@@ -194,6 +194,14 @@ straight onto a network. For a lab where students reach the host directly, set
 those browsers actually use; the console payload travels in a URL fragment and
 must never cross a network in plain text off-host.
 
+**If the TLS proxy is itself a container on this host, loopback will not do.** The
+edge forwards to the host's address (`192.168.1.46:8080`), and a loopback binding
+answers that from the host's *own* process namespace — not from another container,
+which reaches the published port over the bridge. The symptom is a 502 from the
+edge while `curl 127.0.0.1:8080` succeeds on the host, which reads as the stack
+being down when it is up. Set `ONTRAK_BIND_ADDR=0.0.0.0` (or the host's address)
+for that arrangement.
+
 ## Configuration
 
 Everything under `environment:` in `docker-compose.yml` is a `ONTRAK_*` override
