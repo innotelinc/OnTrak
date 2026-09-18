@@ -329,6 +329,23 @@ class Settings:
         self.media_dir.mkdir(parents=True, exist_ok=True)
 
 
+# The sections an ``ONTRAK_<SECTION>__<KEY>`` variable can address, in one place:
+# both :func:`load_settings` and :func:`_reject_unknown_env` need the same list,
+# and they must never drift apart.
+SECTIONS: dict[str, Any] = {
+    "incus": IncusConfig,
+    "guest": GuestConfig,
+    "session": SessionConfig,
+    "pool": PoolConfig,
+    "guac": GuacConfig,
+    "portal": PortalConfig,
+    "paths": PathsConfig,
+    "selection": SelectionConfig,
+    "schedule": ScheduleConfig,
+    "demo": DemoConfig,
+}
+
+
 # --------------------------------------------------------------------------
 # Loading
 # --------------------------------------------------------------------------
@@ -386,6 +403,33 @@ def _section(cls: Any, data: dict) -> Any:
     return cls(**data)
 
 
+def _reject_unknown_env(environ: dict[str, str] | None = None) -> None:
+    """Reject an environment variable that names a setting the app cannot read.
+
+    A spent ``ONTRAK_<SECTION>__<KEY>`` left in ``.env`` is not a typo to shrug off.
+    ``.env`` is what an operator exports, so *every* command that loads config dies
+    on it — and ``_section``'s error names the field but never the variable or the
+    file, which leaves an upgraded checkout staring at ``unknown setting(s) for
+    GuacConfig: public_port`` with nothing to grep for. Naming the variable here is
+    what makes that self-diagnosing.
+
+    Only sections the app models are held to this: ``ONTRAK_FOO__BAR`` addresses
+    nothing the app knows, and stays ignored rather than becoming an error.
+    """
+    for section, values in _env_overrides(environ).items():
+        cls = SECTIONS.get(section)
+        if cls is None:
+            continue
+        known = {f.name for f in fields(cls)}
+        for leaf in sorted(set(values) - known):
+            raise ConfigError(
+                f"unknown setting {ENV_PREFIX}{section.upper()}__{leaf.upper()} "
+                f"for {cls.__name__}: not one of {', '.join(sorted(known))}. "
+                f"Remove it from the environment — if it came from a .env file, "
+                f"delete the line there."
+            )
+
+
 def load_settings(
     path: str | Path | None = None,
     overrides: dict | None = None,
@@ -400,22 +444,14 @@ def load_settings(
     if config_path != LOCAL_CONFIG and LOCAL_CONFIG.exists():
         data = _deep_merge(data, _read_yaml(LOCAL_CONFIG))
         sources.append(str(LOCAL_CONFIG))
+    _reject_unknown_env(environ)  # an operator's own .env gets named, not just the field
     data = _deep_merge(data, _env_overrides(environ))
     if overrides:
         data = _deep_merge(data, overrides)
         sources.append("<overrides>")
 
     settings = Settings(
-        incus=_section(IncusConfig, data.get("incus", {})),
-        guest=_section(GuestConfig, data.get("guest", {})),
-        session=_section(SessionConfig, data.get("session", {})),
-        pool=_section(PoolConfig, data.get("pool", {})),
-        guac=_section(GuacConfig, data.get("guac", {})),
-        portal=_section(PortalConfig, data.get("portal", {})),
-        paths=_section(PathsConfig, data.get("paths", {})),
-        selection=_section(SelectionConfig, data.get("selection", {})),
-        schedule=_section(ScheduleConfig, data.get("schedule", {})),
-        demo=_section(DemoConfig, data.get("demo", {})),
+        **{name: _section(cls, data.get(name, {})) for name, cls in SECTIONS.items()},
         source_files=sources,
     )
     return settings

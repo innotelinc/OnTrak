@@ -125,7 +125,8 @@ OnTrak/
 ├── ontrak/                    # the platform: catalog, sessions, scoring, portal, CLI
 ├── scenarios/                 # scenarios (scenario.yaml + setup.ps1/check.sh) and the shared guest library
 ├── scripts/setup.sh           # bootstrap: hooks, venv, dependencies, .env
-├── scripts/secrets.sh         # idempotent local secrets: .env blanks only, never a set value
+├── scripts/secrets.sh         # idempotent local secrets: .env blanks only, never a set
+│                              #   value; reports keys .env.example no longer lists
 ├── tests/                     # pytest suite
 ├── web/landing/               # static GitHub Pages landing
 ├── docker-compose.yml         # the stack: first-run lab-setup + origin gateway + portal + console

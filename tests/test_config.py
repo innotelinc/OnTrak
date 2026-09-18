@@ -79,6 +79,31 @@ def test_bad_key_is_rejected(tmp_path):
         load_settings(path=config, environ={})
 
 
+def test_a_spent_env_key_names_the_variable_that_carries_it():
+    """A leftover `ONTRAK_...` in `.env` must point at the line to delete.
+
+    This is the `ONTRAK_GUAC__PUBLIC_PORT` failure exactly: the value sat in the
+    operator's `.env`, every command that loaded config died, and the error named
+    `GuacConfig` and a bare field — nothing said which variable, or which file, to
+    go and fix. `.env` is exported wholesale, so one spent line is not a stray
+    value the loader can ignore: naming it is the difference between a self-
+    diagnosing upgrade and a checkout that looks broken for no visible reason.
+    """
+    with pytest.raises(ConfigError, match=r"unknown setting ONTRAK_GUAC__PUBLIC_PORT"):
+        load_settings(path=None, environ={"ONTRAK_GUAC__PUBLIC_PORT": "8081"})
+
+
+def test_a_section_the_app_does_not_model_is_still_ignored():
+    """`ONTRAK_FOO__BAR` addresses nothing the app knows, so it stays ignored.
+
+    Only the app's own sections are held to the strict check. Other tooling shares
+    this environment — a name that was never a setting must not become a boot
+    failure, or the check would be worse than the problem it reports.
+    """
+    settings = load_settings(path=None, environ={"ONTRAK_FOO__BAR": "1"})
+    assert settings.guac.base_url
+
+
 def test_absolute_and_relative_state_paths(tmp_path):
     settings = load_settings(overrides={"paths": {"state": str(tmp_path / "s")}}, environ={})
     assert settings.state_dir == tmp_path / "s"
