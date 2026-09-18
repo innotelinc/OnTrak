@@ -141,11 +141,20 @@ class IncusClient:
         return info.ipv4 if info and info.ipv4 else None
 
     def image_exists(self, alias: str) -> bool:
+        """Whether an image alias resolves — locally, or on the image server.
+
+        Asked with `image info` and its exit code, because there is no JSON form to
+        ask for: `incus image info` has no `--format` (see the note on
+        :meth:`server_info`). The alias resolving *is* the question, and a
+        server-side alias like `images:ubuntu/24.04` resolves without being cached
+        — which is what lets a container workload launch straight from the image
+        server, as the catalog planner promises.
+        """
         try:
-            data = self.run_json(["image", "info", alias, "--format=json"])
+            proc = self.run(["image", "info", alias], check=False)
         except IncusError:
             return False
-        return bool(data)
+        return proc.returncode == 0
 
     def image_aliases(self) -> list[str]:
         try:
@@ -169,15 +178,21 @@ class IncusClient:
     def has_snapshot(self, instance: str, snapshot: str) -> bool:
         return snapshot in self.snapshot_names(instance)
 
+    # The CLI's `--format` is a flag of the *list* commands. `image info`, `info`
+    # and `storage info` do not have it, and asking for it is a hard failure rather
+    # than a fallback: `Error: unknown flag: --format`, exit 1. Every call below is
+    # therefore either a `* list --format=json` or a raw `query`, which is the
+    # machine-readable form of the same answer and has existed in every version.
     def server_info(self) -> dict:
         try:
-            return self.run_json(["info", "--format=json"]) or {}
+            return self.run_json(["query", "/1.0"]) or {}
         except IncusError:
             return {}
 
     def storage_info(self, pool: str | None = None) -> dict:
+        name = pool or self.incus.storage_pool
         try:
-            return self.run_json(["storage", "info", pool or self.incus.storage_pool, "--format=json"]) or {}
+            return self.run_json(["query", f"/1.0/storage-pools/{name}"]) or {}
         except IncusError:
             return {}
 
