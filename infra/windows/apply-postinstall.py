@@ -82,5 +82,7 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main(sys.argv))
     except GuestError as exc:
+        # `from exc` keeps the guest error in the traceback: this exits the
+        # process, and the reason is the only thing that explains the exit.
         print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
