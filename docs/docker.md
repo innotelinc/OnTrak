@@ -158,6 +158,15 @@ On the deployment those are one TLS host with two paths, and the second is what
 | `https://ontrak.innotel.us/` | the student portal and the admin panel |
 | `https://ontrak.innotel.us/guacamole/` | the console the portal signs students into |
 
+What the proxy in front has to do, with the stack bound to loopback (the
+default), is two routes and nothing else — the path is passed through unchanged,
+which is why `ONTRAK_GUAC__BASE_URL` keeps its trailing `/guacamole/`:
+
+| Public | Upstream |
+| --- | --- |
+| `https://ontrak.innotel.us/` | `http://127.0.0.1:8080/` |
+| `https://ontrak.innotel.us/guacamole/` | `http://127.0.0.1:8081/guacamole/` |
+
 `ONTRAK_BIND_ADDR` defaults to `127.0.0.1`. That is the portfolio posture — a
 TLS proxy (NPM Edge / Cerulean-issued certificate) in front, never the portal
 straight onto a network. For a lab where students reach the host directly, set
