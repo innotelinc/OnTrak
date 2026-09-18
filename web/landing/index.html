@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OnTrak — Windows Support Training Platform</title>
+  <meta name="description" content="Self-hosted tech-support training range: pick an operating system, get a broken machine, fix the fault, get graded.">
+  <meta property="og:title" content="OnTrak — Windows Support Training Platform">
+  <meta property="og:description" content="A self-hosted training range that stands up broken Windows, Linux and Office machines on demand, grades the fix, and throws the machine away.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b0d10'/%3E%3Cpath d='M20 26h24M20 34h16' stroke='%23fb923c' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      color-scheme: dark;
+      --p-bg: #0b0d10;
+      --p-bg-elevated: #12151a;
+      --p-surface: #181c22;
+      --p-surface-hover: #1f242c;
+      --p-border: #262c35;
+      --p-text: #f4f7fb;
+      --p-text-secondary: #cdd6e0;
+      --p-text-muted: #a8b2bf;
+      --p-accent: #fb923c;
+      --p-accent-hover: #fdba74;
+      --p-accent-tint: rgba(251, 146, 60, 0.12);
+      --p-gold: #f5b544;
+      --p-success: #3ddc84;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --ease: cubic-bezier(.2, .8, .2, 1);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0; background: var(--p-bg); color: var(--p-text);
+      font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased;
+    }
+    ::selection { background: var(--p-accent-tint); }
+    a { color: var(--p-accent); text-decoration: none; }
+    a:hover { color: var(--p-accent-hover); }
+    code, pre { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+    .topbar { position: sticky; top: 0; z-index: 10; background: rgba(10, 14, 19, 0.72); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border-bottom: 1px solid var(--p-border); }
+    .topbar-inner { display: flex; align-items: center; gap: 20px; height: 60px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: 0.04em; color: var(--p-text); }
+    .brand:hover { color: var(--p-text); }
+    .brand .mark { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: var(--p-bg-elevated); border: 1px solid var(--p-border); }
+    .topbar nav { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+    .topbar nav a { color: var(--p-text-secondary); padding: 6px 12px; border-radius: var(--radius-sm); font-size: 14px; }
+    .topbar nav a:hover { color: var(--p-text); background: var(--p-surface-hover); }
+    .topbar .gh { display: inline-flex; align-items: center; gap: 8px; margin-left: 8px; border: 1px solid var(--p-border); border-radius: var(--radius-md); padding: 7px 14px; color: var(--p-text); font-size: 14px; }
+    .topbar .gh:hover { border-color: var(--p-accent); background: var(--p-accent-tint); }
+
+    .hero { position: relative; overflow: hidden; padding: 96px 0 72px; }
+    .hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(600px 320px at 70% -10%, rgba(251, 146, 60, 0.14), transparent 70%), radial-gradient(500px 300px at 15% 110%, rgba(245, 181, 68, 0.06), transparent 70%); pointer-events: none; }
+    .hero-inner { position: relative; max-width: 780px; }
+    .kicker { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--p-accent-hover); background: var(--p-accent-tint); border: 1px solid rgba(251, 146, 60, 0.3); border-radius: 999px; padding: 5px 14px; margin: 0 0 24px; }
+    .kicker .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--p-success); }
+    h1 { font-size: clamp(2.2rem, 5.5vw, 3.4rem); line-height: 1.08; letter-spacing: -0.02em; margin: 0 0 20px; font-weight: 700; }
+    h1 .accent { color: var(--p-accent); }
+    .lede { font-size: 1.125rem; color: var(--p-text-secondary); max-width: 680px; margin: 0 0 32px; }
+    .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 28px; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; border-radius: var(--radius-md); padding: 11px 20px; font-size: 15px; font-weight: 550; border: 1px solid transparent; cursor: pointer; }
+    .btn-primary { background: var(--p-accent); color: #0a0e13; font-weight: 600; }
+    .btn-primary:hover { background: var(--p-accent-hover); color: #0a0e13; }
+    .btn-secondary { border-color: var(--p-border); color: var(--p-text); background: transparent; }
+    .btn-secondary:hover { border-color: var(--p-accent); background: var(--p-accent-tint); color: var(--p-text); }
+    .quickstart { display: flex; align-items: center; gap: 14px; background: var(--p-bg-elevated); border: 1px solid var(--p-border); border-radius: var(--radius-md); padding: 12px 16px; max-width: 720px; font-size: 13.5px; }
+    .quickstart code { color: var(--p-text); white-space: nowrap; overflow-x: auto; }
+    .quickstart code .c { color: var(--p-text-muted); }
+    .quickstart .copy { margin-left: auto; flex: 0 0 auto; background: transparent; border: 1px solid var(--p-border); color: var(--p-text-secondary); border-radius: var(--radius-sm); font: inherit; font-size: 12px; padding: 4px 10px; cursor: pointer; }
+    .quickstart .copy:hover { border-color: var(--p-accent); color: var(--p-text); }
+    .quickstart .copy.copied { color: var(--p-success); border-color: var(--p-success); }
+
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 56px 0 0; }
+    .stat { background: var(--p-bg-elevated); border: 1px solid var(--p-border); border-radius: var(--radius-md); padding: 16px; }
+    .stat .n { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
+    .stat .n em { font-style: normal; color: var(--p-accent); }
+    .stat .l { font-size: 13px; color: var(--p-text-muted); margin-top: 2px; }
+
+    section { padding: 56px 0; }
+    .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 26px; flex-wrap: wrap; }
+    .sec-head h2 { font-size: 1.6rem; letter-spacing: -0.02em; margin: 0; }
+    .sec-head p { color: var(--p-text-muted); margin: 0; font-size: 14.5px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+    .card { border: 1px solid var(--p-border); background: var(--p-bg-elevated); border-radius: var(--radius-md); padding: 18px; }
+    .card h3 { margin: 0 0 8px; font-size: 1rem; letter-spacing: -0.01em; }
+    .card p { margin: 0; color: var(--p-text-secondary); font-size: 14.5px; }
+    .card code { color: var(--p-accent-hover); font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--p-border); vertical-align: top; }
+    th { color: var(--p-text-muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
+    td code { color: var(--p-accent-hover); }
+    footer { border-top: 1px solid var(--p-border); margin-top: 48px; padding: 22px 0 40px; color: var(--p-text-muted); font-size: 13px; }
+    footer .foot-inner { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+    footer a { color: var(--p-text-secondary); }
+    footer a:hover { color: var(--p-accent); }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <div class="topbar-inner">
+        <a class="brand" href="./">
+          <span class="mark" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 64 64"><path d="M20 26h24M20 34h16" stroke="#fb923c" stroke-width="6" stroke-linecap="round"/></svg>
+          </span>
+          <span>OnTrak</span>
+        </a>
+        <nav>
+          <a href="#how">How it works</a>
+          <a href="#platforms">Platforms</a>
+          <a href="#scenarios">Scenarios</a>
+          <a class="gh" href="https://github.com/innotelinc/OnTrak">GitHub ↗</a>
+        </nav>
+      </div>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <section class="hero">
+      <div class="hero-inner">
+        <p class="kicker"><span class="pulse" aria-hidden="true"></span> TrainingOps · self-hosted</p>
+        <h1>Support practice on machines that are <span class="accent">already broken</span>.</h1>
+        <p class="lede">
+          OnTrak stands up a Windows, Linux or Office machine with a real fault injected,
+          hands it to a student in the browser, grades the fix by reading live system state,
+          and throws the machine away. Every attempt starts from a verified-clean clone, so
+          no two students share the consequences of the last one.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://github.com/innotelinc/OnTrak#quick-start">Get started</a>
+          <a class="btn btn-secondary" href="https://github.com/innotelinc/OnTrak/blob/main/docs/scenarios.md">Scenario catalogue</a>
+        </div>
+        <div class="quickstart">
+          <code id="qs"><span class="c"># no hypervisor needed — runs in memory</span>
+git clone https://github.com/innotelinc/OnTrak.git &amp;&amp; cd OnTrak
+./scripts/setup.sh
+make demo</code>
+          <button class="copy" data-copy="#qs" type="button">Copy</button>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><div class="n">Windows <em>95→11</em></div><div class="l">Desktop releases, incl. DOS-era</div></div>
+        <div class="stat"><div class="n">Server <em>NT4→2025</em></div><div class="l">Domain, DNS, DHCP, IIS</div></div>
+        <div class="stat"><div class="n">Office <em>97→2024</em></div><div class="l">Suite builds plus Microsoft 365 Apps</div></div>
+        <div class="stat"><div class="n">All <em>Linux</em></div><div class="l">Containers in ~1s, VMs for kernel work</div></div>
+      </div>
+    </section>
+
+    <section id="how">
+      <div class="sec-head">
+        <h2>How a session runs</h2>
+        <p>Bare-metal Incus is the only requirement. Everything a student sees is a clone.</p>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <h3>1 · Pick a platform</h3>
+          <p>A catalog of manifest entries — not binaries — describes each guest: media source,
+              device profile, resources and how it can be automated. Legacy guests get IDE disks and
+              emulated NICs automatically; there is nothing to hand-configure.</p>
+        </div>
+        <div class="card">
+          <h3>2 · Provision the fastest way available</h3>
+          <p>OnTrak picks the cheapest path the host can actually deliver, and says so:
+              <code>warm pool</code> (instant) → <code>container</code> (~1s) →
+              <code>clone of a broken template</code> (tens of seconds) →
+              <code>launch from a published image</code> → <code>build the image</code> once, as an operator task.</p>
+        </div>
+        <div class="card">
+          <h3>3 · Work the ticket in the browser</h3>
+          <p>Students get an HTML5 console through the gateway, a ticket with a briefing, progressive
+              hints, and a time limit they choose. They can reset as often as they like — a reset is a
+              fresh clone, never an un-break.</p>
+        </div>
+        <div class="card">
+          <h3>4 · Grade live state, not answers</h3>
+          <p>Objective scripts read the machine: does the name resolve, is the service running, is the
+              device enabled. Any correct fix passes, including ones the author did not think of.</p>
+        </div>
+        <div class="card">
+          <h3>5 · Submit and destroy</h3>
+          <p>Practice checks are shown and discarded. <code>Complete &amp; End</code> grades once, records that
+              result, and destroys the machine — results only, no progress tracking.</p>
+        </div>
+        <div class="card">
+          <h3>6 · Keep the lab warm on a schedule</h3>
+          <p>Prewarm windows fill the pool before a class and drain it afterwards, so the first student
+              never watches a boot and idle VMs never hold host memory overnight.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="platforms">
+      <div class="sec-head">
+        <h2>The workload catalog</h2>
+        <p>Free media is fetched; licensed media is yours and stays yours.</p>
+      </div>
+      <table>
+        <thead><tr><th>Group</th><th>Covers</th><th>Fastest path</th></tr></thead>
+        <tbody>
+          <tr><td>Windows desktop</td><td>95, 98SE, ME, NT4, 2000, XP, Vista, 7, 8.1, 10, 11</td><td><code>clone</code> from a built template</td></tr>
+          <tr><td>Windows Server</td><td>NT4 → Server 2025 (AD, DNS, DHCP, GPO, IIS)</td><td><code>clone</code> from a built template</td></tr>
+          <tr><td>Microsoft Office</td><td>97, 2000, XP, 2003, 2007, 2010, 2013, 2016, 2019, LTSC 2021/2024, M365 Apps</td><td><code>clone</code> of a layered image</td></tr>
+          <tr><td>Linux</td><td>Ubuntu, Debian, Fedora, Rocky, Alma, Oracle, CentOS Stream, RHEL, openSUSE, Alpine, Arch, Gentoo, Void, NixOS, Kali, Raspberry Pi OS</td><td><code>container launch</code> in about a second</td></tr>
+          <tr><td>Linux desktop (VM)</td><td>Ubuntu Desktop/cloud images for boot, driver and GUI tickets</td><td><code>launch</code> from the image server</td></tr>
+        </tbody>
+      </table>
+      <p style="color: var(--p-text-muted); font-size: 13.5px; margin-top: 14px;">
+        Retail Windows and Office are not redistributable, so OnTrak never downloads them: the
+        manifest names the media and the operator supplies it from their own licence. Only
+        Microsoft's published evaluation media and the Linux image server are fetched automatically.
+      </p>
+    </section>
+
+    <section id="scenarios">
+      <div class="sec-head">
+        <h2>Scenarios, written or generated</h2>
+        <p>Five families, ranked by ticket volume and how cleanly they can be graded.</p>
+      </div>
+      <div class="grid">
+        <div class="card"><h3>Network &amp; connectivity</h3><p>DNS pointed at a dead resolver, proxy traps, static gateways that do not exist. The highest-volume family, and the one with unambiguous evidence.</p></div>
+        <div class="card"><h3>Boot &amp; performance</h3><p>Startup bloat, a full system disk. The student has to go looking rather than being handed an error.</p></div>
+        <div class="card"><h3>Applications &amp; settings</h3><p>A service disabled, a configuration file corrupted mid-update. The fix is rarely "reinstall".</p></div>
+        <div class="card"><h3>Hardware &amp; drivers</h3><p>A device disabled with an error code. Where junior engineers lose the most time.</p></div>
+        <div class="card"><h3>Security incidents</h3><p>Simulated persistence, a disabled antivirus, a phishing message to triage. The capstone: it tests process and documentation, not just repair.</p></div>
+        <div class="card"><h3>Generate your own</h3><p>Fault primitives compose into new scenarios — <code>ontrak generate one --primitive dns-resolver-trapped --primitive service-disabled</code> — and every generated scenario is validated before it can reach a student.</p></div>
+      </div>
+    </section>
+  </div>
+
+  <footer>
+    <div class="wrap foot-inner">
+      <span>OnTrak — support training range for the Innotel Platform Stack.</span>
+      <a href="https://github.com/innotelinc/OnTrak">Source</a>
+      <a href="https://github.com/innotelinc/OnTrak/blob/main/LICENSE">MIT License</a>
+      <a href="https://github.com/innotelinc/innotel-platform-stack">Platform stack</a>
+    </div>
+  </footer>
+
+  <script>
+    document.querySelectorAll(".copy").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var target = document.querySelector(button.getAttribute("data-copy"));
+        if (!target) return;
+        var text = target.innerText.replace(/^\s*#.*\n/, "");
+        navigator.clipboard.writeText(text).then(function () {
+          button.textContent = "Copied";
+          button.classList.add("copied");
+          setTimeout(function () {
+            button.textContent = "Copy";
+            button.classList.remove("copied");
+          }, 1600);
+        });
+      });
+    });
+  </script>
+</body>
+</html>

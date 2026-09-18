@@ -1,0 +1,118 @@
+# OnTrak configuration. Every value here can be overridden with an environment
+# variable named ONTRAK_<SECTION>__<KEY> (values are parsed as YAML), and every
+# value can be overridden per-deployment with config/local.yaml, which is
+# gitignored. See .env.example for the usual secrets.
+
+incus:
+  remote: local                  # "local" or an incus remote name / https:// endpoint
+  project: ontrak
+  storage_pool: default          # ZFS or btrfs strongly recommended (CoW snapshots)
+  network: ontrak0                # managed bridge the student VMs attach to
+  profile: ontrak-student         # limits applied to every student VM
+  image_alias: ontrak-win-base    # golden image built by infra/build-golden-image.sh
+  template_prefix: tpl           # tpl-<scenario> = booted+broken VM with "clean" snapshot
+  pool_prefix: ontrak-pool        # pre-booted, unclaimed VMs
+  session_prefix: ontrak-sess     # instances cloned directly for a student
+  # Seconds allowed for stop/delete/copy. A CoW clone is seconds; the timeout
+  # is for the tail (storage hiccup, agent handshake).
+  operation_timeout_seconds: 300
+
+guest:
+  # How PowerShell reaches the Windows guest.
+  #   winrm      - default; works on any Windows image with WinRM enabled
+  #   incus-exec - needs the Incus Windows agent + virtio-vsock in the image
+  #   null       - no-op driver, for dry runs, CI and building the catalogue
+  driver: winrm
+  user: student
+  password: ""                   # set via ONTRAK_GUEST__PASSWORD, baked into the image
+  admin_group: Administrators    # group the training user belongs to
+  winrm_port: 5985
+  winrm_transport: ntlm          # ntlm | basic (basic needs HTTPS in practice)
+  winrm_use_ssl: false
+  rdp_port: 3389
+  boot_timeout_seconds: 300      # wait for the VM to have network
+  ready_timeout_seconds: 420     # wait for RDP to accept connections
+  static_host: ""                # driver=winrm against one fixed Windows box (dev mode)
+  work_dir: 'C:\ProgramData\OnTrak'
+
+session:
+  ttl_minutes: 90                # hard cap, even with activity
+  idle_recycle_minutes: 20       # reclaimed after this long with no activity
+  max_per_student: 1             # concurrent sessions per student account
+  randomize_credentials: false   # give each session a unique local password
+  check_timeout_seconds: 240     # grading scripts can be slow (reboots, scans)
+  # Results only: a student may check their own work as often as they like, but the
+  # only grade that is stored is the one submitted at "Complete & End".
+  persist_progress: false
+  # Time limits a student can choose, in minutes; the first is the default.
+  time_limit_choices: [45, 90, 180]
+  destroy_on_complete: true      # grade once, then throw the VM away
+
+selection:
+  # How a student is given a scenario when they do not pick one.
+  #   balanced | random | family | hardest | easiest
+  strategy: balanced
+  auto_assign: true
+  max_difficulty: 4
+  seed: 0                        # set non-zero for repeatable assignment orders
+
+schedule:
+  # Prewarm before a class and drain the pool after it, so the first student does
+  # not wait for a Windows boot and idle VMs do not hold host RAM all night.
+  enabled: false
+  windows: []
+  # Example — a Monday/Wednesday 09:00 class on two scenarios, warm from 08:30:
+  # windows:
+  #   - label: morning-class
+  #     days: [mon, wed]
+  #     start: "09:00"
+  #     end: "12:00"
+  #     prewarm_minutes: 30
+  #     target: 15
+  #     scenarios: [net-dns-failure, os-perf-startup]
+
+demo:
+  # Demo mode runs the whole student flow with no hypervisor: no Incus, no Windows,
+  # no secrets. For workshops, screenshots and CI.
+  enabled: false
+  students: 6
+  success_rate: 1.0              # 1.0 = every objective passed, for clean demos
+  reset_state: true              # wipe demo state on start
+
+pool:
+  enabled: true
+  # Warm, booted, unclaimed VMs per scenario. 0 keeps RAM free; use
+  # `ontrak pool prewarm --scenario X --count N` before a class instead of
+  # keeping idle Windows VMs resident all the time.
+  default_target: 0
+  targets: {}                    # e.g. {net-dns-failure: 30}
+  max_total: 60                  # ceiling across all scenarios (RAM guard rail)
+  refill_interval_seconds: 120
+  claim_timeout_seconds: 90      # copied clone that never came up is discarded
+
+guac:
+  base_url: http://127.0.0.1:8080/guacamole/
+  secret_key: ""                 # 32 hex chars; env ONTRAK_GUAC__SECRET_KEY;
+                                 # must match JSON_SECRET_KEY in deploy/guacamole
+  link_ttl_minutes: 480
+  recording: false               # guacd session recording for instructor review
+  recording_path: /recordings
+  server_layout: en-us-qwerty
+  keyboard_layout: en-us-qwerty
+
+portal:
+  host: 0.0.0.0
+  port: 8080
+  secret: ""                     # signs portal session cookies
+  title: OnTrak
+  admin_user: instructor
+  admin_password: ""
+  brand_note: "Tech support training range"
+  allow_self_reset: true
+  hints_require_attempt: true    # a failed check is needed before hints unlock
+
+paths:
+  scenarios: scenarios
+  state: state
+  catalog: catalog               # OS/Office manifests (see docs/catalog.md)
+  media: media                   # downloaded free media, operator-supplied licensed media

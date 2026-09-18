@@ -1,0 +1,180 @@
+# Windows desktop, Windows 95 through present.
+#
+# Only freely redistributable media carries a url (Microsoft's own evaluation ISOs).
+# Retail and end-of-life media is `source: operator`: OnTrak never downloads it, it
+# looks for the named file in the media store. See docs/catalog.md.
+group: windows-desktop
+label: Windows desktop
+era: 1995-present
+description: >
+  Every Windows desktop release from Windows 95 to Windows 11. Builders:
+  `incus-windows` drives the unattended install used for Windows 10/11 (virtio,
+  WinRM, the Incus agent); `answer-file` renders our own autounattend.xml for
+  Vista-8.1 and XP/2000; `manual` means the operator installs once by hand and
+  publishes the image — unavoidable before Windows 2000, which has no answer-file
+  automation worth relying on.
+family: windows
+defaults:
+  kind: vm
+  family: windows
+  scenario_families: [hardware, software, network, os, security]
+  resources: {cpu: 2, memory: 4GiB, disk: 48GiB}
+
+entries:
+  # -- DOS-based era -----------------------------------------------------
+  - id: win95-osr2
+    name: Windows 95 OSR2
+    released: "1996-08"
+    support: eol
+    media:
+      source: operator
+      kind: iso
+      filename: win95-osr2.iso
+      notes: Retail/OEM media; the publisher no longer distributes it.
+    install: {recipe: manual, builder: manual}
+    device_profile: legacy-9x
+    automation: none
+    resources: {cpu: 1, memory: 256MiB, disk: 4GiB}
+    tags: [dos-era, legacy-hardware]
+    notes: >
+      Needs a real IDE/PCI-era device profile and a FAT16 disk under 2 GB. No guest
+      automation exists, so scenarios on this platform are instructor-observed:
+      Device Manager conflicts, Control Panel, config.sys/autoexec.bat editing.
+  - id: win98se
+    name: Windows 98 Second Edition
+    released: "1999-05"
+    support: eol
+    media: {source: operator, kind: iso, filename: win98se.iso}
+    install: {recipe: manual, builder: manual}
+    device_profile: legacy-9x
+    automation: none
+    resources: {cpu: 1, memory: 256MiB, disk: 8GiB}
+    tags: [dos-era, legacy-hardware]
+    notes: Good for driver-conflict and startup-configuration exercises. Grading is manual.
+  - id: win-me
+    name: Windows Millennium Edition
+    released: "2000-09"
+    support: eol
+    media: {source: operator, kind: iso, filename: winme.iso}
+    install: {recipe: manual, builder: manual}
+    device_profile: legacy-9x
+    automation: none
+    resources: {cpu: 1, memory: 512MiB, disk: 8GiB}
+    tags: [dos-era, system-restore]
+    notes: >
+      The first consumer Windows with System Restore, which makes it the classic
+      "roll back a bad driver" scenario. No automation; grading is manual.
+
+  # -- NT era ------------------------------------------------------------
+  - id: win-nt4-workstation
+    name: Windows NT 4.0 Workstation
+    edition: SP6a
+    released: "1996-07"
+    support: eol
+    media: {source: operator, kind: iso, filename: winnt4wks-sp6a.iso}
+    install: {recipe: manual, builder: manual}
+    device_profile: legacy-xp
+    automation: none
+    resources: {cpu: 1, memory: 512MiB, disk: 8GiB}
+    tags: [nt-era, permissions]
+    notes: Permission and profile exercises (NTFS ACLs, local groups). Manual grading.
+  - id: win2000-pro
+    name: Windows 2000 Professional
+    edition: SP4
+    released: "2000-02"
+    support: eol
+    media: {source: operator, kind: iso, filename: win2000pro-sp4.iso}
+    install: {recipe: manual, builder: answer-file}
+    device_profile: legacy-xp
+    automation: winrm-ps2
+    resources: {cpu: 1, memory: 1GiB, disk: 16GiB}
+    tags: [nt-era]
+    notes: >
+      Answer-file setup is possible but fragile; this build expects an operator-built
+      image. PowerShell 2.0 can be added for automated grading.
+  - id: win-xp-sp3
+    name: Windows XP Professional
+    edition: SP3
+    released: "2001-10"
+    support: eol
+    media: {source: operator, kind: iso, filename: winxp-sp3.iso, sha256: ""}
+    install: {recipe: iso-unattended, builder: answer-file, unattended: winnt.sif}
+    device_profile: legacy-xp
+    automation: winrm-ps2
+    resources: {cpu: 2, memory: 2GiB, disk: 24GiB}
+    tags: [nt-era, classic]
+    notes: >
+      Still the reference for "legacy environment" support tickets. Enable Remote
+      Desktop and install PowerShell 2.0 at image build time so scenarios can be
+      graded; without that, a scenario must mark itself manual.
+
+  # -- Modern era --------------------------------------------------------
+  - id: win-vista-sp2
+    name: Windows Vista Business
+    edition: SP2
+    released: "2007-01"
+    support: eol
+    media: {source: operator, kind: iso, filename: vista-sp2.iso}
+    install: {recipe: iso-unattended, builder: answer-file, unattended: autounattend.xml}
+    device_profile: vista-era
+    automation: winrm-ps2
+    resources: {cpu: 2, memory: 2GiB, disk: 32GiB}
+    tags: [uac, driver-store]
+    notes: UAC and driver-store exercises. Vista needs VirtIO drivers during setup.
+  - id: win7-sp1
+    name: Windows 7 Enterprise
+    edition: SP1
+    released: "2009-10"
+    support: eol
+    media: {source: operator, kind: iso, filename: win7-sp1-enterprise.iso}
+    install: {recipe: iso-unattended, builder: answer-file, unattended: autounattend.xml}
+    device_profile: vista-era
+    automation: winrm-ps51
+    resources: {cpu: 2, memory: 3GiB, disk: 40GiB}
+    tags: [common, wsus]
+    notes: The most common legacy estate in the field. PowerShell 5.1 needs the WMF 5.1 package at image build time.
+  - id: win81
+    name: Windows 8.1 Enterprise
+    released: "2013-10"
+    support: eol
+    media: {source: operator, kind: iso, filename: win81-ent.iso}
+    install: {recipe: iso-unattended, builder: answer-file, unattended: autounattend.xml}
+    device_profile: vista-era
+    automation: winrm-ps51
+    resources: {cpu: 2, memory: 4GiB, disk: 40GiB}
+    tags: [modern]
+    notes: Fast boot and WinRE exercises.
+  - id: win10-22h2
+    name: Windows 10 Enterprise
+    edition: 22H2
+    released: "2022-10"
+    support: extended
+    media:
+      source: free
+      kind: iso
+      filename: Win10_22H2_English_x64.iso
+      url: https://software-download.microsoft.com/download/Win10_22H2_English_x64.iso
+      notes: Microsoft evaluation media; 90-day activation. Replace with your own licensed media for long-lived images.
+    install: {recipe: iso-unattended, builder: incus-windows, target: win10}
+    device_profile: modern
+    automation: agent
+    resources: {cpu: 4, memory: 6GiB, disk: 64GiB}
+    tags: [common, primary]
+    notes: The default student platform. Built by antifob/incus-windows (virtio drivers, WinRM, Incus agent).
+  - id: win11-24h2
+    name: Windows 11 Enterprise
+    edition: 24H2
+    released: "2024-10"
+    support: supported
+    media:
+      source: free
+      kind: iso
+      filename: Win11_24H2_English_x64.iso
+      url: https://software-download.microsoft.com/download/Win11_24H2_English_x64.iso
+      notes: Microsoft evaluation media; 90-day activation.
+    install: {recipe: iso-unattended, builder: incus-windows, target: win11}
+    device_profile: modern
+    automation: agent
+    resources: {cpu: 4, memory: 8GiB, disk: 64GiB}
+    tags: [common, primary, tpm]
+    notes: Requires Secure Boot and a virtual TPM, which the `modern` device profile provides.

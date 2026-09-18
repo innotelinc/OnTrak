@@ -1,0 +1,304 @@
+# Linux distributions.
+#
+# This hand-written group is the curated, offline-safe set. `ontrak catalog refresh`
+# additionally regenerates `catalog/linux-images.yaml` from everything the configured
+# Incus image server publishes, which is how "all Linux distributions" stays true
+# as the server's catalog grows.
+#
+# Containers start in about a second, so they are the default here. Entries that need
+# a kernel (boot loaders, drivers, kernel modules, systemd-boot) are VMs instead.
+group: linux
+label: Linux
+era: 1991-present
+description: >
+  Server and desktop Linux. Container entries come straight from the image server
+  and are the fastest thing OnTrak can hand a student; VM entries are for exercises
+  that touch boot, kernel or driver behaviour.
+family: linux
+defaults:
+  kind: container
+  family: linux
+  install: {recipe: container-image}
+  media: {source: free, kind: image}
+  automation: ssh
+  device_profile: linux-container
+  scenario_families: [network, software, os, security]
+
+entries:
+  # -- Ubuntu ------------------------------------------------------------
+  - id: ubuntu-24.04
+    name: Ubuntu 24.04 LTS
+    released: "2024-04"
+    support: supported
+    install: {recipe: container-image, alias: images:ubuntu/24.04}
+    media: {source: free, kind: image, filename: images:ubuntu/24.04}
+    tags: [lts, common, debian-family]
+    notes: Current LTS; the default Linux student platform.
+  - id: ubuntu-22.04
+    name: Ubuntu 22.04 LTS
+    released: "2022-04"
+    support: supported
+    install: {recipe: container-image, alias: images:ubuntu/22.04}
+    media: {source: free, kind: image, filename: images:ubuntu/22.04}
+    tags: [lts, common, debian-family]
+    notes: Still the most common production Ubuntu in the field.
+  - id: ubuntu-20.04
+    name: Ubuntu 20.04 LTS
+    released: "2020-04"
+    support: extended
+    install: {recipe: container-image, alias: images:ubuntu/20.04}
+    media: {source: free, kind: image, filename: images:ubuntu/20.04}
+    tags: [lts, debian-family]
+    notes: Standard support ended; a realistic "stuck on an old release" platform.
+  - id: ubuntu-18.04
+    name: Ubuntu 18.04 LTS
+    released: "2018-04"
+    support: eol
+    install: {recipe: container-image, alias: images:ubuntu/18.04}
+    media: {source: free, kind: image, filename: images:ubuntu/18.04}
+    tags: [lts, legacy, debian-family]
+    notes: End-of-life; apt endpoints are archived, which is itself a useful exercise.
+  - id: ubuntu-16.04
+    name: Ubuntu 16.04 LTS
+    released: "2016-04"
+    support: eol
+    install: {recipe: container-image, alias: images:ubuntu/16.04}
+    media: {source: free, kind: image, filename: images:ubuntu/16.04}
+    tags: [lts, legacy, debian-family]
+    notes: Old glibc and Python 3.5 — good for "this app will not install here" tickets.
+
+  # -- Debian family -----------------------------------------------------
+  - id: debian-12
+    name: Debian 12 (Bookworm)
+    released: "2023-06"
+    support: supported
+    install: {recipe: container-image, alias: images:debian/12}
+    media: {source: free, kind: image, filename: images:debian/12}
+    tags: [stable, common, debian-family]
+    notes: Stable baseline for server exercises.
+  - id: debian-11
+    name: Debian 11 (Bullseye)
+    released: "2021-08"
+    support: extended
+    install: {recipe: container-image, alias: images:debian/11}
+    media: {source: free, kind: image, filename: images:debian/11}
+    tags: [stable, debian-family]
+    notes: Previous stable.
+  - id: debian-10
+    name: Debian 10 (Buster)
+    released: "2019-07"
+    support: eol
+    install: {recipe: container-image, alias: images:debian/10}
+    media: {source: free, kind: image, filename: images:debian/10}
+    tags: [legacy, debian-family]
+    notes: End-of-life; archived repositories.
+  - id: raspios-12
+    name: Raspberry Pi OS 12 (arm64)
+    released: "2023-10"
+    support: supported
+    install: {recipe: container-image, alias: images:raspios/12}
+    media: {source: free, kind: image, filename: images:raspios/12}
+    tags: [arm64, debian-family, edge-device]
+    notes: Useful wherever students support small-site or kiosk devices.
+
+  # -- Red Hat family ----------------------------------------------------
+  - id: fedora-41
+    name: Fedora 41
+    released: "2024-10"
+    support: supported
+    install: {recipe: container-image, alias: images:fedora/41}
+    media: {source: free, kind: image, filename: images:fedora/41}
+    tags: [rpm-family, fast-moving]
+    notes: Newest userland features and SELinux defaults.
+  - id: fedora-40
+    name: Fedora 40
+    released: "2024-04"
+    support: extended
+    install: {recipe: container-image, alias: images:fedora/40}
+    media: {source: free, kind: image, filename: images:fedora/40}
+    tags: [rpm-family]
+    notes: Previous Fedora release.
+  - id: rockylinux-9
+    name: Rocky Linux 9
+    released: "2022-05"
+    support: supported
+    install: {recipe: container-image, alias: images:rockylinux/9}
+    media: {source: free, kind: image, filename: images:rockylinux/9}
+    tags: [rpm-family, rhel-compatible, common]
+    notes: RHEL-compatible rebuild; common in enterprise estates.
+  - id: rockylinux-8
+    name: Rocky Linux 8
+    released: "2021-06"
+    support: extended
+    install: {recipe: container-image, alias: images:rockylinux/8}
+    media: {source: free, kind: image, filename: images:rockylinux/8}
+    tags: [rpm-family, rhel-compatible]
+    notes: RHEL 8-era exercises.
+  - id: almalinux-9
+    name: AlmaLinux 9
+    released: "2022-05"
+    support: supported
+    install: {recipe: container-image, alias: images:almalinux/9}
+    media: {source: free, kind: image, filename: images:almalinux/9}
+    tags: [rpm-family, rhel-compatible]
+    notes: Second RHEL-compatible rebuild.
+  - id: oracle-linux-9
+    name: Oracle Linux 9
+    released: "2022-06"
+    support: supported
+    install: {recipe: container-image, alias: images:oracle/9}
+    media: {source: free, kind: image, filename: images:oracle/9}
+    tags: [rpm-family, rhel-compatible]
+    notes: Includes the UEK kernel variant.
+  - id: centos-stream-9
+    name: CentOS Stream 9
+    released: "2021-12"
+    support: supported
+    install: {recipe: container-image, alias: images:centos/9-Stream}
+    media: {source: free, kind: image, filename: images:centos/9-Stream}
+    tags: [rpm-family, rhel-upstream]
+    notes: Upstream of RHEL 9.
+  - id: rhel-9
+    name: Red Hat Enterprise Linux 9
+    released: "2022-05"
+    support: supported
+    install: {recipe: container-image, alias: images:rhel/9}
+    media:
+      source: free
+      kind: image
+      filename: images:rhel/9
+      notes: Subscription-licensed in production; the image server copy is for lab use.
+    tags: [rpm-family, enterprise]
+    notes: Requires an active Red Hat subscription for real use; keep lab copies isolated.
+
+  # -- SUSE --------------------------------------------------------------
+  - id: opensuse-leap-15.6
+    name: openSUSE Leap 15.6
+    released: "2024-06"
+    support: supported
+    install: {recipe: container-image, alias: images:opensuse/15.6}
+    media: {source: free, kind: image, filename: images:opensuse/15.6}
+    tags: [suse-family, zypper]
+    notes: zypper/YaST exercises; SUSE-specific config layout.
+  - id: opensuse-tumbleweed
+    name: openSUSE Tumbleweed
+    released: "rolling"
+    support: supported
+    install: {recipe: container-image, alias: images:opensuse/tumbleweed}
+    media: {source: free, kind: image, filename: images:opensuse/tumbleweed}
+    tags: [suse-family, rolling]
+    notes: Rolling release; good for upgrade-path tickets.
+
+  # -- Other distributions -----------------------------------------------
+  - id: alpine-3.21
+    name: Alpine Linux 3.21
+    released: "2024-12"
+    support: supported
+    install: {recipe: container-image, alias: images:alpine/3.21}
+    media: {source: free, kind: image, filename: images:alpine/3.21}
+    tags: [musl, busybox, minimal]
+    notes: apk/BusyBox and musl-vs-glibc incompatibility tickets.
+  - id: alpine-edge
+    name: Alpine Linux edge
+    released: "rolling"
+    support: supported
+    install: {recipe: container-image, alias: images:alpine/edge}
+    media: {source: free, kind: image, filename: images:alpine/edge}
+    tags: [musl, rolling]
+    notes: Rolling Alpine for the newest packages.
+  - id: archlinux
+    name: Arch Linux
+    released: "rolling"
+    support: supported
+    install: {recipe: container-image, alias: images:archlinux}
+    media: {source: free, kind: image, filename: images:archlinux}
+    tags: [rolling, diy]
+    notes: Manual-configuration culture; good for "the user changed everything" tickets.
+  - id: gentoo
+    name: Gentoo
+    released: "rolling"
+    support: supported
+    install: {recipe: container-image, alias: images:gentoo}
+    media: {source: free, kind: image, filename: images:gentoo}
+    tags: [source-based, rolling]
+    notes: Source-based; USE-flag and rebuild exercises.
+  - id: voidlinux
+    name: Void Linux
+    released: "rolling"
+    support: supported
+    install: {recipe: container-image, alias: images:voidlinux}
+    media: {source: free, kind: image, filename: images:voidlinux}
+    tags: [runit, rolling]
+    notes: runit instead of systemd, which reframes service troubleshooting.
+  - id: nixos
+    name: NixOS
+    released: "rolling"
+    support: supported
+    install: {recipe: container-image, alias: images:nixos}
+    media: {source: free, kind: image, filename: images:nixos}
+    tags: [declarative, rolling]
+    notes: Declarative configuration; excellent for "prove the config matches the system".
+  - id: kali-rolling
+    name: Kali Linux
+    released: "rolling"
+    support: supported
+    install: {recipe: container-image, alias: images:kali}
+    media: {source: free, kind: image, filename: images:kali}
+    tags: [security-tooling, rolling]
+    notes: Security-tooling platform for red/blue exercises on an isolated network.
+  - id: ubuntu-core-24
+    name: Ubuntu Core 24 (snap-based)
+    released: "2024-05"
+    support: supported
+    install: {recipe: container-image, alias: images:ubuntu-core/24}
+    media: {source: free, kind: image, filename: images:ubuntu-core/24}
+    tags: [immutable, iot]
+    notes: Immutable image-based OS; IoT/edge appliance support tickets.
+
+  # -- Linux VMs (boot, kernel and driver exercises) ---------------------
+  - id: ubuntu-vm-24.04
+    name: Ubuntu 24.04 LTS (VM)
+    released: "2024-04"
+    support: supported
+    kind: vm
+    device_profile: linux-vm
+    install: {recipe: image-alias, alias: images:ubuntu/24.04/cloud}
+    media: {source: free, kind: image, filename: images:ubuntu/24.04/cloud}
+    resources: {cpu: 2, memory: 2GiB, disk: 16GiB}
+    tags: [vm, boot, kernel]
+    notes: Use for boot loader, kernel module, fstab and driver exercises.
+  - id: debian-vm-12
+    name: Debian 12 (VM)
+    released: "2023-06"
+    support: supported
+    kind: vm
+    device_profile: linux-vm
+    install: {recipe: image-alias, alias: images:debian/12/cloud}
+    media: {source: free, kind: image, filename: images:debian/12/cloud}
+    resources: {cpu: 2, memory: 2GiB, disk: 16GiB}
+    tags: [vm, boot, kernel]
+    notes: VM Debian for GRUB and initramfs exercises.
+  - id: ubuntu-desktop-24.04
+    name: Ubuntu 24.04 Desktop (VM)
+    released: "2024-04"
+    support: supported
+    kind: vm
+    device_profile: linux-vm
+    install: {recipe: image-alias, alias: images:ubuntu/24.04/desktop}
+    media: {source: free, kind: image, filename: images:ubuntu/24.04/desktop}
+    resources: {cpu: 4, memory: 4GiB, disk: 32GiB}
+    scenario_families: [hardware, software, network, os]
+    tags: [vm, desktop, gui]
+    notes: Desktop GUI for printer, display, audio and Wi-Fi-style support tickets.
+  - id: ubuntu-desktop-22.04
+    name: Ubuntu 22.04 Desktop (VM)
+    released: "2022-04"
+    support: supported
+    kind: vm
+    device_profile: linux-vm
+    install: {recipe: image-alias, alias: images:ubuntu/22.04/desktop}
+    media: {source: free, kind: image, filename: images:ubuntu/22.04/desktop}
+    resources: {cpu: 4, memory: 4GiB, disk: 32GiB}
+    scenario_families: [hardware, software, network, os]
+    tags: [vm, desktop, gui]
+    notes: Older GNOME for comparison exercises.

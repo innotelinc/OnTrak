@@ -1,0 +1,37 @@
+<!doctype html>
+{% extends "base.html" %}
+{% block content %}
+<h1>Results</h1>
+<p class="muted">
+  Only submitted grades appear here. Checking your own work does not create a record, so
+  the score below is the one you handed in at <strong>Complete &amp; End</strong>.
+</p>
+
+{% if not results %}
+  <section class="card"><p>No submissions yet.</p></section>
+{% endif %}
+
+{% for report in results %}
+  <section class="card {{ "highlight" if highlight and report.session_id == highlight else "" }}">
+    <h2>{{ scenarios.get(report.scenario_id).title if scenarios.get(report.scenario_id) else report.scenario_id }}</h2>
+    <p class="muted small">
+      session {{ report.session_id }} &middot; submitted {{ report.created_at }} &middot;
+      <strong>{{ report.summary_line() }}</strong>
+      <span class="badge {{ "ok" if report.resolved else "warn" }}">{{ "passed" if report.resolved else "not passed" }}</span>
+    </p>
+    <table>
+      <thead><tr><th>Objective</th><th>Outcome</th><th>Evidence</th></tr></thead>
+      <tbody>
+      {% for outcome in report.outcomes %}
+        <tr>
+          <td>{{ outcome.objective_id }}</td>
+          <td><span class="badge {{ "ok" if outcome.passed else "warn" }}">{{ "met" if outcome.passed else "not met" }}</span></td>
+          <td class="small">{{ outcome.detail }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if report.notes %}<p class="muted small">{{ report.notes|join(" · ") }}</p>{% endif %}
+  </section>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,167 @@
+# The Microsoft Office suite, Office 97 through Microsoft 365 Apps.
+#
+# An Office entry is a *Windows guest with Office preinstalled*, not a standalone
+# OS: `requires` names the base Windows entry, and the image build combines the two
+# (base ISO from its own entry, Office media from the operator's store). Office has
+# never been freely redistributable, so every entry here is `source: operator`.
+group: office
+label: Microsoft Office
+era: 1997-present
+description: >
+  Office suites from Office 97 to Microsoft 365 Apps, each layered onto a
+  compatible Windows base. Repair-install, corrupt-profile, add-in conflict,
+  activation and Outlook mail-profile scenarios all live here.
+family: microsoft-office
+defaults:
+  kind: vm
+  family: microsoft-office
+  scenario_families: [software, os, security]
+  device_profile: vista-era
+  resources: {cpu: 2, memory: 4GiB, disk: 60GiB}
+
+entries:
+  - id: office97-on-win95
+    name: Microsoft Office 97
+    released: "1996-11"
+    support: eol
+    requires: [win95-osr2]
+    media: {source: operator, kind: iso, filename: office97.iso}
+    install: {recipe: manual, builder: manual}
+    device_profile: legacy-9x
+    automation: none
+    resources: {cpu: 1, memory: 256MiB, disk: 6GiB}
+    tags: [legacy, dos-era]
+    notes: Historical reference only; grading is manual.
+  - id: office2000-on-win98
+    name: Microsoft Office 2000
+    released: "1999-06"
+    support: eol
+    requires: [win98se]
+    media: {source: operator, kind: iso, filename: office2000.iso}
+    install: {recipe: manual, builder: manual}
+    device_profile: legacy-9x
+    automation: none
+    resources: {cpu: 1, memory: 256MiB, disk: 8GiB}
+    tags: [legacy]
+    notes: Manual grading; useful for "install from a corporate administrative point".
+  - id: office-xp-on-win2000
+    name: Microsoft Office XP
+    released: "2001-05"
+    support: eol
+    requires: [win2000-pro]
+    media: {source: operator, kind: iso, filename: officexp.iso}
+    install: {recipe: manual, builder: manual}
+    device_profile: legacy-xp
+    automation: winrm-ps2
+    resources: {cpu: 1, memory: 1GiB, disk: 12GiB}
+    tags: [legacy, outlook]
+    notes: First Office with a usable crash-recovery workflow; Outlook profile repairs.
+  - id: office2003-on-xp
+    name: Microsoft Office 2003 Professional
+    released: "2003-10"
+    support: eol
+    requires: [win-xp-sp3]
+    media: {source: operator, kind: iso, filename: office2003.iso}
+    install: {recipe: manual, builder: manual}
+    device_profile: legacy-xp
+    automation: winrm-ps2
+    resources: {cpu: 1, memory: 2GiB, disk: 20GiB}
+    tags: [legacy, outlook, common]
+    notes: The estate most legacy-support tickets still reference.
+  - id: office2007-on-vista
+    name: Microsoft Office 2007 Enterprise
+    released: "2007-01"
+    support: eol
+    requires: [win-vista-sp2]
+    media: {source: operator, kind: iso, filename: office2007.iso}
+    install: {recipe: manual, builder: manual}
+    automation: winrm-ps2
+    resources: {cpu: 2, memory: 2GiB, disk: 30GiB}
+    tags: [ribbon, docx]
+    notes: Ribbon-era file-format conversion issues.
+  - id: office2010-on-win7
+    name: Microsoft Office 2010 Professional Plus
+    released: "2010-05"
+    support: eol
+    requires: [win7-sp1]
+    media: {source: operator, kind: iso, filename: office2010.iso}
+    install: {recipe: manual, builder: manual}
+    automation: winrm-ps51
+    resources: {cpu: 2, memory: 3GiB, disk: 40GiB}
+    tags: [common, outlook, activation]
+    notes: Volume activation and KMS exercises.
+  - id: office2013-on-win81
+    name: Microsoft Office 2013 Professional Plus
+    released: "2013-01"
+    support: eol
+    requires: [win81]
+    media: {source: operator, kind: iso, filename: office2013.iso}
+    install: {recipe: manual, builder: manual}
+    automation: winrm-ps51
+    resources: {cpu: 2, memory: 4GiB, disk: 40GiB}
+    tags: [click-to-run-era]
+    notes: Click-to-run vs MSI comparison exercises.
+  - id: office2016-on-win10
+    name: Microsoft Office 2016 Professional Plus
+    released: "2015-09"
+    support: extended
+    requires: [win10-22h2]
+    media: {source: operator, kind: iso, filename: office2016.iso}
+    install: {recipe: manual, builder: manual}
+    device_profile: modern
+    automation: agent
+    resources: {cpu: 4, memory: 6GiB, disk: 64GiB}
+    tags: [common, outlook]
+    notes: Good default Office scenario platform.
+  - id: office2019-on-win10
+    name: Microsoft Office 2019 Professional Plus
+    released: "2018-09"
+    support: extended
+    requires: [win10-22h2]
+    media: {source: operator, kind: iso, filename: office2019.iso}
+    install: {recipe: manual, builder: manual}
+    device_profile: modern
+    automation: agent
+    resources: {cpu: 4, memory: 6GiB, disk: 64GiB}
+    tags: [common]
+    notes: Requires a licensed volume or retail key at image build time.
+  - id: office2021-on-win11
+    name: Microsoft Office LTSC 2021
+    released: "2021-10"
+    support: supported
+    requires: [win11-24h2]
+    media: {source: operator, kind: iso, filename: office2021-ltsc.iso}
+    install: {recipe: manual, builder: manual}
+    device_profile: modern
+    automation: agent
+    resources: {cpu: 4, memory: 8GiB, disk: 64GiB}
+    tags: [ltsc, supported]
+    notes: LTSC channel; the supported perpetual release.
+  - id: office2024-on-win11
+    name: Microsoft Office LTSC 2024
+    released: "2024-09"
+    support: supported
+    requires: [win11-24h2]
+    media: {source: operator, kind: iso, filename: office2024-ltsc.iso}
+    install: {recipe: manual, builder: manual}
+    device_profile: modern
+    automation: agent
+    resources: {cpu: 4, memory: 8GiB, disk: 64GiB}
+    tags: [ltsc, newest]
+    notes: Newest perpetual release.
+  - id: m365-apps-on-win11
+    name: Microsoft 365 Apps for enterprise
+    released: "2017-07"
+    support: supported
+    requires: [win11-24h2]
+    media:
+      source: operator
+      kind: archive
+      filename: m365-apps-c2r.zip
+      notes: Deployment Tool download from your tenant; OnTrak never fetches it.
+    install: {recipe: manual, builder: manual}
+    device_profile: modern
+    automation: agent
+    resources: {cpu: 4, memory: 8GiB, disk: 64GiB}
+    tags: [subscription, newest]
+    notes: Click-to-run with the Office Deployment Tool; the ordinary current-workplace platform.

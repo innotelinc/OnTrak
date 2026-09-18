@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Instructor console</h1>
+
+{% if pool_error %}<div class="card error"><p>{{ pool_error }}</p></div>{% endif %}
+
+<section class="card">
+  <h2>Capacity: templates and warm pool</h2>
+  <p class="muted">
+    A template is the booted, fault-injected machine plus its clean snapshot. The warm pool is
+    pre-booted clones waiting to be handed out: prewarm before a class so nobody waits for Windows
+    to boot.
+  </p>
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th>Template</th><th>Clean snapshot</th><th>Target</th><th>Ready</th><th>Claimed</th><th>Deficit</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+    {% for t in templates_ %}
+      {% set p = pool | selectattr("scenario_id", "equalto", t.scenario_id) | list | first %}
+      <tr>
+        <td>{{ t.scenario_id }}</td>
+        <td><code>{{ t.name }}</code></td>
+        <td>{% if t.ready %}<span class="badge ok">yes</span>{% else %}<span class="badge warn">no</span>{% endif %}</td>
+        <td>{{ p.target if p else 0 }}</td>
+        <td>{{ p.ready if p else 0 }}</td>
+        <td>{{ p.claimed if p else 0 }}</td>
+        <td>{{ p.deficit if p else "-" }}</td>
+        <td class="actions">
+          <form method="post" action="/instructor/template" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="scenario_id" value="{{ t.scenario_id }}">
+            <button type="submit" class="secondary small">Build template</button>
+          </form>
+          <form method="post" action="/instructor/prewarm" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="scenario_id" value="{{ t.scenario_id }}">
+            <input type="hidden" name="count" value="10">
+            <button type="submit" class="secondary small">Prewarm 10</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Live sessions</h2>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Student</th><th>Scenario</th><th>State</th><th>Instance</th><th>IP</th>
+          <th>Checks</th><th>Best</th><th>Left</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+    {% for row in rows %}{% if row.session %}
+      {% set s = row.session %}
+      <tr>
+        <td>{{ s.id }}</td>
+        <td>{{ s.student }}</td>
+        <td>{{ s.scenario_id }}</td>
+        <td><span class="badge state-{{ s.state.value }}">{{ s.state.value }}</span></td>
+        <td><code>{{ s.instance or "-" }}</code></td>
+        <td>{{ s.host_ip or "-" }}</td>
+        <td>{{ s.checks_run }}</td>
+        <td>{{ "%.0f%%"|format(s.best_score) }}</td>
+        <td>{{ (row.remaining // 60) if row.remaining is not none else "-" }}m</td>
+        <td class="actions">
+          {% if row.console %}<a class="button small" href="/instructor/sessions/{{ s.id }}/console" target="_blank">Watch</a>{% endif %}
+          <form method="post" action="/sessions/{{ s.id }}/reset" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="secondary small">Reset</button>
+          </form>
+          <form method="post" action="/sessions/{{ s.id }}/end" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="danger small">End</button>
+          </form>
+        </td>
+      </tr>
+    {% endif %}{% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Results <a class="button small secondary" href="/instructor/results.csv">Download CSV</a></h2>
+  {% if leaderboard %}
+  <table>
+    <thead><tr><th>Student</th><th>Scenario</th><th>Attempts</th><th>Best score</th><th>Resolved</th></tr></thead>
+    <tbody>
+      {% for row in leaderboard %}
+        <tr>
+          <td>{{ row["student"] }}</td>
+          <td>{{ row["scenario_id"] }}</td>
+          <td>{{ row["attempts"] }}</td>
+          <td>{{ "%.0f%%"|format(row["best"]) }}</td>
+          <td>{% if row["solved"] %}<span class="badge ok">yes</span>{% else %}<span class="badge warn">no</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">No graded attempts yet.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Recent activity</h2>
+  <ul class="timeline">
+    {% for event in events %}
+      <li><span class="muted small">{{ event["created_at"] }}</span>
+        {% if event["session_id"] %}#{{ event["session_id"] }}{% endif %}
+        <strong>{{ event["kind"] }}</strong> {{ event["detail"] }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

@@ -1,0 +1,39 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# build/packaging artifacts
+*.egg-info/
+build/
+
+# local state / secrets
+state/
+*.sqlite3
+config/local.yaml
+.env
+
+# editor and agent scratch space
+.freebuff/
+images/
+output/
+
+# installation media never belongs in the repository: the catalog describes it,
+# `ontrak media fetch` downloads the free copies, and the operator supplies the
+# licensed ones. CI fails the build if an image is ever committed.
+media/
+*.iso
+*.vhd
+*.vhdx
+*.qcow2
+*.esd
+*.wim
+
+# build artefacts of the guest image pipeline
+build-*/
+*.tar.gz
+
+# guacamole session recordings (large, and they show a student's screen)
+deploy/guacamole/recordings/

@@ -1,0 +1,60 @@
+id: os-perf-startup
+title: "The workstation takes ten minutes to boot and then crawls"
+category: os
+difficulty: 3
+minutes: 35
+pass_score: 80
+tags: [performance, startup, services, level-3]
+
+ticket:
+  from: "Sam Whitfield (Reception)"
+  system: "WORKSTATION-056"
+  priority: "Medium"
+  channel: "Email"
+  reported: "Getting worse over a week"
+
+briefing: |
+  Sam's machine takes about ten minutes to become usable after boot, and even
+  then the fans run constantly and everything feels sluggish. She is convinced
+  the machine is "dying", but a hardware check came back clean.
+
+  Last week she installed a free "PC Speed Booster" from the internet to help.
+  Reception also cannot print any more: the printer shows as unusable.
+
+  What you know about the estate:
+    * Persistent programs are listed under
+      HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run and in Task Scheduler.
+    * Windows Search index performance tools are NOT approved software.
+    * Printing on the estate goes through the Print Spooler service.
+
+  Get the machine responsive again and printing restored. Removing the unwanted
+  software means the program itself is gone, not just stopped.
+
+objectives:
+  - id: cpu-normal
+    text: "The machine is no longer burning CPU (no runaway process, load under 25%)"
+    weight: 35
+    critical: true
+    hint: "Task Manager on the Details tab sorted by CPU shows the culprit. Get-Process | Sort-Object CPU -Descending does the same."
+  - id: persistence-removed
+    text: "Both persistence entries are gone: the Run key and the scheduled task"
+    weight: 35
+    critical: true
+    hint: "Removing one persistence mechanism is not enough — the other one re-launches it on the next boot."
+  - id: software-removed
+    text: "The unwanted program file is gone from the machine"
+    weight: 15
+    hint: "Stopping the process leaves the program on disk; find the script it runs from under C:\\ProgramData\\OnTrak."
+  - id: spooler-running
+    text: "The Print Spooler service is running with a normal startup type"
+    weight: 15
+    hint: "Get-Service Spooler shows both the state and (via Get-CimInstance Win32_Service) the startup type."
+
+hints:
+  - "Start with Task Manager or `Get-OnTrakTopProcess`, then find out *why* it keeps coming back."
+  - "Check all three persistence locations: the Run keys, Task Scheduler, and the Startup folder."
+  - "The service was set to Disabled, not just stopped: `Set-Service -Name Spooler -StartupType Automatic` then `Start-Service Spooler`."
+
+reset_notes: |
+  Reset re-clones the clean snapshot: the runaway process, both persistence
+  entries and the disabled spooler all return.

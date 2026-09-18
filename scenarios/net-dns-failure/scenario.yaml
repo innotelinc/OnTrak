@@ -1,0 +1,54 @@
+id: net-dns-failure
+title: "Nothing resolves on the intranet"
+category: network
+difficulty: 1
+minutes: 20
+pass_score: 80
+tags: [dns, dhcp, resolver, level-1]
+requires_internet: true
+
+ticket:
+  from: "Priya Raman (Accounting)"
+  system: "WORKSTATION-042"
+  priority: "High"
+  channel: "Phone"
+  reported: "Since this morning"
+
+briefing: |
+  Priya sits at WORKSTATION-042 and can no longer open the shared drive or the
+  staff portal. Browsing the web also fails with "server not found". She says she
+  was able to reach everything yesterday, and nobody else in Accounting has a
+  problem, so it is not the file server.
+
+  She also mentions that "the IT guy from the contractor was on it yesterday
+  afternoon" adjusting network settings.
+
+  Your job: get the machine resolving names on the intranet again, and leave the
+  connection configured the way the rest of the estate is (addresses come from
+  DHCP, including DNS servers).
+
+objectives:
+  - id: restore-resolver
+    text: "The adapter resolves through the lab DNS server again (no leftover static DNS entries)"
+    weight: 40
+    critical: true
+    hint: "Compare `ipconfig /all` on this machine with a working one — DHCP supplies both the address and the DNS servers."
+  - id: resolve-intranet
+    text: "The name fileserver.ontrak.lab resolves to an address"
+    weight: 40
+    critical: true
+    hint: "Resolve-DnsName fileserver.ontrak.lab -DnsOnly tests the resolver itself, bypassing the hosts file and NetBIOS."
+  - id: reach-service
+    text: "The file server accepts connections on port 80 by name"
+    weight: 20
+    hint: "Resolving a name and actually reaching the service are two different objectives — check both."
+
+hints:
+  - "Start with `ipconfig /all`, `Get-DnsClientServerAddress` and `Resolve-DnsName fileserver.ontrak.lab`."
+  - "A wrong DNS server is set manually on the adapter. Setting the adapter back to DHCP is the least invasive fix."
+  - "After changing DNS, clear the client cache with `Clear-DnsClientCache`, then retest."
+
+reset_notes: |
+  Reset re-clones the clean snapshot, so the bogus DNS server returns. Every
+  attempt starts from the same fault, which keeps scores comparable between
+  students.

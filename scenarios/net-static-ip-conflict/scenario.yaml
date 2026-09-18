@@ -1,0 +1,51 @@
+id: net-static-ip-conflict
+title: "A contractor 'optimised' the network settings"
+category: network
+difficulty: 2
+minutes: 25
+pass_score: 80
+tags: [ip, dhcp, gateway, routing, level-2]
+requires_internet: true
+
+ticket:
+  from: "Marcus Webb (Warehouse)"
+  system: "WORKSTATION-117"
+  priority: "High"
+  channel: "Email"
+  reported: "This morning"
+
+briefing: |
+  WORKSTATION-117 came back from an on-site visit with "hardcoded network
+  settings for speed". Nothing works now: no intranet, no shared drive, no web
+  browsing. The machine does answer to a remote session, which is how you are
+  connected to it.
+
+  The site standard is simple: workstations take their address from DHCP, on the
+  10.20.0.0/24 network, gateway 10.20.0.1. Warehouse machines are never given
+  fixed addresses because they get moved between desks.
+
+  Fix the machine's addressing so it matches the standard, and prove you have
+  working connectivity after the change.
+
+objectives:
+  - id: dhcp-enabled
+    text: "The adapter takes its address from DHCP again"
+    weight: 30
+    critical: true
+    hint: "`Get-NetIPInterface -AddressFamily IPv4 | Select InterfaceAlias, Dhcp` shows which adapters are static."
+  - id: gateway-reachable
+    text: "The default gateway answers"
+    weight: 40
+    critical: true
+    hint: "A wrong gateway is not a wrong address — the machine can look 'connected' with no route out."
+  - id: reach-intranet
+    text: "The file server is reachable by name and port"
+    weight: 30
+    hint: "Fixing the address is not done until the service the user needs actually answers."
+
+hints:
+  - "`ipconfig /all` and `Get-NetIPAddress` show the address; `Get-NetRoute` shows whether a default route exists."
+  - "The contractor left a static address and a gateway of 10.20.0.254. DHCP would supply 10.20.0.1."
+  - "`Set-NetIPInterface -Dhcp Enabled` then `ipconfig /renew`, or set the adapter to 'Obtain an IP address automatically'."
+
+reset_notes: "Reset restores the static bogus address and gateway from the clean snapshot."

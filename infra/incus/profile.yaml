@@ -1,0 +1,22 @@
+# Applied to every student VM (and to the scenario templates they are cloned from)
+# as the `ontrak-student` profile. Keep per-VM resources small: the class size
+# decides how many of these run at once, and the pool multiplies them.
+#
+# Tune with:
+#   incus --project ontrak profile edit ontrak-student < infra/incus/profile.yaml
+#
+# Windows 11 needs TPM + Secure Boot. Those come from the golden image built by
+# infra/build-golden-image.sh (incus-windows sets them); do not override
+# security.secureboot here or the guest will refuse to boot.
+description: OnTrak student workstation limits
+config:
+  limits.cpu: "2"
+  limits.memory: 4GiB
+  # Windows is chatty on the bus; this also keeps a misbehaving student VM from
+  # starving the host's storage.
+  limits.disk.priority: "5"
+  # training VMs are standalone (no domain) and disposable
+  boot.autostart: "false"
+  # a stuck shutdown should not hold up a reset
+  migration.stateful: "false"
+devices: {}

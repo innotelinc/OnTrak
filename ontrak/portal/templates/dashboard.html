@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Your training machines</h1>
+<p class="muted">
+  Each ticket gets you your own machine for the time limit you choose. It is always a fresh
+  clone of the scenario: resetting throws the machine away and hands you a new one. Only the
+  grade you submit at <strong>Complete &amp; End</strong> is recorded — check your work as often
+  as you like.
+</p>
+
+<section class="card station">
+  <h2>Set up a station</h2>
+  <form method="post" action="/sessions/start" class="inline station-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="scenario_id" value="auto">
+    <label>
+      Platform
+      <select name="workload">
+        <option value="">Site default ({{ "" if not workloads else "recommended image" }})</option>
+        {% for group in workloads %}
+          <optgroup label="{{ group.label }}{% if group.era %} — {{ group.era }}{% endif %}">
+            {% for entry in group.entries %}
+              <option value="{{ entry.id }}">{{ entry.label }}{% if entry.support %} · {{ entry.support }}{% endif %}</option>
+            {% endfor %}
+          </optgroup>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Time limit
+      <select name="time_limit">
+        {% for minutes in time_limits %}
+          <option value="{{ minutes }}">{{ minutes }} minutes</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% if auto_assign %}
+      <button type="submit">Give me a ticket</button>
+      <span class="muted small">a random scenario, chosen so you see a range of faults</span>
+    {% else %}
+      <span class="muted small">pick a ticket below; automatic assignment is switched off</span>
+    {% endif %}
+  </form>
+</section>
+
+{% if sessions %}
+<section class="card">
+  <h2>Your sessions</h2>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Ticket</th><th>Platform</th><th>State</th><th>Result</th><th>Time left</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for s in sessions %}
+      <tr>
+        <td>{{ s.id }}</td>
+        <td>{{ s.scenario_id }}</td>
+        <td>{{ s.workload or "default" }}</td>
+        <td><span class="badge state-{{ s.state.value }}">{{ s.state.value }}</span></td>
+        <td>
+          {% if s.state.value in ["passed", "failed"] %}
+            <span class="badge {{ "ok" if s.resolved else "warn" }}">{{ "passed" if s.resolved else "not passed" }}</span>
+          {% else %}
+            <span class="muted small">submitted results only</span>
+          {% endif %}
+        </td>
+        <td>
+          {% set secs = s.seconds_remaining() %}
+          {{ (secs // 60) if secs is not none else "—" }} min
+        </td>
+        <td><a class="button" href="/sessions/{{ s.id }}">{{ "Review" if s.state.value in ["passed", "failed"] else "Open" }}</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if results %}
+<section class="card">
+  <h2>Recent submissions</h2>
+  <table>
+    <thead><tr><th>Ticket</th><th>Score</th><th>Outcome</th><th>When</th></tr></thead>
+    <tbody>
+    {% for r in results %}
+      <tr>
+        <td>{{ r.scenario_id }}</td>
+        <td>{{ "%.0f%%"|format(r.score) }}</td>
+        <td>{{ "passed" if r.resolved else "not passed" }}</td>
+        <td>{{ r.created_at }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted small"><a href="/results">All results</a></p>
+</section>
+{% endif %}
+
+{% for group in catalog %}
+<section class="card">
+  <h2>{{ group.label }}</h2>
+  <div class="grid">
+    {% for scenario in group.scenarios %}
+      <div class="ticket">
+        <div class="ticket-head">
+          <strong>{{ scenario.title }}</strong>
+          <span class="badge diff-{{ scenario.difficulty }}">difficulty {{ scenario.difficulty }}/4</span>
+        </div>
+        <p class="muted small">
+          {{ scenario.minutes }} min &middot; {{ scenario.objectives|length }} objectives &middot;
+          pass mark {{ scenario.pass_score|int }}%
+          {% if scenario.workload %}&middot; platform {{ scenario.workload }}{% endif %}
+          {% if scenario.tags %}&middot; {{ scenario.tags|join(", ") }}{% endif %}
+        </p>
+        <p>{{ scenario.briefing.split("\n\n")[0][:320] }}{% if scenario.briefing|length > 320 %}…{% endif %}</p>
+        <form method="post" action="/sessions/start" class="inline ticket-form">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="scenario_id" value="{{ scenario.id }}">
+          <input type="hidden" name="workload" value="">
+          <input type="hidden" name="time_limit" value="{{ time_limits[0] }}">
+          <button type="submit">Start this ticket</button>
+        </form>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // One station picker, applied to whichever ticket the student starts: keeps the
+  // page readable instead of repeating two selects on every card.
+  (function () {
+    var station = document.querySelector(".station-form");
+    if (!station) return;
+    var platform = station.querySelector("select[name=workload]");
+    var limit = station.querySelector("select[name=time_limit]");
+    document.querySelectorAll(".ticket-form").forEach(function (form) {
+      form.addEventListener("submit", function () {
+        form.querySelector("input[name=workload]").value = platform ? platform.value : "";
+        form.querySelector("input[name=time_limit]").value = limit ? limit.value : "";
+      });
+    });
+  })();
+</script>
+{% endblock %}

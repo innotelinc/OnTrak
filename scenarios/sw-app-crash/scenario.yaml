@@ -1,0 +1,58 @@
+id: sw-app-crash
+title: "The CRM app crashes on launch"
+category: software
+difficulty: 2
+minutes: 30
+pass_score: 80
+tags: [application, configuration, registry, level-2]
+
+ticket:
+  from: "Dana Okafor (Sales)"
+  system: "WORKSTATION-208"
+  priority: "Medium"
+  channel: "Walk-up"
+  reported: "After the power cut"
+
+briefing: |
+  The CRM client on WORKSTATION-208 refuses to start. Dana clicks the desktop
+  shortcut, a console flashes up and closes, and nothing else happens. It worked
+  before the building lost power on Friday.
+
+  Three things about this app:
+
+  * Its deployment settings live in C:\ProgramData\OnTrak\CrmApp\config.json.
+  * A per-user override is stored under HKCU\Software\OnTrak\CrmApp.
+  * It refuses to start while a stale lock file is present. Crashes leave one
+    behind, so a crash often needs two fixes, not one.
+
+  The approved backend is fileserver.ontrak.lab. Get the app starting cleanly
+  again. You can test it yourself from the shortcut, or by running
+  C:\Program Files\OnTrak\CrmApp\CrmApp.ps1 -SelfTest and reading the log at
+  C:\ProgramData\OnTrak\CrmApp\selftest.log.
+
+objectives:
+  - id: config-valid
+    text: "config.json parses and points at the approved backend"
+    weight: 25
+    critical: true
+    hint: "Validate the JSON with Get-Content config.json -Raw | ConvertFrom-Json — the error message includes the line number."
+  - id: settings-correct
+    text: "The per-user override under HKCU\\Software\\OnTrak\\CrmApp points at the approved backend"
+    weight: 20
+    hint: "The app prefers the per-user override over the deployment file, so fixing only config.json will not be enough."
+  - id: lock-cleared
+    text: "The stale lock file blocking startup is gone"
+    weight: 15
+    hint: "Look in the app's data directory: C:\\ProgramData\\OnTrak\\CrmApp."
+  - id: app-selftest
+    text: "The app's self-test runs clean and writes SELFTEST OK"
+    weight: 40
+    critical: true
+    hint: "powershell -ExecutionPolicy Bypass -File 'C:\\Program Files\\OnTrak\\CrmApp\\CrmApp.ps1' -SelfTest"
+
+hints:
+  - "Read the log first: C:\\ProgramData\\OnTrak\\CrmApp\\selftest.log. It names the failing check."
+  - "There are three independent faults: a syntax error in config.json, a wrong value in the registry override, and a leftover lock file."
+  - "Fix the JSON syntax, set both server values to fileserver.ontrak.lab, delete crmapp.lock, then rerun the self-test."
+
+reset_notes: "Reset re-clones the snapshot, restoring the corrupted config, the wrong registry value and the lock file."

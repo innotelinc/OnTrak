@@ -1,0 +1,46 @@
+# Apache Guacamole: the HTML5 RDP gateway behind the portal's console iframe.
+#
+#   cd deploy/guacamole
+#   cp .env.example .env      # set JSON_SECRET_KEY to the same value as
+#                             # ONTRAK_GUAC__SECRET_KEY / guac.secret_key
+#   docker compose up -d
+#
+# Then set guac.base_url in config/ontrak.yaml to the URL *students' browsers*
+# use, e.g. https://lab.example.com/guacamole/ (put a TLS proxy in front: the
+# session payload travels in a URL fragment and should never go over plain HTTP
+# off-host).
+#
+# The portal signs the connection data; Guacamole is only a renderer. There is no
+# user database and no Guacamole login page students ever see — every session is
+# handed a single-use, short-lived, encrypted payload scoped to exactly one VM.
+
+services:
+  guacd:
+    image: guacamole/guacd:1.6.0
+    container_name: ontrak-guacd
+    restart: unless-stopped
+    volumes:
+      # Only used when guac.recording is enabled: lets instructors review a
+      # session afterwards. Recordings can be large; mount somewhere with room.
+      - ./recordings:/recordings
+
+  guacamole:
+    image: guacamole/guacamole:1.6.0
+    container_name: ontrak-guacamole
+    restart: unless-stopped
+    depends_on:
+      - guacd
+    ports:
+      # Bind to localhost and terminate TLS in a reverse proxy, or change to
+      # 0.0.0.0:8080 only on a network students cannot spoof.
+      - "127.0.0.1:8080:8080"
+    environment:
+      GUACD_HOSTNAME: guacd
+      GUACD_PORT: "4822"
+      # guacamole-auth-json: signed + AES-128-CBC encrypted payloads.
+      JSON_ENABLED: "true"
+      JSON_SECRET_KEY: "${JSON_SECRET_KEY:?set JSON_SECRET_KEY to the same 32 hex characters as ONTRAK_GUAC__SECRET_KEY}"
+      # Keep the access log useful and quiet: this runs in a training lab.
+      LOG_LEVEL: info
+    volumes:
+      - ./recordings:/recordings

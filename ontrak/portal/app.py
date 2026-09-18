@@ -1,0 +1,662 @@
+"""Student and instructor portal.
+
+Design notes:
+
+* Provisioning takes tens of seconds (clone + Windows boot + transport
+  handshake), so it runs in a worker thread and the session page polls a small
+  JSON endpoint. A web request never blocks on a boot.
+* The console is an iframe pointing at Guacamole with a signed, encrypted,
+  short-lived payload scoped to one VM. The student never sees an RDP password,
+  and the RDP port is never exposed to the student's browser.
+* Sessions are claimed for use on page load, which doubles as the activity
+  heartbeat the reaper uses to reclaim abandoned VMs.
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+import secrets
+import threading
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from .. import auth, demo, guac, selection
+from ..catalog import Catalog
+from ..config import Settings, load_settings
+from ..guest import build_driver
+from ..incus import IncusClient
+from ..models import SessionState
+from ..scenarios import ScenarioError, ScenarioRepository
+from ..sessions import SessionError, SessionManager
+from ..store import Store
+
+HERE = Path(__file__).resolve().parent
+templates = Jinja2Templates(directory=str(HERE / "templates"))
+CSRF_COOKIE = "ontrak_csrf"
+FLASH_COOKIE = "ontrak_flash"
+
+
+# ---------------------------------------------------------------------------
+# request helpers
+# ---------------------------------------------------------------------------
+def catalog_entry(catalog: Catalog, entry_id: str):
+    """Look up a catalog entry without letting a stale id break a page."""
+    if not entry_id:
+        return None
+    try:
+        return catalog.get(entry_id)
+    except Exception:  # noqa: BLE001 - the console must still render
+        return None
+
+
+def _workload_groups(catalog: Catalog) -> list[dict]:
+    """Grouped, portal-safe view of the workloads a student can pick."""
+    groups = []
+    for group in catalog.group_list():
+        entries = [entry.to_public() for entry in group.entries]
+        if entries:
+            groups.append(
+                {
+                    "id": group.id,
+                    "label": group.label,
+                    "era": group.era,
+                    "entries": entries,
+                }
+            )
+    return groups
+
+
+def _settings(request: Request) -> Settings:
+    return request.app.state.settings
+
+
+def current_user(request: Request):
+    """Return the sqlite Row for the logged-in user, or None."""
+    settings = _settings(request)
+    payload = auth.read_cookie(request.cookies.get(auth.COOKIE_NAME), settings.portal.secret)
+    if not payload:
+        return None
+    return request.app.state.store.get_user(payload.get("username", ""))
+
+
+def require_user(request: Request):
+    user = current_user(request)
+    if user is None:
+        raise HTTPException(status_code=303, headers={"Location": "/login"})
+    return user
+
+
+def require_instructor(request: Request):
+    user = require_user(request)
+    if user["role"] != "instructor":
+        raise HTTPException(status_code=403, detail="instructor role required")
+    return user
+
+
+def _csrf_token(request: Request) -> str:
+    token = request.cookies.get(CSRF_COOKIE) or secrets.token_urlsafe(24)
+    request.state.csrf = token
+    return token
+
+
+def _check_csrf(request: Request, submitted: str) -> None:
+    expected = request.cookies.get(CSRF_COOKIE)
+    if not expected or not submitted or not secrets.compare_digest(expected, submitted):
+        raise HTTPException(status_code=400, detail="invalid form token; reload the page")
+
+
+def _pop_flash(request: Request) -> str:
+    settings = _settings(request)
+    payload = auth.read_cookie(request.cookies.get(FLASH_COOKIE), settings.portal.secret)
+    return (payload or {}).get("m", "")
+
+
+def _set_flash(response, request: Request, message: str) -> None:
+    settings = _settings(request)
+    response.set_cookie(
+        FLASH_COOKIE,
+        auth.sign_cookie({"m": message}, settings.portal.secret, ttl_seconds=120),
+        httponly=True,
+        samesite="lax",
+    )
+
+
+def render(request: Request, template: str, context: dict, status_code: int = 200):
+    """Render a page with the chrome every page needs."""
+    settings = _settings(request)
+    csrf = getattr(request.state, "csrf", None) or _csrf_token(request)
+    body = {
+        "request": request,
+        "title": settings.portal.title,
+        "brand_note": settings.portal.brand_note,
+        "user": current_user(request),
+        "csrf": csrf,
+        "flash": _pop_flash(request),
+        **context,
+    }
+    response = templates.TemplateResponse(request, template, body, status_code=status_code)
+    response.set_cookie(CSRF_COOKIE, csrf, httponly=True, samesite="lax", max_age=12 * 3600)
+    response.delete_cookie(FLASH_COOKIE)
+    return response
+
+
+def redirect(path: str, request: Request, message: str = "", status_code: int = 303):
+    response = RedirectResponse(path, status_code=status_code)
+    if message:
+        _set_flash(response, request, message)
+    return response
+
+
+def _session_link(request: Request, session) -> str:
+    """Signed Guacamole URL for one session, or an empty string."""
+    settings = _settings(request)
+    if not session.host_ip or not settings.guac.secret_key:
+        return ""
+    try:
+        scenario = request.app.state.repo.get(session.scenario_id)
+        return guac.build_link(settings, session, scenario)
+    except (guac.GuacError, ScenarioError):
+        return ""
+
+
+def _provision_async(request: Request, session_id: int) -> None:
+    """Kick off provisioning in a daemon thread, at most once per session."""
+    state = request.app.state
+    with state.provision_lock:
+        if session_id in state.provisioning:
+            return
+        state.provisioning.add(session_id)
+
+    def work() -> None:
+        try:
+            session = state.store.get_session(session_id)
+            if session is not None:
+                state.manager.provision(session)
+        finally:
+            with state.provision_lock:
+                state.provisioning.discard(session_id)
+
+    threading.Thread(target=work, name=f"provision-{session_id}", daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
+# app factory
+# ---------------------------------------------------------------------------
+def create_app(
+    settings: Settings | None = None,
+    incus: IncusClient | None = None,
+    driver=None,
+) -> FastAPI:
+    """Build the ASGI app. ``incus``/``driver`` are injectable for tests and demos."""
+    settings = settings or load_settings()
+    settings.ensure_dirs()
+
+    app = FastAPI(title=settings.portal.title, docs_url=None, redoc_url=None)
+    app.state.settings = settings
+    app.state.store = Store(settings.db_path)
+    app.state.repo = ScenarioRepository(settings.scenarios_dir)
+    catalog = Catalog(settings.catalog_dir)
+    app.state.catalog = catalog
+
+    if incus is None and driver is None and settings.demo.enabled:
+        # Demo mode: no Incus, no Windows, no secrets. The whole portal still works,
+        # which is what makes `ontrak demo serve` a two-second demo.
+        env = demo.build_demo_environment(settings)
+        demo.seed_accounts(env)
+        incus, driver = env.incus, env.driver
+        app.state.store = env.store
+        app.state.repo = env.repository
+        catalog = env.catalog
+    if incus is None:
+        incus = IncusClient(settings) if IncusClient.available() else None
+    app.state.incus = incus
+    app.state.manager = SessionManager(
+        settings,
+        app.state.store,
+        repo=app.state.repo,
+        incus=incus,
+        driver=driver or build_driver(settings),
+        catalog=catalog,
+    )
+    app.state.provisioning = set()
+    app.state.provision_lock = threading.Lock()
+    # "Check my work" results are shown to the student but never persisted: the lab is
+    # results-only, so only the grade submitted at Complete & End is stored. Keeping
+    # the last preview in process memory is what lets the page still show feedback.
+    app.state.preview_reports: dict[int, object] = {}
+
+    app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
+
+    def load_session(request: Request, user, session_id: int):
+        """Fetch a session the user is allowed to touch.
+
+        Instructors may act on any session; students only on their own. This is
+        the single place that decision is made, so a new endpoint cannot forget
+        it and leak one student's machine (and its console) to another.
+        """
+        return request.app.state.manager.get_owned_session(
+            user["username"], session_id, allow_instructor=user["role"] == "instructor"
+        )
+
+    # ------------------------------------------------------------------ auth --
+    @app.get("/login", response_class=HTMLResponse)
+    def login_form(request: Request):
+        return render(request, "login.html", {"error": ""})
+
+    @app.post("/login")
+    def login_submit(
+        request: Request,
+        username: str = Form(...),
+        password: str = Form(...),
+        csrf: str = Form(""),
+    ):
+        _check_csrf(request, csrf)
+        user = request.app.state.store.authenticate(username, password)
+        if user is None:
+            return render(request, "login.html", {"error": "Unknown username or wrong password."}, status_code=401)
+        response = redirect("/dashboard", request, f"Signed in as {user['username']}.")
+        response.set_cookie(
+            auth.COOKIE_NAME,
+            auth.sign_cookie(
+                {"username": user["username"], "role": user["role"]},
+                settings.portal.secret,
+                ttl_seconds=12 * 3600,
+            ),
+            httponly=True,
+            samesite="lax",
+        )
+        request.app.state.store.log_event("login", user["username"])
+        return response
+
+    @app.post("/logout")
+    def logout(request: Request, csrf: str = Form("")):
+        _check_csrf(request, csrf)
+        response = redirect("/login", request, "Signed out.")
+        response.delete_cookie(auth.COOKIE_NAME)
+        return response
+
+    @app.get("/healthz")
+    def healthz():
+        return {"status": "ok", "scenarios": len(app.state.repo.list())}
+
+    @app.get("/")
+    def index(request: Request):
+        return redirect("/dashboard" if current_user(request) else "/login", request)
+
+    # ------------------------------------------------------------- dashboard --
+    @app.get("/dashboard", response_class=HTMLResponse)
+    def dashboard(request: Request, user=Depends(require_user)):
+        store = request.app.state.store
+        repo = request.app.state.repo
+        my_sessions = store.list_sessions(student=user["username"], limit=25)
+        grouped = repo.by_category()
+        catalog = [
+            {
+                "category": category,
+                "label": scenario_list[0].category_label,
+                "scenarios": [s.public() for s in scenario_list],
+            }
+            for category, scenario_list in grouped.items()
+        ]
+        live = [s for s in my_sessions if s.state.is_live]
+        workloads = _workload_groups(request.app.state.catalog)
+        return render(
+            request,
+            "dashboard.html",
+            {
+                "catalog": catalog,
+                "sessions": my_sessions,
+                "live_ids": {s.id for s in live},
+                "states": SessionState,
+                "lifetime_minutes": settings.session.ttl_minutes,
+                "time_limits": settings.session.time_limit_choices,
+                "workloads": workloads,
+                "auto_assign": settings.selection.auto_assign,
+                "strategy": settings.selection.strategy,
+                "results": store.results_for_student(user["username"])[:10],
+            },
+        )
+
+    # -------------------------------------------------------------- sessions --
+    @app.post("/sessions/start")
+    def start_session(
+        request: Request,
+        scenario_id: str = Form(""),
+        workload: str = Form(""),
+        time_limit: str = Form(""),
+        csrf: str = Form(""),
+        user=Depends(require_user),
+    ):
+        _check_csrf(request, csrf)
+        manager = request.app.state.manager
+        settings_ = request.app.state.settings
+
+        # "auto" (or nothing) means "surprise me": pick a scenario the settings say
+        # fits, rather than making a student choose their own fault.
+        if not scenario_id or scenario_id == "auto":
+            if not settings_.selection.auto_assign:
+                return redirect("/dashboard", request, "Choose a scenario to start.")
+            history = [s.scenario_id for s in request.app.state.store.list_sessions(limit=500)]
+            choice = selection.choose(
+                request.app.state.repo.list(),
+                history=history,
+                strategy=settings_.selection.strategy,
+                max_difficulty=settings_.selection.max_difficulty,
+                seed=settings_.selection.seed,
+            )
+            scenario_id = choice.scenario.id
+        limit = int(time_limit) if str(time_limit).isdigit() and int(time_limit) > 0 else None
+        try:
+            session = manager.create_session(
+                user["username"], scenario_id, workload=workload or None, time_limit_minutes=limit
+            )
+        except (SessionError, ScenarioError) as exc:
+            return redirect("/dashboard", request, str(exc))
+        if session.state in {SessionState.READY, SessionState.IN_USE, SessionState.PASSED}:
+            return redirect(f"/sessions/{session.id}", request, "Session resumed.")
+        if session.state == SessionState.ERROR:
+            return redirect(f"/sessions/{session.id}", request, session.error[:200])
+        _provision_async(request, session.id)
+        return redirect(f"/sessions/{session.id}", request, "Preparing your machine...")
+
+    @app.get("/sessions/{session_id}", response_class=HTMLResponse)
+    def session_page(request: Request, session_id: int, user=Depends(require_user)):
+        manager = request.app.state.manager
+        store = request.app.state.store
+        try:
+            session = load_session(request, user, session_id)
+        except SessionError as exc:
+            return redirect("/dashboard", request, str(exc))
+
+        scenario = request.app.state.repo.get(session.scenario_id)
+        if session.state == SessionState.READY:
+            session = manager.claim_for_use(session)
+        elif session.state in {SessionState.IN_USE, SessionState.PASSED}:
+            manager.touch(session)
+
+        # Stored results are final submissions only. A student's own check is shown
+        # from process memory so the page still gives feedback without recording it.
+        report = store.latest_report(session.id) if session.id else None
+        preview = request.app.state.preview_reports.get(session.id or 0)
+        return render(
+            request,
+            "session.html",
+            {
+                "session": session,
+                "scenario": scenario,
+                "scenario_public": scenario.public(session.hint_level),
+                "report": report,
+                "preview": preview,
+                "console_url": _session_link(request, session),
+                "events": store.events_for(session.id, limit=15) if session.id else [],
+                "states": SessionState,
+                "time_limits": settings.session.time_limit_choices,
+                "workload": catalog_entry(request.app.state.catalog, session.workload),
+                "workloads": _workload_groups(request.app.state.catalog),
+            },
+        )
+
+    @app.get("/sessions/{session_id}/status")
+    def session_status(request: Request, session_id: int, user=Depends(require_user)):
+        try:
+            session = load_session(request, user, session_id)
+        except SessionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        return JSONResponse(
+            {
+                "id": session.id,
+                "state": session.state.value,
+                "ready": session.state in {SessionState.READY, SessionState.IN_USE, SessionState.PASSED},
+                "host_ip": session.host_ip,
+                "error": session.error,
+                "checks_run": session.checks_run,
+                "best_score": session.best_score,
+                "resolved": session.resolved,
+                "seconds_remaining": session.seconds_remaining(),
+                "time_limit_minutes": session.time_limit_minutes,
+                "workload": session.workload,
+                "console_available": bool(_session_link(request, session)),
+            }
+        )
+
+    @app.post("/sessions/{session_id}/check")
+    def session_check(request: Request, session_id: int, csrf: str = Form(""), user=Depends(require_user)):
+        _check_csrf(request, csrf)
+        manager = request.app.state.manager
+        try:
+            session = load_session(request, user, session_id)
+        except SessionError as exc:
+            return redirect("/dashboard", request, str(exc))
+        if session.state in {SessionState.REQUESTED, SessionState.ALLOCATING, SessionState.PROVISIONING}:
+            return redirect(f"/sessions/{session_id}", request, "The machine is still starting up.")
+        report = manager.run_checks(session)
+        # Held in memory for display only: nothing about this attempt is stored.
+        request.app.state.preview_reports[session_id] = report
+        if report.error:
+            return redirect(f"/sessions/{session_id}", request, f"Grading problem: {report.error}")
+        verdict = "Resolved" if report.resolved else "Not resolved yet"
+        return redirect(
+            f"/sessions/{session_id}",
+            request,
+            f"{verdict} — {report.summary_line()} (this attempt is not recorded; "
+            "use Complete & End to submit)",
+        )
+
+    @app.post("/sessions/{session_id}/complete")
+    def session_complete(
+        request: Request, session_id: int, csrf: str = Form(""), user=Depends(require_user)
+    ):
+        """The student is done: grade once, store the result, destroy the machine."""
+        _check_csrf(request, csrf)
+        manager = request.app.state.manager
+        try:
+            session = load_session(request, user, session_id)
+        except SessionError as exc:
+            return redirect("/dashboard", request, str(exc))
+        if session.state.is_terminal:
+            return redirect(f"/results?session={session_id}", request, "That session is already closed.")
+        report = manager.complete(session)
+        request.app.state.preview_reports.pop(session_id, None)
+        if report.error:
+            return redirect(f"/sessions/{session_id}", request, f"Could not grade: {report.error}")
+        verdict = "passed" if report.resolved else "not passed"
+        return redirect(
+            f"/results?session={session_id}",
+            request,
+            f"Submitted — {report.summary_line()} ({verdict}). Your machine has been destroyed.",
+        )
+
+    @app.post("/sessions/{session_id}/limit")
+    def session_limit(
+        request: Request,
+        session_id: int,
+        minutes: int = Form(90),
+        csrf: str = Form(""),
+        user=Depends(require_user),
+    ):
+        """Set (or change) the student's time limit."""
+        _check_csrf(request, csrf)
+        try:
+            session = load_session(request, user, session_id)
+        except SessionError as exc:
+            return redirect("/dashboard", request, str(exc))
+        try:
+            request.app.state.manager.set_time_limit(session, minutes)
+        except SessionError as exc:
+            return redirect(f"/sessions/{session_id}", request, str(exc))
+        return redirect(f"/sessions/{session_id}", request, f"Time limit set to {minutes} minutes.")
+
+    @app.get("/results", response_class=HTMLResponse)
+    def results(request: Request, session: int = 0, user=Depends(require_user)):
+        """Final submissions only — the results-only policy, made visible."""
+        store = request.app.state.store
+        role = user["role"]
+        rows = (
+            store.results_for_student(user["username"])
+            if role != "instructor"
+            else [r for s in store.list_sessions(limit=500) for r in [store.latest_report(s.id or 0)] if r]
+        )
+        return render(
+            request,
+            "results.html",
+            {
+                "results": rows,
+                "highlight": session,
+                "scenarios": {s.id: s for s in request.app.state.repo.list()},
+            },
+        )
+
+    @app.post("/sessions/{session_id}/reset")
+    def session_reset(request: Request, session_id: int, csrf: str = Form(""), user=Depends(require_user)):
+        _check_csrf(request, csrf)
+        if not settings.portal.allow_self_reset and user["role"] != "instructor":
+            return redirect(f"/sessions/{session_id}", request, "Resetting is disabled; ask your instructor.")
+        manager = request.app.state.manager
+        try:
+            session = load_session(request, user, session_id)
+        except SessionError as exc:
+            return redirect("/dashboard", request, str(exc))
+        try:
+            session = manager.reset(session)
+        except SessionError as exc:
+            return redirect(f"/sessions/{session_id}", request, str(exc))
+        if session.state == SessionState.ERROR:
+            return redirect(f"/sessions/{session_id}", request, session.error)
+        return redirect(f"/sessions/{session_id}", request, "Reset: you have a clean machine again.")
+
+    @app.post("/sessions/{session_id}/hint")
+    def session_hint(request: Request, session_id: int, csrf: str = Form(""), user=Depends(require_user)):
+        _check_csrf(request, csrf)
+        manager = request.app.state.manager
+        try:
+            session = load_session(request, user, session_id)
+        except SessionError as exc:
+            return redirect("/dashboard", request, str(exc))
+        scenario = request.app.state.repo.get(session.scenario_id)
+        if settings.portal.hints_require_attempt and session.checks_run == 0:
+            return redirect(
+                f"/sessions/{session_id}",
+                request,
+                "Try the ticket once and run a check first; hints unlock after your first attempt.",
+            )
+        if session.hint_level >= len(scenario.hints):
+            return redirect(f"/sessions/{session_id}", request, "No more hints for this scenario.")
+        manager.reveal_hint(session, scenario)
+        return redirect(f"/sessions/{session_id}", request, "Hint revealed.")
+
+    @app.post("/sessions/{session_id}/extend")
+    def session_extend(
+        request: Request, session_id: int, minutes: int = Form(15), csrf: str = Form(""),
+        user=Depends(require_user),
+    ):
+        _check_csrf(request, csrf)
+        manager = request.app.state.manager
+        try:
+            session = load_session(request, user, session_id)
+        except SessionError as exc:
+            return redirect("/dashboard", request, str(exc))
+        manager.extend(session, max(1, min(minutes, 240)))
+        return redirect(f"/sessions/{session_id}", request, f"Extended by {minutes} minutes.")
+
+    @app.post("/sessions/{session_id}/end")
+    def session_end(request: Request, session_id: int, csrf: str = Form(""), user=Depends(require_user)):
+        _check_csrf(request, csrf)
+        manager = request.app.state.manager
+        try:
+            session = load_session(request, user, session_id)
+        except SessionError as exc:
+            return redirect("/dashboard", request, str(exc))
+        manager.end(session)
+        return redirect("/dashboard", request, "Session ended and the machine was destroyed.")
+
+    # ------------------------------------------------------------ instructor --
+    @app.get("/instructor", response_class=HTMLResponse)
+    def instructor(request: Request, user=Depends(require_instructor)):
+        store = request.app.state.store
+        manager = request.app.state.manager
+        sessions = store.list_sessions(limit=200)
+        rows = []
+        for session in sessions:
+            report = store.latest_report(session.id)
+            rows.append(
+                {
+                    "session": session,
+                    "report": report,
+                    "remaining": session.seconds_remaining(),
+                    "console": bool(_session_link(request, session)),
+                }
+            )
+        try:
+            pool = manager.pool_status()
+        except Exception as exc:  # noqa: BLE001 - the instructor page must still render
+            pool = []
+            app.state.pool_error = f"could not read the pool: {exc}"
+        return render(
+            request,
+            "instructor.html",
+            {
+                "rows": rows,
+                "pool": pool,
+                "templates_": manager.template_status(),
+                "scenarios": request.app.state.repo.list(),
+                "leaderboard": store.leaderboard(),
+                "events": store.recent_events(limit=40),
+                "states": SessionState,
+                "pool_error": getattr(app.state, "pool_error", ""),
+            },
+        )
+
+    @app.post("/instructor/prewarm")
+    def instructor_prewarm(
+        request: Request, scenario_id: str = Form(...), count: int = Form(5), csrf: str = Form(""),
+        user=Depends(require_instructor),
+    ):
+        _check_csrf(request, csrf)
+        created = request.app.state.manager.prewarm(scenario_id, max(0, min(count, 200)))
+        return redirect("/instructor", request, f"Started {created} VM(s) for {scenario_id}.")
+
+    @app.post("/instructor/template")
+    def instructor_template(
+        request: Request, scenario_id: str = Form(...), force: bool = Form(False), csrf: str = Form(""),
+        user=Depends(require_instructor),
+    ):
+        _check_csrf(request, csrf)
+        results = request.app.state.manager.build_templates([scenario_id], force=force)
+        return redirect("/instructor", request, f"{scenario_id}: {results.get(scenario_id, '?')}")
+
+    @app.get("/instructor/results.csv")
+    def instructor_csv(request: Request, user=Depends(require_instructor)):
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["student", "scenario_id", "attempts", "best_score", "resolved"])
+        for row in request.app.state.store.leaderboard():
+            writer.writerow(
+                [row["student"], row["scenario_id"], row["attempts"], row["best"], "yes" if row["solved"] else "no"]
+            )
+        buffer.seek(0)
+        return StreamingResponse(
+            iter([buffer.read()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=ontrak-results.csv"},
+        )
+
+    @app.get("/instructor/sessions/{session_id}/console")
+    def instructor_console(request: Request, session_id: int, user=Depends(require_instructor)):
+        session = request.app.state.store.get_session(session_id)
+        if session is None or not session.host_ip:
+            return redirect("/instructor", request, "That session has no console.")
+        url = _session_link(request, session)
+        if not url:
+            return redirect("/instructor", request, "Guacamole is not configured (guac.secret_key).")
+        return RedirectResponse(url)
+
+    return app
+
+
+# Module-level app so `uvicorn ontrak.portal.app:app` works without the CLI.
+app = create_app()

@@ -1,0 +1,49 @@
+id: sec-phishing-triage
+title: Suspicious invoice email — triage before it spreads
+category: security
+difficulty: 3
+minutes: 30
+pass_score: 80
+tags: [phishing, triage, email, hosts-file, process]
+requires_internet: false
+briefing: >
+  A user forwarded an email that claims to be an overdue invoice. They have not
+  opened the attachment, but they did try to "fix" a broken intranet page earlier
+  by editing a system file on this machine.
+
+  Triage the email and the machine: say what the indicators are, isolate anything
+  that could execute, and leave the machine's configuration the way you found it.
+  Write your findings where the ticket expects them — an incident that is not
+  written down did not happen.
+
+  Nothing on this machine is real malware: the attachment is a placeholder and the
+  network is isolated.
+ticket:
+  reported_by: User
+  channel: Service desk
+  priority: High
+  summary: Phishing report — invoice attachment
+  notes:
+    - "The user is waiting on your conclusion: was this a real attack?"
+    - "Documentation is part of the triage, not an optional extra."
+objectives:
+  - id: phish-indicators
+    text: The indicators are written up (spoofed sender, lookalike domain, attachment)
+    weight: 30
+    critical: true
+  - id: attachment-isolated
+    text: The downloaded attachment has been isolated so it cannot be run
+    weight: 30
+    critical: true
+  - id: hosts-restored
+    text: The hosts file is back to the vendor default
+    weight: 20
+  - id: phish-reported
+    text: The incident report records the sender, the URL and the action taken
+    weight: 20
+hints:
+  - "Read the message headers the way a mail server would, not the way a user does."
+  - "An attachment that is still sitting in a user's Downloads folder is one double-click from executing."
+  - "The user changed a file that maps names to addresses. Windows keeps it in a well-known place."
+  - "A triage report needs the indicators, the evidence and the action taken — in that order."
+reset_notes: Reset destroys the machine and clones a fresh copy, so the email and the hosts edit come back.

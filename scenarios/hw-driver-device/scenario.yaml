@@ -1,0 +1,62 @@
+id: hw-driver-device
+title: "Dock Ethernet shows a warning triangle"
+category: hardware
+difficulty: 3
+minutes: 30
+pass_score: 80
+tags: [drivers, devices, device-manager, level-3]
+
+# This scenario needs a second network device to break. It is attached when the
+# template is built (see below) because you cannot add hardware to a guest from
+# inside the guest. The device is what the student has to bring back to life.
+instance_devices:
+  - name: eth1
+    type: nic
+    network: ontrak0
+
+ticket:
+  from: "Facilities helpdesk (via Sam Whitfield)"
+  system: "WORKSTATION-042"
+  priority: "Medium"
+  channel: "Ticket"
+
+briefing: |
+  The docking station Ethernet port stopped working after a Windows update. The
+  built-in port is fine, so the machine is online, but device management shows a
+  problem with the dock adapter and Windows will not use it.
+
+  On the estate, adapters that are present must be enabled and reporting a
+  healthy status — "disabled so it stops complaining" is not an accepted fix, and
+  neither is leaving it with a yellow warning triangle.
+
+  There is a second thing to close out: the user's notes. Support work is only
+  finished when the next person can read what you found. Write your notes to
+  C:\Users\student\Desktop\ontrak-notes.txt with two labelled lines:
+
+    Evidence: <what you observed, at least a sentence>
+    Action: <what you changed to fix it, at least a sentence>
+
+objectives:
+  - id: nic-device-ok
+    text: "Every network adapter is enabled and reports a healthy driver status"
+    weight: 50
+    critical: true
+    hint: "Device Manager, or Get-PnpDevice -Class Net | Format-Table FriendlyName, Status, Problem. A problem of CM_PROB_DISABLED means somebody disabled it."
+  - id: nic-link-up
+    text: "Both adapters are up and usable"
+    weight: 30
+    hint: "Get-NetAdapter shows the link state; a device that is enabled but not 'Up' is not fixed."
+  - id: cause-documented
+    text: "Notes written to the desktop with an Evidence and an Action line"
+    weight: 20
+    hint: "Use Notepad to create C:\\Users\\student\\Desktop\\ontrak-notes.txt. Both lines need real content (15+ characters each)."
+
+hints:
+  - "Start with Device Manager (devmgmt.msc) and look for the yellow warning triangle under Network adapters."
+  - "Right-click the adapter and choose Enable device — or use Get-PnpDevice followed by Enable-PnpDevice -InstanceId <id> -Confirm:$false."
+  - "After enabling it, check Get-NetAdapter to confirm the link is actually up, not just present."
+
+reset_notes: |
+  Reset re-clones the snapshot, so the adapter is disabled again. Scenarios that
+  need extra hardware declare it under instance_devices, which is applied when
+  the template is built.

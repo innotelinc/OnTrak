@@ -1,0 +1,188 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# ci.yml — static checks on push and pull requests.
+#
+# The repo is maintained at zero findings: structure and landing stay conformant,
+# the Python control plane is linted and tested, every scenario and catalog manifest
+# is validated, the guest PowerShell parses, and the compose stack renders.
+# The attribution guard lives in its own workflow.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  structure:
+    name: Repository structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Conformant structure
+        run: |
+          set -euo pipefail
+          for f in README.md LICENSE .env.example .gitignore \
+                   web/landing/index.html docs/stack.md docs/catalog.md docs/roadmap.md \
+                   .github/workflows/attribution-guard.yml .githooks/guard-lib; do
+            if [ ! -f "$f" ]; then
+              echo "::error::missing required file: $f"
+              exit 1
+            fi
+          done
+          echo "structure: ok"
+
+      - name: .gitignore covers .env
+        run: |
+          set -euo pipefail
+          grep -q '^\.env' .gitignore || { echo "::error:: .gitignore does not list .env"; exit 1; }
+
+      - name: No licensed media committed
+        run: |
+          set -euo pipefail
+          # Media is never redistributed with the repo: the catalog describes it and
+          # the operator supplies it. A committed ISO means somebody broke that rule.
+          if git ls-files | grep -Eiq '\.(iso|img|vhd|vhdx|esd|wim)$'; then
+            echo "::error::an installation image is committed; media must stay out of the repo"
+            git ls-files | grep -Eic '\.(iso|img|vhd|vhdx|esd|wim)$'
+            exit 1
+          fi
+          echo "media: not committed (correct)"
+
+  landing:
+    name: Landing page sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Landing sanity
+        run: |
+          set -euo pipefail
+          f=web/landing/index.html
+          grep -qi '<title>' "$f" || { echo "::error::landing has no <title>"; exit 1; }
+          grep -qi 'og:title' "$f" || { echo "::error::landing has no og:title"; exit 1; }
+          grep -qi 'og:description' "$f" || { echo "::error::landing has no og:description"; exit 1; }
+          grep -qi 'data:image/svg+xml' "$f" || { echo "::error::landing favicon is not inline SVG"; exit 1; }
+          if grep -Eiq 'https?://(fonts\.googleapis|cdn\.|unpkg|jsdelivr)' "$f"; then
+            echo "::error::landing makes third-party network requests"
+            exit 1
+          fi
+          echo "landing: ok"
+
+  python:
+    name: Python control plane
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Lint
+        run: ruff check ontrak tests
+
+      - name: Tests
+        run: pytest -q
+
+      - name: Catalogue and manifest validation
+        run: |
+          python -m ontrak scenario validate
+          python -m ontrak catalog validate
+          python -m ontrak generate list >/dev/null
+
+      - name: Generated scenarios must validate
+        run: |
+          set -euo pipefail
+          # Generation is a supported path, so a primitive that cannot produce a
+          # gradeable scenario is a CI failure, not a surprise in a classroom.
+          python -m ontrak generate matrix --prefix gen 2>&1 | tee /tmp/generate.log
+          if grep -q 'FAIL' /tmp/generate.log; then
+            echo "::error::a generated scenario failed validation"
+            exit 1
+          fi
+          python -m ontrak scenario validate
+
+      - name: CLI smoke test
+        run: |
+          python -m ontrak doctor --help >/dev/null
+          python -m ontrak catalog plan ubuntu-24.04
+          python -m ontrak media status >/dev/null
+          python -m ontrak schedule show >/dev/null
+
+  guest-scripts:
+    name: Guest PowerShell parses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse every scenario script
+        shell: pwsh
+        run: |
+          $failed = @()
+          $files = Get-ChildItem -Path scenarios -Recurse -Filter *.ps1
+          Write-Host "checking $($files.Count) PowerShell file(s)"
+          foreach ($file in $files) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $failed += $file.FullName
+              foreach ($e in $errors) { Write-Host "::error file=$($file.FullName)::$($e.Message)" }
+            }
+          }
+          if ($failed.Count -gt 0) { throw "$($failed.Count) guest script(s) do not parse" }
+          Write-Host "guest scripts: ok"
+
+      - name: Parse the infrastructure scripts
+        shell: pwsh
+        run: |
+          $failed = @()
+          foreach ($file in Get-ChildItem -Path infra -Recurse -Filter *.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $failed += $file.FullName
+              foreach ($e in $errors) { Write-Host "::error file=$($file.FullName)::$($e.Message)" }
+            }
+          }
+          if ($failed.Count -gt 0) { throw "$($failed.Count) infra script(s) do not parse" }
+          Write-Host "infra scripts: ok"
+
+  shell-and-compose:
+    name: Shell and compose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shell syntax
+        run: |
+          set -euo pipefail
+          for f in $(git ls-files '*.sh'); do
+            bash -n "$f" || { echo "::error::$f does not parse"; exit 1; }
+          done
+          echo "shell: ok"
+
+      - name: Compose config renders
+        run: |
+          set -euo pipefail
+          cd deploy/guacamole
+          cp .env.example .env
+          docker compose config --quiet
+          rm -f .env
+          echo "compose: ok"
