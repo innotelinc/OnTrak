@@ -24,9 +24,16 @@ planned. Anything in the last two sections is a statement of intent, not a featu
   blended with the machine grade at submission, with the rubric kept satisfiable by tests.
 - The instructor admin panel: overview, users, scenarios, platforms, tickets, sessions,
   schedule, results, audit — role-gated, and rendering when the hypervisor is unreachable.
-- The container stack: the portal image builds, both compose files validate, the portal and
+- The container stack: the portal image builds, every compose file validates, the portal and
   the console gateway report healthy, a class runs inside the image, and the admin panel
   serves every page with no Incus socket mounted.
+- The one-command install: `docker compose up` on a machine with no `.env` and no
+  hypervisor writes the secrets, publishes the shared portal/console key, and brings both
+  services up healthy — with the generated instructor password logging into the admin panel,
+  and a payload the portal signed accepted by the live gateway as a connection the student
+  can open. `scripts/check-first-run-contract.py` checks the arrangement in CI, because a
+  first run that silently half-works is the expensive kind of broken. The host half of it
+  (installing and initialising Incus) is the part that still needs a lab host to prove.
 
 ## Built, but not proven on real hardware
 

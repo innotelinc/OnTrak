@@ -56,6 +56,17 @@ ASSIGNMENT = re.compile(
 NAMESPACED_IDENTIFIER_KEY = re.compile(r"_key$", re.IGNORECASE)
 NAMESPACED_IDENTIFIER_VALUE = re.compile(r"^[a-z0-9]+(\.[a-z0-9]+)+$")
 
+# A <something>_MOUNT/_PATH/_DIR/_FILE holding an absolute path is pointing at
+# where a secret lives, not carrying one — e.g. SECRETS_MOUNT = "/run/ontrak",
+# the volume the first run writes the shared keys into. Both halves are required:
+# the name has to say "location" *and* the value has to be a path. Either alone
+# would be loose enough to hide a credential behind a name like SECRET_PATH.
+LOCATION_NAME = re.compile(
+    r"(_mount|_mountpoint|_path|_dir|_file|_socket|_endpoint|_url|_host|_ref)$",
+    re.IGNORECASE,
+)
+LOCATION_VALUE = re.compile(r"^/[A-Za-z0-9._~/-]+$")
+
 # A value that is itself a SCREAMING_SNAKE_CASE name is naming a field or env var,
 # not carrying a credential — e.g. SECRET_KEY = "INITIAL_PASSWORD", which says
 # *which* Vault field to read. Two or more all-uppercase words joined by
@@ -193,6 +204,8 @@ def scan_text(label: str, text: str) -> list[Finding]:
             if NAMESPACED_IDENTIFIER_KEY.search(name) and NAMESPACED_IDENTIFIER_VALUE.match(value):
                 continue
             if FIELD_NAME_VALUE.match(value):
+                continue
+            if LOCATION_NAME.search(name) and LOCATION_VALUE.match(value):
                 continue
             if VAULT_REFERENCE.match(value):
                 continue

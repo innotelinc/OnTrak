@@ -53,23 +53,31 @@ make demo            # a full class: assign, provision, grade, submit, tear down
 make demo-serve      # the student portal, in demo mode, at http://127.0.0.1:8080
 ```
 
-With Docker, the control plane and the browser console come up as containers:
+With Docker, one command is the whole installation — a machine with only Docker, no
+hypervisor, no `.env`, nothing to read first:
 
 ```bash
-make secrets         # .env with generated portal/console keys
-make up              # portal :8080 + Guacamole :8081, plus the host's Incus if it is there
+docker compose up -d
+# portal   http://localhost:8080      console   http://localhost:8081/guacamole/
 make ps              # health  ·  make logs  ·  make down
 ```
 
-`make up` adds the host's Incus socket when it finds one and says so when it does not;
-everything else about it is in [docs/docker.md](docs/docker.md). The training machines are
-still Incus VMs on the host — a container cannot be Windows 95, and a broken machine that
-shares the host kernel is an outage rather than a lesson.
+A one-shot `lab-setup` service runs before the others: it generates `.env` and the shared
+portal/console keys, and — if the host cannot run training machines yet — installs and
+initialises Incus on the host (storage pool, lab bridge, project, profiles) by running
+`infra/bootstrap-host.sh` in the host's own namespaces. Then the portal and the console
+gateway start. A host that cannot be prepared is reported and skipped, never fatal: the
+portal still comes up, in demo mode or against a remote cluster. `ONTRAK_LAB_SETUP=force`
+re-runs the host step; `off` skips it. Details in [docs/docker.md](docs/docker.md).
 
-For a real range (Incus, KVM, ZFS or btrfs):
+The training machines are still Incus VMs on the host — a container cannot be Windows 95,
+and a broken machine that shares the host kernel is an outage rather than a lesson.
+
+For a real range (Incus, KVM, ZFS or btrfs), whether or not you use Docker for the
+control plane — `lab-setup` runs this same script for you:
 
 ```bash
-sudo infra/bootstrap-host.sh          # Incus, KVM, project, pool, bridge, profile
+sudo infra/bootstrap-host.sh          # what the first run does, by hand
 make check                            # host readiness, including storage and secrets
 declare -x ONTRAK_GUEST__PASSWORD='…' # or set it in .env
 make media-fetch                      # free media only (Microsoft evaluation ISOs)
@@ -106,7 +114,8 @@ OnTrak/
 ├── scripts/secrets.sh         # idempotent local secrets: .env blanks only, never a set value
 ├── tests/                     # pytest suite
 ├── web/landing/               # static GitHub Pages landing
-├── docker-compose.yml         # the stack: portal + Guacamole gateway (+ .incus.yml overlay)
+├── docker-compose.yml         # the stack: first-run lab-setup + portal + Guacamole gateway
+├── docker-compose.remote.yml  # override: a remote Incus cluster, or no hypervisor at all
 ├── Dockerfile                 # the portal image
 ├── .githooks/                 # attribution guard (commit-msg, pre-commit, guard-lib)
 └── .github/workflows/         # CI, attribution guard, Pages
@@ -119,9 +128,14 @@ OnTrak/
   validation, the CLI, demo mode end to end, generated scenarios validated, the admin
   panel rendering without a reachable hypervisor, and the Guacamole link format
   cross-checked against the `openssl` CLI.
-- **Verified in Docker:** the image builds, `docker compose config` validates, the portal
-  and the console gateway both report healthy, a whole class runs inside the image
-  (`make docker-demo`), and the admin panel serves every page with no Incus socket at all.
+- **Verified in Docker:** the image builds, every compose file validates, the portal and the
+  console gateway both report healthy, a whole class runs inside the image (`make docker-demo`),
+  and the admin panel serves every page with no Incus socket at all.
+- **Verified as a first run:** from a checkout with no `.env` and no hypervisor, one
+  `docker compose up -d` writes the secrets, brings both services up healthy, signs in to the
+  admin panel with the generated instructor password, and gets a portal-signed console payload
+  accepted by the live gateway as a machine the student can open. Installing Incus on the host
+  is the same code path, and that half still needs a lab host to prove.
 - **Guest scripts:** every `scenarios/**/*.ps1` and `infra/**/*.ps1` parses under PowerShell 7
   (checked by CI, and locally with `pwsh`).
 - **Reviewed but not proven in this repository:** the Windows, Incus, ZFS and Guacamole

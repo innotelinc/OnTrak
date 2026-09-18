@@ -95,6 +95,7 @@ guac:
   secret_key: ""                 # 32 hex chars; env ONTRAK_GUAC__SECRET_KEY;
                                  # must match JSON_SECRET_KEY in deploy/guacamole
   link_ttl_minutes: 480
+  public_port: 8081              # host port the container stack publishes the console on
   recording: false               # guacd session recording for instructor review
   recording_path: /recordings
   server_layout: en-us-qwerty

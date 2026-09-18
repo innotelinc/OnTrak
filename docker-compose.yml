@@ -1,13 +1,22 @@
 # ============================================================================
 # OnTrak — IT Support Training Platform powered by Innotel OnTrak
 #
-#   make secrets        # writes .env with freshly generated portal/console keys
-#   make up             # portal + console gateway (+ local Incus when present)
-#   make logs           # follow
-#   make down
+#   docker compose up -d        # everything, including the first run
+#   docker compose logs -f lab-setup
+#   docker compose down
 #
-# Two containers run the *control plane*:
+# One command is the whole installation. `lab-setup` runs first and does what a
+# first run needs: it writes `.env` with generated local secrets, publishes the
+# shared keys for the two services that must agree on them, and — if the host
+# cannot run training machines yet — installs and initialises Incus on the host,
+# creating the storage pool, lab bridge, project and profiles. The portal and the
+# console gateway start when it finishes (`depends_on: service_completed_
+# successfully`), so a machine with only Docker goes from git clone to a running
+# lab in one command. `make up` is the same thing with a friendlier summary.
 #
+# Three containers run the *control plane*:
+#
+#   lab-setup   first-run setup: secrets, and Incus on the host (then exits)
 #   portal      the FastAPI student portal: scenarios, tickets, grading, admin
 #   guacamole   the HTML5 console (RDP/SSH into the training machines)
 #  +guacd       Guacamole's connection daemon, which does the actual protocol work
@@ -17,16 +26,75 @@
 # the Linux distributions (see docs/catalog.md) — because a machine that has to
 # boot a real Windows kernel, hold a driver fault and survive a malware
 # scenario is a VM, not a container. The portal reaches the host's Incus daemon
-# over its unix socket, which is why the stack runs from this directory, next to
-# the checkout: `docker compose up -d`.
+# through /var/lib/incus, which is why the stack runs from this directory, next
+# to the checkout.
 #
-# For the socket-free variant (a remote Incus cluster over HTTPS, demo mode, or
-# a laptop) use `make up-remote`; `make up` adds the local socket override
-# automatically when the host has one. See docs/docker.md.
+# No hypervisor on this host (Docker Desktop, or a remote cluster)? Use
+# `docker compose -f docker-compose.yml -f docker-compose.remote.yml up -d`, or
+# demo mode with ONTRAK_DEMO__ENABLED=true. See docs/docker.md.
 # ============================================================================
 name: ontrak
 
 services:
+  # ── first run: secrets, then the host's hypervisor ────────────────────────
+  # This container is a hypervisor admin by design: it installs packages and
+  # creates bridges on the host by entering the host's namespaces (pid 1), which
+  # is why it asks for `pid: host` and `privileged: true`. It is a one-shot that
+  # exits before anything else starts, and it is the only service that writes to
+  # the project directory.
+  lab-setup:
+    image: ${ONTRAK_IMAGE:-ontrak:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ontrak-lab-setup
+    restart: "no"
+    entrypoint: ["/app/docker/lab-setup.sh"]
+    privileged: true
+    pid: host
+    environment:
+      # auto  = set up the host when it is not ready yet (the default)
+      # force = re-run the host bootstrap even if Incus answers
+      # off   = secrets only (a remote cluster, or demo mode)
+      ONTRAK_LAB_SETUP: ${ONTRAK_LAB_SETUP:-auto}
+      ONTRAK_LAB_BOOTSTRAP: ${ONTRAK_LAB_BOOTSTRAP:-infra/bootstrap-host.sh}
+      # Storage choices for the host's pool, passed straight to the bootstrap.
+      # `dir` works anywhere and copies instead of cloning: fine for a demo,
+      # slow for a class. See docs/operations.md.
+      ONTRAK_STORAGE_DRIVER: ${ONTRAK_STORAGE_DRIVER:-dir}
+      ONTRAK_STORAGE_SOURCE: ${ONTRAK_STORAGE_SOURCE:-}
+      ONTRAK_STORAGE_POOL: ${ONTRAK_STORAGE_POOL:-default}
+      ONTRAK_NETWORK: ${ONTRAK_NETWORK:-ontrak0}
+      ONTRAK_NET_CIDR: ${ONTRAK_NET_CIDR:-10.20.0.1/24}
+      ONTRAK_DOMAIN: ${ONTRAK_DOMAIN:-ontrak.lab}
+      ONTRAK_INCUS_PROJECT: ${ONTRAK_INCUS__PROJECT:-ontrak}
+      ONTRAK_INCUS__REMOTE: ${ONTRAK_INCUS__REMOTE:-local}
+      ONTRAK_PORTAL__PORT: ${ONTRAK_PORTAL__PORT:-8080}
+      ONTRAK_GUAC__PUBLIC_PORT: ${ONTRAK_GUAC__PUBLIC_PORT:-8081}
+      # The checkout, as this container sees it. This is where `.env` is written
+      # and where infra/bootstrap-host.sh is read from.
+      ONTRAK_PROJECT_DIR: /project
+      # The same directory by the path it has on the host, so the bootstrap can
+      # be run as the host's own file instead of a staged copy. Empty when the
+      # path cannot be known (a remote Docker host): the script then stages the
+      # few files it needs into the host's /run and says so.
+      ONTRAK_PROJECT_DIR_HOST: ${PWD:-}
+      ONTRAK_SECRETS_FILE: /run/ontrak/secrets.env
+    volumes:
+      # The checkout, twice: at /project for this container's own use, and at
+      # the path it has on the host so the bootstrap can be run in place.
+      #
+      # Deliberately *not* mounted over the image's own /app: a bind mount would
+      # shadow the copy baked into the image, including the executable bit the
+      # entrypoint needs — and the host's checkout may well be checked out on a
+      # filesystem with no exec permission at all. The image's copy of
+      # docker/lab-setup.sh is the one that runs.
+      - .:/project
+      - ${PWD:-.}:${PWD:-/opt/ontrak-host}
+      # The generated secrets, read by the portal and the console gateway.
+      - ontrak-secrets:/run/ontrak
+    networks: [ontrak]
+
   # ── the student portal ────────────────────────────────────────────────────
   portal:
     build:
@@ -36,6 +104,9 @@ services:
     container_name: ontrak-portal
     restart: unless-stopped
     init: true
+    depends_on:
+      lab-setup:
+        condition: service_completed_successfully
     ports:
       # Loopback by default: the portfolio posture is a TLS proxy (NPM Edge)
       # in front, never a portal exposed straight to the network. Set
@@ -45,17 +116,21 @@ services:
       # ── identity and secrets ──
       ONTRAK_PORTAL__TITLE: ${ONTRAK_PORTAL__TITLE:-OnTrak}
       ONTRAK_PORTAL__BRAND_NOTE: ${ONTRAK_PORTAL__BRAND_NOTE:-IT support training range — powered by Innotel OnTrak}
-      # Signs the portal's session cookies: without it nobody can log in.
-      ONTRAK_PORTAL__SECRET: ${ONTRAK_PORTAL__SECRET:?run 'make secrets' to generate .env, then 'make up' again}
+      # Signs the portal's session cookies; without it nobody can log in. Empty
+      # on a first run — then the entrypoint reads it from the secrets file that
+      # lab-setup wrote, which is what lets `docker compose up` work before .env
+      # exists (compose cannot interpolate a secret that is not there yet).
+      ONTRAK_PORTAL__SECRET: ${ONTRAK_PORTAL__SECRET:-}
       # Seeded as the instructor account on boot, and the admin panel's login.
       ONTRAK_PORTAL__ADMIN_USER: ${ONTRAK_PORTAL__ADMIN_USER:-instructor}
       ONTRAK_PORTAL__ADMIN_PASSWORD: ${ONTRAK_PORTAL__ADMIN_PASSWORD:-}
       # Must equal JSON_SECRET_KEY below: the portal signs console links with it
       # and Guacamole verifies them. One value, two services.
-      ONTRAK_GUAC__SECRET_KEY: ${ONTRAK_GUAC__SECRET_KEY:?run 'make secrets' to generate .env, then 'make up' again}
+      ONTRAK_GUAC__SECRET_KEY: ${ONTRAK_GUAC__SECRET_KEY:-}
       ONTRAK_GUAC__BASE_URL: ${ONTRAK_GUAC__BASE_URL:-http://localhost:8081/guacamole/}
       ONTRAK_GUAC__RECORDING: ${ONTRAK_GUAC__RECORDING:-false}
       ONTRAK_GUAC__RECORDING_PATH: /recordings
+      ONTRAK_SECRETS_FILE: /run/ontrak/secrets.env
 
       # ── hypervisor ──
       ONTRAK_INCUS__REMOTE: ${ONTRAK_INCUS__REMOTE:-local}
@@ -93,6 +168,16 @@ services:
       # Installation media (`ontrak media fetch`): large, so never in the image.
       - ontrak-media:/app/media
       - ./deploy/guacamole/recordings:/recordings
+      # The shared secrets lab-setup wrote (used only when the environment has
+      # no value for them).
+      - ontrak-secrets:/run/ontrak
+      # The whole Incus API in one directory: the portal shells out to the
+      # `incus` CLI, and `incus.remote: local` is the socket inside it. This is
+      # why the container is effectively a hypervisor admin. Mounted as the
+      # directory rather than the socket file so a host without Incus yet — or a
+      # remote/demo setup — gets an empty directory instead of Docker creating a
+      # stray file where the daemon will later want its own socket.
+      - /var/lib/incus:/var/lib/incus
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
       interval: 30s
@@ -117,7 +202,10 @@ services:
     restart: unless-stopped
     init: true
     depends_on:
-      - guacd
+      lab-setup:
+        condition: service_completed_successfully
+      guacd:
+        condition: service_started
     ports:
       - "${ONTRAK_BIND_ADDR:-127.0.0.1}:${ONTRAK_GUAC__PUBLIC_PORT:-8081}:8080"
     environment:
@@ -127,8 +215,30 @@ services:
       # single-use payload scoped to one machine. There is no Guacamole user
       # database and no login page a student ever sees.
       JSON_ENABLED: "true"
-      JSON_SECRET_KEY: ${ONTRAK_GUAC__SECRET_KEY:?run 'make secrets' to generate .env, then 'make up' again}
+      # Empty on a first run; the entrypoint then takes it from the secrets file
+      # lab-setup wrote, so both services sign with the same key.
+      JSON_SECRET_KEY: ${ONTRAK_GUAC__SECRET_KEY:-}
       LOG_LEVEL: ${ONTRAK_GUAC__LOG_LEVEL:-info}
+    volumes:
+      - ontrak-secrets:/run/ontrak:ro
+    # The stock entrypoint (`/opt/guacamole/bin/entrypoint.sh`, run as the
+    # unprivileged `guacamole` user) with one step in front of it: read the
+    # shared secrets file when the environment has no key. The image is a
+    # Debian/Tomcat stack, so /bin/sh and sed are both there, and lab-setup
+    # writes the file readable for exactly this reason.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ -z "${JSON_SECRET_KEY:-}" ] && [ -r /run/ontrak/secrets.env ]; then
+          JSON_SECRET_KEY="$(sed -n 's/^ONTRAK_GUAC__SECRET_KEY=//p' /run/ontrak/secrets.env)"
+          export JSON_SECRET_KEY
+        fi
+        if [ -z "${JSON_SECRET_KEY:-}" ]; then
+          echo "ontrak: no console key — the portal cannot hand out console links" >&2
+        fi
+        exec /opt/guacamole/bin/entrypoint.sh "$@"
+      - --
     healthcheck:
       # The image is a Tomcat deployment; probe whichever HTTP client it has.
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/guacamole/ >/dev/null 2>&1 || wget -q --spider http://127.0.0.1:8080/guacamole/ || exit 1"]
@@ -143,6 +253,11 @@ volumes:
     name: ontrak-state
   ontrak-media:
     name: ontrak-media
+  # The shared secrets, written once by lab-setup and read by the portal and the
+  # console gateway. Kept out of the project directory so a first run works
+  # without a writable checkout, and out of the image so it never ships.
+  ontrak-secrets:
+    name: ontrak-secrets
 
 networks:
   # A private bridge. The portal still needs egress (it dials the training

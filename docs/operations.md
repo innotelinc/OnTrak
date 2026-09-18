@@ -130,10 +130,13 @@ ontrak demo serve                                 # the portal, in demo mode
 It proves the lifecycle, the scoring and the UI. It does **not** prove the Windows path —
 the same caveat applies as everywhere else: `ontrak doctor` and one real template build.
 
-Running the platform itself in Docker (`make up`) changes none of this: the containers are
-the control plane and the console gateway, while the training machines stay Incus VMs on
-the host. See [docker.md](docker.md) for what is containerised, the three ways to reach a
-hypervisor, and the volume that holds the results.
+Running the platform itself in Docker (`docker compose up -d`) changes none of this: the
+containers are the control plane and the console gateway, while the training machines stay
+Incus VMs on the host. The first run prepares that host for you — it installs Incus and
+creates the pool, bridge, project and profiles — so the only thing left before a class is
+the part that genuinely needs a human: check the storage driver, build the templates you
+intend to use, and size the pool. See [docker.md](docker.md) for what is containerised, the
+three ways to reach a hypervisor, and the volume that holds the results.
 
 ## Before, during and after a class
 

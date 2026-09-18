@@ -182,14 +182,24 @@ jobs:
       - name: The root stack renders
         run: |
           set -euo pipefail
-          # The stack marks its two shared secrets required, so a copied .env fails
-          # loudly instead of booting a portal whose console key does not match the
-          # gateway's. Render the way an operator actually starts it: generated keys.
+          # The stack has to render with generated keys (the way an operator starts
+          # it) and with none at all — a first run has no .env yet, and
+          # `docker compose up` has to be a complete installation on its own.
+          # lab-setup is what makes that true: it writes .env and the shared
+          # secrets before the portal and the gateway start.
           bash scripts/secrets.sh .env.ci >/dev/null
           docker compose --env-file .env.ci config --quiet
-          docker compose --env-file .env.ci -f docker-compose.yml -f docker-compose.incus.yml config --quiet
+          docker compose --env-file .env.ci -f docker-compose.yml -f docker-compose.remote.yml config --quiet
           rm -f .env.ci
-          echo "root stack: ok"
+          docker compose -f docker-compose.yml config --quiet
+          echo "root stack: ok (with generated keys, and with none)"
+
+      # The first-run promise, checked as a contract rather than a comment:
+      # lab-setup must exist, must be able to write the project directory and
+      # reach the host, and the services that read what it writes must wait for
+      # it to finish. The same check runs locally in `make check-compose`.
+      - name: The first-run contract
+        run: python3 scripts/check-first-run-contract.py
 
       - name: Compose config renders
         run: |

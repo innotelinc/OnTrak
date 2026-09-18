@@ -101,6 +101,18 @@ class IgnoresCodeThatOnlyMentionsCredentials(unittest.TestCase):
     def test_namespaced_storage_key_is_naming_a_key(self):
         self.assertEqual(findings('STORAGE_KEY = "studio.token"'), [])
 
+    def test_a_location_says_where_a_secret_lives(self):
+        # The case that prompted this: the first-run contract check names the
+        # volume the shared keys are written to, and a mount path is public.
+        self.assertEqual(findings('SECRETS_MOUNT = "/run/ontrak"'), [])
+        self.assertEqual(findings('secret_path = "/etc/ontrak/keys.json"'), [])
+        self.assertEqual(findings('VAULT_TOKEN_FILE = "/var/run/secrets/token"'), [])
+
+    def test_the_location_exemption_needs_both_halves(self):
+        # A location-shaped *name* is not enough: the value has to be a path.
+        self.assertEqual(len(findings('SECRET_PATH = "hunter2hunter"')), 1)
+        self.assertEqual(len(findings('ADMIN_PASSWORD = "/run/ontrak"')), 1)
+
 
 class ToleratesTestFixtures(unittest.TestCase):
     def test_literal_assignment_is_relaxed_under_a_test_path(self):

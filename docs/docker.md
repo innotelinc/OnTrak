@@ -5,15 +5,53 @@ machines do not — they are Incus virtual machines on the host, and that split 
 the design, not a shortcut.
 
 ```bash
-make secrets      # .env with generated portal/console keys (never overwrites)
-make up           # portal + Guacamole; adds the host's Incus when it finds one
+docker compose up -d          # the whole installation, first run included
 # portal   http://localhost:8080        console   http://localhost:8081/guacamole/
-make ps           # health of every service
-make logs         # follow
-make down         # stop (the state and media volumes survive)
+make ps                       # health of every service
+make logs                     # follow
+docker compose logs lab-setup # what the first run set up
+make down                     # stop (the state and media volumes survive)
 ```
 
-`make up` prints which mode it picked, so the choice is never silent.
+`make up` is `docker compose up -d` with the addresses printed at the end.
+
+## The first run
+
+`docker compose up` on a machine that has only Docker is a complete
+installation. A one-shot `lab-setup` service runs before anything else and does
+the two things a fresh checkout cannot do for itself:
+
+1. **Secrets.** It writes `.env` (via `scripts/secrets.sh`, which never
+   overwrites a value that is already there) and publishes the shared keys to a
+   volume the portal and the console gateway both read. This step has to happen
+   inside a container: compose interpolates variables and reads `env_file` when
+   it loads the project, *before* any container runs, so a stack that required a
+   `.env` could never create one.
+2. **Incus on the host.** If the host cannot run training machines yet, it runs
+   the host's own `infra/bootstrap-host.sh` — installs Incus, initialises the
+   daemon, and creates the storage pool, lab bridge, project and profiles. It
+   does that by entering the host's namespaces (`privileged: true`, `pid: host`)
+   and running the script as *the host's file*, so a host prepared this way and a
+   host prepared by hand end up identical.
+
+Only then do the portal and the gateway start: both wait on
+`service_completed_successfully`, because the files `lab-setup` writes are what
+they read. `scripts/check-first-run-contract.py` checks that arrangement against
+the rendered configuration, where a comment cannot rot.
+
+Two things it deliberately does **not** do: it never blocks the control plane
+(a host that cannot run VMs is reported, and the portal still comes up — in demo
+mode, or against a remote cluster), and it never guesses a storage driver,
+because cloning is what makes a reset cheap and only you know what the disk is:
+
+```bash
+# in .env, before the first run
+ONTRAK_STORAGE_DRIVER=zfs          # dir (default) | btrfs | zfs | lvm
+ONTRAK_STORAGE_SOURCE=/dev/nvme1n1 # a block device, for zfs/lvm
+```
+
+`ONTRAK_LAB_SETUP=force` re-runs the host step; `off` skips it. See
+[operations.md](operations.md) for what the pool layout does to class timings.
 
 ## What is a container, and what is not
 
@@ -31,29 +69,31 @@ So the containers are the *control plane*. The lab is the host.
 The portal shells out to the `incus` CLI, so "where is Incus" is a mount, not a
 build flag.
 
-**1. Local Incus on the same host (the normal lab).** Compose overlay
-`docker-compose.incus.yml` bind-mounts `/var/lib/incus/unix.socket` into the
-portal. `make up` applies it automatically when the socket exists; force it with
-`docker compose -f docker-compose.yml -f docker-compose.incus.yml up -d`.
+**1. Local Incus on the same host (the normal lab).** This is the base stack,
+and `lab-setup` installs and initialises Incus for you if it is not there yet.
+`/var/lib/incus` is bind-mounted into the portal, which is where the daemon's
+socket and its configuration live.
 
-That socket is the whole Incus API in one file: an unprivileged reader of it can
-create, delete and exec into machines. **The portal container is a hypervisor
-admin, because that is what it is.** Treat it like root on the lab host — which
-is also why it is not published beyond loopback by default.
+That directory is the whole Incus API: an unprivileged reader of it can create,
+delete and exec into machines. **The portal container is a hypervisor admin,
+because that is what it is.** Treat it like root on the lab host — which is also
+why it is not published beyond loopback by default, and why the mount is the
+directory rather than the socket file (a host without Incus yet gets an empty
+directory instead of Docker creating a stray file where the daemon will later
+want its own socket).
 
-**2. A remote Incus cluster over HTTPS.** No overlay, plus the CLI's trust
-config mounted read-only:
+**2. A remote Incus cluster over HTTPS.** `docker-compose.remote.yml` turns the
+host step off (nothing to install here) and points the portal at a named remote,
+with the CLI's trust config mounted read-only:
 
 ```bash
-docker run -d --name ontrak-portal \
-  -p 8080:8080 --env-file .env \
-  -v "$HOME/.config/incus:/root/.config/incus:ro" \
-  ontrak:local
+docker compose -f docker-compose.yml -f docker-compose.remote.yml up -d   # or: make up-remote
 ```
 
-Set `ONTRAK_INCUS__REMOTE=https://incus.example.com:8443` (and
-`ONTRAK_INCUS__PROJECT`) in `.env`. A cluster also removes the single-host
-ceiling: placement across hosts is the daemon's problem, not the portal's.
+Set `ONTRAK_INCUS__REMOTE` to the remote's name (and `ONTRAK_INCUS__PROJECT`) in
+`.env`; uncomment the trust-config mounts at the bottom of that file for your
+operator account. A cluster also removes the single-host ceiling: placement
+across hosts is the daemon's problem, not the portal's.
 
 **3. No hypervisor at all.** Demo mode runs an entire class against an
 in-memory Incus — no socket, no Windows, no guests:
@@ -65,9 +105,10 @@ docker compose run --rm -e ONTRAK_DEMO__ENABLED=true portal demo serve
 ```
 
 Use it for a workshop, a screenshot, a smoke test, or CI. `make up` also works
-with no socket at all: the portal starts, serves everything stored in its
-database, and tells you on the admin panel that the hypervisor is unreachable
-rather than failing to render.
+with no hypervisor at all: the first-run step reports that the host cannot be
+prepared, the portal starts anyway, serves everything stored in its database, and
+tells you on the admin panel that the hypervisor is unreachable rather than
+failing to render.
 
 ## Volumes
 
@@ -75,6 +116,7 @@ rather than failing to render.
 | --- | --- | --- |
 | `ontrak-state` → `/app/state` | SQLite: accounts, sessions, **submitted grades**, tickets, audit log | you lose every result. Back this up; nothing else here is worth a second copy |
 | `ontrak-media` → `/app/media` | installation media (`ontrak media fetch`) | you re-download it. It is large and reproducible, never back it up |
+| `ontrak-secrets` → `/run/ontrak` (portal, gateway) | the shared keys the first run generated | the portal and the gateway lose their common key and console links stop opening. `ONTRAK_LAB_SETUP=force` regenerates it, which logs everyone out |
 | `deploy/guacamole/recordings` → `/recordings` | optional session recordings (`ONTRAK_GUAC__RECORDING=true`) | you lose the recordings. They can be very large, and they show a student's screen |
 
 `../state` on the host is still the path the *host* uses when you run
@@ -95,24 +137,26 @@ straight onto a network. For a lab where students reach the host directly, set
 those browsers actually use; the console payload travels in a URL fragment and
 must never cross a network in plain text off-host.
 
-## Configuration
-
-Everything under `environment:` in `docker-compose.yml` is a `ONTRAK_*` override
+## ConfigurationEverything under `environment:` in `docker-compose.yml` is a `ONTRAK_*` override
 of `config/ontrak.yaml`, and every one of them has a default, so `.env` only
-needs the values you want to differ. Two have no default and the stack refuses
-to start without them:
+needs the values you want to differ. The two that have no default are the ones a
+first run generates for you:
 
 * `ONTRAK_PORTAL__SECRET` — signs portal session cookies.
 * `ONTRAK_GUAC__SECRET_KEY` — exactly 32 hex characters; the portal signs console
   links with it and Guacamole verifies them. **One value, two services**; if they
   ever disagree, every console link silently fails to open.
 
-`make secrets` generates both (and the instructor and guest passwords) into the
-gitignored `.env`, and never overwrites a value that is already there — a
-`vault://` reference counts as a value. In production these come from Cerulean
-Vault by reference (see `.env.example`); the container resolves a reference only
-if the deployment gives it something that can, otherwise it fails at boot. There
-is no silent fallback to a local secret.
+`lab-setup` generates both (with the instructor and guest passwords) on the first
+run, through `make secrets` / `scripts/secrets.sh`, which never overwrites a value
+that is already there — a `vault://` reference counts as a value. In production
+these come from Cerulean Vault by reference (see `.env.example`); the container
+resolves a reference only if the deployment gives it something that can,
+otherwise it fails at boot. There is no silent fallback to a local secret.
+
+Run `bash scripts/secrets.sh` by hand to create `.env` *before* the first run —
+useful when you want to set the storage driver first, or to see the generated
+instructor password without reading it back out of the file.
 
 ## Operating it
 
@@ -151,15 +195,18 @@ volumes — on a range that has graded results, that is data loss, so it is not 
 **`/admin` shows "Hypervisor reads failed".** The panel is telling you exactly
 what it could not read — usually `The incus daemon doesn't appear to be started`.
 Everything stored in the portal still works and is still shown; only live machine
-facts are missing. Start Incus on the host (`systemctl start incus`), or apply
-the overlay if you forgot it.
+facts are missing. Start Incus on the host (`systemctl start incus`) and check it
+is answering there (`incus info`); if it is not installed at all,
+`ONTRAK_LAB_SETUP=force docker compose up -d` runs the host step again.
 
 **`failed to bind host port`.** Something already owns 8080 or 8081 on the host.
 Set `ONTRAK_PORTAL__PORT` / `ONTRAK_GUAC__PUBLIC_PORT` in `.env` and bring the
 stack up again.
 
 **`unix.socket` became a directory.** Bind-mounting a path that does not exist
-makes Docker create it — and it creates a *directory*. If that happened:
+makes Docker create it — and it creates a *directory*. The base stack mounts
+`/var/lib/incus` as a directory for exactly this reason, so this only bites an
+old overlay that pointed at the socket file. If it happened:
 
 ```bash
 docker compose down
@@ -167,11 +214,16 @@ sudo rmdir /var/lib/incus/unix.socket     # only if it is empty and Incus is sto
 sudo systemctl restart incus              # the socket is recreated by the daemon
 ```
 
-Use `make up` (which checks for the socket first) and this does not happen.
-
 **The portal is up but no console appears in the iframe.** `ONTRAK_GUAC__BASE_URL`
 is what *students' browsers* resolve, not what the container can reach. Behind a
 TLS proxy it is the public console host, not `localhost`.
+
+**`make exec ARGS=doctor` says there is no hypervisor, but Incus is installed.**
+The first run says which of the three ways to reach a hypervisor it took; read it
+with `docker compose logs lab-setup`. "This container cannot reach the host's
+namespaces" means Docker is not running on the lab host itself (Docker Desktop,
+or a remote daemon) — install Incus on that host with `sudo
+infra/bootstrap-host.sh`, or use the remote overlay, or demo mode.
 
 **`guacamole` never becomes healthy.** It waits for `guacd`; check
 `make logs` — and note the first start pulls the upstream images.

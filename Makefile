@@ -10,15 +10,17 @@ PY := $(VENV)/bin/python
 
 COMPOSE := docker compose
 IMAGE := $(if $(ONTRAK_IMAGE),$(ONTRAK_IMAGE),ontrak:local)
-# Single-host lab: Docker runs the control plane, Incus runs the training
-# machines, and the portal needs the host's Incus socket to reach them. Detected
-# rather than assumed, and printed by `up` so it is never a silent choice.
-INCUS_OVERLAY := $(shell test -S /var/lib/incus/unix.socket && echo -f docker-compose.incus.yml)
+# The base stack is the single-host lab, and `lab-setup` makes it work on a
+# first run: secrets, then Incus on the host. `docker-compose.remote.yml` is for
+# the deployments that have no host hypervisor to prepare (a remote cluster, or
+# demo mode) — see docs/docker.md.
+REMOTE_OVERLAY := -f docker-compose.yml -f docker-compose.remote.yml
 
 .PHONY: help setup secrets check doctor validate test lint demo \
         catalog catalog-validate media-status media-fetch generate schedule \
         templates pool reap demo-serve host-image landing \
-        build up up-remote down logs ps exec check-compose docker-demo docker-shell
+        build up up-remote down logs ps exec check-compose setup-log \
+        docker-demo docker-shell
 
 help: ## Show this help message
 	@echo "OnTrak — operator workflow"
@@ -43,34 +45,40 @@ doctor: check ## Alias for `check`
 build: ## Build the portal image
 	$(COMPOSE) build
 
-up: secrets ## Start the stack (portal + Guacamole; adds host Incus when present)
-	@if [ -n "$(INCUS_OVERLAY)" ]; then echo "==> /var/lib/incus/unix.socket found: the portal gets the host's Incus"; \
-	 else echo "==> no local Incus socket: starting without hypervisor access (demo or remote cluster only)"; fi
-	$(COMPOSE) $(INCUS_OVERLAY) up -d
-	@echo "==> portal  http://localhost:$${ONTRAK_PORTAL__PORT:-8080}   console  http://localhost:$${ONTRAK_GUAC__PUBLIC_PORT:-8081}/guacamole/"
-
-up-remote: secrets ## Start the stack without any hypervisor access (remote cluster / demo)
+up: secrets ## One command: first-run setup (secrets, then Incus on the host), start the stack
 	$(COMPOSE) up -d
+	@echo "==> portal    http://localhost:$${ONTRAK_PORTAL__PORT:-8080}"
+	@echo "==> console   http://localhost:$${ONTRAK_GUAC__PUBLIC_PORT:-8081}/guacamole/"
+	@echo "==> sign in   instructor / ONTRAK_PORTAL__ADMIN_PASSWORD in .env"
+	@echo "==> first run make setup-log   lab health: make exec ARGS=doctor"
 
-down: ## Stop the stack (keeps the state and media volumes)
-	$(COMPOSE) $(INCUS_OVERLAY) down
+up-remote: secrets ## Start the stack with no host hypervisor (remote cluster / demo)
+	$(COMPOSE) $(REMOTE_OVERLAY) up -d
+	@echo "==> started without a host hypervisor — see docs/docker.md § remote"
+
+setup-log: ## Show what the first-run lab setup did (secrets, Incus on the host)
+	$(COMPOSE) logs lab-setup
+
+down: ## Stop the stack (keeps the state, media and secrets volumes)
+	$(COMPOSE) down
 
 logs: ## Follow the stack logs
-	$(COMPOSE) $(INCUS_OVERLAY) logs -f
+	$(COMPOSE) logs -f
 
 ps: ## Show stack containers and their health
-	$(COMPOSE) $(INCUS_OVERLAY) ps
+	$(COMPOSE) ps
 
-check-compose: ## Validate both compose files and their env interpolation
+check-compose: ## Validate the compose files, their env interpolation and the first-run contract
 	@bash scripts/secrets.sh .env.compose-check >/dev/null
 	$(COMPOSE) --env-file .env.compose-check config --quiet
-	$(COMPOSE) --env-file .env.compose-check -f docker-compose.yml -f docker-compose.incus.yml config --quiet
+	$(COMPOSE) --env-file .env.compose-check $(REMOTE_OVERLAY) config --quiet
 	@rm -f .env.compose-check
+	$(PY) scripts/check-first-run-contract.py
 	@echo "==> compose files are valid"
 
 exec: ## Run a CLI command inside the running portal (make exec ARGS="user list")
 	@test -n "$(ARGS)" || { echo "usage: make exec ARGS=\"catalog list\""; exit 2; }
-	$(COMPOSE) $(INCUS_OVERLAY) exec portal python3 -m ontrak $(ARGS)
+	$(COMPOSE) exec portal python3 -m ontrak $(ARGS)
 
 docker-demo: build ## Run a whole class inside the image, with no hypervisor at all
 	docker run --rm $(IMAGE) demo run --students 6

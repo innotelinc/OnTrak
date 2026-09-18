@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 import yaml
 
@@ -33,6 +35,37 @@ def test_section_key_env_override(settings):
     assert settings.session.ttl_minutes == 15
     assert settings.pool.target_for("net-dns-failure") == 30
     assert settings.pool.target_for("other") == settings.pool.default_target
+
+
+def test_the_shipped_env_template_is_loadable():
+    """`.env` is generated from `.env.example`, so the app must be able to read it.
+
+    The first run copies the template into `.env` and both the container stack and
+    the host CLI read that file. A key in it that `load_settings` does not know is
+    therefore not a typo warning — it is a first run that fails at boot, which is
+    how `ONTRAK_GUAC__PUBLIC_PORT` (read by compose, rejected by GuacConfig) got
+    caught: `docker compose up` was fine, the portal container was fine, and every
+    host command died on a setting the documentation told operators to set.
+    """
+    from pathlib import Path
+
+    template = Path(__file__).resolve().parent.parent / ".env.example"
+    # Values may legitimately be blank (the secrets are filled in by the first
+    # run), but every key must be one the app can read.
+    listed = dict(re.findall(r"^([A-Z][A-Z0-9_]*)=(.*)$", template.read_text(), re.MULTILINE))
+    for secret in ("ONTRAK_GUAC__SECRET_KEY", "ONTRAK_PORTAL__SECRET", "ONTRAK_PORTAL__ADMIN_PASSWORD"):
+        assert secret in listed, f"the template stopped listing {secret}"
+
+    filled = {key: value for key, value in listed.items() if value.strip()}
+    settings = load_settings(path=None, environ=dict(filled))
+
+    # Spot-check that the values arrived rather than being swallowed, including
+    # the one that used to raise: compose publishes the console on it, so the app
+    # has to be able to read it back.
+    assert settings.guac.public_port == 8081
+    assert settings.guac.recording is False
+    assert settings.session.ttl_minutes == 90
+    assert settings.pool.targets == {}
 
 
 def test_bad_key_is_rejected(tmp_path):

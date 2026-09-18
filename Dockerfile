@@ -62,6 +62,10 @@ RUN apt-get update \
       incus-client \
       # the ssh driver provisions and grades Linux guests
       openssh-client \
+      # `lab-setup` enters the host's namespaces to install and initialise
+      # Incus there, and generates the local secrets before anything starts
+      util-linux \
+      openssl \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
@@ -73,8 +77,8 @@ COPY . /app
 
 # Volumes are created here so a run without them (plain `docker run`) still
 # works: the image is usable with no mounts at all, in demo mode.
-RUN mkdir -p /app/state /app/media \
- && chmod +x /app/docker/entrypoint.sh \
+RUN mkdir -p /app/state /app/media /run/ontrak \
+ && chmod +x /app/docker/entrypoint.sh /app/docker/lab-setup.sh \
  && python3 -c "import ontrak, ontrak.portal.app; print('ontrak import ok')"
 
 # The portal listens on 8080; the console gateway (Guacamole) is a separate

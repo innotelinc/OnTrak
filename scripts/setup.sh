@@ -55,7 +55,7 @@ fi
 echo
 echo "==> done. Next:"
 echo "    make demo        # full student flow, no hypervisor needed"
-echo "    make up          # portal + console gateway in Docker (docs/docker.md)"
+echo "    make up          # or `docker compose up -d`: one command, first-run setup included"
 echo "    make serve       # the same portal, on the host instead"
 echo "    make check       # host readiness, including Incus and KVM"
 echo
