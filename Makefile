@@ -65,8 +65,8 @@ down: ## Stop the stack (keeps the state, media and secrets volumes)
 logs: ## Follow the stack logs
 	$(COMPOSE) logs -f
 
-ps: ## Show stack containers and their health
-	$(COMPOSE) ps
+ps: ## Show stack containers and their health (including the one-shot first-run setup)
+	$(COMPOSE) ps -a
 
 check-compose: ## Validate the compose files, their env interpolation and the first-run contract
 	@bash scripts/secrets.sh .env.compose-check >/dev/null
