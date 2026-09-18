@@ -5,7 +5,7 @@ machines do not — they are Incus virtual machines on the host, and that split 
 the design, not a shortcut.
 
 ```bash
-docker compose up -d          # the whole installation, first run included
+docker compose up -d --build  # the whole installation, first run included
 # portal   http://localhost:8080        console   http://localhost:8081/guacamole/
 make ps                       # health of every service
 make logs                     # follow
@@ -13,7 +13,9 @@ docker compose logs lab-setup # what the first run set up
 make down                     # stop (the state and media volumes survive)
 ```
 
-`make up` is `docker compose up -d` with the addresses printed at the end.
+`make up` is the same command with the addresses printed at the end. `--build`
+only matters after a `git pull`: without it compose reuses the image from the
+previous commit, and a stale `lab-setup` reports a host step it never ran.
 
 ## The first run
 
@@ -182,8 +184,9 @@ Templates and the warm pool still need a host that can build them
 
 ```bash
 git pull
-docker compose build          # or `make build`
-docker compose up -d          # recreates only what changed
+make up                       # `docker compose up -d --build`: a new image, then start
+# or, without make:
+docker compose build && docker compose up -d
 ```
 
 The state volume is untouched by a rebuild. `docker compose down -v` deletes the
@@ -220,10 +223,21 @@ TLS proxy it is the public console host, not `localhost`.
 
 **`make exec ARGS=doctor` says there is no hypervisor, but Incus is installed.**
 The first run says which of the three ways to reach a hypervisor it took; read it
-with `docker compose logs lab-setup`. "This container cannot reach the host's
-namespaces" means Docker is not running on the lab host itself (Docker Desktop,
-or a remote daemon) — install Incus on that host with `sudo
-infra/bootstrap-host.sh`, or use the remote overlay, or demo mode.
+with `docker compose logs lab-setup`. "cannot reach the host's namespaces" means
+Docker is not running on the lab host itself (Docker Desktop, or a remote
+daemon) — install Incus on that host with `sudo infra/bootstrap-host.sh`, or use
+the remote overlay, or demo mode. If Docker *is* on the lab host and it still
+says that, check for a stale image first: `make up` (which passes `--build`)
+rather than a bare `docker compose up` after a `git pull`.
+
+**The host step failed and I want to see the output again.** It is in
+`docker compose logs lab-setup`, and the last line names the script *by its path
+on the host*, so the retry it prints can be pasted into a shell there:
+
+```bash
+sudo /path/to/checkout/infra/bootstrap-host.sh   # the host step, alone
+ONTRAK_LAB_SETUP=force make up                   # then let the stack re-check
+```
 
 **`guacamole` never becomes healthy.** It waits for `guacd`; check
 `make logs` — and note the first start pulls the upstream images.

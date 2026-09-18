@@ -46,7 +46,12 @@ build: ## Build the portal image
 	$(COMPOSE) build
 
 up: secrets ## One command: first-run setup (secrets, then Incus on the host), start the stack
-	$(COMPOSE) up -d
+	@# --build so a checkout that was just pulled does not silently run the
+	@# image from an earlier commit; the cache makes this a second when nothing
+	@# changed. Secrets are handled twice on purpose: here so an interrupted
+	@# first run still leaves a usable .env, and inside lab-setup so that a bare
+	@# `docker compose up` — with no .env at all — works the same way.
+	$(COMPOSE) up -d --build
 	@echo "==> portal    http://localhost:$${ONTRAK_PORTAL__PORT:-8080}"
 	@echo "==> console   http://localhost:$${ONTRAK_GUAC__PUBLIC_PORT:-8081}/guacamole/"
 	@echo "==> sign in   instructor / ONTRAK_PORTAL__ADMIN_PASSWORD in .env"

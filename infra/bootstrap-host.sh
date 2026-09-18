@@ -43,8 +43,21 @@ die()  { printf '\033[31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
 . /etc/os-release
 log "host: ${PRETTY_NAME:-unknown}"
 
+# Only Debian and Ubuntu are handled here: the script installs Incus from
+# packages. Anything else is told so once, instead of failing three apt calls
+# later with a message about a missing binary.
+if ! command -v apt-get >/dev/null 2>&1; then
+  die "this script installs Incus with apt, so it handles Debian and Ubuntu only.
+    Install Incus yourself (https://linuxcontainers.org/incus/docs/main/install/),
+    then either re-run this script on a Debian/Ubuntu host or start the stack with
+    ONTRAK_LAB_SETUP=off (the portal works, it just cannot create machines)."
+fi
+
 if [[ ! -e /dev/kvm ]]; then
-  die "no /dev/kvm: enable virtualisation in firmware (VT-x/AMD-V) or pass it to this VM"
+  die "no /dev/kvm — this host cannot run virtual machines.
+    On bare metal: enable VT-x/AMD-V in firmware.
+    In a VM: enable nested virtualisation, or run the lab on bare metal.
+    (kernel $(uname -r); 'kvm-ok' from cpu-checker diagnoses it)"
 fi
 log "KVM available"
 
@@ -65,6 +78,7 @@ if ! command -v incus >/dev/null; then
   log "installing incus from the upstream stable repository"
   install -d -m 0755 /etc/apt/keyrings
   curl -fsSL https://pkgs.zabbly.com/key.asc | gpg --dearmor -o /etc/apt/keyrings/zabbly.gpg
+  # shellcheck disable=SC1091  # read fresh, for the codename this host reports
   codename="$(. /etc/os-release && echo "${VERSION_CODENAME}")"
   echo "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable ${codename} main" \
     > /etc/apt/sources.list.d/zabbly-incus-stable.list
@@ -77,7 +91,6 @@ if ! command -v incus >/dev/null; then
     apt-get install -y incus || die "could not install incus"
   fi
 fi
-incus version
 
 if [[ "$STORAGE_DRIVER" == "zfs" ]]; then
   apt-get install -y --no-install-recommends zfsutils-linux >/dev/null
@@ -94,6 +107,10 @@ for _ in $(seq 1 30); do
 done
 incus info >/dev/null 2>&1 || die "the incus daemon is not answering; check: systemctl status incus"
 
+# Printed only now: `incus version` against a daemon that is not up yet says
+# "Server version: unreachable", which on a first run reads like a failure.
+incus version | sed 's/^/    /'
+
 add_to_group() {
   local user="${SUDO_USER:-}" group="incus"
   [[ -n "$user" && "$user" != "root" ]] || return 0
@@ -104,9 +121,18 @@ add_to_group() {
 }
 add_to_group
 
-# ------------------------------------------------------------ storage pool --
+# The driver of a pool, from the JSON API rather than the table columns: those
+# letters are not stable across releases (`-c n,d` was the driver in 6.x and is
+# the *description* in 7.x, where the driver is `n,D`), and a wrong letter here
+# reads as "the pool has no driver" instead of failing.
+storage_driver() {
+  incus storage list --format=json 2>/dev/null \
+    | jq -r --arg pool "$STORAGE_POOL" '.[] | select(.name == $pool) | .driver' \
+      2>/dev/null | head -1
+}
+
 if incus storage list --format=csv -c n 2>/dev/null | grep -qx "$STORAGE_POOL"; then
-  driver="$(incus storage list --format=csv -c n,d | awk -v p="$STORAGE_POOL" '$1==p {print $2}')"
+  driver="$(storage_driver)"
   log "storage pool '$STORAGE_POOL' already exists ($driver)"
   if [[ "$driver" == "dir" ]]; then
     warn "pool '$STORAGE_POOL' uses the dir driver: clones are full copies, so"
@@ -176,7 +202,7 @@ fi
 incus --project "$PROJECT" profile edit ontrak-student < "$PROJECT_ROOT/infra/incus/profile.yaml"
 
 # ------------------------------------------------------------------ summary ---
-DRIVER="$(incus storage list --format=csv -c n,d | awk -v p="$STORAGE_POOL" '$1==p {print $2}')"
+DRIVER="$(storage_driver)"
 BRIDGE_IP="$(incus network get "$NETWORK" ipv4.address)"
 cat <<EOF
 

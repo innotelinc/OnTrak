@@ -1,9 +1,12 @@
 # ============================================================================
 # OnTrak — IT Support Training Platform powered by Innotel OnTrak
 #
-#   docker compose up -d        # everything, including the first run
-#   docker compose logs -f lab-setup
+#   docker compose up -d --build   # everything, including the first run
+#   docker compose logs lab-setup  # what that first run did
 #   docker compose down
+#
+# --build is only needed after a pull: without it compose reuses the image from
+# the previous commit, and a stale `lab-setup` looks like a broken first run.
 #
 # One command is the whole installation. `lab-setup` runs first and does what a
 # first run needs: it writes `.env` with generated local secrets, publishes the
@@ -71,6 +74,12 @@ services:
       ONTRAK_INCUS__REMOTE: ${ONTRAK_INCUS__REMOTE:-local}
       ONTRAK_PORTAL__PORT: ${ONTRAK_PORTAL__PORT:-8080}
       ONTRAK_GUAC__PUBLIC_PORT: ${ONTRAK_GUAC__PUBLIC_PORT:-8081}
+      # Read only to report, at the end of a first run, the console address a
+      # student's browser will actually be sent to — the portal's own value is
+      # below, and a report that printed the local port instead would be wrong
+      # on any deployment that puts a TLS console host here.
+      ONTRAK_GUAC__BASE_URL: ${ONTRAK_GUAC__BASE_URL:-http://localhost:8081/guacamole/}
+      ONTRAK_BIND_ADDR: ${ONTRAK_BIND_ADDR:-127.0.0.1}
       # The checkout, as this container sees it. This is where `.env` is written
       # and where infra/bootstrap-host.sh is read from.
       ONTRAK_PROJECT_DIR: /project

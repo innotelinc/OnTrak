@@ -27,13 +27,20 @@ planned. Anything in the last two sections is a statement of intent, not a featu
 - The container stack: the portal image builds, every compose file validates, the portal and
   the console gateway report healthy, a class runs inside the image, and the admin panel
   serves every page with no Incus socket mounted.
-- The one-command install: `docker compose up` on a machine with no `.env` and no
-  hypervisor writes the secrets, publishes the shared portal/console key, and brings both
-  services up healthy — with the generated instructor password logging into the admin panel,
-  and a payload the portal signed accepted by the live gateway as a connection the student
-  can open. `scripts/check-first-run-contract.py` checks the arrangement in CI, because a
-  first run that silently half-works is the expensive kind of broken. The host half of it
-  (installing and initialising Incus) is the part that still needs a lab host to prove.
+- The one-command install, both halves of it. `docker compose up` on a machine with no
+  `.env` and no Incus writes the secrets, publishes the shared portal/console key, and brings
+  both services up healthy — with the generated instructor password logging into the admin
+  panel, and a payload the portal signed accepted by the live gateway as a connection the
+  student can open. The host half runs `infra/bootstrap-host.sh` inside the host's own
+  namespaces, and that script was exercised end to end against a real Incus daemon: the
+  upstream package install, the daemon, the storage pool, the lab bridge, the project and
+  the limits profile — run twice, to prove a re-run changes nothing. What the dev host here
+  cannot do is offer `/dev/kvm`, so what it does instead is stop at the KVM check and say
+  why; booting a real Windows VM is still a lab-host job (below).
+  `scripts/check-first-run-contract.py` checks the arrangement in CI, because a first run
+  that silently half-works is the expensive kind of broken, and CI now runs ShellCheck at
+  warning severity over every shell file — the first-run setup runs as root on someone
+  else's machine before anything else does.
 
 ## Built, but not proven on real hardware
 

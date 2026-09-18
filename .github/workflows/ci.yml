@@ -179,6 +179,19 @@ jobs:
           done
           echo "shell: ok"
 
+      # Warning severity, the same bar the platform stack holds itself to:
+      # the info-level findings in the guest scenario scripts (sourced-library
+      # paths, intentional word splitting) are not worth silencing by hand.
+      # The host bootstrap and the first-run setup are the reason this is here:
+      # they run as root on someone's machine before anything else does.
+      - name: ShellCheck
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files '*.sh')
+          echo "checking ${#files[@]} shell file(s)"
+          shellcheck -S warning "${files[@]}"
+          echo "shellcheck: ok"
+
       - name: The root stack renders
         run: |
           set -euo pipefail

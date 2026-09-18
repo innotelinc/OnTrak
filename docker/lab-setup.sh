@@ -38,13 +38,14 @@ MODE="${ONTRAK_LAB_SETUP:-auto}"
 BOOTSTRAP="${ONTRAK_LAB_BOOTSTRAP:-infra/bootstrap-host.sh}"
 REMOTE="${ONTRAK_INCUS__REMOTE:-local}"
 
-# Everything but a fatal error goes to stdout: this output is read as a report of
-# what the first run did, and interleaving two streams through `docker compose
-# logs` scrambles the order of exactly the lines a new operator needs.
+# Everything goes to stdout: this output is read as a report of what the first
+# run did, and interleaving two streams through `docker compose logs` scrambles
+# the order of exactly the lines a new operator needs. There is no fatal exit
+# here on purpose — a host that cannot run VMs is reported and skipped, and the
+# control plane still comes up, which is the whole promise of one command.
 log()  { printf '\033[36m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[32m  ✓\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m  !\033[0m %s\n' "$*"; }
-die()  { printf '\033[31m==>\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ── 1. secrets ──────────────────────────────────────────────────────────────
 # A first run has no .env, and both the portal (session cookies) and the console
@@ -70,7 +71,7 @@ write_secrets() {
   {
     printf '# Written by docker/lab-setup.sh on the first run. The portal and the\n'
     printf '# console gateway read this when their environment has no value — which is\n'
-    printf '# what makes `docker compose up` work before a .env exists.\n'
+    printf '# what makes a bare "docker compose up" work before a .env exists.\n'
     grep -E '^(ONTRAK_PORTAL__SECRET|ONTRAK_GUAC__SECRET_KEY|ONTRAK_PORTAL__ADMIN_PASSWORD)=' \
       "$PROJECT_DIR/.env"
   } >"$SECRETS_FILE"
@@ -96,14 +97,25 @@ write_secrets() {
 # from its own location, so it is run from a location the host can read: the
 # checkout at its own host path when that is knowable, otherwise a staged copy
 # (see host_visible_bootstrap).
-host_run() { nsenter -t 1 -a -- "$@"; }
+#
+# The namespaces are listed rather than `-a`, which also asks for the *time*
+# namespace: where that one is restricted (a container host, a hardened kernel)
+# `nsenter -a` fails outright with "reassociate to namespace 'ns/time' failed",
+# and a detector that treats that as "no host access" skips installing Incus on
+# a machine that would have been perfectly capable. mount, uts, ipc, net and pid
+# are the ones installing packages and starting a daemon actually need.
+HOST_NS="-m -u -i -n -p"
+host_run() {
+  # shellcheck disable=SC2086  # the list is meant to split into arguments
+  nsenter -t 1 $HOST_NS -- "$@"
+}
 
 have_host() {
-  nsenter -t 1 -a -- /bin/true >/dev/null 2>&1
+  host_run /bin/true >/dev/null 2>&1
 }
 
 incus_ready() {
-  host_run /bin/sh -c 'command -v incus >/dev/null 2>&1 && incus info >/dev/null 2>&1'
+  host_run /bin/sh -c 'command -v incus >/dev/null 2>&1 && incus info >/dev/null 2>&1' >/dev/null 2>&1
 }
 
 prepare_host() {
@@ -149,9 +161,12 @@ prepare_host() {
     ok "host prepared"
     report_state
   else
+    # Named by the path the *host* resolved, not this container's /project: the
+    # command printed here is meant to be pasted into a shell on the host, and
+    # that is the one place it is guaranteed to work.
     warn "the host bootstrap failed — the portal is up, but training machines"
-    warn "will not work. Re-run it directly for the full output:"
-    warn "  sudo ${PROJECT_DIR}/${BOOTSTRAP}"
+    warn "will not work. Its output is above; to retry this step alone:"
+    warn "  sudo ${script}"
   fi
 }
 
@@ -166,7 +181,7 @@ host_visible_bootstrap() {
   local candidate
   for candidate in "${ONTRAK_PROJECT_DIR_HOST:-}" "$PROJECT_DIR"; do
     [ -n "$candidate" ] || continue
-    if host_run /bin/sh -c "test -f '$candidate/$BOOTSTRAP'" >/dev/null 2>&1; then
+    if host_run /bin/sh -c "test -f '$candidate/$BOOTSTRAP'" 2>/dev/null; then
       printf '%s' "$candidate/$BOOTSTRAP"
       return 0
     fi
@@ -176,7 +191,7 @@ host_visible_bootstrap() {
   # derives its project root from its own location, so the layout is part of
   # the contract, and `infra/` is the whole of what it reads.
   local stage=/run/ontrak-bootstrap
-  if ! host_run /bin/sh -c "rm -rf '$stage' && mkdir -p '$stage/infra'"; then
+  if ! host_run /bin/sh -c "rm -rf '$stage' && mkdir -p '$stage/infra'" >/dev/null 2>&1; then
     return 1
   fi
   mkdir -p "/proc/1/root$stage/infra" 2>/dev/null || return 1
@@ -201,7 +216,20 @@ prepare_host
 
 log "ready. Next:"
 printf '      portal      http://localhost:%s\n' "${ONTRAK_PORTAL__PORT:-8080}"
-printf '      console     http://localhost:%s/guacamole/\n' "${ONTRAK_GUAC__PUBLIC_PORT:-8081}"
+# The console address a *student's browser* uses, which is not necessarily this
+# host: a deployment puts a TLS console host here, and printing the local port
+# regardless would tell the operator something that is not true.
+guac_url="${ONTRAK_GUAC__BASE_URL:-http://localhost:${ONTRAK_GUAC__PUBLIC_PORT:-8081}/guacamole/}"
+printf '      console     %s\n' "$guac_url"
+case "$guac_url" in
+  *localhost* | *127.0.0.1*) ;;
+  *)
+    printf '      %s\n' "            students' browsers resolve that host, not this machine —"
+    printf '      %s\n' "            set ONTRAK_GUAC__BASE_URL in .env for a lab on this host."
+    ;;
+esac
+printf '      published   bind %s, console port %s\n' \
+  "${ONTRAK_BIND_ADDR:-127.0.0.1}" "${ONTRAK_GUAC__PUBLIC_PORT:-8081}"
 printf '      sign in     %s / the password in .env (ONTRAK_PORTAL__ADMIN_PASSWORD)\n' \
   "${ONTRAK_PORTAL__ADMIN_USER:-instructor}"
 printf '      verify lab  docker compose exec portal python3 -m ontrak doctor\n'

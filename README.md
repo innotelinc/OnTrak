@@ -57,10 +57,14 @@ With Docker, one command is the whole installation — a machine with only Docke
 hypervisor, no `.env`, nothing to read first:
 
 ```bash
-docker compose up -d
+docker compose up -d --build     # `make up` is the same, with the addresses printed
 # portal   http://localhost:8080      console   http://localhost:8081/guacamole/
-make ps              # health  ·  make logs  ·  make down
+make ps              # health  ·  make logs  ·  docker compose logs lab-setup
+make down
 ```
+
+(`--build` only matters after a `git pull` — without it compose reuses the image from
+whatever commit was checked out before, and a stale first run looks like a broken one.)
 
 A one-shot `lab-setup` service runs before the others: it generates `.env` and the shared
 portal/console keys, and — if the host cannot run training machines yet — installs and
@@ -132,10 +136,15 @@ OnTrak/
   console gateway both report healthy, a whole class runs inside the image (`make docker-demo`),
   and the admin panel serves every page with no Incus socket at all.
 - **Verified as a first run:** from a checkout with no `.env` and no hypervisor, one
-  `docker compose up -d` writes the secrets, brings both services up healthy, signs in to the
-  admin panel with the generated instructor password, and gets a portal-signed console payload
-  accepted by the live gateway as a machine the student can open. Installing Incus on the host
-  is the same code path, and that half still needs a lab host to prove.
+  `docker compose up -d --build` writes the secrets, brings both services up healthy, signs in
+  to the admin panel with the generated instructor password, and gets a portal-signed console
+  payload accepted by the live gateway as a machine the student can open.
+- **Verified for the host half:** `infra/bootstrap-host.sh` — the same script `lab-setup`
+  runs in the host's namespaces — was run twice against a real Incus daemon (upstream
+  packages, storage pool, lab bridge, project, limits profile), and the second run changed
+  nothing. The first run reaches the host, finds the script, runs it there and reports the
+  result; a host without `/dev/kvm` is told exactly that instead of being failed silently.
+  Booting a real Windows VM is still a lab-host job — see [docs/roadmap.md](docs/roadmap.md).
 - **Guest scripts:** every `scenarios/**/*.ps1` and `infra/**/*.ps1` parses under PowerShell 7
   (checked by CI, and locally with `pwsh`).
 - **Reviewed but not proven in this repository:** the Windows, Incus, ZFS and Guacamole
