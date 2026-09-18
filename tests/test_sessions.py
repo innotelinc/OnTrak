@@ -49,6 +49,18 @@ def test_template_build_injects_the_fault_and_snapshots(manager, incus, settings
     assert incus.instance_status(name) == "STOPPED"  # snapshots come from a clean power-off
 
 
+def test_an_unknown_scenario_id_is_reported_rather_than_skipped(manager):
+    """A typo used to print nothing at all and exit 0.
+
+    An operator who asks for a template that does not exist was told nothing, which
+    reads exactly like a build that happened. The rest of the request still runs.
+    """
+    results = manager.build_templates([SCENARIO, "net-dns-fialure"])
+    assert results["net-dns-fialure"].startswith("failed: unknown scenario")
+    assert "net-dns-failure" in results["net-dns-fialure"], results["net-dns-fialure"]
+    assert [key for key, status in results.items() if status == "ready"], results
+
+
 def test_template_build_is_idempotent(manager, incus):
     first = manager.ensure_template(SCENARIO)
     copies_before = len([c for c in incus.calls if c[0] == "create_instance"])

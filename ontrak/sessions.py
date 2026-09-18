@@ -50,6 +50,7 @@ from .scenarios import (
     SETUP_OK_MARKER,
     SHELL_COMMON_LIB,
     WINDOWS,
+    ScenarioError,
     ScenarioRepository,
 )
 from .scoring import evaluate
@@ -275,6 +276,15 @@ class SessionManager:
     ) -> dict[str, str]:
         """Build/replace scenario templates. Returns ``{'<scenario>@<workload>': status}``."""
         results: dict[str, str] = {}
+        # An id that matches no scenario used to filter the pairs down to nothing, so
+        # the CLI printed no lines at all and exited 0: a typo read exactly like a
+        # successful build. Report it as that scenario's outcome instead, so the rest
+        # of the request still runs and the exit code is non-zero.
+        for scenario_id in ids or []:
+            try:
+                self.repo.get(scenario_id)
+            except ScenarioError as exc:
+                results[scenario_id] = f"failed: {exc}"
         for scenario, workload in self.workload_pairs(ids):
             if workloads and workload not in workloads:
                 continue
