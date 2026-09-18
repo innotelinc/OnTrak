@@ -37,6 +37,9 @@ STUB = r'''#!/usr/bin/env python3
   * `query` is a raw API call and refuses `--project`.
   * `exec --user` takes a numeric uid, and refuses an account name with
     `strconv.ParseUint`.
+  * `copy --instance-only` means "the instance without its snapshots", so the CLI
+    refuses it when the source is a snapshot — which is how a student's machine is
+    cloned from the template's clean snapshot.
 """
 import json
 import os
@@ -114,6 +117,14 @@ if head == "storage" and rest[:1] == ["info"]:
 
 if head == "storage" and rest[:1] == ["list"] and asks_for_format(rest):
     sys.stdout.write(json.dumps([POOL]) + "\n")
+    raise SystemExit(0)
+
+if head == "copy":
+    source = rest[0] if rest else ""
+    body = source.split(":", 1)[1] if ":" in source else source
+    if "/" in body and any(a == "--instance-only" for a in rest[1:]):
+        die("--instance-only can't be passed when the source is a snapshot")
+    sys.stdout.write("")
     raise SystemExit(0)
 
 if head == "exec":
@@ -262,6 +273,43 @@ def test_no_user_flag_is_sent_when_none_was_configured(client, argv_log):
 
 
 # --------------------------------------------------------------------------- #
+# cloning the clean snapshot
+# --------------------------------------------------------------------------- #
+def test_cloning_the_clean_snapshot_works(client, argv_log):
+    """Handing a student their machine: `copy tpl-x/clean <name>`.
+
+    This is the call that fills the pool and starts every session, and the flag it
+    used to carry made it fail outright.
+    """
+    client.copy_instance("tpl-linux-user-lifecycle-ubuntu-24-04/clean", "ontrak-sess-42")
+    asked = argv_log.read_text(encoding="utf-8")
+    assert "copy tpl-linux-user-lifecycle-ubuntu-24-04/clean ontrak-sess-42" in asked, asked
+    assert "--instance-only" not in asked, asked
+
+
+def test_copying_a_whole_instance_still_skips_its_snapshots(client, argv_log):
+    """The flag's actual meaning, kept where it is valid."""
+    client.copy_instance("tpl-linux-user-lifecycle-ubuntu-24-04", "ontrak-copy")
+    assert "--instance-only" in argv_log.read_text(encoding="utf-8")
+
+
+def test_a_cluster_qualified_snapshot_reads_the_same_way(client, argv_log):
+    client.copy_instance("lab:tpl-x/clean", "ontrak-copy")
+    assert "--instance-only" not in argv_log.read_text(encoding="utf-8")
+
+
+def test_a_snapshot_copy_is_not_asked_to_skip_snapshots(client):
+    """Fails loudly if the flag comes back on a snapshot source."""
+    client.copy_instance("tpl-x/clean", "ontrak-copy")  # no IncusError
+
+
+def test_the_source_of_a_copy_is_never_an_image_alias(client, argv_log):
+    """A reminder in a test rather than a comment: `copy` here is always a template."""
+    client.copy_instance("tpl-x/clean", "ontrak-copy")
+    assert "copy tpl-x/clean" in argv_log.read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- #
 # the invariants, stated directly
 # --------------------------------------------------------------------------- #
 def test_the_client_asks_nothing_the_cli_refuses(client, argv_log):
@@ -269,6 +317,7 @@ def test_the_client_asks_nothing_the_cli_refuses(client, argv_log):
     client.server_info()
     client.storage_info("default")
     client.exec_in("probe", ["/bin/true"], user="root", check=False)
+    client.copy_instance("tpl-x/clean", "ontrak-probe")
 
     asked = [line for line in argv_log.read_text(encoding="utf-8").splitlines() if line]
     assert asked, "the stand-in recorded no commands"
@@ -281,3 +330,9 @@ def test_the_client_asks_nothing_the_cli_refuses(client, argv_log):
         if line.startswith("exec"):
             assert "--user root" not in line, f"--user wants a uid, not a name: {line}"
             assert "--user student" not in line, f"--user wants a uid, not a name: {line}"
+        if line.startswith("copy"):
+            source = line.split()[1]
+            body = source.split(":", 1)[1] if ":" in source else source
+            assert not ("/" in body and "--instance-only" in line), (
+                f"a snapshot source cannot skip its own snapshots: {line}"
+            )

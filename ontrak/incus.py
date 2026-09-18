@@ -39,6 +39,18 @@ class IncusNotFound(IncusError):
     """Raised when an instance/image/snapshot does not exist."""
 
 
+def _is_snapshot(source: str) -> bool:
+    """Whether an instance reference names a snapshot (``tpl-x/clean``).
+
+    Incus writes an instance and one of its snapshots as ``instance/snapshot``, so
+    the slash is the distinction the CLI itself draws when it refuses a flag. Any
+    ``remote:`` prefix is dropped first, so a cluster-qualified reference reads the
+    same way.
+    """
+    body = source.split(":", 1)[1] if ":" in source else source
+    return "/" in body
+
+
 @dataclass
 class InstanceInfo:
     name: str
@@ -231,9 +243,19 @@ class IncusClient:
         self.run(args, timeout=self.timeout)
 
     def copy_instance(self, source: str, name: str, instance_only: bool = True) -> None:
-        """Copy an instance or one of its snapshots (``tpl-x/clean``) to ``name``."""
+        """Copy an instance, or one of its snapshots (``tpl-x/clean``), to ``name``.
+
+        ``instance_only`` means "the instance, without its snapshots", so it is an
+        argument about an *instance* source and the CLI refuses it on a snapshot:
+
+          Error: --instance-only can't be passed when the source is a snapshot
+
+        Handing a student their machine is exactly that second case — the clean
+        snapshot is cloned — so this flag made `session start` fail every time,
+        and the pool never filled.
+        """
         args = ["copy", source, name]
-        if instance_only:
+        if instance_only and not _is_snapshot(source):
             args.append("--instance-only")
         self.run(args, timeout=self.timeout)
 
