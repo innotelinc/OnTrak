@@ -54,6 +54,37 @@ def cert(**overrides) -> dict:
     return data
 
 
+class TheBridgePathsAreRight(unittest.TestCase):
+    """The one shape that is not a straight prefix swap."""
+
+    def api(self, zone: str = "") -> object:
+        api = provision.Api("https://cerulean.example", "ceru" + "_" + "a" * 16 + "_" + "b" * 8)
+        api.zone = zone
+        return api
+
+    def test_the_records_route_is_zone_addressed(self):
+        self.assertEqual(
+            self.api("innotel.us")._path("/api/dns/records"),
+            "/api/service/dns/records?zone=innotel.us",
+        )
+
+    def test_a_zone_that_is_not_known_yet_is_a_refusal_not_a_bad_request(self):
+        with self.assertRaises(provision.CannotRun):
+            self.api()._path("/api/dns/records")
+
+    def test_the_other_routes_are_prefix_swaps(self):
+        api = self.api("innotel.us")
+        self.assertEqual(api._path("/api/domains"), "/api/service/domains")
+        self.assertEqual(api._path("/api/certificates/12"), "/api/service/certificates/12")
+        self.assertEqual(api._path("/api/npm/hosts"), "/api/service/npm/hosts")
+
+    def test_a_session_only_route_is_named_rather_than_passed_through(self):
+        # Passing it through would send a service key at a session-only route and
+        # come back 401, which says nothing about the cause.
+        with self.assertRaises(provision.CannotRun):
+            self.api("innotel.us")._path("/api/users")
+
+
 class NamesAreZoneRelative(unittest.TestCase):
     """Technitium writes zone-relative names and reads back FQDNs."""
 
@@ -230,11 +261,15 @@ class ADryRunWritesNothing(unittest.TestCase):
 
     def setUp(self):
         self._saved = dict(provision.os.environ)
+        self._real_api = provision.Api
         provision.os.environ["CERULEAN_API_TOKEN"] = "ceru" + "_" + "a" * 8 + "_" + "b" * 8
         self.fake = self.FakeApi()
         provision.Api = lambda *a, **k: self.fake
 
     def tearDown(self):
+        # Restore the class as well as the environment: a leaked patch is how the
+        # next test ends up asserting against a stub it never asked for.
+        provision.Api = self._real_api
         provision.os.environ.clear()
         provision.os.environ.update(self._saved)
 

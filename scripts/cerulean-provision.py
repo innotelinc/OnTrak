@@ -40,8 +40,7 @@ Configuration (environment; every one has a default that matches the estate):
     ONTRAK_DNS_ZONE         innotel.us      — the zone the names live in
     ONTRAK_EDGE_IP          73.68.203.71    — what the names resolve to (the edge)
     ONTRAK_FORWARD_HOST     192.168.1.46    — where the edge forwards: the lab host
-    ONTRAK_PORTAL_PORT      8080
-    ONTRAK_CONSOLE_PORT     8081
+    ONTRAK_PORTAL_PORT      8080    — the one port the edge forwards
 
 Exit codes: 0 = the plan ran (or was applied) cleanly, 1 = a step failed,
 2 = cannot run (no key, unreachable).
@@ -99,6 +98,13 @@ SERVICE_PATHS = {
     "/api/npm/hosts": "/api/service/npm/hosts",
 }
 
+# The bridge's record route is zone-addressed rather than id-addressed
+# (`/api/domains/<id>/records` becomes `/api/service/dns/records?zone=<zone>`),
+# because a key carries a tenant and a tenant has many zones — the id would have
+# to be resolved to a name anyway. Forgetting the query is not a quiet failure:
+# Cerulean answers `?zone= is required`.
+RECORDS_PATH = "/api/dns/records"
+
 
 class Api:
     def __init__(self, base: str, token: str) -> None:
@@ -111,6 +117,10 @@ class Api:
         self.registered = False
 
     def _path(self, path: str) -> str:
+        if path == RECORDS_PATH:
+            if not self.zone:
+                raise CannotRun("the zone must be known before records can be read")
+            return f"{SERVICE_PATHS[RECORDS_PATH]}?zone={urllib.parse.quote(self.zone)}"
         for session, service in SERVICE_PATHS.items():
             if path == session:
                 return service
@@ -481,7 +491,6 @@ def plan(args) -> int:
     edge_ip = setting("ONTRAK_EDGE_IP", "73.68.203.71")
     forward_host = setting("ONTRAK_FORWARD_HOST", "192.168.1.46")
     portal_port = int(setting("ONTRAK_PORTAL_PORT", "8080"))
-    console_port = int(setting("ONTRAK_CONSOLE_PORT", "8081"))
 
     if not token:
         raise CannotRun(
@@ -497,41 +506,42 @@ def plan(args) -> int:
     print(f"zone      {zone}   names -> {edge_ip}   edge -> {forward_host}")
     print(f"mode      {'apply' if args.apply else 'dry run (nothing is written)'}\n")
 
-    steps: list[str] = []
-    steps.append(ensure_zone(api, zone, args.apply))
+    # Printed as they happen, not collected: when a step fails in the middle of a
+    # plan, the steps that already succeeded are half the diagnosis.
+    def emit(step: str) -> None:
+        print(f"  · {step}", flush=True)
+
+    emit(ensure_zone(api, zone, args.apply))
 
     for fqdn in (BASE_NAME, STUDENT_NAME, ADMIN_NAME):
-        steps.append(ensure_record(api, fqdn, "A", edge_ip, args.apply))
+        emit(ensure_record(api, fqdn, "A", edge_ip, args.apply))
 
     # Two certificates: the wildcard covers both subdomains, the apex needs its
     # own — a wildcard never covers the name it hangs off.
     wildcard_id, wildcard_report = ensure_certificate(api, WILDCARD, args.apply, args.wait, args.renew_days)
-    steps.append(wildcard_report)
+    emit(wildcard_report)
     if args.apply and wildcard_id:
-        steps.append(f"exported certificate #{wildcard_id} to NPM (id {export_to_npm(api, wildcard_id)})")
+        emit(f"exported the wildcard to NPM (certificate #{export_to_npm(api, wildcard_id)})")
     apex_id, apex_report = ensure_certificate(api, BASE_NAME, args.apply, args.wait, args.renew_days)
-    steps.append(apex_report)
+    emit(apex_report)
     if args.apply and apex_id:
-        steps.append(f"exported certificate #{apex_id} to NPM (id {export_to_npm(api, apex_id)})")
+        emit(f"exported the apex certificate to NPM (certificate #{export_to_npm(api, apex_id)})")
 
     for fqdn, cert_id, port in (
         (BASE_NAME, apex_id, portal_port),
         (STUDENT_NAME, wildcard_id, portal_port),
         (ADMIN_NAME, wildcard_id, portal_port),
     ):
-        steps.append(
-            ensure_proxy_host(api, fqdn, forward_host, port, cert_id, args.apply, args.repoint)
-        )
-
-    for step in steps:
-        print(f"  · {step}")
+        emit(ensure_proxy_host(api, fqdn, forward_host, port, cert_id, args.apply, args.repoint))
 
     if args.apply:
         print(
-            f"\nthe range is on the edge. The console is a path on {BASE_NAME}, and Cerulean's NPM\n"
-            "bridge forwards a host rather than a path, so that one location rule is applied\n"
-            f"by the deploy step against NPM itself:\n"
-            f"    {BASE_NAME}{CONSOLE_PATH}  ->  http://{forward_host}:{console_port}{CONSOLE_PATH}\n"
+            f"\nthe range is on the edge. Every name forwards to one address, and that is\n"
+            "enough: the stack's own gateway serves the portal at / and the console at\n"
+            f"{CONSOLE_PATH}/ on that same port, so the edge needs no location rule —\n"
+            "Cerulean's NPM bridge forwards a host rather than a path, and this is the\n"
+            "arrangement that does not ask it to.\n"
+            f"    {BASE_NAME}/  and  {BASE_NAME}{CONSOLE_PATH}/  ->  http://{forward_host}:{portal_port}\n"
             f"Set ONTRAK_GUAC__BASE_URL=https://{BASE_NAME}{CONSOLE_PATH}/ on the range."
         )
     else:
