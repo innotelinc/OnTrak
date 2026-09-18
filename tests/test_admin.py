@@ -152,6 +152,40 @@ def test_the_panel_says_what_failed_instead_of_tracing_it(broken_app):
     assert "unaffected" in page
 
 
+def test_the_instructor_page_renders_when_incus_is_unreachable(broken_app):
+    """`/instructor` was the page that did not survive a missing hypervisor.
+
+    It guarded its pool read and not its template read, so the whole page answered
+    500 with a traceback in the log — on exactly the host an instructor is most
+    likely to open it from. The admin panel had this test; this page did not, which
+    is why it shipped.
+    """
+    client, _ = broken_app
+    as_instructor(client)
+    response = client.get("/instructor")
+    assert response.status_code == 200
+    assert "could not read the templates" in response.text
+    assert "incus daemon" in response.text
+    # And the page is still the page: the parts that do not need Incus are there.
+    assert "Instructor console" in response.text
+
+
+def test_the_instructor_banner_does_not_stick_to_later_pages(broken_app, settings):
+    """A failure is reported by the response that met it, not forever after.
+
+    The message used to be stored on the app, so the first failure left a
+    "could not read the pool" banner on every page from then on — including after
+    the hypervisor came back, which is the case that misleads.
+    """
+    client, app = broken_app
+    as_instructor(client)
+    assert "could not read" in client.get("/instructor").text
+
+    # The hypervisor comes back.
+    app.state.manager.incus = FakeIncus(image_alias=settings.incus.image_alias)
+    assert "could not read" not in client.get("/instructor").text
+
+
 def test_the_dashboard_still_works_without_a_hypervisor(broken_app):
     """A student with no reachable Incus gets an error, not a stack trace."""
     client, _ = broken_app

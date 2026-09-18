@@ -2,7 +2,7 @@
 {% block content %}
 <h1>Instructor console</h1>
 
-{% if pool_error %}<div class="card error"><p>{{ pool_error }}</p></div>{% endif %}
+{% for e in infra_errors %}<div class="card error"><p>{{ e }}</p></div>{% endfor %}
 
 <section class="card">
   <h2>Capacity: templates and warm pool</h2>

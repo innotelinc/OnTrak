@@ -762,23 +762,33 @@ def create_app(
                     "console": bool(_session_link(request, session)),
                 }
             )
-        try:
-            pool = manager.pool_status()
-        except Exception as exc:  # noqa: BLE001 - the instructor page must still render
-            pool = []
-            app.state.pool_error = f"could not read the pool: {exc}"
+        # Both of these shell out to Incus, and this page has to render without it:
+        # a host whose hypervisor is not prepared yet, or one whose machines live on
+        # a cluster, is a normal place for an instructor to open it. The template
+        # read was the unguarded half — ungarded it answered 500 and said nothing —
+        # and the pool's message was stored on the app, so one failure put a
+        # permanent "the pool is broken" banner on every later page.
+        infra_errors: list[str] = []
+
+        def read(label: str, call):
+            try:
+                return call()
+            except Exception as exc:  # noqa: BLE001 - the instructor page must still render
+                infra_errors.append(f"could not read the {label}: {exc}")
+                return []
+
         return render(
             request,
             "instructor.html",
             {
                 "rows": rows,
-                "pool": pool,
-                "templates_": manager.template_status(),
+                "pool": read("warm pool", manager.pool_status),
+                "templates_": read("templates", manager.template_status),
                 "scenarios": request.app.state.repo.list(),
                 "leaderboard": store.leaderboard(),
                 "events": store.recent_events(limit=40),
                 "states": SessionState,
-                "pool_error": getattr(app.state, "pool_error", ""),
+                "infra_errors": infra_errors,
             },
         )
 
