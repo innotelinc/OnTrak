@@ -54,7 +54,9 @@ make demo-serve      # the student portal, in demo mode, at http://127.0.0.1:808
 ```
 
 With Docker, one command is the whole installation — a machine with only Docker, no
-hypervisor, no `.env`, nothing to read first:
+hypervisor, no `.env`, nothing to read first. (A Debian or Ubuntu lab host with
+`/dev/kvm` and a few GB per machine; elsewhere the portal and demo mode still run —
+[docs/docker.md](docs/docker.md) has the table.)
 
 ```bash
 docker compose up -d --build     # `make up` is the same, with the addresses printed

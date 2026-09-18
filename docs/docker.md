@@ -17,6 +17,24 @@ make down                     # stop (the state and media volumes survive)
 only matters after a `git pull`: without it compose reuses the image from the
 previous commit, and a stale `lab-setup` reports a host step it never ran.
 
+What the lab host needs, for the version that installs Incus for you:
+
+| | |
+| --- | --- |
+| Linux, Debian or Ubuntu | the host step installs with `apt`. Another distribution: install Incus yourself, then run the stack with `ONTRAK_LAB_SETUP=off`. |
+| Docker Engine with Compose v2 | the setup container is privileged and needs `pid: host`, so it must be the daemon on the lab host itself. |
+| x86-64 with virtualisation, `/dev/kvm` | bare metal with VT-x/AMD-V, or a VM with nested virtualisation. Nothing else can boot a Windows guest. |
+| RAM for the machines in flight | the default student profile is 2 vCPU / 4 GiB; size the host for a class, not for one student ([operations.md](operations.md)). |
+
+**Docker Desktop, or Docker on another machine:** the host step cannot reach the
+lab host's namespaces and says so. The portal still runs, which is the useful
+half for a workshop or a demo:
+
+```bash
+make up-remote                                            # or:
+docker compose -f docker-compose.yml -f docker-compose.remote.yml up -d
+```
+
 ## The first run
 
 `docker compose up` on a machine that has only Docker is a complete
