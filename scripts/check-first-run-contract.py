@@ -18,6 +18,8 @@ only way to keep that promise is the arrangement this checks:
   * exactly one service publishes a host port, and it is the origin gateway,
     which both upstreams share a network with — the arrangement that lets one
     URL serve the portal at `/` and the console at `/guacamole/`;
+  * exactly one service builds the image the two of them run, because two
+    builders of one tag race for it;
   * the whole file renders with no `.env` at all — a first run has none.
 
 Read the rendered configuration rather than the YAML: what matters is the
@@ -151,6 +153,19 @@ def check(config: dict) -> list[str]:
                     f"{GATEWAY} routes to {name} but shares no network with it, so "
                     f"{name} would answer 502"
                 )
+
+    # Likewise for building: `lab-setup` and `portal` run the same image, and on a
+    # cold build two services exporting one tag collide — one of them fails with
+    # `image "ontrak:local": already exists`. It only shows up the first time an
+    # image is built on a host, which is the worst time to learn it.
+    builders = sorted(
+        name for name, service in services.items() if (service or {}).get("build")
+    )
+    if len(builders) != 1:
+        problems.append(
+            f"the image is built by {builders or 'nothing'}, not by exactly one "
+            "service — two services building one tag race for it on a cold build"
+        )
 
     publishers = sorted(
         name for name, service in services.items() if (service or {}).get("ports")

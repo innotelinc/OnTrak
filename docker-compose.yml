@@ -52,10 +52,12 @@ services:
   # exits before anything else starts, and it is the only service that writes to
   # the project directory.
   lab-setup:
+    # No `build:` here on purpose. This service and `portal` run the same image,
+    # and two services building one tag race for it: on a cold build both export
+    # at once and one dies with `image "ontrak:local": already exists`, which
+    # reads as an image problem and is a compose declaration problem. `portal` is
+    # the one service that builds it; this one only uses it.
     image: ${ONTRAK_IMAGE:-ontrak:local}
-    build:
-      context: .
-      dockerfile: Dockerfile
     container_name: ontrak-lab-setup
     restart: "no"
     entrypoint: ["/app/docker/lab-setup.sh"]
@@ -111,6 +113,8 @@ services:
 
   # ── the student portal ────────────────────────────────────────────────────
   portal:
+    # The stack's only builder (see the note on lab-setup). Everything else that
+    # runs this image — lab-setup — refers to it by tag.
     build:
       context: .
       dockerfile: Dockerfile
