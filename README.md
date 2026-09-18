@@ -16,6 +16,9 @@
 > ticket. It runs on Ubuntu + Incus, consumes Cerulean for identity and trust, and keeps
 > only results — never progress.
 > **Landing page:** [https://innotelinc.github.io/OnTrak/](https://innotelinc.github.io/OnTrak/)
+> **Range:** [https://ontrak.innotel.us/](https://ontrak.innotel.us/) — the deployed portal,
+> with the browser console on the same TLS host at `/guacamole/`. A lab on your own box is
+> `http://localhost:8080` and `http://localhost:8081/guacamole/` ([docs/docker.md](docs/docker.md)).
 
 ---
 

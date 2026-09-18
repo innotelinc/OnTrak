@@ -150,6 +150,14 @@ them means a container upgrade can lock the host out of its own database.
 | 8080 | `ONTRAK_BIND_ADDR:ONTRAK_PORTAL__PORT` | student portal and admin panel |
 | 8081 | `ONTRAK_BIND_ADDR:ONTRAK_GUAC__PUBLIC_PORT` | Guacamole (the console iframe's target) |
 
+On the deployment those are one TLS host with two paths, and the second is what
+`ONTRAK_GUAC__BASE_URL` has to be, exactly, including the trailing path:
+
+| Address | What serves it |
+| --- | --- |
+| `https://ontrak.innotel.us/` | the student portal and the admin panel |
+| `https://ontrak.innotel.us/guacamole/` | the console the portal signs students into |
+
 `ONTRAK_BIND_ADDR` defaults to `127.0.0.1`. That is the portfolio posture — a
 TLS proxy (NPM Edge / Cerulean-issued certificate) in front, never the portal
 straight onto a network. For a lab where students reach the host directly, set
@@ -157,7 +165,9 @@ straight onto a network. For a lab where students reach the host directly, set
 those browsers actually use; the console payload travels in a URL fragment and
 must never cross a network in plain text off-host.
 
-## ConfigurationEverything under `environment:` in `docker-compose.yml` is a `ONTRAK_*` override
+## Configuration
+
+Everything under `environment:` in `docker-compose.yml` is a `ONTRAK_*` override
 of `config/ontrak.yaml`, and every one of them has a default, so `.env` only
 needs the values you want to differ. The two that have no default are the ones a
 first run generates for you:
