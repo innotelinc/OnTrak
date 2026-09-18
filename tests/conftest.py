@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
-from ontrak.config import load_settings
+from ontrak.config import ENV_PREFIX, load_settings
 from ontrak.guest import NullDriver
 from ontrak.scenarios import ScenarioRepository
 from ontrak.sessions import SessionManager
@@ -21,6 +22,23 @@ try:  # FastAPI + httpx are optional at runtime; skip cleanly if absent
     from fastapi.testclient import TestClient
 except ImportError:  # pragma: no cover
     TestClient = None
+
+
+@pytest.fixture(autouse=True)
+def clean_environment(monkeypatch):
+    """Keep the operator's own environment out of the suite.
+
+    ``load_settings`` falls back to ``os.environ`` whenever it is not handed an
+    explicit mapping, and exporting ``.env`` is a normal way to configure a
+    deployment — so a developer's shell silently reconfigures the tests. That is
+    how a stale ``ONTRAK_GUAC__PUBLIC_PORT`` (a key the app no longer knows, left
+    in ``.env`` by an older layout) turned every test into a ConfigError, and how
+    an exported ``ONTRAK_GUEST__PASSWORD`` broke demo mode's promise that it runs
+    with no secrets at all. Tests that are about environment overrides pass
+    ``environ=`` themselves; everything else should see a clean one.
+    """
+    for key in [name for name in os.environ if name.startswith(ENV_PREFIX)]:
+        monkeypatch.delenv(key)
 
 
 @pytest.fixture
