@@ -1,0 +1,106 @@
+id: id-group-membership
+title: A team move, a contractor who has gone, and access that only ever grows
+category: identity
+platform: linux
+workloads: [ubuntu-24.04, debian-12]
+difficulty: 3
+minutes: 30
+pass_score: 80
+tags: [identity, groups, least-privilege, offboarding, audit, cli]
+requires_internet: false
+lessons: [identity-directory-admin, linux-users-and-groups, linux-sudo]
+
+ticket:
+  from: "Priya Raman (People team)"
+  system: "sso-01 (directory service)"
+  priority: "Medium"
+  channel: "Email"
+  reported: "Monthly access review"
+  form:
+    title: Access review — two changes, one removal each
+    intro: >
+      The access review asks one question of every change: what did this person lose?
+      A ticket that only lists what was granted gets sent back.
+    weight: 35
+    fields:
+      - id: summary
+        label: The changes this review asks for
+        kind: textarea
+        weight: 15
+        min_words: 8
+      - id: granted
+        label: What access you granted, and to whom
+        kind: textarea
+        weight: 20
+        min_words: 6
+        all_of: [finance]
+        any_of: [add-member, granted, added]
+      - id: removed
+        label: What access you removed, and why it was safe to remove
+        kind: textarea
+        weight: 30
+        min_words: 6
+        all_of: [warehouse]
+        any_of: [remove-member, removed, no longer, left the team]
+        none_of: ["left it for now", "kept it just in case"]
+        hint: "Least privilege is a removal. Name the group and say why the role no longer needs it."
+      - id: contractor
+        label: What you did about the contractor's account
+        kind: textarea
+        weight: 20
+        min_words: 6
+        any_of: [disable, disabled, contract, ended, expiry]
+        none_of: ["locked", "unlock"]
+        hint: "A contractor past their end date is disabled, not locked — locked implies someone may unlock it again."
+      - id: evidence
+        label: Evidence for the review
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [audit, show-user, list-users, list-sessions]
+
+briefing: |
+  The monthly access review on sso-01 has two items and one obvious question:
+
+    1. Marco Silva has moved from the warehouse team to Finance. He needs finance. He
+       must keep finance-reporting, which the finance systems team also uses.
+
+    2. Chi Nguyen was a contractor whose agreement ended on 2026-08-31. The account is
+       still active and still in the warehouse group.
+
+  The directory service is at lib/idp.py with state in /var/lib/ontrak-idp/directory.json
+  (HTTP on http://localhost:8081 if the service is running).
+
+  Make the two changes, each with a recorded reason. The review will be read by someone
+  checking that access is not simply accumulating — so whatever the change is, say what
+  was taken away.
+
+objectives:
+  - id: added-to-new-group
+    text: "Marco Silva is a member of finance"
+    weight: 30
+    critical: true
+    hint: "`add-member marco.silva finance`."
+  - id: removed-from-old-group
+    text: "Marco Silva is no longer a member of warehouse"
+    weight: 25
+    critical: true
+    hint: "This is the half of a team move people skip: `remove-member marco.silva warehouse`."
+  - id: kept-required-group
+    text: "Marco Silva is still a member of finance-reporting"
+    weight: 25
+    hint: "Removing the old access must not remove the access he still needs. Check with `show-user` after both changes."
+  - id: contractor-disabled
+    text: "The contractor's account is disabled, not merely locked"
+    weight: 20
+    hint: "There is a difference in the directory between locked (a hold) and disabled (out of service)."
+
+hints:
+  - "`lib/idp.py list-users` shows status, failed attempts and memberships at a glance."
+  - "Adding the new group and removing the old one are two commands; neither implies the other."
+  - "The contractor's status should read disabled. `--reason` records why, which is what the review wants to see."
+  - "`lib/idp.py audit` lists the changes with their reasons — read it before you call the ticket done."
+
+reset_notes: |
+  Reset re-clones the clean snapshot: Marco is back in warehouse only, and the
+  contractor's account is active again.

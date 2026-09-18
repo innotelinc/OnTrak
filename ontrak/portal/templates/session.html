@@ -80,7 +80,94 @@
         </table>
       {% endif %}
       <div class="briefing">{{ scenario.briefing }}</div>
+      {% if lessons %}
+        <p class="muted small">
+          Lessons for this ticket:
+          {% for lesson in lessons %}<a href="/lessons/{{ lesson.id }}">{{ lesson.title }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+        </p>
+      {% endif %}
     </div>
+
+    {% if ticket_form and state in live_states %}
+    <div class="card ticket-card">
+      <h2>{{ ticket_form.title }}</h2>
+      <p class="muted small">
+        {{ ticket_form.intro }}
+        This write-up is <strong>{{ ticket_form.weight|int }}%</strong> of your grade and is
+        marked with the machine when you hand the session in. Nothing here is recorded until then.
+      </p>
+      <form method="post" action="/sessions/{{ session.id }}/complete">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        {% for field in ticket_form.fields %}
+          {% set value = ticket_answers.get(field.id, "") %}
+          <label class="ticket-field">
+            <span class="label">{{ field.label }}{% if field.required %} <span class="muted small">required</span>{% endif %}</span>
+            <span class="weight">{{ field.weight|int }} pts{% if field.min_words %} &middot; at least {{ field.min_words }} words{% endif %}</span>
+            {% if field.kind == "textarea" %}
+              <textarea name="{{ field.id }}" rows="{{ field.rows }}" placeholder="{{ field.placeholder }}">{{ value }}</textarea>
+            {% elif field.kind == "select" %}
+              <select name="{{ field.id }}">
+                <option value="">— choose —</option>
+                {% for option in field.options %}
+                  <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+              </select>
+            {% elif field.kind == "checkbox" %}
+              <input type="checkbox" name="{{ field.id }}" value="yes" {% if value %}checked{% endif %}>
+            {% elif field.kind == "number" %}
+              <input type="number" name="{{ field.id }}" value="{{ value }}">
+            {% else %}
+              <input type="text" name="{{ field.id }}" value="{{ value }}" placeholder="{{ field.placeholder }}">
+            {% endif %}
+            {% if field.hint %}<span class="muted small">{{ field.hint }}</span>{% endif %}
+          </label>
+        {% endfor %}
+        <div class="actions">
+          <button type="submit" name="action" value="save" class="secondary">Save draft</button>
+          <button type="submit" name="action" value="preview" class="secondary">Preview mark</button>
+          <button type="submit" name="action" value="complete" class="primary"
+                  onclick="return confirm('Hand this session in? The machine is graded and destroyed afterwards.')">
+            Complete &amp; End
+          </button>
+        </div>
+      </form>
+      {% if ticket_rows %}
+        <h3>Last mark{% if ticket_preview and not report %} (preview, not recorded){% endif %}</h3>
+        <ul class="objectives">
+          {% for row in ticket_rows %}
+            <li class="{% if row.passed %}done{% else %}failed{% endif %}">
+              <div class="objective-head">
+                <span class="mark">{% if row.passed %}✓{% else %}✗{% endif %}</span>
+                <span>{{ row.label }}</span>
+                <span class="weight">{{ row.weight|int }} pts</span>
+              </div>
+              <div class="detail">{{ row.detail }}</div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+      {% if report and report.has_ticket %}
+        <p class="muted small">Submitted grade: {{ report.breakdown() }}</p>
+      {% endif %}
+    </div>
+    {% elif ticket_form %}
+    <div class="card">
+      <h2>Write-up</h2>
+      {% if report and report.has_ticket %}
+        <p class="muted small">Marked with the machine: {{ report.breakdown() }}</p>
+        <ul class="objectives">
+          {% for row in ticket_rows %}
+            <li class="{% if row.passed %}done{% else %}failed{% endif %}">
+              <div class="objective-head"><span class="mark">{% if row.passed %}✓{% else %}✗{% endif %}</span><span>{{ row.label }}</span></div>
+              <div class="detail">{{ row.detail }}</div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted small">The write-up is filled in on the machine page while the session is live.</p>
+      {% endif %}
+    </div>
+    {% endif %}
 
     <div class="card">
       <h2>Objectives</h2>
@@ -130,7 +217,7 @@
       </div>
     </div>
 
-    {% if state in live_states %}
+    {% if state in live_states and not ticket_form %}
     <div class="card submit-card">
       <h2>Finished?</h2>
       <p class="muted small">
@@ -142,6 +229,15 @@
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <button type="submit" class="primary">Complete &amp; End</button>
       </form>
+    </div>
+    {% elif state in live_states and ticket_form %}
+    <div class="card submit-card">
+      <h2>Handing in</h2>
+      <p class="muted small">
+        Complete &amp; End grades the machine and marks your write-up together, records one
+        result, then destroys the machine. A blank write-up scores zero for its share, and
+        the attempt cannot pass without it.
+      </p>
     </div>
     {% endif %}
 

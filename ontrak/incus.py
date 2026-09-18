@@ -79,6 +79,7 @@ class IncusClient:
         timeout: int | None = None,
         check: bool = True,
         capture: bool = True,
+        input_data: str | None = None,
     ) -> subprocess.CompletedProcess:
         cmd = self._base() + list(args)
         try:
@@ -86,6 +87,7 @@ class IncusClient:
                 cmd,
                 capture_output=capture,
                 text=True,
+                input=input_data,
                 timeout=timeout or DEFAULT_TIMEOUT,
                 check=False,
             )
@@ -242,14 +244,47 @@ class IncusClient:
     def rename_instance(self, instance: str, new_name: str) -> None:
         self.run(["rename", instance, new_name], timeout=self.timeout)
 
-    def exec_in(self, instance: str, command: Sequence[str], timeout: int = 60, detach: bool = False):
-        """Run a command inside a guest (containers always; VMs need the agent)."""
+    def exec_in(
+        self,
+        instance: str,
+        command: Sequence[str],
+        timeout: int = 60,
+        detach: bool = False,
+        check: bool | None = None,
+        input_data: str | None = None,
+        user: str | None = None,
+    ):
+        """Run a command inside a guest (containers always; VMs need the agent).
+
+        ``input_data`` is fed to the command's stdin, which is how shell scripts are
+        executed without quoting them into a command line, and ``check`` lets a caller
+        read a non-zero exit code instead of having it raised (grading does exactly
+        that: a failing check is data, not an incident).
+        """
         args = ["exec", instance, "-T"]
+        if user:
+            args += ["--user", str(user)]
         if detach:
             args.append("--mode=detach")
         args.append("--")
         args += list(command)
-        return self.run(args, timeout=timeout, check=not detach)
+        return self.run(
+            args,
+            timeout=timeout,
+            check=(not detach) if check is None else check,
+            input_data=input_data,
+        )
+
+    def guest_shell(self, instance: str, script: str, timeout: int = 120, user: str | None = None):
+        """Run a shell script inside a guest verbatim. Never raises on exit code."""
+        return self.exec_in(
+            instance,
+            ["bash", "-s"],
+            timeout=timeout,
+            check=False,
+            input_data=script,
+            user=user,
+        )
 
     def wait_for_status(
         self, instance: str, status: str, timeout: int = 300, interval: float = 2.0

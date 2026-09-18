@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OnTrak — Windows Support Training Platform</title>
-  <meta name="description" content="Self-hosted tech-support training range: pick an operating system, get a broken machine, fix the fault, get graded.">
-  <meta property="og:title" content="OnTrak — Windows Support Training Platform">
-  <meta property="og:description" content="A self-hosted training range that stands up broken Windows, Linux and Office machines on demand, grades the fix, and throws the machine away.">
+  <title>OnTrak — IT Support Training Platform</title>
+  <meta name="description" content="IT Support Training Platform powered by Innotel OnTrak: pick Windows, Server, Office or Linux, get a broken machine and a real ticket, work it in the browser, get graded.">
+  <meta property="og:title" content="OnTrak — IT Support Training Platform">
+  <meta property="og:description" content="IT Support Training Platform powered by Innotel OnTrak — a self-hosted range that stands up broken Windows, Office and Linux machines with real tickets, grades the work, and throws the machine away.">
   <meta property="og:type" content="website">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b0d10'/%3E%3Cpath d='M20 26h24M20 34h16' stroke='%23fb923c' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
   <style>
@@ -123,13 +123,15 @@
   <div class="wrap">
     <section class="hero">
       <div class="hero-inner">
-        <p class="kicker"><span class="pulse" aria-hidden="true"></span> TrainingOps · self-hosted</p>
-        <h1>Support practice on machines that are <span class="accent">already broken</span>.</h1>
+        <p class="kicker"><span class="pulse" aria-hidden="true"></span> TrainingOps · powered by Innotel OnTrak</p>
+        <h1>IT support practice on machines that are <span class="accent">already broken</span>.</h1>
         <p class="lede">
-          OnTrak stands up a Windows, Linux or Office machine with a real fault injected,
-          hands it to a student in the browser, grades the fix by reading live system state,
-          and throws the machine away. Every attempt starts from a verified-clean clone, so
-          no two students share the consequences of the last one.
+          The IT Support Training Platform powered by Innotel OnTrak stands up a Windows,
+          Server, Office or Linux machine with a real fault injected, opens an in-house
+          ticket against it, hands both to a student in the browser, and grades the fix by
+          reading live system state and the written ticket — then throws the machine away.
+          Every attempt starts from a verified-clean clone, so no two students share the
+          consequences of the last one.
         </p>
         <div class="cta-row">
           <a class="btn btn-primary" href="https://github.com/innotelinc/OnTrak#quick-start">Get started</a>
@@ -141,6 +143,12 @@ git clone https://github.com/innotelinc/OnTrak.git &amp;&amp; cd OnTrak
 ./scripts/setup.sh
 make demo</code>
           <button class="copy" data-copy="#qs" type="button">Copy</button>
+        </div>
+        <div class="quickstart">
+          <code id="qs-docker"><span class="c"># the control plane and console, as containers</span>
+make secrets &amp;&amp; make up
+<span class="c"># portal :8080 · console :8081 · the broken machines stay Incus VMs</span></code>
+          <button class="copy" data-copy="#qs-docker" type="button">Copy</button>
         </div>
       </div>
 
@@ -235,7 +243,7 @@ make demo</code>
 
   <footer>
     <div class="wrap foot-inner">
-      <span>OnTrak — support training range for the Innotel Platform Stack.</span>
+      <span>OnTrak — IT support training range for the Innotel Platform Stack.</span>
       <a href="https://github.com/innotelinc/OnTrak">Source</a>
       <a href="https://github.com/innotelinc/OnTrak/blob/main/LICENSE">MIT License</a>
       <a href="https://github.com/innotelinc/innotel-platform-stack">Platform stack</a>

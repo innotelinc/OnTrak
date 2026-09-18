@@ -31,6 +31,21 @@
       {% endfor %}
       </tbody>
     </table>
+    {% if report.has_ticket %}
+      <p class="muted small">Marked: {{ report.breakdown() }}</p>
+      <table>
+        <thead><tr><th>Write-up field</th><th>Outcome</th><th>Evidence</th></tr></thead>
+        <tbody>
+        {% for outcome in report.ticket_outcomes %}
+          <tr>
+            <td>{{ outcome.get("label") or outcome.get("field_id") }}</td>
+            <td><span class="badge {{ "ok" if outcome.get("passed") else "warn" }}">{{ "met" if outcome.get("passed") else "not met" }}</span></td>
+            <td class="small">{{ outcome.get("detail") }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
     {% if report.notes %}<p class="muted small">{{ report.notes|join(" · ") }}</p>{% endif %}
   </section>
 {% endfor %}

@@ -4,12 +4,14 @@ Everything an instructor or operator needs, without touching Python:
 
     ontrak doctor                         # is this host ready?
     ontrak scenario list|show|validate
+    ontrak lesson list|show|validate      # the command walkthroughs
     ontrak template build --all           # tpl-<scenario> + clean snapshot
     ontrak pool status|prewarm|refill
     ontrak session start|check|reset|console|end
+    ontrak ticket form|show|grade|complete # the in-house write-up
     ontrak reap --loop                    # pool refill + idle/expiry reaping
     ontrak user seed-admin|add|import
-    ontrak serve                          # the student portal
+    ontrak serve                          # the student portal, including /admin
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from .demo import run_demo
 from .generator import GenerationError, generate, generate_matrix, primitive_matrix, suggest_combinations
 from .guest import GuestError, build_driver
 from .incus import IncusClient, IncusError
+from .lessons import LessonError, LessonRepository
 from .media import MediaError, MediaStore
 from .models import Session, SessionState
 from .scenarios import ScenarioError, ScenarioRepository
@@ -37,6 +40,8 @@ from .scheduler import Scheduler
 from .scoring import feedback_text
 from .sessions import SessionError, SessionManager
 from .store import Store
+from .tickets import TicketError, missing_required
+from .tickets import feedback_text as ticket_feedback_text
 
 OK, WARN, FAIL, INFO = "ok", "warn", "FAIL", "info"
 _SYMBOL = {OK: "  ok  ", WARN: " warn ", FAIL: " FAIL ", INFO: " info "}
@@ -75,6 +80,7 @@ class Context:
         self._manager: SessionManager | None = None
         self._catalog: Catalog | None = None
         self._media: MediaStore | None = None
+        self._lessons: LessonRepository | None = None
 
     @property
     def store(self) -> Store:
@@ -99,6 +105,12 @@ class Context:
         if self._media is None:
             self._media = MediaStore(self.settings.media_dir, self.catalog)
         return self._media
+
+    @property
+    def lessons(self) -> LessonRepository:
+        if self._lessons is None:
+            self._lessons = LessonRepository(self.settings.lessons_dir)
+        return self._lessons
 
     @property
     def incus(self) -> IncusClient:
@@ -316,12 +328,13 @@ def cmd_scenario(args) -> int:
                 print(f"  {i}. {hint}")
         return 0
     if args.action == "validate":
-        problems = ctx.repo.validate()
-        if problems:
-            for problem in problems:
-                _say(FAIL, problem)
+        problems = ctx.repo.validate(catalog=ctx.catalog, lessons=ctx.lessons)
+        lesson_problems = ctx.lessons.validate()
+        for problem in [*problems, *lesson_problems]:
+            _say(FAIL, problem)
+        if problems or lesson_problems:
             return 1
-        _say(OK, f"{len(ctx.repo.list())} scenario(s) valid")
+        _say(OK, f"{len(ctx.repo.list())} scenario(s) and {len(ctx.lessons.list())} lesson(s) valid")
         return 0
     return 2
 
@@ -923,14 +936,213 @@ def cmd_demo(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# lessons
+# ---------------------------------------------------------------------------
+def cmd_lesson(args) -> int:
+    ctx = Context(args.config)
+    if args.action == "list":
+        rows = [
+            [
+                lesson.id,
+                lesson.platform,
+                f"{lesson.minutes}m",
+                str(lesson.difficulty),
+                str(len(lesson.commands)),
+                str(len(lesson.exercises)),
+                lesson.title[:52],
+            ]
+            for lesson in ctx.lessons.list()
+        ]
+        _table(["id", "platform", "time", "diff", "cmds", "ex", "title"], rows)
+        return 0
+    if args.action == "show":
+        if not args.lesson:
+            print("specify a lesson id (ontrak lesson list)", file=sys.stderr)
+            return 2
+        lesson = ctx.lessons.get(args.lesson)
+        if args.json:
+            print(json.dumps(lesson.public(), indent=2))
+            return 0
+        if args.shell:
+            print(lesson.all_shell())
+            return 0
+        print(f"{lesson.title}  ({lesson.id})")
+        print(
+            f"  platform: {lesson.platform}   difficulty: {lesson.difficulty}/4   "
+            f"time: {lesson.minutes}m   exercises: {len(lesson.exercises)}"
+        )
+        if lesson.prerequisites:
+            print(f"  do first: {', '.join(lesson.prerequisites)}")
+        print("\nSummary:\n  " + lesson.summary.replace("\n  ", " ").strip())
+        if lesson.objectives:
+            print("\nYou will be able to:")
+            for objective in lesson.objectives:
+                print(f"  - {objective}")
+        if lesson.commands:
+            print("\nCommands:")
+            for command in lesson.commands:
+                print(f"  {command.command}")
+                print(f"      {command.what}")
+                if command.example:
+                    print(f"      e.g. {command.example}")
+                if command.danger:
+                    print(f"      CARE: {command.danger}")
+        for index, step in enumerate(lesson.steps, 1):
+            print(f"\n{index}. {step.title}")
+            if step.body:
+                print("   " + step.body.replace("\n", "\n   ").strip())
+            if step.command:
+                print(f"   $ {step.command}")
+        if lesson.exercises:
+            print("\nExercises:")
+            for exercise in lesson.exercises:
+                print(f"  [{exercise.id}] {exercise.prompt.strip()}")
+                if args.solutions:
+                    print("      solution:")
+                    for line in exercise.solution.splitlines():
+                        print(f"        {line}")
+                    if exercise.verify:
+                        print(f"      check with: {exercise.verify}")
+        if lesson.docs:
+            print("\nFurther reading: " + ", ".join(lesson.docs))
+        print("\n(Solutions are hidden; add --solutions to print them.)")
+        return 0
+    if args.action == "validate":
+        problems = ctx.lessons.validate()
+        for problem in problems:
+            _say(FAIL, problem)
+        if problems:
+            return 1
+        _say(OK, f"{len(ctx.lessons.list())} lesson(s) valid")
+        return 0
+    return 2
+
+
+# ---------------------------------------------------------------------------
+# tickets (the in-house write-up)
+# ---------------------------------------------------------------------------
+def _ticket_values(ctx: Context, form, args) -> dict:
+    """Collect answers from --json and/or repeated --field id=value."""
+    values: dict[str, str] = {}
+    if args.json_data:
+        try:
+            loaded = json.loads(args.json_data)
+        except json.JSONDecodeError as exc:
+            raise TicketError(f"--json is not valid JSON: {exc}") from exc
+        if not isinstance(loaded, dict):
+            raise TicketError("--json must be an object of field id to answer")
+        values.update({str(k): "" if v is None else str(v) for k, v in loaded.items()})
+    for item in args.fields or []:
+        if "=" not in item:
+            raise TicketError(f"--field expects id=value, got {item!r}")
+        key, _, value = item.partition("=")
+        values[key.strip()] = value
+    known = {field.id for field in form.fields}
+    unknown = sorted(set(values) - known)
+    if unknown:
+        raise TicketError(
+            f"unknown ticket field(s): {', '.join(unknown)}; this form has: {', '.join(sorted(known))}"
+        )
+    return values
+
+
+def cmd_ticket(args) -> int:
+    ctx = Context(args.config)
+    action = args.action
+
+    if action == "form":
+        scenario = ctx.repo.get(args.scenario) if args.scenario else None
+        if scenario is None:
+            print("specify --scenario (see `ontrak scenario list`)", file=sys.stderr)
+            return 2
+        form = ctx.manager.ticket_form(scenario)
+        if form is None:
+            _say(INFO, f"{scenario.id} has no ticket form; it is graded on machine state alone")
+            return 0
+        print(f"{form.title}  ({scenario.id})")
+        print(f"  {form.weight:.0f}% of the final grade, pass mark {form.pass_score:.0f}%")
+        if form.intro:
+            print("\n  " + form.intro.replace("\n", "\n  ").strip())
+        print("\nFields:")
+        for field in form.fields:
+            print(f"  [{field.weight:>5.0f}] {field.id:<18} {field.kind:<9} {field.label}")
+            if field.options:
+                print(f"           options: {', '.join(field.options)}")
+            rubric = []
+            if field.required:
+                rubric.append("required")
+            if field.min_words:
+                rubric.append(f"at least {field.min_words} words")
+            if field.all_of:
+                rubric.append("must mention " + ", ".join(field.all_of))
+            if field.any_of:
+                rubric.append("must mention one of " + ", ".join(field.any_of))
+            if field.none_of:
+                rubric.append("must not mention " + ", ".join(field.none_of))
+            if rubric:
+                print(f"           rubric: {'; '.join(rubric)}")
+        return 0
+
+    session = _session_or_die(ctx, args)
+    if session is None:
+        return 1
+    form = ctx.manager.ticket_form_for(session)
+    if form is None:
+        _say(INFO, f"{session.scenario_id} has no ticket form")
+        return 0
+
+    if action == "show":
+        values = ctx.store.ticket_values(session.id) or ctx.store.ticket_draft(session.id or 0)
+        grade = ctx.store.latest_ticket(session.id)
+        print(f"Session #{session.id} — {session.student} — {session.scenario_id}")
+        print(f"{form.title} ({form.weight:.0f}% of the grade)\n")
+        for field in form.fields:
+            answer = values.get(field.id, "")
+            print(f"  {field.label} [{field.weight:.0f} pts]")
+            print("    " + (answer.replace("\n", "\n    ") if answer else "(blank)"))
+        if grade:
+            print("\n" + ticket_feedback_text(form, grade))
+        else:
+            print("\n(not handed in yet: no marked ticket for this session)")
+        return 0
+
+    values = _ticket_values(ctx, form, args)
+    if action == "save":
+        ctx.manager.save_ticket_draft(session, values)
+        _say(OK, f"saved a draft for session {session.id} ({len(values)} field(s))")
+        return 0
+    if action == "grade":
+        ctx.manager.save_ticket_draft(session, values)
+        grade = ctx.manager.grade_ticket(session, values)
+        print(ticket_feedback_text(form, grade))
+        _say(INFO, "preview only — nothing stored; `ontrak ticket complete` hands it in")
+        return 0
+    if action == "complete":
+        missing = missing_required(form, values)
+        if missing:
+            _say(FAIL, "required field(s) still blank: " + ", ".join(missing))
+            return 1
+        report = ctx.manager.complete(session, values=values)
+        print(feedback_text(ctx.repo.get(session.scenario_id), report))
+        if report.has_ticket:
+            print("\n" + report.breakdown())
+        _say(OK if report.resolved else FAIL, f"session {session.id} submitted: {report.summary_line()}")
+        return 0 if report.resolved else 1
+    return 2
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ontrak", description=__doc__.splitlines()[0])
     parser.add_argument("--version", action="version", version=f"ontrak {__version__}")
     parser.add_argument("--config", help="path to a config yaml (default config/ontrak.yaml)")
     parser.add_argument(
         "--driver",
-        choices=["winrm", "incus-exec", "null"],
-        help="override guest.driver (null runs everything as a no-op, handy for demos)",
+        choices=["winrm", "incus-exec", "incus-shell", "ssh", "null"],
+        help=(
+            "override guest.driver (winrm/incus-exec for Windows, incus-shell/ssh for "
+            "Linux, null runs everything as a no-op)"
+        ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -940,6 +1152,28 @@ def build_parser() -> argparse.ArgumentParser:
     scenario.add_argument("action", choices=["list", "show", "validate"])
     scenario.add_argument("scenario", nargs="?")
     scenario.set_defaults(func=cmd_scenario)
+
+    lesson = sub.add_parser("lesson", help="the command walkthrough library")
+    lesson.add_argument("action", choices=["list", "show", "validate"])
+    lesson.add_argument("lesson", nargs="?")
+    lesson.add_argument("--json", action="store_true", help="print the lesson as JSON")
+    lesson.add_argument("--shell", action="store_true", help="print only the commands, in order")
+    lesson.add_argument("--solutions", action="store_true", help="include exercise solutions")
+    lesson.set_defaults(func=cmd_lesson)
+
+    ticket = sub.add_parser("ticket", help="the in-house incident write-up")
+    ticket.add_argument("action", choices=["form", "show", "save", "grade", "complete"])
+    ticket.add_argument("--scenario", help="for `form`: which scenario's ticket to print")
+    ticket.add_argument("--session-id", type=int, help="which session (or wrap with --student)")
+    ticket.add_argument("--student", help="the student whose session this is")
+    ticket.add_argument(
+        "--field",
+        dest="fields",
+        action="append",
+        help="an answer as id=value; repeat for each field",
+    )
+    ticket.add_argument("--json", dest="json_data", help="answers as a JSON object")
+    ticket.set_defaults(func=cmd_ticket)
 
     template = sub.add_parser("template", help="build scenario templates")
     template.add_argument("action", choices=["build"])
@@ -1059,7 +1293,15 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
         return 130
-    except (ConfigError, ScenarioError, SessionError, IncusError, GuestError) as exc:
+    except (
+        ConfigError,
+        ScenarioError,
+        SessionError,
+        IncusError,
+        GuestError,
+        LessonError,
+        TicketError,
+    ) as exc:
         _say(FAIL, str(exc))
         return 1
 

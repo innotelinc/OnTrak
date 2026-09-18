@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Platforms</h1>
+<p class="muted">
+  The workload catalogue: every operating system and Microsoft product OnTrak can stand
+  up, what it needs, and the fastest way to get a student a machine on it. Media is
+  never committed to the repository — free media is fetched, licensed media is supplied
+  by the operator.
+</p>
+{% include "admin/_nav.html" %}
+
+{% if catalog_problems %}
+  <div class="card error">
+    <h2>{{ catalog_problems|length }} catalogue problem(s)</h2>
+    {% for problem in catalog_problems %}<p><code>{{ problem }}</code></p>{% endfor %}
+  </div>
+{% endif %}
+
+<div class="cards">
+  <div class="tile">
+    <h3>Warm pools</h3>
+    <p class="big">{{ pool|length }}</p>
+    <p class="muted small">pairs with a target; default target {{ default_target }}</p>
+  </div>
+  <div class="tile">
+    <h3>Templates</h3>
+    <p class="big">{{ templates|selectattr("ready")|list|length }}/{{ templates|length }}</p>
+    <p class="muted small">built with a clean snapshot</p>
+  </div>
+  <div class="tile">
+    <h3>Images on this host</h3>
+    <p class="big">{{ image_aliases|length }}</p>
+    <p class="muted small">published Incus aliases</p>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Warm pools and targets</h2>
+  <p class="muted small">
+    A target is set per <code>scenario@platform</code> in <code>pool.targets</code>, falling
+    back to a plain scenario key, then to the default. Raising a target is how you make a
+    class of 30 start instantly.
+  </p>
+  <table class="grid">
+    <tr><th>pool</th><th>platform</th><th>driver</th><th>target</th><th>ready</th><th>claimed</th><th>total</th><th>template</th><th></th></tr>
+    {% for status in pool %}
+      <tr>
+        <td>{{ status.scenario_id }}</td>
+        <td>{{ status.workload or "golden image" }}</td>
+        <td>{{ status.platform }}</td>
+        <td>{{ status.target }}</td>
+        <td>{{ status.ready }}</td>
+        <td>{{ status.claimed }}</td>
+        <td>{{ status.total }}</td>
+        <td>{% if status.template_ready %}<span class="badge ok">ready</span>{% else %}<span class="badge warn">missing</span>{% endif %}</td>
+        <td>
+          <form method="post" action="/instructor/prewarm" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="scenario_id" value="{{ status.scenario_id }}">
+            <input type="hidden" name="workload" value="{{ status.workload }}">
+            <input type="number" name="count" value="5" min="1" max="200" size="3">
+            <button type="submit" class="link">prewarm</button>
+          </form>
+          <form method="post" action="/admin/maintenance" class="inline"
+                onsubmit="return confirm('Drain {{ status.label }}? Students keep their machines.')">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="action" value="drain">
+            <input type="hidden" name="scenario_id" value="{{ status.scenario_id }}">
+            <input type="hidden" name="workload" value="{{ status.workload }}">
+            <button type="submit" class="link danger">drain</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+  {% if pool_targets %}
+    <p class="muted small">Configured targets: <code>{{ pool_targets }}</code></p>
+  {% endif %}
+</div>
+
+{% for group in groups %}
+  <div class="card">
+    <h2>{{ group.group.label }} <span class="muted small">{{ group.entries|length }} entr{{ "y" if group.entries|length == 1 else "ies" }}</span></h2>
+    {% if group.group.description %}<p class="muted small">{{ group.group.description }}</p>{% endif %}
+    <table class="grid">
+      <tr><th>entry</th><th>kind</th><th>support</th><th>automation</th><th>resources</th><th>media</th><th>plan</th><th>families</th></tr>
+      {% for row in group.entries %}
+        {% set entry = row.entry %}
+        <tr>
+          <td>
+            <code>{{ entry.id }}</code>
+            <div class="muted small">{{ entry.label }}</div>
+          </td>
+          <td>{{ entry.kind }}</td>
+          <td>
+            {% if entry.support == "supported" %}<span class="badge ok">{{ entry.support }}</span>
+            {% elif entry.support == "eol" %}<span class="badge warn">{{ entry.support }}</span>
+            {% else %}{{ entry.support or "—" }}{% endif %}
+          </td>
+          <td>
+            {{ entry.automation }}
+            {% if not entry.automated %}<div class="muted small">manual / no grading</div>{% endif %}
+          </td>
+          <td class="muted small">{{ entry.resources.cpu }} CPU, {{ entry.resources.memory }}</td>
+          <td class="muted small">
+            {{ entry.media.source }}/{{ entry.media.kind }}
+            {% if entry.media.url %}<div class="muted small">downloadable</div>{% endif %}
+          </td>
+          <td class="muted small">
+            {% if row.plan %}
+              {{ row.plan.strategy }}
+              <div class="muted small">~{{ row.plan.estimate_seconds }}s</div>
+              {% for blocker in row.plan.blockers %}<div class="muted small">needs: {{ blocker }}</div>{% endfor %}
+            {% else %}—{% endif %}
+          </td>
+          <td class="muted small">{{ entry.scenario_families|join(", ") or "—" }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+  </div>
+{% endfor %}
+
+<div class="card">
+  <h2>Images published on this host</h2>
+  <p class="muted small">Anything a workload needs must appear here before its template can be built.</p>
+  <p>{% for alias in image_aliases %}<code>{{ alias }}</code> {% else %}<span class="muted">none — run <code>ontrak image build &lt;entry&gt;</code></span>{% endfor %}</p>
+</div>
+{% endblock %}

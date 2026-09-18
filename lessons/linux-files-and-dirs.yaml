@@ -1,0 +1,89 @@
+id: linux-files-and-dirs
+title: Files, directories and finding things
+platform: linux
+category: software
+difficulty: 1
+minutes: 15
+summary: >
+  Create, inspect, move and delete files and directories from the shell, and find
+  them again afterwards — the four commands every other Linux ticket depends on.
+tags: [cli, files, directories, basics]
+objectives:
+  - Create and remove directories, including parents in one step
+  - Inspect file contents and metadata without an editor
+  - Find a file by name, owner or age
+prerequisites: []
+commands:
+  - command: pwd
+    what: Print the directory you are currently in.
+    example: pwd
+  - command: ls -la
+    what: List everything, including dotfiles, with permissions, owner, size and date.
+    example: ls -la /srv/app
+  - command: mkdir -p /srv/app/{src,tests,docs}
+    what: Create directories, and their parents, in one step. Brace expansion builds the whole tree.
+    example: mkdir -p /srv/projects/alpha/{src,tests,docs}
+  - command: touch /srv/app/README.md
+    what: Create an empty file, or update the timestamp of an existing one.
+  - command: cp -a src/ dst/
+    what: Copy, preserving permissions, ownership and timestamps (the "right" way for a tree).
+    example: cp -a /srv/projects/alpha /srv/projects/alpha-backup
+  - command: mv old.txt new.txt
+    what: Rename, or move to another directory. Silent overwrite if the target exists.
+    danger: mv silently replaces the destination. Use `mv -n` to refuse instead.
+  - command: rm -r dir/
+    what: Delete a directory and everything inside it.
+    danger: There is no recycle bin. `rm -rf /` is unrecoverable — check your path with pwd first.
+  - command: find /srv -name '*.log' -mtime -1
+    what: Find files by name, owner, permissions or age. Far faster than guessing.
+    example: find /srv -type f -user root
+  - command: file archive.dat
+    what: Ask what a file actually is, rather than trusting its extension.
+  - command: du -sh /srv/* | sort -h
+    what: See what is eating disk space, largest last.
+steps:
+  - title: Everything is a path
+    body: >
+      Linux has no drive letters. One tree starts at /, and every file lives
+      somewhere in it. /srv is conventionally where a site puts services, /etc is
+      configuration, /var is changing data such as logs, and /tmp is disposable.
+      When a ticket says "the app cannot write its uploads", the question is always
+      *which path* and *who owns it*.
+    command: ls -la /
+  - title: Look before you write
+    body: >
+      Before creating or deleting anything under a path, confirm what is already
+      there and who owns it. `ls -la` answers all of that in one line, and reading
+      it is a habit that prevents most self-inflicted outages.
+    command: ls -la /srv
+  - title: Create the tree in one command
+    body: >
+      Brace expansion plus -p means a whole project skeleton in a single step, and
+      it is idempotent: running it again changes nothing.
+    command: mkdir -p /srv/projects/alpha/{src,tests,docs}
+  - title: Find it again
+    body: >
+      In a real incident you are rarely handed the path. `find` with -name, -user
+      or -mtime is how you locate "the log that was written yesterday" without
+      walking the tree by hand.
+    command: find /srv -type f -newermt '-1 day'
+exercises:
+  - id: build-tree
+    prompt: >
+      Create /srv/projects/bravo with src, tests and docs subdirectories, and an
+      empty README.md at the top of it.
+    solution: |
+      mkdir -p /srv/projects/bravo/{src,tests,docs}
+      touch /srv/projects/bravo/README.md
+    verify: find /srv/projects/bravo -maxdepth 2 | sort
+  - id: find-and-remove
+    prompt: >
+      Something is filling /var/log with files named *.old. Find them and delete
+      only those.
+    solution: |
+      find /var/log -type f -name '*.old' -print
+      find /var/log -type f -name '*.old' -delete
+    verify: find /var/log -type f -name '*.old' | wc -l
+docs:
+  - man 1 find
+  - man 1 ls

@@ -1,7 +1,7 @@
 [project]
 name = "ontrak"
 version = "0.1.0"
-description = "Automated Windows tech-support training range on Ubuntu + Incus"
+description = "IT Support Training Platform powered by Innotel OnTrak: broken Windows, Server, Office and Linux machines, ticketed and graded, on Ubuntu + Incus"
 requires-python = ">=3.10"
 dependencies = [
     "PyYAML>=6.0",
@@ -24,7 +24,10 @@ build-backend = "setuptools.build_meta"
 packages = ["ontrak", "ontrak.portal"]
 
 [tool.setuptools.package-data]
-"ontrak.portal" = ["templates/*.html", "static/*"]
+# Templates and stylesheets are data, and the admin pages live one directory
+# deeper than the rest: `templates/*.html` alone ships a portal whose /admin
+# 500s when the app is installed rather than run from the source tree.
+"ontrak.portal" = ["templates/*.html", "templates/admin/*.html", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

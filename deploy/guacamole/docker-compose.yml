@@ -1,5 +1,10 @@
 # Apache Guacamole: the HTML5 RDP gateway behind the portal's console iframe.
 #
+# Standalone, for a gateway deployed on its own host (or when the portal runs on
+# the host via `make serve`). If you run the whole platform with `make up`, the
+# portal's own compose file already includes this gateway and this file is
+# redundant — and would collide, since both claim the same container names.
+#
 #   cd deploy/guacamole
 #   cp .env.example .env      # set JSON_SECRET_KEY to the same value as
 #                             # ONTRAK_GUAC__SECRET_KEY / guac.secret_key

@@ -5,6 +5,7 @@ from datetime import timedelta
 
 import pytest
 
+from ontrak.demo import synthesise_ticket
 from ontrak.guest import NullDriver
 from ontrak.models import SessionState, iso, parse_iso, utcnow
 from ontrak.scenarios import JSON_BEGIN, JSON_END
@@ -242,7 +243,7 @@ def test_checks_grade_a_passing_attempt(settings, store, repo, incus, built_temp
     assert store.attempt_counts(session.id) == 0
     assert store.latest_report(session.id) is None
 
-    final = manager.complete(session)
+    final = manager.complete(session, values=synthesise_ticket(manager.ticket_form_for(session)))
     assert final.score == 100.0
     assert final.resolved is True
     assert session.state is SessionState.PASSED

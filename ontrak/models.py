@@ -89,6 +89,7 @@ class Category(str, Enum):
     NETWORK = "network"
     OS = "os"
     SECURITY = "security"
+    IDENTITY = "identity"
 
 
 CATEGORY_LABELS: dict[str, str] = {
@@ -97,6 +98,7 @@ CATEGORY_LABELS: dict[str, str] = {
     Category.NETWORK.value: "Network & connectivity",
     Category.OS.value: "Boot & performance",
     Category.SECURITY.value: "Security incidents",
+    Category.IDENTITY.value: "Identity & access",
 }
 
 
@@ -175,6 +177,13 @@ class ScoreReport:
     created_at: str = field(default_factory=iso)
     error: str = ""
     notes: list[str] = field(default_factory=list)
+    # The grade is a blend: the machine state checked in the guest, plus the ticket
+    # the student wrote. They are kept apart as well as combined, so feedback can
+    # say which half was weak and a report can be audited later.
+    machine_score: float = 0.0
+    ticket_score: float | None = None
+    ticket_weight: float = 0.0
+    ticket_outcomes: list[dict] = field(default_factory=list)
 
     @property
     def passed_count(self) -> int:
@@ -189,6 +198,20 @@ class ScoreReport:
             return f"grading failed: {self.error}"
         return f"{self.score:.0f}% ({self.passed_count}/{len(self.outcomes)} objectives)"
 
+    @property
+    def has_ticket(self) -> bool:
+        return self.ticket_score is not None
+
+    def breakdown(self) -> str:
+        """One line naming each half of a blended grade."""
+        if not self.has_ticket:
+            return f"machine {self.score:.0f}%"
+        return (
+            f"machine {self.machine_score:.0f}% x {100 - self.ticket_weight:.0f}% "
+            f"+ ticket {self.ticket_score:.0f}% x {self.ticket_weight:.0f}% "
+            f"= {self.score:.0f}%"
+        )
+
     def to_dict(self) -> dict:
         return {
             "session_id": self.session_id,
@@ -199,6 +222,10 @@ class ScoreReport:
             "error": self.error,
             "notes": list(self.notes),
             "outcomes": [o.to_dict() for o in self.outcomes],
+            "machine_score": self.machine_score,
+            "ticket_score": self.ticket_score,
+            "ticket_weight": self.ticket_weight,
+            "ticket_outcomes": [dict(o) for o in self.ticket_outcomes],
         }
 
     @classmethod
@@ -212,6 +239,12 @@ class ScoreReport:
             error=str(data.get("error", "")),
             notes=[str(n) for n in data.get("notes", [])],
             outcomes=[CheckOutcome.from_dict(o) for o in data.get("outcomes", [])],
+            machine_score=float(data.get("machine_score", data.get("score", 0.0))),
+            ticket_score=(
+                None if data.get("ticket_score") is None else float(data["ticket_score"])
+            ),
+            ticket_weight=float(data.get("ticket_weight", 0.0)),
+            ticket_outcomes=[dict(o) for o in data.get("ticket_outcomes", []) if isinstance(o, dict)],
         )
 
 

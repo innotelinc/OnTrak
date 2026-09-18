@@ -107,7 +107,7 @@ portal:
   title: OnTrak
   admin_user: instructor
   admin_password: ""
-  brand_note: "Tech support training range"
+  brand_note: "IT support training range — powered by Innotel OnTrak"
   allow_self_reset: true
   hints_require_attempt: true    # a failed check is needed before hints unlock
 
@@ -116,3 +116,4 @@ paths:
   state: state
   catalog: catalog               # OS/Office manifests (see docs/catalog.md)
   media: media                   # downloaded free media, operator-supplied licensed media
+  lessons: lessons               # command walkthroughs scenarios link to (docs/lessons.md)

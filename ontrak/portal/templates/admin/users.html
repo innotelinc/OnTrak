@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Accounts</h1>
+<p class="muted">
+  {{ counts.student }} student(s), {{ counts.instructor }} instructor(s),
+  {{ counts.inactive }} disabled. Deleting an account removes the login only — the
+  results and tickets stay, because a marking record the instructor can erase is not
+  a marking record.
+</p>
+{% include "admin/_nav.html" %}
+
+<div class="layout">
+  <div class="col-console">
+    <div class="card">
+      <h2>All accounts</h2>
+      <table class="grid">
+        <tr><th>username</th><th>name</th><th>role</th><th>status</th><th>created</th><th>actions</th></tr>
+        {% for account in accounts %}
+          <tr>
+            <td><code>{{ account["username"] }}</code></td>
+            <td>{{ account["display_name"] }}</td>
+            <td>{{ account["role"] }}</td>
+            <td>
+              {% if account["active"] %}<span class="badge ok">active</span>
+              {% else %}<span class="badge warn">disabled</span>{% endif %}
+            </td>
+            <td class="muted small">{{ account["created_at"] }}</td>
+            <td>
+              <form method="post" action="/admin/users" class="inline">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="username" value="{{ account['username'] }}">
+                {% if account["role"] == "student" %}
+                  <input type="hidden" name="action" value="role">
+                  <input type="hidden" name="role" value="instructor">
+                  <button type="submit" class="link">make instructor</button>
+                {% else %}
+                  <input type="hidden" name="action" value="role">
+                  <input type="hidden" name="role" value="student">
+                  <button type="submit" class="link">make student</button>
+                {% endif %}
+              </form>
+              <form method="post" action="/admin/users" class="inline">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="username" value="{{ account['username'] }}">
+                <input type="hidden" name="action" value="password">
+                <input type="password" name="password" placeholder="new password" size="10" required>
+                <button type="submit" class="link">reset</button>
+              </form>
+              {% if account["active"] %}
+                <form method="post" action="/admin/users" class="inline">
+                  <input type="hidden" name="csrf" value="{{ csrf }}">
+                  <input type="hidden" name="username" value="{{ account['username'] }}">
+                  <input type="hidden" name="action" value="deactivate">
+                  <button type="submit" class="link">disable</button>
+                </form>
+              {% else %}
+                <form method="post" action="/admin/users" class="inline">
+                  <input type="hidden" name="csrf" value="{{ csrf }}">
+                  <input type="hidden" name="username" value="{{ account['username'] }}">
+                  <input type="hidden" name="action" value="activate">
+                  <button type="submit" class="link">enable</button>
+                </form>
+              {% endif %}
+              <form method="post" action="/admin/users" class="inline"
+                    onsubmit="return confirm('Delete {{ account['username'] }}? Their results are kept.')">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="username" value="{{ account['username'] }}">
+                <input type="hidden" name="action" value="delete">
+                <button type="submit" class="link danger">delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+
+  <div class="col-side">
+    <div class="card">
+      <h2>Create or update an account</h2>
+      <form method="post" action="/admin/users">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="create">
+        <label>Username <input name="username" required placeholder="aisha.khan"></label>
+        <label>Display name <input name="display_name" placeholder="Aisha Khan"></label>
+        <label>Password <input name="password" required></label>
+        <label>Role
+          <select name="role">
+            <option value="student">student</option>
+            <option value="instructor">instructor</option>
+          </select>
+        </label>
+        <button type="submit">Create account</button>
+        <p class="muted small">Creating an existing username resets it and re-enables it.</p>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Bulk import</h2>
+      <p class="muted small">
+        A class list is faster from the command line:
+        <code>ontrak user import --csv roster.csv --default-password ChangeMe123</code>.
+      </p>
+    </div>
+  </div>
+</div>
+{% endblock %}

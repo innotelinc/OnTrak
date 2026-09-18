@@ -6,7 +6,7 @@ planned. Anything in the last two sections is a statement of intent, not a featu
 ## Verified in this repository
 
 - Python control plane: catalog, scenarios, sessions, scoring, selection, scheduler,
-  generator, portal, CLI — `pytest` (210 tests collected, 1 skipped) and `ruff` clean.
+  generator, portal (student and admin), CLI — `pytest` (280 tests, 1 skipped) and `ruff` clean.
 - Scenario and catalog validation, including the grading contract (a check script that
   cannot report an objective fails validation rather than scoring zero forever).
 - Scenario generation from fault primitives: every generated scenario is validated before
@@ -15,7 +15,18 @@ planned. Anything in the last two sections is a statement of intent, not a featu
   in-memory hypervisor, with results-only storage asserted by tests.
 - Guacamole's JSON-auth payload format, cross-checked against the `openssl` CLI (an
   independent implementation of HMAC-prepend → AES-128-CBC → PKCS#7 with a zero IV).
-- Guest PowerShell: every `scenarios/**/*.ps1` and `infra/**/*.ps1` is parsed by `pwsh` in CI.
+- Guest PowerShell: every `scenarios/**/*.ps1` and `infra/**/*.ps1` is parsed by `pwsh` in CI;
+  the Linux and identity scenarios are run end to end against the real `chmod`, `chown`,
+  `useradd`, `groupadd` and `sudo` tooling in a mount namespace, setup and check scripts both.
+- Per-workload (scenario × platform) template matrices: the same fault on Windows 11 and on
+  Ubuntu are two templates, and the pool, status views and automatic assignment follow them.
+- The in-house ticket system: rubric-marked write-ups (length, required terms, classification)
+  blended with the machine grade at submission, with the rubric kept satisfiable by tests.
+- The instructor admin panel: overview, users, scenarios, platforms, tickets, sessions,
+  schedule, results, audit — role-gated, and rendering when the hypervisor is unreachable.
+- The container stack: the portal image builds, both compose files validate, the portal and
+  the console gateway report healthy, a class runs inside the image, and the admin panel
+  serves every page with no Incus socket mounted.
 
 ## Built, but not proven on real hardware
 
@@ -34,29 +45,25 @@ scenario end to end, then size the pool.
 
 ## Next
 
-1. **Per-workload template matrices.** Today a scenario has one base platform (`workload:`),
-   so running `net-dns-failure` on both Windows 11 and Ubuntu means two scenario variants.
-   The next step is templates keyed by (scenario, workload) with the pool and status views
-   following, plus a generator flag to emit the variants.
-2. **Microsoft products beyond Office.** Exchange Server, SQL Server, SharePoint and
+1. **Microsoft products beyond Office.** Exchange Server, SQL Server, SharePoint and
    Microsoft 365 Apps in more fidelity. The catalog shape already supports it — a product
    entry names the OS it is layered onto — but each needs a build recipe worth trusting.
-3. **Cloud and identity scenarios.** Entra ID / Microsoft 365 sign-in failures, MFA resets
-   and conditional-access tickets are now a large share of real service-desk volume. They
-   need a simulated directory rather than a real tenant, so they belong behind a scenario
-   family of their own.
-4. **Instructor scheduling UI.** `schedule.windows` is configuration today; a small page
-   that shows the next window, the pool plan and the drain would make it usable without
-   editing YAML.
-5. **Recording and review.** `guac.recording` is wired but unused. Turning it on for
+2. **Cloud identity beyond the simulation.** The identity family runs against a simulated
+   directory service. Entra ID / Microsoft 365 sign-in failures, MFA resets and
+   conditional-access tickets are a large share of real service-desk volume; they need a
+   tenant sandbox rather than a simulation before they can be graded honestly.
+3. **Recording and review.** `guac.recording` is wired but unused. Turning it on for
    security scenarios, with an instructor-only playback view, is the obvious assessment
    upgrade (and needs a storage-retention decision, which belongs to ONYX).
-6. **Role-based portals.** One instructor role today; cohorts (teacher, TA, marker) and
+4. **Role-based portals.** One instructor role today; cohorts (teacher, TA, marker) and
    per-cohort scenario sets are a small addition to the account model.
-7. **Metrics.** Session latency, pool depth over time and pass rates per objective, exported
+5. **Metrics.** Session latency, pool depth over time and pass rates per objective, exported
    for the operator. Deliberately last: it is easy to add and hard to remove.
-8. **Scenario packs.** Versioned, signed bundles so a course can pin its scenario set and
+6. **Scenario packs.** Versioned, signed bundles so a course can pin its scenario set and
    ship it to another range without copying the whole repository.
+7. **Publish the image.** The Dockerfile is unbuilt-on-push today: the CI job builds it, but
+   nothing pushes it to a registry. A tagged `ghcr.io/innotelinc/ontrak` would make a range
+   host a `docker pull` instead of a build (and needs the registry credentials decision).
 
 ## Out of scope
 

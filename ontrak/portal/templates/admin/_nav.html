@@ -1,0 +1,25 @@
+<nav class="admin-nav">
+  {% for id, label, blurb in sections %}
+    <a href="{{ '/admin' if id == 'overview' else '/admin/' + id }}"
+       class="{% if section == id %}active{% endif %}"
+       title="{{ blurb }}">{{ label }}</a>
+  {% endfor %}
+</nav>
+
+{# Hypervisor reads are allowed to fail without taking the page down: an operator
+   opens the panel precisely when something is wrong, and "Incus is not
+   answering" is the answer far more often than a traceback is. #}
+{% if infra_errors %}
+  <div class="card error">
+    <h2>Hypervisor reads failed</h2>
+    <ul>
+      {% for problem in infra_errors %}<li><code>{{ problem }}</code></li>{% endfor %}
+    </ul>
+    <p class="muted small">
+      Everything stored in the portal — accounts, tickets, submitted results, the audit
+      log — is unaffected and shown below. Only live machine facts are missing. Check
+      that the Incus daemon is running and that this deployment can reach it
+      (<code>make check</code>, or docs/docker.md for the container's socket).
+    </p>
+  </div>
+{% endif %}

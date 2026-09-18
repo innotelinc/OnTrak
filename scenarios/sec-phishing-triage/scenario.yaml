@@ -26,6 +26,51 @@ ticket:
   notes:
     - "The user is waiting on your conclusion: was this a real attack?"
     - "Documentation is part of the triage, not an optional extra."
+  form:
+    title: Incident write-up — phishing triage
+    intro: >
+      The user wants an answer and the security team wants a record. One write-up
+      covers both, and it is marked.
+    weight: 30
+    fields:
+      - id: symptom
+        label: What the user reported, in your own words
+        kind: textarea
+        weight: 15
+        min_words: 8
+        placeholder: "What they clicked or did not click, and when."
+      - id: root_cause
+        label: Why this is malicious (or why it is not)
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [spoof, lookalike, look-alike, domain, attachment, sender, phishing, header]
+        none_of: ["it was probably fine", "the user was at fault", "nothing to do"]
+        hint: "Point at the evidence: sender address, link target, attachment behaviour."
+      - id: category
+        label: Classification
+        kind: select
+        weight: 15
+        options:
+          - Phishing
+          - Malware
+          - Spam
+          - Legitimate mail
+        expected: Phishing
+      - id: action
+        label: What you did about it
+        kind: textarea
+        weight: 25
+        min_words: 8
+        any_of: [isolated, quarantined, blocked, deleted, removed, reported, escalated]
+        hint: "Isolating the attachment and reporting it are separate actions."
+      - id: verification
+        label: How you confirmed the result
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [header, sender, URL, hash, sandbox, blocked, report, evidence]
+        hint: "What you checked after acting — a claim with no check is a guess."
 objectives:
   - id: phish-indicators
     text: The indicators are written up (spoofed sender, lookalike domain, attachment)

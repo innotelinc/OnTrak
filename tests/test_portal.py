@@ -1,56 +1,20 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
-from ontrak.guest import NullDriver
+from ontrak.demo import synthesise_ticket
 from ontrak.models import SessionState
-from ontrak.portal.app import create_app
-from ontrak.scenarios import JSON_BEGIN, JSON_END
+
+from .conftest import csrf, login
 
 SCENARIO = "net-dns-failure"
 OBJECTIVES = ["restore-resolver", "resolve-intranet", "reach-service"]
 
-try:  # FastAPI + httpx are optional at runtime; skip cleanly if absent
-    from fastapi.testclient import TestClient
-except ImportError:  # pragma: no cover
-    TestClient = None
-
-pytestmark = pytest.mark.skipif(TestClient is None, reason="fastapi/httpx not installed")
-
-
-def pass_payload() -> str:
-    checks = [{"objective": o, "passed": True, "detail": "ok"} for o in OBJECTIVES]
-    return f"{JSON_BEGIN}{json.dumps({'checks': checks})}{JSON_END}"
-
 
 @pytest.fixture
-def app_client(settings, store, incus):
-    store.upsert_user("alice", "alice-pw", "student", "Alice A")
-    store.upsert_user("teacher", "teach-pw", "instructor", "Teacher T")
-    driver = NullDriver(settings, responses={"setup.ps1": "ONTRAK-SETUP-OK", "check.ps1": pass_payload()})
-    app = create_app(settings, incus=incus, driver=driver)
-    # A template must exist for provisioning to succeed.
-    app.state.manager.ensure_template(SCENARIO)
-    with TestClient(app) as client:
-        yield client, app
-
-
-def login(client, username: str, password: str, follow: bool = True):
-    token = client.cookies.get("ontrak_csrf") or ""
-    if not token:
-        client.get("/login")
-        token = client.cookies.get("ontrak_csrf")
-    return client.post(
-        "/login",
-        data={"username": username, "password": password, "csrf": token or ""},
-        follow_redirects=follow,
-    )
-
-
-def csrf(client) -> str:
-    return client.cookies.get("ontrak_csrf", "")
+def app_client(app_env):
+    """The shared portal fixture — this suite is its oldest and largest user."""
+    return app_env
 
 
 def provision(app, student: str = "alice"):
@@ -151,8 +115,13 @@ def test_full_student_flow(app_client):
     assert app.state.store.latest_report(session.id) is None
     assert "not recorded" in checked.text
 
-    # Complete & End grades once, stores that result, and destroys the machine.
-    completed = client.post(f"/sessions/{session.id}/complete", data={"csrf": csrf(client)})
+    # Complete & End grades once, stores that result, and destroys the machine. The
+    # write-up is part of the submission, so it is filled in like a student would.
+    form = app.state.manager.ticket_form_for(session)
+    completed = client.post(
+        f"/sessions/{session.id}/complete",
+        data={**synthesise_ticket(form), "csrf": csrf(client)},
+    )
     assert completed.status_code == 200
     report = app.state.store.latest_report(session.id)
     assert report is not None

@@ -13,6 +13,52 @@ ticket:
   priority: "High"
   channel: "Email"
   reported: "This morning"
+  form:
+    title: Incident write-up — addressing brought back to standard
+    intro: >
+      Marcus has moved desks twice this month, which is exactly why the site bans
+      fixed addresses. Record what you found and what you did about it.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom, in your own words
+        kind: textarea
+        weight: 15
+        min_words: 8
+        placeholder: "What did not work, and what still did."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [static, manual, hardcoded, hard-coded, fixed address, dhcp]
+        none_of: ["reinstall windows", "the cable"]
+        hint: "Say where the address came from, and which setting made it so."
+      - id: category
+        label: Classification
+        kind: select
+        weight: 15
+        options:
+          - Network
+          - Driver and device
+          - Permissions
+          - Software configuration
+          - Account
+        expected: Network
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 25
+        min_words: 8
+        any_of: [dhcp, automatic, ipconfig, release, renew, Set-NetIPInterface]
+        hint: "Which adapter, which setting, and what it is set to now."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [gateway, 10.20.0.1, ping, ipconfig, fileserver, reachable]
+        hint: "A machine with no route out still looks 'connected' — show the route."
 
 briefing: |
   WORKSTATION-117 came back from an on-site visit with "hardcoded network

@@ -1,0 +1,98 @@
+id: linux-dir-tree-build
+title: Build the project workspace the team asked for
+category: software
+platform: linux
+workloads: [ubuntu-24.04, debian-12]
+difficulty: 1
+minutes: 20
+pass_score: 80
+tags: [linux, files, directories, mkdir, cli, level-1]
+requires_internet: false
+lessons: [linux-files-and-dirs, linux-permissions]
+
+ticket:
+  from: "Dana Okafor (Platform team)"
+  system: "build-02 (Ubuntu)"
+  priority: "Low"
+  channel: "Ticket queue"
+  reported: "Requested by email"
+  form:
+    title: Change record — project workspace on build-02
+    intro: >
+      This is a service request rather than a fault. It still gets a write-up: the
+      next engineer should be able to reproduce the layout from your ticket alone.
+    weight: 25
+    fields:
+      - id: summary
+        label: What was requested
+        kind: textarea
+        weight: 20
+        min_words: 8
+      - id: layout
+        label: The layout you created
+        kind: textarea
+        weight: 30
+        min_words: 6
+        all_of: [alpha]
+        any_of: [mkdir, docs, src, tests]
+        hint: "Name the paths. A tree diagram or one line per directory is fine."
+      - id: restricted_dir
+        label: Which directory is restricted, and to what mode?
+        kind: text
+        weight: 25
+        min_words: 4
+        all_of: [750]
+        hint: "The change request asked for one directory to stay closed to other."
+      - id: cleanup
+        label: What you removed, and why it was safe to remove
+        kind: textarea
+        weight: 25
+        min_words: 6
+        any_of: [junk, leftover, old, stale]
+        none_of: ["rm -rf /", "deleted everything"]
+
+briefing: |
+  The platform team needs a workspace on build-02 for the "alpha" project. The
+  request is:
+
+    /srv/projects/alpha/            the project root
+    /srv/projects/alpha/src/        source
+    /srv/projects/alpha/tests/      tests
+    /srv/projects/alpha/docs/       documentation — mode 750, it holds drafts we
+                                    do not want readable by every account
+    /srv/projects/alpha/README.md   a short README naming the project
+
+  There is also a leftover /srv/projects/junk directory from a copy someone made
+  last month. Nobody claims it; it is holding a stale copy of the same files and
+  should go.
+
+  Work from the shell. Do not delete anything outside /srv/projects, and leave the
+  rest of /srv alone.
+
+objectives:
+  - id: tree-created
+    text: "/srv/projects/alpha exists with src, tests and docs subdirectories"
+    weight: 30
+    critical: true
+    hint: "`mkdir -p /srv/projects/alpha/{src,tests,docs}` makes the whole tree in one step."
+  - id: docs-restricted
+    text: "/srv/projects/alpha/docs is mode 750"
+    weight: 25
+    hint: "750 = owner rwx, group r-x, other nothing."
+  - id: readme-present
+    text: "README.md exists at the project root and describes the alpha project"
+    weight: 25
+    hint: "Use `cat > path` with a heredoc, or printf. It needs to be a file with content, not just a name."
+  - id: junk-removed
+    text: "The stale /srv/projects/junk directory is gone"
+    weight: 20
+    hint: "`ls -la` the directory before you delete it — that is the difference between cleaning up and losing data."
+
+hints:
+  - "Create the whole tree in one command: brace expansion repeats the prefix for each name."
+  - "Docs mode is set after creation, with chmod 750."
+  - "Read what is inside junk before removing it. If it were not junk, the ticket would be a different conversation."
+
+reset_notes: |
+  Reset re-clones the clean snapshot, so the missing tree and the leftover junk
+  directory come back.

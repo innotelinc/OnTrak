@@ -2,17 +2,19 @@
 
 # OnTrak
 
-**Self-hosted tech-support training range — Windows 95 → present, graded.**
+**IT Support Training Platform powered by Innotel OnTrak — Windows, Server, Office and Linux, ticketed and graded.**
 
 [![CI](https://github.com/innotelinc/OnTrak/actions/workflows/ci.yml/badge.svg)](https://github.com/innotelinc/OnTrak/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
 
-> **OnTrak** is a TrainingOps platform: it stands up deliberately broken Windows, Linux
-> and Office machines on demand, hands one to a student in the browser, grades the fix by
-> reading live system state, and destroys the machine. It runs on Ubuntu + Incus, consumes
-> Cerulean for identity and trust, and keeps only results — never progress.
+> **OnTrak** is the **IT Support Training Platform powered by Innotel OnTrak** — a
+> TrainingOps platform that stands up deliberately broken Windows, Server, Office and Linux
+> machines on demand, opens an in-house support ticket against each one, hands both to a
+> student in the browser, and grades the work from live system state *and* the written
+> ticket. It runs on Ubuntu + Incus, consumes Cerulean for identity and trust, and keeps
+> only results — never progress.
 > **Landing page:** [https://innotelinc.github.io/OnTrak/](https://innotelinc.github.io/OnTrak/)
 
 ---
@@ -35,6 +37,7 @@
 - **A scenario engine** — six hand-written scenarios and a fault-primitive library that generates more, each with a ticket, weighted objectives, progressive hints, a fault-injecting `setup.ps1` and a live-state `check.ps1`.
 - **A session lifecycle** — request → clone → boot → hand over → grade → submit → destroy, with per-session time limits, progressive hints, reset-on-demand and a reset that is always a fresh clone.
 - **A student portal** — FastAPI app with login, ticket dashboard, HTML5 console via the gateway, time-limit control, `Complete & End`, and results-only reporting.
+- **A container stack** — `docker compose up` brings up the portal and the Guacamole console gateway; the training machines stay Incus VMs on the host, reached over its socket or a cluster endpoint.
 - **An operator surface** — CLI (`doctor`, `catalog`, `media`, `image`, `template`, `pool`, `schedule`, `session`, `generate`, `demo`), warm-pool management, scheduled prewarm/teardown, and an instructor view with CSV export.
 - **Demo mode** — the whole student flow against an in-memory hypervisor: no Incus, no Windows, no secrets, in about five seconds.
 
@@ -50,6 +53,19 @@ make demo            # a full class: assign, provision, grade, submit, tear down
 make demo-serve      # the student portal, in demo mode, at http://127.0.0.1:8080
 ```
 
+With Docker, the control plane and the browser console come up as containers:
+
+```bash
+make secrets         # .env with generated portal/console keys
+make up              # portal :8080 + Guacamole :8081, plus the host's Incus if it is there
+make ps              # health  ·  make logs  ·  make down
+```
+
+`make up` adds the host's Incus socket when it finds one and says so when it does not;
+everything else about it is in [docs/docker.md](docs/docker.md). The training machines are
+still Incus VMs on the host — a container cannot be Windows 95, and a broken machine that
+shares the host kernel is an outage rather than a lesson.
+
 For a real range (Incus, KVM, ZFS or btrfs):
 
 ```bash
@@ -59,7 +75,7 @@ declare -x ONTRAK_GUEST__PASSWORD='…' # or set it in .env
 make media-fetch                      # free media only (Microsoft evaluation ISOs)
 python -m ontrak image build win11-24h2
 make templates                        # build every scenario template
-make serve
+make serve                            # or `make up`, to run it in Docker
 ```
 
 ## Documentation
@@ -71,6 +87,7 @@ make serve
 | [docs/catalog.md](docs/catalog.md) | The workload catalog: every group and entry, device profiles, media rules, provisioning plans |
 | [docs/scenarios.md](docs/scenarios.md) | The five scenario families, why they are ranked that way, how to write one, and how generation works |
 | [docs/operations.md](docs/operations.md) | Host sizing, capacity maths, warm pools, schedules, media management, backups and troubleshooting |
+| [docs/docker.md](docs/docker.md) | The container stack: what runs in Docker and what cannot, the three ways to reach a hypervisor, volumes, secrets, upgrades |
 | [docs/roadmap.md](docs/roadmap.md) | What is verified, what is planned, and what is explicitly out of scope |
 
 ## Repo layout
@@ -79,24 +96,32 @@ make serve
 OnTrak/
 ├── catalog/                   # workload manifests: Windows, Server, Office, Linux
 ├── config/                    # configuration (ontrak.yaml + gitignored local.yaml)
-├── deploy/guacamole/          # browser-console gateway (HTML5 RDP)
+├── docker/                    # container entrypoint (docker-compose.yml is at the root)
+├── deploy/guacamole/          # browser-console gateway (HTML5 RDP), standalone deployment
 ├── docs/                      # architecture, catalog, scenarios, operations, stack, roadmap
 ├── infra/                     # host bootstrap, golden-image and template builds, workload images
 ├── ontrak/                    # the platform: catalog, sessions, scoring, portal, CLI
-├── scenarios/                 # scenarios (scenario.yaml + setup.ps1 + check.ps1) and the shared guest library
+├── scenarios/                 # scenarios (scenario.yaml + setup.ps1/check.sh) and the shared guest library
 ├── scripts/setup.sh           # bootstrap: hooks, venv, dependencies, .env
+├── scripts/secrets.sh         # idempotent local secrets: .env blanks only, never a set value
 ├── tests/                     # pytest suite
 ├── web/landing/               # static GitHub Pages landing
+├── docker-compose.yml         # the stack: portal + Guacamole gateway (+ .incus.yml overlay)
+├── Dockerfile                 # the portal image
 ├── .githooks/                 # attribution guard (commit-msg, pre-commit, guard-lib)
 └── .github/workflows/         # CI, attribution guard, Pages
 ```
 
 ## Status
 
-- **Verified here:** the Python control plane — `pytest` (210 tests collected, 1 skipped
+- **Verified here:** the Python control plane — `pytest` (280 tests, 1 skipped
   where the host lacks a tool it needs), `ruff` clean, scenario validation, catalog
-  validation, the CLI, demo mode end to end, generated scenarios validated, and the
-  Guacamole link format cross-checked against the `openssl` CLI.
+  validation, the CLI, demo mode end to end, generated scenarios validated, the admin
+  panel rendering without a reachable hypervisor, and the Guacamole link format
+  cross-checked against the `openssl` CLI.
+- **Verified in Docker:** the image builds, `docker compose config` validates, the portal
+  and the console gateway both report healthy, a whole class runs inside the image
+  (`make docker-demo`), and the admin panel serves every page with no Incus socket at all.
 - **Guest scripts:** every `scenarios/**/*.ps1` and `infra/**/*.ps1` parses under PowerShell 7
   (checked by CI, and locally with `pwsh`).
 - **Reviewed but not proven in this repository:** the Windows, Incus, ZFS and Guacamole
@@ -115,7 +140,7 @@ referenced by the infrastructure scripts (`antifob/incus-windows`, the Incus ima
 Guacamole, guacd) keep their own licences, which apply to their output, not to this
 repository. No upstream source is vendored or re-licensed here.
 
-*OnTrak — support training range. © 2026 Innotel Inc*
+*OnTrak — IT support training range, powered by Innotel. © 2026 Innotel Inc*
 
 ## 🏛️ Platform stack
 

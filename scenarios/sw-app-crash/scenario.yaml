@@ -12,6 +12,52 @@ ticket:
   priority: "Medium"
   channel: "Walk-up"
   reported: "After the power cut"
+  form:
+    title: Incident write-up — CRM client will not start
+    intro: >
+      Dana wants the app back, and the next person who touches this machine wants to
+      know why it broke. Both are on you, and both are marked.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom, in your own words
+        kind: textarea
+        weight: 15
+        min_words: 8
+        placeholder: "What the shortcut did, and what the log said."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [config, json, lock, registry, override, corrupt, crash]
+        none_of: ["reinstall windows", "the power cut broke the disk"]
+        hint: "This app fails twice over. Name both causes, not just the first."
+      - id: category
+        label: Classification
+        kind: select
+        weight: 15
+        options:
+          - Software configuration
+          - Driver and device
+          - Network
+          - Permissions
+          - Account
+        expected: Software configuration
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 25
+        min_words: 8
+        any_of: [config.json, config, registry, lock, corrected, fixed, updated, deleted]
+        hint: "Fixing the file is not enough on its own — think about where the app reads from."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [selftest, self-test, log, SELFTEST OK, shortcut, ConvertFrom-Json, launched]
+        hint: "The app can test itself. Say what its own check reported."
 
 briefing: |
   The CRM client on WORKSTATION-208 refuses to start. Dana clicks the desktop

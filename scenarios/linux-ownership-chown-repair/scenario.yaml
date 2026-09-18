@@ -1,0 +1,108 @@
+id: linux-ownership-chown-repair
+title: "The web app runs but cannot write anything"
+category: software
+platform: linux
+workloads: [ubuntu-24.04, debian-12]
+difficulty: 2
+minutes: 25
+pass_score: 80
+tags: [linux, ownership, chown, chgrp, services, cli]
+requires_internet: false
+lessons: [linux-ownership, linux-permissions, linux-users-and-groups]
+
+ticket:
+  from: "Marco Silva (Web team)"
+  system: "www-01 (Ubuntu)"
+  priority: "Medium"
+  channel: "Chat"
+  reported: "Since the rebuild"
+  form:
+    title: Incident write-up — service cannot write its own directories
+    intro: >
+      The web team is asking why the service account "lost" its access. Answer in
+      terms of ownership, not permissions, and say how you proved it.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom
+        kind: textarea
+        weight: 15
+        min_words: 8
+        placeholder: "What the application did, and what the logs said."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [ownership, owner, chown, group, root]
+        none_of: ["reinstall", "chmod 777", "selinux"]
+        hint: "The service ran as a different account than the one that owns the files."
+      - id: category
+        label: Classification
+        kind: select
+        weight: 15
+        options:
+          - Ownership
+          - File permissions
+          - Disk space
+          - Network
+          - Account
+        expected: Ownership
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 25
+        min_words: 8
+        all_of: [chown]
+        hint: "Include the recursion, and the --from= so a re-run cannot touch files you did not intend to move."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [find, stat, wrote, uploaded, www-data]
+        hint: "Ownership is verified with find/stat, not by refreshing a page."
+
+briefing: |
+  www-01 hosts the intranet site at /srv/www/site. Since the machine was rebuilt,
+  the application starts and serves pages, but uploads fail and the application log
+  has nothing in it after startup.
+
+  Everything in the site tree is owned by root. The service runs as www-data. The
+  log file the app writes to was created by the rebuild script as root, too.
+
+  A leftover archive in the uploads directory belongs to a uid that no longer exists
+  on this machine — a previous operator who has left.
+
+  Give the service the access it needs. Do not loosen permissions to achieve it:
+  the directory must stay world-traversable (755) so the reverse proxy can serve
+  static files, and no file under the site may become world-writable.
+
+objectives:
+  - id: site-owned-by-service
+    text: "/srv/www/site and everything below it is owned by www-data:www-data"
+    weight: 35
+    critical: true
+    hint: "chown -R, and `find /srv/www/site -not -user www-data` should come back empty."
+  - id: log-owned-by-service
+    text: "The application log is owned by www-data and not world-writable"
+    weight: 25
+    critical: true
+    hint: "The service appends to this file; root owning it is why the app went quiet."
+  - id: no-orphan-files
+    text: "No file in the site tree is owned by a uid that no longer exists"
+    weight: 20
+    hint: "`find /srv/www/site -nouser` lists them. Re-own or remove — the ticket does not care which."
+  - id: permissions-intact
+    text: "The site directory is still traversable (755) and no file is world-writable"
+    weight: 20
+    hint: "Ownership and permission are different repairs. Widening the mode is not the fix for this ticket."
+
+hints:
+  - "`ls -l /srv/www/site` and `ps -eo user,comm | grep nginx` tell you who owns it and who needs it."
+  - "The service account is www-data. The fix is to hand the tree to that account, not to open the tree to everyone."
+  - "`chown -R --from=root www-data:www-data /srv/www/site` is repeatable and cannot touch files you already fixed."
+
+reset_notes: |
+  Reset re-clones the clean snapshot: root ownership, the root-owned log and the
+  orphan archive all come back.

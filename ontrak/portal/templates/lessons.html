@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Command lessons</h1>
+<p class="muted">
+  Short, practical walkthroughs for the commands the scenarios expect you to know.
+  Every lesson ends with exercises and a one-line way to check your own answer — that
+  habit is the point of the page.
+</p>
+
+{% if problems %}
+  <div class="card error">
+    <h2>{{ problems|length }} lesson problem(s)</h2>
+    <ul>{% for problem in problems %}<li><code>{{ problem }}</code></li>{% endfor %}</ul>
+    <p class="muted small">A lesson with problems still reads fine; the note is here so authors see it.</p>
+  </div>
+{% endif %}
+
+{% for group in groups %}
+  <div class="card">
+    <h2>{{ group.platform|capitalize }}</h2>
+    <div class="cards">
+      {% for lesson in group.lessons %}
+        <a class="tile" href="/lessons/{{ lesson.id }}">
+          <h3>{{ lesson.title }}</h3>
+          <p class="muted small">{{ lesson.summary }}</p>
+          <p class="muted small">
+            {{ lesson.minutes }} min &middot; {{ lesson.commands }} commands &middot;
+            {{ lesson.exercises }} exercises
+            {% if lesson.prerequisites %}&middot; after
+              {% for prerequisite in lesson.prerequisites %}<code>{{ prerequisite }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+            {% endif %}
+          </p>
+          {% if lesson.tags %}<p class="tags">{% for tag in lesson.tags %}<span class="tag">{{ tag }}</span>{% endfor %}</p>{% endif %}
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+{% endfor %}
+
+{% if not groups %}
+  <p class="muted">No lessons are installed. Add YAML files under <code>lessons/</code>.</p>
+{% endif %}
+{% endblock %}

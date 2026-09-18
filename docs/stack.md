@@ -47,7 +47,8 @@ Canonical definition of the ecosystem:
 - Identity, secrets, DNS, TLS, storage replication, billing, telephony or edge routing.
   OnTrak calls the platform services for these or runs air-gapped without them.
 - The hypervisor. Incus is consumed as infrastructure (`infra/bootstrap-host.sh` prepares
-  the host); OnTrak does not wrap it.
+  the host); OnTrak does not wrap it, and the training machines are not containers — the
+  container stack carries the control plane only.
 - The browser-console gateway's upstream software: Guacamole and guacd are deployed from
   their own images (`deploy/guacamole/`), not forked or vendored.
 - Course content, assessment policy or student records of record. OnTrak stores results for
@@ -57,8 +58,9 @@ Canonical definition of the ecosystem:
 
 | Component | Technology | Job |
 | --- | --- | --- |
-| Control plane | Python 3.11+ (`ontrak/`) | Catalog, scenarios, sessions, scoring, CLI, portal |
-| Hypervisor | Incus on Ubuntu + KVM | Guest VMs (Windows, Linux desktop) and system containers (Linux server) |
+| Control plane | Python 3.11+ (`ontrak/`) | Catalog, scenarios, sessions, scoring, CLI, portal. Runs on the host (`make serve`) or as the `portal` container (`make up`) |
+| Container stack | Docker Compose (`docker-compose.yml`) | The control plane and the console gateway as services; host Incus reached over its socket when present (docs/docker.md) |
+| Hypervisor | Incus on Ubuntu + KVM | Guest VMs (Windows, Linux desktop) and system containers (Linux server). **Host infrastructure, never containerised** — a guest that must boot a real kernel and hold a driver fault is a VM |
 | Storage | ZFS or btrfs pool | Copy-on-write clones make reset and handout cheap |
 | Warm pool | `ontrak pool` / `ontrak schedule` | Pre-booted, unclaimed clones per scenario |
 | Console gateway | Apache Guacamole + guacd | HTML5 RDP into student machines with signed, encrypted single-session links |

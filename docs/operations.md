@@ -130,6 +130,11 @@ ontrak demo serve                                 # the portal, in demo mode
 It proves the lifecycle, the scoring and the UI. It does **not** prove the Windows path —
 the same caveat applies as everywhere else: `ontrak doctor` and one real template build.
 
+Running the platform itself in Docker (`make up`) changes none of this: the containers are
+the control plane and the console gateway, while the training machines stay Incus VMs on
+the host. See [docker.md](docker.md) for what is containerised, the three ways to reach a
+hypervisor, and the volume that holds the results.
+
 ## Before, during and after a class
 
 ### Before (10 minutes)
@@ -189,8 +194,8 @@ for the whole class: a cluster does not make a cold Windows boot faster.
 | Scenario edited | `make validate && .venv/bin/ontrak template build <id> --force` |
 | Templates regenerated | Pool VMs built from the old template keep running; end their sessions or let the reaper recycle them |
 | Leaked instances | `incus --project ontrak list` and delete anything that is not `tpl-*` or an active session; `ontrak stats` shows the state counts |
-| Control plane database | `state/ontrak.sqlite3` (WAL). Back it up if results matter; deleting it resets users/results, not VMs |
-| Logs | `journalctl -u incus`, `docker compose logs -f` in `deploy/guacamole`, and the portal's events table (`/instructor`, recent activity) |
+| Control plane database | `state/ontrak.sqlite3` (WAL) on the host, or the `ontrak-state` volume when the portal runs in Docker (`docker run --rm -v ontrak-state:/s alpine tar czf - -C /s . > ontrak-state.tgz`). Back it up if results matter; deleting it resets users/results, not VMs |
+| Logs | `journalctl -u incus`, `make logs` (or `docker compose logs -f`) for the stack, and the portal's events table (`/admin/audit`) |
 | Instructor passwords | `ontrak user add --username X --password Y --role instructor` |
 | Reclaim RAM fast | set `pool.targets` to 0, then `ontrak pool status` and delete pool VMs, or just stop them with `incus stop` |
 

@@ -1,0 +1,109 @@
+id: identity-directory-admin
+title: "Account administration: locks, groups and sessions"
+platform: linux
+category: identity
+difficulty: 2
+minutes: 20
+summary: >
+  Work the three identity tickets a service desk gets every week — an account locked
+  out, somebody moving team, and a session that should no longer be alive — against a
+  directory service, leaving an audit trail that shows what you did and why.
+tags: [identity, accounts, groups, sessions, audit, cli]
+objectives:
+  - Read an account's status, groups and failed attempts from the directory
+  - Unlock, disable and re-enable accounts, and understand when each is right
+  - Add and remove group membership without accidentally widening access
+  - Revoke a live session and record the reason
+prerequisites: [linux-users-and-groups]
+commands:
+  - command: "python3 lib/idp.py --state /var/lib/ontrak-idp/directory.json list-users"
+    what: Every account with its status, failed-attempt count and group memberships.
+  - command: "python3 lib/idp.py --state /var/lib/ontrak-idp/directory.json show-user aisha.khan"
+    what: One account in full, as the directory sees it.
+  - command: "python3 lib/idp.py --state <file> --actor helpdesk --reason 'user verified by phone' unlock aisha.khan"
+    what: Unlock an account and reset its failed attempts, recording who asked and why.
+  - command: "python3 lib/idp.py --state <file> lock aisha.khan"
+    what: Lock an account without deleting it — a security hold while an incident is investigated.
+  - command: "python3 lib/idp.py --state <file> disable c.nguyen --reason 'contract ended 2026-08-31'"
+    what: Disable an account for good (leaver, contractor expiry). Disabled is a status, not a lock.
+  - command: "python3 lib/idp.py --state <file> add-member marco.silva finance"
+    what: Add a group membership. Nothing else about the account changes.
+  - command: "python3 lib/idp.py --state <file> remove-member marco.silva warehouse"
+    what: Remove the membership that is no longer needed — least privilege is a removal, not a promise.
+  - command: "python3 lib/idp.py --state <file> list-sessions"
+    what: Live sessions with the device they were issued to.
+  - command: "python3 lib/idp.py --state <file> revoke-session aisha.khan-laptop --reason 'device not seen for 30 days'"
+    what: Kill one session by id. This is the step students most often forget.
+  - command: "python3 lib/idp.py --state <file> audit"
+    what: The last 20 changes with actor, action, target and reason — your evidence.
+  - command: "curl -s localhost:8081/users | jq '.[] | {id, status, groups}'"
+    what: The same data over HTTP, if the service is running. This is what a real integration would call.
+steps:
+  - title: Status is not the same as membership
+    body: >
+      A locked account keeps every group membership it had; it just cannot authenticate.
+      A disabled account is out of service entirely. An account whose memberships are
+      wrong is a third, separate problem — and the three have three different fixes.
+      Read the account before you change anything: the wrong fix here either leaves the
+      user unable to work or leaves access open.
+    command: "python3 lib/idp.py --state /var/lib/ontrak-idp/directory.json show-user aisha.khan"
+  - title: Unlocking is a fix; disabling is a decision
+    body: >
+      Lockouts from failed attempts are routine and are undone with an unlock, which
+      also clears the counter. Disabling is a deliberate removal of access (a leaver, an
+      expired contract) and should never be used to fix a typo'd password.
+    command: "python3 lib/idp.py --state <file> unlock aisha.khan --reason 'verified by phone'"
+  - title: Least privilege means removing the old one
+    body: >
+      When somebody moves team, the new membership is the visible half of the ticket.
+      The other half is that their old access goes away — otherwise access only ever
+      grows, and the audit becomes worthless. Name both in the same change.
+    command: "python3 lib/idp.py --state <file> remove-member marco.silva warehouse"
+  - title: Sessions outlive password changes
+    body: >
+      Changing a status or a password does not necessarily end a session that is already
+      open — a laptop that signed in last week stays signed in. If the ticket says the
+      device is gone, revoking the session is part of the job.
+    command: "python3 lib/idp.py --state <file> list-sessions"
+  - title: The audit trail is the deliverable
+    body: >
+      Every command above records an actor, an action, a target and a reason. Use
+      --reason for anything that grants or removes access: it is the difference between
+      "someone changed it" and a change you can defend a month later.
+    command: "python3 lib/idp.py --state <file> audit"
+exercises:
+  - id: unlock-with-evidence
+    prompt: >
+      Aisha Khan is locked out after failed attempts and has telephoned the service desk.
+      Unlock her account and show the audit entry that proves the change.
+    solution: |
+      python3 lib/idp.py --state /var/lib/ontrak-idp/directory.json \
+        --actor helpdesk --reason "caller verified: aisha.khan, staff id 4711" unlock aisha.khan
+      python3 lib/idp.py --state /var/lib/ontrak-idp/directory.json audit
+    verify: "python3 lib/idp.py --state /var/lib/ontrak-idp/directory.json show-user aisha.khan"
+  - id: team-move
+    prompt: >
+      Marco Silva moves to finance. He needs finance and must keep finance-reporting, but
+      must lose warehouse.
+    solution: |
+      python3 lib/idp.py --state <file> add-member marco.silva finance
+      python3 lib/idp.py --state <file> remove-member marco.silva warehouse
+    verify: "python3 lib/idp.py --state <file> show-user marco.silva"
+  - id: contractor-offboarding
+    prompt: >
+      A contractor's agreement ended last month and their account is still active in two
+      groups. Close it down and record why.
+    solution: |
+      python3 lib/idp.py --state <file> disable c.nguyen --reason "contract ended 2026-08-31"
+      python3 lib/idp.py --state <file> list-sessions
+    verify: "python3 lib/idp.py --state <file> list-users | grep c.nguyen"
+  - id: kill-the-stale-session
+    prompt: >
+      A laptop that has not been seen for a month still holds an active session for
+      Aisha Khan. End it.
+    solution: |
+      python3 lib/idp.py --state <file> list-sessions
+      python3 lib/idp.py --state <file> revoke-session <session-id> --reason "device not seen for 30 days"
+    verify: "python3 lib/idp.py --state <file> list-sessions"
+docs:
+  - "curl -s localhost:8081/healthz"

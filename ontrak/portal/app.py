@@ -30,10 +30,14 @@ from ..catalog import Catalog
 from ..config import Settings, load_settings
 from ..guest import build_driver
 from ..incus import IncusClient
+from ..lessons import LessonError, LessonRepository
 from ..models import SessionState
 from ..scenarios import ScenarioError, ScenarioRepository
 from ..sessions import SessionError, SessionManager
 from ..store import Store
+from ..tickets import missing_required
+from ..tickets import render_feedback as ticket_feedback
+from .admin import AdminContext, register_admin_routes
 
 HERE = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(HERE / "templates"))
@@ -52,6 +56,30 @@ def catalog_entry(catalog: Catalog, entry_id: str):
         return catalog.get(entry_id)
     except Exception:  # noqa: BLE001 - the console must still render
         return None
+
+
+def lesson_index(lessons: LessonRepository, platform: str | None = None) -> list[dict]:
+    """Lesson summaries for the index page, newest-skill-last within a platform."""
+    out = []
+    for lesson in lessons.list():
+        if platform and lesson.platform != platform:
+            continue
+        out.append(
+            {
+                "id": lesson.id,
+                "title": lesson.title,
+                "summary": lesson.summary,
+                "platform": lesson.platform,
+                "category": lesson.category,
+                "difficulty": lesson.difficulty,
+                "minutes": lesson.minutes,
+                "commands": len(lesson.commands),
+                "exercises": len(lesson.exercises),
+                "tags": list(lesson.tags),
+                "prerequisites": list(lesson.prerequisites),
+            }
+        )
+    return out
 
 
 def _workload_groups(catalog: Catalog) -> list[dict]:
@@ -200,6 +228,7 @@ def create_app(
     app.state.settings = settings
     app.state.store = Store(settings.db_path)
     app.state.repo = ScenarioRepository(settings.scenarios_dir)
+    app.state.lessons = LessonRepository(settings.lessons_dir)
     catalog = Catalog(settings.catalog_dir)
     app.state.catalog = catalog
 
@@ -229,6 +258,8 @@ def create_app(
     # results-only, so only the grade submitted at Complete & End is stored. Keeping
     # the last preview in process memory is what lets the page still show feedback.
     app.state.preview_reports: dict[int, object] = {}
+    # Write-up previews, same policy as the machine previews above: shown, never stored.
+    app.state.preview_tickets: dict[int, object] = {}
 
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
@@ -383,6 +414,19 @@ def create_app(
         # from process memory so the page still gives feedback without recording it.
         report = store.latest_report(session.id) if session.id else None
         preview = request.app.state.preview_reports.get(session.id or 0)
+        # The in-house ticket: the form to fill in, whatever the student has typed so
+        # far, and the mark from a preview (never from a stored submission — that is
+        # what Complete & End is for).
+        ticket_form = manager.ticket_form(scenario)
+        ticket_answers = store.ticket_draft(session.id or 0) if ticket_form else {}
+        ticket_preview = request.app.state.preview_tickets.get(session.id or 0)
+        submitted_ticket = store.latest_ticket(session.id) if session.id else None
+        if ticket_form is not None and submitted_ticket is not None:
+            ticket_rows = ticket_feedback(ticket_form, submitted_ticket)
+        elif ticket_form is not None and ticket_preview is not None:
+            ticket_rows = ticket_feedback(ticket_form, ticket_preview)
+        else:
+            ticket_rows = []
         return render(
             request,
             "session.html",
@@ -398,6 +442,11 @@ def create_app(
                 "time_limits": settings.session.time_limit_choices,
                 "workload": catalog_entry(request.app.state.catalog, session.workload),
                 "workloads": _workload_groups(request.app.state.catalog),
+                "ticket_form": ticket_form.public() if ticket_form else None,
+                "ticket_answers": ticket_answers,
+                "ticket_preview": ticket_preview,
+                "ticket_rows": ticket_rows,
+                "lessons": request.app.state.lessons.for_scenario(scenario.lessons),
             },
         )
 
@@ -447,12 +496,52 @@ def create_app(
             "use Complete & End to submit)",
         )
 
-    @app.post("/sessions/{session_id}/complete")
-    def session_complete(
-        request: Request, session_id: int, csrf: str = Form(""), user=Depends(require_user)
+    @app.post("/sessions/{session_id}/ticket")
+    async def session_ticket(
+        request: Request, session_id: int, user=Depends(require_user)
     ):
-        """The student is done: grade once, store the result, destroy the machine."""
-        _check_csrf(request, csrf)
+        """Save the in-house ticket as a draft, or grade a preview of it.
+
+        Nothing is recorded here: the written ticket is graded when the student hands
+        the session in, exactly like the machine state (see the results-only policy in
+        docs/architecture.md). The draft is kept so a reload does not lose the typing.
+        """
+        form_data = await request.form()
+        _check_csrf(request, str(form_data.get("csrf") or ""))
+        manager = request.app.state.manager
+        try:
+            session = load_session(request, user, session_id)
+        except SessionError as exc:
+            return redirect("/dashboard", request, str(exc))
+        ticket_form = manager.ticket_form_for(session)
+        if ticket_form is None:
+            return redirect(f"/sessions/{session_id}", request, "This scenario has no ticket form.")
+        values = {fld.id: str(form_data.get(fld.id) or "") for fld in ticket_form.fields}
+        manager.save_ticket_draft(session, values)
+        action = str(form_data.get("action") or "save")
+        if action != "preview":
+            return redirect(f"/sessions/{session_id}", request, "Ticket saved as a draft.")
+        grade = manager.grade_ticket(session, values)
+        request.app.state.preview_tickets[session_id] = grade
+        if grade is None:
+            return redirect(f"/sessions/{session_id}", request, "This scenario has no ticket form.")
+        return redirect(
+            f"/sessions/{session_id}",
+            request,
+            f"Write-up preview: {grade.summary_line()} (not recorded — it is marked with the "
+            "machine when you complete the session).",
+        )
+
+    @app.post("/sessions/{session_id}/complete")
+    async def session_complete(request: Request, session_id: int, user=Depends(require_user)):
+        """Hand the session in — or save/preview the write-up, from the same form.
+
+        The write-up lives in one HTML form with three submitting buttons (save,
+        preview, hand in), because nested forms are not a thing and duplicating every
+        field for a second button would be worse. ``action`` decides which one it was.
+        """
+        form_data = await request.form()
+        _check_csrf(request, str(form_data.get("csrf") or ""))
         manager = request.app.state.manager
         try:
             session = load_session(request, user, session_id)
@@ -460,8 +549,38 @@ def create_app(
             return redirect("/dashboard", request, str(exc))
         if session.state.is_terminal:
             return redirect(f"/results?session={session_id}", request, "That session is already closed.")
-        report = manager.complete(session)
+
+        ticket_form = manager.ticket_form_for(session)
+        values = None
+        if ticket_form is not None:
+            values = {fld.id: str(form_data.get(fld.id) or "") for fld in ticket_form.fields}
+            action = str(form_data.get("action") or "complete")
+            if action in {"save", "preview"}:
+                manager.save_ticket_draft(session, values)
+                if action == "save":
+                    return redirect(f"/sessions/{session_id}", request, "Write-up saved as a draft.")
+                preview_grade = manager.grade_ticket(session, values)
+                request.app.state.preview_tickets[session_id] = preview_grade
+                summary = preview_grade.summary_line() if preview_grade else "no rubric"
+                return redirect(
+                    f"/sessions/{session_id}",
+                    request,
+                    f"Write-up preview: {summary} (not recorded — it is marked with the "
+                    "machine when you hand the session in).",
+                )
+            # A blank required field is a submit-by-mistake, not a zero: send it back so
+            # the student loses nothing but a click.
+            missing = missing_required(ticket_form, values)
+            if missing:
+                manager.save_ticket_draft(session, values)
+                return redirect(
+                    f"/sessions/{session_id}",
+                    request,
+                    "Your write-up is missing: " + ", ".join(missing) + ". Nothing was submitted.",
+                )
+        report = manager.complete(session, values=values)
         request.app.state.preview_reports.pop(session_id, None)
+        request.app.state.preview_tickets.pop(session_id, None)
         if report.error:
             return redirect(f"/sessions/{session_id}", request, f"Could not grade: {report.error}")
         verdict = "passed" if report.resolved else "not passed"
@@ -574,6 +693,58 @@ def create_app(
         manager.end(session)
         return redirect("/dashboard", request, "Session ended and the machine was destroyed.")
 
+    # --------------------------------------------------------------- lessons --
+    @app.get("/lessons", response_class=HTMLResponse)
+    def lessons_index(request: Request, platform: str = "", user=Depends(require_user)):
+        """The walkthrough library.
+
+        Available to students *and* instructors, and reachable from the dashboard and
+        from any session: the moment a student wants to know how chmod works is the
+        moment they are staring at a broken machine, not before.
+        """
+        repository = request.app.state.lessons
+        grouped = repository.by_platform()
+        return render(
+            request,
+            "lessons.html",
+            {
+                "groups": [
+                    {
+                        "platform": key,
+                        "lessons": lesson_index(repository, key),
+                    }
+                    for key in sorted(grouped)
+                ],
+                "selected": platform,
+                "problems": repository.validate(),
+            },
+        )
+
+    @app.get("/lessons/{lesson_id}", response_class=HTMLResponse)
+    def lesson_page(request: Request, lesson_id: str, user=Depends(require_user)):
+        repository = request.app.state.lessons
+        try:
+            lesson = repository.get(lesson_id)
+        except LessonError as exc:
+            return redirect("/lessons", request, str(exc))
+        # Which scenarios this lesson is the walkthrough for — the other direction of
+        # the link, so a student can go straight from learning to doing.
+        related = [
+            scenario
+            for scenario in request.app.state.repo.list()
+            if lesson.id in scenario.lessons
+        ]
+        return render(
+            request,
+            "lesson.html",
+            {
+                "lesson": lesson,
+                "prerequisites": repository.for_scenario(lesson.prerequisites),
+                "related": related,
+                "shell_block": lesson.all_shell(),
+            },
+        )
+
     # ------------------------------------------------------------ instructor --
     @app.get("/instructor", response_class=HTMLResponse)
     def instructor(request: Request, user=Depends(require_instructor)):
@@ -613,21 +784,27 @@ def create_app(
 
     @app.post("/instructor/prewarm")
     def instructor_prewarm(
-        request: Request, scenario_id: str = Form(...), count: int = Form(5), csrf: str = Form(""),
-        user=Depends(require_instructor),
+        request: Request, scenario_id: str = Form(...), count: int = Form(5),
+        workload: str = Form(""), csrf: str = Form(""), user=Depends(require_instructor),
     ):
         _check_csrf(request, csrf)
-        created = request.app.state.manager.prewarm(scenario_id, max(0, min(count, 200)))
-        return redirect("/instructor", request, f"Started {created} VM(s) for {scenario_id}.")
+        created = request.app.state.manager.prewarm(
+            scenario_id, max(0, min(count, 200)), workload=workload
+        )
+        label = f"{scenario_id}@{workload}" if workload else scenario_id
+        return redirect("/instructor", request, f"Started {created} VM(s) for {label}.")
 
     @app.post("/instructor/template")
     def instructor_template(
-        request: Request, scenario_id: str = Form(...), force: bool = Form(False), csrf: str = Form(""),
-        user=Depends(require_instructor),
+        request: Request, scenario_id: str = Form(...), force: bool = Form(False),
+        workload: str = Form(""), csrf: str = Form(""), user=Depends(require_instructor),
     ):
         _check_csrf(request, csrf)
-        results = request.app.state.manager.build_templates([scenario_id], force=force)
-        return redirect("/instructor", request, f"{scenario_id}: {results.get(scenario_id, '?')}")
+        results = request.app.state.manager.build_templates(
+            [scenario_id], force=force, workloads=[workload] if workload else None
+        )
+        key = f"{scenario_id}@{workload}" if workload else scenario_id
+        return redirect("/instructor", request, f"{key}: {results.get(key, '?')}")
 
     @app.get("/instructor/results.csv")
     def instructor_csv(request: Request, user=Depends(require_instructor)):
@@ -644,6 +821,31 @@ def create_app(
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=ontrak-results.csv"},
         )
+
+    # ---------------------------------------------------------------- admin --
+    # The education-administration surface: users, the scenario and platform
+    # catalogue, tickets, sessions, the schedule, results and the audit trail. Kept
+    # in its own module because it is a different job from running a class.
+    register_admin_routes(
+        app,
+        AdminContext(
+            settings=settings,
+            store=app.state.store,
+            repo=app.state.repo,
+            catalog=catalog,
+            lessons=app.state.lessons,
+            manager=app.state.manager,
+            render=render,
+            redirect=redirect,
+            require_instructor=require_instructor,
+            check_csrf=_check_csrf,
+            csrf_token=_csrf_token,
+            session_link=_session_link,
+            workload_groups=_workload_groups,
+            catalog_entry=catalog_entry,
+            lesson_index=lesson_index,
+        ),
+    )
 
     @app.get("/instructor/sessions/{session_id}/console")
     def instructor_console(request: Request, session_id: int, user=Depends(require_instructor)):

@@ -62,14 +62,63 @@ class IncusConfig:
         safe = "-".join(s for s in slugs if s)
         return f"{slugify(kind)}-{safe}" if safe else slugify(kind)
 
-    def template_name(self, scenario_id: str) -> str:
-        return self.instance_name(self.template_prefix, scenario_id)
+    # Templates and pooled VMs are keyed by (scenario, workload): the same fault on
+    # Windows 11 and on Ubuntu are different machines with different images, so they
+    # need different names. An empty workload means "the site's golden image", which is
+    # how scenarios that do not name a platform keep working.
+    def template_name(self, scenario_id: str, workload: str = "") -> str:
+        return self.instance_name(self.template_prefix, scenario_id, workload or "")
 
-    def pool_name(self, scenario_id: str, index: int) -> str:
-        return self.instance_name(self.pool_prefix, scenario_id, str(index))
+    def pool_name(self, scenario_id: str, index: int | str, workload: str = "") -> str:
+        return self.instance_name(self.pool_prefix, scenario_id, workload or "", str(index))
 
-    def session_name(self, scenario_id: str, session_id: int | str) -> str:
-        return self.instance_name(self.session_prefix, scenario_id, str(session_id))
+    def session_name(self, scenario_id: str, session_id: int | str, workload: str = "") -> str:
+        return self.instance_name(self.session_prefix, scenario_id, workload or "", str(session_id))
+
+    def parse_template_name(self, name: str) -> tuple[str, str]:
+        """Inverse of :meth:`template_name`: ``tpl-<scenario>[-<workload>]``.
+
+        Used by the reaper and by the pool views, which see instance names and have to
+        work out which scenario-and-workload pair a machine belongs to. Scenarios whose
+        own id ends in a known workload id cannot be distinguished by name alone, so the
+        caller passes the known ids and we take the longest match.
+        """
+        return self._split_suffix(name, self.template_prefix)
+
+    def parse_pool_name(self, name: str) -> tuple[str, str, int] | None:
+        """``ontrak-pool-<scenario>[-<workload>]-<n>`` -> ``(scenario, workload, n)``."""
+        prefix = f"{slugify(self.pool_prefix)}-"
+        if not name.startswith(prefix):
+            return None
+        rest = name[len(prefix) :]
+        index_text, _, remainder = rest.rpartition("-")
+        if not remainder.isdigit():
+            return None
+        scenario, workload = self._split_suffix(index_text, "")
+        return scenario, workload, int(remainder)
+
+    def _split_suffix(self, name: str, prefix: str) -> tuple[str, str]:
+        text = name
+        if prefix:
+            head = f"{slugify(prefix)}-"
+            if text.startswith(head):
+                text = text[len(head) :]
+        # Instance names are slugified (git-style, dash-separated) while catalog ids
+        # keep their dots — "ubuntu-24.04" becomes ``ubuntu-24-04`` in a name. Matching
+        # on the slug and returning the original id is what keeps ``pool-x-ubuntu-24-04-1``
+        # attributable to the catalog entry it was built from.
+        candidates = sorted(
+            ((slugify(w), w) for w in self.known_workloads if w), key=lambda pair: len(pair[0]),
+            reverse=True,
+        )
+        for slug, workload in candidates:
+            if slug and text.endswith(f"-{slug}"):
+                return text[: -len(slug) - 1], workload
+        return text, ""
+
+    # Populated by the session manager from the catalog so name parsing stays a
+    # string operation with no import cycle.
+    known_workloads: tuple[str, ...] = ()
 
 
 @dataclass
@@ -85,6 +134,20 @@ class GuestConfig:
     boot_timeout_seconds: int = 300
     ready_timeout_seconds: int = 420
     static_host: str = ""
+
+    # -- Linux guests -------------------------------------------------------
+    # incus-shell (default): run inside the guest through the Incus agent, so no
+    # sshd, key material or extra port is needed. ssh: for machines OnTrak does not
+    # run on Incus, key-based only.
+    linux_driver: str = "incus-shell"
+    # The account shell scripts run as. Root is the honest default: grading reads
+    # things an unprivileged user cannot see (/etc/shadow, /etc/sudoers, ownership),
+    # and the guest is a disposable lab machine.
+    linux_user: str = "root"
+    linux_work_dir: str = "/var/lib/ontrak"
+    linux_ready_timeout_seconds: int = 180
+    ssh_port: int = 22
+    ssh_key: str = ""
     work_dir: str = r"C:\ProgramData\OnTrak"
 
 
@@ -152,7 +215,18 @@ class PoolConfig:
     refill_interval_seconds: int = 120
     claim_timeout_seconds: int = 90
 
-    def target_for(self, scenario_id: str) -> int:
+    def target_for(self, scenario_id: str, workload: str = "") -> int:
+        """Warm-pool target for a (scenario, workload) pair.
+
+        The explicit ``<scenario>@<workload>`` key wins, then the plain scenario key,
+        then ``default_target``. That ordering is what lets a site say "30 Windows 11
+        DNS machines, but only 5 of them on Ubuntu" without two config blocks per
+        scenario.
+        """
+        if workload:
+            label = f"{scenario_id}@{workload}"
+            if label in self.targets:
+                return int(self.targets[label])
         return int(self.targets.get(scenario_id, self.default_target))
 
 
@@ -187,7 +261,7 @@ class PortalConfig:
     title: str = "OnTrak"
     admin_user: str = "instructor"
     admin_password: str = ""
-    brand_note: str = "Tech support training range"
+    brand_note: str = "IT support training range — powered by Innotel OnTrak"
     allow_self_reset: bool = True
     hints_require_attempt: bool = True
 
@@ -201,6 +275,8 @@ class PathsConfig:
     # Installation media: free media is downloaded here, licensed media is placed
     # here by the operator. Gitignored either way.
     media: str = "media"
+    # Command walkthroughs a scenario can point a student at (see docs/lessons.md).
+    lessons: str = "lessons"
 
 
 @dataclass
@@ -237,6 +313,10 @@ class Settings:
     @property
     def media_dir(self) -> Path:
         return self._path(self.paths.media)
+
+    @property
+    def lessons_dir(self) -> Path:
+        return self._path(self.paths.lessons)
 
     @property
     def db_path(self) -> Path:

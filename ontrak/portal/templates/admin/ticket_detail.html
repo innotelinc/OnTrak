@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Ticket — session #{{ session.id if session else "?" }}</h1>
+<p class="muted">
+  {% if scenario %}{{ scenario.title }} <span class="muted small">({{ scenario.id }})</span>{% endif %}
+  &middot; {{ session.student if session else "" }}
+  &middot; <span class="badge state-{{ session.state.value }}">{{ session.state.value if session else "" }}</span>
+</p>
+{% include "admin/_nav.html" %}
+
+{% if grade %}
+  <div class="card {{ "notice" if grade.score >= (form.pass_score if form else 60) else "error" }}">
+    <h2>Marked {{ "%.0f%%"|format(grade.score) }}{% if form %} (pass mark {{ form.pass_score|int }}%){% endif %}</h2>
+    <p class="muted small">
+      {{ grade.passed_count }} of {{ grade.outcomes|length }} fields passed
+      {% if not grade.submitted %} &middot; nothing was written, so the whole ticket scored zero{% endif %}
+      &middot; marked {{ grade.created_at }}
+    </p>
+    {% for note in grade.notes %}<p class="muted small">{{ note }}</p>{% endfor %}
+  </div>
+{% else %}
+  <div class="card notice">
+    <h2>No marked ticket</h2>
+    <p class="muted small">Either this scenario has no ticket form, or the session was never completed.</p>
+  </div>
+{% endif %}
+
+{% if form %}
+<div class="card">
+  <h2>{{ form.title }}</h2>
+  <p class="muted small">{{ form.intro }}</p>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>What the student wrote</h2>
+  {% if form %}
+    {% for field in form.fields %}
+      {% set outcome = (grade.outcomes | selectattr("field_id", "equalto", field.id) | list | first) if grade else None %}
+      <div class="field {% if outcome and outcome.passed %}done{% elif outcome %}failed{% endif %}">
+        <h3>
+          {{ field.label_or_id }}
+          <span class="weight">{{ field.weight|int }} pts</span>
+          {% if outcome %}<span class="mark">{% if outcome.passed %}✓{% else %}✗{% endif %}</span>{% endif %}
+        </h3>
+        <pre class="answer">{{ answers.get(field.id, "(blank)") }}</pre>
+        {% if outcome and outcome.detail %}<p class="detail">{{ outcome.detail }}</p>{% endif %}
+        {% if outcome and not outcome.passed and field.hint %}<p class="hint">Hint given: {{ field.hint }}</p>{% endif %}
+      </div>
+    {% endfor %}
+  {% else %}
+    <p class="muted">This scenario declares no ticket form; the machine state was the whole grade.</p>
+  {% endif %}
+</div>
+
+{% if text %}
+<div class="card">
+  <h2>Marked copy, as the student sees it</h2>
+  <pre class="cmd">{{ text }}</pre>
+</div>
+{% endif %}
+
+{% if attempts|length > 1 %}
+<div class="card">
+  <h2>Attempts ({{ attempts|length }})</h2>
+  <table class="grid">
+    <tr><th>marked at</th><th>score</th><th>submitted</th></tr>
+    {% for attempt in attempts %}
+      <tr>
+        <td class="muted small">{{ attempt.created_at }}</td>
+        <td>{{ "%.0f%%"|format(attempt.score) }}</td>
+        <td>{% if attempt.submitted %}yes{% else %}no{% endif %}</td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Session</h2>
+  <p><a href="/admin/sessions?student={{ session.student if session else "" }}">All of this student's sessions</a></p>
+</div>
+{% endblock %}

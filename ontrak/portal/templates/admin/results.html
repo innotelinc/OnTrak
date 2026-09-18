@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Results</h1>
+<p class="muted">
+  The marking record: one row per submission, with the machine score and the ticket score
+  kept apart so a weak write-up on a fixed machine is visible rather than averaged away.
+</p>
+{% include "admin/_nav.html" %}
+
+<div class="card">
+  <h2>Submissions <a class="button secondary" href="/admin/results.csv">Export CSV</a></h2>
+  <table class="grid">
+    <tr><th>student</th><th>scenario</th><th>machine</th><th>ticket</th><th>ticket weight</th><th>final</th><th>resolved</th><th>submitted</th></tr>
+    {% for row in rows %}
+      {% set report = row.report %}
+      <tr>
+        <td>{{ row.student }}</td>
+        <td>
+          {{ scenarios.get(report.scenario_id).title if scenarios.get(report.scenario_id) else report.scenario_id }}
+          <div class="muted small"><code>{{ report.scenario_id }}</code></div>
+        </td>
+        <td>{{ "%.0f%%"|format(report.machine_score) }}</td>
+        <td>
+          {% if report.ticket_score is not none %}
+            {{ "%.0f%%"|format(report.ticket_score) }}
+          {% else %}<span class="muted small">n/a</span>{% endif %}
+        </td>
+        <td class="muted small">{{ report.ticket_weight|int }}%</td>
+        <td><strong>{{ "%.0f%%"|format(report.score) }}</strong></td>
+        <td>
+          {% if report.resolved %}<span class="badge ok">yes</span>{% else %}<span class="badge warn">no</span>{% endif %}
+        </td>
+        <td class="muted small">{{ row.submitted_at }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+  {% if not rows %}
+    <p class="muted">Nothing submitted yet.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Best score per student and scenario</h2>
+  <table class="grid">
+    <tr><th>student</th><th>scenario</th><th>best</th><th>attempts</th><th>resolved</th></tr>
+    {% for item in leaderboard %}
+      <tr>
+        <td>{{ item["student"] }}</td>
+        <td>{{ item["scenario_id"] }}</td>
+        <td>{{ "%.0f%%"|format(item["best"]) }}</td>
+        <td>{{ item["attempts"] }}</td>
+        <td>{% if item["solved"] %}<span class="badge ok">yes</span>{% else %}<span class="badge warn">no</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card">
+  <h2>How a grade is made</h2>
+  <p class="muted small">
+    <code>final = machine × (1 − ticket_weight) + ticket × ticket_weight</code>, where the
+    ticket weight comes from the scenario's <code>ticket.form.weight</code>. A scenario
+    without a ticket form is graded on machine state alone, and a scenario where the
+    machine could not be graded at all stays at zero however good the write-up is.
+  </p>
+</div>
+{% endblock %}

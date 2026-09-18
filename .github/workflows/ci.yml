@@ -3,7 +3,8 @@
 #
 # The repo is maintained at zero findings: structure and landing stay conformant,
 # the Python control plane is linted and tested, every scenario and catalog manifest
-# is validated, the guest PowerShell parses, and the compose stack renders.
+# is validated, the guest PowerShell parses, the compose stacks render, and the
+# container image builds and serves the portal.
 # The attribution guard lives in its own workflow.
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -178,6 +179,18 @@ jobs:
           done
           echo "shell: ok"
 
+      - name: The root stack renders
+        run: |
+          set -euo pipefail
+          # The stack marks its two shared secrets required, so a copied .env fails
+          # loudly instead of booting a portal whose console key does not match the
+          # gateway's. Render the way an operator actually starts it: generated keys.
+          bash scripts/secrets.sh .env.ci >/dev/null
+          docker compose --env-file .env.ci config --quiet
+          docker compose --env-file .env.ci -f docker-compose.yml -f docker-compose.incus.yml config --quiet
+          rm -f .env.ci
+          echo "root stack: ok"
+
       - name: Compose config renders
         run: |
           set -euo pipefail
@@ -190,3 +203,45 @@ jobs:
           JSON_SECRET_KEY="$(openssl rand -hex 16)" docker compose config --quiet
           rm -f .env
           echo "compose: ok"
+
+  docker:
+    name: Container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the portal image
+        run: docker build -t ontrak:ci .
+
+      - name: A whole class runs inside the image
+        run: |
+          set -euo pipefail
+          # The image has to be useful with no hypervisor, no Windows and no secrets:
+          # demo mode is the one path every host can always run.
+          docker run --rm ontrak:ci demo run --students 3
+
+      - name: The portal boots and answers
+        run: |
+          set -euo pipefail
+          docker run -d --name ontrak-ci -p 18080:8080 \
+            -e ONTRAK_PORTAL__SECRET=ci-only-secret \
+            -e ONTRAK_PORTAL__ADMIN_PASSWORD=ci-only-admin \
+            -e ONTRAK_GUAC__SECRET_KEY="$(openssl rand -hex 16)" \
+            -e ONTRAK_DEMO__ENABLED=true \
+            ontrak:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:18080/healthz
+          curl -fsS -o /dev/null -w 'login page: %{http_code}\n' http://127.0.0.1:18080/login
+          echo '--- container log ---'
+          docker logs ontrak-ci 2>&1 | tail -20
+
+      - name: Container log on failure
+        if: failure()
+        run: docker logs ontrak-ci 2>&1 | tail -50 || true
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f ontrak-ci || true

@@ -37,3 +37,6 @@ build-*/
 
 # guacamole session recordings (large, and they show a student's screen)
 deploy/guacamole/recordings/
+
+# compose env check (generated, never committed)
+.env.compose-check

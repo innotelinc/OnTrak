@@ -12,15 +12,28 @@ from ontrak.incus import IncusError, IncusNotFound, InstanceInfo
 
 
 class FakeIncus:
-    def __init__(self, image_alias: str = "ontrak-win-base", image_present: bool = True):
+    def __init__(
+        self,
+        image_alias: str = "ontrak-win-base",
+        image_present: bool = True,
+        images: set[str] | None = None,
+    ):
         self.image_alias = image_alias
         self.image_present = image_present
+        # Workload images published beyond the site's golden one: a Linux scenario names
+        # an image alias from the catalog, and the template build refuses to run until
+        # that image exists.
+        self.images: set[str] = set(images or ())
         self.instances: dict[str, dict] = {}
         self.snapshots: dict[str, set[str]] = {}
         self.calls: list[tuple] = []
         self.devices: list[tuple] = []
         self.configs: list[tuple] = []
         self._ip_counter = 100
+
+    def add_image(self, alias: str, present: bool = True) -> None:
+        if present:
+            self.images.add(alias)
 
     # -- test utilities -------------------------------------------------
     def add_instance(self, name: str, running: bool = True, ip: str = "", snapshots=()) -> None:
@@ -69,7 +82,12 @@ class FakeIncus:
         return snapshot in self.snapshots.get(instance, set())
 
     def image_exists(self, alias: str) -> bool:
+        if alias in self.images:
+            return True
         return self.image_present and alias == self.image_alias
+
+    def image_aliases(self) -> list[str]:
+        return sorted(self.images | {self.image_alias})
 
     def create_instance(self, name: str, image: str, profiles=None) -> None:
         self.calls.append(("create_instance", name, image, tuple(profiles or ())))

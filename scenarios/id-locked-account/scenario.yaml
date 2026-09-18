@@ -1,0 +1,105 @@
+id: id-locked-account
+title: A locked-out analyst during the month-end close
+category: identity
+platform: linux
+workloads: [ubuntu-24.04, debian-12]
+difficulty: 2
+minutes: 25
+pass_score: 80
+tags: [identity, accounts, lockout, sessions, audit, cli]
+requires_internet: false
+lessons: [identity-directory-admin, linux-users-and-groups]
+
+ticket:
+  from: "Aisha Khan (Finance)"
+  system: "sso-01 (directory service)"
+  priority: "High"
+  channel: "Phone"
+  reported: "This morning, repeatedly"
+  form:
+    title: Incident write-up — account lockout
+    intro: >
+      Identity changes are audited. Write the ticket as the record of a change you would
+      be happy to defend in a review: what the user reported, what you verified, what you
+      changed, and how you know it worked.
+    weight: 35
+    fields:
+      - id: symptom
+        label: Reported symptom
+        kind: textarea
+        weight: 15
+        min_words: 8
+      - id: verification_of_identity
+        label: How you verified the caller's identity before changing access
+        kind: textarea
+        weight: 25
+        min_words: 6
+        any_of: [staff id, directory, manager, callback, verified, known, employee number]
+        none_of: ["they said", "seemed fine", "assumed"]
+        hint: "Unlocking on an unverified request is how social engineering works. Say what you checked."
+      - id: root_cause
+        label: Why the account was locked
+        kind: textarea
+        weight: 20
+        min_words: 6
+        any_of: [failed attempts, lockout, threshold, wrong password, sign-in attempts]
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 25
+        min_words: 8
+        all_of: [unlock]
+        any_of: [session, revoke]
+        hint: "The lockout is one change; the stale session is a second one."
+      - id: evidence
+        label: Evidence the account is usable and no session is left open
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [show-user, status, list-sessions, audit, active]
+
+briefing: |
+  Aisha Khan, in Finance, cannot sign in this morning. The user portal says her account
+  is locked, and she is on deadline for the month-end close.
+
+  Your service desk has the machine sso-01, which runs the lab directory service. Its
+  CLI is at lib/idp.py and the directory state is /var/lib/ontrak-idp/directory.json
+  (the service also answers on http://localhost:8081 if it is running).
+
+  Two things are reported:
+
+    1. Her account is locked and she needs to sign in today.
+    2. Her old work laptop, which she returned last month, still appears to be signed in.
+
+  Unlock the account, end the stale session, and leave a reason on the change. Do not
+  change her group memberships — she still needs the access she had.
+
+objectives:
+  - id: account-unlocked
+    text: "The account is active again, with its failed sign-in count cleared"
+    weight: 35
+    critical: true
+    hint: "A lockout is cleared by an unlock, not by recreating the account — that would lose her memberships."
+  - id: memberships-intact
+    text: "The account still belongs to finance and finance-reporting"
+    weight: 20
+    hint: "`list-users` shows memberships. If they are gone, something else was done to the account."
+  - id: stale-session-revoked
+    text: "No active session remains for the account"
+    weight: 25
+    critical: true
+    hint: "`list-sessions` shows sessions with the device they were issued to. Ending one is `revoke-session`."
+  - id: change-audited
+    text: "The unlock is recorded in the audit log with a reason"
+    weight: 20
+    hint: "Every directory change records an actor, an action, a target and a reason. Pass --reason."
+
+hints:
+  - "Read before you write: `lib/idp.py list-users`, `show-user aisha.khan`, `list-sessions`."
+  - "The unlock also resets the failed-attempt counter, which is what stops it re-locking immediately."
+  - "The laptop session is a separate record from the account. Unlocking does not end it."
+  - "`lib/idp.py audit` shows what your changes recorded — if it is not in there, it did not happen."
+
+reset_notes: |
+  Reset re-clones the clean snapshot: the directory is seeded and the account is locked
+  again, with the stale laptop session back.

@@ -13,6 +13,53 @@ ticket:
   priority: "High"
   channel: "Phone"
   reported: "Since this morning"
+  form:
+    title: Incident write-up — name resolution
+    intro: >
+      The service desk asks every ticket to end with the same three lines: what was
+      wrong, what you changed, and how you proved it. They are what the next
+      technician reads, and they are marked.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom, in your own words
+        kind: textarea
+        weight: 15
+        min_words: 8
+        placeholder: "What Priya reported, and what you saw when you looked."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [dns, resolver, name resolution, static, nameserver]
+        none_of: ["reinstall windows", "the file server was down"]
+        hint: "Name the mechanism — where the name lookup was being sent, and why."
+      - id: category
+        label: Classification
+        kind: select
+        weight: 15
+        options:
+          - Network
+          - Driver and device
+          - Permissions
+          - Software configuration
+          - Account
+        expected: Network
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 25
+        min_words: 8
+        any_of: [dhcp, ipconfig, renew, automatic, Set-DnsClientServerAddress, obtain]
+        hint: "The command, and the state you left the adapter in."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [nslookup, Resolve-DnsName, ping, ipconfig, fileserver.ontrak.lab, resolved]
+        hint: "A name that resolves and a service that answers are two different proofs."
 
 briefing: |
   Priya sits at WORKSTATION-042 and can no longer open the shared drive or the

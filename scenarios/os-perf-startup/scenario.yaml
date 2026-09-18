@@ -12,6 +12,52 @@ ticket:
   priority: "Medium"
   channel: "Email"
   reported: "Getting worse over a week"
+  form:
+    title: Incident write-up — slow boot and no printing
+    intro: >
+      Sam is convinced the machine is dying and a hardware check says otherwise, so
+      the write-up is what stops this being a mystery next week.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom, in your own words
+        kind: textarea
+        weight: 15
+        min_words: 8
+        placeholder: "How long a boot took, and what else was affected."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [startup, run key, scheduled task, persistence, speed booster, spooler]
+        none_of: ["reinstall windows", "the hardware", "old machine"]
+        hint: "There is more than one cause here. Name the one you can also explain."
+      - id: category
+        label: Classification
+        kind: select
+        weight: 15
+        options:
+          - Startup and services
+          - Driver and device
+          - Network
+          - Permissions
+          - Malware
+        expected: Startup and services
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 25
+        min_words: 8
+        any_of: [removed, delete, deleted, disabled, uninstalled, stopping, stopped, spooler]
+        hint: "Stopping a program is not removing it — say which one you did."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [Task Manager, Get-Process, CPU, load, Get-Service, Spooler, reboot, print]
+        hint: "Both halves need proving: the load and the printer."
 
 briefing: |
   Sam's machine takes about ten minutes to become usable after boot, and even

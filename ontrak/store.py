@@ -17,6 +17,7 @@ from typing import Any
 
 from .auth import hash_password, verify_password
 from .models import ScoreReport, Session, SessionState, iso
+from .tickets import TicketGrade
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -72,6 +73,24 @@ CREATE TABLE IF NOT EXISTS events (
     detail     TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS events_kind ON events (kind);
+
+-- The in-house ticket: what the student typed, and the marked version of it.
+-- Kept as a separate table from results so a ticket can be read back (and shown
+-- to the student) without unpacking a score report.
+CREATE TABLE IF NOT EXISTS tickets (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER NOT NULL,
+    student     TEXT NOT NULL,
+    scenario_id TEXT NOT NULL,
+    values_json TEXT NOT NULL,
+    report_json TEXT NOT NULL,
+    score       REAL NOT NULL DEFAULT 0,
+    submitted   INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tickets_session ON tickets (session_id);
+CREATE INDEX IF NOT EXISTS tickets_student ON tickets (student);
 
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -192,6 +211,55 @@ class Store:
             conn.execute(
                 "UPDATE users SET active = 0 WHERE username = ?", (username.strip().lower(),)
             )
+
+    def activate_user(self, username: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE users SET active = 1 WHERE username = ?", (username.strip().lower(),)
+            )
+
+    def delete_user(self, username: str) -> None:
+        """Remove an account outright.
+
+        Offboarding a *portal* account is not the same as offboarding a person:
+        their results and tickets are kept, because a marking record that the
+        instructor can delete is not a marking record. Only the login goes.
+        """
+        with self.connect() as conn:
+            conn.execute("DELETE FROM users WHERE username = ?", (username.strip().lower(),))
+
+    def list_all_users(self) -> list[sqlite3.Row]:
+        """Every account, active or not — the admin panel's user list."""
+        with self.connect() as conn:
+            return list(conn.execute("SELECT * FROM users ORDER BY role, username"))
+
+    def set_user_role(self, username: str, role: str) -> None:
+        if role not in {"student", "instructor"}:
+            raise ValueError(f"unknown role {role!r}")
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE users SET role = ? WHERE username = ?", (role, username.strip().lower())
+            )
+
+    def set_user_password(self, username: str, password: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE users SET password_hash = ? WHERE username = ?",
+                (hash_password(password), username.strip().lower()),
+            )
+
+    def count_users(self) -> dict[str, int]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT role, active, COUNT(*) AS n FROM users GROUP BY role, active"
+            ).fetchall()
+        out = {"student": 0, "instructor": 0, "inactive": 0}
+        for row in rows:
+            if not row["active"]:
+                out["inactive"] += int(row["n"])
+            elif row["role"] in out:
+                out[row["role"]] += int(row["n"])
+        return out
 
     def import_roster(
         self, csv_path: str | Path, default_password: str | None = None
@@ -437,6 +505,145 @@ class Store:
                 ).fetchone()["n"]
             )
 
+    def list_result_rows(self, limit: int = 200, student: str | None = None) -> list[dict[str, Any]]:
+        """Stored submissions with the student who made them.
+
+        The student is a column on ``results`` rather than a field on the report, so
+        an export needs both: fetching only the report would lose who submitted it.
+        """
+        where, params = "", []
+        if student:
+            where = "WHERE student = ?"
+            params.append(student.strip().lower())
+        params.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT student, report_json, created_at FROM results {where} "
+                "ORDER BY id DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [
+            {
+                "student": str(row["student"]),
+                "submitted_at": str(row["created_at"]),
+                "report": ScoreReport.from_dict(json.loads(row["report_json"])),
+            }
+            for row in rows
+        ]
+
+    def list_results(self, limit: int = 200, student: str | None = None) -> list[ScoreReport]:
+        """Every stored submission, newest first (the admin results view)."""
+        where, params = "", []
+        if student:
+            where = "WHERE student = ?"
+            params.append(student.strip().lower())
+        params.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT report_json FROM results {where} ORDER BY id DESC LIMIT ?", params
+            ).fetchall()
+        return [ScoreReport.from_dict(json.loads(r["report_json"])) for r in rows]
+
+    # ------------------------------------------------------------------
+    # tickets (the in-house incident write-up)
+    # ------------------------------------------------------------------
+    def save_ticket(self, grade: TicketGrade, student: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO tickets (session_id, student, scenario_id, values_json,
+                                     report_json, score, submitted, created_at)
+                VALUES (?,?,?,?,?,?,?,?)
+                """,
+                (
+                    grade.session_id,
+                    student.strip().lower(),
+                    grade.scenario_id,
+                    json.dumps(grade.values),
+                    json.dumps(grade.to_dict()),
+                    grade.score,
+                    int(grade.submitted),
+                    grade.created_at,
+                ),
+            )
+
+    def latest_ticket(self, session_id: int) -> TicketGrade | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT report_json FROM tickets WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+        return TicketGrade.from_dict(json.loads(row["report_json"])) if row else None
+
+    def ticket_values(self, session_id: int) -> dict[str, str]:
+        """The raw answers last submitted for a session (to re-populate the form)."""
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT values_json FROM tickets WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return {}
+        try:
+            loaded = json.loads(row["values_json"])
+        except json.JSONDecodeError:
+            return {}
+        return {str(k): str(v) for k, v in (loaded or {}).items()} if isinstance(loaded, dict) else {}
+
+    def save_ticket_draft(self, session_id: int, values: dict[str, Any]) -> None:
+        """Remember what the student has typed so far.
+
+        Drafts live in ``meta`` on purpose: the ``tickets`` table means "a graded
+        submission", and the lab is results-only — an unsubmitted draft is not a
+        grade and must not appear in a report.
+        """
+        self.set_meta(f"ticket_draft:{int(session_id)}", {str(k): str(v) for k, v in (values or {}).items()})
+
+    def ticket_draft(self, session_id: int) -> dict[str, str]:
+        draft = self.get_meta(f"ticket_draft:{int(session_id)}", {}) or {}
+        return {str(k): str(v) for k, v in draft.items()} if isinstance(draft, dict) else {}
+
+    def clear_ticket_draft(self, session_id: int) -> None:
+        self.set_meta(f"ticket_draft:{int(session_id)}", {})
+
+    def tickets_for_session(self, session_id: int) -> list[TicketGrade]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT report_json FROM tickets WHERE session_id = ? ORDER BY id", (session_id,)
+            ).fetchall()
+        return [TicketGrade.from_dict(json.loads(r["report_json"])) for r in rows]
+
+    def tickets_for_student(self, student: str, limit: int = 50) -> list[TicketGrade]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT report_json FROM tickets WHERE student = ? ORDER BY id DESC LIMIT ?",
+                (student.strip().lower(), limit),
+            ).fetchall()
+        return [TicketGrade.from_dict(json.loads(r["report_json"])) for r in rows]
+
+    def list_tickets(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Ticket rows plus the student who wrote them (the admin ticket view)."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, session_id, student, scenario_id, score, submitted, created_at
+                FROM tickets ORDER BY id DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_tickets(self) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n, AVG(score) AS avg, SUM(submitted) AS submitted FROM tickets"
+            ).fetchone()
+        return {
+            "count": int(row["n"] or 0),
+            "average": round(float(row["avg"] or 0.0), 1),
+            "submitted": int(row["submitted"] or 0),
+        }
+
     # ------------------------------------------------------------------
     # events / meta
     # ------------------------------------------------------------------
@@ -459,6 +666,37 @@ class Store:
     def recent_events(self, limit: int = 100) -> list[sqlite3.Row]:
         with self.connect() as conn:
             return list(conn.execute("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)))
+
+    def list_events(
+        self, kind: str | None = None, limit: int = 200, session_id: int | None = None
+    ) -> list[sqlite3.Row]:
+        """The audit trail, filtered. Everything the control plane does lands here."""
+        where, params = [], []
+        if kind:
+            where.append("kind = ?")
+            params.append(kind)
+        if session_id:
+            where.append("session_id = ?")
+            params.append(session_id)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        params.append(limit)
+        with self.connect() as conn:
+            return list(
+                conn.execute(
+                    f"SELECT * FROM events {clause} ORDER BY id DESC LIMIT ?", params
+                )
+            )
+
+    def event_kinds(self) -> list[tuple[str, int]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT kind, COUNT(*) AS n FROM events GROUP BY kind ORDER BY n DESC, kind"
+            ).fetchall()
+        return [(str(r["kind"]), int(r["n"])) for r in rows]
+
+    def count_events(self) -> int:
+        with self.connect() as conn:
+            return int(conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"])
 
     def get_meta(self, key: str, default: Any = None) -> Any:
         with self.connect() as conn:

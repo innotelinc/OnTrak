@@ -19,6 +19,52 @@ ticket:
   system: "WORKSTATION-042"
   priority: "Medium"
   channel: "Ticket"
+  form:
+    title: Incident write-up — docking station adapter
+    intro: >
+      The next person to open this ticket will read three things: what was wrong,
+      what you changed, and how you proved it. They are marked as part of your grade.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom, in your own words
+        kind: textarea
+        weight: 15
+        min_words: 8
+        placeholder: "What the user reported, and what you saw when you looked."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [driver, adapter, device, disabled, update]
+        none_of: ["reinstall windows", "system restore"]
+        hint: "Name the mechanism. \"The dock was broken\" is a symptom, not a cause."
+      - id: category
+        label: Classification
+        kind: select
+        weight: 15
+        options:
+          - Driver and device
+          - Network
+          - Permissions
+          - Software configuration
+          - Account
+        expected: Driver and device
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 25
+        min_words: 8
+        any_of: [enable, enabled, driver, device, reinstall, roll back]
+        hint: "The tool you used, the device you touched and the state you left it in."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [Get-NetAdapter, Get-PnpDevice, ping, ipconfig, status, link, Up]
+        hint: "The command you ran and what it showed — not \"it looked fine\"."
 
 briefing: |
   The docking station Ethernet port stopped working after a Windows update. The

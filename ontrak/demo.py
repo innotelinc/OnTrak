@@ -95,6 +95,32 @@ class DemoDriver(BaseDriver):
         payload = json.dumps({"checks": checks})
         return CommandResult(True, 0, f"{JSON_BEGIN}\n{payload}\n{JSON_END}")
 
+    def run_shell(
+        self, script: str, host: str = "", instance: str = "", timeout: int = 120
+    ) -> CommandResult:
+        """Shell transport for Linux scenarios, mirroring run_powershell.
+
+        A demo that only spoke PowerShell could not exercise the Linux half of the
+        catalogue — and the Linux half is where the CLI lessons live.
+        """
+        self.calls.append((instance, script[:200]))
+        if "setup.sh" in script:
+            return CommandResult(True, 0, f"demo setup applied\n{SETUP_OK_MARKER}")
+        if "check.sh" in script:
+            return self._report(script)
+        return CommandResult(True, 0, "ok")
+
+    def run_script_file(
+        self, remote_path: str, host: str = "", instance: str = "", timeout: int = 300
+    ) -> CommandResult:
+        """Both platforms' scripts by filename, so the same demo drives PowerShell and shell."""
+        self.calls.append((instance, f"run:{remote_path}"))
+        if remote_path.endswith(("setup.ps1", "setup.sh")):
+            return CommandResult(True, 0, f"demo setup applied\n{SETUP_OK_MARKER}")
+        if remote_path.endswith(("check.ps1", "check.sh")):
+            return self._report(remote_path)
+        return CommandResult(True, 0, "ok")
+
     # -- BaseDriver surface --------------------------------------------
     def run_powershell(
         self, script: str, host: str = "", instance: str = "", timeout: int = 120
@@ -152,6 +178,20 @@ def build_demo_environment(
     catalog = Catalog(settings.catalog_dir)
     repository = ScenarioRepository(settings.scenarios_dir)
     incus = InMemoryIncus(image_alias=settings.incus.image_alias, image_present=True)
+    # Pretend the workload images a scenario names are published on this host.
+    # Demo mode's whole job is to stand in for the infrastructure, and an image
+    # alias that exists is exactly what a real host would have after `ontrak image
+    # build` or a plain `incus image copy` — without it, every catalogue-backed
+    # scenario would fail on a host check the demo has no way to satisfy.
+    catalog.load()
+    for entry in catalog.entries.values():
+        if entry.media.kind == "image" or entry.recipe in {"image-alias", "container-image"}:
+            incus.add_image(entry.image_alias)
+    # add_image() also moves the "current" alias, which would leave the site's
+    # golden image unpublished; put it back so scenarios with no declared platform
+    # still find theirs.
+    incus.add_image(settings.incus.image_alias)
+    incus.image_alias = settings.incus.image_alias
     driver = DemoDriver(
         settings,
         repository,
@@ -164,6 +204,10 @@ def build_demo_environment(
         repo=repository,
         incus=incus,  # type: ignore[arg-type]
         driver=driver,
+        # The same simulated guest answers shell as well as PowerShell, so a Linux
+        # scenario (setup.sh/check.sh) runs through the real manager, scoring and
+        # ticket paths in demo mode too.
+        shell_driver=driver,
         catalog=catalog,
     )
     return DemoEnvironment(
@@ -189,6 +233,32 @@ def seed_accounts(env: DemoEnvironment, *, students: int | None = None) -> list[
     return names
 
 
+def synthesise_ticket(form) -> dict[str, str]:
+    """Write a plausible incident write-up that satisfies a ticket rubric.
+
+    Demo mode pretends a student did the work; pretending they also *documented* it is
+    what makes the blended grade visible — and it means a rubric that asks for terms
+    nobody can guess shows up as unreachable in a demo run rather than in a class.
+    """
+    values: dict[str, str] = {}
+    for field in form.fields:
+        if field.is_choice():
+            values[field.id] = field.expected or (field.options[0] if field.options else "")
+            continue
+        if (field.kind or "").lower() == "number":
+            values[field.id] = "1"
+            continue
+        terms = [*field.all_of, *(field.any_of[:1] if field.any_of else [])]
+        text = ("Answered: " + ", ".join(terms) + ".") if terms else "Recorded the incident."
+        # Pad to the minimum length with a sentence that is true of any repair, and
+        # never with a phrase the rubric rejects.
+        filler = " Verified on the machine before handing the session in."
+        while len(text.split()) < max(field.min_words, 1) + 1 and len(text) < 1200:
+            text = f"{text}{filler}" if not text.endswith(filler.strip()) else f"{text} Confirmed."
+        values[field.id] = text
+    return values
+
+
 def seed_pool(
     env: DemoEnvironment,
     scenario_ids: list[str],
@@ -196,18 +266,25 @@ def seed_pool(
     per_scenario: int = 2,
     prewarm_ids: list[str] | None = None,
 ) -> dict[str, int]:
-    """Build templates for every scenario, then prewarm only the ones asked for.
+    """Build a template for every (scenario, platform) pair, prewarming only some.
 
-    Every template is built because automatic assignment can hand a student *any*
-    scenario; only the nominated scenarios get warm VMs, which is what a real lab
-    would do to keep host memory under control.
+    Templates are per pair because the same fault on Windows 11 and Ubuntu are
+    different machines (see the workload matrix in docs/architecture.md). Every pair
+    is built because automatic assignment can hand a student any scenario; only the
+    nominated scenarios get warm VMs, which is what a real lab does to keep host
+    memory under control.
+
+    Returns ``{"<scenario>[@<platform>]": warm_count}``.
     """
     warm = set(prewarm_ids) if prewarm_ids is not None else set(scenario_ids)
     built: dict[str, int] = {}
-    for scenario_id in scenario_ids:
-        env.manager.ensure_template(scenario_id)
-        built[scenario_id] = (
-            env.manager.prewarm(scenario_id, per_scenario) if scenario_id in warm else 0
+    for scenario, workload in env.manager.workload_pairs(scenario_ids):
+        key = f"{scenario.id}@{workload}" if workload else scenario.id
+        env.manager.ensure_template(scenario.id, workload=workload)
+        built[key] = (
+            env.manager.prewarm(scenario.id, per_scenario, workload=workload)
+            if scenario.id in warm
+            else 0
         )
     return built
 
@@ -219,6 +296,7 @@ def run_demo(
     success_rate: float | None = None,
     state_dir: str | Path | None = None,
     complete_sessions: bool = True,
+    write_ups: bool = True,
     verbose: bool = True,
 ) -> dict:
     """Drive a complete class: assign, provision, grade, hand in, tear down.
@@ -288,15 +366,25 @@ def run_demo(
         if session.state == SessionState.ERROR:
             continue
 
-        # A student checks their work (not recorded), then hands it in (recorded).
+        # A student checks their work (not recorded), writes up the ticket, then hands
+        # it in (recorded). The write-up is synthesised from the rubric, so the demo
+        # exercises the ticket grading and the blended score rather than leaving the
+        # ticket component at zero.
         preview = env.manager.run_checks(session)
         if complete_sessions:
-            final = env.manager.complete(session)
+            ticket_values = None
+            ticket_form = env.manager.ticket_form_for(session)
+            if ticket_form is not None and write_ups:
+                ticket_values = synthesise_ticket(ticket_form)
+                env.manager.save_ticket_draft(session, ticket_values)
+            final = env.manager.complete(session, values=ticket_values)
             summary["completed"].append(
                 {
                     "student": student,
                     "scenario_id": scenario_id,
                     "score": final.score,
+                    "machine_score": final.machine_score,
+                    "ticket_score": final.ticket_score,
                     "resolved": final.resolved,
                     "state": session.state.value,
                 }

@@ -140,3 +140,59 @@ ul.timeline li { padding: 3px 0; border-bottom: 1px dashed var(--border); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-top: 8px; }
+
+/* ------------------------------------------------------------------ admin -- */
+.admin-nav { display: flex; flex-wrap: wrap; gap: 4px; margin: 14px 0 22px; }
+.admin-nav a {
+  padding: 6px 11px; border: 1px solid var(--border); border-radius: 999px;
+  font-size: 13px; color: var(--muted); text-decoration: none;
+}
+.admin-nav a:hover { color: var(--text); }
+.admin-nav a.active { color: var(--text); border-color: var(--accent); background: var(--panel-2); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; margin: 16px 0; }
+.tile {
+  display: block; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px; text-decoration: none; color: inherit;
+}
+a.tile:hover { border-color: var(--accent); }
+.tile h3 { margin: 0 0 6px; font-size: 14px; color: var(--muted); font-weight: 600; }
+.tile .big { font-size: 26px; margin: 4px 0; font-weight: 600; }
+.tile p { margin: 4px 0; }
+.tile .muted, .tile .small { font-size: 12px; }
+
+.filters { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; }
+.filters label { margin: 0; }
+.filters input, .filters select { width: auto; }
+form { margin: 0; }
+form label { margin: 12px 0 4px; }
+.kv { width: 100%; border-collapse: collapse; font-size: 13px; }
+.kv th { text-align: left; color: var(--muted); font-weight: 500; padding: 5px 10px 5px 0; vertical-align: top; }
+.kv td { padding: 5px 0; }
+select, textarea, input[type=number] {
+  width: 100%; padding: 9px 11px; border-radius: 7px; border: 1px solid var(--border);
+  background: var(--panel-2); color: var(--text); font-size: 14px; font-family: inherit;
+}
+textarea { resize: vertical; }
+button.danger, .link.danger { color: var(--bad); }
+
+/* ---------------------------------------------------------------- lessons -- */
+.tags { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 0; }
+.tag { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px; }
+.step, .exercise, .field { border-top: 1px solid var(--border); padding: 12px 0; }
+.step:first-child, .exercise:first-child, .field:first-child { border-top: 0; }
+.step h3, .exercise h3, .field h3 { font-size: 14px; margin: 0 0 6px; }
+pre.cmd, pre.answer {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; overflow-x: auto; font-size: 13px; white-space: pre-wrap;
+}
+pre.answer { white-space: pre-wrap; }
+.field.done .mark { color: var(--ok); }
+.field.failed .mark { color: var(--bad); }
+
+/* ------------------------------------------------------------- write-up --- */
+.ticket-card label.ticket-field { margin: 14px 0 0; }
+.ticket-card label.ticket-field > .label { display: block; color: var(--text); font-size: 14px; }
+.ticket-card label.ticket-field > .weight { color: var(--muted); font-size: 12px; }
+.ticket-card textarea { min-height: 80px; }
+.danger.small { font-size: 12px; }

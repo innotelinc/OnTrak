@@ -73,13 +73,23 @@ def test_partial_success_is_reproducible(env):
     assert other != first
 
 
-def test_seed_pool_builds_every_template_but_warms_only_what_is_asked(tmp_path):
+def test_seed_pool_builds_a_template_per_scenario_and_platform(tmp_path):
+    """A template is per (scenario, platform): the same fault on Ubuntu and Debian
+    are different machines, so a scenario offered on both needs two templates."""
     env = build_demo_environment(state_dir=tmp_path / "s", success_rate=1.0)
     ids = [s.id for s in env.repository.list()]
+    expected = {
+        f"{scenario.id}@{workload}" if workload else scenario.id
+        for scenario, workload in env.manager.workload_pairs()
+    }
     built = seed_pool(env, ids, per_scenario=2, prewarm_ids=ids[:2])
-    assert set(built) == set(ids)
-    assert built[ids[0]] == 2 and built[ids[2]] == 0
+    assert set(built) == expected
+    # Every pair got a template; only the nominated scenarios got warm machines.
     assert all(row.template_ready for row in env.manager.pool_status())
+    warm = {key: count for key, count in built.items() if count}
+    assert warm, "the requested scenarios should have been warmed"
+    assert all(count == 2 for count in warm.values())
+    assert set(warm) < set(built), "only the nominated scenarios should be warm"
 
 
 def test_run_demo_completes_a_whole_class(tmp_path):

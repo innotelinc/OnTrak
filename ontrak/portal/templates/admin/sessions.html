@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Sessions</h1>
+<p class="muted">
+  Every session, live and historical. A session is one student's machine for one attempt;
+  the results-only policy means only the grade handed in at Complete &amp; End is stored.
+</p>
+{% include "admin/_nav.html" %}
+
+<div class="card">
+  <form method="get" action="/admin/sessions" class="filters">
+    <label>State
+      <select name="state">
+        <option value="">any</option>
+        {% for state in states %}
+          <option value="{{ state.value }}" {% if filters.state == state.value %}selected{% endif %}>{{ state.value }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Student <input name="student" value="{{ filters.student }}" placeholder="all"></label>
+    <label>Scenario
+      <select name="scenario">
+        <option value="">any</option>
+        {% for scenario in scenarios %}
+          <option value="{{ scenario.id }}" {% if filters.scenario == scenario.id %}selected{% endif %}>{{ scenario.id }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Limit <input type="number" name="limit" value="{{ filters.limit }}" min="1" max="1000"></label>
+    <button type="submit">Filter</button>
+  </form>
+</div>
+
+<div class="card">
+  <table class="grid">
+    <tr>
+      <th>#</th><th>student</th><th>scenario</th><th>platform</th><th>state</th>
+      <th>machine</th><th>checks</th><th>best</th><th>final</th><th>time left</th><th>console</th>
+    </tr>
+    {% for row in rows %}
+      {% set session = row.session %}
+      <tr>
+        <td><a href="/sessions/{{ session.id }}">{{ session.id }}</a></td>
+        <td>{{ session.student }}</td>
+        <td>
+          {{ session.scenario_id }}
+          {% if session.resolved %}<span class="badge ok">resolved</span>{% endif %}
+        </td>
+        <td class="muted small">{{ session.workload or "golden" }}</td>
+        <td><span class="badge state-{{ session.state.value }}">{{ session.state.value }}</span></td>
+        <td class="muted small">{{ session.instance or "—" }}<br>{{ session.host_ip or "" }}</td>
+        <td>{{ session.checks_run }}</td>
+        <td>{{ "%.0f%%"|format(session.best_score) }}</td>
+        <td>
+          {% if row.report %}
+            {{ "%.0f%%"|format(row.report.score) }}
+            {% if row.report.has_ticket %}<div class="muted small">ticket {{ "%.0f%%"|format(row.report.ticket_score) }}</div>{% endif %}
+          {% else %}—{% endif %}
+        </td>
+        <td class="muted small">
+          {% if row.remaining is not none %}
+            {{ (row.remaining // 60) }}m {{ (row.remaining % 60) }}s
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {% if row.console %}<a href="/instructor/sessions/{{ session.id }}/console">open</a>{% else %}<span class="muted small">—</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+  <p class="muted small">{{ rows|length }} session(s) shown.</p>
+</div>
+
+<div class="card">
+  <h2>Session state reference</h2>
+  <table class="grid">
+    <tr><th>state</th><th>meaning</th></tr>
+    <tr><td>requested / allocating / provisioning</td><td>the machine is being prepared</td></tr>
+    <tr><td>ready</td><td>cloned and reachable, the student has not opened it yet</td></tr>
+    <tr><td>in_use</td><td>the student is working on it</td></tr>
+    <tr><td>checking</td><td>a check is running right now</td></tr>
+    <tr><td>passed / failed</td><td>handed in and graded; the machine has been destroyed</td></tr>
+    <tr><td>recycling / destroyed</td><td>cleaned up (expiry, idle timeout or \"end without grading\")</td></tr>
+    <tr><td>error</td><td>provisioning failed; the reason is on the session</td></tr>
+  </table>
+</div>
+{% endblock %}

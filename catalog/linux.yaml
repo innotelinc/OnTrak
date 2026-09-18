@@ -22,7 +22,11 @@ defaults:
   media: {source: free, kind: image}
   automation: ssh
   device_profile: linux-container
-  scenario_families: [network, software, os, security]
+  # Identity/access scenarios (account locks, group membership, session revocation)
+  # run against the simulated directory service that the scenario ships, so any Linux
+  # guest can host them — which is why identity is in the family list here rather
+  # than being tied to one special image.
+  scenario_families: [network, software, os, security, identity]
 
 entries:
   # -- Ubuntu ------------------------------------------------------------

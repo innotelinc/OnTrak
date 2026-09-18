@@ -161,6 +161,23 @@ class InMemoryIncus:
     def exec_in(self, instance: str, command, timeout: int = 60, detach: bool = False):
         raise IncusError(list(command), 1, "the in-memory client has no guest agent")
 
+    def guest_shell(self, instance: str, script: str, timeout: int = 120, user: str | None = None):
+        """Answer the readiness probe and nothing else.
+
+        The in-memory client has no guest to run a script in, so it does the one thing
+        the lifecycle genuinely needs — report that the machine is up — and returns
+        empty output otherwise. Grading then fails honestly with "no grading payload",
+        which is exactly what a test that reaches for this should see; demo mode uses
+        its own driver instead.
+        """
+        import subprocess
+
+        self.calls.append(("guest_shell", instance, script[:120]))
+        if instance not in self.instances:
+            raise IncusNotFound(["exec", instance], 1, "instance not found")
+        stdout = "ontrak-ready\n" if "ontrak-ready" in script else ""
+        return subprocess.CompletedProcess(args=["bash", "-s"], returncode=0, stdout=stdout, stderr="")
+
     def wait_for_status(self, instance: str, status: str, timeout: int = 300, interval: float = 2.0) -> bool:
         return self.instance_status(instance) == status
 

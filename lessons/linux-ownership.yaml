@@ -1,0 +1,82 @@
+id: linux-ownership
+title: Ownership with chown and chgrp
+platform: linux
+category: software
+difficulty: 2
+minutes: 20
+summary: >
+  Who a file belongs to decides which permission bits apply to you. Change
+  ownership safely, including recursively, and diagnose the "the app runs but
+  cannot write its own directory" class of ticket.
+tags: [cli, ownership, chown, chgrp, services]
+objectives:
+  - Read owner and group and explain which bits they select
+  - Change ownership of a file, a tree and a symlink correctly
+  - Recognise when the right fix is a group, not a wider permission
+prerequisites: [linux-permissions]
+commands:
+  - command: ls -l
+    what: Third and fourth columns are the owner and the group.
+  - command: chown www-data:www-data /srv/www/site
+    what: Set owner and group together. Prefix with -R to recurse.
+    example: chown -R www-data:www-data /srv/www/site/uploads
+  - command: chgrp developers /srv/projects/alpha
+    what: Change only the group, leaving the owner alone.
+  - command: chown -h user file
+    what: Change a symlink itself rather than what it points at.
+    danger: Without -h as root, chown follows the link and changes the target.
+  - command: chown --from=root www-data data/
+    what: Only change the entries still owned by root, so a repair is repeatable.
+  - command: find /srv -not -user www-data -ls
+    what: List everything under a path that is not owned by the expected account — the audit query.
+  - command: namei -l path
+    what: Show ownership and permissions for every component of a path.
+steps:
+  - title: Ownership selects which bits apply
+    body: >
+      A mode of 640 means: owner rw, group r, everyone else nothing. *Which* triples
+      you get depends on who you are and which group you are in — so the same file
+      can be writable for one engineer and read-only for another. Ownership is how
+      you give a service access without opening the file to the world.
+    command: stat -c '%a %U %G %n' /srv/www/site
+  - title: Services run as their own user
+    body: >
+      A daemon runs as the account named in its unit file, very often www-data or
+      nginx. If the upload directory is owned by root, the daemon cannot create
+      files there — and the log will say "permission denied", not "wrong owner".
+      Check with `ps -o user= -p $(pgrep -f nginx | head -1)`.
+    command: ps -eo user,comm | grep -E 'nginx|apache|www-data'
+  - title: The right repair is usually a group
+    body: >
+      When three engineers need write access, adding them to a shared group and
+      setting g+w on the directory is the fix. Widening to 777 is not: it grants
+      the same access to every process on the machine.
+    command: chgrp -R developers /srv/projects/alpha && chmod -R g+rwX /srv/projects/alpha
+  - title: Recursion, but deliberately
+    body: >
+      -R applies the change to every entry below the path. Do it knowingly: a
+      recursive chown on / will make the machine unbootable, and there is no undo.
+    danger: chown -R on the wrong path (especially /) can leave a host unbootable.
+    command: chown -R --from=root www-data /srv/www/site/uploads
+exercises:
+  - id: hand-over-site
+    prompt: >
+      /srv/www/site, and everything below it, is owned by root. The web service
+      runs as www-data and must own the whole tree.
+    solution: chown -R www-data:www-data /srv/www/site
+    verify: find /srv/www/site -not -user www-data | head
+  - id: shared-group
+    prompt: >
+      The developers group needs read and write access to /srv/projects/alpha, and
+      nobody else should have any. Keep the owner as-is.
+    solution: |
+      chgrp -R developers /srv/projects/alpha
+      chmod -R g+rwX,o-rwx /srv/projects/alpha
+    verify: stat -c '%a %U %G' /srv/projects/alpha
+  - id: symlink-owner
+    prompt: /srv/www/current is a symlink to /srv/www/releases/v3 and must be owned by www-data without touching the release.
+    solution: chown -h www-data /srv/www/current
+    verify: ls -l /srv/www/current
+docs:
+  - man 1 chown
+  - man 1 chgrp

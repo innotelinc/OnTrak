@@ -15,8 +15,12 @@
     <nav>
       {% if user %}
         <a href="/dashboard">Dashboard</a>
+        <a href="/lessons">Lessons</a>
         <a href="/results">Results</a>
-        {% if user["role"] == "instructor" %}<a href="/instructor">Instructor</a>{% endif %}
+        {% if user["role"] == "instructor" %}
+          <a href="/instructor">Class</a>
+          <a href="/admin">Admin</a>
+        {% endif %}
         <span class="who">{{ user["display_name"] or user["username"] }}</span>
         <form method="post" action="/logout" class="inline">
           <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -32,7 +36,7 @@
   </main>
 
   <footer>
-    <span>OnTrak — Windows support training range</span>
+    <span>IT Support Training Platform — powered by Innotel OnTrak</span>
     <span>Faults are simulated. Reset restores the machine to its clean state.</span>
   </footer>
   {% block scripts %}{% endblock %}

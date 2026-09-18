@@ -33,15 +33,57 @@ from pathlib import Path
 
 from .catalog import Catalog, CatalogEntry, CatalogError
 from .config import Settings
-from .guest import BaseDriver, GuestError, build_driver, quote_ps
+from .guest import (
+    BaseDriver,
+    GuestError,
+    build_driver,
+    build_shell_driver,
+    quote_ps,
+)
 from .incus import IncusClient, IncusError
 from .models import ScoreReport, Session, SessionState, iso, parse_iso, seconds_since, utcnow
-from .scenarios import COMMON_LIB, SETUP_OK_MARKER, ScenarioRepository
+from .scenarios import (
+    CHECK_NAMES,
+    COMMON_LIB,
+    LINUX,
+    SETUP_NAMES,
+    SETUP_OK_MARKER,
+    SHELL_COMMON_LIB,
+    WINDOWS,
+    ScenarioRepository,
+)
 from .scoring import evaluate
 from .store import Store
+from .tickets import TicketGrade, blend
+from .tickets import grade as mark_ticket
 
 POOL_SNAPSHOT = "clean"
 TEMPLATE_PSEUDO_STUDENT = "<template>"
+
+# Workload id prefixes that mean "a Linux guest". Used only to label pool rows for
+# the operator view; the scenario's own `platform` decides how a guest is driven.
+LINUX_TAG_PREFIXES = {
+    "alpine",
+    "almalinux",
+    "archlinux",
+    "arch",
+    "centos",
+    "debian",
+    "fedora",
+    "gentoo",
+    "kali",
+    "linuxmint",
+    "nixos",
+    "opensuse",
+    "oracle",
+    "raspios",
+    "rhel",
+    "rockylinux",
+    "ubuntu",
+    "void",
+    "voidlinux",
+    "ontrak-idp",
+}
 
 
 class SessionError(RuntimeError):
@@ -56,6 +98,20 @@ class PoolStatus:
     claimed: int
     total: int
     template_ready: bool
+    # Which platform this pool is for. Empty means the site's golden image, which is
+    # what scenarios that do not name a workload use.
+    workload: str = ""
+
+    @property
+    def label(self) -> str:
+        return f"{self.scenario_id}@{self.workload}" if self.workload else self.scenario_id
+
+    @property
+    def platform(self) -> str:
+        """Which driver family this pool needs, inferred from the workload id."""
+        if not self.workload:
+            return WINDOWS
+        return LINUX if self.workload.split("-")[0] in LINUX_TAG_PREFIXES else WINDOWS
 
     @property
     def deficit(self) -> int:
@@ -87,13 +143,25 @@ class SessionManager:
         incus: IncusClient | None = None,
         driver: BaseDriver | None = None,
         catalog: Catalog | None = None,
+        shell_driver: BaseDriver | None = None,
     ):
         self.settings = settings
         self.store = store
         self.repo = repo or ScenarioRepository(settings.scenarios_dir)
         self.incus = incus
         self.driver = driver or build_driver(settings)
+        # Linux guests are driven over the Incus agent (or SSH) rather than WinRM, so
+        # the manager holds both transports and picks per scenario.
+        self.shell_driver = shell_driver or build_shell_driver(settings, client=incus)
         self.catalog = catalog
+        if catalog is not None:
+            # Lets instance-name parsing recognise workload suffixes without an import
+            # cycle between config and the catalog. The catalog must be *loaded* first:
+            # an unloaded one is indistinguishable from an empty one, and name parsing
+            # would then read `pool-<scenario>-<workload>-1` as a different scenario's
+            # pool — silently, because an unmatched name just looks like "no machines".
+            catalog.load()
+            settings.incus.known_workloads = tuple(catalog.entries)
         # Kept as an attribute (not ``self.repo``) because the scheduler and the
         # portal both reach for ``manager.repository``.
         self.repository = self.repo
@@ -120,28 +188,79 @@ class SessionManager:
         return self.incus
 
     def _guest_path(self, *parts: str) -> str:
+        """Windows guest path under the work directory."""
         root = self.settings.guest.work_dir.rstrip("\\")
         return "\\".join([root, *parts])
+
+    def _posix_path(self, *parts: str) -> str:
+        """Linux guest path under the work directory."""
+        root = self.settings.guest.linux_work_dir.rstrip("/")
+        return "/".join([root, *parts])
+
+    def _join(self, scenario, *parts: str) -> str:
+        """Path inside whichever guest platform the scenario targets."""
+        if getattr(scenario, "platform", WINDOWS) == LINUX:
+            return self._posix_path(*parts)
+        return self._guest_path(*parts)
+
+    def _driver_for(self, scenario) -> BaseDriver:
+        """The transport this scenario's guest speaks."""
+        if getattr(scenario, "platform", WINDOWS) == LINUX:
+            return self.shell_driver
+        return self.driver
 
     @property
     def _lib_source(self) -> Path:
         return self.settings.scenarios_dir / "_lib" / COMMON_LIB
 
+    @property
+    def _shell_lib_source(self) -> Path:
+        return self.settings.scenarios_dir / "_lib" / SHELL_COMMON_LIB
+
     def _guest_args(self, session: Session) -> dict:
         return {"host": session.host_ip, "instance": session.instance}
 
     # ------------------------------------------------------------------
-    # templates
+    # templates and pools, keyed by (scenario, workload)
     # ------------------------------------------------------------------
+    def workload_pairs(self, ids: list[str] | None = None) -> list[tuple]:
+        """Every (scenario, workload) pair the lab can offer.
+
+        A scenario that names workloads is offered once per workload, each with its own
+        template and pool. A scenario that names none is offered once on the site's
+        golden image, which is what every pre-catalog scenario does.
+        """
+        pairs = []
+        for scenario in self.repo.list():
+            if ids and scenario.id not in ids:
+                continue
+            workloads = scenario.platform_workloads
+            if not workloads or self.catalog is None:
+                pairs.append((scenario, ""))
+                continue
+            for workload_id in workloads:
+                try:
+                    self.catalog.get(workload_id)
+                except CatalogError:
+                    self.store.log_event(
+                        "workload_unknown",
+                        f"scenario {scenario.id} names workload {workload_id!r}, not in the catalog",
+                    )
+                    continue
+                pairs.append((scenario, workload_id))
+        return pairs
+
     def template_status(self) -> list[dict]:
         incus = self.incus
         rows = []
-        for scenario in self.repo.list():
-            name = self.settings.incus.template_name(scenario.id)
+        for scenario, workload in self.workload_pairs():
+            name = self.settings.incus.template_name(scenario.id, workload)
             exists = bool(incus and incus.exists(name))
             rows.append(
                 {
                     "scenario_id": scenario.id,
+                    "workload": workload,
+                    "platform": scenario.platform,
                     "name": name,
                     "exists": exists,
                     "snapshot": bool(exists and incus and incus.has_snapshot(name, POOL_SNAPSHOT)),
@@ -151,37 +270,47 @@ class SessionManager:
             )
         return rows
 
-    def build_templates(self, ids: list[str] | None = None, force: bool = False) -> dict[str, str]:
-        """Build/replace scenario templates. Returns ``{scenario_id: status}``."""
+    def build_templates(
+        self, ids: list[str] | None = None, force: bool = False, workloads: list[str] | None = None
+    ) -> dict[str, str]:
+        """Build/replace scenario templates. Returns ``{'<scenario>@<workload>': status}``."""
         results: dict[str, str] = {}
-        for scenario in self.repo.list():
-            if ids and scenario.id not in ids:
+        for scenario, workload in self.workload_pairs(ids):
+            if workloads and workload not in workloads:
                 continue
+            key = f"{scenario.id}@{workload}" if workload else scenario.id
             try:
-                self.ensure_template(scenario.id, force=force)
-                results[scenario.id] = "ready"
+                self.ensure_template(scenario.id, workload=workload, force=force)
+                results[key] = "ready"
             except (SessionError, IncusError, GuestError) as exc:
-                results[scenario.id] = f"failed: {exc}"
-                self.store.log_event("template_failed", f"{scenario.id}: {exc}")
+                results[key] = f"failed: {exc}"
+                self.store.log_event("template_failed", f"{key}: {exc}")
         return results
 
-    def ensure_template(self, scenario_id: str, force: bool = False) -> str:
-        """Create ``tpl-<scenario>`` with a ``clean`` snapshot, idempotently.
+    def ensure_template(self, scenario_id: str, force: bool = False, workload: str = "") -> str:
+        """Create ``tpl-<scenario>[-<workload>]`` with a ``clean`` snapshot, idempotently.
 
-        Boots a clone of the golden image, applies the fault, shuts the guest
-        down cleanly and snapshots. Idempotent because re-running a template
-        build is a normal operator move after editing a scenario.
+        Boots a clone of the workload's image, applies the fault, shuts the guest down
+        and snapshots. Idempotent because re-running a template build is a normal
+        operator move after editing a scenario. One template per (scenario, workload)
+        pair is what lets the same fault be offered on Windows 11 and Ubuntu without
+        the scenario being written twice.
         """
         incus = self._require_incus()
         scenario = self.repo.get(scenario_id)
-        name = self.settings.incus.template_name(scenario_id)
+        if workload and workload not in scenario.platform_workloads and scenario.platform_workloads:
+            raise SessionError(
+                f"scenario {scenario_id} is not offered on workload {workload!r}; "
+                f"it declares {', '.join(scenario.platform_workloads)}"
+            )
+        name = self.settings.incus.template_name(scenario_id, workload)
 
         if not force and incus.exists(name) and incus.has_snapshot(name, POOL_SNAPSHOT):
             return name
 
-        base_image = self._base_image(scenario)
+        base_image = self._base_image(scenario, workload)
         if not incus.image_exists(base_image):
-            entry = self.workload_for(scenario)
+            entry = self.workload_entry(workload)
             if entry is not None:
                 raise SessionError(
                     f"workload image {base_image!r} for scenario {scenario_id} is not published "
@@ -203,15 +332,16 @@ class SessionManager:
         # and need different disks/NICs), then the scenario layers on any extra
         # hardware it needs: hardware cannot be added from inside the guest, so it
         # has to exist before first boot.
-        entry = self._apply_workload(name, scenario)
+        entry = self._apply_workload(name, scenario, workload)
         if entry is not None:
             self.store.log_event(
                 "workload_applied",
-                f"{scenario_id} -> {entry.id} (profile {entry.device_profile}, "
+                f"{scenario_id}@{workload} -> {entry.id} (profile {entry.device_profile}, "
                 f"{entry.resources.cpu} CPU / {entry.resources.memory})",
             )
         self._apply_instance_spec(name, scenario)
 
+        driver = self._driver_for(scenario)
         session = Session(
             id=None,
             student=TEMPLATE_PSEUDO_STUDENT,
@@ -220,20 +350,22 @@ class SessionManager:
             instance=name,
             rdp_user=self.settings.guest.user,
             rdp_password=self.settings.guest.password,
+            workload=workload,
         )
         incus.start_instance(name)
         try:
-            self._await_guest(session, self.settings.guest.ready_timeout_seconds)
-            self._upload_scenario_files(session, scenario, include_setup=True)
-            result = self.driver.run_script_file(
-                self._guest_path("scenarios", scenario_id, "setup.ps1"),
+            self._await_guest(session, self._ready_timeout(scenario), driver=driver)
+            self._upload_scenario_files(session, scenario, include_setup=True, driver=driver)
+            setup_name = SETUP_NAMES[scenario.platform]
+            result = driver.run_script_file(
+                self._join(scenario, "scenarios", scenario_id, setup_name),
                 timeout=self.settings.session.check_timeout_seconds,
                 **self._guest_args(session),
             )
             combined = (result.stdout or "") + (result.stderr or "")
             if not result.ok or SETUP_OK_MARKER not in combined:
                 raise SessionError(
-                    f"setup.ps1 for {scenario_id} did not report {SETUP_OK_MARKER} "
+                    f"{setup_name} for {scenario_id} did not report {SETUP_OK_MARKER} "
                     f"(exit {result.exit_code}). Output tail: {combined[-800:].strip()}"
                 )
         finally:
@@ -244,8 +376,14 @@ class SessionManager:
                 self._require_incus().stop_instance(name, force=True, timeout=60)
 
         incus.create_snapshot(name, POOL_SNAPSHOT)
-        self.store.log_event("template_built", f"{scenario_id} -> {name}/{POOL_SNAPSHOT}")
+        label = f"{scenario_id}@{workload}" if workload else scenario_id
+        self.store.log_event("template_built", f"{label} -> {name}/{POOL_SNAPSHOT}")
         return name
+
+    def _ready_timeout(self, scenario) -> int:
+        if getattr(scenario, "platform", WINDOWS) == LINUX:
+            return self.settings.guest.linux_ready_timeout_seconds
+        return self.settings.guest.ready_timeout_seconds
 
     # ------------------------------------------------------------------
     # workloads (which OS/build a guest runs)
@@ -269,9 +407,23 @@ class SessionManager:
             )
             return None
 
-    def _base_image(self, scenario) -> str:
-        """The Incus image alias a scenario's template should be built from."""
-        entry = self.workload_for(scenario)
+    def workload_entry(self, workload_id: str) -> CatalogEntry | None:
+        """Resolve an explicit workload id through the catalog."""
+        if not workload_id or self.catalog is None:
+            return None
+        try:
+            return self.catalog.get(workload_id)
+        except CatalogError:
+            self.store.log_event("workload_unknown", f"workload {workload_id!r} is not in the catalog")
+            return None
+
+    def _base_image(self, scenario, workload: str = "") -> str:
+        """The Incus image alias a template should be built from.
+
+        The pair's workload wins when it has one; otherwise the scenario's own declared
+        workload, and otherwise the site's golden image.
+        """
+        entry = self.workload_entry(workload) if workload else self.workload_for(scenario)
         if entry is None:
             return self.settings.incus.image_alias
         if entry.media.kind == "image" or entry.recipe in {"image-alias", "container-image"}:
@@ -280,14 +432,14 @@ class SessionManager:
         # `ontrak image build`, which publishes it under this alias.
         return f"ontrak-{entry.id}"
 
-    def _apply_workload(self, name: str, scenario) -> CatalogEntry | None:
+    def _apply_workload(self, name: str, scenario, workload: str = "") -> CatalogEntry | None:
         """Apply a workload's device profile and resource limits to a new instance.
 
         This is what makes the legacy platforms work at all: Windows 95/98/ME cannot
         use VirtIO and need an IDE disk, an emulated NIC and a chipset they recognise,
         and none of that can be changed from inside the guest.
         """
-        entry = self.workload_for(scenario)
+        entry = self.workload_entry(workload) if workload else self.workload_for(scenario)
         if entry is None:
             return None
         incus = self._require_incus()
@@ -323,47 +475,63 @@ class SessionManager:
         live = self.store.list_sessions(limit=2000)
         return {s.instance for s in live if s.instance and not s.state.is_terminal}
 
-    def _pool_instances(self, scenario_id: str, instances=None) -> list:
-        prefix = f"{self.settings.incus.pool_prefix}-{scenario_id}-"
-        instances = instances if instances is not None else self._all_instances()
-        return [i for i in instances if i.name.startswith(prefix)]
+    def _pool_instances(self, scenario_id: str, instances=None, workload: str = "") -> list:
+        """Pool instances for exactly this (scenario, workload) pair.
 
-    def _available_pool(self, scenario_id: str, instances=None) -> list:
+        Matched by parsing the name against the known workloads rather than by prefix:
+        ``pool-a-1`` (no workload) and ``pool-a-linux-1`` would otherwise both look like
+        pools for the same scenario.
+        """
+        instances = instances if instances is not None else self._all_instances()
+        parser = self.settings.incus.parse_pool_name
+        out = []
+        for instance in instances:
+            parsed = parser(instance.name)
+            if not parsed:
+                continue
+            scenario, found_workload, _index = parsed
+            if scenario == scenario_id and found_workload == workload:
+                out.append(instance)
+        return out
+
+    def _available_pool(self, scenario_id: str, instances=None, workload: str = "") -> list:
         claimed = self._claimed_instances()
         return [
             i
-            for i in self._pool_instances(scenario_id, instances)
+            for i in self._pool_instances(scenario_id, instances, workload)
             if i.running and i.ipv4 and i.name not in claimed
         ]
 
-    def _next_pool_index(self, scenario_id: str, instances=None) -> int:
-        existing = self._pool_instances(scenario_id, instances)
+    def _next_pool_index(self, scenario_id: str, instances=None, workload: str = "") -> int:
         highest = 0
-        prefix = f"{self.settings.incus.pool_prefix}-{scenario_id}-"
-        for instance in existing:
-            suffix = instance.name[len(prefix) :]
-            if suffix.isdigit():
-                highest = max(highest, int(suffix))
+        parser = self.settings.incus.parse_pool_name
+        for instance in self._pool_instances(scenario_id, instances, workload):
+            parsed = parser(instance.name)
+            if parsed:
+                highest = max(highest, parsed[2])
         return highest + 1
 
-    def pool_status(self, scenario_id: str | None = None) -> list[PoolStatus]:
+    def pool_status(self, scenario_id: str | None = None, workload: str | None = None) -> list[PoolStatus]:
         incus = self.incus
         if incus is None:
             return []
         instances = self._all_instances()
         claimed = self._claimed_instances()
         rows: list[PoolStatus] = []
-        for scenario in self.repo.list():
+        for scenario, pair_workload in self.workload_pairs():
             if scenario_id and scenario.id != scenario_id:
                 continue
-            pool = self._pool_instances(scenario.id, instances)
+            if workload is not None and pair_workload != workload:
+                continue
+            pool = self._pool_instances(scenario.id, instances, pair_workload)
             ready = len([i for i in pool if i.running and i.ipv4 and i.name not in claimed])
             owned = len([i for i in pool if i.name in claimed])
-            template = self.settings.incus.template_name(scenario.id)
+            template = self.settings.incus.template_name(scenario.id, pair_workload)
             rows.append(
                 PoolStatus(
                     scenario_id=scenario.id,
-                    target=self.settings.pool.target_for(scenario.id),
+                    workload=pair_workload,
+                    target=self.settings.pool.target_for(scenario.id, pair_workload),
                     ready=ready,
                     claimed=owned,
                     total=len(pool),
@@ -374,14 +542,18 @@ class SessionManager:
             )
         return rows
 
-    def prewarm(self, scenario_id: str, count: int) -> int:
-        """Create ``count`` booted, unclaimed VMs for a scenario. Returns how many
-        were actually created (bounded by ``pool.max_total``)."""
+    def prewarm(self, scenario_id: str, count: int, workload: str = "") -> int:
+        """Create ``count`` booted, unclaimed VMs for a (scenario, workload) pair.
+
+        Returns how many were actually created (bounded by ``pool.max_total``).
+        """
         self._require_incus()
         if count <= 0:
             return 0
         instances = self._all_instances()
-        pool_total = sum(len(self._pool_instances(s.id, instances)) for s in self.repo.list())
+        pool_total = sum(
+            len(self._pool_instances(s.id, instances, w)) for s, w in self.workload_pairs()
+        )
         budget = max(0, self.settings.pool.max_total - pool_total)
         to_create = min(count, budget)
         if to_create == 0:
@@ -390,24 +562,25 @@ class SessionManager:
             )
             return 0
         created = 0
-        index = self._next_pool_index(scenario_id, instances)
+        index = self._next_pool_index(scenario_id, instances, workload)
         for _ in range(to_create):
-            name = self.settings.incus.pool_name(scenario_id, index)
+            name = self.settings.incus.pool_name(scenario_id, index, workload)
             index += 1
             try:
-                self._provision_pool_instance(scenario_id, name)
+                self._provision_pool_instance(scenario_id, name, workload)
             except (SessionError, IncusError, GuestError) as exc:
-                self.store.log_event("prewarm_failed", f"{scenario_id} {name}: {exc}")
+                self.store.log_event("prewarm_failed", f"{scenario_id}@{workload} {name}: {exc}")
                 break
             created += 1
         if created:
-            self.store.log_event("prewarmed", f"{scenario_id}: {created} VM(s)")
+            label = f"{scenario_id}@{workload}" if workload else scenario_id
+            self.store.log_event("prewarmed", f"{label}: {created} VM(s)")
         return created
 
-    def _provision_pool_instance(self, scenario_id: str, name: str) -> str:
+    def _provision_pool_instance(self, scenario_id: str, name: str, workload: str = "") -> str:
         scenario = self.repo.get(scenario_id)
         self._require_incus()
-        self._clone_from_template(scenario, name)
+        self._clone_from_template(scenario, name, workload)
         session = Session(
             id=None,
             student=TEMPLATE_PSEUDO_STUDENT,
@@ -416,36 +589,39 @@ class SessionManager:
             instance=name,
             rdp_user=self.settings.guest.user,
             rdp_password=self.settings.guest.password,
+            workload=workload,
         )
-        self._await_guest(session, self.settings.guest.ready_timeout_seconds)
+        self._await_guest(session, self._ready_timeout(scenario), driver=self._driver_for(scenario))
         return name
 
     def refill_pool(self, scenario_ids: list[str] | None = None) -> dict[str, int]:
-        """Top every scenario's pool back up to its configured target."""
+        """Top every pool back up to its configured target."""
         created: dict[str, int] = {}
         for status in self.pool_status():
             if scenario_ids and status.scenario_id not in scenario_ids:
                 continue
             if status.deficit and status.template_ready:
-                made = self.prewarm(status.scenario_id, status.deficit)
+                made = self.prewarm(status.scenario_id, status.deficit, status.workload)
                 if made:
-                    created[status.scenario_id] = made
+                    created[status.label] = made
         return created
 
-    def _clone_from_template(self, scenario, target_name: str) -> str:
+    def _clone_from_template(self, scenario, target_name: str, workload: str = "") -> str:
         incus = self._require_incus()
-        template = self.settings.incus.template_name(scenario.id)
+        template = self.settings.incus.template_name(scenario.id, workload)
         if not incus.exists(template) or not incus.has_snapshot(template, POOL_SNAPSHOT):
+            label = f"{scenario.id}@{workload}" if workload else scenario.id
             raise SessionError(
                 f"template {template} is missing snapshot {POOL_SNAPSHOT}; run "
-                f"`ontrak template build {scenario.id}`"
+                f"`ontrak template build {label}`"
             )
         incus.copy_instance(f"{template}/{POOL_SNAPSHOT}", target_name, instance_only=True)
         incus.start_instance(target_name)
         return target_name
 
-    def _await_guest(self, session: Session, timeout: int) -> str:
+    def _await_guest(self, session: Session, timeout: int, driver: BaseDriver | None = None) -> str:
         """Wait for an address, then for the guest transport to answer."""
+        driver = driver or self.driver
         incus = self._require_incus()
         deadline = time.time() + timeout
         ip = ""
@@ -458,28 +634,53 @@ class SessionManager:
             raise SessionError(f"{session.instance} never obtained an address on {self.settings.incus.network}")
         session.host_ip = ip
         remaining = max(30, int(deadline - time.time()))
-        if not self.driver.wait_ready(session, timeout=remaining):
+        if not driver.wait_ready(session, timeout=remaining):
             raise SessionError(
                 f"{session.instance} at {ip} never became reachable over the "
-                f"{self.driver.name} transport"
+                f"{driver.name} transport"
             )
         return ip
 
     # ------------------------------------------------------------------
     # scenario files
     # ------------------------------------------------------------------
-    def _upload_scenario_files(self, session: Session, scenario, include_setup: bool) -> None:
+    def _upload_scenario_files(
+        self, session: Session, scenario, include_setup: bool, driver: BaseDriver | None = None
+    ) -> None:
+        """Copy the shared lib, the scenario scripts and any resources into the guest.
+
+        The layout is identical on both platforms — ``lib/`` next to ``scenarios/<id>/``
+        — so a script can find its library with the same relative path whether it is
+        PowerShell or shell.
+        """
+        driver = driver or self._driver_for(scenario)
         args = self._guest_args(session)
-        lib = self._lib_source
-        if lib.exists():
-            self.driver.upload_file(lib, self._guest_path("lib", COMMON_LIB), **args)
+        linux = getattr(scenario, "platform", WINDOWS) == LINUX
+        # Everything in scenarios/_lib lands in the guest's lib/ directory: the two
+        # platform libraries always, plus anything a scenario family needs there —
+        # the simulated directory service the identity scenarios run, for instance.
+        # Uploading the whole directory (rather than naming files here) is what lets a
+        # new shared tool ship without touching the session manager.
+        for source in sorted(self.settings.scenarios_dir.joinpath("_lib").glob("*")):
+            if not source.is_file():
+                continue
+            driver.upload_file(source, self._join(scenario, "lib", source.name), **args)
         if include_setup:
-            self.driver.upload_file(scenario.setup_script, self._guest_path("scenarios", scenario.id, "setup.ps1"), **args)
-        self.driver.upload_file(scenario.check_script, self._guest_path("scenarios", scenario.id, "check.ps1"), **args)
+            driver.upload_file(
+                scenario.setup_script,
+                self._join(scenario, "scenarios", scenario.id, SETUP_NAMES[scenario.platform]),
+                **args,
+            )
+        driver.upload_file(
+            scenario.check_script,
+            self._join(scenario, "scenarios", scenario.id, CHECK_NAMES[scenario.platform]),
+            **args,
+        )
         for resource in scenario.resources:
             source = scenario.directory / resource
-            destination = self._guest_path("scenarios", scenario.id, "resources", resource.replace("/", "\\"))
-            self.driver.upload_file(source, destination, **args)
+            relative = resource if linux else resource.replace("/", "\\")
+            destination = self._join(scenario, "scenarios", scenario.id, "resources", relative)
+            driver.upload_file(source, destination, **args)
 
     # ------------------------------------------------------------------
     # allocation
@@ -505,11 +706,15 @@ class SessionManager:
         """
         student = student.strip().lower()
         self.repo.get(scenario_id)  # raises ScenarioError if unknown
-        if workload:
-            entry = self.catalog.get(workload) if self.catalog else None
-            if self.catalog and entry is None:  # pragma: no cover - defensive
-                raise SessionError(f"unknown workload {workload!r}")
-        limit = int(time_limit_minutes or self.settings.session.ttl_minutes)
+        if workload and self.catalog is not None:
+            # A typo'd platform should read like every other user error, not leak a
+            # catalog exception out of the session API.
+            try:
+                self.catalog.get(workload)
+            except CatalogError as exc:
+                raise SessionError(f"unknown workload {workload!r}; see `ontrak catalog list`") from exc
+        limit = int(time_limit_minutes or self.settings.session.default_time_limit)
+        workload = self._resolve_workload(scenario_id, workload)
         if limit <= 0:
             raise SessionError("the time limit must be a positive number of minutes")
         live = self.store.live_sessions_for(student)
@@ -545,6 +750,36 @@ class SessionManager:
             session.id,
         )
         return session
+
+    def _resolve_workload(self, scenario_id: str, workload: str | None) -> str:
+        """Work out which platform a session should be built on.
+
+        An explicit choice wins, but only if the scenario actually offers it; otherwise
+        the scenario's first declared workload is used, and a scenario that declares
+        none falls back to the site's golden image.
+        """
+        scenario = self.repo.get(scenario_id)
+        offered = scenario.platform_workloads
+        wanted = str(workload or "").strip()
+        if wanted:
+            if offered and wanted not in offered:
+                raise SessionError(
+                    f"scenario {scenario_id} is not offered on workload {wanted!r}; "
+                    f"it declares: {', '.join(offered)}"
+                )
+            if not offered and self.catalog is not None:
+                # A scenario without declared workloads can still be asked for on a
+                # platform, as long as that platform can host its family of fault.
+                entry = self.workload_entry(wanted)
+                if entry is None:
+                    raise SessionError(f"unknown workload {wanted!r}; see `ontrak catalog list`")
+                families = entry.scenario_families
+                if families and scenario.category not in families:
+                    raise SessionError(
+                        f"workload {wanted} does not support {scenario.category} scenarios"
+                    )
+            return wanted
+        return offered[0] if offered else ""
 
     def set_time_limit(self, session: Session, minutes: int) -> Session:
         """Set or change a student's time limit mid-session."""
@@ -585,15 +820,16 @@ class SessionManager:
         session.state = SessionState.ALLOCATING
         self.store.save_session(session)
 
+        driver = self._driver_for(scenario)
         try:
             if not self._claim_pool(session):
-                name = self.settings.incus.session_name(scenario.id, session.id or "x")
-                self._clone_from_template(scenario, name)
+                name = self.settings.incus.session_name(scenario.id, session.id or "x", session.workload)
+                self._clone_from_template(scenario, name, session.workload)
                 session.instance = name
                 self.store.save_session(session)
                 self.store.log_event("cloned", name, session.id)
-            self._await_guest(session, self.settings.guest.ready_timeout_seconds)
-            if self.settings.session.randomize_credentials:
+            self._await_guest(session, self._ready_timeout(scenario), driver=driver)
+            if self.settings.session.randomize_credentials and not scenario.is_linux:
                 self._rotate_credentials(session)
             session.state = SessionState.READY
             session.ready_at = iso()
@@ -626,7 +862,10 @@ class SessionManager:
         )
 
     def _claim_pool(self, session: Session) -> str | None:
-        available = self._available_pool(session.scenario_id)
+        # A pool is per (scenario, workload): the same fault on Windows 11 and on
+        # Ubuntu are different machines, so a Windows pool must never hand a student
+        # a machine for a Linux scenario.
+        available = self._available_pool(session.scenario_id, workload=session.workload)
         if not available:
             return None
         # Lowest name first: it has been idle longest and its page cache is cold.
@@ -646,6 +885,8 @@ class SessionManager:
             f"Set-LocalUser -Name {quote_ps(self.settings.guest.user)} -Password $p;"
             "'rotated'"
         )
+        # Windows-only: a Linux guest is reached through the Incus agent or a key, so
+        # there is no password to rotate for the student's login.
         result = self.driver.run_powershell(script, timeout=60, **self._guest_args(session))
         if result.ok:
             session.rdp_password = password
@@ -686,6 +927,40 @@ class SessionManager:
             self.store.log_event("hint", f"level {session.hint_level}", session.id)
         return session
 
+    # ------------------------------------------------------------------
+    # the in-house ticket
+    # ------------------------------------------------------------------
+    def ticket_form(self, scenario):
+        """The write-up rubric for a scenario, or ``None`` when it has no ticket.
+
+        A form with no fields is treated as "no ticket" rather than as a rubric the
+        student can never satisfy.
+        """
+        form = getattr(scenario, "ticket_form", None)
+        return form if form is not None and getattr(form, "fields", None) else None
+
+    def ticket_form_for(self, session: Session):
+        return self.ticket_form(self.repo.get(session.scenario_id))
+
+    def save_ticket_draft(self, session: Session, values: dict) -> dict[str, str]:
+        """Keep the student's work in progress so a page reload does not lose it."""
+        stored = {str(k): str(v) for k, v in (values or {}).items()}
+        if session.id:
+            self.store.save_ticket_draft(session.id, stored)
+        return stored
+
+    def ticket_answers(self, session: Session) -> dict[str, str]:
+        return self.store.ticket_draft(session.id or 0)
+
+    def grade_ticket(self, session: Session, values: dict | None = None) -> TicketGrade | None:
+        """Mark the write-up without recording it (the preview a student sees)."""
+        scenario = self.repo.get(session.scenario_id)
+        form = self.ticket_form(scenario)
+        if form is None:
+            return None
+        answers = values if values is not None else self.ticket_answers(session)
+        return mark_ticket(form, answers, session_id=session.id or 0, scenario_id=scenario.id)
+
     def run_checks(self, session: Session, record: bool | None = None) -> ScoreReport:
         """Grade the current VM state against the scenario.
 
@@ -707,10 +982,11 @@ class SessionManager:
 
         session.state = SessionState.CHECKING
         self.store.save_session(session)
+        driver = self._driver_for(scenario)
         try:
-            self._upload_scenario_files(session, scenario, include_setup=False)
-            result = self.driver.run_script_file(
-                self._guest_path("scenarios", scenario.id, "check.ps1"),
+            self._upload_scenario_files(session, scenario, include_setup=False, driver=driver)
+            result = driver.run_script_file(
+                self._join(scenario, "scenarios", scenario.id, CHECK_NAMES[scenario.platform]),
                 timeout=self.settings.session.check_timeout_seconds,
                 **self._guest_args(session),
             )
@@ -743,26 +1019,107 @@ class SessionManager:
         session.last_report = report
         return report
 
-    def complete(self, session: Session) -> ScoreReport:
+    def complete(self, session: Session, values: dict | None = None) -> ScoreReport:
         """The student's "Complete & End": grade once, keep the result, destroy the VM.
 
-        This is the only grading run whose outcome is stored. After it the session is
-        terminal, the instance is gone, and the student gets a fresh machine next time
-        — which is also what makes a reset unnecessary to be perfectly clean.
+        This is the only grading run whose outcome is stored. It marks two things and
+        blends them:
+
+        * the **machine**, from the scenario's ``check`` script, and
+        * the **ticket**, from the write-up the student handed in.
+
+        A scenario with no ticket form grades exactly as it always did. A scenario
+        with one treats documentation as part of the work: an unsubmitted ticket
+        scores zero and the attempt cannot be marked resolved, which is the honest
+        reading of "the fix nobody recorded".
+
+        After this the session is terminal, the instance is gone, and the student gets
+        a fresh machine next time — which is also what makes a reset unnecessary to be
+        perfectly clean.
         """
         if session.state.is_terminal:
             raise SessionError(
                 f"session {session.id} is already {session.state.value}; there is nothing to complete"
             )
-        report = self.run_checks(session, record=True)
         scenario = self.repo.get(session.scenario_id)
+
+        # Machine first, not recorded yet: the grade that gets stored is the blend, and
+        # storing the machine half separately would put two rows in the results table
+        # for one submission.
+        report = self.run_checks(session, record=False)
+        if values is not None:
+            self.save_ticket_draft(session, values)
+
+        form = self.ticket_form(scenario)
+        ticket: TicketGrade | None = None
+        # If the machine could not be graded at all, blending in a good write-up would
+        # manufacture a passing score for an unverified machine. Mark the ticket, log
+        # it, but leave the attempt at zero and say so.
+        if form is not None and report.error:
+            report.notes.append(
+                "machine grading failed, so the write-up was marked but not blended into "
+                "the score"
+            )
+            ticket = self.grade_ticket(session)
+            report.ticket_score = ticket.score if ticket else 0.0
+            report.ticket_weight = form.weight
+            report.ticket_outcomes = [o.to_dict() for o in (ticket.outcomes if ticket else [])]
+            session.state = SessionState.FAILED
+            session.resolved = False
+            session.notes = (session.notes + " [completed]").strip()
+            self.store.save_session(session)
+            self.store.add_result(report, session.student)
+            if ticket is not None:
+                self.store.save_ticket(ticket, session.student)
+                self.store.clear_ticket_draft(session.id or 0)
+                self.store.log_event("ticket_graded", ticket.summary_line(), session.id)
+            self.store.log_event("completed", report.summary_line(), session.id)
+            self._destroy_instance(session.instance)
+            session.instance = ""
+            session.host_ip = ""
+            self.store.save_session(session)
+            session.last_report = report
+            return report
+        if form is not None:
+            ticket = self.grade_ticket(session)
+            report.machine_score = report.machine_score or report.score
+            report.ticket_score = ticket.score if ticket else 0.0
+            report.ticket_weight = form.weight
+            report.ticket_outcomes = [o.to_dict() for o in (ticket.outcomes if ticket else [])]
+            report.score = blend(report.machine_score, ticket, form.weight)
+            if ticket is None or not ticket.submitted:
+                report.notes.append(
+                    f"no ticket was submitted; the write-up is {form.weight:.0f}% of this "
+                    "grade and counts as zero"
+                )
+                report.resolved = False
+            elif ticket.score < form.pass_score:
+                report.notes.append(
+                    f"the write-up scored {ticket.score:.0f}% (pass mark {form.pass_score:.0f}%)"
+                )
+                report.resolved = False
+            else:
+                report.notes.append(
+                    f"write-up: {ticket.score:.0f}% ({ticket.passed_count}/{len(ticket.outcomes)} fields)"
+                )
+
         report.resolved = bool(report.resolved)
         report.notes.append(f"final submission judged against {scenario.title}")
+        if report.has_ticket:
+            report.notes.append(report.breakdown())
         session.state = SessionState.PASSED if report.resolved else SessionState.FAILED
         session.resolved = bool(report.resolved)
+        session.best_score = max(session.best_score, report.score)
         session.notes = (session.notes + " [completed]").strip()
         self.store.save_session(session)
+
+        self.store.add_result(report, session.student)
+        if ticket is not None:
+            self.store.save_ticket(ticket, session.student)
+            self.store.clear_ticket_draft(session.id or 0)
+            self.store.log_event("ticket_graded", ticket.summary_line(), session.id)
         self.store.log_event("completed", report.summary_line(), session.id)
+
         self._destroy_instance(session.instance)
         session.instance = ""
         session.host_ip = ""
@@ -770,20 +1127,29 @@ class SessionManager:
         session.last_report = report
         return report
 
-    def drain_pool(self, scenario_id: str) -> int:
+    def drain_pool(self, scenario_id: str, workload: str | None = None) -> int:
         """Delete unclaimed pooled VMs for a scenario (end of a class window).
 
         Only unclaimed instances go: a student still working keeps their machine.
-        Returns the number destroyed.
+        ``workload=None`` drains every platform this scenario is offered on, which is
+        what a class-ending ``ontrak pool drain --scenario X`` means; passing a
+        workload drains just that platform's pool.
         """
         if self.incus is None:
             return 0
+        pairs = (
+            [pair_workload for _scenario, pair_workload in self.workload_pairs([scenario_id])]
+            if workload is None
+            else [workload]
+        )
         removed = 0
-        for instance in self._available_pool(scenario_id):
-            self._destroy_instance(instance.name)
-            removed += 1
+        for pair_workload in dict.fromkeys(pairs):
+            for instance in self._available_pool(scenario_id, workload=pair_workload):
+                self._destroy_instance(instance.name)
+                removed += 1
         if removed:
-            self.store.log_event("pool_drained", f"{scenario_id}: {removed} VM(s)")
+            label = f"{scenario_id}@{workload}" if workload else scenario_id
+            self.store.log_event("pool_drained", f"{label}: {removed} VM(s)")
         return removed
 
     # ------------------------------------------------------------------
@@ -805,12 +1171,14 @@ class SessionManager:
 
         try:
             if not self._claim_pool(session):
-                name = self.settings.incus.session_name(session.scenario_id, session.id or "x")
-                self._clone_from_template(scenario, name)
+                name = self.settings.incus.session_name(
+                    session.scenario_id, session.id or "x", session.workload
+                )
+                self._clone_from_template(scenario, name, session.workload)
                 session.instance = name
                 self.store.save_session(session)
-            self._await_guest(session, self.settings.guest.ready_timeout_seconds)
-            if self.settings.session.randomize_credentials:
+            self._await_guest(session, self._ready_timeout(scenario), driver=self._driver_for(scenario))
+            if self.settings.session.randomize_credentials and not scenario.is_linux:
                 self._rotate_credentials(session)
             session.state = SessionState.READY
             session.ready_at = iso()

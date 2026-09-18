@@ -2,12 +2,13 @@
 # OnTrak — one-shot bootstrap.
 #
 # Installs the attribution-guard hooks, creates the virtualenv, installs the Python
-# dependencies and seeds .env from .env.example. Safe to re-run: it never overwrites
-# an existing .env, and re-running only re-installs what is missing.
+# dependencies and fills .env. Safe to re-run: it never overwrites a value that is
+# already set, and re-running only re-installs what is missing.
 #
-# OnTrak has no root-level compose stack: the student range runs on the host through
-# Incus (see infra/bootstrap-host.sh) and the browser console runs through the
-# operator's Guacamole deployment (see deploy/guacamole/).
+# The root compose stack runs the control plane and the console gateway (see
+# docker-compose.yml, docs/docker.md). The training machines themselves are not
+# containers: they are Incus virtual machines on the host, built by
+# infra/bootstrap-host.sh and infra/build-templates.sh.
 set -euo pipefail
 
 APP="$(basename "$(pwd)")"
@@ -22,14 +23,10 @@ if [ -d .githooks ]; then
 fi
 
 # ── .env ─────────────────────────────────────────────────────────────────────
-if [ ! -f .env ]; then
-  if [ -f .env.example ]; then
-    cp .env.example .env
-    echo "==> .env created from .env.example — fill in the real values"
-  fi
-else
-  echo "==> .env already present, left untouched"
-fi
+# Creates .env from .env.example when it is missing, and fills the blanks the
+# local stack cannot start without (session-cookie key, console key). Anything
+# that already holds a value — a `vault://` reference included — is left alone.
+bash scripts/secrets.sh
 
 # ── python environment ────────────────────────────────────────────────────────
 PYTHON="${PYTHON:-python3}"
@@ -58,7 +55,8 @@ fi
 echo
 echo "==> done. Next:"
 echo "    make demo        # full student flow, no hypervisor needed"
-echo "    make serve       # student portal (needs the secrets in .env)"
+echo "    make up          # portal + console gateway in Docker (docs/docker.md)"
+echo "    make serve       # the same portal, on the host instead"
 echo "    make check       # host readiness, including Incus and KVM"
 echo
 echo "    Building real Windows templates needs a host: infra/bootstrap-host.sh"

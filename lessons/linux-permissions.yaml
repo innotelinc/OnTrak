@@ -1,0 +1,91 @@
+id: linux-permissions
+title: File permissions with chmod
+platform: linux
+category: software
+difficulty: 2
+minutes: 20
+summary: >
+  Read a permission string, turn it into octal, and set it correctly with chmod —
+  including the executable, private-file and directory-crawl cases that cause most
+  service failures.
+tags: [cli, permissions, chmod, security, basics]
+objectives:
+  - Read the 10-character permission string and the octal equivalent
+  - Set a file private, shared or executable on purpose
+  - Understand why a directory needs the execute bit to be usable
+prerequisites: [linux-files-and-dirs]
+commands:
+  - command: ls -l file
+    what: Show the mode, owner and group. First column is type + 9 permission bits.
+    example: ls -l /srv/app/deploy.sh
+  - command: stat -c '%a %U %G %n' file
+    what: Print the mode in octal plus owner and group — the form you can compare in a script.
+    example: stat -c '%a %U %G %n' /srv/app/payroll-export.csv
+  - command: chmod 640 file
+    what: Set the mode by octal. 6=rw for the owner, 4=r for the group, 0=nothing for everyone else.
+  - command: chmod u+x script.sh
+    what: Add the execute bit for the owner only, leaving every other bit alone.
+  - command: chmod -R g+rX docs/
+    what: Recurse. Capital X adds execute only to directories (and to files that already had it).
+    example: chmod -R g+rX /srv/www/site
+  - command: chmod 750 dir/
+    what: Traversable and readable by the owner and the group, closed to everyone else.
+  - command: umask
+    what: Show the bits stripped from newly created files and directories.
+  - command: namei -l /srv/app/deploy.sh
+    what: Print the permissions of *every* directory on the path. Diagnoses "permission denied" that has nothing to do with the file itself.
+steps:
+  - title: Read the mode as three triples
+    body: >
+      `-rwxr-x---` is: type (one character), then owner, group, other — each three
+      bits of read (4), write (2) and execute (1). rwxr-x--- is 7, 5, 0, so the
+      octal form is 750. Reading it the other way round is the single most common
+      reason a "fixed" permission is still wrong.
+    command: ls -l /etc/shadow
+  - title: Executable is a permission, not a name
+    body: >
+      A .sh file that is not +x cannot be run, no matter what it is called. The
+      usual cause of "the deployment script broke overnight" is a copy or an
+      extraction that dropped the bit.
+    command: chmod u+x,g+x,o-x /srv/app/deploy.sh
+  - title: Private means nobody else
+    body: >
+      Data about people — payroll, exports, keys — belongs at 600 or 640. The
+      question is never "can I read it", it is "who else can". `find / -perm -o+r`
+      finds the readable-by-the-world cases in an audit.
+    command: chmod 600 /srv/app/payroll-export.csv
+  - title: Directories need execute to be entered
+    body: >
+      On a directory, r lists names and x lets you traverse into it. That is why a
+      750 directory is usable and a 640 directory is not, even though both look
+      restrictive. `namei -l` shows the whole path at once.
+    command: chmod 750 /srv/app
+  - title: Do not fix a permission error with 777
+    body: >
+      777 removes the question instead of answering it, and later looks like a
+      security finding. Decide who needs access — owner, group, or other — and
+      grant exactly that.
+    danger: chmod -R 777 hides the real failure and is a finding in any audit.
+exercises:
+  - id: fix-deploy
+    prompt: >
+      /srv/app/deploy.sh must be runnable by its owner and by members of its
+      group, but not by anyone else. Nothing else about the file should change.
+    solution: chmod 750 /srv/app/deploy.sh
+    verify: stat -c '%a' /srv/app/deploy.sh
+  - id: lock-export
+    prompt: A payroll export at /srv/app/payroll-export.csv is world-readable. Lock it down.
+    solution: chmod 600 /srv/app/payroll-export.csv
+    verify: stat -c '%a %U %G' /srv/app/payroll-export.csv
+  - id: traverse-dir
+    prompt: >
+      A service running as its own user cannot read /srv/app/config, and the files
+      inside are already world-readable. What is wrong, and what do you change?
+    solution: |
+      # The directory itself is not traversable:
+      namei -l /srv/app/config
+      chmod 755 /srv/app/config
+    verify: namei -l /srv/app/config
+docs:
+  - man 1 chmod
+  - man 7 path_resolution

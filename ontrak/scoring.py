@@ -153,6 +153,8 @@ def evaluate(scenario: Scenario, session_id: int, guest_output: str) -> ScoreRep
     total = scenario.total_weight or 1.0
     earned = sum(o.weight for o in report.outcomes if o.passed)
     report.score = round(100.0 * earned / total, 1)
+    # Until a session blends in the ticket grade, the machine score *is* the score.
+    report.machine_score = report.score
     critical_failed = [o for o in report.outcomes if o.critical and not o.passed]
     report.resolved = not critical_failed and report.score >= scenario.pass_score
     return report
