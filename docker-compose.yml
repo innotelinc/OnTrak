@@ -17,12 +17,18 @@
 # successfully`), so a machine with only Docker goes from git clone to a running
 # lab in one command. `make up` is the same thing with a friendlier summary.
 #
-# Three containers run the *control plane*:
+# Four containers run the *control plane*:
 #
 #   lab-setup   first-run setup: secrets, and Incus on the host (then exits)
+#   gateway     the origin: one published port, routing / to the portal and
+#               /guacamole/ to the console (see deploy/gateway/nginx.conf)
 #   portal      the FastAPI student portal: scenarios, tickets, grading, admin
 #   guacamole   the HTML5 console (RDP/SSH into the training machines)
 #  +guacd       Guacamole's connection daemon, which does the actual protocol work
+#
+# Only `gateway` publishes a port. The portal and the console are reachable on
+# the network but not from the host, so there is one address to put behind TLS
+# and no second host port to collide with whatever else the machine runs.
 #
 # What is deliberately **not** here: the training machines themselves. Those are
 # Incus virtual machines on the host — Windows 95 through 11, Server, Office and
@@ -73,12 +79,11 @@ services:
       ONTRAK_INCUS_PROJECT: ${ONTRAK_INCUS__PROJECT:-ontrak}
       ONTRAK_INCUS__REMOTE: ${ONTRAK_INCUS__REMOTE:-local}
       ONTRAK_PORTAL__PORT: ${ONTRAK_PORTAL__PORT:-8080}
-      ONTRAK_GUAC__PUBLIC_PORT: ${ONTRAK_GUAC__PUBLIC_PORT:-8081}
       # Read only to report, at the end of a first run, the console address a
       # student's browser will actually be sent to — the portal's own value is
       # below, and a report that printed the local port instead would be wrong
       # on any deployment that puts a TLS console host here.
-      ONTRAK_GUAC__BASE_URL: ${ONTRAK_GUAC__BASE_URL:-http://localhost:8081/guacamole/}
+      ONTRAK_GUAC__BASE_URL: ${ONTRAK_GUAC__BASE_URL:-http://localhost:8080/guacamole/}
       ONTRAK_BIND_ADDR: ${ONTRAK_BIND_ADDR:-127.0.0.1}
       # The checkout, as this container sees it. This is where `.env` is written
       # and where infra/bootstrap-host.sh is read from.
@@ -116,11 +121,9 @@ services:
     depends_on:
       lab-setup:
         condition: service_completed_successfully
-    ports:
-      # Loopback by default: the portfolio posture is a TLS proxy (NPM Edge)
-      # in front, never a portal exposed straight to the network. Set
-      # ONTRAK_BIND_ADDR=0.0.0.0 in .env for a lab where students hit it directly.
-      - "${ONTRAK_BIND_ADDR:-127.0.0.1}:${ONTRAK_PORTAL__PORT:-8080}:8080"
+    # Deliberately unpublished: `gateway` holds the only host port, so the portal
+    # is reached at / on that one address and never directly. Publishing it too
+    # would mean two addresses serving the same app, one of which has no console.
     environment:
       # ── identity and secrets ──
       ONTRAK_PORTAL__TITLE: ${ONTRAK_PORTAL__TITLE:-OnTrak}
@@ -136,7 +139,7 @@ services:
       # Must equal JSON_SECRET_KEY below: the portal signs console links with it
       # and Guacamole verifies them. One value, two services.
       ONTRAK_GUAC__SECRET_KEY: ${ONTRAK_GUAC__SECRET_KEY:-}
-      ONTRAK_GUAC__BASE_URL: ${ONTRAK_GUAC__BASE_URL:-http://localhost:8081/guacamole/}
+      ONTRAK_GUAC__BASE_URL: ${ONTRAK_GUAC__BASE_URL:-http://localhost:8080/guacamole/}
       ONTRAK_GUAC__RECORDING: ${ONTRAK_GUAC__RECORDING:-false}
       ONTRAK_GUAC__RECORDING_PATH: /recordings
       ONTRAK_SECRETS_FILE: /run/ontrak/secrets.env
@@ -215,8 +218,7 @@ services:
         condition: service_completed_successfully
       guacd:
         condition: service_started
-    ports:
-      - "${ONTRAK_BIND_ADDR:-127.0.0.1}:${ONTRAK_GUAC__PUBLIC_PORT:-8081}:8080"
+    # Reached through `gateway` at /guacamole/, not on a port of its own.
     environment:
       GUACD_HOSTNAME: guacd
       GUACD_PORT: "4822"
@@ -257,6 +259,30 @@ services:
       retries: 3
     networks: [ontrak]
 
+  # ── the origin ────────────────────────────────────────────────────────────
+  # The estate's edge forwards a host, not a path, so the portal and the console
+  # share this one address: `/` to the portal, `/guacamole/` (websocket included)
+  # to the console. It holds the stack's only published port.
+  #
+  # This is where the stack's posture meets the network: loopback by default, so
+  # a TLS proxy goes in front of it and nothing is served in the clear off-host.
+  # Set ONTRAK_BIND_ADDR=0.0.0.0 in .env for a lab where students reach this host
+  # directly — and then make ONTRAK_GUAC__BASE_URL the URL their browsers use.
+  gateway:
+    image: ${ONTRAK_GATEWAY_IMAGE:-nginx:1.27-alpine}
+    container_name: ontrak-gateway
+    restart: unless-stopped
+    depends_on:
+      portal:
+        condition: service_started
+      guacamole:
+        condition: service_started
+    ports:
+      - "${ONTRAK_BIND_ADDR:-127.0.0.1}:${ONTRAK_PORTAL__PORT:-8080}:8080"
+    volumes:
+      - ./deploy/gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks: [ontrak]
+
 volumes:
   ontrak-state:
     name: ontrak-state
@@ -269,7 +295,8 @@ volumes:
     name: ontrak-secrets
 
 networks:
-  # A private bridge. The portal still needs egress (it dials the training
-  # machines the host's Incus bridge hands it); the gateway needs none.
+  # A private bridge. The portal needs no egress of its own — it reaches the
+  # training machines through the host's Incus socket — and the console is only
+  # ever spoken to by the origin gateway on this network.
   ontrak:
     name: ontrak

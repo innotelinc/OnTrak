@@ -21,7 +21,9 @@
 > [student.ontrak.innotel.us](https://student.ontrak.innotel.us/) and instructors
 > [admin.ontrak.innotel.us](https://admin.ontrak.innotel.us/): one portal, three names,
 > provisioned through Cerulean by `make provision` ([docs/docker.md](docs/docker.md)).
-> A lab on your own box is `http://localhost:8080` and `http://localhost:8081/guacamole/`.
+> A lab on your own box is `http://localhost:8080`, with the console at
+> `http://localhost:8080/guacamole/` — one address, because the edge forwards a host
+> rather than a path.
 
 ---
 
@@ -66,7 +68,7 @@ hypervisor, no `.env`, nothing to read first. (A Debian or Ubuntu lab host with
 
 ```bash
 docker compose up -d --build     # `make up` is the same, with the addresses printed
-# portal   http://localhost:8080      console   http://localhost:8081/guacamole/
+# portal   http://localhost:8080      console   http://localhost:8080/guacamole/
 make ps              # health  ·  make logs  ·  docker compose logs lab-setup
 make down
 ```
@@ -126,7 +128,7 @@ OnTrak/
 ├── scripts/secrets.sh         # idempotent local secrets: .env blanks only, never a set value
 ├── tests/                     # pytest suite
 ├── web/landing/               # static GitHub Pages landing
-├── docker-compose.yml         # the stack: first-run lab-setup + portal + Guacamole gateway
+├── docker-compose.yml         # the stack: first-run lab-setup + origin gateway + portal + console
 ├── docker-compose.remote.yml  # override: a remote Incus cluster, or no hypervisor at all
 ├── Dockerfile                 # the portal image
 ├── .githooks/                 # attribution guard (commit-msg, pre-commit, guard-lib)

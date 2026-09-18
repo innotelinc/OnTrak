@@ -66,7 +66,7 @@ up: secrets ## One command: first-run setup (secrets, then Incus on the host), s
 	@# `docker compose up` — with no .env at all — works the same way.
 	$(COMPOSE) up -d --build
 	@echo "==> portal    http://localhost:$${ONTRAK_PORTAL__PORT:-8080}"
-	@echo "==> console   http://localhost:$${ONTRAK_GUAC__PUBLIC_PORT:-8081}/guacamole/"
+	@echo "==> console   http://localhost:$${ONTRAK_PORTAL__PORT:-8080}/guacamole/"
 	@echo "==> sign in   instructor / ONTRAK_PORTAL__ADMIN_PASSWORD in .env"
 	@echo "==> first run make setup-log   lab health: make exec ARGS=doctor"
 

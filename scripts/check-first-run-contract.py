@@ -11,10 +11,13 @@ only way to keep that promise is the arrangement this checks:
   * a `lab-setup` service exists and can reach the host (privileged, pid: host),
     write the project directory, and run the image's own copy of its script —
     a bind mount over /app would shadow it, executable bit and all;
-  * the portal and the console gateway wait for it to *complete*, not merely to
-    start, because the files it writes are what they read;
+  * the portal and the console wait for it to *complete*, not merely to start,
+    because the files it writes are what they read;
   * both of them can read the shared secrets volume, and the portal can reach
     the host's Incus;
+  * exactly one service publishes a host port, and it is the origin gateway,
+    which both upstreams share a network with — the arrangement that lets one
+    URL serve the portal at `/` and the console at `/guacamole/`;
   * the whole file renders with no `.env` at all — a first run has none.
 
 Read the rendered configuration rather than the YAML: what matters is the
@@ -33,12 +36,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 PORTAL = "portal"
-GATEWAY = "guacamole"
+CONSOLE = "guacamole"
+GATEWAY = "gateway"
 SETUP = "lab-setup"
 SECRETS_MOUNT = "/run/ontrak"
 PROJECT_MOUNT = "/project"
 IMAGE_MOUNT = "/app"
 INCUS_MOUNT = "/var/lib/incus"
+GATEWAY_CONFIG = "/etc/nginx/conf.d/default.conf"
 
 
 def rendered(*extra: str) -> dict:
@@ -51,6 +56,13 @@ def rendered(*extra: str) -> dict:
 
 def mounts(service: dict) -> set[str]:
     return {str(m.get("target")) for m in service.get("volumes") or []}
+
+
+def networks_of(service: dict) -> set[str]:
+    # Rendered either as a mapping of names or as a list of them, depending on how
+    # the file declared it.
+    nets = service.get("networks") or {}
+    return set(nets)
 
 
 def check(config: dict) -> list[str]:
@@ -97,7 +109,7 @@ def check(config: dict) -> list[str]:
             "checkout being executable"
         )
 
-    for name in (PORTAL, GATEWAY):
+    for name in (PORTAL, CONSOLE):
         service = services.get(name)
         if service is None:
             problems.append(f"there is no {name} service")
@@ -111,6 +123,44 @@ def check(config: dict) -> list[str]:
             )
         if SECRETS_MOUNT not in mounts(service):
             problems.append(f"{name} cannot read the shared secrets ({SECRETS_MOUNT})")
+
+    # The origin, and the single-published-port invariant it exists to hold.
+    gateway = services.get(GATEWAY)
+    if gateway is None:
+        problems.append(
+            f"there is no {GATEWAY} service: with no origin in front, the portal and "
+            "the console would each need a published port, and the edge forwards a "
+            "host rather than a path"
+        )
+    else:
+        if not gateway.get("ports"):
+            problems.append(
+                f"{GATEWAY} publishes no port, so nothing in the stack is reachable "
+                "from outside it"
+            )
+        if GATEWAY_CONFIG not in mounts(gateway):
+            problems.append(
+                f"{GATEWAY} does not mount its routing config ({GATEWAY_CONFIG}), so "
+                "it would serve nginx's default page instead of the range"
+            )
+        gateway_nets = networks_of(gateway)
+        for name in (PORTAL, CONSOLE):
+            upstream = services.get(name) or {}
+            if not gateway_nets & networks_of(upstream):
+                problems.append(
+                    f"{GATEWAY} routes to {name} but shares no network with it, so "
+                    f"{name} would answer 502"
+                )
+
+    publishers = sorted(
+        name for name, service in services.items() if (service or {}).get("ports")
+    )
+    if publishers != [GATEWAY]:
+        problems.append(
+            f"published ports are held by {publishers or 'nothing'}, not by {GATEWAY} "
+            "alone — a second published port is a second address for the same app, "
+            "and the one that is not the gateway answers nothing at /guacamole/"
+        )
 
     portal = services.get(PORTAL) or {}
     if INCUS_MOUNT not in mounts(portal):
@@ -135,7 +185,10 @@ def main() -> int:
             print(f"first-run contract: {problem}", file=sys.stderr)
         return 1
 
-    print("first-run contract: ok — lab-setup prepares the host, the services wait for it")
+    print(
+        "first-run contract: ok — lab-setup prepares the host, the services wait for "
+        "it, and one port serves the portal and the console"
+    )
     return 0
 
 

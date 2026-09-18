@@ -67,4 +67,4 @@ fill ONTRAK_GUEST__PASSWORD 12
 
 echo
 echo "==> done. ${ENV_FILE} is gitignored; never commit it."
-echo "    next: make up      (portal on http://localhost:8080, console on :8081)"
+echo "    next: make up      (portal on http://localhost:8080, console on :8080/guacamole/)"

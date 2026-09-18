@@ -45,7 +45,10 @@ def test_the_shipped_env_template_is_loadable():
     therefore not a typo warning — it is a first run that fails at boot, which is
     how `ONTRAK_GUAC__PUBLIC_PORT` (read by compose, rejected by GuacConfig) got
     caught: `docker compose up` was fine, the portal container was fine, and every
-    host command died on a setting the documentation told operators to set.
+    host command died on a setting the documentation told operators to set. That
+    key is gone now — the console is a path on the stack's single published port,
+    not a service with a port of its own — and this test is what keeps its
+    replacement honest.
     """
     from pathlib import Path
 
@@ -59,10 +62,11 @@ def test_the_shipped_env_template_is_loadable():
     filled = {key: value for key, value in listed.items() if value.strip()}
     settings = load_settings(path=None, environ=dict(filled))
 
-    # Spot-check that the values arrived rather than being swallowed, including
-    # the one that used to raise: compose publishes the console on it, so the app
-    # has to be able to read it back.
-    assert settings.guac.public_port == 8081
+    # Spot-check that the values arrived rather than being swallowed. The console
+    # address is the one the stack's gateway is configured against: a template
+    # that listed it under a name the app could not read would send students to a
+    # path that answers nothing.
+    assert settings.guac.base_url.endswith("/guacamole/")
     assert settings.guac.recording is False
     assert settings.session.ttl_minutes == 90
     assert settings.pool.targets == {}

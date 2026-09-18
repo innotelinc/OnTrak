@@ -219,7 +219,7 @@ printf '      portal      http://localhost:%s\n' "${ONTRAK_PORTAL__PORT:-8080}"
 # The console address a *student's browser* uses, which is not necessarily this
 # host: a deployment puts a TLS console host here, and printing the local port
 # regardless would tell the operator something that is not true.
-guac_url="${ONTRAK_GUAC__BASE_URL:-http://localhost:${ONTRAK_GUAC__PUBLIC_PORT:-8081}/guacamole/}"
+guac_url="${ONTRAK_GUAC__BASE_URL:-http://localhost:${ONTRAK_PORTAL__PORT:-8080}/guacamole/}"
 printf '      console     %s\n' "$guac_url"
 case "$guac_url" in
   *localhost* | *127.0.0.1*) ;;
@@ -228,8 +228,8 @@ case "$guac_url" in
     printf '      %s\n' "            set ONTRAK_GUAC__BASE_URL in .env for a lab on this host."
     ;;
 esac
-printf '      published   bind %s, console port %s\n' \
-  "${ONTRAK_BIND_ADDR:-127.0.0.1}" "${ONTRAK_GUAC__PUBLIC_PORT:-8081}"
+printf '      published   bind %s, port %s (the portal and the console share it)\n' \
+  "${ONTRAK_BIND_ADDR:-127.0.0.1}" "${ONTRAK_PORTAL__PORT:-8080}"
 printf '      sign in     %s / the password in .env (ONTRAK_PORTAL__ADMIN_PASSWORD)\n' \
   "${ONTRAK_PORTAL__ADMIN_USER:-instructor}"
 printf '      verify lab  docker compose exec portal python3 -m ontrak doctor\n'

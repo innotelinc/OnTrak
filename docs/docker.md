@@ -6,7 +6,7 @@ the design, not a shortcut.
 
 ```bash
 docker compose up -d --build  # the whole installation, first run included
-# portal   http://localhost:8080        console   http://localhost:8081/guacamole/
+# portal   http://localhost:8080        console   http://localhost:8080/guacamole/
 make ps                       # health of every service
 make logs                     # follow
 docker compose logs lab-setup # what the first run set up
@@ -147,8 +147,12 @@ them means a container upgrade can lock the host out of its own database.
 
 | Port | Default | Service |
 | --- | --- | --- |
-| 8080 | `ONTRAK_BIND_ADDR:ONTRAK_PORTAL__PORT` | student portal and admin panel |
-| 8081 | `ONTRAK_BIND_ADDR:ONTRAK_GUAC__PUBLIC_PORT` | Guacamole (the console iframe's target) |
+| 8080 | `ONTRAK_BIND_ADDR:ONTRAK_PORTAL__PORT` | the origin gateway: the student portal and admin panel at `/`, the console at `/guacamole/` |
+
+One published port, on purpose. The portal and the console are separate containers
+but share an origin (`deploy/gateway/nginx.conf` routes them), because the estate's
+edge forwards a host rather than a path — and because a port per service is one
+more host port to collide with whatever else the machine is running.
 
 On the deployment the range answers on three names, provisioned through Cerulean
 (DNS, the wildcard certificate and the edge host — `make provision`), which is
@@ -168,13 +172,14 @@ them differently later (the student name on the internet, the staff name behind
 the VPN) without touching the app.
 
 What the edge has to do with the stack bound to loopback (the default) is three
-hosts and one path — the path is passed through unchanged, which is why
-`ONTRAK_GUAC__BASE_URL` keeps its trailing `/guacamole/`:
+hosts and no paths: every name goes to the same address, and the stack's gateway
+decides what `/` and `/guacamole/` mean. The path is passed through unchanged,
+which is why `ONTRAK_GUAC__BASE_URL` keeps its trailing `/guacamole/`.
 
 | Public | Upstream |
 | --- | --- |
 | `https://ontrak.innotel.us/` | `http://<lab host>:8080/` |
-| `https://ontrak.innotel.us/guacamole/` | `http://<lab host>:8081/guacamole/` (a location rule: NPM's bridge forwards a host, not a path) |
+| `https://ontrak.innotel.us/guacamole/` | `http://<lab host>:8080/guacamole/` (routed inside the stack, not at the edge) |
 | `https://student.ontrak.innotel.us/` | `http://<lab host>:8080/` |
 | `https://admin.ontrak.innotel.us/` | `http://<lab host>:8080/` |
 
@@ -254,8 +259,9 @@ facts are missing. Start Incus on the host (`systemctl start incus`) and check i
 is answering there (`incus info`); if it is not installed at all,
 `ONTRAK_LAB_SETUP=force docker compose up -d` runs the host step again.
 
-**`failed to bind host port`.** Something already owns 8080 or 8081 on the host.
-Set `ONTRAK_PORTAL__PORT` / `ONTRAK_GUAC__PUBLIC_PORT` in `.env` and bring the
+**`failed to bind host port`.** Something already owns 8080 on the host — only
+one port is published, so this is the only one that can collide. Set
+`ONTRAK_PORTAL__PORT` in `.env` and bring the
 stack up again.
 
 **`unix.socket` became a directory.** Bind-mounting a path that does not exist

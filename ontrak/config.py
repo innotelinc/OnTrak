@@ -232,12 +232,10 @@ class PoolConfig:
 
 @dataclass
 class GuacConfig:
+    # The address a *browser* uses. The console is a path on the stack's one
+    # published port, so this only has to change when a TLS host is put in front.
     base_url: str = "http://127.0.0.1:8080/guacamole/"
     secret_key: str = ""
-    # The host port the console gateway is published on. `base_url` is the
-    # address a *browser* uses; this is what a stack publishes, so the container
-    # stack and the portal read the same number instead of each hardcoding one.
-    public_port: int = 8081
     link_ttl_minutes: int = 480
     recording: bool = False
     recording_path: str = "/recordings"
