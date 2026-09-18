@@ -97,10 +97,16 @@ jobs:
           pip install -e .
 
       - name: Lint
-        run: ruff check ontrak tests
+        run: ruff check ontrak tests scripts
 
       - name: Tests
         run: pytest -q
+
+      # The repository's own tooling has tests too — the secret scanner and the
+      # Cerulean provisioner. They are what runs unattended against the estate, so
+      # they are held to the same bar as the platform.
+      - name: Scripts
+        run: python -m unittest discover -s scripts/tests -q
 
       - name: Catalogue and manifest validation
         run: |

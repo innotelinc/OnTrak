@@ -75,9 +75,19 @@ Canonical definition of the ecosystem:
   fallback so a class can run without a network dependency.
 - **Secrets** — Cerulean Vault (KV v2) is the production posture; references take the
   `vault://<mount>/<path>#<key>` form. `.env` carries resolved values only for local use.
-- **Trust** — the portal host and console host are issued through Cerulean (DNS + wildcard
-  certificate). The Guacamole JSON-auth key is a repository-independent secret that must
-  match across `ONTRAK_GUAC__SECRET_KEY` and the gateway's `JSON_SECRET_KEY`.
+- **Trust** — the range's three names are issued through Cerulean (DNS, the
+  `*.ontrak.innotel.us` wildcard plus the apex certificate, and the edge hosts), by
+  `scripts/cerulean-provision.py` over Cerulean's **service bridge** — the only unattended
+  door, since the local admin password is break-glass and a session exists only for a
+  browser OIDC flow. It needs a `ceru_` service key scoped `domains, dns, certs, npm`
+  (Platform → *Service API keys*), is idempotent, plans before it writes, and refuses to
+  repoint an edge host that is already serving a name. The Guacamole JSON-auth key is a
+  repository-independent secret that must match across `ONTRAK_GUAC__SECRET_KEY` and the
+  gateway's `JSON_SECRET_KEY`.
+- **Trust — the names** — `ontrak.innotel.us` is the range, `student.ontrak.innotel.us`
+  what a student is given, `admin.ontrak.innotel.us` what an instructor is given; all
+  three answer on the same portal, which is role-gated at sign-in. Every origin needs its
+  own OIDC callback registered (`AUTHENTIK_*_REDIRECT_URI` takes the list).
 - **Storage** — built images and snapshots live on the lab host's Incus pool for speed;
   the durable copy and backups belong to ONYX.
 - **Revenue** — no billing integration today. If ranges are sold per seat, entitlements come

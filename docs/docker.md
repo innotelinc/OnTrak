@@ -150,22 +150,37 @@ them means a container upgrade can lock the host out of its own database.
 | 8080 | `ONTRAK_BIND_ADDR:ONTRAK_PORTAL__PORT` | student portal and admin panel |
 | 8081 | `ONTRAK_BIND_ADDR:ONTRAK_GUAC__PUBLIC_PORT` | Guacamole (the console iframe's target) |
 
-On the deployment those are one TLS host with two paths, and the second is what
-`ONTRAK_GUAC__BASE_URL` has to be, exactly, including the trailing path:
+On the deployment the range answers on three names, provisioned through Cerulean
+(DNS, the wildcard certificate and the edge host — `make provision`), which is
+the only supported way: a record added by hand and a certificate fetched by hand
+are two things that drift apart, and the drift is a browser warning in front of a
+class.
 
 | Address | What serves it |
 | --- | --- |
-| `https://ontrak.innotel.us/` | the student portal and the admin panel |
-| `https://ontrak.innotel.us/guacamole/` | the console the portal signs students into |
+| `https://ontrak.innotel.us/` | the range itself — the portal, and the console at `/guacamole/` |
+| `https://student.ontrak.innotel.us/` | the same portal; what a student is given |
+| `https://admin.ontrak.innotel.us/` | the same portal; what an instructor is given |
 
-What the proxy in front has to do, with the stack bound to loopback (the
-default), is two routes and nothing else — the path is passed through unchanged,
-which is why `ONTRAK_GUAC__BASE_URL` keeps its trailing `/guacamole/`:
+One portal, three names, role-gated at sign-in: the student and staff names are
+how an institution hands out one URL each, and how the edge can be told to treat
+them differently later (the student name on the internet, the staff name behind
+the VPN) without touching the app.
+
+What the edge has to do with the stack bound to loopback (the default) is three
+hosts and one path — the path is passed through unchanged, which is why
+`ONTRAK_GUAC__BASE_URL` keeps its trailing `/guacamole/`:
 
 | Public | Upstream |
 | --- | --- |
-| `https://ontrak.innotel.us/` | `http://127.0.0.1:8080/` |
-| `https://ontrak.innotel.us/guacamole/` | `http://127.0.0.1:8081/guacamole/` |
+| `https://ontrak.innotel.us/` | `http://<lab host>:8080/` |
+| `https://ontrak.innotel.us/guacamole/` | `http://<lab host>:8081/guacamole/` (a location rule: NPM's bridge forwards a host, not a path) |
+| `https://student.ontrak.innotel.us/` | `http://<lab host>:8080/` |
+| `https://admin.ontrak.innotel.us/` | `http://<lab host>:8080/` |
+
+TLS is one wildcard (`*.ontrak.innotel.us`) plus a certificate for the apex — a
+wildcard never covers the name it hangs off — both issued by Cerulean over
+DNS-01, so nothing has to be reachable from the internet for them to exist.
 
 `ONTRAK_BIND_ADDR` defaults to `127.0.0.1`. That is the portfolio posture — a
 TLS proxy (NPM Edge / Cerulean-issued certificate) in front, never the portal

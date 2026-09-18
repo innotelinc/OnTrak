@@ -20,7 +20,7 @@ REMOTE_OVERLAY := -f docker-compose.yml -f docker-compose.remote.yml
         catalog catalog-validate media-status media-fetch generate schedule \
         templates pool reap demo-serve host-image landing \
         build up up-remote down logs ps exec check-compose setup-log \
-        docker-demo docker-shell
+        docker-demo docker-shell provision provision-plan
 
 help: ## Show this help message
 	@echo "OnTrak — operator workflow"
@@ -44,6 +44,19 @@ doctor: check ## Alias for `check`
 
 build: ## Build the portal image
 	$(COMPOSE) build
+
+## ---- Trust: DNS + TLS + edge through Cerulean ---------------------------
+# This repo owns no nameserver and no CA. Cerulean does (docs/stack.md), and
+# these two targets are the only supported way to put OnTrak's names on the
+# estate: the plan writes nothing, and --apply is idempotent, so a re-run after
+# a backend move is the same command. Needs CERULEAN_API_TOKEN (a ceru_ service
+# key with the scopes domains, dns, certs, npm).
+
+provision-plan: ## Show what Cerulean would change for ontrak's names (writes nothing)
+	$(PY) scripts/cerulean-provision.py
+
+provision: ## Provision DNS, certificates and edge hosts for OnTrak through Cerulean
+	$(PY) scripts/cerulean-provision.py --apply
 
 up: secrets ## One command: first-run setup (secrets, then Incus on the host), start the stack
 	@# --build so a checkout that was just pulled does not silently run the

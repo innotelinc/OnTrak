@@ -17,8 +17,11 @@
 > only results — never progress.
 > **Landing page:** [https://innotelinc.github.io/OnTrak/](https://innotelinc.github.io/OnTrak/)
 > **Range:** [https://ontrak.innotel.us/](https://ontrak.innotel.us/) — the deployed portal,
-> with the browser console on the same TLS host at `/guacamole/`. A lab on your own box is
-> `http://localhost:8080` and `http://localhost:8081/guacamole/` ([docs/docker.md](docs/docker.md)).
+> with the browser console on the same TLS host at `/guacamole/`. Students are given
+> [student.ontrak.innotel.us](https://student.ontrak.innotel.us/) and instructors
+> [admin.ontrak.innotel.us](https://admin.ontrak.innotel.us/): one portal, three names,
+> provisioned through Cerulean by `make provision` ([docs/docker.md](docs/docker.md)).
+> A lab on your own box is `http://localhost:8080` and `http://localhost:8081/guacamole/`.
 
 ---
 
