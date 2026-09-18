@@ -2,17 +2,20 @@
 
 `tests.helpers.FakeIncus` implements the same *method names* as the real client, so
 it can never catch a command line the CLI does not accept. That is precisely how
-this shipped: on Incus 7.4 `image info`, `info` and `storage info` have no
-`--format` flag, and the client asked for it anyway. `Error: unknown flag:
---format`, exit 1, read as "this image does not exist" — so `image_exists()`
-answered False for every image on the host and `template build` refused every
-workload, telling the operator to run `ontrak image build` which answers "already
-an image; nothing to build". Two commands, each pointing at the other.
+this shipped, twice over in one function each:
 
-The stand-in reproduces the flag surface that matters: `--format` belongs to the
-*list* commands, and the three above reject it the way the real CLI does. So these
-tests assert behaviour rather than argv, and putting the flag back has to fail
-them.
+  * on Incus 7.4 `image info`, `info` and `storage info` have no `--format` flag —
+    `Error: unknown flag: --format`, exit 1 — so `image_exists()` answered False for
+    every image on the host and `template build` refused every workload, telling the
+    operator to run `ontrak image build`, which answers "already an image; nothing
+    to build";
+  * `incus query` refuses `--project` outright (`Error: --project cannot be used
+    with the query command`), because the project belongs in the path — so the same
+    mistake in the other direction.
+
+The stand-in reproduces both rules, so these tests assert behaviour rather than
+argv, and putting either call back has to fail them. The last test names both
+directly, for the reader who arrives here from a failure.
 """
 
 from __future__ import annotations
@@ -25,11 +28,12 @@ import pytest
 from ontrak.incus import IncusClient
 
 STUB = r'''#!/usr/bin/env python3
-"""A stand-in for `incus`, with the flag surface of 7.4 for the calls we make.
+"""A stand-in for `incus`, with the CLI rules that the platform's calls trip over.
 
-`--format` is a flag of the list commands. `image info`, `info` and `storage info`
-do not take it, and the real CLI answers `Error: unknown flag: --format`, exit 1.
-Asking for it here is how a client that gets it wrong fails on a host.
+  * `--format` belongs to the *list* commands. `image info`, `info` and
+    `storage info` answer `Error: unknown flag: --format`, exit 1.
+  * `query` is a raw API call and refuses `--project`: the project belongs in the
+    path. `Error: --project cannot be used with the query command`.
 """
 import json
 import os
@@ -37,17 +41,22 @@ import sys
 
 KNOWN_ALIASES = {"images:ubuntu/24.04", "images:debian/12", "ontrak-win-base"}
 ROOT = {"environment": {"server_version": "7.4", "driver": "incus"}}
-POOL = {"name": "default", "driver": "zfs"}
+POOL = {"name": "default", "driver": "zfs", "status": "Created"}
 
-argv = list(sys.argv[1:])
-while argv and argv[0] in {"--project", "--remote"}:
-    argv = argv[2:]
+raw = list(sys.argv[1:])
 
-# Recorded only when asked for, so the CLI shim stays a plain command otherwise.
+# Recorded whole, global flags included: the invariants are about what is *asked*.
 log = os.environ.get("ONTRAK_INCUS_STUB_LOG")
 if log:
     with open(log, "a", encoding="utf-8") as handle:
-        handle.write(" ".join(argv) + "\n")
+        handle.write(" ".join(raw) + "\n")
+
+argv = list(raw)
+project = None
+while argv and argv[0] in {"--project", "--remote"}:
+    if argv[0] == "--project":
+        project = argv[1]
+    argv = argv[2:]
 
 
 def die(message):
@@ -63,6 +72,16 @@ if not argv:
     die("no subcommand")
 
 head, rest = argv[0], argv[1:]
+
+# The raw API: JSON by nature, and no place for a project flag.
+if head == "query":
+    if project is not None:
+        die("--project cannot be used with the query command")
+    if asks_for_format(rest):
+        die("unknown flag: --format")
+    path = rest[0] if rest else ""
+    sys.stdout.write(json.dumps(ROOT if path == "/1.0" else {}) + "\n")
+    raise SystemExit(0)
 
 if head == "image" and rest[:1] == ["info"]:
     if asks_for_format(rest[1:]):
@@ -85,20 +104,13 @@ if head == "storage" and rest[:1] == ["info"]:
     sys.stdout.write("driver: zfs\n")
     raise SystemExit(0)
 
-# The raw API answers in JSON by nature, so there is no flag to get wrong.
-if head == "query" and rest:
-    path = rest[0]
-    if path == "/1.0":
-        sys.stdout.write(json.dumps(ROOT) + "\n")
-        raise SystemExit(0)
-    if path.startswith("/1.0/storage-pools/"):
-        sys.stdout.write(json.dumps(POOL) + "\n")
-        raise SystemExit(0)
-    sys.stdout.write("{}\n")
+# The list commands: `--format` is real here, and that is where a JSON answer
+# about the pools comes from.
+if head == "storage" and rest[:1] == ["list"] and asks_for_format(rest):
+    sys.stdout.write(json.dumps([POOL]) + "\n")
     raise SystemExit(0)
 
-# Everything else the platform runs is a list command, where --format is real.
-if asks_for_format(rest) or head in {"list", "image", "storage", "network", "profile", "snapshot"}:
+if asks_for_format(rest):
     sys.stdout.write("[]\n")
     raise SystemExit(0)
 
@@ -108,7 +120,7 @@ sys.stdout.write("")
 
 @pytest.fixture
 def stub_bin(tmp_path) -> Path:
-    """The stand-in, on PATH for the client to run."""
+    """The stand-in, executable, for the client to run."""
     path = tmp_path / "incus"
     path.write_text(STUB, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -164,10 +176,14 @@ def test_storage_info_defaults_to_the_configured_pool(client, settings):
     assert client.storage_info()["name"] == settings.incus.storage_pool
 
 
+def test_storage_info_says_nothing_about_a_pool_that_is_not_there(client):
+    assert client.storage_info("nosuchpool") == {}
+
+
 # --------------------------------------------------------------------------- #
-# the invariant, stated directly
+# the invariants, stated directly
 # --------------------------------------------------------------------------- #
-def test_the_client_never_asks_for_a_format_those_subcommands_lack(client, monkeypatch, tmp_path):
+def test_the_client_asks_nothing_the_cli_refuses(client, monkeypatch, tmp_path):
     log = tmp_path / "argv.log"
     monkeypatch.setenv("ONTRAK_INCUS_STUB_LOG", str(log))
 
@@ -178,4 +194,8 @@ def test_the_client_never_asks_for_a_format_those_subcommands_lack(client, monke
     asked = [line for line in log.read_text(encoding="utf-8").splitlines() if line]
     assert asked, "the stand-in recorded no commands"
     for line in asked:
-        assert "--format" not in line, f"asked for a flag that does not exist: {line}"
+        if line.startswith("query"):
+            assert "--project" not in line, f"query refuses a project flag: {line}"
+            assert "--format" not in line, f"query has no --format: {line}"
+        if line.startswith(("image info", "info ", "storage info")):
+            assert "--format" not in line, f"no such flag on this subcommand: {line}"

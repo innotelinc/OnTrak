@@ -65,11 +65,14 @@ class IncusClient:
     # ------------------------------------------------------------------
     # plumbing
     # ------------------------------------------------------------------
-    def _base(self) -> list[str]:
+    def _base(self, project: bool = True) -> list[str]:
         cmd = [self.binary]
         if self.incus.remote and self.incus.remote != "local":
             cmd += ["--remote", self.incus.remote]
-        if self.incus.project:
+        # `incus query` is a raw API call and refuses `--project` outright
+        # (`Error: --project cannot be used with the query command`), because the
+        # project belongs in the path instead. Callers that use it say so.
+        if project and self.incus.project:
             cmd += ["--project", self.incus.project]
         return cmd
 
@@ -80,8 +83,9 @@ class IncusClient:
         check: bool = True,
         capture: bool = True,
         input_data: str | None = None,
+        project: bool = True,
     ) -> subprocess.CompletedProcess:
-        cmd = self._base() + list(args)
+        cmd = self._base(project) + list(args)
         try:
             proc = subprocess.run(  # noqa: S603 - arguments are internal, never user input
                 cmd,
@@ -102,8 +106,10 @@ class IncusClient:
             raise IncusError(args, proc.returncode, stderr)
         return proc
 
-    def run_json(self, args: Sequence[str], timeout: int | None = None) -> Any:
-        proc = self.run(args, timeout=timeout)
+    def run_json(
+        self, args: Sequence[str], timeout: int | None = None, project: bool = True
+    ) -> Any:
+        proc = self.run(args, timeout=timeout, project=project)
         out = (proc.stdout or "").strip()
         if not out:
             return None
@@ -184,17 +190,32 @@ class IncusClient:
     # therefore either a `* list --format=json` or a raw `query`, which is the
     # machine-readable form of the same answer and has existed in every version.
     def server_info(self) -> dict:
+        """The server's own record: version, API extensions, environment.
+
+        Not project-scoped, and `query` will not take a project, so the flag is
+        dropped. Asking for it is what made this answer `{}`, and `doctor` print
+        "incus server unknown" on a host whose server was answering fine.
+        """
         try:
-            return self.run_json(["query", "/1.0"]) or {}
+            return self.run_json(["query", "/1.0"], project=False) or {}
         except IncusError:
             return {}
 
     def storage_info(self, pool: str | None = None) -> dict:
+        """One pool's record, from the list the CLI *can* render as JSON.
+
+        `storage info` has no `--format`, and `query` refuses `--project`, so this
+        is the same answer in a form that exists and stays project-aware.
+        """
         name = pool or self.incus.storage_pool
         try:
-            return self.run_json(["query", f"/1.0/storage-pools/{name}"]) or {}
+            pools = self.run_json(["storage", "list", "--format=json"]) or []
         except IncusError:
             return {}
+        for record in pools:
+            if record.get("name") == name:
+                return record
+        return {}
 
     # ------------------------------------------------------------------
     # mutation
