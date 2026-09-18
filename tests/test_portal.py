@@ -96,7 +96,12 @@ def test_full_student_flow(app_client):
     assert start.status_code == 200  # redirect followed
 
     session = provision(app)
-    assert session.state is SessionState.READY
+    # `is_usable`, not bare READY: the POST above follows its redirect into the
+    # session page, and a page view claims a READY machine (READY -> IN_USE) —
+    # which of the two the student lands on depends on whether the provisioning
+    # thread finished before that page was rendered. Both are equally usable,
+    # which is what the rest of this test already asserts about the state.
+    assert session.state.is_usable
 
     page = client.get(f"/sessions/{session.id}")
     assert page.status_code == 200

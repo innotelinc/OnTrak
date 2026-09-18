@@ -388,7 +388,7 @@ def create_app(
             )
         except (SessionError, ScenarioError) as exc:
             return redirect("/dashboard", request, str(exc))
-        if session.state in {SessionState.READY, SessionState.IN_USE, SessionState.PASSED}:
+        if session.state.is_usable:
             return redirect(f"/sessions/{session.id}", request, "Session resumed.")
         if session.state == SessionState.ERROR:
             return redirect(f"/sessions/{session.id}", request, session.error[:200])
@@ -460,7 +460,7 @@ def create_app(
             {
                 "id": session.id,
                 "state": session.state.value,
-                "ready": session.state in {SessionState.READY, SessionState.IN_USE, SessionState.PASSED},
+                "ready": session.state.is_usable,
                 "host_ip": session.host_ip,
                 "error": session.error,
                 "checks_run": session.checks_run,

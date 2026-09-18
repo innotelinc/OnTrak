@@ -513,7 +513,7 @@ def cmd_session(args) -> int:
         _say(OK, f"session {session.id} ended and VM destroyed")
         return 0
     if action == "console":
-        if session.state not in {SessionState.READY, SessionState.IN_USE, SessionState.PASSED}:
+        if not session.state.is_usable:
             _say(FAIL, f"session is {session.state.value}; no console yet")
             return 1
         try:

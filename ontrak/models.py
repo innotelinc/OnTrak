@@ -67,6 +67,18 @@ class SessionState(str, Enum):
         }
 
     @property
+    def is_usable(self) -> bool:
+        """True once the machine is the student's to sit in front of.
+
+        READY before they open the console, IN_USE while they work in it, and
+        PASSED after grading — the machine is still on screen, so the console
+        link, the check and the write-up stay reachable. The portal used to
+        spell this set out at each call site, and a test asserting bare READY
+        raced the provisioning thread for it.
+        """
+        return self in {SessionState.READY, SessionState.IN_USE, SessionState.PASSED}
+
+    @property
     def is_terminal(self) -> bool:
         return self in {SessionState.DESTROYED, SessionState.ERROR}
 
