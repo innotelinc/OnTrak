@@ -1,0 +1,47 @@
+# Docker build context exclusions.
+#
+# The image needs the repository (scenarios, catalog, lessons, config, ontrak/)
+# and nothing else: no local state, no downloaded installation media, no venv,
+# no repo metadata. Keeping media/ and state/ out also keeps .iso files out of
+# the build context, which is the difference between a 300 MB context and a
+# 12 GB one.
+
+# repository metadata and CI
+.git
+.gitignore
+.github
+.githooks
+.freebuff
+
+# local state: never shipped, always a volume
+state/
+*.sqlite3
+config/local.yaml
+.env
+
+# downloaded / operator-supplied installation media
+media/
+images/
+build-*/
+*.iso
+*.esd
+*.wim
+*.vhd
+*.vhdx
+*.qcow2
+*.tar.gz
+
+# python environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# tests are run on the host (and in CI on the host); the image has no test runner
+tests/
+
+# gateway recordings: large, and they show a student's screen
+deploy/guacamole/recordings/

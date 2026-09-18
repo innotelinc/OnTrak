@@ -1,0 +1,151 @@
+# ============================================================================
+# OnTrak — IT Support Training Platform powered by Innotel OnTrak
+#
+#   make secrets        # writes .env with freshly generated portal/console keys
+#   make up             # portal + console gateway (+ local Incus when present)
+#   make logs           # follow
+#   make down
+#
+# Two containers run the *control plane*:
+#
+#   portal      the FastAPI student portal: scenarios, tickets, grading, admin
+#   guacamole   the HTML5 console (RDP/SSH into the training machines)
+#  +guacd       Guacamole's connection daemon, which does the actual protocol work
+#
+# What is deliberately **not** here: the training machines themselves. Those are
+# Incus virtual machines on the host — Windows 95 through 11, Server, Office and
+# the Linux distributions (see docs/catalog.md) — because a machine that has to
+# boot a real Windows kernel, hold a driver fault and survive a malware
+# scenario is a VM, not a container. The portal reaches the host's Incus daemon
+# over its unix socket, which is why the stack runs from this directory, next to
+# the checkout: `docker compose up -d`.
+#
+# For the socket-free variant (a remote Incus cluster over HTTPS, demo mode, or
+# a laptop) use `make up-remote`; `make up` adds the local socket override
+# automatically when the host has one. See docs/docker.md.
+# ============================================================================
+name: ontrak
+
+services:
+  # ── the student portal ────────────────────────────────────────────────────
+  portal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${ONTRAK_IMAGE:-ontrak:local}
+    container_name: ontrak-portal
+    restart: unless-stopped
+    init: true
+    ports:
+      # Loopback by default: the portfolio posture is a TLS proxy (NPM Edge)
+      # in front, never a portal exposed straight to the network. Set
+      # ONTRAK_BIND_ADDR=0.0.0.0 in .env for a lab where students hit it directly.
+      - "${ONTRAK_BIND_ADDR:-127.0.0.1}:${ONTRAK_PORTAL__PORT:-8080}:8080"
+    environment:
+      # ── identity and secrets ──
+      ONTRAK_PORTAL__TITLE: ${ONTRAK_PORTAL__TITLE:-OnTrak}
+      ONTRAK_PORTAL__BRAND_NOTE: ${ONTRAK_PORTAL__BRAND_NOTE:-IT support training range — powered by Innotel OnTrak}
+      # Signs the portal's session cookies: without it nobody can log in.
+      ONTRAK_PORTAL__SECRET: ${ONTRAK_PORTAL__SECRET:?run 'make secrets' to generate .env, then 'make up' again}
+      # Seeded as the instructor account on boot, and the admin panel's login.
+      ONTRAK_PORTAL__ADMIN_USER: ${ONTRAK_PORTAL__ADMIN_USER:-instructor}
+      ONTRAK_PORTAL__ADMIN_PASSWORD: ${ONTRAK_PORTAL__ADMIN_PASSWORD:-}
+      # Must equal JSON_SECRET_KEY below: the portal signs console links with it
+      # and Guacamole verifies them. One value, two services.
+      ONTRAK_GUAC__SECRET_KEY: ${ONTRAK_GUAC__SECRET_KEY:?run 'make secrets' to generate .env, then 'make up' again}
+      ONTRAK_GUAC__BASE_URL: ${ONTRAK_GUAC__BASE_URL:-http://localhost:8081/guacamole/}
+      ONTRAK_GUAC__RECORDING: ${ONTRAK_GUAC__RECORDING:-false}
+      ONTRAK_GUAC__RECORDING_PATH: /recordings
+
+      # ── hypervisor ──
+      ONTRAK_INCUS__REMOTE: ${ONTRAK_INCUS__REMOTE:-local}
+      ONTRAK_INCUS__PROJECT: ${ONTRAK_INCUS__PROJECT:-ontrak}
+      ONTRAK_INCUS__STORAGE_POOL: ${ONTRAK_INCUS__STORAGE_POOL:-default}
+      ONTRAK_INCUS__NETWORK: ${ONTRAK_INCUS__NETWORK:-ontrak0}
+      ONTRAK_INCUS__PROFILE: ${ONTRAK_INCUS__PROFILE:-ontrak-student}
+      ONTRAK_INCUS__IMAGE_ALIAS: ${ONTRAK_INCUS__IMAGE_ALIAS:-ontrak-win-base}
+
+      # ── guest automation ──
+      # winrm (Windows guests), ssh (Linux guests), incus-exec, or null for a
+      # dry run. The driver is chosen per scenario platform when unset.
+      ONTRAK_GUEST__DRIVER: ${ONTRAK_GUEST__DRIVER:-}
+      ONTRAK_GUEST__USER: ${ONTRAK_GUEST__USER:-student}
+      ONTRAK_GUEST__PASSWORD: ${ONTRAK_GUEST__PASSWORD:-}
+      ONTRAK_GUEST__STATIC_HOST: ${ONTRAK_GUEST__STATIC_HOST:-}
+
+      # ── sessions, results and pools ──
+      ONTRAK_SESSION__TTL_MINUTES: ${ONTRAK_SESSION__TTL_MINUTES:-90}
+      ONTRAK_SESSION__IDLE_RECYCLE_MINUTES: ${ONTRAK_SESSION__IDLE_RECYCLE_MINUTES:-20}
+      ONTRAK_SESSION__MAX_PER_STUDENT: ${ONTRAK_SESSION__MAX_PER_STUDENT:-1}
+      ONTRAK_SESSION__PERSIST_PROGRESS: ${ONTRAK_SESSION__PERSIST_PROGRESS:-false}
+      ONTRAK_POOL__ENABLED: ${ONTRAK_POOL__ENABLED:-true}
+      ONTRAK_POOL__DEFAULT_TARGET: ${ONTRAK_POOL__DEFAULT_TARGET:-0}
+      ONTRAK_POOL__MAX_TOTAL: ${ONTRAK_POOL__MAX_TOTAL:-60}
+      ONTRAK_SELECTION__STRATEGY: ${ONTRAK_SELECTION__STRATEGY:-balanced}
+
+      # ── demo mode (no hypervisor, no Windows, no secrets) ──
+      ONTRAK_DEMO__ENABLED: ${ONTRAK_DEMO__ENABLED:-false}
+    volumes:
+      # Durable portal state: accounts, sessions, submitted results, tickets,
+      # audit log. This is the only thing in the stack that matters after a
+      # class — the machines are disposable by design.
+      - ontrak-state:/app/state
+      # Installation media (`ontrak media fetch`): large, so never in the image.
+      - ontrak-media:/app/media
+      - ./deploy/guacamole/recordings:/recordings
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    networks: [ontrak]
+
+  # ── Guacamole: the browser console ────────────────────────────────────────
+  guacd:
+    image: guacamole/guacd:1.6.0
+    container_name: ontrak-guacd
+    restart: unless-stopped
+    init: true
+    volumes:
+      - ./deploy/guacamole/recordings:/recordings
+    networks: [ontrak]
+
+  guacamole:
+    image: guacamole/guacamole:1.6.0
+    container_name: ontrak-guacamole
+    restart: unless-stopped
+    init: true
+    depends_on:
+      - guacd
+    ports:
+      - "${ONTRAK_BIND_ADDR:-127.0.0.1}:${ONTRAK_GUAC__PUBLIC_PORT:-8081}:8080"
+    environment:
+      GUACD_HOSTNAME: guacd
+      GUACD_PORT: "4822"
+      # guacamole-auth-json: the portal hands the browser a signed, encrypted,
+      # single-use payload scoped to one machine. There is no Guacamole user
+      # database and no login page a student ever sees.
+      JSON_ENABLED: "true"
+      JSON_SECRET_KEY: ${ONTRAK_GUAC__SECRET_KEY:?run 'make secrets' to generate .env, then 'make up' again}
+      LOG_LEVEL: ${ONTRAK_GUAC__LOG_LEVEL:-info}
+    healthcheck:
+      # The image is a Tomcat deployment; probe whichever HTTP client it has.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/guacamole/ >/dev/null 2>&1 || wget -q --spider http://127.0.0.1:8080/guacamole/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    networks: [ontrak]
+
+volumes:
+  ontrak-state:
+    name: ontrak-state
+  ontrak-media:
+    name: ontrak-media
+
+networks:
+  # A private bridge. The portal still needs egress (it dials the training
+  # machines the host's Incus bridge hands it); the gateway needs none.
+  ontrak:
+    name: ontrak
