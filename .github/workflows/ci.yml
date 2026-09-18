@@ -183,6 +183,10 @@ jobs:
           set -euo pipefail
           cd deploy/guacamole
           cp .env.example .env
-          docker compose config --quiet
+          # The template ships JSON_SECRET_KEY empty on purpose: the compose file marks it
+          # required (${JSON_SECRET_KEY:?...}) so a copied .env fails loudly instead of
+          # booting a gateway whose key does not match the portal's. Render with a real
+          # generated key here, which is the path an operator actually takes.
+          JSON_SECRET_KEY="$(openssl rand -hex 16)" docker compose config --quiet
           rm -f .env
           echo "compose: ok"
