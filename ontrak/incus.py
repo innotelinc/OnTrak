@@ -61,6 +61,9 @@ class IncusClient:
         self.incus = settings.incus
         self.binary = binary
         self.timeout = self.incus.operation_timeout_seconds
+        # Account name -> uid, per instance. Resolving one costs a command, and
+        # the answer cannot change while a disposable lab machine lives.
+        self._uid_cache: dict[tuple[str, str], str] = {}
 
     # ------------------------------------------------------------------
     # plumbing
@@ -298,8 +301,9 @@ class IncusClient:
         that: a failing check is data, not an incident).
         """
         args = ["exec", instance, "-T"]
-        if user:
-            args += ["--user", str(user)]
+        uid = self._uid_argument(instance, user)
+        if uid:
+            args += ["--user", uid]
         if detach:
             args.append("--mode=detach")
         args.append("--")
@@ -310,6 +314,48 @@ class IncusClient:
             check=(not detach) if check is None else check,
             input_data=input_data,
         )
+
+    def _uid_argument(self, instance: str, user: str | None) -> str | None:
+        """The uid to pass to ``exec --user``, or None to leave the flag off.
+
+        `incus exec --user` takes a *numeric* uid, and refuses an account name
+        outright: `invalid argument "root" for "--user" flag:
+        strconv.ParseUint: parsing "root": invalid syntax`. The platform's default
+        Linux account is the name `root`, so passing it through made every shell
+        call fail — readiness probes never succeeded, and no template could be
+        built, on any host.
+
+        Root is what `incus exec` already uses, so uid 0 (and the name for it)
+        needs no flag at all. Any other name is resolved in the guest once and
+        remembered; a name that does not exist there is a misconfiguration worth
+        failing on, because the alternative is running a graded check as the wrong
+        account.
+        """
+        value = str(user or "").strip()
+        if not value or value == "0" or value == "root":
+            return None
+        if value.isdigit():
+            return value
+
+        key = (instance, value)
+        if key not in self._uid_cache:
+            proc = self.run(
+                ["exec", instance, "-T", "--", "id", "-u", value],
+                check=False,
+                timeout=30,
+            )
+            uid = (proc.stdout or "").strip()
+            self._uid_cache[key] = uid if proc.returncode == 0 and uid.isdigit() else ""
+        uid = self._uid_cache[key]
+        if not uid:
+            raise IncusError(
+                ["exec", instance, "--user", value],
+                1,
+                f"no account {value!r} in {instance} — guest.linux_user must be a "
+                "user that exists in the guest, or root",
+            )
+        # uid 0 needs no flag: it is what exec does anyway.
+        return uid if uid != "0" else None
 
     def guest_shell(self, instance: str, script: str, timeout: int = 120, user: str | None = None):
         """Run a shell script inside a guest verbatim. Never raises on exit code."""

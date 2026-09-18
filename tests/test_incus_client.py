@@ -1,21 +1,23 @@
 """The real Incus client, driven against a stand-in for the CLI.
 
 `tests.helpers.FakeIncus` implements the same *method names* as the real client, so
-it can never catch a command line the CLI does not accept. That is precisely how
-this shipped, twice over in one function each:
+it can never catch a command line the CLI does not accept. That is how three
+separate mistakes shipped, each of which stopped the platform dead on a real host:
 
-  * on Incus 7.4 `image info`, `info` and `storage info` have no `--format` flag —
+  * `image info`, `info` and `storage info` have no `--format` on Incus 7.4 —
     `Error: unknown flag: --format`, exit 1 — so `image_exists()` answered False for
-    every image on the host and `template build` refused every workload, telling the
-    operator to run `ontrak image build`, which answers "already an image; nothing
-    to build";
-  * `incus query` refuses `--project` outright (`Error: --project cannot be used
-    with the query command`), because the project belongs in the path — so the same
-    mistake in the other direction.
+    every image and `template build` refused every workload, pointing the operator at
+    `ontrak image build`, which answers "already an image; nothing to build";
+  * `incus query` refuses `--project` outright, because the project belongs in the
+    path (`Error: --project cannot be used with the query command`);
+  * `exec --user` takes a *numeric* uid and refuses an account name —
+    `invalid argument "root" for "--user" flag: strconv.ParseUint: parsing "root":
+    invalid syntax`. `root` is the platform's default Linux account, so *every*
+    shell call failed and no machine ever looked ready.
 
-The stand-in reproduces both rules, so these tests assert behaviour rather than
-argv, and putting either call back has to fail them. The last test names both
-directly, for the reader who arrives here from a failure.
+The stand-in reproduces all three rules, so these tests assert behaviour rather than
+argv, and putting any of them back has to fail them. The last test names each rule
+directly, for whoever arrives here from a failure.
 """
 
 from __future__ import annotations
@@ -25,23 +27,29 @@ from pathlib import Path
 
 import pytest
 
-from ontrak.incus import IncusClient
+from ontrak.incus import IncusClient, IncusError
 
 STUB = r'''#!/usr/bin/env python3
-"""A stand-in for `incus`, with the CLI rules that the platform's calls trip over.
+"""A stand-in for `incus`, with the CLI rules the platform's calls trip over.
 
-  * `--format` belongs to the *list* commands. `image info`, `info` and
+  * `--format` belongs to the *list* commands; `image info`, `info` and
     `storage info` answer `Error: unknown flag: --format`, exit 1.
-  * `query` is a raw API call and refuses `--project`: the project belongs in the
-    path. `Error: --project cannot be used with the query command`.
+  * `query` is a raw API call and refuses `--project`.
+  * `exec --user` takes a numeric uid, and refuses an account name with
+    `strconv.ParseUint`.
 """
 import json
 import os
 import sys
 
 KNOWN_ALIASES = {"images:ubuntu/24.04", "images:debian/12", "ontrak-win-base"}
+UIDS = {"root": 0, "student": 1000, "ubuntu": 1000}
 ROOT = {"environment": {"server_version": "7.4", "driver": "incus"}}
-POOL = {"name": "default", "driver": "zfs", "status": "Created"}
+POOL = {
+    "name": os.environ.get("ONTRAK_INCUS_STUB_POOL", "default"),
+    "driver": "zfs",
+    "status": "Created",
+}
 
 raw = list(sys.argv[1:])
 
@@ -104,10 +112,39 @@ if head == "storage" and rest[:1] == ["info"]:
     sys.stdout.write("driver: zfs\n")
     raise SystemExit(0)
 
-# The list commands: `--format` is real here, and that is where a JSON answer
-# about the pools comes from.
 if head == "storage" and rest[:1] == ["list"] and asks_for_format(rest):
     sys.stdout.write(json.dumps([POOL]) + "\n")
+    raise SystemExit(0)
+
+if head == "exec":
+    # `--user` takes a uid. An account name is refused, in either spelling.
+    probe = list(rest)
+    while "--user" in probe:
+        i = probe.index("--user")
+        value = probe[i + 1] if len(probe) > i + 1 else ""
+        if not value.isdigit():
+            die('invalid argument "%s" for "--user" flag: strconv.ParseUint: '
+                'parsing "%s": invalid syntax' % (value, value))
+        del probe[i:i + 2]
+    for token in [a for a in rest if a.startswith("--user=")]:
+        value = token.split("=", 1)[1]
+        if not value.isdigit():
+            die('invalid argument "%s" for "--user" flag: strconv.ParseUint: '
+                'parsing "%s": invalid syntax' % (value, value))
+
+    # `... -- id -u <name>` is how the client resolves an account name.
+    if "-u" in rest and "id" in rest:
+        index = rest.index("-u")
+        name = rest[index + 1] if len(rest) > index + 1 else ""
+        if name in UIDS:
+            sys.stdout.write(str(UIDS[name]) + "\n")
+            raise SystemExit(0)
+        die("id: '%s': no such user" % name)
+
+    if "ontrak-ready" in " ".join(rest):
+        sys.stdout.write("ontrak-ready\n")
+        raise SystemExit(0)
+    sys.stdout.write("")
     raise SystemExit(0)
 
 if asks_for_format(rest):
@@ -128,8 +165,18 @@ def stub_bin(tmp_path) -> Path:
 
 
 @pytest.fixture
-def client(settings, stub_bin) -> IncusClient:
+def client(settings, stub_bin, monkeypatch) -> IncusClient:
+    # The stand-in reports the pool the settings actually name, so this stays honest
+    # if the default ever changes.
+    monkeypatch.setenv("ONTRAK_INCUS_STUB_POOL", settings.incus.storage_pool)
     return IncusClient(settings, binary=str(stub_bin))
+
+
+@pytest.fixture
+def argv_log(monkeypatch, tmp_path) -> Path:
+    log = tmp_path / "argv.log"
+    monkeypatch.setenv("ONTRAK_INCUS_STUB_LOG", str(log))
+    return log
 
 
 # --------------------------------------------------------------------------- #
@@ -160,7 +207,7 @@ def test_a_missing_binary_reads_as_absent_rather_than_raising(settings, tmp_path
 
 
 # --------------------------------------------------------------------------- #
-# the two calls that had the same wrong flag
+# the calls that asked the API for a flag it does not have
 # --------------------------------------------------------------------------- #
 def test_server_info_reports_the_version(client):
     """This answered `{}` on Incus 7.4, so `doctor` printed "server unknown"."""
@@ -181,17 +228,49 @@ def test_storage_info_says_nothing_about_a_pool_that_is_not_there(client):
 
 
 # --------------------------------------------------------------------------- #
+# the account a shell runs as
+# --------------------------------------------------------------------------- #
+def test_the_default_root_account_sends_no_user_flag(client, argv_log):
+    """Root is what `exec` does anyway, and the name is not a valid argument."""
+    client.exec_in("probe", ["/bin/true"], user="root", check=False)
+    asked = argv_log.read_text(encoding="utf-8")
+    assert "--user" not in asked, asked
+
+
+def test_an_account_name_is_resolved_to_its_uid(client, argv_log):
+    client.exec_in("probe", ["/bin/true"], user="student", check=False)
+    asked = argv_log.read_text(encoding="utf-8").strip().splitlines()
+    assert any("--user 1000" in line for line in asked), asked
+
+
+def test_the_lookup_is_paid_once_per_instance(client, argv_log):
+    for _ in range(3):
+        client.exec_in("probe", ["/bin/true"], user="student", check=False)
+    lookups = [line for line in argv_log.read_text(encoding="utf-8").splitlines() if "id -u" in line]
+    assert len(lookups) == 1, lookups
+
+
+def test_an_account_the_guest_does_not_have_is_refused(client):
+    """Better a clear failure than a graded check run as the wrong account."""
+    with pytest.raises(IncusError, match="no account 'ghost'"):
+        client.exec_in("probe", ["/bin/true"], user="ghost", check=False)
+
+
+def test_no_user_flag_is_sent_when_none_was_configured(client, argv_log):
+    client.exec_in("probe", ["/bin/true"], check=False)
+    assert "--user" not in argv_log.read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- #
 # the invariants, stated directly
 # --------------------------------------------------------------------------- #
-def test_the_client_asks_nothing_the_cli_refuses(client, monkeypatch, tmp_path):
-    log = tmp_path / "argv.log"
-    monkeypatch.setenv("ONTRAK_INCUS_STUB_LOG", str(log))
-
+def test_the_client_asks_nothing_the_cli_refuses(client, argv_log):
     client.image_exists("images:ubuntu/24.04")
     client.server_info()
     client.storage_info("default")
+    client.exec_in("probe", ["/bin/true"], user="root", check=False)
 
-    asked = [line for line in log.read_text(encoding="utf-8").splitlines() if line]
+    asked = [line for line in argv_log.read_text(encoding="utf-8").splitlines() if line]
     assert asked, "the stand-in recorded no commands"
     for line in asked:
         if line.startswith("query"):
@@ -199,3 +278,6 @@ def test_the_client_asks_nothing_the_cli_refuses(client, monkeypatch, tmp_path):
             assert "--format" not in line, f"query has no --format: {line}"
         if line.startswith(("image info", "info ", "storage info")):
             assert "--format" not in line, f"no such flag on this subcommand: {line}"
+        if line.startswith("exec"):
+            assert "--user root" not in line, f"--user wants a uid, not a name: {line}"
+            assert "--user student" not in line, f"--user wants a uid, not a name: {line}"
