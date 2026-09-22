@@ -30,7 +30,8 @@ jobs:
           set -euo pipefail
           for f in README.md LICENSE .env.example .gitignore \
                    web/landing/index.html docs/stack.md docs/catalog.md docs/roadmap.md \
-                   .github/workflows/attribution-guard.yml .githooks/guard-lib \
+                   .github/workflows/attribution-guard.yml .github/workflows/range-nightly.yml \
+                   .githooks/guard-lib \
                    docs/installer.md infra/build-installer-iso.sh \
                    infra/installer/README.txt \
                    infra/installer/autoinstall/user-data.dist \
@@ -107,16 +108,18 @@ jobs:
       - name: Tests
         run: pytest -q
 
-      # The identity path, on its own line. Sign-in is Authentik's and only
-      # Authentik's, so a regression here is a range nobody can get into. The
-      # fake IdP in tests/test_oidc.py drives discovery, the code exchange and
+      # The identity path, on its own line. SSO is optional, but a range that has
+      # switched it on must still be able to sign people in, so a regression here
+      # is a class nobody can get into. The fake IdP in tests/test_oidc.py drives
+      # discovery, the code exchange and
       # userinfo; this fails loudly if that stops holding.
       - name: Authentik sign-in flow
         run: pytest -q tests/test_oidc.py
 
-      # The repository's own tooling has tests too — the secret scanner and the
-      # Cerulean provisioner. They are what runs unattended against the estate, so
-      # they are held to the same bar as the platform.
+      # The repository's own tooling has tests too — the secret scanner, the Cerulean
+      # provisioner and the grade sweep's reading half. They are what runs unattended
+      # against the estate, so they are held to the same bar as the platform, and
+      # `make test` runs this half too.
       - name: Scripts
         run: python -m unittest discover -s scripts/tests -q
 
@@ -254,24 +257,85 @@ jobs:
       - name: Build the portal image
         run: docker build -t ontrak:ci .
 
-      - name: A whole class runs inside the image
+      - name: The image is useful with no hypervisor
         run: |
           set -euo pipefail
-          # The image has to be useful with no hypervisor, no Windows and no secrets:
-          # demo mode is the one path every host can always run.
-          docker run --rm ontrak:ci demo run --students 3
+          # The image has to validate a checkout with no hypervisor, no Windows and
+          # no secrets: the scenario catalogue and the workload catalog are checked
+          # in-tree, which is the path every host can always run.
+          docker run --rm ontrak:ci scenario validate
+          docker run --rm ontrak:ci catalog validate
 
-      - name: The portal boots and offers Authentik only
+      - name: The portal boots with SSO off and offers first-run setup
         run: |
           set -euo pipefail
-          # A representative range: pointed at Authentik. The issuer is
-          # deliberately unreachable — this checks the *posture* the portal
-          # presents, not the IdP, and a login page that offered a password form
-          # would be the regression. The flow itself is driven against the fake
-          # IdP in tests/test_oidc.py.
+          # The shipped default: no identity provider, SSO off, so the range is
+          # usable out of the box and the first account comes from /setup. A login
+          # page that could not make an account would be the regression.
+          docker run -d --name ontrak-default -p 18081:8080 \
+            -e ONTRAK_PORTAL__SECRET=ci-only-secret \
+            -e ONTRAK_GUAC__SECRET_KEY="$(openssl rand -hex 16)" \
+            ontrak:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18081/healthz >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:18081/healthz
+
+          login="$(curl -fsS http://127.0.0.1:18081/login)"
+          grep -q 'Set up this range' <<<"$login" \
+            || { echo '::error::a fresh range does not offer first-run setup'; exit 1; }
+          if grep -q 'Sign in with Authentik' <<<"$login"; then
+            echo '::error::a fresh range offers Authentik; SSO is off by default'
+            exit 1
+          fi
+          code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18081/setup)"
+          [ "$code" = "200" ] \
+            || { echo "::error::/setup answered $code on a fresh range, expected 200"; exit 1; }
+          echo 'default range: setup offered, no Authentik, SSO off'
+
+          # And an unattended deployment seeds its first account from the
+          # environment instead of the page.
+          docker rm -f ontrak-default >/dev/null
+          docker run -d --name ontrak-bootstrap -p 18081:8080 \
+            -e ONTRAK_PORTAL__SECRET=ci-only-secret \
+            -e ONTRAK_GUAC__SECRET_KEY="$(openssl rand -hex 16)" \
+            -e ONTRAK_PORTAL__ADMIN_USERNAME=rangeboss \
+            -e ONTRAK_PORTAL__ADMIN_PASSWORD=ci-only-admin-pw \
+            ontrak:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18081/healthz >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          login="$(curl -fsS http://127.0.0.1:18081/login)"
+          grep -q 'name="password"' <<<"$login" \
+            || { echo '::error::the seeded range renders no password form'; exit 1; }
+          if grep -q 'Set up this range' <<<"$login"; then
+            echo '::error::a seeded range still offers first-run setup; the password did not seed'
+            exit 1
+          fi
+          # The credentials the environment seeded really open the door.
+          jar="$(mktemp)"
+          token="$(curl -fsS -c "$jar" http://127.0.0.1:18081/login >/dev/null; grep -oP 'ontrak_csrf\s+\K\S+' "$jar")"
+          code="$(curl -s -o /dev/null -w '%{http_code}' -b "$jar" \
+            --data "username=rangeboss&password=ci-only-admin-pw&csrf=$token" \
+            http://127.0.0.1:18081/login)"
+          [ "$code" = "303" ] \
+            || { echo "::error::the seeded account answered $code, expected a 303 to /dashboard"; exit 1; }
+          echo 'seeded range: admin password opens the door'
+          docker rm -f ontrak-bootstrap >/dev/null
+
+      - name: The portal boots with SSO switched on
+        run: |
+          set -euo pipefail
+          # A representative SSO range: pointed at Authentik, switched on, and with
+          # no local account. The issuer is deliberately unreachable — this checks
+          # the *posture* the portal presents, not the IdP. The flow itself is
+          # driven against the fake IdP in tests/test_oidc.py.
           docker run -d --name ontrak-ci -p 18080:8080 \
             -e ONTRAK_PORTAL__SECRET=ci-only-secret \
             -e ONTRAK_GUAC__SECRET_KEY="$(openssl rand -hex 16)" \
+            -e ONTRAK_PORTAL__SSO_ENABLED=true \
             -e ONTRAK_PORTAL__OIDC_ISSUER=https://auth.example.invalid/application/o/ontrak/ \
             -e ONTRAK_PORTAL__OIDC_CLIENT_ID=ontrak \
             -e ONTRAK_PORTAL__OIDC_CLIENT_SECRET=ci-only-oidc-secret \
@@ -287,24 +351,26 @@ jobs:
           grep -q 'Sign in with Authentik' <<<"$login" \
             || { echo '::error::the login page does not offer Authentik'; exit 1; }
           if grep -q 'name="password"' <<<"$login"; then
-            echo '::error::the login page renders a password form; the local login is gone'
+            echo '::error::a pure-SSO range renders a password form; there is no local account'
             exit 1
           fi
           echo 'login page: Authentik offered, no password form'
 
-          # The route is gone, not merely refused.
-          code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
-            --data 'username=alice&password=alice-pw' \
+          # A password cannot open an SSO account; the route refuses it.
+          jar="$(mktemp)"
+          token="$(curl -fsS -c "$jar" http://127.0.0.1:18080/login >/dev/null; grep -oP 'ontrak_csrf\s+\K\S+' "$jar")"
+          code="$(curl -s -o /dev/null -w '%{http_code}' -b "$jar" \
+            --data "username=alice&password=alice-pw&csrf=$token" \
             http://127.0.0.1:18080/login)"
-          [ "$code" = "405" ] \
-            || { echo "::error::POST /login answered $code, expected 405 (no password route)"; exit 1; }
-          echo 'POST /login: 405 (no password route)'
+          [ "$code" = "303" ] \
+            || { echo "::error::POST /login answered $code, expected a 303 back to /login"; exit 1; }
+          echo 'POST /login: 303 refused (no local account to open)'
 
-          # The demo door exists for `ontrak demo serve` only; a real range 404s it.
-          code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/demo/login/student1)"
-          [ "$code" = "404" ] \
-            || { echo "::error::the demo sign-in answered $code on a non-demo range, expected 404"; exit 1; }
-          echo 'demo door: 404 (closed on a real range)'
+          # A provisioned range is never an open account-creation page.
+          code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/setup)"
+          [ "$code" = "303" ] \
+            || { echo "::error::/setup answered $code on a provisioned range, expected 303"; exit 1; }
+          echo 'setup: closed on a provisioned range'
 
           # Starting the flow with an unreachable IdP is reported, not a 500.
           code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/oidc/login)"
@@ -317,7 +383,10 @@ jobs:
 
       - name: Container log on failure
         if: failure()
-        run: docker logs ontrak-ci 2>&1 | tail -50 || true
+        run: |
+          for name in ontrak-default ontrak-bootstrap ontrak-ci; do
+            docker logs "$name" 2>&1 | tail -50 || true
+          done
 
       - name: Clean up
         if: always()

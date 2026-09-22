@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Opening the console…</title>
+  <style>
+    html, body { height: 100%; margin: 0; background: #070a11; color: #dbe4f0;
+                 font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+    body {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+      background-image: radial-gradient(900px 600px at 50% -10%, rgba(56, 189, 248, 0.16), transparent 60%);
+    }
+    .ring {
+      width: 34px; height: 34px; border-radius: 50%;
+      border: 3px solid rgba(126, 162, 202, 0.22); border-top-color: #38bdf8;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    p { color: #8b9cb3; margin: 0; letter-spacing: 0.02em; }
+    a { color: #38bdf8; }
+    @media (prefers-reduced-motion: reduce) { .ring { animation-duration: 2.5s; } }
+  </style>
+</head>
+<body>
+<div class="ring"></div>
+<p>Opening the console…</p>
+<noscript><a href="{{ console_url }}">Open the console</a></noscript>
+<script>
+  {% if clear_token %}
+  // Guacamole keeps its auth token in localStorage and re-authenticates with it on
+  // every load. A still-valid token makes the gateway *reuse that session*, so the
+  // fresh, signed payload we just handed over is ignored and the console opens the
+  // last machine this browser used — one student's #6 quietly showing them #3, for
+  // as long as the token lasts. Clearing it here (this page is on the gateway's own
+  // origin, so localStorage is the same storage) makes the payload authoritative.
+  try { localStorage.removeItem("GUAC_AUTH_TOKEN"); } catch (e) {}
+  {% endif %}
+  location.replace({{ console_url | tojson }});
+</script>
+</body>
+</html>

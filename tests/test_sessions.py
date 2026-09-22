@@ -5,12 +5,12 @@ from datetime import timedelta
 
 import pytest
 
-from ontrak.demo import synthesise_ticket
 from ontrak.guest import NullDriver
 from ontrak.incus import IncusError
-from ontrak.models import SessionState, iso, parse_iso, utcnow
+from ontrak.models import ScoreReport, Session, SessionState, iso, parse_iso, utcnow
 from ontrak.scenarios import JSON_BEGIN, JSON_END, SETUP_OK_MARKER
 from ontrak.sessions import POOL_SNAPSHOT, SessionError, SessionManager
+from tests.helpers import synthesise_ticket
 
 SCENARIO = "net-dns-failure"
 OBJECTIVES = ["restore-resolver", "resolve-intranet", "reach-service"]
@@ -47,7 +47,26 @@ def test_template_build_injects_the_fault_and_snapshots(manager, incus, settings
     assert name == settings.incus.template_name(SCENARIO)
     assert incus.exists(name)
     assert incus.has_snapshot(name, POOL_SNAPSHOT)
-    assert incus.instance_status(name) == "STOPPED"  # snapshots come from a clean power-off
+    assert incus.instance_status(name) == "STOPPED"  # a snapshot is of a machine at rest
+
+
+def test_a_template_build_lets_the_guest_flush_before_it_snapshots(manager, incus, settings):
+    """The build must not power-cut a guest it reconfigured seconds earlier.
+
+    A hard stop is a *disk* event as much as a power one: the injected fault was
+    written moments before and can still be sitting in the guest's write-back cache,
+    so `stop --force` snapshots the state from *before* the fault. The template then
+    builds clean, every clone boots healthy, and the scenario grades an untouched
+    machine at full marks — which is what happened, silently, on every Windows
+    template, because nothing about the scenario had moved for the recipe to notice.
+    """
+    name = manager.ensure_template(SCENARIO)
+    stops = [call for call in incus.calls if call[0] == "power_off_instance"]
+    assert stops, incus.calls
+    # Before the snapshot, so what is captured is the state the guest committed.
+    assert incus.calls.index(("power_off_instance", name)) < incus.calls.index(
+        ("create_snapshot", name, POOL_SNAPSHOT)
+    )
 
 
 def test_an_unknown_scenario_id_is_reported_rather_than_skipped(manager):
@@ -85,6 +104,127 @@ def test_template_build_fails_loudly_when_setup_does_not_confirm(settings, store
     assert incus.instance_status(settings.incus.template_name(SCENARIO)) == "STOPPED"
 
 
+def test_a_setup_that_breaks_its_own_transport_is_confirmed_by_the_marker_file(
+    settings, store, repo
+):
+    """A fault may end the session it is injected over, and the build must cope.
+
+    ``net-static-ip-conflict`` re-addresses the adapter, which terminates the WinRM
+    session running setup.ps1: the build hears a read timeout with no marker on
+    stdout, and used to throw away a correctly applied fault. Both helper libraries
+    also write the marker to a file beside the scenario library, so the build
+    re-reads it -- and has to look at the address the guest moved to, not the one
+    the script started from.
+    """
+    from ontrak.guest import CommandResult
+
+    from .helpers import FakeIncus
+
+    class ReadressedIncus(FakeIncus):
+        """The guest's address changes while setup runs, as the fault intends."""
+
+        readdressed = False
+
+        def instance_ip(self, name):
+            if self.readdressed:
+                return "10.20.0.5"
+            return super().instance_ip(name)
+
+    class TransportLost(NullDriver):
+        """Setup dies with the session; only the marker file answers afterwards."""
+
+        def __init__(self, settings, incus):
+            super().__init__(settings)
+            self.incus = incus
+
+        def run_script_file(self, remote_path, host="", instance="", timeout=300):
+            self.incus.readdressed = True
+            return CommandResult(False, 1, "", "WinRM read timeout: the connection was reset")
+
+        def run_powershell(self, script, host="", instance="", timeout=120):
+            if "Get-Content" in script and host == "10.20.0.5":
+                return CommandResult(True, 0, f"{SETUP_OK_MARKER}\nstatic=10.20.0.5")
+            return CommandResult(True, 0, "")
+
+    incus = ReadressedIncus()
+    manager = SessionManager(
+        settings, store, repo=repo, incus=incus, driver=TransportLost(settings, incus)
+    )
+
+    name = manager.ensure_template(SCENARIO)
+
+    assert incus.has_snapshot(name, POOL_SNAPSHOT)
+    kinds = {row["kind"] for row in store.list_events(limit=50)}
+    assert "guest_readdressed" in kinds
+    assert "setup_confirmed_by_file" in kinds
+
+
+def test_the_marker_lookup_keeps_trying_while_the_guest_comes_back(
+    settings, store, repo, monkeypatch
+):
+    """A re-addressed guest answers late, and the build has to wait for it.
+
+    Measured on a real host: after net-static-ip-conflict moves the adapter, port 5985
+    on the new address refuses connections for a while and then simply works. A
+    single-shot probe reads that as "the file is not there" and throws the fault away.
+    """
+    import ontrak.sessions as sessions_module
+    from ontrak.guest import CommandResult
+
+    from .helpers import FakeIncus
+
+    monkeypatch.setattr(sessions_module, "SETUP_OK_POLL_SECONDS", 0.02)
+    settings.session.setup_ok_grace_seconds = 1
+
+    class SlowToAnswer(NullDriver):
+        def __init__(self, settings):
+            super().__init__(settings)
+            self.probes = 0
+
+        def run_powershell(self, script, host="", instance="", timeout=120):
+            if "Get-Content" in script:
+                self.probes += 1
+                if self.probes >= 3:
+                    return CommandResult(True, 0, SETUP_OK_MARKER)
+                return CommandResult(False, 1, "", "connection timed out")
+            return CommandResult(True, 0, "")
+
+        def run_script_file(self, remote_path, host="", instance="", timeout=300):
+            return CommandResult(False, 1, "", "WinRM read timeout: the connection was reset")
+
+    incus = FakeIncus()
+    driver = SlowToAnswer(settings)
+    manager = SessionManager(settings, store, repo=repo, incus=incus, driver=driver)
+
+    name = manager.ensure_template(SCENARIO)
+    assert incus.has_snapshot(name, POOL_SNAPSHOT)
+    assert driver.probes >= 3, "the build gave up before the guest answered"
+
+
+def test_a_setup_that_never_confirms_is_not_rescued_by_a_stale_marker_file(
+    settings, store, repo
+):
+    """The fallback must not become a rubber stamp: no file, no snapshot."""
+    from ontrak.guest import CommandResult
+
+    from .helpers import FakeIncus
+
+    class NoMarker(NullDriver):
+        def run_script_file(self, remote_path, host="", instance="", timeout=300):
+            return CommandResult(False, 1, "injection failed", "")
+
+        def run_powershell(self, script, host="", instance="", timeout=120):
+            return CommandResult(True, 0, "")  # nothing was ever written
+
+    incus = FakeIncus()
+    manager = SessionManager(
+        settings, store, repo=repo, incus=incus, driver=NoMarker(settings)
+    )
+    with pytest.raises(SessionError, match="ONTRAK-SETUP-OK"):
+        manager.ensure_template(SCENARIO)
+    assert not incus.has_snapshot(settings.incus.template_name(SCENARIO), POOL_SNAPSHOT)
+
+
 def test_template_build_requires_the_golden_image(settings, store, repo):
     from .helpers import FakeIncus
 
@@ -101,6 +241,40 @@ def test_scenario_declared_devices_are_attached_to_the_template(manager, incus, 
     _, kind, device_name, options = devices[0]
     assert (kind, device_name) == ("nic", "eth1")
     assert options["network"] == settings.incus.network
+
+
+def test_a_windows_image_that_demands_an_agent_disk_gets_one(settings, store, repo):
+    """A template must carry the agent disk its image insists on, before boot.
+
+    A Windows image published by incus-windows is created with
+    ``requirements.cdrom_agent=true``, and Incus enforces it at *start*, not at
+    create: `incus init` succeeds, then `incus start` answers "This virtual machine
+    image requires an agent:config disk be added" and the instance stays STOPPED.
+    That is why every Windows template build died while the Linux ones were fine,
+    so the device has to be attached at creation time.
+    """
+    from .helpers import FakeIncus
+
+    incus = FakeIncus(image_alias="ontrak-win-base", requires_agent_disk=True)
+    driver = NullDriver(settings, responses={"setup.ps1": SETUP_OK_MARKER})
+    manager = SessionManager(settings, store, repo=repo, incus=incus, driver=driver)
+
+    name = manager.ensure_template(SCENARIO)
+    disks = [d for d in incus.devices if d[0] == name and d[2] == "agent"]
+    assert disks, "the Windows image refuses to start without an agent:config disk"
+    assert disks[0][3] == {"source": "agent:config"}
+
+
+def test_an_image_that_asks_for_nothing_gets_no_extra_device(settings, store, repo):
+    """Linux images ask for no agent disk, and must not be given one."""
+    from .helpers import FakeIncus
+
+    incus = FakeIncus(image_alias="ontrak-win-base", requires_agent_disk=False)
+    driver = NullDriver(settings, responses={"setup.ps1": SETUP_OK_MARKER})
+    manager = SessionManager(settings, store, repo=repo, incus=incus, driver=driver)
+
+    name = manager.ensure_template(SCENARIO)
+    assert not [d for d in incus.devices if d[0] == name and d[2] == "agent"]
 
 
 def test_build_templates_reports_per_scenario_results(manager):
@@ -192,18 +366,49 @@ def test_allocate_is_idempotent_per_student_and_scenario(manager, built_template
     assert first.id == second.id
 
 
+def test_starting_again_does_not_revive_an_expired_session(manager, store, incus, built_template):
+    first = manager.allocate("alice", SCENARIO)
+    store.update_session(first.id, expires_at=iso(utcnow() - timedelta(minutes=1)))
+
+    second = manager.allocate("alice", SCENARIO)
+
+    assert second.id != first.id
+    assert second.state is SessionState.READY
+    assert second.seconds_remaining() > 0
+    assert store.get_session(first.id).state is SessionState.DESTROYED
+    assert not incus.exists(first.instance)
+
+
 def test_allocate_enforces_one_session_per_student(manager, incus, built_template):
     manager.allocate("alice", SCENARIO)
     with pytest.raises(SessionError, match="already has a live session"):
         manager.allocate("alice", "sw-app-crash")
 
 
-def test_allocate_without_a_template_reports_an_error_session(manager, incus):
+def test_a_missing_template_is_built_for_the_session_that_needs_it(manager, incus):
+    """A template is a snapshot, so it goes stale — and a session heals it.
+
+    This used to be an error naming `ontrak template build` for somebody else to run,
+    which leaves the student holding a dead session either way. The useful answer is
+    the machine.
+    """
+    session = manager.allocate("alice", "sw-app-crash")
+    assert session.state is SessionState.READY, session.error
+    template = manager.settings.incus.template_name("sw-app-crash")
+    assert incus.has_snapshot(template, POOL_SNAPSHOT)
+
+
+def test_a_template_that_cannot_be_built_still_reports_an_error_session(settings, store, repo, incus):
+    """Auto-heal must not paper over a build that genuinely failed."""
+    # A guest that never confirms the fault was injected: the build refuses to
+    # snapshot, exactly as it would on a real host.
+    manager = SessionManager(
+        settings, store, repo=repo, incus=incus,
+        driver=NullDriver(settings, responses={}),
+    )
     session = manager.allocate("alice", "sw-app-crash")
     assert session.state is SessionState.ERROR
-    assert "missing snapshot" in session.error or "template" in session.error
-    # nothing was left running
-    assert not incus.live_names()
+    assert "ONTRAK-SETUP-OK" in session.error
 
 
 def test_allocate_marks_a_failed_guest_handshake(settings, store, repo, incus, built_template):
@@ -302,7 +507,11 @@ def test_checks_grade_a_passing_attempt(settings, store, repo, incus, built_temp
     report = manager.run_checks(session)
     assert report.score == 100.0
     assert report.resolved is True
-    assert session.state is SessionState.PASSED
+    # The achievement is kept, the *state* is not touched: `passed` is what a submitted
+    # session is, and a practice check submits nothing. Writing it here took the
+    # console, the write-up and the hand-in button off a student's page while their
+    # machine was still running (see test_a_practice_check_does_not_submit_the_session).
+    assert session.state is SessionState.IN_USE
     assert session.resolved is True
     assert session.best_score == 100.0
     assert session.checks_run == 1
@@ -318,6 +527,60 @@ def test_checks_grade_a_passing_attempt(settings, store, repo, incus, built_temp
     assert store.attempt_counts(session.id) == 1
     # The machine is destroyed on submission: nothing is left to tamper with.
     assert incus.exists(session.instance) is False
+    assert session.instance == "" and session.host_ip == ""
+
+
+def test_a_practice_check_does_not_submit_the_session(settings, store, repo, incus, built_template):
+    """A check reports on the machine; only Complete & End hands the session in.
+
+    The state is what the session page, the reaper and the prune read to tell a
+    submitted session from one being worked in, so a check that resolved must leave it
+    exactly as it found it — otherwise a student is locked out of the hand-in on a
+    machine that is still up.
+    """
+    manager = manager_with(
+        settings, store, repo, incus, {"setup.ps1": "ONTRAK-SETUP-OK", "check.ps1": full_pass()}
+    )
+    session = manager.allocate("alice", SCENARIO)
+    manager.run_checks(session)
+    assert session.state is SessionState.IN_USE
+    assert session.resolved is True
+    # Still handed back as the student's own machine, not as a finished session.
+    assert session.state.is_usable
+    assert session.state.is_live
+
+    manager.complete(session, values=synthesise_ticket(manager.ticket_form_for(session)))
+    assert session.state is SessionState.PASSED
+    # And once it *is* submitted, another check cannot reopen it: the state it found
+    # is the state it leaves.
+    manager.run_checks(session)
+    assert session.state is SessionState.PASSED
+    assert session.resolved is True
+
+
+def test_a_submitted_machine_is_kept_when_the_setting_says_so(settings, store, repo, incus, built_template):
+    """``session.destroy_on_complete`` has to mean something.
+
+    It is on the admin panel, in the shipped config and in the reasoning behind what a
+    prune may delete — and the session was thrown away whatever it said, so a range
+    that set it to keep the machine for a debrief kept nothing.
+    """
+    settings.session.destroy_on_complete = False
+    manager = manager_with(
+        settings, store, repo, incus, {"setup.ps1": "ONTRAK-SETUP-OK", "check.ps1": full_pass()}
+    )
+    session = manager.allocate("alice", SCENARIO)
+    manager.run_checks(session)
+    instance, address = session.instance, session.host_ip
+
+    report = manager.complete(session, values=synthesise_ticket(manager.ticket_form_for(session)))
+
+    assert report.resolved is True
+    assert session.state is SessionState.PASSED
+    assert session.instance == instance
+    assert session.host_ip == address
+    assert incus.exists(instance) is True
+    assert incus.instance_status(instance) == "RUNNING"
 
 
 def test_checks_grade_a_failing_attempt_and_keep_the_session_usable(settings, store, repo, incus, built_template):
@@ -355,6 +618,93 @@ def test_a_broken_check_script_reports_an_error_not_a_score(settings, store, rep
     assert report.score == 0.0
     assert session.state is SessionState.IN_USE
     assert session.best_score == 0.0
+
+
+def test_grading_follows_a_machine_that_moved(settings, store, repo, monkeypatch):
+    """A correct repair can re-address the guest, and grading has to follow it there.
+
+    `net-static-ip-conflict`'s documented fix — turn DHCP back on — hands the guest a
+    new address, while the check talks to the one the session recorded. Without this,
+    a student whose work was right is graded "No route to host" and reads it as the
+    range being broken. The template build has handled a re-addressed guest since
+    `_marker_candidates`; grading never did.
+    """
+    from ontrak.guest import GuestError
+
+    from .helpers import FakeIncus
+
+    moved_to = "10.20.0.77"
+
+    class Readdressed(FakeIncus):
+        """Incus answers with the old address until the machine actually moves."""
+
+        moved = False
+
+        def instance_ip(self, name):
+            if self.moved:
+                return moved_to
+            return super().instance_ip(name)
+
+    class MovesMidCheck(NullDriver):
+        """The first attempt cannot reach the old address; the new one answers."""
+
+        def __init__(self, settings, incus):
+            super().__init__(settings)
+            self.incus = incus
+            self.hosts: list[str] = []
+
+        def run_script_file(self, remote_path, host="", instance="", timeout=300):
+            # The build runs setup.ps1 through the same transport and must not move;
+            # only the grading pass meets a machine that has changed address.
+            if "check.ps1" not in remote_path:
+                return super().run_script_file(remote_path, host=host, instance=instance, timeout=timeout)
+            self.hosts.append(host)
+            if not self.incus.moved:
+                self.incus.moved = True
+                raise GuestError("HTTPConnectionPool: No route to host")
+            return super().run_script_file(remote_path, host=host, instance=instance, timeout=timeout)
+
+    incus = Readdressed(image_alias=settings.incus.image_alias)
+    driver = MovesMidCheck(settings, incus)
+    driver.responses["setup.ps1"] = "ONTRAK-SETUP-OK"
+    driver.responses["check.ps1"] = full_pass()
+    manager = SessionManager(settings, store, repo=repo, incus=incus, driver=driver)
+    manager.ensure_template(SCENARIO)
+    session = manager.allocate("alice", SCENARIO)
+    before = session.host_ip
+
+    report = manager.run_checks(session)
+
+    assert report.error == ""
+    assert report.score == 100.0
+    assert driver.hosts[0] == before
+    assert driver.hosts[1] == moved_to
+    assert session.host_ip == moved_to
+    assert "readdressed" in {row["kind"] for row in store.list_events(limit=50)}
+
+
+def test_grading_still_reports_a_transport_failure_that_did_not_move(settings, store, repo):
+    """A machine that has not moved is a real failure, not something to retry away."""
+    from ontrak.guest import GuestError
+
+    from .helpers import FakeIncus
+
+    class Unreachable(NullDriver):
+        def run_script_file(self, remote_path, host="", instance="", timeout=300):
+            if "check.ps1" in remote_path:
+                raise GuestError("HTTPConnectionPool: No route to host")
+            return super().run_script_file(remote_path, host=host, instance=instance, timeout=timeout)
+
+    incus = FakeIncus(image_alias=settings.incus.image_alias)
+    driver = Unreachable(settings, responses={"setup.ps1": "ONTRAK-SETUP-OK"})
+    manager = SessionManager(settings, store, repo=repo, incus=incus, driver=driver)
+    manager.ensure_template(SCENARIO)
+    session = manager.allocate("alice", SCENARIO)
+
+    report = manager.run_checks(session)
+
+    assert "could not run checks" in report.error
+    assert report.score == 0.0
 
 
 def test_grading_does_not_re_upload_the_setup_script(settings, store, repo, incus, built_template):
@@ -448,6 +798,83 @@ def test_reap_clears_stuck_provisioning_rows(manager, store, incus, built_templa
 
 
 # --------------------------------------------------------------------------- #
+# pruning the history
+#
+# `reap` handles a session a student is still owed. This handles the rows nobody is
+# owed anything for: machines destroyed weeks ago, still listed as sessions. It must
+# never take a row a grade or a ticket points at — but the row a student is *still
+# sitting in front of* is reap's business, so a live one is left alone either way.
+# --------------------------------------------------------------------------- #
+def _finished_session(store, *, state=SessionState.DESTROYED, days_ago=30, student="alice"):
+    when = utcnow() - timedelta(days=days_ago)
+    return store.create_session(
+        Session(
+            id=None,
+            student=student,
+            scenario_id=SCENARIO,
+            state=state,
+            instance=f"ontrak-sess-closed-{student}",
+            created_at=iso(when),
+            last_activity_at=iso(when),
+        )
+    )
+
+
+def test_prune_deletes_finished_sessions_older_than_the_cutoff(manager, store):
+    old = _finished_session(store, days_ago=30)
+    fresh = _finished_session(store, days_ago=1, student="bob")
+
+    result = manager.prune_sessions(days=7)
+
+    assert result["deleted"] == 1
+    assert result["sessions"] == [old.id]
+    assert store.get_session(old.id) is None
+    assert store.get_session(fresh.id) is not None  # too recent to be history
+
+
+def test_prune_keeps_a_session_a_grade_points_at(manager, store):
+    """A stored result is the record of the course, not a machine that stopped existing."""
+    graded = _finished_session(store, days_ago=30)
+    other = _finished_session(store, days_ago=30, student="bob")
+    store.add_result(ScoreReport(session_id=graded.id, scenario_id=SCENARIO, score=80.0, resolved=True), "alice")
+
+    result = manager.prune_sessions(days=7)
+
+    assert result["kept"] == [graded.id]
+    assert result["sessions"] == [other.id]
+    assert store.get_session(graded.id) is not None
+    assert store.latest_report(graded.id) is not None
+
+
+def test_prune_leaves_a_live_session_to_reap(manager, store, incus, built_template):
+    """An expired `in_use` row is recycled, never pruned: the student still has a console."""
+    session = manager.allocate("alice", SCENARIO)
+    store.update_session(session.id, last_activity_at=iso(utcnow() - timedelta(days=30)))
+
+    result = manager.prune_sessions(days=7)
+
+    assert result["deleted"] == 0
+    assert session.id in result["live"]
+    assert store.get_session(session.id) is not None
+
+    # ...and reap is what takes it, destroying the machine on the way out.
+    manager.reap()
+    assert store.get_session(session.id).state is SessionState.DESTROYED
+    assert not incus.exists(session.instance)
+
+
+def test_prune_dry_run_deletes_nothing(manager, store):
+    old = _finished_session(store, days_ago=30)
+
+    result = manager.prune_sessions(days=7, dry_run=True)
+
+    assert result["dry_run"] is True
+    assert result["sessions"] == [old.id]
+    assert result["deleted"] == 0
+    assert store.get_session(old.id) is not None
+
+
+# --------------------------------------------------------------------------- #
 # session helpers
 # --------------------------------------------------------------------------- #
 def test_hints_reveal_one_at_a_time(manager, built_template, repo):
@@ -521,6 +948,11 @@ def console_manager(settings, store, repo, incus, driver):
     )
 
 
+def _template_builds(incus) -> list[tuple]:
+    """Every create/delete the hypervisor was asked for, as evidence of a rebuild."""
+    return [call for call in incus.calls if call[0] in ("create_instance", "delete_instance")]
+
+
 def test_the_console_script_sets_the_lab_credential_and_enables_the_door(settings):
     from ontrak.sessions import console_transport_script
 
@@ -569,6 +1001,38 @@ def test_the_console_transport_is_opt_in(settings, store, repo, incus):
     manager = console_manager(settings, store, repo, incus, driver)
     manager.ensure_template(LINUX_SCENARIO)
     assert not any("openssh-server" in call for call in driver.shell_calls)
+
+
+def test_a_template_built_before_a_console_setting_changed_is_rebuilt(settings, store, repo, incus):
+    """The snapshot is of the *settings too*, so changing one rebuilds it.
+
+    This is the failure the recipe stamp exists for: turning `guac.linux_ssh` on left
+    every existing Linux template without an sshd, and the portal signed an SSH
+    console onto it — a console that never opened, for a reason nothing stated.
+    """
+    # Built with the console transport off: a Linux template with no sshd.
+    settings.guac.linux_ssh = False
+    driver = RecordingShell(settings)
+    manager = console_manager(settings, store, repo, incus, driver)
+    scenario = repo.get(LINUX_SCENARIO)
+    manager.ensure_template(LINUX_SCENARIO)
+    builds = _template_builds(incus)
+    assert manager.template_current(scenario) is True
+    assert not any("openssh-server" in call for call in driver.shell_calls)
+
+    # Same settings: the build is a no-op, not another boot.
+    manager.ensure_template(LINUX_SCENARIO)
+    assert _template_builds(incus) == builds
+
+    # A console setting that is baked in at build time changes the recipe, so the
+    # snapshot is stale and the next build replaces it — this time with an sshd.
+    # Observed on the hypervisor, not on the shell calls: turning the transport *off*
+    # rebuilds too (to a guest without one), and that build runs no shell to count.
+    settings.guac.linux_ssh = True
+    assert manager.template_current(scenario) is False
+    manager.ensure_template(LINUX_SCENARIO)
+    assert len(_template_builds(incus)) > len(builds)
+    assert any("openssh-server" in call for call in driver.shell_calls)
 
 
 def test_an_empty_lab_password_refuses_to_build_a_console(settings, store, repo, incus):

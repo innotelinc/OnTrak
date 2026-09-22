@@ -9,6 +9,21 @@
 </p>
 {% include "admin/_nav.html" %}
 
+{% if access_url %}
+  {# Read off the request, so it is the address that actually works from here. A LAN
+     range has no DNS name to hand out, and the console follows this same address
+     (`guac.base_url: auto`), so this one line is what an instructor gives a student. #}
+  <div class="card notice">
+    <h2>Students reach this range at</h2>
+    <p><code>{{ access_url }}</code></p>
+    <p class="muted small">
+      Taken from the address this page was opened on, so it is the one that works — on a
+      LAN there is no name to hand out and none is needed. The browser console follows
+      the same address, at <code>{{ access_url }}guacamole/</code>.
+    </p>
+  </div>
+{% endif %}
+
 {% if problems or lesson_problems or catalog_problems %}
   <div class="card error">
     <h2>Health problems</h2>
@@ -57,7 +72,10 @@
   <div class="tile">
     <h3>Machines</h3>
     <p class="big">{{ pool_ready }}</p>
-    <p class="muted small">{{ templates_ready }} template(s) with a clean snapshot, {{ pool_ready }} warm machine(s)</p>
+    <p class="muted small">
+      {{ templates_ready }} template(s) with a clean snapshot, {{ pool_ready }} warm machine(s)
+      {% if templates_stale %}<br><span class="badge warn">stale</span> {{ templates_stale }} built from an older recipe {% endif %}
+    </p>
     <a class="button secondary" href="/admin/platforms">Platforms</a>
   </div>
   <div class="tile">
@@ -137,7 +155,7 @@
             <td><a href="/admin/sessions?student={{ session.student }}">{{ session.id }}</a></td>
             <td>{{ session.student }}</td>
             <td>{{ session.scenario_id }}</td>
-            <td><span class="badge state-{{ session.state.value }}">{{ session.state.value }}</span></td>
+            <td><span class="badge state-{{ session.state.value }}">{{ session.state.value|replace("_", " ")|title }}</span></td>
           </tr>
         {% endfor %}
       </table>

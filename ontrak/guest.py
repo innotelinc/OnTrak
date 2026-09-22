@@ -24,9 +24,10 @@ still injects a fault in ``setup.sh`` and reports grading JSON from ``check.sh``
 
 All PowerShell is sent as a UTF-16LE ``-EncodedCommand`` so quoting, newlines and
 non-ASCII characters survive every transport. Shell is sent on stdin for the same
-reason. File uploads are base64 in a quoted heredoc over that channel, so no
-SMB/SCP path is required and no transfer-API flags have to be guessed per Incus
-version.
+reason. A Windows file upload is base64 in chunks small enough to fit the WinRS
+command line (see ``UPLOAD_CHUNK``); a Linux one is base64 in a quoted heredoc over
+stdin, so no SMB/SCP path is required and no transfer-API flags have to be guessed
+per Incus version.
 """
 
 from __future__ import annotations
@@ -42,9 +43,24 @@ from .config import Settings
 from .models import Session
 
 POWERSHELL = "powershell"
-# Windows command lines are capped (cmd.exe 8k, WinRM envelopes larger but not
-# unbounded); 32 KB of base64 per call is safely inside every transport.
-UPLOAD_CHUNK = 32_000
+# The readiness probe must print something on every Windows build we run on.
+# ``$env:COMPUTERNAME`` is not dependable: a sysprepped/OOBE image (and the Incus
+# agent's service context) can leave it unset, which made a live guest look dead
+# and stalled provisioning until the timeout expired.
+READY_PROBE = "Write-Output ([Environment]::MachineName)"
+# An upload chunk travels *in the command line*, so the chunk size and the
+# command-line size are the same number, and WinRS caps the latter at 8191
+# characters. The payload is UTF-16LE and base64 encoded, so a script costs 8/3
+# characters per byte of it; with ~150 characters of flags and path, 2 400
+# characters of chunk lands near 6 900 and leaves room for a longer path.
+#
+# This was 32 000, which is not "safely inside every transport" as the module
+# docstring used to claim: the first scenario file a Windows guest was ever asked
+# to accept came back as HRESULT 0x800700CE, "The filename or extension is too
+# long", and every Windows template build died there. The Linux uploader was
+# unaffected because it sends the same payload on stdin rather than in argv.
+WINRS_COMMAND_LINE_LIMIT = 8191
+UPLOAD_CHUNK = 2_400
 
 
 @dataclass
@@ -205,7 +221,7 @@ class BaseDriver:
     def _wait_for_powershell(self, session: Session, timeout: int | None = None) -> bool:
         deadline = time.time() + (timeout or self.guest.boot_timeout_seconds)
         while time.time() < deadline:
-            result = self.run_powershell("$env:COMPUTERNAME", host=session.host_ip,
+            result = self.run_powershell(READY_PROBE, host=session.host_ip,
                                         instance=session.instance, timeout=30)
             if result.ok and result.stdout.strip():
                 return True
@@ -383,7 +399,7 @@ class SSHDriver(ShellRunner):
 class WinRMDriver(BaseDriver):
     name = "winrm"
 
-    def _session(self, host: str):
+    def _session(self, host: str, timeout: int | None = None):
         try:
             import winrm  # noqa: PLC0415 - optional dependency, imported lazily
         except ImportError as exc:  # pragma: no cover - dependency path
@@ -391,11 +407,21 @@ class WinRMDriver(BaseDriver):
                 "pywinrm is not installed; `pip install pywinrm` or set guest.driver"
             ) from exc
         scheme = "https" if self.guest.winrm_use_ssl else "http"
+        # pywinrm has its own timeouts and ignores our `timeout` argument unless it is
+        # told: without this, *every* call was capped at pywinrm's 30-second read
+        # default. That silently defeated the platform's own limits — a grading script
+        # allowed `session.check_timeout_seconds` (240) died at 30, and so did the
+        # patient re-read of a template's setup marker, which matters because that
+        # loop is measured in rounds, not seconds. Operation timeout must stay below
+        # the read timeout or pywinrm rejects the pair.
+        effective = max(5, int(timeout or self.guest.ready_timeout_seconds or 30))
         return winrm.Session(
             f"{scheme}://{host}:{self.guest.winrm_port}/wsman",
             auth=(self.guest.user, self.guest.password),
             transport=self.guest.winrm_transport,
             server_cert_validation="ignore",
+            read_timeout_sec=effective,
+            operation_timeout_sec=max(1, effective - 5),
         )
 
     def run_powershell(
@@ -404,7 +430,9 @@ class WinRMDriver(BaseDriver):
         target = self.resolve_host(instance, host)
         started = time.time()
         try:
-            result = self._session(target).run_cmd(POWERSHELL, powershell_argv(script)[1:])
+            result = self._session(target, timeout).run_cmd(
+                POWERSHELL, powershell_argv(script)[1:]
+            )
         except Exception as exc:  # winrm raises a wide variety of transport errors
             return CommandResult(False, 1, "", str(exc), time.time() - started)
         return CommandResult(
@@ -459,7 +487,7 @@ class IncusExecDriver(BaseDriver):
             return False
         deadline = time.time() + (timeout or self.guest.boot_timeout_seconds)
         while time.time() < deadline:
-            result = self.run_powershell("$env:COMPUTERNAME", instance=session.instance, timeout=30)
+            result = self.run_powershell(READY_PROBE, instance=session.instance, timeout=30)
             if result.ok and result.stdout.strip():
                 return True
             time.sleep(5)
@@ -538,6 +566,7 @@ __all__ = [
     "IncusExecDriver",
     "IncusShellDriver",
     "NullDriver",
+    "READY_PROBE",
     "SSHDriver",
     "ShellRunner",
     "WinRMDriver",

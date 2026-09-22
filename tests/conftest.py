@@ -32,10 +32,9 @@ def clean_environment(monkeypatch):
     explicit mapping, and exporting ``.env`` is a normal way to configure a
     deployment — so a developer's shell silently reconfigures the tests. That is
     how a stale ``ONTRAK_GUAC__PUBLIC_PORT`` (a key the app no longer knows, left
-    in ``.env`` by an older layout) turned every test into a ConfigError, and how
-    an exported ``ONTRAK_GUEST__PASSWORD`` broke demo mode's promise that it runs
-    with no secrets at all. Tests that are about environment overrides pass
-    ``environ=`` themselves; everything else should see a clean one.
+    in ``.env`` by an older layout) turned every test into a ConfigError. Tests
+    that are about environment overrides pass ``environ=`` themselves; everything
+    else should see a clean one.
     """
     for key in [name for name in os.environ if name.startswith(ENV_PREFIX)]:
         monkeypatch.delenv(key)
@@ -59,10 +58,34 @@ def settings(tmp_path):
                 "idle_recycle_minutes": 30,
                 "max_per_student": 1,
                 "check_timeout_seconds": 5,
+                # No waiting for a lost transport's marker file in tests: the real
+                # fallback sleeps between probes, and a suite that exercises the
+                # failure path must not spend minutes proving a marker is absent.
+                "setup_ok_grace_seconds": 0,
+                # The portal's housekeeping loop destroys expired machines on a timer.
+                # A suite that asserts on session state between requests must not have
+                # a thread reaping underneath it; `test_maintenance.py` drives the loop
+                # directly, and the shipped default (on) is asserted there.
+                "maintenance_enabled": False,
+                # Same reason, for the template sweep the lifespan starts: it would
+                # build and rebuild templates behind a test's back. The sweep's own
+                # behaviour is driven directly (`ensure_all_templates`).
+                "auto_templates": False,
             },
             "incus": {"image_alias": "ontrak-win-base", "network": "ontrak0"},
             "pool": {"default_target": 0, "targets": {}, "max_total": 4},
-            "guac": {"secret_key": GUAC_KEY, "base_url": "http://guac.test/guacamole/"},
+            # The Linux console transport is pinned off for the suite. It is on in
+            # the shipped config (config/ontrak.yaml, and the stack's .env), but it
+            # is a template-build step that installs sshd and needs a guest
+            # password — and the driver doubles here (NullDriver) are not guests.
+            # The tests that exercise it turn it on and drive it through a driver
+            # that answers the install, so the posture they check is explicit
+            # rather than an accident of this default.
+            "guac": {
+                "secret_key": GUAC_KEY,
+                "base_url": "http://guac.test/guacamole/",
+                "linux_ssh": False,
+            },
             "portal": {"secret": "test-portal-secret"},
         }
     )
@@ -114,9 +137,10 @@ def app_env(settings, store, incus):
     Yields ``(client, app)``. Shared by the portal and admin-panel suites so both
     exercise the same wiring the entrypoint does, rather than a re-declared app.
 
-    The two accounts are rows without a credential, which is all any account is
-    now: sign-in is Authentik's, and these suites mint the session the OIDC
-    callback would (see `login`).
+    The two accounts are rows without a credential, and this range has SSO
+    switched on, so these suites mint the session the OIDC callback would (see
+    `login`). The default posture — SSO off, local accounts — is exercised in
+    test_local_auth.py.
     """
     if TestClient is None:  # pragma: no cover - exercised only without fastapi
         pytest.skip("fastapi/httpx not installed")
@@ -124,14 +148,15 @@ def app_env(settings, store, incus):
 
     store.upsert_user("alice", "student", "Alice A")
     store.upsert_user("teacher", "instructor", "Teacher T")
-    # A representative range: pointed at Authentik, so the login page renders the
-    # real thing rather than the "not set up" state. The sign-in itself is done
-    # with `login` below; test_oidc.py drives the IdP half.
+    # A representative range: pointed at Authentik with SSO switched on, so the
+    # login page renders the real thing rather than a local form. The sign-in
+    # itself is done with `login` below; test_oidc.py drives the IdP half.
     settings.portal.oidc_issuer = OIDC_ISSUER
     settings.portal.oidc_client_id = "ontrak"
     settings.portal.oidc_client_secret = "ontrak-client-secret"
     settings.portal.oidc_redirect_uri = ",".join(OIDC_CALLBACKS)
     settings.portal.oidc_instructor_group = "range-instructors"
+    settings.portal.sso_enabled = True
     driver = NullDriver(
         settings, responses={"setup.ps1": "ONTRAK-SETUP-OK", "check.ps1": _pass_payload()}
     )
@@ -154,11 +179,12 @@ def _pass_payload() -> str:
 
 
 def login(client, username: str = "alice"):
-    """Sign in a seeded account.
+    """Sign in a seeded account without a password.
 
-    There is no password path to exercise any more, so this mints exactly what the
-    OIDC callback issues: a signed session cookie for the account row. Authentik's
-    own half of the flow is covered in tests/test_oidc.py.
+    These suites are about everything *after* sign-in, so this mints exactly what a
+    door issues — a signed session cookie for the account row — rather than driving
+    one. The local password door is covered in tests/test_local_auth.py and
+    Authentik's half in tests/test_oidc.py.
     """
     from ontrak import auth
 
@@ -211,10 +237,11 @@ OIDC_CALLBACKS = (
 
 @pytest.fixture
 def sso_env(settings, store, incus):
-    """A portal wired to Authentik: sign-in through the IdP, and nothing else.
+    """A portal with SSO switched on: sign-in through the IdP.
 
-    Yields ``(client, app)``. This is the shipped posture — SSO is the only way
-    in — and it is the one a sign-in has to survive.
+    Yields ``(client, app)``. SSO is off by default, so the switch is seeded on
+    here — this is the posture a sign-in has to survive when a range *has* been
+    provisioned for Authentik (see test_local_auth.py for the default, local one).
     """
     if TestClient is None:  # pragma: no cover - exercised only without fastapi
         pytest.skip("fastapi/httpx not installed")
@@ -225,6 +252,7 @@ def sso_env(settings, store, incus):
     settings.portal.oidc_client_secret = "ontrak-client-secret"
     settings.portal.oidc_redirect_uri = ",".join(OIDC_CALLBACKS)
     settings.portal.oidc_instructor_group = "range-instructors"
+    settings.portal.sso_enabled = True
     app = create_app(settings, incus=incus, driver=NullDriver(settings, responses={}))
     with TestClient(app) as client:
         yield client, app

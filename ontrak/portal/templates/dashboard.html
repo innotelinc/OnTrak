@@ -60,7 +60,7 @@
            own machine, and having to open a session to learn where it is made the
            list a set of links rather than an answer. #}
         <td class="muted small">{{ s.instance or "—" }}{% if s.host_ip %}<br><code>{{ s.host_ip }}</code>{% endif %}</td>
-        <td><span class="badge state-{{ s.state.value }}">{{ s.state.value }}</span></td>
+        <td><span class="badge state-{{ s.state.value }}">{{ s.state.value|replace("_", " ")|title }}</span></td>
         <td>
           {% if s.state.value in ["passed", "failed"] %}
             <span class="badge {{ "ok" if s.resolved else "warn" }}">{{ "passed" if s.resolved else "not passed" }}</span>

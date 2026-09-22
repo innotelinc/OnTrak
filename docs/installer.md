@@ -61,9 +61,11 @@ make for them:
   this host (`make provision-plan`, then `make provision`) — see
   [stack.md](stack.md) and the sign-in section of [operations.md](operations.md).
 
-Sign-in is Authentik's: the stack comes up with generated local secrets, and the
-`ONTRAK_PORTAL__OIDC_*` values in `/opt/ontrak/.env` are what point it at the
-estate's identity provider.
+Sign-in is local by default: the stack comes up with generated local secrets, and
+the first account is created at `/setup` or seeded from
+`ONTRAK_PORTAL__ADMIN_PASSWORD`. To use the estate's identity provider instead,
+set the `ONTRAK_PORTAL__OIDC_*` values in `/opt/ontrak/.env` and switch SSO on
+under **Admin → Sign-in**.
 
 ## Settings
 

@@ -16,14 +16,18 @@
 > ticket. It runs on Ubuntu + Incus, consumes Cerulean for identity and trust, and keeps
 > only results — never progress.
 > **Landing page:** [https://innotelinc.github.io/OnTrak/](https://innotelinc.github.io/OnTrak/)
-> **Range:** [https://ontrak.innotel.us/](https://ontrak.innotel.us/) — the deployed portal,
-> with the browser console on the same TLS host at `/guacamole/`. Students are given
-> [student.ontrak.innotel.us](https://student.ontrak.innotel.us/) and instructors
-> [admin.ontrak.innotel.us](https://admin.ontrak.innotel.us/): one portal, three names,
-> provisioned through Cerulean by `make provision` ([docs/docker.md](docs/docker.md)).
-> A lab on your own box is `http://localhost:8080`, with the console at
-> `http://localhost:8080/guacamole/` — one address, because the edge forwards a host
-> rather than a path.
+> **Running it:** a range is reached by its own **address**, and needs no DNS name at all —
+> `make up` then `make lan` prints the one to hand out, and the admin panel's Overview
+> page shows it too. A lab on your own box is `https://localhost:8443`, with the console at
+> `https://localhost:8443/guacamole/` — one address, because the edge forwards a host
+> rather than a path, and the console follows whatever address the browser used. The
+> certificate is local and self-signed, so each device warns once until it is trusted.
+> An estate deployment can also put real names in front of it —
+> [ontrak.innotel.us](https://ontrak.innotel.us/) for the portal,
+> [student.ontrak.innotel.us](https://student.ontrak.innotel.us/) and
+> [admin.ontrak.innotel.us](https://admin.ontrak.innotel.us/) for the people who use it,
+> provisioned through Cerulean by `make provision` ([docs/docker.md](docs/docker.md)) — but
+> that is a choice, not a requirement, and a range on a LAN never needs it.
 
 ---
 
@@ -43,35 +47,64 @@
 
 - **A workload catalog** — manifests for Windows desktop, Windows Server, Microsoft Office and Linux: media source, device profile, resources, automation capability and provisioning plan. Manifests, never binaries.
 - **A scenario engine** — six hand-written scenarios and a fault-primitive library that generates more, each with a ticket, weighted objectives, progressive hints, a fault-injecting `setup.ps1` and a live-state `check.ps1`.
-- **A session lifecycle** — request → clone → boot → hand over → grade → submit → destroy, with per-session time limits, progressive hints, reset-on-demand and a reset that is always a fresh clone.
-- **A student portal** — FastAPI app with Authentik SSO sign-in (no local password), ticket dashboard, HTML5 console via the gateway, time-limit control, `Complete & End`, and results-only reporting.
+- **A session lifecycle** — request → clone → boot → hand over → grade → submit → destroy, with per-session time limits, progressive hints, reset-on-demand and a reset that is always a fresh clone. The portal reaps expiry, idle sessions and finished history itself, so an abandoned machine is taken back without anyone remembering a command — and without a cron job, which the container stack does not have.
+- **A student portal** — FastAPI app with local accounts by default and Authentik SSO one toggle away, ticket dashboard, HTML5 console via the gateway, time-limit control, `Complete & End`, and results-only reporting.
 - **A container stack** — `docker compose up` brings up the portal and the Guacamole console gateway; the training machines stay Incus VMs on the host, reached over its socket or a cluster endpoint.
-- **An operator surface** — CLI (`doctor`, `catalog`, `media`, `image`, `template`, `pool`, `schedule`, `session`, `generate`, `demo`), warm-pool management, scheduled prewarm/teardown, and an instructor view with CSV export.
-- **Demo mode** — the whole student flow against an in-memory hypervisor: no Incus, no Windows, no secrets, in about five seconds.
+- **An operator surface** — CLI (`doctor`, `catalog`, `media`, `image`, `template`, `pool`, `schedule`, `session`, `generate`), warm-pool management, scheduled prewarm/teardown, and an instructor view with CSV export.
+- **Setup anywhere** — one script installs what a machine is missing (Python, `make`, Docker, `openssl`) and `make` builds its own environment, so a checkout carried onto a laptop, a mini-PC or a phone-hosted daemon runs with one command and no editing.
 
 ## Quick start
 
-Two commands, no hypervisor, no Windows image:
+One command, on any machine. `start.sh` installs whatever is missing — Python and
+`make` for the host portal, Docker and its Compose plugin for the container path —
+and then picks the stack this machine can actually run:
 
 ```bash
 git clone https://github.com/innotelinc/OnTrak.git
 cd OnTrak
-./scripts/setup.sh
-make demo            # a full class: assign, provision, grade, submit, tear down
-make demo-serve      # the student portal, in demo mode, at http://127.0.0.1:8080
+./start.sh           # Docker if it is here and usable, otherwise the host portal
 ```
 
-With Docker, one command is the whole installation — a machine with only Docker, no
-hypervisor, no `.env`, nothing to read first. (A Debian or Ubuntu lab host with
-`/dev/kvm` and a few GB per machine; elsewhere the portal and demo mode still run —
+Nothing is a prerequisite, and nothing has to be read first. The pieces it picks
+from:
+
+```bash
+./start.sh up        # the full stack; needs a Linux host with Incus + KVM
+./start.sh serve     # the real portal on this host, no containers
+./start.sh stop      # stop whatever is running
+```
+
+`make` works the same way — every Python target builds the virtualenv itself when
+it is missing, so `make check` on a fresh clone just works. A machine with no
+hypervisor is still a working portal: `lab-setup` notices and reports it, and the
+pages that do not need a machine keep working.
+
+The stack binds `0.0.0.0`, so the phone or laptop next to the host can open it:
+
+```bash
+make lan             # prints https://<this machine's address>:8443 (it follows the stack)
+```
+
+The console follows the address the browser used, so nothing has to be edited to
+move the same checkout between `localhost`, a LAN address and a TLS host.
+
+With Docker, one command is the whole installation — no hypervisor, no `.env`,
+nothing to read first. (A Debian or Ubuntu lab host with `/dev/kvm` and a few GB
+per machine for the full stack; elsewhere the portal still serves its pages —
 [docs/docker.md](docs/docker.md) has the table.)
 
 ```bash
-docker compose up -d --build     # `make up` is the same, with the addresses printed
-# portal   http://localhost:8080      console   http://localhost:8080/guacamole/
-make ps              # health  ·  make logs  ·  docker compose logs lab-setup
+make up              # the whole installation, over TLS
+# portal   https://<this host>:8443/   console   https://<this host>:8443/guacamole/
+make ps              # health  ·  make logs  ·  make setup-log
+make boot            # come back by itself after a reboot (systemd)
 make down
 ```
+
+`make up` encrypts by default: it writes a local certificate if there is not one
+and starts the TLS overlay, so the stack publishes one port — 8443 — with no
+unencrypted door beside it. `make up-plain` is the exception, for a host behind a
+TLS edge that already terminates it.
 
 (`--build` only matters after a `git pull` — without it compose reuses the image from
 whatever commit was checked out before, and a stale first run looks like a broken one.)
@@ -81,8 +114,9 @@ portal/console keys, and — if the host cannot run training machines yet — in
 initialises Incus on the host (storage pool, lab bridge, project, profiles) by running
 `infra/bootstrap-host.sh` in the host's own namespaces. Then the portal and the console
 gateway start. A host that cannot be prepared is reported and skipped, never fatal: the
-portal still comes up, in demo mode or against a remote cluster. `ONTRAK_LAB_SETUP=force`
-re-runs the host step; `off` skips it. Details in [docs/docker.md](docs/docker.md).
+portal still comes up — `lab-setup` says so — or against a remote cluster.
+`ONTRAK_LAB_SETUP=force` re-runs the host step; `off` skips it. Details in
+[docs/docker.md](docs/docker.md).
 
 The training machines are still Incus VMs on the host — a container cannot be Windows 95,
 and a broken machine that shares the host kernel is an outage rather than a lesson.
@@ -122,6 +156,7 @@ credential is baked into the image. [docs/installer.md](docs/installer.md).
 
 ```
 OnTrak/
+├── start.sh                   # one command, anywhere: bootstrap, then the right stack
 ├── catalog/                   # workload manifests: Windows, Server, Office, Linux
 ├── config/                    # configuration (ontrak.yaml + gitignored local.yaml)
 ├── docker/                    # container entrypoint (docker-compose.yml is at the root)
@@ -144,19 +179,32 @@ OnTrak/
 
 ## Status
 
-- **Verified here:** the Python control plane — `pytest` (280 tests, 1 skipped
-  where the host lacks a tool it needs), `ruff` clean, scenario validation, catalog
-  validation, the CLI, demo mode end to end, generated scenarios validated, the admin
-  panel rendering without a reachable hypervisor, and the Guacamole link format
-  cross-checked against the `openssl` CLI.
-- **Verified in Docker:** the image builds, every compose file validates, the portal and the
-  console gateway both report healthy, a whole class runs inside the image (`make docker-demo`),
-  and the admin panel serves every page with no Incus socket at all.
+- **Verified here:** the Python control plane — `pytest` (494 tests; the only two that skip
+  themselves are the live-Guacamole interop test and the range walk below), `ruff` clean,
+  scenario validation, catalog validation, the CLI, generated scenarios validated, the
+  admin panel rendering without a reachable hypervisor, and the Guacamole link format
+  cross-checked against the `openssl` CLI. The repository's own tooling — the secret
+  scanner, the Cerulean provisioner and the grade sweep's reading half — has its own suite
+  too (`scripts/tests`, run by CI).
+- **Verified on a real range:** `make sweep` grades every `(scenario, workload)` pair on
+  a booted machine — broken untouched, resolved after a repair — and `ONTRAK_E2E=1
+  make test` walks one student through the whole lifecycle on a VM, from the door and
+  the account to the hand-in and the state it leaves the page in. The walk also runs
+  **nightly** on a self-hosted runner labelled `incus`
+  (`.github/workflows/range-nightly.yml`), which fails rather than reports green if the
+  walk skips itself. `make sweep` stays an operator command: it boots the whole pool
+  (see [docs/operations.md](docs/operations.md#maintenance)).
+- **Verified in Docker:** the image builds and validates a checkout with no hypervisor, every
+  compose file renders — the base stack, the remote override and the TLS overlay — the portal
+  and the console gateway both report healthy, and the doors behave: first-run setup on a
+  fresh range, the environment's password on a seeded one, and no password form on a pure-SSO
+  one.
 - **Verified as a first run:** from a checkout with no `.env` and no hypervisor, one
   `docker compose up -d --build` writes the secrets, brings both services up healthy, and gets
   a portal-signed console payload accepted by the live gateway as a machine the student can
-  open. Reaching the admin panel in that run needs a way in, and sign-in is Authentik's and
-  only Authentik's: point the range at Cerulean (see
+  open. Reaching the admin panel in that run needs a way in, and the default door is a local
+  account: `/setup` creates the first instructor, or `ONTRAK_PORTAL__ADMIN_PASSWORD` seeds one
+  at startup. SSO is optional — switch it on under Admin → Sign-in (see
   [docs/operations.md](docs/operations.md#sign-in)).
 - **Verified for the host half:** `infra/bootstrap-host.sh` — the same script `lab-setup`
   runs in the host's namespaces — was run twice against a real Incus daemon (upstream
@@ -188,7 +236,8 @@ repository. No upstream source is vendored or re-licensed here.
 
 OnTrak is the ecosystem's **TrainingOps** platform in the
 [**Innotel Platform Stack**](https://github.com/innotelinc/innotel-platform-stack) —
-the canonical single-responsibility architecture where Authentik owns identity,
+the canonical single-responsibility architecture where Authentik owns identity
+(when a range switches SSO on — local accounts need no platform at all),
 Cerulean Vault owns secrets, Cerulean owns trust, ONYX owns storage, Magnate owns
 revenue, NPM Edge owns the edge, and every other platform is a business function
 that consumes them. See [docs/stack.md](docs/stack.md) for this platform's

@@ -36,9 +36,12 @@ services:
     depends_on:
       - guacd
     ports:
-      # Bind to localhost and terminate TLS in a reverse proxy, or change to
-      # 0.0.0.0:8080 only on a network students cannot spoof.
-      - "127.0.0.1:8080:8080"
+      # 0.0.0.0 by default, like the main stack: this console is meant to be
+      # opened from the device in the room. Set ONTRAK_BIND_ADDR=127.0.0.1 to keep
+      # it on this machine, or to one address to pin it — and put TLS in front
+      # before a class uses it, because this deployment has no origin gateway in
+      # front of the console (the stack's own one does; see docker-compose.yml).
+      - "${ONTRAK_BIND_ADDR:-0.0.0.0}:8080:8080"
     environment:
       GUACD_HOSTNAME: guacd
       GUACD_PORT: "4822"

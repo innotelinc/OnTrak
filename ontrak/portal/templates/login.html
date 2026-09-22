@@ -1,32 +1,69 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="login-card">
-  {% if sso.enabled %}
+  {% if sso.misconfigured %}
+    <h1>Single sign-on is switched on but not set up</h1>
+    <p class="muted">
+      The admin panel has SSO enabled, but the four Authentik values are not all present, so
+      the button would lead nowhere. An operator has to finish it, or switch SSO off under
+      Admin &rarr; Sign-in.
+    </p>
+    <p class="error">Set ONTRAK_PORTAL__OIDC_ISSUER, ONTRAK_PORTAL__OIDC_CLIENT_ID,
+      ONTRAK_PORTAL__OIDC_CLIENT_SECRET and ONTRAK_PORTAL__OIDC_REDIRECT_URI.</p>
+  {% endif %}
+
+  {% if sso.active %}
     <h1>Sign in</h1>
-    <p class="muted">Use your Innotel account. This range keeps no password of its own.</p>
+    <p class="muted">Use your Innotel account.</p>
     <a class="button" href="/oidc/login">Sign in with {{ sso.provider }}</a>
     {% if sso.issuerHost %}
       <p class="muted small">You will sign in at {{ sso.issuerHost }} and come back here.</p>
     {% endif %}
   {% endif %}
 
-  {% if sso.misconfigured and not demo_accounts %}
-    <h1>Sign-in is not set up</h1>
-    <p class="muted">This range has no way in at all at the moment, and only an operator can fix it:</p>
-    <p class="error">Set ONTRAK_PORTAL__OIDC_ISSUER, ONTRAK_PORTAL__OIDC_CLIENT_ID,
-      ONTRAK_PORTAL__OIDC_CLIENT_SECRET and ONTRAK_PORTAL__OIDC_REDIRECT_URI to sign in through
-      Authentik. OnTrak keeps no password of its own, so there is nothing else to switch on.</p>
+  {% if needs_setup %}
+    <h1>Set up this range</h1>
+    <p class="muted">
+      No identity provider is configured and no account exists yet, so there is nobody to sign
+      in as. Create the first instructor account — you can add students, and switch on single
+      sign-on, from the admin panel afterwards.
+    </p>
+    <a class="button" href="/setup">Create the first account</a>
   {% endif %}
 
-  {% if demo_accounts %}
-    <h1>Demo mode</h1>
-    <p class="muted">This range has no identity provider to sign in against, so pick a demo
-      account. There is no password — demo mode is not a way into a real range.</p>
-    <div class="demo-accounts">
-      {% for name in demo_accounts %}
-        <a class="button" href="/demo/login/{{ name }}">{{ name }}</a>
-      {% endfor %}
-    </div>
+  {% if local_form %}
+    {% if sso.active %}
+      <h2>Or sign in with a local account</h2>
+      <p class="muted small">An account on this range, with its own password.</p>
+    {% else %}
+      <h1>Sign in</h1>
+      <p class="muted">This range signs in with local accounts. No identity provider is needed.</p>
+    {% endif %}
+    <form method="post" action="/login" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Username
+        <input name="username" autocomplete="username" {% if not sso.active %}autofocus {% endif %}required>
+      </label>
+      <label>Password
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit">Sign in</button>
+    </form>
+    {% if local_accounts %}
+      <p class="muted small">{{ local_accounts }} local account(s) exist on this range.</p>
+    {% endif %}
+  {% endif %}
+
+  {% if no_way_in %}
+    <h1>No way in</h1>
+    <p class="muted">
+      Single sign-on is switched off and this range has no local account, so there is nobody to
+      sign in as. Only an operator can end this, from outside the portal.
+    </p>
+    <p class="error">
+      Either seed a local account with <code>ONTRAK_PORTAL__ADMIN_PASSWORD</code>, or switch SSO
+      on with <code>ONTRAK_PORTAL__SSO_ENABLED=true</code>, then restart the portal.
+    </p>
   {% endif %}
 </div>
 {% endblock %}

@@ -46,7 +46,7 @@ students ──► portal (FastAPI)  ──► session manager ──► incus �
 | Scoring | turns guest JSON into a weighted report | `ontrak/scoring.py` |
 | Guacamole links | signed + encrypted SSO payloads for browser consoles | `ontrak/guac.py` |
 | Store | users, sessions, submitted results, events (SQLite, WAL, self-migrating) | `ontrak/store.py` |
-| Demo mode | in-memory hypervisor + a driver that reports plausible grades | `ontrak/memory.py`, `ontrak/demo.py` |
+| In-memory Incus | stands in for a hypervisor in the test suite | `ontrak/memory.py` |
 
 The control plane has **no long-running state of its own** beyond SQLite. Pool
 membership is derived from instance names plus live session rows, so restarting
@@ -94,14 +94,21 @@ referenced by any non-terminal session` — no separate pool bookkeeping to drif
 | `allocating` | claiming or cloning | manager → `ready` / `error` |
 | `provisioning` | pool VM claimed, waiting on the guest | manager → `ready` / `error` |
 | `ready` | address + transport confirmed | student opens the page → `in_use` |
-| `in_use` | student is working | check → `passed`/`in_use`; reset → `recycling` |
-| `checking` | grading in flight | manager → `passed` / `in_use` |
-| `passed` | a check met the pass mark with all critical objectives | still usable for practice |
+| `in_use` | student is working | check → `in_use`; reset → `recycling` |
+| `checking` | grading in flight | manager → `in_use` (the state it found) |
+| `passed`, `failed` | **submitted**: Complete & End graded the machine and the write-up | machine destroyed, or kept for review (`session.destroy_on_complete: false`) and reclaimed by `reap` when the clock runs out |
 | `recycling` | destroy + re-clone in progress | manager → `ready` / `error` / `destroyed` |
 | `destroyed`, `error` | terminal (error is recoverable only by reset) | — |
 
-`passed` is sticky: once a student has demonstrated the fix, breaking it again
-does not take the credit back.
+Only Complete & End submits a session, and only it sets `passed`/`failed` — which is
+what makes those two readable as "handed in" by the page, the reaper and the prune
+alike. A **practice check** is feedback, not a submission: it reports on the machine,
+keeps the session usable, and leaves the state where it found it.
+
+What *is* sticky is the achievement. `resolved` and `best_score` are on the session
+rather than on one report, so once a student has demonstrated the fix, breaking it
+again does not take the credit back — the dashboard and the results show the session as
+resolved while the machine is still theirs to keep working in.
 
 ## Reset policy: destroy, don't repair
 

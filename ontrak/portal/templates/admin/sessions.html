@@ -48,7 +48,7 @@
           {% if session.resolved %}<span class="badge ok">resolved</span>{% endif %}
         </td>
         <td class="muted small">{{ session.workload or "golden" }}</td>
-        <td><span class="badge state-{{ session.state.value }}">{{ session.state.value }}</span></td>
+        <td><span class="badge state-{{ session.state.value }}">{{ session.state.value|replace("_", " ")|title }}</span></td>
         <td class="muted small">{{ session.instance or "—" }}<br>{{ session.host_ip or "" }}</td>
         <td>{{ session.checks_run }}</td>
         <td>{{ "%.0f%%"|format(session.best_score) }}</td>

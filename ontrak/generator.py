@@ -80,6 +80,12 @@ def _setup_script(primitives: list[FaultPrimitive], scenario_id: str) -> str:
         "",
         '. "$PSScriptRoot\\..\\..\\lib\\OnTrak.Common.ps1"',
         "",
+        "# Each injected fault is asserted straight after it is applied. `Require-OnTrak`",
+        "# exits without writing the success marker when its check does not hold, and the",
+        "# template build refuses to snapshot a setup that never confirmed -- so a fault",
+        "# that silently does not land fails the build instead of reaching a student as a",
+        "# ticket with nothing behind it.",
+        "",
     ]
     for item in primitives:
         parts += [
@@ -88,6 +94,8 @@ def _setup_script(primitives: list[FaultPrimitive], scenario_id: str) -> str:
             item.setup_ps.strip(),
             "",
         ]
+        if item.assert_ps.strip():
+            parts += [item.assert_ps.strip(), ""]
     parts += [
         "# Every setup script must confirm success; the template build rejects a",
         "# partially applied fault instead of handing a half-broken VM to a student.",

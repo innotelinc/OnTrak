@@ -63,6 +63,8 @@ If the first boot failed outright (no network yet, a private remote without a
 token), fixing the cause and re-running is all that is needed: the host is left
 armed to provision itself again.
 
-Sign-in to the portal is Authentik's. Set the ONTRAK_PORTAL__OIDC_* values in
-/opt/ontrak/.env, and see docs/operations.md for the estate around it: DNS and
-certificates are Cerulean's, not this host's.
+Sign-in to the portal is local by default — open /setup to create the first
+account, or seed one with ONTRAK_PORTAL__ADMIN_PASSWORD. To use the estate's
+identity provider, set the ONTRAK_PORTAL__OIDC_* values in /opt/ontrak/.env and
+switch SSO on in the admin panel. See docs/operations.md for the estate around
+it: DNS and certificates are Cerulean's, not this host's.

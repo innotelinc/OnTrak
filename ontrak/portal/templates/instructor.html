@@ -59,7 +59,7 @@
         <td>{{ s.id }}</td>
         <td>{{ s.student }}</td>
         <td>{{ s.scenario_id }}</td>
-        <td><span class="badge state-{{ s.state.value }}">{{ s.state.value }}</span></td>
+        <td><span class="badge state-{{ s.state.value }}">{{ s.state.value|replace("_", " ")|title }}</span></td>
         <td><code>{{ s.instance or "-" }}</code></td>
         <td class="muted small">
           {# The address as it is actually used - the SSH command, the RDP target - rather

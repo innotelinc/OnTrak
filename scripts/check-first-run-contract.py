@@ -20,7 +20,8 @@ only way to keep that promise is the arrangement this checks:
     URL serve the portal at `/` and the console at `/guacamole/`;
   * exactly one service builds the image the two of them run, because two
     builders of one tag race for it;
-  * the whole file renders with no `.env` at all — a first run has none.
+  * the whole file renders with no `.env` at all — a first run has none;
+  * the same holds for the remote override (`docker-compose.remote.yml`).
 
 Read the rendered configuration rather than the YAML: what matters is the
 project compose actually builds, including interpolation and overrides.
@@ -190,11 +191,17 @@ def main() -> int:
     # With no .env at all: the first run of a fresh clone.
     bare = rendered()
     # And as an operator starts it when .env exists: same contract, and it also
-    # proves the remote/demo override does not break it.
+    # proves the remote override does not break it.
     from_env = rendered("-f", "docker-compose.yml", "-f", "docker-compose.remote.yml")
+    # The TLS overlay is the same contract with the gateway's published port moved
+    # from 8080 to 8443: still exactly one publisher, still the gateway. Rendering it
+    # here is what proves the port swap did not quietly add a second one — the
+    # unencrypted door this overlay exists to close.
+    tls = rendered("-f", "docker-compose.yml", "-f", "docker-compose.tls.yml")
 
     problems = check(bare)
-    problems += [f"(remote/demo override) {p}" for p in check(from_env)]
+    problems += [f"(remote override) {p}" for p in check(from_env)]
+    problems += [f"(tls override) {p}" for p in check(tls)]
     if problems:
         for problem in problems:
             print(f"first-run contract: {problem}", file=sys.stderr)

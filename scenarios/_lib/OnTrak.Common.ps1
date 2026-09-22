@@ -24,6 +24,14 @@ $script:OnTrakBegin = '###ONTRAK-JSON-BEGIN###'
 $script:OnTrakEnd   = '###ONTRAK-JSON-END###'
 $script:OnTrakChecks = New-Object System.Collections.ArrayList
 
+# Captured while this file is being dot-sourced (the only moment $PSScriptRoot is
+# reliably *this* directory), because the caller's own $PSScriptRoot is the
+# scenario folder. The marker file therefore lands in the guest's work directory,
+# next to lib/ and scenarios/.
+$script:OnTrakLibDir = $PSScriptRoot
+$script:OnTrakSetupOkMarker = 'ONTRAK-SETUP-OK'
+$script:OnTrakSetupOkPath = Join-Path (Split-Path $script:OnTrakLibDir -Parent) 'setup-ok.txt'
+
 # ---------------------------------------------------------------- reporting --
 function Add-OnTrakCheck {
     <#
@@ -67,11 +75,57 @@ function Write-OnTrakSetupOk {
     <#
     .SYNOPSIS
         Confirm that fault injection finished. Required at the end of setup.ps1.
+    .DESCRIPTION
+        The confirmation is written twice on purpose: to stdout, where the template
+        build reads it, and to a file beside this library. A scenario is allowed to
+        break the transport it is being injected over -- `net-static-ip-conflict`
+        re-addresses the adapter, which kills the very WinRM session running it and
+        leaves the build with nothing but a read timeout -- so the file is what the
+        build falls back to after finding the guest at its new address.
     #>
     [CmdletBinding()]
     param([string] $Note = '')
     if ($Note) { Write-Output ("setup note: " + $Note) }
     Write-Output 'ONTRAK-SETUP-OK'
+    try {
+        New-OnTrakFile -Path $script:OnTrakSetupOkPath -Content ('ONTRAK-SETUP-OK' + "`n" + $Note)
+    } catch { }
+}
+
+function Require-OnTrak {
+    <#
+    .SYNOPSIS
+        Assert something that has to be true for this fault to be worth snapshotting.
+    .DESCRIPTION
+        The PowerShell twin of the shell library's `ontrak_require`, and the reason
+        both libraries have one: fault injection that quietly does nothing is worse
+        than a build that fails. A student handed a ticket with no fault behind it
+        hunts for something that is not there, and the grader passes them for it.
+
+        So setup.ps1 asserts its own fault. When the assertion does not hold this
+        exits *without* writing the success marker, and the template build refuses to
+        snapshot a scenario whose setup did not confirm -- so the outcome is a failed
+        build carrying the reason, not a broken ticket in somebody's lab.
+
+        Assert on what the fault *does*, never on the mechanism that produced it: an
+        image where a step was already in the desired state still has a working
+        fault, and failing there would be a lie in the other direction.
+    .PARAMETER What
+        What should be true, phrased as the fault it proves.
+    .PARAMETER Condition
+        Script block that evaluates to $true when the fault is observable.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)][string] $What,
+        [Parameter(Mandatory = $true, Position = 1)][scriptblock] $Condition
+    )
+    $passed = $false
+    try { $passed = [bool](& $Condition) } catch { $passed = $false }
+    if ($passed) { return }
+    Write-Output ('[ontrak] injection failed: ' + $What)
+    Write-Output '[ontrak] the fault was NOT applied; not reporting setup success'
+    exit 1
 }
 
 function Write-OnTrakStep {
@@ -256,19 +310,31 @@ function New-OnTrakFile {
 function Test-OnTrakReportField {
     <#
     .SYNOPSIS
-        Check that the student's incident report contains a "Field: value" line
-        with a non-trivial value. Used by write-up objectives so "asked the user
-        to reboot" cannot earn points.
+        Read the student's write-up, two ways.
+
+        -Field requires a "Field: value" line whose value is at least -MinLength
+        characters, so "asked the user to reboot" cannot earn points. -Pattern
+        requires the report to mention a regular expression somewhere, which is
+        how the triage scenarios check that it names the indicators that actually
+        matter (the spoofed domain, the SPF failure, the action taken).
+
+        Both are parameter sets on one function on purpose: a report objective is
+        one kind of thing, and a second near-identical helper is how the two
+        definitions drift apart.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Field')]
     param(
         [Parameter(Mandatory = $true)][string] $Path,
-        [Parameter(Mandatory = $true)][string] $Field,
+        [Parameter(Mandatory = $true, ParameterSetName = 'Field')][string] $Field,
+        [Parameter(Mandatory = $true, ParameterSetName = 'Pattern')][string] $Pattern,
         [int] $MinLength = 15
     )
     if (-not (Test-Path -LiteralPath $Path)) { return $false }
     $text = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
     if (-not $text) { return $false }
+    if ($PSCmdlet.ParameterSetName -eq 'Pattern') {
+        return [bool]([regex]::IsMatch($text, $Pattern))
+    }
     $match = [regex]::Match($text, '(?im)^\s*' + [regex]::Escape($Field) + '\s*:\s*(?<value>.+)$')
     if (-not $match.Success) { return $false }
     return ($match.Groups['value'].Value.Trim().Length -ge $MinLength)

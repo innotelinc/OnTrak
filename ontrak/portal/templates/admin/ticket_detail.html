@@ -5,7 +5,7 @@
 <p class="muted">
   {% if scenario %}{{ scenario.title }} <span class="muted small">({{ scenario.id }})</span>{% endif %}
   &middot; {{ session.student if session else "" }}
-  &middot; <span class="badge state-{{ session.state.value }}">{{ session.state.value if session else "" }}</span>
+  &middot; <span class="badge state-{{ session.state.value }}">{{ session.state.value|replace("_", " ")|title if session else "" }}</span>
 </p>
 {% include "admin/_nav.html" %}
 

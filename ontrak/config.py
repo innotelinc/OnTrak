@@ -156,8 +156,37 @@ class SessionConfig:
     ttl_minutes: int = 90
     idle_recycle_minutes: int = 20
     max_per_student: int = 1
+
+    # ── the portal's own housekeeping (ontrak/maintenance.py) ──
+    # `ontrak reap` and `ontrak schedule tick` are written for cron, and the stack
+    # `docker compose up` builds has no cron — so the portal runs the session half of
+    # the reaper itself: expiry, idle recycling, and one history prune a day. Without
+    # it a student's abandoned machine is only taken back when somebody runs a command,
+    # which is how a session came to sit at `in_use` with `0:00` left. Turn it off for
+    # a range where a session must outlive its own timer.
+    maintenance_enabled: bool = True
+    maintenance_interval_seconds: int = 60
+    # How long a finished (destroyed or errored) session row is kept before that daily
+    # prune deletes it. 0 keeps history forever. A session a submitted result or a
+    # ticket points at is never deleted, whatever this says (see `Store.delete_sessions`).
+    history_days: int = 30
     randomize_credentials: bool = False
+    # A template is a snapshot of a scenario, and a snapshot goes stale: editing the
+    # scenario, or turning a setting that is baked into the guest on or off
+    # (`guac.linux_ssh` installs an sshd), leaves every existing template wrong. With
+    # this on — the default — the portal brings the range up to date itself: a sweep
+    # at startup builds what is missing and rebuilds what is stale, and a session that
+    # still lands on an out-of-date template rebuilds it there and then. Off means
+    # templates only ever change when an operator runs `ontrak template build`.
+    auto_templates: bool = True
     check_timeout_seconds: int = 240
+    # How long a template build keeps hunting for a setup script's marker file after
+    # that script's own transport has died -- the case a fault that re-addresses the
+    # guest creates. Counted in seconds because re-addressing a Windows guest also
+    # makes it rebind its WinRM listener, and the guest answers again long before the
+    # build has to give up. 0 disables the fallback (the build then trusts stdout
+    # only), which is what the test suite runs with.
+    setup_ok_grace_seconds: int = 240
     # Results-only by default: a student can check their work as often as they like,
     # but only the grade they submit at "Complete & End" is stored. Set this to true
     # if you want a record of every attempt (some courses mark the journey).
@@ -197,16 +226,6 @@ class ScheduleConfig:
 
 
 @dataclass
-class DemoConfig:
-    """Demo mode: the whole student flow with no hypervisor (see ontrak/demo.py)."""
-
-    enabled: bool = False
-    students: int = 6
-    success_rate: float = 1.0
-    reset_state: bool = True
-
-
-@dataclass
 class PoolConfig:
     enabled: bool = True
     default_target: int = 0
@@ -233,8 +252,19 @@ class PoolConfig:
 @dataclass
 class GuacConfig:
     # The address a *browser* uses. The console is a path on the stack's one
-    # published port, so this only has to change when a TLS host is put in front.
-    base_url: str = "http://127.0.0.1:8080/guacamole/"
+    # published port, so the default — `auto` — derives it from the address the
+    # student's browser reached the portal on (`guac.resolve_base_url`). That is
+    # what lets the same checkout serve `http://127.0.0.1:8080`, a LAN address and
+    # a TLS host without editing anything; set an absolute URL when the browser
+    # name differs from what the container answers on (behind Cerulean's edge).
+    #
+    # Prefer an address that shares the portal's origin. Guacamole stores its auth
+    # token in the browser's `localStorage`, which is scoped to an origin, and the
+    # portal's console bootstrap can only clear it when the two agree — so a console
+    # on a *different* origin than the portal can leave a student looking at the last
+    # machine that browser opened. `auto` always agrees; a name that serves both the
+    # portal and `/guacamole/` (the shipped gateway does) agrees too.
+    base_url: str = "auto"
     secret_key: str = ""
     link_ttl_minutes: int = 480
     recording: bool = False
@@ -244,10 +274,14 @@ class GuacConfig:
     # A Linux *container* guest has no RDP server, so an RDP console pointed at it
     # is a page that says "the remote desktop server is currently unreachable" —
     # which is what the console iframe used to show for every container scenario.
-    # Off by default, because these guests run `linux_driver: incus-shell` and
-    # therefore no sshd either; turn it on when the Linux images do run one, and
-    # the console becomes SSH instead of RDP.
-    linux_ssh: bool = False
+    # On by default, and the console becomes SSH instead: `ontrak template build`
+    # installs openssh-server, sets the Linux account's password to
+    # `guest.password` and enables password login (sessions.console_transport_script),
+    # so a Linux ticket is reachable from the dashboard with no extra step. The
+    # build needs a non-empty password and refuses without one; turn the setting
+    # off for a range whose Linux guests must not open port 22, and the portal
+    # explains the missing console rather than embedding one that cannot connect.
+    linux_ssh: bool = True
 
     def secret_bytes(self) -> bytes:
         key = (self.secret_key or "").strip()
@@ -272,11 +306,26 @@ class PortalConfig:
     allow_self_reset: bool = True
     hints_require_attempt: bool = True
 
-    # ── Cerulean / Authentik SSO (docs/operations.md "Sign-in") ──
+    # ── Sign-in (docs/operations.md "Sign-in") ──
+    # SSO is optional. This value is the *seed* for the admin toggle: the live
+    # switch is stored in the portal database (`meta.sso_enabled`) so an
+    # instructor can turn it on or off from the admin panel without editing files.
+    # Default off, so a fresh range signs people in with local accounts and needs
+    # no identity provider to be usable at all.
+    sso_enabled: bool = False
+    # Bootstrap instructor for a range whose SSO is off and which has no local
+    # account yet. Set ONTRAK_PORTAL__ADMIN_PASSWORD to seed it on startup; with
+    # neither this nor an existing local account, the portal offers a one-time
+    # `/setup` page that creates the first account instead.
+    admin_username: str = "admin"
+    admin_password: str = ""
+
+    # ── Cerulean / Authentik SSO ──
     # OnTrak is a relying party, not an identity provider: an instructor and a
     # student are Authentik accounts, and the portal only decides what a signed-in
-    # account may do. All four below must be set for SSO to be enabled — an empty
-    # one makes the flow fail closed rather than half-work.
+    # account may do. All four below must be set for the SSO button to work — an
+    # empty one makes the flow fail closed rather than half-work, and the admin
+    # panel refuses to switch SSO on until they are.
     oidc_issuer: str = ""
     oidc_client_id: str = ""
     oidc_client_secret: str = ""
@@ -316,7 +365,6 @@ class Settings:
     paths: PathsConfig = field(default_factory=PathsConfig)
     selection: SelectionConfig = field(default_factory=SelectionConfig)
     schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
-    demo: DemoConfig = field(default_factory=DemoConfig)
     source_files: list[str] = field(default_factory=list)
 
     # -- derived paths -----------------------------------------------------
@@ -366,7 +414,6 @@ SECTIONS: dict[str, Any] = {
     "paths": PathsConfig,
     "selection": SelectionConfig,
     "schedule": ScheduleConfig,
-    "demo": DemoConfig,
 }
 
 
@@ -484,10 +531,6 @@ def load_settings(
 def require_secrets(settings: Settings) -> list[str]:
     """Return a list of human-readable problems with missing secrets."""
     problems = []
-    if settings.demo.enabled:
-        # Demo mode never touches a hypervisor or a guest, so it runs with no secrets
-        # at all: that is what makes "clone and try it" a two-command experience.
-        return problems
     if not settings.guest.password:
         problems.append("guest.password is empty (set ONTRAK_GUEST__PASSWORD)")
     if not settings.portal.secret:

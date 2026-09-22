@@ -181,6 +181,15 @@ fi
 log "creating the build VM from $SOURCE_IMAGE"
 incus --project "$PROJECT" init "$SOURCE_IMAGE" "$BUILD_VM" -p default -p ontrak-student
 incus --project "$PROJECT" config device add "$BUILD_VM" eth0 nic network="$NETWORK" 2>/dev/null || true
+# The agent config disk. The image was imported with requirements.cdrom_agent=true
+# (above), and Incus refuses to *start* such a VM until it has a device carrying
+# that config — it fails with "This virtual machine image requires an agent:config
+# disk be added" and leaves the VM created but stopped. incus-windows' own pack.sh
+# adds this to its build VM ("Device incusagent added to ..."), which is why the
+# build works there and this step did not: the device was never re-created here.
+# Without it the whole run dies *after* a finished Windows install, at the step
+# that only exists to customise it.
+incus --project "$PROJECT" config device add "$BUILD_VM" agent disk source=agent:config
 incus --project "$PROJECT" start "$BUILD_VM"
 
 log "waiting for an address"
@@ -193,9 +202,18 @@ done
 [[ -n "$IP" ]] || { incus --project "$PROJECT" list "$BUILD_VM"; die "the build VM never got an address"; }
 log "build VM address: $IP"
 
-log "applying post-install.ps1 over WinRM"
-"$PY" "$PROJECT_ROOT/infra/windows/apply-postinstall.py" "$BUILD_VM" "$IP" \
-  || die "post-install failed; the VM '$BUILD_VM' is left running so you can inspect it"
+# The transport matters. The image ships WinRM on 5986 (HTTPS, self-signed) and
+# *post-install's job* is to make 5985 reachable through the firewall, so asking
+# WinRM first is a deadlock: the step that enables WinRM cannot get in to run.
+# The Incus agent is in the image already, so the agent transport works on the
+# freshly installed guest and is the one to try first.
+log "applying post-install.ps1 over the Incus agent (WinRM is not listening until it runs)"
+if ! ONTRAK_GUEST__DRIVER=incus-exec ONTRAK_GUEST__READY_TIMEOUT_SECONDS=600 \
+     "$PY" "$PROJECT_ROOT/infra/windows/apply-postinstall.py" "$BUILD_VM" "$IP"; then
+  warn "the agent transport failed; retrying over WinRM"
+  "$PY" "$PROJECT_ROOT/infra/windows/apply-postinstall.py" "$BUILD_VM" "$IP" \
+    || die "post-install failed; the VM '$BUILD_VM' is left running so you can inspect it"
+fi
 
 log "shutting the build VM down cleanly"
 # --force as a fallback: a failed clean shutdown must not block publishing, and a

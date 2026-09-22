@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from .auth import ACCOUNT_SENTINEL
+from .auth import ACCOUNT_SENTINEL, HASH_SCHEME, hash_password
 from .models import ScoreReport, Session, SessionState, iso
 from .tickets import TicketGrade
 
@@ -166,13 +166,37 @@ class Store:
     # users
     # ------------------------------------------------------------------
     def upsert_user(self, username: str, role: str = "student", display_name: str = "") -> None:
-        """Create an account row, or refresh the one that exists.
+        """Create a password-less account row, or refresh the one that exists.
 
-        There is no password: OnTrak is SSO-only, so every row — this one and the
-        one a sign-in writes — carries `auth.ACCOUNT_SENTINEL` and nothing verifies a
-        credential against it. This is for the accounts a range seeds itself (the
-        demo roster), not for real identities: those arrive through Authentik and
-        are created by `upsert_sso_user` on first sign-in.
+        This writes `auth.ACCOUNT_SENTINEL`, not a credential: it is for the
+        accounts a range seeds for itself or an SSO identity's row, never for a
+        local sign-in (use :meth:`create_local_user` for that). The
+        conflict branch deliberately leaves `password_hash` alone, so re-seeding a
+        range never silently strips a local account of its password.
+        """
+        username = username.strip().lower()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO users (username, display_name, role, password_hash, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(username) DO UPDATE SET
+                    role=excluded.role,
+                    display_name=excluded.display_name,
+                    active=1
+                """,
+                (username, display_name or username, role, ACCOUNT_SENTINEL, iso()),
+            )
+
+    def create_local_user(
+        self, username: str, password: str, role: str = "student", display_name: str = ""
+    ) -> None:
+        """Create an account that signs in with a password, or reset the one it has.
+
+        The local half of the sign-in model: a range with SSO switched off (the
+        default) is usable with no identity provider because accounts live here.
+        Re-using a username is the password-reset path, and it reactivates the
+        row, because an instructor doing that means it.
         """
         username = username.strip().lower()
         with self.connect() as conn:
@@ -186,8 +210,32 @@ class Store:
                     display_name=excluded.display_name,
                     active=1
                 """,
-                (username, display_name or username, role, ACCOUNT_SENTINEL, iso()),
+                (username, display_name or username, role, hash_password(password), iso()),
             )
+
+    def set_user_password(self, username: str, password: str) -> bool:
+        """Give an existing account a local password. False if there is no row."""
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "UPDATE users SET password_hash = ? WHERE username = ?",
+                (hash_password(password), username.strip().lower()),
+            )
+            return cursor.rowcount > 0
+
+    def count_local_accounts(self) -> int:
+        """How many accounts can sign in with a password.
+
+        The test is the scheme prefix rather than "not the sentinel": the column
+        is only ever one or the other, and a count that read a hash format it did
+        not recognise as a password would be the wrong answer in the direction that
+        locks an operator out.
+        """
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM users WHERE password_hash LIKE ?",
+                (f"{HASH_SCHEME}$%",),
+            ).fetchone()
+        return int(row["n"])
 
     def upsert_sso_user(
         self, username: str, display_name: str = "", role: str = "student"
@@ -197,8 +245,9 @@ class Store:
         `active` is deliberately NOT touched on an existing row: deactivating an
         account here is the range's own control — an instructor taking a student
         off the board — and an SSO sign-in must not quietly undo it. The password
-        column gets `auth.ACCOUNT_SENTINEL`, the same sentinel every row carries, so
-        nothing here can ever verify as a credential.
+        column is left alone too, so an account that also has a local password keeps
+        it; a brand-new row gets `auth.ACCOUNT_SENTINEL`, which no credential
+        verifies against.
         """
         username = username.strip().lower()
         with self.connect() as conn:
@@ -246,9 +295,10 @@ class Store:
 
         Offboarding a *portal* account is not the same as offboarding a person:
         their results and tickets are kept, because a marking record that the
-        instructor can delete is not a marking record. Only the row here goes —
-        and because identity is Authentik's, the person can still sign in, which
-        creates a fresh row. Revoke the person in Authentik, not here.
+        instructor can delete is not a marking record. Only the row here goes.
+        What that costs depends on the door: an SSO account is recreated on the next
+        Authentik sign-in (revoke the person in Authentik, not here), while a local
+        account's password went with the row, so that person cannot sign in again.
         """
         with self.connect() as conn:
             conn.execute("DELETE FROM users WHERE username = ?", (username.strip().lower(),))
@@ -395,6 +445,43 @@ class Store:
             for s in self.list_sessions(student=student)
             if s.state.is_live
         ]
+
+    def recorded_session_ids(self, session_ids: Sequence[int]) -> set[int]:
+        """Which of these sessions a grade or a ticket still points at.
+
+        The two things a range must not lose when it tidies up. ``results`` and
+        ``tickets`` carry a ``session_id``, so deleting the session row underneath one
+        leaves the instructor's results and ticket pages naming a session that is not
+        there any more — the grade survives, the audit trail does not.
+        """
+        ids = [int(i) for i in session_ids]
+        if not ids:
+            return set()
+        placeholders = ",".join("?" for _ in ids)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT session_id FROM results WHERE session_id IN ({placeholders}) "
+                f"UNION SELECT session_id FROM tickets WHERE session_id IN ({placeholders})",
+                (*ids, *ids),
+            ).fetchall()
+        return {int(r["session_id"]) for r in rows}
+
+    def delete_sessions(self, session_ids: Sequence[int]) -> int:
+        """Remove session rows and the events that belong to them. Returns the count.
+
+        Events go with them on purpose: they are this session's log ("provisioned",
+        "graded"), so a row that no longer exists would leave a trail of orphans in
+        the admin activity list. Results and tickets are the caller's job to protect —
+        see :meth:`recorded_session_ids`.
+        """
+        ids = [int(i) for i in session_ids]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        with self.connect() as conn:
+            conn.execute(f"DELETE FROM events WHERE session_id IN ({placeholders})", ids)
+            cursor = conn.execute(f"DELETE FROM sessions WHERE id IN ({placeholders})", ids)
+            return int(cursor.rowcount or 0)
 
     def count_sessions(self, states: Sequence[SessionState] | None = None) -> int:
         params: list[Any] = []

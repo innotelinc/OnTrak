@@ -65,8 +65,11 @@ def test_the_shipped_env_template_is_loadable():
     # Spot-check that the values arrived rather than being swallowed. The console
     # address is the one the stack's gateway is configured against: a template
     # that listed it under a name the app could not read would send students to a
-    # path that answers nothing.
-    assert settings.guac.base_url.endswith("/guacamole/")
+    # path that answers nothing. The shipped value is `auto` — the console follows
+    # the address the student reached the portal on, which is what makes one
+    # checkout work on a laptop, a LAN and a TLS host — so an absolute URL (what a
+    # deployment behind an edge sets) is the other accepted shape.
+    assert settings.guac.base_url == "auto" or settings.guac.base_url.endswith("/guacamole/")
     assert settings.guac.recording is False
     assert settings.session.ttl_minutes == 90
     assert settings.pool.targets == {}
@@ -149,3 +152,27 @@ def test_shipped_yaml_is_parseable():
     data = yaml.safe_load(Path(DEFAULT_CONFIG).read_text())
     for section in ("incus", "guest", "session", "pool", "guac", "portal", "paths"):
         assert section in data, f"{section} missing from config/ontrak.yaml"
+
+
+def test_the_linux_console_is_on_in_the_shipped_configuration():
+    """A Linux ticket opens an SSH console out of the box, in both halves of a range.
+
+    The two halves read the setting from different places: `ontrak template build`
+    (a host command) reads config/ontrak.yaml, while the portal container reads
+    whatever compose forwards from .env. If they disagreed, a host would build a
+    template with no sshd while the portal signed an SSH console onto it — a
+    console that never opens, for a reason nothing states. So the shipped default is
+    asserted in both at once.
+    """
+    from pathlib import Path
+
+    from ontrak.config import DEFAULT_CONFIG
+
+    assert yaml.safe_load(Path(DEFAULT_CONFIG).read_text())["guac"]["linux_ssh"] is True
+    assert load_settings(environ={}).guac.linux_ssh is True
+
+    # .env is generated from .env.example and interpolated by compose, so the
+    # template has to carry the same answer the config does.
+    template = Path(__file__).resolve().parent.parent / ".env.example"
+    listed = dict(re.findall(r"^([A-Z][A-Z0-9_]*)=(.*)$", template.read_text(), re.MULTILINE))
+    assert listed["ONTRAK_GUAC__LINUX_SSH"] == "true"

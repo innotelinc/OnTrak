@@ -47,6 +47,12 @@ class FaultPrimitive:
     requires_internet: bool = False
     devices: list[str] = field(default_factory=list)
     notes: str = ""
+    # PowerShell that proves the fault is observable in the guest, emitted into
+    # setup.ps1 by the generator. This is what makes a generated scenario as
+    # trustworthy as a hand-written one: `setup_ps` describes the attempt, and an
+    # attempt that silently does nothing would otherwise reach a student as a ticket
+    # with no fault behind it -- and a grader that passes them for doing nothing.
+    assert_ps: str = ""
 
     @property
     def category_label(self) -> str:
@@ -96,6 +102,13 @@ if (-not $adapter) {
     try { Clear-DnsClientCache -ErrorAction SilentlyContinue } catch { }
     Write-OnTrakStep ("intranet lookup works after fault: " + (Test-OnTrakDnsName -Name 'fileserver.ontrak.lab'))
 }""",
+    assert_ps="""Require-OnTrak 'there is an active adapter to break' { [bool](Get-OnTrakPrimaryAdapterName) }
+Require-OnTrak 'the adapter resolves through the dead resolver 10.20.0.99' {
+    (Get-OnTrakDnsServerAddress -InterfaceAlias (Get-OnTrakPrimaryAdapterName)) -contains '10.20.0.99'
+}
+Require-OnTrak 'the intranet name no longer resolves' {
+    -not (Test-OnTrakDnsName -Name 'fileserver.ontrak.lab')
+}""",
     check_ps="""$bogusDns = '10.20.0.99'
 $adapter = Get-OnTrakPrimaryAdapterName
 $servers = @(Get-OnTrakDnsServerAddress -InterfaceAlias $adapter)
@@ -144,6 +157,13 @@ Set-ItemProperty -Path $key -Name ProxyServer -Value $deadProxy -Type String
 Set-ItemProperty -Path $key -Name ProxyOverride -Value '<-loopback>' -Type String
 Write-OnTrakStep ("setting WinHTTP proxy to " + $deadProxy)
 netsh winhttp set proxy $deadProxy | Out-Null""",
+    assert_ps="""Require-OnTrak 'the browser proxy points at a host that does not exist' {
+    (Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' `
+        -Name ProxyServer -ErrorAction SilentlyContinue).ProxyServer -eq '10.20.0.98:8080'
+}
+Require-OnTrak 'the machine-wide WinHTTP proxy is set' {
+    ((netsh winhttp show proxy) -join ' ') -notmatch 'Direct access'
+}""",
     check_ps="""$key = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
 $enable = 1
 $server = ''
@@ -193,6 +213,14 @@ if (-not $adapter) {
     New-NetRoute -InterfaceAlias $adapter -DestinationPrefix '0.0.0.0/0' -NextHop $bogusGateway -ErrorAction SilentlyContinue
     Write-OnTrakStep ("outside reachable after fault: " + (Test-OnTrakDefaultGatewayReachable))
 }""",
+    assert_ps="""Require-OnTrak 'there is an active adapter to re-address' { [bool](Get-OnTrakPrimaryAdapterName) }
+Require-OnTrak 'the default gateway is the non-existent 10.20.0.254' {
+    @(Get-NetRoute -InterfaceAlias (Get-OnTrakPrimaryAdapterName) -DestinationPrefix '0.0.0.0/0' `
+        -ErrorAction SilentlyContinue | Where-Object { $_.NextHop -eq '10.20.0.254' }).Count -gt 0
+}
+Require-OnTrak 'off-subnet destinations are unreachable' {
+    -not (Test-OnTrakDefaultGatewayReachable)
+}""",
     check_ps="""$adapter = Get-OnTrakPrimaryAdapterName
 $route = Get-NetRoute -InterfaceAlias $adapter -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue
 $nextHops = @($route | ForEach-Object { $_.NextHop })
@@ -235,6 +263,12 @@ Write-OnTrakStep ("stopping and disabling " + $service)
 try { Stop-Service -Name $service -Force -ErrorAction SilentlyContinue } catch { }
 Set-Service -Name $service -StartupType Disabled -ErrorAction SilentlyContinue
 Write-OnTrakStep ("service state after fault: " + (Get-OnTrakServiceState -Name $service))""",
+    assert_ps="""Require-OnTrak 'the print spooler is not running' {
+    (Get-OnTrakServiceState -Name 'Spooler') -ne 'Running'
+}
+Require-OnTrak 'the print spooler will not come back on boot either' {
+    "$((Get-Service -Name 'Spooler' -ErrorAction SilentlyContinue).StartType)" -eq 'Disabled'
+}""",
     check_ps="""$service = 'Spooler'
 $state = Get-OnTrakServiceState -Name $service
 $running = ($state -eq 'Running')
@@ -275,6 +309,16 @@ New-Item -ItemType Directory -Path $appDir -Force | Out-Null
 $config = Join-Path $appDir 'reporter.config.json'
 New-OnTrakFile -Path $config -Content '{"version": "3.2.1", "database": {'
 Write-OnTrakStep ("corrupted config written to " + $config)""",
+    assert_ps="""Require-OnTrak 'the configuration file is on disk' {
+    Test-OnTrakFileExists -Path (Join-Path $env:ProgramData 'OnTrak\\Apps\\Reporter\\reporter.config.json')
+}
+Require-OnTrak 'the configuration file no longer parses' {
+    $parsed = $null
+    try {
+        $parsed = Get-Content -Path (Join-Path $env:ProgramData 'OnTrak\\Apps\\Reporter\\reporter.config.json') -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    } catch { $parsed = $null }
+    $null -eq $parsed
+}""",
     check_ps="""$appDir = Join-Path $env:ProgramData 'OnTrak\\Apps\\Reporter'
 $config = Join-Path $appDir 'reporter.config.json'
 $valid = $false
@@ -330,6 +374,10 @@ try {
 } finally { $fs.Dispose() }
 $free = Get-OnTrakFreeDiskGB
 Write-OnTrakStep ("free space after fault: " + $free + " GB")""",
+    assert_ps="""Require-OnTrak 'the cache file is filling the system disk' {
+    Test-OnTrakFileExists -Path (Join-Path $env:ProgramData 'OnTrak\\Apps\\Cache\\cache.bin')
+}
+Require-OnTrak 'the system disk is low enough for the ticket to be real' { (Get-OnTrakFreeDiskGB) -lt 8 }""",
     check_ps="""$hog = Join-Path $env:ProgramData 'OnTrak\\Apps\\Cache\\cache.bin'
 $free = Get-OnTrakFreeDiskGB
 $hogExists = Test-OnTrakFileExists -Path $hog
@@ -371,6 +419,12 @@ foreach ($name in $entries.Keys) {
 }
 Write-OnTrakStep 'registering logon scheduled task OnTrakVendorAgent'
 Start-OnTrakProcess -CommandLine 'schtasks /Create /TN OnTrakVendorAgent /SC ONLOGON /TR "C:\\ProgramData\\OnTrak\\Apps\\updater.exe" /F'""",
+    assert_ps="""Require-OnTrak 'the unwanted Run entries are in place' {
+    @(@('OneDriveBoost', 'PDFSaverHelper', 'VendorUpdater') | Where-Object { -not (Get-OnTrakRunKeyValue -Name $_) }).Count -eq 0
+}
+Require-OnTrak 'the logon task is registered' {
+    @(Get-OnTrakScheduledTask -Name 'OnTrakVendorAgent').Count -gt 0
+}""",
     check_ps="""$expected = @('OneDriveBoost', 'PDFSaverHelper', 'VendorUpdater')
 $remaining = @()
 foreach ($name in $expected) {
@@ -418,6 +472,14 @@ if (-not $device) {
     Write-OnTrakStep ("disabling device '" + $device.FriendlyName + "'")
     Disable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false -ErrorAction SilentlyContinue
     Write-OnTrakStep ("device state after fault: " + (Get-PnpDevice -InstanceId $device.InstanceId).Status)
+}""",
+    assert_ps="""Require-OnTrak 'there is a media-class device to disable' {
+    @(Get-PnpDevice -Class 'MEDIA' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Problem -ne 'CM_PROB_PHANTOM' }).Count -gt 0
+}
+Require-OnTrak 'a media-class device is now disabled' {
+    @(Get-PnpDevice -Class 'MEDIA' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Status -ne 'OK' -and $_.Problem -ne 'CM_PROB_PHANTOM' }).Count -gt 0
 }""",
     check_ps="""$device = Get-OnTrakPnpDevice -Class 'MEDIA'
 if (-not $device) {
@@ -479,6 +541,13 @@ try {
     Write-OnTrakStep 'disabled Defender real-time monitoring'
 } catch {
     Write-OnTrakStep ('could not change Defender state: ' + $_.Exception.Message)
+}""",
+    assert_ps="""Require-OnTrak 'the simulated payload is on disk' {
+    Test-OnTrakFileExists -Path (Join-Path $env:ProgramData 'OnTrak\\Apps\\Vendor\\invoice_8842.exe')
+}
+Require-OnTrak 'the persistence run key is set' { [bool](Get-OnTrakRunKeyValue -Name 'WindowsUpdateHelper') }
+Require-OnTrak 'the logon task is registered' {
+    @(Get-OnTrakScheduledTask -Name 'WindowsUpdateCheck').Count -gt 0
 }""",
     check_ps="""$runValue = Get-OnTrakRunKeyValue -Name 'WindowsUpdateHelper'
 $task = Get-OnTrakScheduledTask -Name 'WindowsUpdateCheck'

@@ -83,6 +83,23 @@ class SessionState(str, Enum):
         return self in {SessionState.DESTROYED, SessionState.ERROR}
 
     @property
+    def is_submitted(self) -> bool:
+        """True once the student has handed the session in ("Complete & End").
+
+        Only those two states, and only ``complete`` sets them. That is what keeps the
+        distinction usable: a check the student runs for feedback reports on the machine
+        without submitting anything (``run_checks`` leaves the state where it found it),
+        so "resolved" is an achievement on the session and "submitted" is a lifecycle
+        state — the two did once share ``passed``, and a passing practice check took the
+        console, the write-up and the hand-in button off a live student's page.
+
+        Deliberately not part of :attr:`is_terminal`: a submitted session whose machine
+        was kept for review (``session.destroy_on_complete: false``) is still taking up
+        a VM, so the reaper has to see it.
+        """
+        return self in {SessionState.PASSED, SessionState.FAILED}
+
+    @property
     def needs_instance(self) -> bool:
         return self in {
             SessionState.ALLOCATING,

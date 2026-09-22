@@ -13,7 +13,14 @@ build/
 state/
 *.sqlite3
 config/local.yaml
-.env
+# Secrets live in .env and its variants (.env.bak.*, .env.local, .env.compose-check).
+# Only the template is tracked — a stray copy of a real .env must never be committable.
+.env*
+!.env.example
+
+# The local TLS certificate pair `make tls` generates: a private key must never
+# be committable, and the certificate is regenerated per host anyway.
+deploy/tls/
 
 # editor and agent scratch space
 .freebuff/

@@ -1,4 +1,4 @@
-"""Test doubles.
+"""Test doubles and fixtures helpers.
 
 ``FakeIncus`` implements the slice of :class:`ontrak.incus.IncusClient` that the
 session manager uses, in memory. It models the parts that actually matter for
@@ -11,15 +11,45 @@ from __future__ import annotations
 from ontrak.incus import IncusError, IncusNotFound, InstanceInfo
 
 
+def synthesise_ticket(form) -> dict[str, str]:
+    """Write a plausible incident write-up that satisfies a ticket rubric.
+
+    Fills each field from the rubric's own required terms, padded to its minimum
+    length with a sentence that is true of any repair. A rubric asking for something
+    nobody could write is then unreachable in a test rather than in a class.
+    """
+    values: dict[str, str] = {}
+    for field in form.fields:
+        if field.is_choice():
+            values[field.id] = field.expected or (field.options[0] if field.options else "")
+            continue
+        if (field.kind or "").lower() == "number":
+            values[field.id] = "1"
+            continue
+        terms = [*field.all_of, *(field.any_of[:1] if field.any_of else [])]
+        text = ("Answered: " + ", ".join(terms) + ".") if terms else "Recorded the incident."
+        # Pad to the minimum length with a sentence that is true of any repair, and
+        # never with a phrase the rubric rejects.
+        filler = " Verified on the machine before handing the session in."
+        while len(text.split()) < max(field.min_words, 1) + 1 and len(text) < 1200:
+            text = f"{text}{filler}" if not text.endswith(filler.strip()) else f"{text} Confirmed."
+        values[field.id] = text
+    return values
+
+
 class FakeIncus:
     def __init__(
         self,
         image_alias: str = "ontrak-win-base",
         image_present: bool = True,
         images: set[str] | None = None,
+        requires_agent_disk: bool = False,
     ):
         self.image_alias = image_alias
         self.image_present = image_present
+        # A Windows image published by incus-windows demands an agent:config disk
+        # before it will start; the Linux images do not.
+        self.requires_agent_disk = requires_agent_disk
         # Workload images published beyond the site's golden one: a Linux scenario names
         # an image alias from the catalog, and the template build refuses to run until
         # that image exists.
@@ -29,6 +59,7 @@ class FakeIncus:
         self.calls: list[tuple] = []
         self.devices: list[tuple] = []
         self.configs: list[tuple] = []
+        self._config: dict[tuple[str, str], str] = {}
         self._ip_counter = 100
 
     def add_image(self, alias: str, present: bool = True) -> None:
@@ -117,6 +148,14 @@ class FakeIncus:
         if name in self.instances:
             self.instances[name]["status"] = "STOPPED"
 
+    def power_off_instance(self, name: str, timeout: int = 90) -> None:
+        # Recorded separately from `stop_instance` so a test can tell a build that
+        # lets the guest flush from one that power-cuts it -- the difference a
+        # snapshot of a just-injected fault depends on.
+        self.calls.append(("power_off_instance", name))
+        if name in self.instances:
+            self.instances[name]["status"] = "STOPPED"
+
     def delete_instance(self, name: str, force: bool = True) -> None:
         self.calls.append(("delete_instance", name))
         self.instances.pop(name, None)
@@ -131,8 +170,23 @@ class FakeIncus:
     def delete_snapshot(self, instance: str, snapshot: str) -> None:
         self.snapshots.get(instance, set()).discard(snapshot)
 
+    def get_config(self, instance: str, key: str) -> str:
+        # Config set on an instance is readable back off it, the way Incus behaves:
+        # the template recipe a build stamps is only useful if the next build can
+        # read it, and a double that swallowed it would make every template stale.
+        if key == "image.requirements.cdrom_agent" and self.requires_agent_disk:
+            return "true"
+        return self._config.get((instance, key), "")
+
+    def add_agent_disk_if_required(self, instance: str) -> bool:
+        if not self.requires_agent_disk:
+            return False
+        self.devices.append((instance, "disk", "agent", {"source": "agent:config"}))
+        return True
+
     def set_config(self, instance: str, key: str, value) -> None:
         self.configs.append((instance, key, value))
+        self._config[(instance, key)] = str(value)
 
     def set_configs(self, instance: str, values: dict) -> None:
         for key, value in values.items():

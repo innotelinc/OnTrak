@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="login-card">
+  <h1>Create the first account</h1>
+  <p class="muted">
+    This range has no identity provider switched on and no accounts yet, so this page is the
+    only way in — and it closes itself as soon as an account exists. The account it creates is
+    an instructor, so you can reach the admin panel and add everyone else.
+  </p>
+  <form method="post" action="/setup" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Username
+      <input name="username" autocomplete="username" autofocus required>
+    </label>
+    <label>Display name
+      <input name="display_name" autocomplete="name" placeholder="optional">
+    </label>
+    <label>Password
+      <input type="password" name="password" autocomplete="new-password" required>
+    </label>
+    <label>Confirm password
+      <input type="password" name="confirm" autocomplete="new-password" required>
+    </label>
+    <button type="submit">Create account and sign in</button>
+  </form>
+  <p class="muted small">
+    On a headless deployment you can skip this page by setting
+    <code>ONTRAK_PORTAL__ADMIN_PASSWORD</code> before the portal starts.
+  </p>
+</div>
+{% endblock %}

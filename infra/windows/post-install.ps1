@@ -82,8 +82,15 @@ Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\W
     -Name 'PortNumber' -Value 3389 -Type DWord -Force
 
 # Isolated lab networks should not raise "make this PC discoverable" prompts.
-New-Item -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Network' -Force | Out-Null
-Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Network' -Name 'NewNetworkWindowOff' -Value 1 -Force
+# The key always exists on Windows and New-Item -Force against it fails with
+# "Attempted to perform an unauthorized operation" (its ACL denies key creation),
+# which used to print an alarming error into every build log for a setting that
+# was in fact applied. Set the value directly, and say so if even that is refused.
+try {
+    Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Network' `
+        -Name 'NewNetworkWindowOff' -Value 1 -Force -ErrorAction Stop
+    Step 'set NewNetworkWindowOff=1 (no discovery prompts on the lab network)'
+} catch { StepFail ('could not set NewNetworkWindowOff: ' + $_.Exception.Message) }
 
 # ------------------------------------------------------------------- power -----
 powercfg -h off 2>$null
@@ -117,11 +124,18 @@ foreach ($path in @('C:\ProgramData\OnTrak', 'C:\Users\Public\update')) {
 # ------------------------------------------------------------ incus agent ------
 # Only needed for guest.driver=incus-exec. Best effort: a VM using WinRM works
 # without it, so a failure here is not fatal.
+#
+# Deliberately no `Restart-Service`. This script is normally applied *through*
+# that same agent (WinRM is not listening until the Enable-PSRemoting above ran,
+# so the agent is the only transport that works on a fresh guest), and restarting
+# it tears down the very session running these commands: the build dies with
+# "Lost connection to the event listener ... websocket: close 1006" part-way
+# through, after a 40-minute install. Setting the startup type is what "able to
+# start on boot" actually needs; the running service keeps running.
 try {
     $service = Get-Service -Name 'Incus-Agent' -ErrorAction SilentlyContinue
     if ($service) {
         Set-Service -Name 'Incus-Agent' -StartupType Automatic -ErrorAction SilentlyContinue
-        Restart-Service -Name 'Incus-Agent' -ErrorAction SilentlyContinue
         Step 'Incus-Agent service set to Automatic'
     } else {
         Step 'Incus-Agent service not present (fine for guest.driver=winrm)'

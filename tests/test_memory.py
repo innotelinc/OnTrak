@@ -1,6 +1,6 @@
-"""The in-memory Incus stands in for a hypervisor in demo mode and in the tests, so
+"""The in-memory Incus stands in for a hypervisor in the tests, so
 its behaviour has to match the real client's in the ways the session manager relies
-on — otherwise the demo would pass while the real path fails."""
+on — otherwise a test would pass while the real path fails."""
 
 from __future__ import annotations
 

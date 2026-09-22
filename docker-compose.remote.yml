@@ -5,16 +5,12 @@
 #
 # The base stack is the single-host lab: `lab-setup` installs and initialises
 # Incus on the host and the portal reads /var/lib/incus. Where that is not what
-# you want — the control plane on a laptop with the machines on a cluster, or
-# demo mode with no hypervisor anywhere — this turns the host step off and lets
-# the portal talk to a named remote instead.
+# you want — the control plane on a laptop with the machines on a cluster — this
+# turns the host step off and lets the portal talk to a named remote instead.
 #
 # The Incus CLI's trust configuration is per-operator (its own certificates),
 # so it has to be mounted by you; docs/docker.md § "A remote Incus cluster"
 # shows the mounts. Set ONTRAK_INCUS__REMOTE in .env to the remote's name.
-#
-# Demo mode needs neither: ONTRAK_DEMO__ENABLED=true in .env, no cluster, no
-# machines, the whole class simulated in memory.
 
 services:
   lab-setup:

@@ -76,7 +76,7 @@ WORKDIR /app
 COPY . /app
 
 # Volumes are created here so a run without them (plain `docker run`) still
-# works: the image is usable with no mounts at all, in demo mode.
+# works: the image is usable with no mounts at all.
 RUN mkdir -p /app/state /app/media /run/ontrak \
  && chmod +x /app/docker/entrypoint.sh /app/docker/lab-setup.sh \
  && python3 -c "import ontrak, ontrak.portal.app; print('ontrak import ok')"

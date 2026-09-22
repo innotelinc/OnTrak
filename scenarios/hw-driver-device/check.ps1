@@ -16,10 +16,21 @@ foreach ($adapter in $adapters) {
         $unhealthy += ($adapter.Name + '=' + $device.Problem)
     }
 }
+# A device that was disabled before the guest ever started it is reported by
+# Get-NetAdapter as 'Not Present', not 'Disabled' — that is how the injected fault
+# appears on a *clone* of the snapshot, even though it arrives as 'Disabled' on the
+# template it was injected into. So the count above is zero for a machine that does
+# have a disabled adapter, and the feedback would tell a student "nothing is
+# disabled" while Device Manager shows one. The PnP state is the truth; report it.
+$pnpOff = @(Get-PnpDevice -Class Net -ErrorAction SilentlyContinue |
+    Where-Object { $_.Problem -eq 'CM_PROB_DISABLED' })
+$pnpText = if ($pnpOff.Count -gt 0) {
+    '; devices disabled at the device level: ' + (($pnpOff | ForEach-Object { $_.FriendlyName }) -join ', ')
+} else { '' }
 $adaptersText = (($adapters | ForEach-Object { $_.Name + '/' + $_.Status }) -join ', ')
 $deviceOk = (($adapters.Count -ge 2) -and ($disabled.Count -eq 0) -and ($unhealthy.Count -eq 0))
 Add-OnTrakCheck -Objective 'nic-device-ok' -Passed $deviceOk `
-    -Detail ('adapters: ' + $adaptersText + '; disabled=' + $disabled.Count + '; problem codes: ' + (($unhealthy -join ', ') -replace '^$', 'none'))
+    -Detail ('adapters: ' + $adaptersText + '; disabled=' + $disabled.Count + $pnpText + '; problem codes: ' + (($unhealthy -join ', ') -replace '^$', 'none'))
 
 # --- objective: nic-link-up --------------------------------------------------
 $up = @($adapters | Where-Object { $_.Status -eq 'Up' })

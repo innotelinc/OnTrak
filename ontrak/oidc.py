@@ -17,6 +17,15 @@ JWKS would be a second code path for the same answer.
 
 Configuration lives in PortalConfig (see docs/operations.md "Sign-in"); every
 one of the four `oidc_*` values must be set for the flow to be enabled.
+
+SSO is *optional*, and off by default. There are two separate questions, and
+keeping them apart is what makes the admin toggle honest:
+
+* **configured** — are all four values present, so the flow could work at all?
+* **enabled** — has an instructor switched SSO on (the admin panel's switch)?
+
+Only ``enabled and configured`` makes the sign-in button live; a range that has
+not been provisioned for Authentik signs people in with local accounts instead.
 """
 
 from __future__ import annotations
@@ -40,6 +49,12 @@ OIDC_COOKIE = "ontrak_oidc"
 # provider must carry the platform's groups scope mapping for this to return
 # anything (Cerulean's scripts/authentik-setup.py pins it on every app).
 SCOPE = "openid email profile groups"
+
+# Where the admin panel's switch lives, in the portal database (`meta`). It is
+# the authority once set; `PortalConfig.sso_enabled` only seeds the first read, so
+# a deployment can ship a default without the value being rewritable from files
+# after an instructor has flipped it.
+SSO_TOGGLE_KEY = "sso_enabled"
 
 # The state cookie is short-lived: a sign-in that took longer than this is a
 # sign-in the browser abandoned, and replaying it should not work.
@@ -72,8 +87,57 @@ def enabled(portal) -> bool:
     )
 
 
-def public_config(portal) -> dict:
-    """What the login page may know. No secret is ever part of this."""
+def configured(portal) -> bool:
+    """Every value the flow needs is present — the same test as `enabled`.
+
+    An alias rather than a second rule: the pair of names exists because the
+    admin panel shows *configured* (can this ever work?) next to *enabled* (has
+    an instructor switched it on?), and a page that conflated them would report
+    a working range as broken the moment SSO was switched off.
+    """
+    return enabled(portal)
+
+
+def _truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def toggle(store, portal) -> bool:
+    """The admin panel's switch, seeded from `portal.sso_enabled` on first read.
+
+    The database is the authority once an instructor has touched it, so flipping
+    the switch survives a restart and is not silently undone by the config file
+    the range happens to have been deployed with.
+    """
+    if store is None:
+        return bool(getattr(portal, "sso_enabled", False))
+    raw = store.get_meta(SSO_TOGGLE_KEY)
+    if raw is None:
+        return bool(getattr(portal, "sso_enabled", False))
+    return _truthy(raw)
+
+
+def set_toggle(store, on: bool) -> None:
+    """Record the admin panel's decision. The caller logs the event."""
+    store.set_meta(SSO_TOGGLE_KEY, bool(on))
+
+
+def active(store, portal) -> bool:
+    """Whether the SSO button works: switched on *and* fully configured."""
+    return toggle(store, portal) and enabled(portal)
+
+
+def public_config(portal, store=None) -> dict:
+    """What the login page may know. No secret is ever part of this.
+
+    ``active`` is the only field a sign-in decision may be made on. The other two
+    exist so the page can tell the three states apart: off (local accounts),
+    on and working (the button), and on but incomplete (a misconfiguration an
+    operator has to fix — the admin panel refuses to create it, but an exported
+    `ONTRAK_PORTAL__SSO_ENABLED=true` can).
+    """
     issuer = str(getattr(portal, "oidc_issuer", "") or "").strip()
     host = ""
     if issuer:
@@ -81,14 +145,15 @@ def public_config(portal) -> dict:
             host = urllib.parse.urlsplit(issuer).hostname or issuer
         except ValueError:
             host = issuer
+    switched_on = toggle(store, portal)
+    complete = enabled(portal)
     return {
-        "enabled": enabled(portal),
         "provider": "Authentik",
         "issuerHost": host,
-        # SSO is the only way in, so an unconfigured range has no way in at all:
-        # the page must say so loudly rather than render a button that leads
-        # nowhere.
-        "misconfigured": not enabled(portal),
+        "configured": complete,
+        "enabled": switched_on,
+        "active": switched_on and complete,
+        "misconfigured": switched_on and not complete,
     }
 
 

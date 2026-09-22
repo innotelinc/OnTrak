@@ -5,7 +5,7 @@ tests are about whether it *resists* the lazy answer while accepting every reaso
 one. Two properties matter beyond individual rules:
 
 * every rubric shipped in the repository must be satisfiable — a form nobody can score
-  full marks on is a broken ticket, and demo mode proves it in a second;
+  full marks on is a broken ticket, and `synthesise_ticket` proves it in a second;
 * a form is optional, so nothing changes for scenarios that predate it.
 """
 
@@ -14,7 +14,6 @@ from __future__ import annotations
 import pytest
 
 from ontrak.catalog import Catalog
-from ontrak.demo import synthesise_ticket
 from ontrak.scenarios import ScenarioRepository
 from ontrak.store import Store
 from ontrak.tickets import (
@@ -30,6 +29,7 @@ from ontrak.tickets import (
     validate_form,
     word_count,
 )
+from tests.helpers import synthesise_ticket
 
 
 def form_with(fields: list[dict], weight: float = 30.0) -> object:

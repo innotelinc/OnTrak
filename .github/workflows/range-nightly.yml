@@ -1,0 +1,125 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# range-nightly.yml — the student lifecycle, walked on a real range.
+#
+# Everything in ci.yml tests a layer with the layers under it doubled: the session
+# manager against FakeIncus, the portal against those, the theme against rendered
+# markup. That is the right way to pin behaviour and it is deliberately blind to one
+# thing — whether the layers agree on a *real machine*. A fault that never made it
+# into the snapshot, a check that grades the injection rather than the student's
+# work, a page that drops the hand-in button once the practice check passes: all
+# three pass every test in ci.yml.
+#
+# tests/test_range_end_to_end.py walks it whole. It boots a VM, so it cannot run on a
+# GitHub-hosted runner; it runs here, on a self-hosted runner labelled `incus`, once
+# a night and on demand.
+#
+# The one failure mode this file exists to prevent is a *silent* pass: the test skips
+# itself when there is no hypervisor, and a skipped pytest is a green pytest. A
+# nightly that skips every night is worse than no nightly, because it reads as
+# coverage. So the walk is asserted to have actually run, and a skip is an error.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: Range walk
+
+on:
+  schedule:
+    # 03:17 UTC — outside class hours in every region the range is used from, and off
+    # the hour so it does not contend with the other cron jobs on the host.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One walk at a time, and the newest wins: two of these on one range would take each
+# other's machines, and a queued backlog of them tells nobody anything.
+concurrency:
+  group: range-walk
+  cancel-in-progress: true
+
+jobs:
+  range-walk:
+    name: Student walk on a live range
+    # Only a host that really has Incus takes this job. The label is the gate; the
+    # preflight below is what turns "the label is wrong" into a clear error rather
+    # than a skipped test that reports success.
+    runs-on: [self-hosted, linux, incus]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preflight — this host is a range
+        run: |
+          set -euo pipefail
+          command -v incus >/dev/null 2>&1 \
+            || { echo "::error::this runner has no incus binary; the 'incus' label is wrong"; exit 1; }
+          incus version
+          # The walk uses the range's real project, so it has to exist before anything
+          # is booted; a wrong project name would otherwise surface as a skip.
+          project="${ONTRAK_INCUS__PROJECT:-ontrak}"
+          incus project show "$project" >/dev/null \
+            || { echo "::error::incus project '$project' does not exist on this host"; exit 1; }
+          templates="$(incus list --project "$project" --format csv -c n | grep -c '^tpl-' || true)"
+          echo "templates in $project: $templates"
+          if [ "$templates" -eq 0 ]; then
+            echo "::error::no templates in project '$project' — build the pool before walking it"
+            exit 1
+          fi
+
+      - name: Install
+        run: |
+          set -euo pipefail
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt
+          .venv/bin/pip install -e .
+
+      - name: Walk the lifecycle
+        env:
+          ONTRAK_E2E: "1"
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m pytest tests/test_range_end_to_end.py \
+            -p no:cacheprovider -p no:warnings -q --junitxml=/tmp/range-walk.xml
+
+      # A skipped pytest is a green pytest, and this test skips itself whenever there
+      # is no hypervisor, no template, or no scenario the range can start. A nightly
+      # that skips every night reads as coverage while covering nothing — so the run
+      # is asserted here, on the machine, rather than trusted to the exit code.
+      - name: The walk actually ran
+        if: always()
+        run: |
+          set -euo pipefail
+          .venv/bin/python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          try:
+              root = ET.parse("/tmp/range-walk.xml").getroot()
+          except (OSError, ET.ParseError) as exc:
+              raise SystemExit(f"::error::the walk produced no result file: {exc}")
+
+          tests = sum(int(s.get("tests", 0)) for s in root.iter("testsuite"))
+          skipped = sum(int(s.get("skipped", 0)) for s in root.iter("testsuite"))
+          ran = tests - skipped
+          print(f"tests={tests} skipped={skipped} ran={ran}")
+          if ran < 1:
+              raise SystemExit(
+                  "::error::the range walk did not run — it skipped itself, which is not a pass"
+              )
+          PY
+
+      - name: What the range looked like on failure
+        if: failure()
+        run: |
+          project="${ONTRAK_INCUS__PROJECT:-ontrak}"
+          echo "--- instances ---"
+          incus list --project "$project" --format table || true
+          # Deliberately read-only. This job runs against a range that may have a class
+          # on it, and the walk's own sessions cannot be told apart from a student's by
+          # name — `ontrak-sess-<scenario>-<platform>-<id>` is the same shape for both.
+          # So this reports rather than deletes: the test ends its own session in a
+          # `finally`, and anything a killed run leaves behind is reclaimed by the
+          # deployed range's reaper at TTL like any other abandoned session.
+          echo "--- session machines ---"
+          incus list --project "$project" --format csv -c n \
+            | grep -E '^ontrak-sess-' || echo "(none)"

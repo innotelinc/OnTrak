@@ -36,6 +36,22 @@ SETUP_OK_HELPER = "Write-OnTrakSetupOk"
 CHECK_ENTRYPOINT = "Write-OnTrakReport"
 COMMON_LIB = "OnTrak.Common.ps1"
 
+# Confirming success and *asserting the fault is observable* are two different
+# promises, and only the second one is worth anything. A setup script that injects a
+# fault, does not check, and then confirms success hands the student a ticket with
+# nothing behind it and a grader that passes them for doing nothing -- which is
+# exactly what happened to every Windows template until the snapshot was checked.
+# `Require-OnTrak` / `ontrak_require` exit without the success marker, so the build
+# refuses to snapshot. Validation insists on one of them.
+SETUP_ASSERT_HELPER = "Require-OnTrak"
+
+# Both helper libraries also drop the marker into this file beside lib/, because a
+# scenario is allowed to break the transport its fault is injected over
+# (`net-static-ip-conflict` re-addresses the adapter and kills the session running
+# the script). When the build stops hearing the guest, it reads this instead of
+# assuming a half-applied fault. Name must match both libraries.
+SETUP_OK_FILE = "setup-ok.txt"
+
 # A scenario targets one platform. Windows guests are driven over WinRM with
 # PowerShell; Linux guests are driven over the Incus agent or SSH with shell. The
 # script contract is the same on both — inject the fault, then report JSON between
@@ -49,6 +65,7 @@ CHECK_NAMES = {WINDOWS: "check.ps1", LINUX: "check.sh"}
 
 # Shell equivalents of the PowerShell helpers (scenarios/_lib/ontrak-common.sh).
 SHELL_SETUP_OK_HELPER = "ontrak_setup_ok"
+SHELL_SETUP_ASSERT_HELPER = "ontrak_require"
 SHELL_CHECK_HELPER = "ontrak_check"
 SHELL_CHECK_ENTRYPOINT = "ontrak_report"
 SHELL_COMMON_LIB = "ontrak-common.sh"
@@ -323,10 +340,12 @@ class ScenarioRepository:
         if scenario.platform == WINDOWS:
             setup_ok_tokens = (SETUP_OK_HELPER, SETUP_OK_MARKER)
             setup_ok_hint = f"{SETUP_OK_HELPER} or the literal {SETUP_OK_MARKER}"
+            setup_assert_token = SETUP_ASSERT_HELPER
             entrypoint = CHECK_ENTRYPOINT
         else:
             setup_ok_tokens = (SHELL_SETUP_OK_HELPER, SETUP_OK_MARKER)
             setup_ok_hint = f"{SHELL_SETUP_OK_HELPER} or the literal {SETUP_OK_MARKER}"
+            setup_assert_token = SHELL_SETUP_ASSERT_HELPER
             entrypoint = SHELL_CHECK_ENTRYPOINT
 
         if not setup_path.exists() or not setup_path.stat().st_size:
@@ -337,6 +356,12 @@ class ScenarioRepository:
                 problems.append(
                     f"{prefix} {setup_name} never confirms success (needs {setup_ok_hint}); "
                     "template build would reject a partially applied fault"
+                )
+            if setup_assert_token not in setup_text:
+                problems.append(
+                    f"{prefix} {setup_name} never asserts the fault is observable "
+                    f"(needs {setup_assert_token}); a fault that silently did not land "
+                    "would be snapshotted, and the student graded on a healthy machine"
                 )
 
         if not check_path.exists() or not check_path.stat().st_size:

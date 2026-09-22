@@ -4,6 +4,11 @@
 {% set outcome_map = {} %}
 {% if shown %}{% for o in shown.outcomes %}{% set _ = outcome_map.update({o.objective_id: o}) %}{% endfor %}{% endif %}
 {% set live_states = ["ready", "in_use"] %}
+{# A submitted session is `passed`/`failed`, and its machine is usually gone by then.
+   The exception is `session.destroy_on_complete: false`, where the machine is left up
+   for the student to look over (see PRUNABLE_STATES). `address.host` is what tells the
+   two apart: it is the address the guest actually answered on. #}
+{% set machine_up = address.host %}
 {# What is booting, said in the platform's terms: the site's golden image is a Windows
    build, so "waiting for Windows" was the copy for a Linux container too, and read as
    the wrong machine being started. #}
@@ -22,7 +27,7 @@
     </p>
   </div>
   <div class="session-meta">
-    <span class="badge state-{{ state }}">{{ state }}</span>
+    <span class="badge state-{{ state }}">{{ state|replace("_", " ")|title }}</span>
     {% if state in live_states %}<span class="timer">Time left <strong id="timer">--:--</strong></span>{% endif %}
   </div>
 </div>
@@ -48,7 +53,12 @@
     <h2>{{ "Passed" if state == "passed" else "Not passed" }}</h2>
     <p>
       {% if report %}{{ report.summary_line() }}.{% else %}This session has been submitted.{% endif %}
-      The machine has been destroyed, so there is nothing left to change — this score is final.
+      {% if machine_up %}
+        The score is final, but the machine is still up so you can look at what you
+        changed — it is taken back when this session's clock runs out.
+      {% else %}
+        The machine has been destroyed, so there is nothing left to change — this score is final.
+      {% endif %}
     </p>
     <p class="muted small">See <a href="/results?session={{ session.id }}">the submitted result</a> for the objective-by-objective breakdown.</p>
   </div>
@@ -94,14 +104,44 @@
           <p class="muted small">Tell your instructor; this is fixed by an operator, not by you.</p>
         </div>
       {% endif %}
-      {% if console_url and state in live_states %}
-        <iframe id="console" src="{{ console_url }}" title="Remote session" allow="clipboard-read; clipboard-write"></iframe>
+      {% if console_origin_warning %}
+        {# An operator pinned guac.base_url to another origin, so the frame's
+           stored-token clear cannot reach the console's browser storage. A browser
+           that has opened another machine on that console may keep opening that one;
+           the student cannot fix it and an operator can, so it is stated once here. #}
+        <div class="card">
+          <h2 class="small">The console is on a different site from this portal</h2>
+          <p class="muted small">{{ console_origin_warning }}</p>
+        </div>
+      {% endif %}
+      {% if console_url and machine_up %}
+        {# The frame loads our own bootstrap, not the Guacamole URL: that page clears
+           Guacamole's stored auth token, which otherwise decides the connection and
+           would show the previous session's machine. #}
+        {# `fullscreen` on the allow list, and `allowfullscreen`, are what let the
+           shell fill the screen: without them the browser blocks the Fullscreen API
+           for the frame, and Guacamole's own fullscreen button does nothing. #}
+        <iframe id="console" src="/sessions/{{ session.id }}/console" title="Remote session"
+                allow="clipboard-read; clipboard-write; fullscreen" allowfullscreen></iframe>
+        <div class="console-tools">
+          {# Pop out opens the same bootstrap in its own tab, where the console is the
+             top-level document and fullscreen needs no permission from a parent. #}
+          <a class="button small secondary" href="/sessions/{{ session.id }}/console"
+             target="_blank" rel="noopener">Pop out</a>
+          <button type="button" class="secondary small" id="console-fullscreen">Full screen</button>
+        </div>
         <p class="muted small">
           Click inside the screen, then press the "Send Ctrl+Alt+Del" button in the Guacamole menu if you
           need a login prompt. Sign in with the training account shown to you by your instructor.
         </p>
       {% elif console_url %}
         <p class="muted">The console appears once the machine is ready.</p>
+      {% elif not address.host %}
+        {# Still allocating: there is no address for a console to point at yet, so
+           there is nothing to say about the console itself. The old copy fell
+           through to "no browser console is configured", which told a student their
+           instructor had not set one up while the machine was simply still booting. #}
+        <p class="muted">The console appears as soon as your machine has an address.</p>
       {% elif scenario.is_linux %}
         {# No remote desktop to embed: the guest is a Linux container, which speaks SSH
            and runs no RDP server — an iframe here used to report "the remote desktop
@@ -263,7 +303,10 @@
       {% if shown and shown.error %}<p class="error">{{ shown.error }}</p>{% endif %}
       {% if shown %}{% for note in shown.notes %}<p class="muted small">{{ note }}</p>{% endfor %}{% endif %}
       <div class="actions">
-        {% if state in live_states + ["passed", "failed"] %}
+        {# Only while the session is live: a submitted one has nothing left to submit,
+           and a check on a machine that has been destroyed answers with "session has
+           no VM" — an internal error where the student expected feedback. #}
+        {% if state in live_states %}
         <form method="post" action="/sessions/{{ session.id }}/check" class="inline">
           <input type="hidden" name="csrf" value="{{ csrf }}">
           <button type="submit">Check my work</button>
@@ -376,6 +419,27 @@
       if (data.ready || data.state === 'error') { window.location.reload(); }
     } catch (err) { /* keep polling */ }
   }, 5000);
+  {% endif %}
+
+  {% if console_url and machine_up %}
+  // Fill the screen with the console. The frame carries allowfullscreen, so the
+  // browser permits this; the pop-out tab needs none of it, because there the
+  // console is the whole document.
+  function ontrakFullscreen() {
+    var frame = document.getElementById('console');
+    if (!frame) { return; }
+    var full = document.fullscreenElement || document.webkitFullscreenElement;
+    var request = document.exitFullscreen || document.webkitExitFullscreen;
+    if (full) {
+      if (request) { request.call(document); }
+    } else if (frame.requestFullscreen) {
+      frame.requestFullscreen();
+    } else if (frame.webkitRequestFullscreen) {
+      frame.webkitRequestFullscreen();
+    }
+  }
+  var fsButton = document.getElementById('console-fullscreen');
+  if (fsButton) { fsButton.addEventListener('click', ontrakFullscreen); }
   {% endif %}
 </script>
 {% endblock %}

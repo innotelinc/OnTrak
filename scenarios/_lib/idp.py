@@ -105,12 +105,19 @@ class Directory:
         )
 
     # -- mutations -----------------------------------------------------
-    def set_status(self, user_id: str, status: str, *, actor: str, reason: str) -> str:
+    def set_status(
+        self, user_id: str, status: str, *, actor: str, reason: str, failed_attempts=None
+    ) -> str:
         user = self.require_user(user_id)
         before = user.get("status", ACTIVE)
         user["status"] = status
         if status == ACTIVE:
             user["failed_attempts"] = 0
+        elif failed_attempts is not None:
+            # A lockout is a count, not just a flag: a directory that locked an
+            # account after five bad sign-ins still has five failed attempts on
+            # record, and clearing them is part of putting the account right.
+            user["failed_attempts"] = int(failed_attempts)
         action = {"active": "enable", "locked": "lock", "disabled": "disable"}[status]
         self.audit(action, user_id, actor=actor, reason=reason)
         self.save()
@@ -300,6 +307,13 @@ def build_parser() -> argparse.ArgumentParser:
     unlock.add_argument("user")
     lock = sub.add_parser("lock", parents=[common])
     lock.add_argument("user")
+    lock.add_argument(
+        "--failed-attempts",
+        dest="failed_attempts",
+        type=int,
+        default=None,
+        help="failed sign-ins to leave on record with the lockout",
+    )
     disable = sub.add_parser("disable", parents=[common])
     disable.add_argument("user")
     enable = sub.add_parser("enable", parents=[common])
@@ -444,7 +458,15 @@ def main(argv: list[str] | None = None) -> int:
         if command == "unlock":
             print(directory.unlock(args.user, actor=actor, reason=reason))
         elif command == "lock":
-            print(directory.set_status(args.user, LOCKED, actor=actor, reason=reason))
+            print(
+                directory.set_status(
+                    args.user,
+                    LOCKED,
+                    actor=actor,
+                    reason=reason,
+                    failed_attempts=args.failed_attempts,
+                )
+            )
         elif command == "disable":
             print(directory.set_status(args.user, DISABLED, actor=actor, reason=reason))
         elif command == "enable":

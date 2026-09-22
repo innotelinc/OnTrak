@@ -1,0 +1,62 @@
+# ============================================================================
+# OnTrak — the range, back up after a reboot, with no operator.
+#
+#   make boot   ->  sudo bash scripts/install-boot-service.sh
+#
+# This is a *template*. The installer substitutes @ONTRAK_DIR@ with the absolute
+# path of the checkout and writes the result to
+# /etc/systemd/system/ontrak-range.service. The path is baked in on purpose: a
+# unit cannot guess where the checkout lives, and WorkingDirectory with relative
+# `-f` paths would break the moment someone runs it from elsewhere.
+#
+# It starts exactly the TLS stack `make up` starts — docker-compose.yml plus
+# docker-compose.tls.yml — so what comes back on boot is what an operator was
+# running by hand: one published port, encrypted.
+#
+# A lab host that returns from a power cut serving nothing is a support call at
+# the start of a class. That is the whole reason this exists.
+# ============================================================================
+
+[Unit]
+Description=OnTrak range (portal + console gateway, TLS on one published port)
+Documentation=file:@ONTRAK_DIR@/docs/docker.md
+# Docker must be up first: every service here is a container.
+Requires=docker.service
+Wants=network-online.target
+After=network-online.target docker.service
+
+# The stack is TLS-only, so a certificate is not optional — starting without one
+# would leave the gateway unable to bind 8443 and the range half-up. Fail here,
+# where the journal says why, instead of after a confusing restart loop.
+# `make up` (or scripts/tls-local-cert.sh) writes this pair.
+ConditionPathExists=@ONTRAK_DIR@/deploy/tls/ontrak.crt
+ConditionPathExists=@ONTRAK_DIR@/deploy/tls/ontrak.key
+
+[Service]
+Type=oneshot
+# `up -d` returns as soon as the containers are created, so the oneshot stays
+# "active" afterwards; RemainAfterExit is what makes `systemctl stop` run ExecStop.
+RemainAfterExit=yes
+WorkingDirectory=@ONTRAK_DIR@
+
+# 1. The certificate. Idempotent by design — it only writes when the pair is
+#    missing — which is what makes it safe to run on every boot.
+ExecStartPre=/bin/bash @ONTRAK_DIR@/scripts/tls-local-cert.sh
+
+# 2. The image. This is normally just an `image inspect`: the installer runs
+#    `make up` first, so the portal image already exists. The build is the
+#    fallback for a host whose images were pruned, so that it recovers by itself
+#    rather than failing on "image not found" and staying down.
+ExecStartPre=/bin/sh -c 'cd @ONTRAK_DIR@ && img="$(sed -n "s/^ONTRAK_IMAGE=//p" .env 2>/dev/null | head -1)"; img="${img:-ontrak:local}"; /usr/bin/docker image inspect "$img" >/dev/null 2>&1 || /usr/bin/docker compose -f docker-compose.yml -f docker-compose.tls.yml build'
+
+ExecStart=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+ExecStop=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.tls.yml down
+
+# A first build on a cold host is minutes; a wedged pull must not hold up
+# multi-user.target forever. Bounded rather than infinite for that reason.
+TimeoutStartSec=900
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

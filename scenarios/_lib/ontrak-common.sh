@@ -22,6 +22,12 @@ ONTRAK_JSON_BEGIN='###ONTRAK-JSON-BEGIN###'
 ONTRAK_JSON_END='###ONTRAK-JSON-END###'
 ONTRAK_SETUP_OK_MARKER='ONTRAK-SETUP-OK'
 
+# Where this library was sourced from, captured while the shell still knows
+# (the caller's $0 is the scenario script, not this file). The marker file
+# therefore lands in the guest's work directory, next to lib/ and scenarios/.
+_ontrak_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ONTRAK_SETUP_OK_FILE="${_ontrak_lib_dir%/lib}/setup-ok.txt"
+
 _ONTRAK_CHECKS=()
 
 # ---------------------------------------------------------------- reporting --
@@ -81,8 +87,18 @@ ontrak_report() {
 
 ontrak_setup_ok() {
     # Confirm fault injection finished. Required at the end of setup.sh.
+    #
+    # The confirmation is written twice on purpose: to stdout, where the template
+    # build reads it, and to a file beside this library. A scenario is allowed to
+    # break the transport it is being injected over -- a fault that re-addresses
+    # the interface can end the very session running this script -- so the file is
+    # what the build falls back to when stdout never arrives.
     [ -n "${1:-}" ] && printf 'setup note: %s\n' "$1"
     printf '%s\n' "$ONTRAK_SETUP_OK_MARKER"
+    {
+        printf '%s\n' "$ONTRAK_SETUP_OK_MARKER"
+        [ -n "${1:-}" ] && printf '%s\n' "$1"
+    } >"$ONTRAK_SETUP_OK_FILE" 2>/dev/null || true
     return 0
 }
 

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Sign-in</h1>
+<p class="muted">
+  How people get into this range. Two doors are possible, and both end at the same session:
+  <strong>local accounts</strong>, which need nothing else installed and are the default, and
+  <strong>single sign-on</strong> through Authentik, which is off until someone switches it on
+  here. Switching one on never closes the other.
+</p>
+{% include "admin/_nav.html" %}
+
+<div class="layout">
+  <div class="col-console">
+    <div class="card">
+      <h2>Single sign-on ({{ sso.provider }})</h2>
+      <table class="kv">
+        <tr><th>Switch</th>
+          <td>
+            {% if sso.enabled %}<span class="badge ok">on</span>
+            {% else %}<span class="badge warn">off</span>{% endif %}
+          </td></tr>
+        <tr><th>Configured</th>
+          <td>
+            {% if sso.configured %}<span class="badge ok">yes</span> — issuer and client values are present
+            {% else %}<span class="badge warn">no</span> — the four <code>ONTRAK_PORTAL__OIDC_*</code> values are not all set
+            {% endif %}
+          </td></tr>
+        <tr><th>Working now</th>
+          <td>
+            {% if sso.active %}<span class="badge ok">yes</span> — the login page offers the SSO button
+            {% else %}<span class="badge warn">no</span> — sign-in is local accounts
+            {% endif %}
+          </td></tr>
+        {% if sso.issuerHost %}<tr><th>Issuer</th><td><code>{{ sso.issuerHost }}</code></td></tr>{% endif %}
+        <tr><th>Registered callbacks</th><td>{{ callbacks|length }}</td></tr>
+      </table>
+
+      {% if sso.misconfigured %}
+        <p class="error">
+          SSO is switched on but cannot work: the issuer, client id, client secret and redirect
+          uri are not all set. Fix <code>.env</code> and restart, or switch SSO off below.
+        </p>
+      {% endif %}
+
+      <div class="actions">
+        {% if sso.active %}
+          <form method="post" action="/admin/signin" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="action" value="disable">
+            <button type="submit" class="secondary">Switch SSO off</button>
+          </form>
+        {% else %}
+          <form method="post" action="/admin/signin" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="action" value="enable">
+            <button type="submit">Switch SSO on</button>
+          </form>
+        {% endif %}
+      </div>
+      <p class="muted small">
+        The switch is stored in this range's database, so it survives a restart. To provision
+        Authentik itself, use <code>scripts/authentik-setup.py</code> and set the four
+        <code>ONTRAK_PORTAL__OIDC_*</code> values in <code>.env</code>, then switch it on here.
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>How SSO accounts behave</h2>
+      <p class="muted small">
+        An account that arrives through Authentik is keyed on its email address, and its role
+        follows the instructor group on every sign-in. It carries no password, so the local
+        password form can never open it — disabling it here still keeps its owner out, even
+        through SSO, and the person can sign back in after a local delete.
+      </p>
+      <p class="muted small">
+        Instructor group: <code>{{ instructor_group or "(none — nobody is promoted)" }}</code>.
+        Required group: <code>{{ required_group or "(none — any authenticated account may enter)" }}</code>.
+      </p>
+    </div>
+  </div>
+
+  <div class="col-side">
+    <div class="card">
+      <h2>Local accounts</h2>
+      <p class="big">{{ local_accounts }}</p>
+      <p class="muted small">
+        An account with a password of its own. They are what makes the default — SSO off — work
+        with no identity provider at all.
+      </p>
+      <a class="button secondary" href="/admin/users">Manage accounts</a>
+    </div>
+
+    <div class="card">
+      <h2>First run</h2>
+      {% if local_accounts %}
+        <p class="muted small">This range has accounts, so the <code>/setup</code> page is closed.</p>
+      {% else %}
+        <p class="muted small">
+          No account exists yet, so <code>/setup</code> is open to create the first instructor.
+          Setting <code>ONTRAK_PORTAL__ADMIN_PASSWORD</code> seeds one at startup instead.
+        </p>
+      {% endif %}
+      <p class="muted small">
+        Bootstrap account <code>{{ admin_username }}</code>:
+        {{ "password set in the environment" if admin_password_set else "no environment password (created via /setup or the panel)" }}.
+      </p>
+    </div>
+  </div>
+</div>
+{% endblock %}

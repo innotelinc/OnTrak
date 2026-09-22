@@ -4,10 +4,10 @@
 <h1>Accounts</h1>
 <p class="muted">
   {{ counts.student }} student(s), {{ counts.instructor }} instructor(s),
-  {{ counts.inactive }} disabled. Identity is Authentik's: an account appears here the first
-  time its owner signs in, and disabling one keeps them out even through SSO. Deleting an
-  account removes the local row only — the results and tickets stay, because a marking record
-  the instructor can erase is not a marking record, and the person can sign straight back in.
+  {{ counts.inactive }} disabled. {{ local_accounts }} sign in with a password of their own
+  {%- if sso_active %}; the rest arrive through Authentik{% endif %}. Disabling an account keeps
+  it out either way. Deleting one removes the local row only — the results and tickets stay,
+  because a marking record the instructor can erase is not a marking record.
 </p>
 {% include "admin/_nav.html" %}
 
@@ -16,12 +16,17 @@
     <div class="card">
       <h2>All accounts</h2>
       <table class="grid">
-        <tr><th>username</th><th>name</th><th>role</th><th>status</th><th>created</th><th>actions</th></tr>
+        <tr><th>username</th><th>name</th><th>role</th><th>sign-in</th><th>status</th><th>created</th><th>actions</th></tr>
         {% for account in accounts %}
+          {% set local = account["password_hash"].startswith("pbkdf2_") %}
           <tr>
             <td><code>{{ account["username"] }}</code></td>
             <td>{{ account["display_name"] }}</td>
             <td>{{ account["role"] }}</td>
+            <td>
+              {% if local %}<span class="badge ok">password</span>
+              {% else %}<span class="badge">{{ "SSO" if sso_active else "none" }}</span>{% endif %}
+            </td>
             <td>
               {% if account["active"] %}<span class="badge ok">active</span>
               {% else %}<span class="badge warn">disabled</span>{% endif %}
@@ -40,6 +45,15 @@
                   <input type="hidden" name="role" value="student">
                   <button type="submit" class="link">make student</button>
                 {% endif %}
+              </form>
+              <form method="post" action="/admin/users" class="inline">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="username" value="{{ account['username'] }}">
+                <input type="hidden" name="action" value="password">
+                <input type="password" name="password" class="mini"
+                       placeholder="new password" autocomplete="new-password"
+                       aria-label="new password for {{ account['username'] }}">
+                <button type="submit" class="link">set password</button>
               </form>
               {% if account["active"] %}
                 <form method="post" action="/admin/users" class="inline">
@@ -68,22 +82,54 @@
         {% endfor %}
       </table>
     </div>
+
+    <div class="card">
+      <h2>Create an account</h2>
+      <p class="muted small">
+        For a range that signs in locally — SSO off, the default — this is where a class is added.
+        Give the password to whoever owns the account; they can sign in immediately.
+      </p>
+      <form method="post" action="/admin/users" class="stack">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="create">
+        <label>Username
+          <input name="username" autocomplete="off" required>
+        </label>
+        <label>Display name
+          <input name="display_name" autocomplete="off" placeholder="optional">
+        </label>
+        <label>Role
+          <select name="role">
+            <option value="student">student</option>
+            <option value="instructor">instructor</option>
+          </select>
+        </label>
+        <label>Password
+          <input type="password" name="password" autocomplete="new-password" required
+                 minlength="{{ min_password_length }}">
+        </label>
+        <button type="submit">Create account</button>
+      </form>
+      <p class="muted small">Passwords are at least {{ min_password_length }} characters.</p>
+    </div>
   </div>
 
   <div class="col-side">
     <div class="card">
-      <h2>Accounts come from Authentik</h2>
+      <h2>Where accounts come from</h2>
       <p class="muted small">
-        OnTrak keeps no password and no user directory. An account is created here the first
-        time someone signs in through the range's Authentik application, keyed on their email
-        address. Membership of the instructor group is what makes someone an instructor, and
-        it is re-read on every sign-in — changing a role below only sticks until that person
-        signs in again.
+        An account created here signs in with its own password. An account that arrives through
+        Authentik — when SSO is on — is created the first time its owner signs in, keyed on their
+        email address, and carries no password: the local password form can never open it.
       </p>
       <p class="muted small">
-        To take someone off the board, <strong>disable</strong> them here: a disabled account
-        stays disabled even when they sign in through SSO. Create, rename and offboard people
-        in Authentik.
+        Membership of the instructor group in Authentik is what makes an SSO account an
+        instructor, and it is re-read on every sign-in — changing a role below only sticks until
+        that person signs in again. For a local account the role set here is the role.
+      </p>
+      <p class="muted small">
+        To take an SSO account off the board, <strong>disable</strong> it: it stays disabled even
+        when its owner signs in through SSO. Create, rename and offboard SSO people in Authentik.
       </p>
     </div>
   </div>

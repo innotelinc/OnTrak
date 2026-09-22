@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "admin/_template_state.html" as ts %}
 
 {% block content %}
 <h1>Scenarios</h1>
@@ -23,8 +24,10 @@
       <th>ticket</th><th>lessons</th><th>template</th><th></th>
     </tr>
     {% for scenario in scenarios %}
-      {% set key = scenario.id %}
-      {% set status = templates.get(key) %}
+      {# One row per platform: a scenario offered on two platforms has two templates
+         and they go stale independently, so a single badge would hide the one that is
+         behind. Keyed by scenario, which is what the workload-keyed view could not do. #}
+      {% set statuses = templates_by_scenario.get(scenario.id, []) %}
       <tr>
         <td><code>{{ scenario.id }}</code></td>
         <td>
@@ -58,9 +61,13 @@
           {% endfor %}
         </td>
         <td>
-          {% if status and status.ready %}<span class="badge ok">ready</span>
-          {% elif status and status.exists %}<span class="badge warn">no snapshot</span>
-          {% else %}<span class="badge">not built</span>{% endif %}
+          {% for status in statuses %}
+            {{ ts.badge(status) }}
+            {% if statuses|length > 1 %}<span class="muted small">{{ status.workload or "golden image" }}</span>{% endif %}
+            {% if not loop.last %}<br>{% endif %}
+          {% else %}
+            <span class="badge">not built</span>
+          {% endfor %}
         </td>
         <td>
           <form method="post" action="/instructor/template" class="inline"
@@ -86,13 +93,14 @@
   <h2>Per-platform templates</h2>
   <p class="muted small">One template per scenario and platform, because the same fault on Windows 11 and Ubuntu are different machines.</p>
   <table class="grid">
-    <tr><th>scenario</th><th>platform</th><th>template</th><th>snapshot</th><th>state</th></tr>
-    {% for entry in templates.values() %}
+    <tr><th>scenario</th><th>platform</th><th>template</th><th>freshness</th><th>why</th><th>instance</th></tr>
+    {% for entry in templates %}
       <tr>
         <td>{{ entry.scenario_id }}</td>
         <td>{{ entry.workload or "golden image" }}</td>
         <td><code>{{ entry.name }}</code></td>
-        <td>{% if entry.snapshot %}<span class="badge ok">clean</span>{% else %}<span class="badge warn">missing</span>{% endif %}</td>
+        <td>{{ ts.badge(entry) }}</td>
+        <td class="muted small">{{ ts.hint(entry) }}</td>
         <td>{% if entry.running %}running{% else %}stopped{% endif %}</td>
       </tr>
     {% endfor %}

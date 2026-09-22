@@ -100,4 +100,18 @@ New-OnTrakFile -Path (Join-Path $faultDir 'fault-manifest.txt') `
 Start-Sleep -Seconds 2
 Write-OnTrakStep ('cpu load after fault: ' + (Get-OnTrakCpuLoad -Samples 2 -IntervalMs 500) + '%')
 
+# Three separate faults sharing one ticket, and a partial application is not a
+# smaller version of it: a machine with the runaway process but no at-startup task
+# stops misbehaving after one reboot and the ticket stops making sense.
+Require-OnTrak 'the optimiser payload is on disk' { Test-OnTrakFileExists -Path $payloadFile }
+Require-OnTrak 'the optimiser is registered to run at logon' {
+    [bool](Get-OnTrakRunKeyValue -Name $runKeyName)
+}
+Require-OnTrak 'the optimiser is registered to run at startup' {
+    @(Get-OnTrakScheduledTask -Name $taskName).Count -gt 0
+}
+Require-OnTrak 'the print spooler is stopped' {
+    (Get-OnTrakServiceState -Name 'Spooler') -ne 'Running'
+}
+
 Write-OnTrakSetupOk -Note ('payload=' + $payloadFile)

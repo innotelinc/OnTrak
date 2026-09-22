@@ -14,6 +14,7 @@ Design notes:
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import io
 import secrets
@@ -26,7 +27,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import auth, demo, guac, oidc, selection
+from .. import auth, guac, maintenance, oidc, selection
 from ..catalog import Catalog
 from ..config import Settings, load_settings
 from ..guest import build_driver
@@ -50,6 +51,40 @@ FLASH_COOKIE = "ontrak_flash"
 # pay for it every time — but a minute is short enough that a fixed gateway stops
 # being reported almost immediately.
 CONSOLE_GATEWAY_TTL_SECONDS = 60.0
+
+# The floor a locally-set password has to clear; the rule lives with the hashing,
+# and the admin panel imports it from there too, so the form and the check agree.
+MIN_PASSWORD_LENGTH = auth.MIN_PASSWORD_LENGTH
+
+# Hashed once, at import, so a sign-in for a username that does not exist still pays
+# the full PBKDF2 cost: response time must not be the way to learn which accounts do.
+_DUMMY_PASSWORD_HASH = auth.hash_password(secrets.token_hex(32))
+
+
+def _valid_username(username: str) -> bool:
+    """A username the range can key on: letters, digits, dot, dash, underscore."""
+    return bool(username) and all(char.isalnum() or char in "._-" for char in username)
+
+
+def _seed_bootstrap_admin(store, settings) -> None:
+    """Create the instructor config names, if the range has no way in yet.
+
+    `ONTRAK_PORTAL__ADMIN_PASSWORD` is the unattended equivalent of the `/setup`
+    page: a container can be handed an admin password and come up ready with no
+    browser, which is what makes the Docker path work with SSO off. It never
+    touches a range that already has a local account, so it cannot reset a password
+    an instructor has since set.
+    """
+    password = (settings.portal.admin_password or "").strip()
+    if not password or store.count_local_accounts() > 0:
+        return
+    username = (settings.portal.admin_username or "admin").strip().lower() or "admin"
+    store.create_local_user(
+        username, password, role="instructor", display_name="Range administrator"
+    )
+    store.log_event(
+        "setup", f"bootstrap instructor {username} from ONTRAK_PORTAL__ADMIN_PASSWORD"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -188,13 +223,18 @@ def redirect(path: str, request: Request, message: str = "", status_code: int = 
 
 
 def _session_link(request: Request, session) -> str:
-    """Signed Guacamole URL for one session, or an empty string."""
+    """Signed Guacamole URL for one session, or an empty string.
+
+    The request is passed through so `guac.base_url: auto` (the default) can put the
+    console on the same address the student used for the portal — a LAN address, a
+    phone hotspot, localhost — instead of a fixed one that only works on one of them.
+    """
     settings = _settings(request)
     if not session.host_ip or not settings.guac.secret_key:
         return ""
     try:
         scenario = request.app.state.repo.get(session.scenario_id)
-        return guac.build_link(settings, session, scenario)
+        return guac.build_link(settings, session, scenario, request=request)
     except (guac.GuacError, ScenarioError):
         return ""
 
@@ -279,6 +319,40 @@ def _provision_async(request: Request, session_id: int) -> None:
     threading.Thread(target=work, name=f"provision-{session_id}", daemon=True).start()
 
 
+def _start_template_sweep(manager, settings) -> threading.Thread | None:
+    """Bring missing or stale templates up to date, off the request path. ``None``
+    when the range has it switched off, or has no hypervisor to build on.
+
+    A template is a snapshot, and the thing it snapshots moves: editing a scenario,
+    or turning a setting that is baked into the guest on or off (``guac.linux_ssh``
+    installs an sshd), leaves every existing snapshot wrong — and the symptom is a
+    student's console or fault being the previous version with nothing to say why.
+    Doing this at startup means a range that has just been deployed, or pulled onto
+    a host, heals itself.
+    """
+    if not getattr(settings.session, "auto_templates", True):
+        return None
+    if getattr(manager, "incus", None) is None:
+        return None
+
+    def work() -> None:
+        try:
+            results = manager.ensure_all_templates()
+        except Exception as exc:  # noqa: BLE001 - a sweep must never kill the portal
+            manager.store.log_event("template_sweep_failed", str(exc))
+            return
+        changed = {key: value for key, value in results.items() if value != "current"}
+        if changed:
+            manager.store.log_event(
+                "template_sweep",
+                ", ".join(f"{key} {value}" for key, value in sorted(changed.items())),
+            )
+
+    thread = threading.Thread(target=work, name="ontrak-templates", daemon=True)
+    thread.start()
+    return thread
+
+
 # ---------------------------------------------------------------------------
 # app factory
 # ---------------------------------------------------------------------------
@@ -287,11 +361,37 @@ def create_app(
     incus: IncusClient | None = None,
     driver=None,
 ) -> FastAPI:
-    """Build the ASGI app. ``incus``/``driver`` are injectable for tests and demos."""
+    """Build the ASGI app. ``incus``/``driver`` are injectable for tests."""
     settings = settings or load_settings()
     settings.ensure_dirs()
 
-    app = FastAPI(title=settings.portal.title, docs_url=None, redoc_url=None)
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI):
+        """Run the portal's own housekeeping for as long as the portal is up.
+
+        A stack built by `docker compose up` has no cron, so the reaper is not run by
+        anything an operator set up: the portal runs the session half of it itself
+        (ontrak/maintenance.py). `app.state.manager` is read here rather than captured.
+
+        The same thread start does the template sweep: a template is a snapshot, and
+        editing a scenario or turning a setting baked into the guest leaves it stale,
+        so the range brings itself up to date rather than waiting for an operator to
+        remember a command. It is a daemon thread because a build boots a guest and
+        can take minutes — the portal serves pages while it works.
+        """
+        app.state.maintenance = maintenance.start(app.state.manager, settings)
+        app.state.template_sweep = _start_template_sweep(app.state.manager, settings)
+        try:
+            yield
+        finally:
+            if app.state.maintenance is not None:
+                app.state.maintenance.stop()
+            app.state.maintenance = None
+            app.state.template_sweep = None
+
+    app = FastAPI(
+        title=settings.portal.title, docs_url=None, redoc_url=None, lifespan=lifespan
+    )
     app.state.settings = settings
     app.state.store = Store(settings.db_path)
     app.state.repo = ScenarioRepository(settings.scenarios_dir)
@@ -299,26 +399,6 @@ def create_app(
     catalog = Catalog(settings.catalog_dir)
     app.state.catalog = catalog
 
-    # The shell transport is a separate driver (Linux scenarios use it) and the demo
-    # one answers for both platforms; without threading it through, a demo Linux
-    # session is graded through the real Incus-agent driver and reports "no grading
-    # payload" instead of a score.
-    shell_driver = None
-    if incus is None and driver is None and settings.demo.enabled:
-        # Demo mode: no Incus, no Windows, no secrets. The whole portal still works,
-        # which is what makes `ontrak demo serve` a two-second demo.
-        env = demo.build_demo_environment(settings)
-        demo.seed_accounts(env)
-        # Build the templates the demo range would have on a real host. Without
-        # them every scenario is "not available on this range yet" before a session
-        # row exists, so the student cannot start anything in the mode whose whole
-        # job is to show the student flow.
-        demo.seed_range(env)
-        incus, driver = env.incus, env.driver
-        shell_driver = env.driver
-        app.state.store = env.store
-        app.state.repo = env.repository
-        catalog = env.catalog
     if incus is None:
         incus = IncusClient(settings) if IncusClient.available() else None
     app.state.incus = incus
@@ -328,13 +408,16 @@ def create_app(
         repo=app.state.repo,
         incus=incus,
         driver=driver or build_driver(settings),
-        shell_driver=shell_driver,
         catalog=catalog,
     )
     # ``(monotonic, (state, detail))`` from the last console-gateway probe, or None.
     app.state.console_gateway: tuple[float, tuple[str, str]] | None = None
     app.state.provisioning = set()
     app.state.provision_lock = threading.Lock()
+    # Set by the lifespan above: the running housekeeping loop and template sweep,
+    # or None.
+    app.state.maintenance = None
+    app.state.template_sweep = None
     # "Check my work" results are shown to the student but never persisted: the lab is
     # results-only, so only the grade submitted at Complete & End is stored. Keeping
     # the last preview in process memory is what lets the page still show feedback.
@@ -356,14 +439,14 @@ def create_app(
         )
 
     # ------------------------------------------------------------------ auth --
-    # Sign-in is Authentik's and only Authentik's (docs/operations.md
-    # "Sign-in"). The portal issues a session for an account the IdP has just
-    # vouched for, and keeps no credential of its own — there is no password form
-    # to fall back to. The one exception is demo mode, which has no IdP to sign
-    # in against and so gets a door of its own below.
+    # Two doors, and the portal decides which are live (docs/operations.md
+    # "Sign-in"): local accounts, which work with nothing else installed and are
+    # the default, and Authentik SSO, which an instructor switches on in the admin
+    # panel once the range has been provisioned for it. Both end here, at
+    # `issue_session`, so a session is minted in exactly one place.
     def issue_session(request: Request, user, message: str = ""):
         """Issue the portal session cookie for a user row. The one place that
-        does it, so the OIDC callback and the demo door cannot drift apart.
+        does it, so the local login and the OIDC callback cannot drift apart.
 
         Not named ``start_session``: that is the ``/sessions/start`` handler
         defined further down this factory, and a helper of the same name is
@@ -383,39 +466,154 @@ def create_app(
         request.app.state.store.log_event("login", user["username"])
         return response
 
+    # ------------------------------------------------------------ local sign-in --
+    # SSO is optional and off by default, so a range with no identity provider still
+    # signs people in: accounts with a password live in this database, and this is
+    # their door. An SSO account row carries only a sentinel, so a password can
+    # never open one (see auth.verify_password) — the SSO and local doors lead to
+    # different accounts, not to the same account twice.
+    def authenticate(request: Request, username: str, password: str):
+        """The account row these credentials open, or None.
+
+        An unknown username still pays the full PBKDF2 cost (the dummy hash), so
+        response time does not say which accounts exist.
+        """
+        store = request.app.state.store
+        row = store.get_user(username.strip().lower())
+        stored = row["password_hash"] if row is not None else _DUMMY_PASSWORD_HASH
+        if not auth.verify_password(password, stored):
+            return None
+        return row
+
+    def local_accounts(request: Request) -> int:
+        return request.app.state.store.count_local_accounts()
+
+    def needs_setup(request: Request) -> bool:
+        """Whether the range has no way in at all, so `/setup` is live.
+
+        Only when SSO is switched off *and* no local account exists *and* no
+        identity provider has been provisioned: that is a range that has genuinely
+        never been set up, and the page closes itself for good as soon as the first
+        instructor is created. A range that *is* provisioned for Authentik but has
+        SSO switched off is deliberately excluded — it is a deployment with an
+        operator, and an open account-creation page on it would be a way in for
+        whoever finds it first. That operator has two ways back: switch the toggle
+        by seeding `ONTRAK_PORTAL__SSO_ENABLED=true`, or seed a local account with
+        `ONTRAK_PORTAL__ADMIN_PASSWORD`.
+        """
+        store = request.app.state.store
+        return (
+            local_accounts(request) == 0
+            and not oidc.active(store, settings.portal)
+            and not oidc.configured(settings.portal)
+        )
+
+    def local_login_offered(request: Request, sso: dict) -> bool:
+        """Whether the password form is part of the login page.
+
+        Exactly when there is an account a password could open. With SSO off that
+        is the door; with SSO on it is still there, because a local account is the
+        operator's break-glass for a provider that has stopped answering — and on a
+        pure-SSO range there is none, so nothing on the page invites a password.
+
+        A range with no accounts and no SSO does not get an empty form: with no
+        provider configured it gets `/setup`, and with one it gets the message
+        below (see `no_way_in`).
+        """
+        return local_accounts(request) > 0
+
+    def no_way_in(request: Request, sso: dict) -> bool:
+        """The one state with no door at all: SSO off, nothing to sign in with.
+
+        A range provisioned for Authentik whose switch is off and which has no
+        local account. Only an operator can end it, and only from outside the
+        portal — which is why the page names the variables instead of a form.
+        """
+        if sso["active"] or needs_setup(request):
+            return False
+        return not local_login_offered(request, sso)
+
     @app.get("/login", response_class=HTMLResponse)
     def login_form(request: Request):
+        store = request.app.state.store
+        sso = oidc.public_config(settings.portal, store)
         return render(
             request,
             "login.html",
             {
-                "sso": oidc.public_config(settings.portal),
-                "demo_accounts": demo.account_names(settings) if settings.demo.enabled else [],
+                "sso": sso,
+                "local_form": local_login_offered(request, sso),
+                "local_accounts": store.count_local_accounts(),
+                "needs_setup": needs_setup(request),
+                "no_way_in": no_way_in(request, sso),
             },
         )
 
-    # ------------------------------------------------------------------- demo --
-    # Demo mode has no IdP to sign in against — that is the point of it — so it
-    # gets a door of its own: a pick-an-account link, no password. It is mounted
-    # only while `demo.enabled` is on, so on a real range these routes 404 and the
-    # only way in is Authentik.
-    @app.get("/demo/login/{username}")
-    def demo_login(request: Request, username: str):
-        if not settings.demo.enabled:
-            raise HTTPException(status_code=404, detail="demo mode is off on this range")
-        wanted = username.strip().lower()
-        if wanted not in demo.account_names(settings):
-            return redirect("/login", request, "Pick one of the demo accounts.")
-        user = request.app.state.store.get_user(wanted)
+    @app.post("/login")
+    def login_submit(
+        request: Request,
+        username: str = Form(""),
+        password: str = Form(""),
+        csrf: str = Form(""),
+    ):
+        """Sign in with a local account. Always present; only local rows open."""
+        _check_csrf(request, csrf)
+        store = request.app.state.store
+        user = authenticate(request, username, password)
         if user is None:
-            return redirect("/login", request, "That demo account is missing — restart demo mode.")
-        return issue_session(request, user, f"Signed in as {user['display_name'] or wanted}.")
+            store.log_event("login-refused", username.strip().lower())
+            return redirect("/login", request, "That username and password do not match.")
+        return issue_session(
+            request, user, f"Signed in as {user['display_name'] or user['username']}."
+        )
+
+    # ------------------------------------------------------------- first run --
+    # A range whose SSO is off and which has no local account yet would have no way
+    # in at all — local sign-in has to exist before there is anyone to sign in as.
+    # So it offers exactly one page to create the first instructor, and then that
+    # page refuses to render again (which is what makes it safe to leave mounted).
+    @app.get("/setup", response_class=HTMLResponse)
+    def setup_form(request: Request):
+        if not needs_setup(request):
+            return redirect("/login", request)
+        return render(request, "setup.html", {})
+
+    @app.post("/setup")
+    def setup_submit(
+        request: Request,
+        username: str = Form(""),
+        display_name: str = Form(""),
+        password: str = Form(""),
+        confirm: str = Form(""),
+        csrf: str = Form(""),
+    ):
+        _check_csrf(request, csrf)
+        if not needs_setup(request):
+            return redirect("/login", request, "This range already has accounts — sign in instead.")
+        store = request.app.state.store
+        username = username.strip().lower()
+        if not _valid_username(username):
+            return redirect(
+                "/setup", request, "Pick a username of letters, digits, dot, dash or underscore."
+            )
+        if password != confirm:
+            return redirect("/setup", request, "The two passwords do not match.")
+        if len(password) < MIN_PASSWORD_LENGTH:
+            return redirect(
+                "/setup", request, f"Use a password of at least {MIN_PASSWORD_LENGTH} characters."
+            )
+        store.create_local_user(
+            username, password, role="instructor", display_name=display_name.strip()
+        )
+        store.log_event("setup", f"bootstrap instructor {username}")
+        user = store.get_user(username)
+        return issue_session(request, user, "Range created — welcome.")
 
     @app.get("/oidc/login")
     def oidc_start(request: Request):
         """Send the browser to Authentik."""
-        if not oidc.enabled(settings.portal):
-            return redirect("/login", request, "Single sign-on is not configured on this range.")
+        if not oidc.active(request.app.state.store, settings.portal):
+            return redirect("/login", request, "Single sign-on is not switched on for this range.")
         try:
             state = oidc.new_state()
             callback = oidc.callback_for(settings.portal, request.headers)
@@ -450,6 +648,9 @@ def create_app(
             response.delete_cookie(oidc.OIDC_COOKIE)
             return response
 
+        if not oidc.active(store, settings.portal):
+            # The switch was turned off between the redirect and the return leg.
+            return refuse("Single sign-on is not switched on for this range.")
         wanted = auth.read_cookie(request.cookies.get(oidc.OIDC_COOKIE), settings.portal.secret)
         if error:
             return refuse(f"Authentik refused the sign-in: {error}")
@@ -624,6 +825,11 @@ def create_app(
         # "unreachable" is normal from a host behind a public name.
         console_url = _session_link(request, session)
         console_refused = ""
+        # The one console problem that is a *deployment* choice rather than a fault: a
+        # pinned guac.base_url on another origin, where the frame's stored-token clear
+        # cannot reach. Say it above the console rather than letting a student wonder
+        # why the machine on screen is not the one this page names.
+        console_origin_warning = guac.console_origin_warning(settings, request) if console_url else ""
         if console_url:
             state_name, detail = _console_gateway_verdict(request)
             if state_name == "refused":
@@ -639,6 +845,7 @@ def create_app(
                 "preview": preview,
                 "console_url": console_url,
                 "console_refused": console_refused,
+                "console_origin_warning": console_origin_warning,
                 "address": _machine_address(settings, scenario, session),
                 "events": store.events_for(session.id, limit=15) if session.id else [],
                 "states": SessionState,
@@ -650,6 +857,47 @@ def create_app(
                 "ticket_preview": ticket_preview,
                 "ticket_rows": ticket_rows,
                 "lessons": request.app.state.lessons.for_scenario(scenario.lessons),
+            },
+        )
+
+    @app.get("/sessions/{session_id}/console", response_class=HTMLResponse)
+    def session_console(request: Request, session_id: int, user=Depends(require_user)):
+        """The page a console frame loads to open one student's machine.
+
+        Deliberately *not* the Guacamole URL itself. Guacamole keeps its auth token in
+        the browser's localStorage and re-authenticates with it on every load, and the
+        gateway reuses the session that token belongs to — so a fresh, correctly signed
+        payload is ignored and the console opens whatever machine that browser used
+        last. A student moving from session #3 to #4 sat looking at #3's (by then
+        destroyed) machine reporting "the remote desktop server has encountered an
+        error", and no amount of cache-busting on the Guacamole URL could fix it.
+
+        This page is served from the portal's own origin, which is the gateway's origin
+        whenever the console is (``guac.base_url: auto``, the default and the whole
+        point of a setup-anywhere lab), so it can drop that stored token first and make
+        the payload we just signed the authority on which connection opens.
+        """
+        try:
+            session = load_session(request, user, session_id)
+        except SessionError as exc:
+            return redirect("/dashboard", request, str(exc))
+        url = _session_link(request, session)
+        if not url:
+            return redirect(
+                f"/sessions/{session_id}",
+                request,
+                "There is no browser console for this machine.",
+            )
+        return render(
+            request,
+            "console.html",
+            {
+                "title": "Opening the console…",
+                "console_url": url,
+                # Only meaningful when the portal's page shares the console's origin;
+                # a console served from somewhere else has storage we cannot touch.
+                # The session page says so in a banner; this page only clears.
+                "clear_token": guac.same_origin(url, guac.request_origin(request)),
             },
         )
 
@@ -752,8 +1000,12 @@ def create_app(
             session = load_session(request, user, session_id)
         except SessionError as exc:
             return redirect("/dashboard", request, str(exc))
-        if session.state.is_terminal:
-            return redirect(f"/results?session={session_id}", request, "That session is already closed.")
+        # `is_submitted` as well as `is_terminal`: a hand-in stores one result and that
+        # is the record, so a second POST — a reloaded form, a scripted retry — must not
+        # grade the same session again. The page no longer offers the button; this is
+        # what makes that true rather than tidy.
+        if session.state.is_terminal or session.state.is_submitted:
+            return redirect(f"/results?session={session_id}", request, "That session is already handed in.")
 
         ticket_form = manager.ticket_form_for(session)
         values = None
@@ -1092,7 +1344,14 @@ def create_app(
         url = _session_link(request, session)
         if not url:
             return redirect("/instructor", request, "Guacamole is not configured (guac.secret_key).")
-        return RedirectResponse(url)
+        # Through the bootstrap, not straight at Guacamole: a tab opened here has the
+        # same stale-token problem a student's frame does, and the bootstrap is the
+        # one place that clears it. See `session_console`.
+        return RedirectResponse(f"/sessions/{session_id}/console")
+
+    # Seed the unattended bootstrap instructor last, once the store the app serves
+    # from is settled.
+    _seed_bootstrap_admin(app.state.store, settings)
 
     return app
 

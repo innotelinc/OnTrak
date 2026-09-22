@@ -27,6 +27,8 @@ from typing import Any
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
+from .. import guac, oidc
+from ..auth import MIN_PASSWORD_LENGTH
 from ..models import SessionState
 from ..scheduler import Scheduler
 from ..tickets import feedback_text as ticket_feedback_text
@@ -34,6 +36,7 @@ from ..tickets import feedback_text as ticket_feedback_text
 ADMIN_SECTIONS = [
     ("overview", "Overview", "Estate at a glance, and the operations you can run from here"),
     ("users", "Accounts", "Students and instructors who can sign in"),
+    ("signin", "Sign-in", "Single sign-on or local accounts — how people get in"),
     ("scenarios", "Scenarios", "The catalogue, and whether each entry validates"),
     ("platforms", "Platforms", "Operating systems, images, templates and pools"),
     ("tickets", "Tickets", "The write-ups students handed in, and how they were marked"),
@@ -42,6 +45,24 @@ ADMIN_SECTIONS = [
     ("results", "Results", "Submitted grades and the marking record"),
     ("audit", "Audit", "Everything the control plane did, in order"),
 ]
+
+
+def templates_by_scenario(rows: list[dict]) -> dict[str, list[dict]]:
+    """Group template rows under the scenario they belong to.
+
+    A scenario offered on two platforms has two templates, and they go stale
+    independently — one recipe change rebuilds both, but the panel has to be able to
+    say *which* is behind. Keying the view by the scenario is what lets the scenarios
+    table show freshness inline instead of an operator running a probe beside the
+    page, and it is why this cannot be keyed by ``scenario@workload``: that key is not
+    the one the scenarios table has to hand.
+    """
+    grouped: dict[str, list[dict]] = {}
+    for row in rows:
+        grouped.setdefault(row["scenario_id"], []).append(row)
+    for entries in grouped.values():
+        entries.sort(key=lambda row: str(row.get("workload") or ""))
+    return grouped
 
 
 @dataclass
@@ -102,6 +123,11 @@ def register_admin_routes(app: FastAPI, ctx: AdminContext) -> None:
             {
                 "sections": ADMIN_SECTIONS,
                 "section": section,
+                # The address this page was reached on, so an instructor can read the
+                # range's address off the panel and give it to a student. A LAN range
+                # has no DNS name to hand out and should not need one: `auto` puts the
+                # console on this same address, so whatever is printed here works.
+                "access_url": f"{guac.request_origin(request)}/",
                 "infra_errors": failures,
                 "pool_error": failures[0] if failures else "",
                 "settings_summary": {
@@ -141,6 +167,7 @@ def register_admin_routes(app: FastAPI, ctx: AdminContext) -> None:
                 "recent_sessions": sessions[:12],
                 "templates": templates,
                 "templates_ready": sum(1 for t in templates if t["ready"]),
+                "templates_stale": sum(1 for t in templates if t["stale"]),
                 "pool": pool,
                 "pool_ready": sum(p.ready for p in pool),
                 "tickets": store.count_tickets(),
@@ -205,6 +232,69 @@ def register_admin_routes(app: FastAPI, ctx: AdminContext) -> None:
         store.log_event(f"admin_{action}", message)
         return ctx.redirect("/admin", request, message)
 
+    # ----------------------------------------------------------------- sign-in --
+    # SSO is optional and off by default, and this is where that is decided. The
+    # switch lives in the portal database, so it survives a restart without an edit
+    # to `.env` — and the page is careful to show *configured* (are the four
+    # ONTRAK_PORTAL__OIDC_* values present?) beside *enabled*, because a range with
+    # SSO switched on but nothing configured is the one state that has to be fixed
+    # by an operator rather than clicked away.
+    @app.get("/admin/signin", response_class=HTMLResponse)
+    def admin_signin(request: Request, user=Depends(require_instructor)):  # noqa: B008
+        return page(
+            request,
+            "admin/signin.html",
+            "signin",
+            {
+                "sso": oidc.public_config(settings.portal, store),
+                "callbacks": oidc.redirect_uris(settings.portal),
+                "local_accounts": store.count_local_accounts(),
+                "admin_username": settings.portal.admin_username,
+                "admin_password_set": bool((settings.portal.admin_password or "").strip()),
+                "instructor_group": settings.portal.oidc_instructor_group,
+                "required_group": settings.portal.oidc_required_group,
+            },
+        )
+
+    @app.post("/admin/signin")
+    def admin_signin_action(
+        request: Request,
+        action: str = Form(...),
+        csrf: str = Form(""),
+        user=Depends(require_instructor),  # noqa: B008
+    ):
+        ctx.check_csrf(request, csrf)
+        if action == "enable":
+            if not oidc.configured(settings.portal):
+                message = (
+                    "Cannot switch SSO on: the issuer, client id, client secret and "
+                    "redirect uri are not all set (ONTRAK_PORTAL__OIDC_*). Local "
+                    "sign-in stays as it is."
+                )
+            else:
+                oidc.set_toggle(store, True)
+                message = "Single sign-on is on. " + (
+                    "Local accounts still work as a fallback."
+                    if store.count_local_accounts()
+                    else "No local account exists, so make one under Accounts before "
+                    "relying on SSO alone."
+                )
+        elif action == "disable":
+            # Guard rail: switching SSO off with no local account to sign in with
+            # would leave a range nobody can enter — including whoever just clicked.
+            if not store.count_local_accounts():
+                message = (
+                    "Refusing to switch SSO off: no local account exists, so this range "
+                    "would have no way in. Create one under Accounts first."
+                )
+            else:
+                oidc.set_toggle(store, False)
+                message = "Single sign-on is off; sign-in is local accounts only."
+        else:
+            message = f"Unknown action {action!r}."
+        store.log_event(f"admin_sso_{action}", message)
+        return ctx.redirect("/admin/signin", request, message)
+
     # -------------------------------------------------------------------- users --
     @app.get("/admin/users", response_class=HTMLResponse)
     def admin_users(request: Request, user=Depends(require_instructor)):  # noqa: B008
@@ -212,19 +302,28 @@ def register_admin_routes(app: FastAPI, ctx: AdminContext) -> None:
             request,
             "admin/users.html",
             "users",
-            {"accounts": store.list_all_users(), "counts": store.count_users()},
+            {
+                "accounts": store.list_all_users(),
+                "counts": store.count_users(),
+                "local_accounts": store.count_local_accounts(),
+                "sso_active": oidc.active(store, settings.portal),
+                "min_password_length": MIN_PASSWORD_LENGTH,
+            },
         )
 
-    # There is no create and no password reset: identity is Authentik's. An
-    # account appears here the first time its owner signs in, and its role is
-    # Authentik's group membership re-read on every sign-in — so the controls
-    # that matter locally are enabling, disabling and deleting, not credentials.
+    # Accounts come from two places now. With SSO on, one appears the first time its
+    # owner signs in through Authentik; with SSO off (the default) an instructor
+    # creates it here and sets the password. The local controls — role, enable,
+    # disable, delete — are the same either way, and only a row with a real password
+    # can sign in with one.
     @app.post("/admin/users")
     def admin_users_action(
         request: Request,
         action: str = Form(...),
         username: str = Form(""),
         role: str = Form("student"),
+        display_name: str = Form(""),
+        password: str = Form(""),
         csrf: str = Form(""),
         user=Depends(require_instructor),  # noqa: B008
     ):
@@ -237,7 +336,24 @@ def register_admin_routes(app: FastAPI, ctx: AdminContext) -> None:
         if user["username"] == username and action in {"deactivate", "delete"}:
             return ctx.redirect("/admin/users", request, "You cannot disable your own account.")
         try:
-            if action == "role":
+            if action in {"create", "password"} and len(password) < MIN_PASSWORD_LENGTH:
+                message = (
+                    f"A password of at least {MIN_PASSWORD_LENGTH} characters is required."
+                )
+            elif action == "create":
+                if role not in {"student", "instructor"}:
+                    message = f"Unknown role {role!r}."
+                else:
+                    store.create_local_user(
+                        username, password, role=role, display_name=display_name.strip()
+                    )
+                    message = f"{username} created as a {role} and can sign in with a password."
+            elif action == "password":
+                if store.set_user_password(username, password):
+                    message = f"Password set for {username}."
+                else:
+                    message = f"There is no account called {username}."
+            elif action == "role":
                 store.set_user_role(username, role)
                 message = f"{username} is now {role}."
             elif action == "deactivate":
@@ -264,6 +380,7 @@ def register_admin_routes(app: FastAPI, ctx: AdminContext) -> None:
         for problem in problems:
             key = problem.split("]", 1)[0].lstrip("[") + "]"
             by_scenario.setdefault(key, []).append(problem)
+        template_rows = safe(ctx.manager.template_status, [], "templates")
         return page(
             request,
             "admin/scenarios.html",
@@ -272,10 +389,8 @@ def register_admin_routes(app: FastAPI, ctx: AdminContext) -> None:
                 "scenarios": ctx.repo.list(),
                 "problems": problems,
                 "problems_by_scenario": by_scenario,
-                "templates": {
-                    scenario_key(t["scenario_id"], t["workload"]): t
-                    for t in safe(ctx.manager.template_status, [], "templates")
-                },
+                "templates": template_rows,
+                "templates_by_scenario": templates_by_scenario(template_rows),
                 "lessons": {lesson.id: lesson for lesson in ctx.lessons.list()},
             },
         )

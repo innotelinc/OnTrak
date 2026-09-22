@@ -46,6 +46,12 @@ import os
 import sys
 
 KNOWN_ALIASES = {"images:ubuntu/24.04", "images:debian/12", "ontrak-win-base"}
+# Instances created from a Windows image demand the agent config disk Incus
+# refuses to start without, named here because a stateless stand-in cannot know
+# which image an instance came from.
+AGENT_DISK_INSTANCES = {
+    name for name in os.environ.get("ONTRAK_INCUS_STUB_AGENT_DISK", "").split(",") if name
+}
 UIDS = {"root": 0, "student": 1000, "ubuntu": 1000}
 ROOT = {"environment": {"server_version": "7.4", "driver": "incus"}}
 POOL = {
@@ -117,6 +123,17 @@ if head == "storage" and rest[:1] == ["info"]:
 
 if head == "storage" and rest[:1] == ["list"] and asks_for_format(rest):
     sys.stdout.write(json.dumps([POOL]) + "\n")
+    raise SystemExit(0)
+
+if head == "config" and rest[:1] == ["get"]:
+    # `config get <instance> <key>`: a key that is not set prints an empty line
+    # and exits 0, which is the whole answer the caller needs.
+    instance = rest[1] if len(rest) > 1 else ""
+    key = rest[2] if len(rest) > 2 else ""
+    if key == "image.requirements.cdrom_agent" and instance in AGENT_DISK_INSTANCES:
+        sys.stdout.write("true\n")
+        raise SystemExit(0)
+    sys.stdout.write("\n")
     raise SystemExit(0)
 
 if head == "copy":
@@ -215,6 +232,29 @@ def test_a_missing_binary_reads_as_absent_rather_than_raising(settings, tmp_path
     """`ontrak doctor` asks this on hosts that may not have Incus at all."""
     client = IncusClient(settings, binary=str(tmp_path / "no-such-incus"))
     assert client.image_exists("images:ubuntu/24.04") is False
+
+
+# --------------------------------------------------------------------------- #
+# the device a Windows image insists on
+# --------------------------------------------------------------------------- #
+# `incus init` from a published Windows image succeeds and `incus start` then
+# refuses the instance outright -- "This virtual machine image requires an
+# agent:config disk be added" -- so there is no failed start to retry: the device
+# has to be attached at creation time. It was not, which is why every Windows
+# template build died while the Linux ones were fine.
+def test_a_windows_image_that_demands_an_agent_disk_is_given_one(client, monkeypatch, argv_log):
+    instance = "tpl-sw-app-crash"
+    monkeypatch.setenv("ONTRAK_INCUS_STUB_AGENT_DISK", instance)
+
+    assert client.add_agent_disk_if_required(instance) is True
+    asked = argv_log.read_text(encoding="utf-8")
+    assert f"config device add {instance} agent disk source=agent:config" in asked, asked
+
+
+def test_an_image_that_asks_for_nothing_is_left_alone(client, argv_log):
+    """A Linux container image demands no agent disk, and gets none."""
+    assert client.add_agent_disk_if_required("tpl-net-dns-failure") is False
+    assert "device add" not in argv_log.read_text(encoding="utf-8")
 
 
 # --------------------------------------------------------------------------- #

@@ -278,6 +278,27 @@ class IncusClient:
             args.append("--force")
         self.run(args, timeout=self.timeout + timeout, check=not force)
 
+    def power_off_instance(self, name: str, timeout: int = 90) -> None:
+        """Stop an instance for good, letting the guest flush before it goes.
+
+        Powering a guest off is a *disk* event, not only a power event: a guest that
+        was reconfigured seconds earlier can still be holding the change in a
+        write-back cache, and ``stop --force`` takes the power away before it lands.
+        Fault injection is exactly that shape — write a setting, stop the machine,
+        snapshot it — so a forced stop snapshots the state from *before* the fault:
+        the template builds clean and the scenario grades itself full marks.
+       
+        A graceful shutdown gives the guest the moment it needs. Force stays the
+        fallback, because a scenario is allowed to wedge the guest it was injected
+        over (broken NIC, runaway CPU) and a half-built template is worse than a
+        hard power-off.
+        """
+        try:
+            self.stop_instance(name, force=False, timeout=timeout)
+        except IncusError:
+            # The forced path is deliberately unchecked, so it cannot raise here.
+            self.stop_instance(name, force=True, timeout=timeout)
+
     def delete_instance(self, name: str, force: bool = True) -> None:
         args = ["delete", name]
         if force:
@@ -289,6 +310,37 @@ class IncusClient:
 
     def delete_snapshot(self, instance: str, snapshot: str) -> None:
         self.run(["snapshot", "delete", instance, snapshot], timeout=self.timeout)
+
+    def get_config(self, instance: str, key: str) -> str:
+        """One config value, or ``""`` when it is unset.
+
+        `incus config get` exits 0 with empty output for a missing key, so an
+        unset value and an empty one are the same answer here — which is what the
+        callers below want.
+        """
+        proc = self.run(["config", "get", instance, key], check=False)
+        return (proc.stdout or "").strip() if proc.returncode == 0 else ""
+
+    def add_agent_disk_if_required(self, instance: str) -> bool:
+        """Give a VM the agent config disk its image demands, and say whether it did.
+
+        A Windows image built by incus-windows is published with
+        ``requirements.cdrom_agent=true``, and the requirement is enforced by Incus
+        at *start*, not at create: a clone comes up STOPPED with
+        "This virtual machine image requires an agent:config disk be added". That
+        is why every Windows template failed to boot while the Linux ones were
+        fine, and why the golden-image build needed the same device by hand.
+
+        The requirement is a property of the image rather than of the workload, so
+        it is read back from the instance: a site's own golden image gets the same
+        treatment with no catalogue change, and a container or a plain VM is left
+        alone because its image asks for nothing.
+        """
+        value = self.get_config(instance, "image.requirements.cdrom_agent")
+        if value.lower() not in {"true", "1", "yes"}:
+            return False
+        self.add_device(instance, "disk", "agent", source="agent:config")
+        return True
 
     def set_config(self, instance: str, key: str, value: Any) -> None:
         self.run(["config", "set", instance, f"{key}={value}"])

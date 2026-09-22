@@ -1,13 +1,17 @@
 """In-memory Incus client.
 
-Used by the demo mode (``ontrak demo``) so the whole student flow — request,
-provision, console, grade, reset, complete — runs with no hypervisor, and by the
-test suite. It models the behaviour that matters:
+Used by the test suite, so the whole student flow — request, provision, grade,
+reset, complete — can be exercised with no hypervisor. It models the behaviour
+that matters:
 
 * a template only exists once it has been built *and* snapshotted,
 * cloning requires that snapshot,
 * instances are gone after ``delete_instance``,
-* a VM only has an address while it is running.
+* a VM only has an address while it is running,
+* an image that demands an agent config disk gets one before it is booted — a
+  Windows image published by incus-windows refuses to start without it, which is
+  the failure that kept every Windows template from building while the Linux ones
+  worked.
 """
 
 from __future__ import annotations
@@ -18,18 +22,21 @@ from .incus import IncusError, IncusNotFound, InstanceInfo
 
 
 class InMemoryIncus:
-    def __init__(self, image_alias: str = "ontrak-win-base", image_present: bool = True):
+    def __init__(self, image_alias: str = "ontrak-win-base", image_present: bool = True,
+                 requires_agent_disk: bool = False):
         self.image_alias = image_alias
         self.image_present = image_present
+        self.requires_agent_disk = requires_agent_disk
         self.instances: dict[str, dict] = {}
         self.snapshots: dict[str, set[str]] = {}
         self.calls: list[tuple] = []
         self.devices: list[tuple] = []
         self.configs: list[tuple] = []
+        self._config: dict[tuple[str, str], str] = {}
         self.images: dict[str, dict] = {}
         self._ip_counter = 100
 
-    # -- test/demo utilities -------------------------------------------
+    # -- test utilities ------------------------------------------------
     def add_instance(self, name: str, running: bool = True, ip: str = "", snapshots=()) -> None:
         self.instances[name] = {
             "status": "RUNNING" if running else "STOPPED",
@@ -128,6 +135,11 @@ class InMemoryIncus:
         if name in self.instances:
             self.instances[name]["status"] = "STOPPED"
 
+    def power_off_instance(self, name: str, timeout: int = 90) -> None:
+        self.calls.append(("power_off_instance", name))
+        if name in self.instances:
+            self.instances[name]["status"] = "STOPPED"
+
     def delete_instance(self, name: str, force: bool = True) -> None:
         self.calls.append(("delete_instance", name))
         self.instances.pop(name, None)
@@ -142,8 +154,20 @@ class InMemoryIncus:
     def delete_snapshot(self, instance: str, snapshot: str) -> None:
         self.snapshots.get(instance, set()).discard(snapshot)
 
+    def get_config(self, instance: str, key: str) -> str:
+        if key == "image.requirements.cdrom_agent" and self.requires_agent_disk:
+            return "true"
+        return self._config.get((instance, key), "")
+
+    def add_agent_disk_if_required(self, instance: str) -> bool:
+        if not self.requires_agent_disk:
+            return False
+        self.devices.append((instance, "disk", "agent", {"source": "agent:config"}))
+        return True
+
     def set_config(self, instance: str, key: str, value) -> None:
         self.configs.append((instance, key, value))
+        self._config[(instance, key)] = str(value)
 
     def set_configs(self, instance: str, values: dict) -> None:
         for key, value in values.items():
@@ -167,8 +191,7 @@ class InMemoryIncus:
         The in-memory client has no guest to run a script in, so it does the one thing
         the lifecycle genuinely needs — report that the machine is up — and returns
         empty output otherwise. Grading then fails honestly with "no grading payload",
-        which is exactly what a test that reaches for this should see; demo mode uses
-        its own driver instead.
+        which is exactly what a test that reaches for this should see.
         """
         import subprocess
 

@@ -40,7 +40,18 @@ session:
   idle_recycle_minutes: 20       # reclaimed after this long with no activity
   max_per_student: 1             # concurrent sessions per student account
   randomize_credentials: false   # give each session a unique local password
+  # A template is a snapshot, and a snapshot goes stale: editing a scenario, or
+  # turning a setting that is baked into the guest on or off (`guac.linux_ssh`
+  # installs an sshd), leaves every existing template wrong. With this on — the
+  # default — the range heals itself: the portal rebuilds missing or stale
+  # templates at startup, and again when a session needs one.
+  auto_templates: true
   check_timeout_seconds: 240     # grading scripts can be slow (reboots, scans)
+  # A template build normally reads the setup script's success marker from its output.
+  # A scenario may break the transport it is injected over (net-static-ip-conflict
+  # re-addresses the adapter), so the marker is also written to a file and the build
+  # keeps looking for it for this long. 0 disables the fallback.
+  setup_ok_grace_seconds: 240
   # Results only: a student may check their own work as often as they like, but the
   # only grade that is stored is the one submitted at "Complete & End".
   persist_progress: false
@@ -71,14 +82,6 @@ schedule:
   #     target: 15
   #     scenarios: [net-dns-failure, os-perf-startup]
 
-demo:
-  # Demo mode runs the whole student flow with no hypervisor: no Incus, no Windows,
-  # no secrets. For workshops, screenshots and CI.
-  enabled: false
-  students: 6
-  success_rate: 1.0              # 1.0 = every objective passed, for clean demos
-  reset_state: true              # wipe demo state on start
-
 pool:
   enabled: true
   # Warm, booted, unclaimed VMs per scenario. 0 keeps RAM free; use
@@ -91,7 +94,12 @@ pool:
   claim_timeout_seconds: 90      # copied clone that never came up is discarded
 
 guac:
-  base_url: http://127.0.0.1:8080/guacamole/
+  # The console address a *browser* uses. `auto` (the default) derives it from the
+  # address the student reached the portal on, so one checkout works at
+  # http://127.0.0.1:8080, on a LAN address and behind a TLS host with no edit.
+  # Set an absolute URL when the browser name differs from the container's own
+  # (a deployment behind Cerulean's edge). Empty disables the browser console.
+  base_url: auto
   secret_key: ""                 # 32 hex chars; env ONTRAK_GUAC__SECRET_KEY;
                                  # must match JSON_SECRET_KEY in deploy/guacamole
   link_ttl_minutes: 480
@@ -99,6 +107,14 @@ guac:
   recording_path: /recordings
   server_layout: en-us-qwerty
   keyboard_layout: en-us-qwerty
+  # A Linux guest answers no RDP, so its browser console is an SSH shell instead
+  # of a remote desktop. On by default: `ontrak template build` installs
+  # openssh-server into every Linux template, sets the Linux account's password
+  # to guest.password and enables password login, so a Linux ticket is reachable
+  # from the dashboard with no extra step. The build refuses to run with an empty
+  # guest.password. Templates are snapshots — one built before this was on has no
+  # sshd, so rebuild them (`ontrak template build --all --force`).
+  linux_ssh: true
 
 portal:
   host: 0.0.0.0
@@ -108,6 +124,19 @@ portal:
   brand_note: "IT support training range — powered by Innotel OnTrak"
   allow_self_reset: true
   hints_require_attempt: true    # a failed check is needed before hints unlock
+
+  # Sign-in. SSO is optional and off by default: a range signs in with local
+  # accounts, so it is usable with no identity provider installed at all. This
+  # value only seeds the admin toggle — the live switch is stored in the portal
+  # database (Admin -> Sign-in), so an instructor can change it without editing
+  # files. Turning it on needs the ONTRAK_PORTAL__OIDC_* values below set, and
+  # switching it off needs a local account to sign in with.
+  sso_enabled: false
+  # Unattended bootstrap instructor for a range with SSO off and no account yet.
+  # Set ONTRAK_PORTAL__ADMIN_PASSWORD to seed it at startup; with neither this nor
+  # an existing local account, the portal offers a one-time /setup page instead.
+  admin_username: admin
+  admin_password: ""
 
 paths:
   scenarios: scenarios

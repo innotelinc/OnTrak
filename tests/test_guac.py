@@ -143,6 +143,12 @@ def test_link_is_a_browser_url_with_an_encrypted_payload(settings, repo):
     parsed = urlparse(link)
     assert parsed.scheme == "http" and parsed.netloc == "guac.test"
     assert parsed.path == "/guacamole/"
+    # No cache-buster on the document. One was added here to stop a browser reusing
+    # the previous session's Guacamole page, and it did not work: what decides which
+    # connection opens is the auth token the browser has *stored*, not a cached
+    # document. The console bootstrap page clears that token instead.
+    assert parsed.query == ""
+    assert parsed.fragment.startswith("/?data=")
     data = parse_qs(parsed.fragment.lstrip("/?"))["data"][0]
 
     payload = guac.decode_payload(data, KEY)
@@ -167,6 +173,93 @@ def test_link_requires_a_configured_gateway(settings):
     settings.guac.base_url = ""
     with pytest.raises(guac.GuacError, match="base_url"):
         guac.build_link(settings, make_session(), None)
+
+
+class _Request:
+    """The two things the address resolution reads off a Starlette Request."""
+
+    def __init__(self, headers: dict, scheme: str = "http", netloc: str = "localhost:8080") -> None:
+        self.headers = headers
+        self.url = type("U", (), {"scheme": scheme, "netloc": netloc})()
+
+
+def test_auto_console_follows_the_address_the_student_used(settings):
+    """`guac.base_url: auto` (the default) keeps the console on the student's address.
+
+    The failure it prevents: a checkout that works at `http://127.0.0.1:8080` hands a
+    student who reached it at `http://192.168.1.9:8080` an iframe pointed at *their*
+    localhost, which is their own laptop — a blank frame with nothing to explain it.
+    One setting, three addresses, which is the whole point of a setup-anywhere lab.
+    """
+    settings.guac.base_url = "auto"
+    request = _Request({"host": "192.168.1.9:8080"})
+    link = guac.build_link(settings, make_session(), None, request=request)
+    parsed = urlparse(link)
+    assert parsed.netloc == "192.168.1.9:8080"
+    assert parsed.path == "/guacamole/"
+
+
+def test_auto_console_prefers_the_forwarded_origin(settings):
+    """Behind the origin gateway the browser's scheme/host arrive as X-Forwarded-*.
+
+    The gateway is nginx on plain HTTP while the student's browser is on TLS, so the
+    request's own scheme is the wrong one to hand back — the forwarded values are the
+    student's, and only the first entry of a chained header is theirs.
+    """
+    settings.guac.base_url = "auto"
+    request = _Request(
+        {
+            "host": "portal:8080",
+            "x-forwarded-proto": "https, http",
+            "x-forwarded-host": "range.example, portal",
+        }
+    )
+    link = guac.build_link(settings, make_session(), None, request=request)
+    assert link.startswith("https://range.example/guacamole/#/?data=")
+
+
+def test_auto_console_needs_a_request_to_be_derived_from(settings):
+    """With no request (the CLI, a probe) there is no address to work out — say so."""
+    settings.guac.base_url = "auto"
+    with pytest.raises(guac.GuacError, match="no request is available"):
+        guac.build_link(settings, make_session(), None)
+
+
+# --------------------------------------------------------------------------- #
+# same_origin
+#
+# The browser scope of localStorage, and so the question that decides whether the
+# portal's own page may clear Guacamole's cached auth token. `guac.base_url: auto`
+# (the default) puts the console on the portal's origin, which is the case this
+# answers "yes" for.
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "first,second,expected",
+    [
+        ("http://host:8080/guacamole/", "http://host:8080/sessions/4", True),
+        ("http://host/guacamole/", "http://host/sessions/4", True),
+        ("https://host/guacamole/", "https://host:443/x", True),
+        # Scheme, host and port are all part of it: each of these is a different
+        # storage silo in the browser.
+        ("https://host/guacamole/", "http://host/guacamole/", False),
+        ("http://host:8443/guacamole/", "http://host:8080/guacamole/", False),
+        ("http://guac.test/guacamole/", "http://testserver/sessions/4", False),
+        # Not absolute URLs: nothing to compare, and the safe reading is "cannot
+        # reach that storage", so no clearing is attempted.
+        ("/guacamole/", "http://host/", False),
+        ("http://host/", "", False),
+    ],
+)
+def test_same_origin_is_the_browsers_storage_scope(first, second, expected):
+    assert guac.same_origin(first, second) is expected
+
+
+def test_the_gateway_probe_skips_an_auto_console(settings):
+    """`auto` is a browser address: there is no fixed URL here to POST a token to."""
+    settings.guac.base_url = "auto"
+    state, detail = guac.probe_gateway(settings, post=lambda *a: (_ for _ in ()).throw(AssertionError()))
+    assert state == "skipped"
+    assert "auto" in detail
 
 
 @pytest.mark.skipif(
@@ -206,13 +299,14 @@ def test_a_windows_guest_gets_rdp(settings):
     assert connection["parameters"]["port"] == str(settings.guest.rdp_port)
 
 
-def test_a_linux_container_gets_no_browser_console_by_default(settings):
+def test_a_linux_container_gets_no_console_when_the_transport_is_off(settings):
     # The reported failure: the console iframe was an RDP session pointed at a
     # Linux container, which has no RDP server, so every container scenario showed
-    # "the remote desktop server is currently unreachable". With no sshd in the
-    # image either (the default Incus-agent driver), the honest answer is no
-    # console at all — the portal says so instead of embedding one that cannot
-    # connect.
+    # "the remote desktop server is currently unreachable". With `guac.linux_ssh`
+    # off — the one posture where nothing has put an sshd in the image — the honest
+    # answer is no console at all, and the portal says so instead of embedding one
+    # that cannot connect. (It is on in the shipped config; this is the opt-out.)
+    settings.guac.linux_ssh = False
     scenario = _Scenario("linux")
     assert guac.protocol_for(settings, scenario) == ""
     with pytest.raises(guac.GuacError, match="no remote desktop"):
@@ -307,6 +401,138 @@ def test_the_gateway_probe_skips_when_there_is_no_console(settings):
     state, detail = guac.probe_gateway(settings, post=lambda *a: (_ for _ in ()).throw(AssertionError()))
     assert state == "skipped"
     assert "guac.base_url" in detail
+
+
+# --------------------------------------------------------------------------- #
+# the end-to-end console probe
+#
+# `probe_gateway` proves the key agrees. This proves the *connection* the browser
+# reads back exists, which is what a student's console actually needs: a gateway
+# can accept our payload as a token and still list no connection for it, and from
+# the student's side that is an empty console on a healthy-looking stack.
+# --------------------------------------------------------------------------- #
+def test_the_probe_accepts_the_stacks_own_self_signed_certificate(monkeypatch):
+    """`make up` serves the console over the local self-signed certificate.
+
+    A probe that verified it would report "unreachable" on the shipped default, which
+    is a false alarm on a healthy range — so it does not verify, and this pins that.
+    """
+    import ssl
+
+    seen = {}
+
+    class _Response:
+        status = 200
+
+        def read(self):
+            return b'{"authToken":"tok"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(request, timeout=None, context=None):
+        seen["context"] = context
+        return _Response()
+
+    monkeypatch.setattr(guac.urllib.request, "urlopen", fake_urlopen)
+    status, body = guac._post_form("https://range:8443/guacamole/api/tokens", {"data": "x"}, 5)
+    assert (status, body) == (200, '{"authToken":"tok"}')
+    assert seen["context"] is not None
+    assert seen["context"].verify_mode is ssl.CERT_NONE
+    assert seen["context"].check_hostname is False
+
+
+def test_the_console_probe_follows_the_link_the_browser_would(settings):
+    seen = {}
+
+    def post(url, fields, timeout):
+        seen["token_url"] = url
+        return 200, '{"authToken":"tok-1","dataSource":"json"}'
+
+    def get(url, timeout):
+        seen["connections_url"] = url
+        # The shape a real gateway answers with: connections keyed by *name*.
+        return 200, '{"OnTrak doctor":{"name":"OnTrak doctor","protocol":"rdp"}}'
+
+    state, detail = guac.probe_console(settings, post=post, get=get)
+    assert state == "ok", detail
+    # The token we were issued is the one the browser would carry next.
+    assert seen["token_url"].endswith("/guacamole/api/tokens")
+    assert "api/session/data/json/connections" in seen["connections_url"]
+    assert "token=tok-1" in seen["connections_url"]
+
+
+def test_the_console_probe_catches_a_token_with_no_connection(settings):
+    """The silence this exists for: an accepted payload that registers nothing."""
+    state, detail = guac.probe_console(
+        settings,
+        post=lambda url, fields, timeout: (200, '{"authToken":"tok-1"}'),
+        get=lambda url, timeout: (200, '{}'),
+    )
+    assert state == "refused"
+    assert "JSON_ENABLED" in detail
+    assert guac.PROBE_CONNECTION_NAME in detail
+
+
+def test_the_console_probe_reports_a_refused_key_like_the_gateway_probe(settings):
+    state, detail = guac.probe_console(
+        settings,
+        post=lambda url, fields, timeout: (403, '{"message":"Permission denied."}'),
+        get=lambda *a: (_ for _ in ()).throw(AssertionError("no token, so no listing")),
+    )
+    assert state == "refused"
+    assert "JSON_SECRET_KEY" in detail
+
+
+def test_the_console_probe_skips_an_auto_console(settings):
+    settings.guac.base_url = "auto"
+    state, detail = guac.probe_console(
+        settings,
+        post=lambda *a: (_ for _ in ()).throw(AssertionError()),
+        get=lambda *a: (_ for _ in ()).throw(AssertionError()),
+    )
+    assert state == "skipped"
+    assert "auto" in detail
+
+
+# --------------------------------------------------------------------------- #
+# the cross-origin guard
+#
+# The console bootstrap can only clear Guacamole's stored auth token when the
+# console shares the portal's origin. A pinned `guac.base_url` on another site
+# gives that up silently, so the portal says so on the page and `ontrak doctor`
+# says so at deploy time.
+# --------------------------------------------------------------------------- #
+def test_a_pinned_console_on_another_origin_is_called_out(settings):
+    settings.guac.base_url = "http://guac.test/guacamole/"
+    request = _Request({"host": "192.168.1.9:8080"})
+    warning = guac.console_origin_warning(settings, request)
+    assert "different site" in warning
+    assert "http://guac.test" in warning
+    assert "192.168.1.9:8080" in warning
+
+
+def test_an_auto_console_has_nothing_to_warn_about(settings):
+    settings.guac.base_url = "auto"
+    request = _Request({"host": "192.168.1.9:8080"})
+    assert guac.console_origin_warning(settings, request) == ""
+    assert guac.pinned_base_url_note(settings) == ""
+
+
+def test_a_pinned_console_on_the_portals_own_origin_is_quiet(settings):
+    """A range behind an edge reaches the portal on the console's name: no warning.
+
+    This is the deployment the pinned setting exists for, so a guard that fired on it
+    would be a permanent lie on a correctly configured range.
+    """
+    settings.guac.base_url = "https://range.example/guacamole/"
+    request = _Request({"host": "portal:8080", "x-forwarded-host": "range.example", "x-forwarded-proto": "https"})
+    assert guac.console_origin_warning(settings, request) == ""
+    # ...but an operator still gets told what pinning costs.
+    assert "pinned to" in guac.pinned_base_url_note(settings)
 
 
 def test_an_unknown_scenario_still_gets_rdp(settings):

@@ -6,33 +6,46 @@ planned. Anything in the last two sections is a statement of intent, not a featu
 ## Verified in this repository
 
 - Python control plane: catalog, scenarios, sessions, scoring, selection, scheduler,
-  generator, portal (student and admin), CLI — `pytest` (280 tests, 1 skipped) and `ruff` clean.
+  generator, portal (student and admin), CLI — `pytest` (494 tests) and `ruff` clean. Only two
+  tests skip themselves, and both switch on from the environment rather than from a device:
+  the Guacamole interop test (`ONTRAK_GUAC_INTEROP_URL`) and the real-range walk
+  (`ONTRAK_E2E`, below).
 - Scenario and catalog validation, including the grading contract (a check script that
   cannot report an objective fails validation rather than scoring zero forever).
 - Scenario generation from fault primitives: every generated scenario is validated before
   it is accepted, and CI generates the full matrix on every push.
-- Demo mode end to end: assign → provision → preview check → submit → destroy, against an
-  in-memory hypervisor, with results-only storage asserted by tests.
 - Guacamole's JSON-auth payload format, cross-checked against the `openssl` CLI (an
   independent implementation of HMAC-prepend → AES-128-CBC → PKCS#7 with a zero IV).
 - Guest PowerShell: every `scenarios/**/*.ps1` and `infra/**/*.ps1` is parsed by `pwsh` in CI;
   the Linux and identity scenarios are run end to end against the real `chmod`, `chown`,
   `useradd`, `groupadd` and `sudo` tooling in a mount namespace, setup and check scripts both.
+- The repository's own tooling, held to the same bar as the platform: `scripts/tests` runs in
+  CI and covers the secret scanner, the Cerulean provisioner's certificate and DNS planning,
+  and the grade sweep's reading half — the part that decides whether a run means `ok`,
+  `BROKEN` or `repaired`, where a false *ok* and a false *BROKEN* are both silent.
 - Per-workload (scenario × platform) template matrices: the same fault on Windows 11 and on
   Ubuntu are two templates, and the pool, status views and automatic assignment follow them.
 - The in-house ticket system: rubric-marked write-ups (length, required terms, classification)
   blended with the machine grade at submission, with the rubric kept satisfiable by tests.
-- The instructor admin panel: overview, users, scenarios, platforms, tickets, sessions,
-  schedule, results, audit — role-gated, and rendering when the hypervisor is unreachable.
-- The container stack: the portal image builds, every compose file validates, the portal and
-  the console gateway report healthy, a class runs inside the image, and the admin panel
-  serves every page with no Incus socket mounted.
+- The instructor admin panel: overview, accounts, sign-in, scenarios, platforms, tickets,
+  sessions, schedule, results, audit — role-gated, and rendering when the hypervisor is
+  unreachable.
+- The container stack: the portal image builds and validates a checkout with no hypervisor,
+  every compose file renders, and the gateway's contract holds in all three: one published
+  port, held by the gateway. The TLS overlay is rendered as one of them, which is what proves
+  the port swap to 8443 did not leave a plain listener beside it — the unencrypted door that
+  overlay exists to close.
+- The doors into a range, checked against the running container rather than the source:
+  a fresh range offers first-run setup at `/setup` and no identity provider, a range seeded
+  from `ONTRAK_PORTAL__ADMIN_USERNAME`/`ONTRAK_PORTAL__ADMIN_PASSWORD` opens with that
+  password and no setup page, and a range with SSO switched on offers Authentik, renders no
+  password form, and refuses a password on an account that has none.
 - The one-command install, both halves of it. `docker compose up` on a machine with no
   `.env` and no Incus writes the secrets, publishes the shared portal/console key, and brings
-  both services up healthy — the login page saying sign-in is not set up until the range is
-  pointed at Cerulean, since sign-in itself is Authentik's and there is no local account
-  (docs/operations.md), and a payload the portal signed accepted by the live gateway as a
-  connection the student can open. The host half runs `infra/bootstrap-host.sh` inside the host's own
+  both services up healthy — the login page offering first-run setup, which creates the first
+  instructor, because the default door is a local account and SSO is optional (docs/operations.md)
+  — and a payload the portal signed accepted by the live gateway as a connection the student
+  can open. The host half runs `infra/bootstrap-host.sh` inside the host's own
   namespaces, and that script was exercised end to end against a real Incus daemon: the
   upstream package install, the daemon, the storage pool, the lab bridge, the project and
   the limits profile — run twice, to prove a re-run changes nothing. What the dev host here
@@ -42,6 +55,13 @@ planned. Anything in the last two sections is a statement of intent, not a featu
   that silently half-works is the expensive kind of broken, and CI now runs ShellCheck at
   warning severity over every shell file — the first-run setup runs as root on someone
   else's machine before anything else does.
+- The nightly range walk, as a workflow: it is scheduled, only a self-hosted runner labelled
+  `incus` takes it, it switches the walk's test on with `ONTRAK_E2E`, and it fails instead of
+  reporting green when the walk skips itself — all four pinned by `tests/test_workflows.py`,
+  which runs in CI. A skipped pytest is a green pytest, so the one thing this job must never
+  do is skip its way to a passing nightly. What the walk proves is a statement about the
+  range it runs against, which is exactly why the job lives on the range and not on a
+  hosted runner: it is the layer no double here can stand in for.
 
 ## Built, but not proven on real hardware
 

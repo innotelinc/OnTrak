@@ -49,8 +49,14 @@ Scenarios share one fictional estate so that tickets reinforce each other:
 | --- | --- |
 | Intranet DNS domain | `ontrak.lab` (served by the lab bridge's own DNS) |
 | DNS server | the bridge gateway, e.g. `10.20.0.1` (supplied by DHCP) |
-| File server | `fileserver.ontrak.lab` — HTTP on 80, from `infra/lab-services.sh` |
-| Staff portal | `portal.ontrak.lab` — HTTP on 8080 |
+| File server | `fileserver.ontrak.lab` — HTTP on 80, `10.20.0.53`, from `infra/lab-services.sh` |
+| Staff portal | `portal.ontrak.lab` — HTTP on 8080, `10.20.0.54` |
+
+The two service names are **explicit DNS records** on the lab bridge
+(`incus network get ontrak0 raw.dnsmasq`), not Incus's automatic per-instance
+registration: the bridge runs with `dns.mode=none` so that one instance may hold
+two NICs on it, which `hw-driver-device` needs. Students still repair the resolver
+— the names are answered by the same dnsmasq that DHCP hands out.
 | Client subnet / DHCP range | `10.20.0.0/24`, DHCP `10.20.0.100-10.20.0.200` |
 | Client gateway | `10.20.0.1` |
 | Training account | local `student`, member of `Administrators` |

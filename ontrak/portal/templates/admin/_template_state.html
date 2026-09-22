@@ -1,0 +1,28 @@
+{# ---------------------------------------------------------------- template state ---
+   The freshness of one built template, in one place, because it is the panel's job to
+   answer a question the catalogue cannot: *is the machine a student is about to be
+   handed the current fault?* Four states, and the third is the one that needs saying
+   out loud —
+
+     ready       clean snapshot, built from the scenario's current recipe
+     stale       clean snapshot, built from an older recipe: a student gets yesterday's
+                 fault under today's ticket, and nothing else on any page looks wrong
+     no snapshot the instance exists but has no clean snapshot to clone
+     not built   no instance at all
+
+   `ready` is `snapshot and not stale` in `template_status`, so these two distinct
+   failures stay distinct here and an operator is told to rebuild rather than to wait.
+#}
+{% macro badge(row) -%}
+  {%- if row.ready %}<span class="badge ok">ready</span>
+  {%- elif row.stale %}<span class="badge warn">stale</span>
+  {%- elif row.exists %}<span class="badge warn">no snapshot</span>
+  {%- else %}<span class="badge">not built</span>{%- endif %}
+{%- endmacro %}
+
+{% macro hint(row) -%}
+  {%- if row.ready %}built from the current recipe
+  {%- elif row.stale %}rebuild needed — the snapshot predates the current recipe
+  {%- elif row.exists %}build it — the instance has no clean snapshot
+  {%- else %}build it — no template yet{%- endif %}
+{%- endmacro %}

@@ -224,7 +224,7 @@ cat <<EOF
 
   portal      http://${IP:-<this-host>}:${PORT}
   console     http://${IP:-<this-host>}:${PORT}/guacamole/
-  sign in     through Authentik (set ONTRAK_PORTAL__OIDC_* in $REPO_DIR/.env)
+  sign in     local accounts — open /setup to create the first one
   checkout    $REPO_DIR
   log         $LOG
   hypervisor  $([[ "${BOOTSTRAP_OK:-0}" == 1 ]] && echo ready || echo 'NOT ready — see the warnings above')

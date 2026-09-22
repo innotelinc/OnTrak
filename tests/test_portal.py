@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from ontrak.demo import synthesise_ticket
 from ontrak.models import Session, SessionState
 from ontrak.portal.app import LAB_NETWORK, _machine_address
 from ontrak.tickets import WRITEUP_ACTION
+from tests.helpers import synthesise_ticket
 
 from .conftest import csrf, login
 
@@ -102,7 +102,15 @@ def test_full_student_flow(app_client):
     page = client.get(f"/sessions/{session.id}")
     assert page.status_code == 200
     assert "Nothing resolves on the intranet" in page.text
-    assert "guac.test" in page.text  # the console iframe points at the gateway
+    # The frame points at our own bootstrap page rather than at the gateway, so the
+    # stored Guacamole token can be cleared before the gateway URL is opened. See the
+    # console-bootstrap tests below.
+    assert f'src="/sessions/{session.id}/console"' in page.text
+    # The frame can fill the screen, and the console can pop out into its own tab
+    # where it is the top-level document.
+    assert "allowfullscreen" in page.text
+    assert "Full screen" in page.text
+    assert f'href="/sessions/{session.id}/console"' in page.text
     assert "Check my work" in page.text
 
     status = client.get(f"/sessions/{session.id}/status").json()
@@ -135,6 +143,182 @@ def test_full_student_flow(app_client):
     assert results.status_code == 200
     assert "100%" in results.text
     assert report.resolved is True
+
+
+def test_a_resolved_practice_check_leaves_the_student_still_holding_the_session(app_client):
+    """The machine passes, and the student must still be able to write it up.
+
+    This is the flow a classroom walks: run the repair, press Check my work, see it
+    pass, and then hand the session in. The check used to move the session to
+    `passed`, which the page reads as *submitted* — it announced a destroyed machine,
+    dropped the console, the write-up and the hand-in button, and left the student with
+    no way to submit the work they had just proved.
+    """
+    client, app = app_client
+    login(client, "alice")
+    client.post("/sessions/start", data={"scenario_id": SCENARIO, "csrf": csrf(client)})
+    session = provision(app)
+
+    checked = client.post(f"/sessions/{session.id}/check", data={"csrf": csrf(client)})
+    assert "Resolved" in checked.text
+    assert app.state.store.get_session(session.id).state is SessionState.IN_USE
+
+    page = checked.text
+    assert "Check my work" in page
+    assert f'src="/sessions/{session.id}/console"' in page
+    assert "Complete &amp; End" in page or "Complete & End" in page
+    assert "machine has been destroyed" not in page
+
+
+def test_a_submitted_session_offers_nothing_it_cannot_do(app_client):
+    """The other half, on the page the student reaches after handing in.
+
+    The machine is gone by then, so a Check button can only answer with "session has no
+    VM" — an internal error where the student expected feedback — and the page has to
+    say where the grade is instead.
+    """
+    client, app = app_client
+    login(client, "alice")
+    client.post("/sessions/start", data={"scenario_id": SCENARIO, "csrf": csrf(client)})
+    session = provision(app)
+    form = app.state.manager.ticket_form_for(session)
+    client.post(
+        f"/sessions/{session.id}/complete",
+        data={**synthesise_ticket(form), WRITEUP_ACTION: "complete", "csrf": csrf(client)},
+    )
+    assert app.state.store.get_session(session.id).state is SessionState.PASSED
+
+    page = client.get(f"/sessions/{session.id}")
+    assert page.status_code == 200
+    assert "Check my work" not in page.text
+    assert "Reset machine" not in page.text
+    assert "machine has been destroyed" in page.text
+    assert f"/results?session={session.id}" in page.text
+
+
+# --------------------------------------------------------------------------- #
+# the console bootstrap
+#
+# Guacamole keeps its auth token in the browser's localStorage and re-authenticates
+# with it on every load, and the gateway *reuses the session that token belongs to* —
+# so a fresh, correctly signed payload is ignored and the console opens the machine
+# that browser used last. A student moving from session #3 to #4 sat watching the
+# destroyed #3 report "the remote desktop server has encountered an error", and no
+# cache-buster on the Guacamole URL could fix it, because the stored token decides.
+# These pin the fix: the frame loads our own page, which drops that token first.
+# --------------------------------------------------------------------------- #
+def _session_with_a_machine(client, app):
+    login(client, "alice")
+    client.post("/sessions/start", data={"scenario_id": SCENARIO, "csrf": csrf(client)})
+    return provision(app)
+
+
+def test_the_bootstrap_drops_the_stored_token_when_the_console_is_our_own_origin(app_client):
+    """`auto` (the default) puts the console on the portal's origin, so it can clear."""
+    client, app = app_client
+    session = _session_with_a_machine(client, app)
+    app.state.settings.guac.base_url = "auto"
+
+    page = client.get(f"/sessions/{session.id}/console")
+    assert page.status_code == 200
+    assert "GUAC_AUTH_TOKEN" in page.text  # the clear, before the gateway is opened
+    assert "/guacamole/#/?data=" in page.text
+
+
+def test_the_bootstrap_leaves_a_console_on_another_origin_alone(app_client):
+    """A console on a different origin has storage this page cannot reach.
+
+    Nothing is gained by pretending otherwise: the frame must still open, and the
+    honest reading of "cannot tell" is "do not clear someone else's key".
+    """
+    client, app = app_client
+    session = _session_with_a_machine(client, app)
+    app.state.settings.guac.base_url = "http://guac.test/guacamole/"
+
+    page = client.get(f"/sessions/{session.id}/console")
+    assert page.status_code == 200
+    assert "http://guac.test/guacamole/#/?data=" in page.text
+    assert "GUAC_AUTH_TOKEN" not in page.text
+
+
+def test_the_session_page_states_a_console_on_another_origin(app_client):
+    """A pinned console loses the stored-token clear, so the page says what that means.
+
+    The student cannot fix this and would otherwise just see the wrong machine, so the
+    one sentence belongs where they are looking, not only in a log.
+    """
+    client, app = app_client
+    session = _session_with_a_machine(client, app)
+    app.state.settings.guac.base_url = "http://guac.test/guacamole/"
+
+    page = client.get(f"/sessions/{session.id}")
+    assert "The console is on a different site from this portal" in page.text
+    assert "http://guac.test" in page.text
+
+
+def test_the_session_page_is_quiet_when_the_console_follows_its_own_address(app_client):
+    """`auto` is the default and the supported posture: no warning on a healthy range."""
+    client, app = app_client
+    session = _session_with_a_machine(client, app)
+    app.state.settings.guac.base_url = "auto"
+
+    page = client.get(f"/sessions/{session.id}")
+    assert "The console is on a different site from this portal" not in page.text
+
+
+def test_a_pending_session_says_the_console_is_coming_not_that_it_is_unset(app_client):
+    """Mid-allocation, the page must not blame the operator for a console that is not there yet.
+
+    The copy used to fall through to "no browser console is configured" — telling a
+    student their instructor had not set one up while the machine was simply still
+    booting. That is a sentence about a fault where there was only a wait.
+    """
+    client, app = app_client
+    login(client, "alice")
+    # A session the student owns, mid-allocation: no instance, no address yet.
+    session = app.state.store.create_session(
+        Session(id=None, student="alice", scenario_id=SCENARIO, state=SessionState.ALLOCATING)
+    )
+
+    page = client.get(f"/sessions/{session.id}")
+    assert page.status_code == 200
+    assert "Preparing your machine" in page.text
+    assert "The console appears as soon as your machine has an address." in page.text
+    assert "No browser console is configured" not in page.text
+    assert "the instructor needs to set guac.base_url" not in page.text
+
+
+def test_the_bootstrap_is_not_a_way_into_another_students_machine(app_client):
+    """It hands out a signed console URL, so it is guarded like the session page."""
+    client, app = app_client
+    other = app.state.manager.allocate("bob", SCENARIO)
+    login(client, "alice")
+
+    page = client.get(f"/sessions/{other.id}/console", follow_redirects=True)
+    assert "belongs to another student" in page.text
+    assert "/guacamole/#/?data=" not in page.text
+
+
+def test_the_bootstrap_says_so_when_there_is_no_console(app_client):
+    client, app = app_client
+    session = _session_with_a_machine(client, app)
+    app.state.settings.guac.base_url = ""
+
+    page = client.get(f"/sessions/{session.id}/console", follow_redirects=True)
+    assert page.status_code == 200
+    assert "no browser console for this machine" in page.text
+
+
+def test_instructor_watch_goes_through_the_same_bootstrap(app_client):
+    """A tab opened by an instructor has the same stale-token problem a frame does."""
+    client, app = app_client
+    session = _session_with_a_machine(client, app)
+    client.post("/logout", data={"csrf": csrf(client)})
+    login(client, "teacher")
+
+    response = client.get(f"/instructor/sessions/{session.id}/console", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == f"/sessions/{session.id}/console"
 
 
 def test_starting_a_scenario_this_range_cannot_run_is_refused(app_client):
@@ -295,7 +479,7 @@ def test_a_refused_console_key_is_explained_to_the_student(app_client, monkeypat
     assert "JSON_SECRET_KEY" in page.text
     assert "not a fault in your virtual machine" in page.text
     # The console is still offered: a stale verdict must not remove a working one.
-    assert "guac.test" in page.text
+    assert f'src="/sessions/{session.id}/console"' in page.text
 
 
 def test_a_healthy_console_key_shows_no_warning(app_client, monkeypatch):
@@ -312,7 +496,7 @@ def test_a_healthy_console_key_shows_no_warning(app_client, monkeypatch):
 
     page = client.get(f"/sessions/{session.id}")
     assert "The console cannot open right now" not in page.text
-    assert "guac.test" in page.text
+    assert f'src="/sessions/{session.id}/console"' in page.text
 
 
 def test_a_student_cannot_open_someone_elses_session(app_client):

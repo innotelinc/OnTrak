@@ -18,8 +18,8 @@
 #
 # It never blocks the control plane. A machine that cannot run VMs (Docker
 # Desktop, no /dev/kvm, a container without host access) is reported and
-# skipped, and the portal still comes up — in demo mode, or against a remote
-# Incus cluster.
+# skipped, and the portal still comes up — against a remote Incus cluster, or
+# serving its pages while reporting that no machines can be provisioned.
 #
 # Environment (from .env, through the compose file):
 #   ONTRAK_LAB_SETUP        auto (default) | force | off
@@ -133,7 +133,6 @@ prepare_host() {
     warn "  (Docker Desktop, or a Docker daemon on another machine). Pick one:"
     warn "  · on the lab host:  sudo infra/bootstrap-host.sh"
     warn "  · a remote cluster: set ONTRAK_INCUS__REMOTE   (docs/docker.md)"
-    warn "  · demo mode:        ONTRAK_DEMO__ENABLED=true  (no training machines)"
     return 0
   fi
 
@@ -199,6 +198,21 @@ host_visible_bootstrap() {
   printf '%s' "$stage/$BOOTSTRAP"
 }
 
+# Best-effort: the first non-loopback IPv4 this host owns, so the report names an
+# address a phone or laptop on the same network can actually open. Silence when
+# there is none to be found — a bare container often has no route — because a wrong
+# address is worse than no address.
+lan_address() {
+  local addr=""
+  if command -v ip >/dev/null 2>&1; then
+    addr="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") {print $(i + 1); exit}}')"
+  fi
+  if [ -z "$addr" ] && command -v hostname >/dev/null 2>&1; then
+    addr="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  [ -n "$addr" ] && printf '%s' "$addr"
+}
+
 report_state() {
   local summary
   summary="$(host_run /bin/sh -c 'incus version 2>/dev/null | head -1; incus storage list --format=csv -c n,d 2>/dev/null | head -3; incus network list --format=csv -c n 2>/dev/null | head -3' 2>/dev/null || true)"
@@ -214,23 +228,39 @@ log "OnTrak first-run lab setup"
 write_secrets
 prepare_host
 
+port="${ONTRAK_PORTAL__PORT:-8080}"
+bind="${ONTRAK_BIND_ADDR:-0.0.0.0}"
+base="${ONTRAK_GUAC__BASE_URL:-auto}"
+
 log "ready. Next:"
-printf '      portal      http://localhost:%s\n' "${ONTRAK_PORTAL__PORT:-8080}"
-# The console address a *student's browser* uses, which is not necessarily this
-# host: a deployment puts a TLS console host here, and printing the local port
-# regardless would tell the operator something that is not true.
-guac_url="${ONTRAK_GUAC__BASE_URL:-http://localhost:${ONTRAK_PORTAL__PORT:-8080}/guacamole/}"
-printf '      console     %s\n' "$guac_url"
-case "$guac_url" in
-  *localhost* | *127.0.0.1*) ;;
+printf '      portal      http://localhost:%s\n' "$port"
+if [ "$bind" = "0.0.0.0" ]; then
+  lan="$(lan_address || true)"
+  if [ -n "$lan" ]; then
+    printf '      on the LAN  http://%s:%s   (reachable from other devices)\n' "$lan" "$port"
+  fi
+fi
+
+# The console address a *student's browser* uses. With the default — `auto` — it is
+# whatever address the student reached the portal on, so printing a fixed URL would
+# only be true on one of them. Say what the setting means instead.
+case "$base" in
+  "")
+    printf '      console     off (ONTRAK_GUAC__BASE_URL is empty)\n'
+    ;;
+  auto | AUTO | Auto)
+    printf '      console     on; follows the address above (ONTRAK_GUAC__BASE_URL=auto)\n'
+    ;;
   *)
+    printf '      console     %s\n' "$base"
     printf '      %s\n' "            students' browsers resolve that host, not this machine —"
-    printf '      %s\n' "            set ONTRAK_GUAC__BASE_URL in .env for a lab on this host."
+    printf '      %s\n' "            that is what ONTRAK_GUAC__BASE_URL is for."
     ;;
 esac
+
 printf '      published   bind %s, port %s (the portal and the console share it)\n' \
-  "${ONTRAK_BIND_ADDR:-127.0.0.1}" "${ONTRAK_PORTAL__PORT:-8080}"
-printf '      sign in     through Authentik — set the four ONTRAK_PORTAL__OIDC_*\n'
-printf '      %s\n' "                  values in .env (docs/operations.md#sign-in)"
+  "$bind" "$port"
+printf '      sign in     local accounts by default — open /setup to make the first\n'
+printf '      %s\n' "                  one; SSO is optional (docs/operations.md#sign-in)"
 printf '      verify lab  docker compose exec portal python3 -m ontrak doctor\n'
 exit 0

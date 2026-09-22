@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "admin/_template_state.html" as ts %}
 
 {% block content %}
 <h1>Platforms</h1>
@@ -26,7 +27,12 @@
   <div class="tile">
     <h3>Templates</h3>
     <p class="big">{{ templates|selectattr("ready")|list|length }}/{{ templates|length }}</p>
-    <p class="muted small">built with a clean snapshot</p>
+    {% set stale = templates|selectattr("stale")|list|length %}
+    {% if stale %}
+      <p class="muted small"><span class="badge warn">stale</span> {{ stale }} built from an older recipe</p>
+    {% else %}
+      <p class="muted small">built with a clean snapshot, none stale</p>
+    {% endif %}
   </div>
   <div class="tile">
     <h3>Images on this host</h3>
@@ -77,6 +83,34 @@
   {% if pool_targets %}
     <p class="muted small">Configured targets: <code>{{ pool_targets }}</code></p>
   {% endif %}
+</div>
+
+{# The freshness of every built template, in the panel and per platform. This is the
+   read an operator used to run a probe beside the page to get: a template can hold a
+   perfectly clean snapshot of an *older* fault, and it is the pool — not the
+   catalogue — that would hand that machine to a student. #}
+<div class="card">
+  <h2>Templates on this host</h2>
+  <p class="muted small">
+    One template per scenario and platform. <strong>stale</strong> means a clean snapshot
+    built from an older recipe: the machine boots and grades, and it is running
+    yesterday's fault under today's ticket. Rebuild it from
+    <a href="/admin/scenarios">Scenarios</a>.
+  </p>
+  <table class="grid">
+    <tr><th>scenario</th><th>platform</th><th>template</th><th>freshness</th><th>why</th></tr>
+    {% for entry in templates %}
+      <tr>
+        <td><code>{{ entry.scenario_id }}</code></td>
+        <td>{{ entry.workload or "golden image" }}</td>
+        <td class="muted small"><code>{{ entry.name }}</code></td>
+        <td>{{ ts.badge(entry) }}</td>
+        <td class="muted small">{{ ts.hint(entry) }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">No templates yet — build one from Scenarios.</td></tr>
+    {% endfor %}
+  </table>
 </div>
 
 {% for group in groups %}

@@ -1,4 +1,4 @@
-"""Sign-in through Authentik, and the password path it replaces.
+"""Sign-in through Authentik, as the range's optional SSO door.
 
 The fake provider is only three functions deep into the flow — discovery, the
 code exchange and userinfo are exactly the boundaries where a real IdP is
@@ -89,12 +89,15 @@ def sign_in(client, *, origin: str = "", code: str = "code-1", state: str | None
 # --------------------------------------------------------------------------- #
 # posture
 # --------------------------------------------------------------------------- #
-def test_the_shipped_posture_is_sso_only_and_says_so_when_unusable(settings):
+def test_the_shipped_posture_is_sso_off_not_misconfigured(settings):
+    """SSO is optional and off by default; that is a working range, not a broken one."""
     assert oidc.public_config(settings.portal) == {
-        "enabled": False,
         "provider": "Authentik",
         "issuerHost": "",
-        "misconfigured": True,
+        "configured": False,
+        "enabled": False,
+        "active": False,
+        "misconfigured": False,
     }
 
 
@@ -107,13 +110,16 @@ def test_sso_needs_all_four_values(settings):
     assert oidc.enabled(settings.portal)
 
 
-def test_a_half_configured_range_is_misconfigured_too(settings):
-    """One missing value leaves SSO off — and off with no password form is no way in."""
-    configured(settings, oidc_redirect_uri="")
-    assert oidc.public_config(settings.portal) == {
-        "enabled": False,
+def test_switching_sso_on_with_a_value_missing_is_misconfigured(settings):
+    """Switched on and incomplete is the one state an operator has to fix."""
+    portal = configured(settings, oidc_redirect_uri="")
+    portal.sso_enabled = True
+    assert oidc.public_config(portal) == {
         "provider": "Authentik",
         "issuerHost": "auth.cerulean.innotel.us",
+        "configured": False,
+        "enabled": True,
+        "active": False,
         "misconfigured": True,
     }
 
@@ -244,7 +250,7 @@ def test_an_unconfigured_portal_cannot_start_the_flow(settings, monkeypatch):
 # --------------------------------------------------------------------------- #
 # the portal itself
 # --------------------------------------------------------------------------- #
-def test_the_login_page_offers_authentik_and_no_password_form(sso_env):
+def test_the_login_page_offers_authentik_and_no_password_form_on_a_pure_sso_range(sso_env):
     client, _ = sso_env
     page = client.get("/login")
     assert page.status_code == 200
@@ -252,17 +258,19 @@ def test_the_login_page_offers_authentik_and_no_password_form(sso_env):
     assert 'name="password"' not in page.text
 
 
-def test_there_is_no_password_route_at_all(sso_env):
-    """Not merely refused: the route does not exist, so there is nothing to guess."""
-    client, _ = sso_env
+def test_a_password_cannot_open_an_sso_account(sso_env):
+    """The local door exists, but an SSO row carries no credential to open it."""
+    client, app = sso_env
+    app.state.store.upsert_sso_user("sam.student@innotel.us", "Sam Student")
     client.get("/login")
     token = client.cookies.get("ontrak_csrf")
     posted = client.post(
         "/login",
-        data={"username": "alice", "password": "alice-pw", "csrf": token},
+        data={"username": "sam.student@innotel.us", "password": "anything", "csrf": token},
         follow_redirects=False,
     )
-    assert posted.status_code == 405
+    assert posted.status_code == 303
+    assert posted.headers["location"] == "/login"
     assert client.cookies.get("ontrak_session") is None
 
 
@@ -375,35 +383,10 @@ def test_a_range_with_no_sign_in_at_all_says_so(sso_env):
     assert client.get("/oidc/login", follow_redirects=False).headers["location"] == "/login"
 
 
-def test_the_demo_door_is_closed_on_a_real_range(sso_env):
-    """The pick-an-account door exists for `ontrak demo serve`; a real range 404s it."""
+def test_a_passwordless_route_cannot_sign_anyone_in(sso_env):
+    """There is no passwordless door: the only ways in are a local password or the IdP."""
     client, app = sso_env
     app.state.store.upsert_user("student1", "student", "Student One")
     refused = client.get("/demo/login/student1", follow_redirects=False)
     assert refused.status_code == 404
     assert client.cookies.get("ontrak_session") is None
-
-
-def test_the_demo_door_signs_in_an_account_with_no_password(settings, incus):
-    """Demo mode has no IdP, so the portal opens a passwordless door for itself."""
-    from fastapi.testclient import TestClient
-
-    from ontrak.portal.app import create_app
-
-    if TestClient is None:  # pragma: no cover - exercised only without fastapi
-        pytest.skip("fastapi/httpx not installed")
-    settings.demo.enabled = True
-    settings.demo.students = 2
-    app = create_app(settings, incus=incus, driver=None)
-    app.state.store.upsert_user("student1", "student")
-    app.state.store.upsert_user("student2", "student")
-    app.state.store.upsert_user("instructor", "instructor")
-    with TestClient(app) as client:
-        assert "Demo mode" in client.get("/login").text
-        entered = client.get("/demo/login/student1", follow_redirects=False)
-        assert entered.status_code == 303
-        assert entered.headers["location"] == "/dashboard"
-        assert client.get("/dashboard").status_code == 200
-        # An account that is not on the demo roster is refused.
-        stranger = client.get("/demo/login/nobody", follow_redirects=False)
-        assert stranger.headers["location"] == "/login"

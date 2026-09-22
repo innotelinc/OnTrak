@@ -33,8 +33,10 @@ $IDP seed-preset finance-close
 $IDP add-session aisha.khan --id aisha.khan-laptop --device HOME-LAPTOP-01
 
 # The fault: locked after repeated bad passwords. Recorded as a system action, because
-# that is what a directory does — the ticket is not "who locked it".
-$IDP --actor system lock aisha.khan --reason "lockout: 5 failed sign-ins"
+# that is what a directory does — the ticket is not "who locked it" — and with the
+# failed-attempt count still on record, because "locked" and "locked with five failed
+# sign-ins behind it" are different starting points and the ticket is the second.
+$IDP --actor system lock aisha.khan --reason "lockout: 5 failed sign-ins" --failed-attempts 5
 
 # Best effort: run the HTTP API so `curl localhost:8081/users` works for the student.
 # Grading uses the CLI and does not care whether this daemon is alive.
@@ -51,8 +53,11 @@ ontrak_step "memberships: $($IDP show-user aisha.khan | tr '\n' ' ')"
 ontrak_require "the directory has the seeded accounts" \
     test "$($IDP --json list-users | grep -c '"id"')" -ge 3
 ontrak_require "the account is locked" test "$($IDP status aisha.khan)" = "locked"
+# `sys.exit`, not `print`: `print` exits 0 whatever it prints, so the check below
+# would pass on an account with no failed attempts at all — and an assertion that
+# cannot fail cannot catch the fault quietly not being there.
 ontrak_require "the account has a failed-attempt count to clear" \
-    bash -c "python3 -c \"import json;d=json.load(open('$IDP_STATE'));u=[x for x in d['users'] if x['id']=='aisha.khan'][0];print(0 if u.get('failed_attempts',0)>=3 else 1)\""
+    bash -c "python3 -c \"import json,sys;d=json.load(open('$IDP_STATE'));u=[x for x in d['users'] if x['id']=='aisha.khan'][0];sys.exit(0 if u.get('failed_attempts',0)>=3 else 1)\""
 ontrak_require "a stale session is live for the account" $IDP has-active-session aisha.khan
 ontrak_require "the account still has its memberships" $IDP in-group aisha.khan finance
 

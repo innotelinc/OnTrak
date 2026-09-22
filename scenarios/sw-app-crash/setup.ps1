@@ -143,4 +143,19 @@ New-OnTrakFile -Path $lockPath -Content ((Get-Date -Format 's') + ' pid=4920 unc
 New-OnTrakFile -Path (Join-Path $dataDir 'selftest.log') -Content ((Get-Date -Format 's') + ' INFO CrmApp starting')
 Write-OnTrakStep 'injected: bad config.json syntax, wrong server values, stale lock file'
 
+# The exercise is diagnosing *which* of three things is wrong, so all three have to
+# be there. Each is asserted on its own signature.
+Require-OnTrak 'the simulated client is installed' { Test-OnTrakFileExists -Path $appPath }
+Require-OnTrak 'config.json is unparseable, as a corrupted config would be' {
+    $parsed = $null
+    try {
+        $parsed = Get-Content -Path $configPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    } catch { $parsed = $null }
+    $null -eq $parsed
+}
+Require-OnTrak 'the per-user override points somewhere it should not' {
+    (Get-ItemProperty -Path 'HKCU:\Software\OnTrak\CrmApp' -Name 'Server' -ErrorAction SilentlyContinue).Server -ne $approvedServer
+}
+Require-OnTrak 'the stale lock file is in place' { Test-OnTrakFileExists -Path $lockPath }
+
 Write-OnTrakSetupOk -Note ('app=' + $appPath)

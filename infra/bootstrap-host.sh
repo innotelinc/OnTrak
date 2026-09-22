@@ -4,9 +4,10 @@
 #
 #   sudo infra/bootstrap-host.sh
 #
-# Idempotent: safe to re-run. Creates the storage pool, the lab bridge (with
-# ontrak.lab as the DNS domain, so guests resolve fileserver.ontrak.lab),
-# the `ontrak` Incus project, and the resource-limits profile.
+# Idempotent: safe to re-run. Creates the storage pool, the lab bridge (domain
+# ontrak.lab; the intranet names themselves come from infra/lab-services.sh, which
+# publishes them as explicit records), the `ontrak` Incus project, and the
+# resource-limits profile.
 #
 # Environment overrides:
 #   ONTRAK_STORAGE_DRIVER   dir (default) | btrfs | zfs | lvm
@@ -168,11 +169,22 @@ else
     ipv4.dhcp.ranges="$DHCP_RANGE" \
     ipv6.address=none \
     dns.domain="$DOMAIN" \
-    dns.mode=managed
+    dns.mode=none
 fi
-# Keep the DNS domain applied even on re-runs: guests resolve <name>.ontrak.lab.
-incus network set "$NETWORK" dns.domain="$DOMAIN"
+# Keep the DHCP range applied even on re-runs.
 incus network set "$NETWORK" ipv4.dhcp.ranges="$DHCP_RANGE"
+# DNS registration off, deliberately. Incus refuses a second NIC on the same
+# managed network while it is also registering that network's names --
+#   "Instance DNS name X conflict between eth1 and eth0 because both are
+#    connected to same network"
+# -- and `hw-driver-device` needs exactly that: two adapters on the lab bridge,
+# both with link up, so a student can re-enable a disabled one. `dns.mode` is a
+# *network* option and not a device one (a device-level dns.mode is rejected as an
+# invalid option), so this is the only place it can be turned off. The lab loses
+# nothing: every component addresses guests by IP from their DHCP lease, and the
+# domain is kept for anyone reading the configuration by hand.
+incus network set "$NETWORK" dns.domain="$DOMAIN"
+incus network set "$NETWORK" dns.mode=none
 
 # ----------------------------------------------------------------- project ---
 if incus project list --format=csv -c n 2>/dev/null | grep -qx "$PROJECT"; then
@@ -231,7 +243,7 @@ Next steps:
   2. make golden                       # build the golden Windows image (long)
   3. infra/lab-services.sh             # create the intranet targets the scenarios test against
   4. make templates                    # build tpl-<scenario> + clean snapshots
-  5. make serve                        # sign-in is Authentik's — see docs/operations.md
+  5. make serve                        # local accounts by default — see docs/operations.md
 
 Guests on $NETWORK can reach the internet through NAT but cannot reach this host's
 management network. Keep the portal and Guacamole off this bridge (see docs/operations.md).

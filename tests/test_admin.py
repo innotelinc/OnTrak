@@ -17,9 +17,16 @@ import pytest
 
 from ontrak.guest import NullDriver
 from ontrak.incus import IncusError
+from ontrak.portal.admin import templates_by_scenario
+from ontrak.sessions import POOL_SNAPSHOT, TEMPLATE_RECIPE_KEY
 
 from .conftest import as_instructor, as_student, login
 from .helpers import FakeIncus
+
+# Exactly what `admin/_template_state.html` renders for the third state. Written out
+# rather than imported so the test fails if the macro's markup drifts, not just if the
+# word disappears.
+STALE_BADGE = 'class="badge warn">stale'
 
 ADMIN_PAGES = [
     "/admin",
@@ -112,6 +119,18 @@ def test_the_overview_counts_what_the_portal_stored(app_env):
     assert "net-dns-failure" in page
 
 
+def test_the_overview_shows_the_address_students_should_use(app_env):
+    """A LAN range has no DNS name to hand out, so the panel prints the address it was
+    opened on — the one an instructor can read out and that the console follows."""
+    client, _ = app_env
+    as_instructor(client)
+    page = client.get(
+        "/admin", headers={"host": "192.168.1.24:8443", "x-forwarded-proto": "https"}
+    ).text
+    assert "Students reach this range at" in page
+    assert "https://192.168.1.24:8443/" in page
+
+
 def test_the_state_snapshot_answers_in_json(app_env):
     client, _ = app_env
     as_instructor(client)
@@ -129,6 +148,67 @@ def test_results_export_as_csv(app_env):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/csv")
     assert "student,scenario_id,machine_score" in response.text
+
+
+# --------------------------------------------------------------------------- #
+# template freshness, shown where the operator already is
+# --------------------------------------------------------------------------- #
+def test_a_stale_template_is_visible_in_the_panel(app_env):
+    """A clean snapshot of an *older* fault is the one wrong machine the panel could not
+    show.
+
+    Everything else about it looks healthy: the template exists, the snapshot is clean,
+    the build reported ready. Only the recipe stamp says that the machine a student
+    would be handed is running yesterday's fault under today's ticket — and finding
+    that used to mean running a probe beside the page. This is the read that has to be
+    on the page itself.
+    """
+    client, app = app_env
+    as_instructor(client)
+    incus = app.state.manager.incus
+    name = app.state.settings.incus.template_name("net-dns-failure")
+
+    # The fixture built it, so it is genuinely fresh to begin with — otherwise the
+    # assertion below would pass for the wrong reason.
+    assert incus.has_snapshot(name, POOL_SNAPSHOT)
+    assert STALE_BADGE not in client.get("/admin/scenarios").text
+
+    # An older build of the same scenario: the snapshot is still there, still clean.
+    incus.set_config(name, TEMPLATE_RECIPE_KEY, "recipe-from-an-older-checkout")
+
+    for path in ("/admin/scenarios", "/admin/platforms"):
+        page = client.get(path).text
+        assert STALE_BADGE in page, path
+        assert "rebuild" in page.lower(), path
+    assert "older recipe" in client.get("/admin").text
+
+
+def test_the_panel_does_not_cry_stale_over_a_healthy_pool(app_env):
+    """The other half, and the one that decides whether the badge is believed."""
+    client, _ = app_env
+    as_instructor(client)
+    for path in ("/admin/scenarios", "/admin/platforms"):
+        page = client.get(path).text
+        assert STALE_BADGE not in page, path
+        assert 'class="badge ok">ready' in page, path
+
+
+def test_templates_are_grouped_by_scenario_not_by_platform():
+    """The scenarios table has a scenario id in hand, so a view keyed
+    ``scenario@workload`` silently showed every multi-platform scenario as unbuilt."""
+    grouped = templates_by_scenario(
+        [
+            {"scenario_id": "id-locked-account", "workload": "ubuntu-24.04"},
+            {"scenario_id": "id-locked-account", "workload": "debian-12"},
+            {"scenario_id": "net-dns-failure", "workload": ""},
+        ]
+    )
+    assert sorted(grouped) == ["id-locked-account", "net-dns-failure"]
+    assert [row["workload"] for row in grouped["id-locked-account"]] == [
+        "debian-12",
+        "ubuntu-24.04",
+    ]
+    assert len(grouped["net-dns-failure"]) == 1
 
 
 # --------------------------------------------------------------------------- #

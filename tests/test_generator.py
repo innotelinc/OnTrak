@@ -34,6 +34,12 @@ def test_every_primitive_has_a_reversible_setup_and_a_live_check():
         assert primitive.objectives, primitive.id
         assert primitive.check_ps.strip(), primitive.id
         assert primitive.setup_ps.strip(), primitive.id
+        # Injecting a fault and proving it landed are different promises. A primitive
+        # without the second one generates a scenario that snapshots a healthy machine
+        # and grades a student who changed nothing as having fixed it.
+        assert "Require-OnTrak" in primitive.assert_ps, (
+            f"{primitive.id} never asserts its fault is observable"
+        )
         assert any(o.critical for o in primitive.objectives), (
             f"{primitive.id} has no critical objective; a scenario should have at "
             "least one thing the student must not miss"
@@ -78,6 +84,9 @@ def test_generated_setup_confirms_success_and_check_writes_a_report(repository):
     setup = (result.directory / "setup.ps1").read_text()
     check = (result.directory / "check.ps1").read_text()
     assert "Write-OnTrakSetupOk" in setup
+    # Confirmed *and* asserted: the build must be able to tell "applied" from "applied
+    # and observable".
+    assert "Require-OnTrak" in setup
     assert "OnTrak.Common.ps1" in setup and "OnTrak.Common.ps1" in check
     assert "Write-OnTrakReport" in check
     assert "Add-OnTrakCheck" in check

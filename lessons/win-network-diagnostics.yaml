@@ -26,7 +26,7 @@ commands:
     what: Ping plus route plus interface selection in one object. Substitute for a bare ping.
   - command: Resolve-DnsName fileserver.ontrak.lab -DnsOnly
     what: Test the DNS resolver itself, bypassing the hosts file and NetBIOS.
-    example: Resolve-DnsName fileserver.ontrak.lab -Server 10.20.0.53
+    example: Resolve-DnsName fileserver.ontrak.lab -Server 10.20.0.1
   - command: Test-NetConnection fileserver.ontrak.lab -Port 80
     what: Prove the service is reachable by name, not just that the name resolves.
   - command: Get-DnsClientServerAddress -AddressFamily IPv4

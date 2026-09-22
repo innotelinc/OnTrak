@@ -58,13 +58,27 @@ def main(argv: list[str]) -> int:
     driver.upload_text(payload, GUEST_CONFIG, host=ip, instance=instance)
     driver.upload_file(SCRIPT, GUEST_SCRIPT, host=ip, instance=instance)
 
+    def run() -> tuple[str, int]:
+        result = driver.run_script_file(GUEST_SCRIPT, host=ip, instance=instance, timeout=900)
+        return (result.stdout or "") + (result.stderr or ""), result.exit_code
+
     print("running post-install.ps1 ...")
-    result = driver.run_script_file(GUEST_SCRIPT, host=ip, instance=instance, timeout=900)
-    output = (result.stdout or "") + (result.stderr or "")
+    output, exit_code = run()
     print(output.strip())
 
     if MARKER not in output:
-        print(f"\npost-install did not report {MARKER} (exit {result.exit_code})", file=sys.stderr)
+        # One retry. The script is idempotent, and anything inside it that
+        # recycles a Windows service carrying our transport (WinRM while
+        # Enable-PSRemoting runs, the Incus agent) drops the exec session part-way
+        # through and leaves output that looks exactly like a failed step. Seconds
+        # of retry against an hour-long image build is the right trade; a genuine
+        # failure fails twice and is reported below.
+        print("no marker in that run; retrying once (post-install is idempotent) ...")
+        output, exit_code = run()
+        print(output.strip())
+
+    if MARKER not in output:
+        print(f"\npost-install did not report {MARKER} (exit {exit_code})", file=sys.stderr)
         return 1
 
     # Belt and braces: post-install deletes the file itself, but a crash between

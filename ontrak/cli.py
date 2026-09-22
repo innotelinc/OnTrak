@@ -28,7 +28,6 @@ from pathlib import Path
 from . import __version__, guac, selection
 from .catalog import Catalog
 from .config import ConfigError, load_settings, require_secrets
-from .demo import run_demo
 from .generator import GenerationError, generate, generate_matrix, primitive_matrix, suggest_combinations
 from .guest import GuestError, build_driver
 from .incus import IncusClient, IncusError
@@ -288,12 +287,23 @@ def cmd_doctor(args) -> int:
 
     print()
     print("Console gateway")
-    # The one check that catches a silent console failure: the portal signs every
-    # console link, and a gateway with a different key refuses all of them while both
-    # sides look healthy. Everything else here passes in that state.
+    # Two checks, in the order a browser meets them. The first catches the silent
+    # failure: the portal signs every console link and a gateway with a different key
+    # refuses all of them while both sides look healthy. The second follows the signed
+    # link the rest of the way — token, then the connection list the browser reads —
+    # because a gateway can accept our key and still not register the connection, which
+    # looks identical from the student's side (an empty console).
     state, detail = guac.probe_gateway(settings)
     if state == "ok":
         _say(OK, detail)
+        state, detail = guac.probe_console(settings)
+        if state == "ok":
+            _say(OK, detail)
+        elif state == "refused":
+            _say(FAIL, detail)
+            failures += 1
+        else:
+            _say(WARN, detail)
     elif state == "refused":
         _say(FAIL, detail)
         failures += 1
@@ -301,6 +311,12 @@ def cmd_doctor(args) -> int:
         _say(WARN, detail)
     else:
         _say(INFO, detail)
+    # A console pinned to an absolute URL is a deliberate choice behind a TLS edge and
+    # a trap on a LAN range reached by IP. The portal cannot detect this per request
+    # (there is no request here), so the note is what stands in for the guard.
+    note = guac.pinned_base_url_note(settings)
+    if note:
+        _say(WARN, note)
 
     print()
     print("Capacity")
@@ -418,8 +434,14 @@ def cmd_pool(args) -> int:
         _table(["scenario", "target", "ready", "claimed", "total", "template", "deficit"], rows)
         return 0
     if args.action == "prewarm":
-        created = ctx.manager.prewarm(args.scenario, args.count)
-        _say(OK, f"created {created} pre-booted VM(s) for {args.scenario}")
+        created = ctx.manager.prewarm(args.scenario, args.count, args.workload)
+        label = f"{args.scenario}@{args.workload}" if args.workload else args.scenario
+        _say(OK, f"created {created} pre-booted VM(s) for {label}")
+        # "created 0" is not an answer on its own: it is what a missing template,
+        # an unreachable hypervisor and a full pool all look like from here.
+        if not created and ctx.manager.last_prewarm_error:
+            _say(FAIL, ctx.manager.last_prewarm_error)
+            return 1
         return 0
     if args.action == "refill":
         created = ctx.manager.refill_pool()
@@ -512,6 +534,33 @@ def cmd_session(args) -> int:
             f"session {session.id} ready on {session.instance} ({session.host_ip}) "
             f"for {session.time_limit_minutes} minutes",
         )
+        return 0
+
+    if action == "prune":
+        # Not a per-session action, so it is handled before the lookup: it tidies the
+        # history rather than touching a machine. `reap` is the other half — see
+        # `SessionManager.prune_sessions` for why an expired *live* row is not pruned.
+        result = ctx.manager.prune_sessions(days=args.days, dry_run=args.dry_run)
+        if not result["sessions"]:
+            _say(OK, f"nothing to prune: no finished session older than {result['days']} day(s)")
+        else:
+            listed = ", ".join(str(s) for s in result["sessions"])
+            if result["dry_run"]:
+                _say(OK, f"would delete {len(result['sessions'])} session(s): {listed}")
+            else:
+                _say(OK, f"deleted {result['deleted']} session(s): {listed}")
+        if result["kept"]:
+            _say(
+                INFO,
+                f"kept {len(result['kept'])} with a submitted result or ticket: "
+                f"{', '.join(str(s) for s in result['kept'])}",
+            )
+        if result["live"]:
+            _say(
+                INFO,
+                f"left {len(result['live'])} live session(s) alone (`ontrak reap` ends "
+                f"the expired ones): {', '.join(str(s) for s in result['live'])}",
+            )
         return 0
 
     session = _session_or_die(ctx, args)
@@ -949,27 +998,6 @@ def cmd_generate(args) -> int:
 
 
 # ---------------------------------------------------------------------------
-# demo
-# ---------------------------------------------------------------------------
-def cmd_demo(args) -> int:
-    if args.action == "serve":
-        os.environ["ONTRAK_DEMO__ENABLED"] = "true"
-        # A demo has no IdP to sign in against and seeds its own roster
-        # (demo.seed_accounts). The portal opens a demo-only door for exactly this
-        # case — pick a demo account, no password (see ontrak/portal/app.py) — so
-        # demo mode still works without opening any kind of credential path.
-        args.log_level = getattr(args, "log_level", "info")
-        return cmd_serve(args)
-    run_demo(
-        scenario_ids=args.scenarios or None,
-        students=args.students,
-        success_rate=args.success_rate,
-        state_dir=args.state_dir,
-    )
-    return 0
-
-
-# ---------------------------------------------------------------------------
 # lessons
 # ---------------------------------------------------------------------------
 def cmd_lesson(args) -> int:
@@ -1218,6 +1246,11 @@ def build_parser() -> argparse.ArgumentParser:
     pool = sub.add_parser("pool", help="manage the warm pool")
     pool.add_argument("action", choices=["status", "prewarm", "refill", "drain"])
     pool.add_argument("--scenario")
+    pool.add_argument(
+        "--workload",
+        help="platform to prewarm, e.g. ubuntu-24.04; omit for every platform "
+        "the scenario declares (and for its default image on a single-platform one)",
+    )
     pool.add_argument("--count", type=int, default=10)
     pool.set_defaults(func=cmd_pool)
 
@@ -1235,6 +1268,7 @@ def build_parser() -> argparse.ArgumentParser:
             "complete",
             "end",
             "console",
+            "prune",
         ],
     )
     session.add_argument("--student")
@@ -1249,6 +1283,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     session.add_argument("--workload", help="catalog entry to build the guest from, e.g. win11-24h2")
     session.add_argument("--limit", type=int, default=50)
+    session.add_argument(
+        "--days",
+        type=int,
+        default=7,
+        help="prune: only finished sessions older than this many days (default 7)",
+    )
+    session.add_argument(
+        "--dry-run", action="store_true", help="prune: report what would go, delete nothing"
+    )
     session.set_defaults(func=cmd_session)
 
     reap = sub.add_parser("reap", help="expire sessions and refill pools")
@@ -1295,15 +1338,6 @@ def build_parser() -> argparse.ArgumentParser:
     generate_cmd.add_argument("--prefix", default="gen")
     generate_cmd.add_argument("--force", action="store_true")
     generate_cmd.set_defaults(func=cmd_generate)
-
-    demo = sub.add_parser("demo", help="run the whole student flow in memory (no Incus, no Windows)")
-    demo.add_argument("action", nargs="?", default="run", choices=["run", "serve"])
-    demo.add_argument("--students", type=int, default=6)
-    demo.add_argument("--success-rate", type=float, default=1.0)
-    demo.add_argument("--scenario", dest="scenarios", action="append")
-    demo.add_argument("--state-dir", default=None)
-    demo.add_argument("--log-level", default="info")
-    demo.set_defaults(func=cmd_demo)
 
     serve = sub.add_parser("serve", help="run the student portal")
     serve.add_argument("--log-level", default="info")

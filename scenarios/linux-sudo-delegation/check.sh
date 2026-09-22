@@ -42,10 +42,26 @@ ontrak_check "delegation-present" "$delegation_ok" "$delegation_detail"
 # Objective: no-blanket-rule
 # A blanket NOPASSWD:ALL is the shortcut this scenario exists to catch. Both the
 # classic (ALL) and command form are matched.
-blanket="$(grep -rEn 'NOPASSWD:[[:space:]]*ALL|NOPASSWD:[[:space:]]+/[^,]*\*|\(ALL\)[[:space:]]+ALL' \
-    /etc/sudoers "$SUDOERS_DIR" 2>/dev/null | grep -v '^Binary' | head -n 5)"
+#
+# Against the *difference* from the recorded baseline, never against the whole
+# policy: the images ship this shape themselves (Ubuntu's `%admin ALL=(ALL) ALL`,
+# and the Incus image's `ubuntu ALL=(ALL) NOPASSWD:ALL` in /etc/sudoers.d/90-incus),
+# so scanning everything reports a rule the student never wrote. A missing baseline
+# is judged as "no exemptions": the objective is about the rules the student added,
+# and a policy we cannot compare is not one to give the all-clear.
+BLANKET_PATTERN='NOPASSWD:[[:space:]]*ALL|NOPASSWD:[[:space:]]+/[^,]*\*|\(ALL\)[[:space:]]+ALL'
+BLANKET_BASELINE="$(cd "$(dirname "$0")" && pwd)/blanket-baseline.txt"
+present="$(grep -rEn "$BLANKET_PATTERN" /etc/sudoers "$SUDOERS_DIR" 2>/dev/null |
+    grep -v '^Binary' | LC_ALL=C sort)"
+if [ -r "$BLANKET_BASELINE" ]; then
+    blanket="$(printf '%s\n' "$present" | LC_ALL=C comm -23 - "$BLANKET_BASELINE" | head -n 5)"
+    baseline_note=""
+else
+    blanket="$(printf '%s\n' "$present" | head -n 5)"
+    baseline_note=" (no baseline was recorded, so every rule counts)"
+fi
 ontrak_check "no-blanket-rule" "$([ -z "$blanket" ] && echo true || echo false)" \
-    "$([ -z "$blanket" ] && echo 'no blanket ALL rule present' || printf 'blanket rule: %s' "$(printf '%s' "$blanket" | head -n 1)")"
+    "$([ -z "$blanket" ] && echo 'no blanket ALL rule added' || printf 'blanket rule: %s%s' "$(printf '%s' "$blanket" | head -n 1)" "$baseline_note")"
 
 # Objective: dropin-hygiene
 # Every real drop-in must be 0440 and free of a dot in its name, or sudo ignores it —

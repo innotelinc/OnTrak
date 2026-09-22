@@ -55,4 +55,12 @@ Set-Content -Path (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts') -Valu
 ) -Force
 Write-OnTrakStep 'added a lookalike hosts entry for portal.ontrak.lab (user-supplied "fix")'
 
+# The exercise is triage and containment, so the seed has to be present: a ticket
+# about a message nobody can find is unanswerable.
+Require-OnTrak 'the phishing message is on disk' { Test-OnTrakFileExists -Path $emlPath }
+Require-OnTrak 'the attachment placeholder is in Downloads' { Test-OnTrakFileExists -Path $attachment }
+Require-OnTrak 'the lookalike hosts override is in place' {
+    @(Get-OnTrakHostsEntry -Hostname 'portal.ontrak.lab').Count -gt 0
+}
+
 Write-OnTrakSetupOk -Note 'phishing-triage seeded; no payload executed'

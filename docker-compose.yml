@@ -38,9 +38,13 @@
 # through /var/lib/incus, which is why the stack runs from this directory, next
 # to the checkout.
 #
-# No hypervisor on this host (Docker Desktop, or a remote cluster)? Use
-# `docker compose -f docker-compose.yml -f docker-compose.remote.yml up -d`, or
-# demo mode with ONTRAK_DEMO__ENABLED=true. See docs/docker.md.
+# No hypervisor on this host (Docker Desktop, a laptop, a phone)? The supported
+# answer is one command:
+#
+#   make up-remote docker-compose.remote.yml — control plane here, machines on a
+#                  remote Incus cluster.
+#
+# See docs/docker.md.
 # ============================================================================
 name: ontrak
 
@@ -66,12 +70,12 @@ services:
     environment:
       # auto  = set up the host when it is not ready yet (the default)
       # force = re-run the host bootstrap even if Incus answers
-      # off   = secrets only (a remote cluster, or demo mode)
+      # off   = secrets only (a remote cluster)
       ONTRAK_LAB_SETUP: ${ONTRAK_LAB_SETUP:-auto}
       ONTRAK_LAB_BOOTSTRAP: ${ONTRAK_LAB_BOOTSTRAP:-infra/bootstrap-host.sh}
       # Storage choices for the host's pool, passed straight to the bootstrap.
-      # `dir` works anywhere and copies instead of cloning: fine for a demo,
-      # slow for a class. See docs/operations.md.
+      # `dir` works anywhere and copies instead of cloning: fine for a small
+      # range, slow for a class. See docs/operations.md.
       ONTRAK_STORAGE_DRIVER: ${ONTRAK_STORAGE_DRIVER:-dir}
       ONTRAK_STORAGE_SOURCE: ${ONTRAK_STORAGE_SOURCE:-}
       ONTRAK_STORAGE_POOL: ${ONTRAK_STORAGE_POOL:-default}
@@ -82,11 +86,10 @@ services:
       ONTRAK_INCUS__REMOTE: ${ONTRAK_INCUS__REMOTE:-local}
       ONTRAK_PORTAL__PORT: ${ONTRAK_PORTAL__PORT:-8080}
       # Read only to report, at the end of a first run, the console address a
-      # student's browser will actually be sent to — the portal's own value is
-      # below, and a report that printed the local port instead would be wrong
-      # on any deployment that puts a TLS console host here.
-      ONTRAK_GUAC__BASE_URL: ${ONTRAK_GUAC__BASE_URL:-http://localhost:8080/guacamole/}
-      ONTRAK_BIND_ADDR: ${ONTRAK_BIND_ADDR:-127.0.0.1}
+      # student's browser will actually be sent to. `auto` (the default) means the
+      # portal works it out per request, so there is no fixed URL to print.
+      ONTRAK_GUAC__BASE_URL: ${ONTRAK_GUAC__BASE_URL:-auto}
+      ONTRAK_BIND_ADDR: ${ONTRAK_BIND_ADDR:-0.0.0.0}
       # The checkout, as this container sees it. This is where `.env` is written
       # and where infra/bootstrap-host.sh is read from.
       ONTRAK_PROJECT_DIR: /project
@@ -137,9 +140,17 @@ services:
       # lab-setup wrote, which is what lets `docker compose up` work before .env
       # exists (compose cannot interpolate a secret that is not there yet).
       ONTRAK_PORTAL__SECRET: ${ONTRAK_PORTAL__SECRET:-}
-      # ── Cerulean / Authentik sign-in (docs/operations.md "Sign-in") ──
-      # The portal is SSO-only and keeps no password: with none of these set it
-      # comes up with a login page that says so, and there is no local fallback.
+      # ── sign-in (docs/operations.md "Sign-in") ──
+      # SSO is optional and off by default, so a fresh stack signs in with local
+      # accounts and needs no identity provider to be usable. SSO_ENABLED only
+      # seeds the admin panel's switch on a range that has never been switched on
+      # or off; ADMIN_PASSWORD seeds the first instructor on a headless box (and
+      # is what an unattended deployment sets instead of using the /setup page).
+      ONTRAK_PORTAL__SSO_ENABLED: ${ONTRAK_PORTAL__SSO_ENABLED:-false}
+      ONTRAK_PORTAL__ADMIN_USERNAME: ${ONTRAK_PORTAL__ADMIN_USERNAME:-admin}
+      ONTRAK_PORTAL__ADMIN_PASSWORD: ${ONTRAK_PORTAL__ADMIN_PASSWORD:-}
+      # ── Cerulean / Authentik (only needed once SSO is switched on) ──
+      # All four must be set for the SSO button to be switchable on.
       # `ONTRAK_PORTAL__OIDC_REDIRECT_URI` lists every origin the portal answers
       # on; `ONTRAK_PORTAL__OIDC_CLIENT_SECRET` is a credential — give it to the
       # container like the rest, or as a `vault://` reference the deployment
@@ -153,17 +164,19 @@ services:
       # Must equal JSON_SECRET_KEY below: the portal signs console links with it
       # and Guacamole verifies them. One value, two services.
       ONTRAK_GUAC__SECRET_KEY: ${ONTRAK_GUAC__SECRET_KEY:-}
-      ONTRAK_GUAC__BASE_URL: ${ONTRAK_GUAC__BASE_URL:-http://localhost:8080/guacamole/}
+      ONTRAK_GUAC__BASE_URL: ${ONTRAK_GUAC__BASE_URL:-auto}
       ONTRAK_GUAC__RECORDING: ${ONTRAK_GUAC__RECORDING:-false}
       ONTRAK_GUAC__RECORDING_PATH: /recordings
       # The student's console transport. Fixing this list is what makes the setting
       # in .env actually reach the portal: the console is built from settings inside
       # this container, so a value compose does not forward is a value the range
       # ignores — and the symptom is silent, because a Linux scenario with
-      # linux_ssh off renders a page explaining why rather than an error. Turn it on
-      # and `ontrak template build` puts sshd in the Linux templates (docs/operations.md,
-      # "The student's console: RDP for Windows, SSH for Linux").
-      ONTRAK_GUAC__LINUX_SSH: ${ONTRAK_GUAC__LINUX_SSH:-false}
+      # linux_ssh off renders a page explaining why rather than an error. It is on
+      # by default: `ontrak template build` puts sshd in the Linux templates and the
+      # console becomes a shell, and the build refuses an empty guest password
+      # (docs/operations.md, "The student's console: RDP for Windows, SSH for
+      # Linux"). Set it false for guests that must not open port 22.
+      ONTRAK_GUAC__LINUX_SSH: ${ONTRAK_GUAC__LINUX_SSH:-true}
       ONTRAK_GUEST__RDP_PORT: ${ONTRAK_GUEST__RDP_PORT:-3389}
       ONTRAK_SECRETS_FILE: /run/ontrak/secrets.env
 
@@ -191,6 +204,13 @@ services:
       # ── sessions, results and pools ──
       ONTRAK_SESSION__TTL_MINUTES: ${ONTRAK_SESSION__TTL_MINUTES:-90}
       ONTRAK_SESSION__IDLE_RECYCLE_MINUTES: ${ONTRAK_SESSION__IDLE_RECYCLE_MINUTES:-20}
+      # The portal runs the session half of the reaper itself, because this stack has
+      # no cron for `ontrak reap` to live in: expiry, idle recycling, and a daily prune
+      # of finished history (`history_days`, 0 = keep forever). Pool refill is
+      # deliberately not part of it — see ontrak/maintenance.py.
+      ONTRAK_SESSION__MAINTENANCE_ENABLED: ${ONTRAK_SESSION__MAINTENANCE_ENABLED:-true}
+      ONTRAK_SESSION__MAINTENANCE_INTERVAL_SECONDS: ${ONTRAK_SESSION__MAINTENANCE_INTERVAL_SECONDS:-60}
+      ONTRAK_SESSION__HISTORY_DAYS: ${ONTRAK_SESSION__HISTORY_DAYS:-30}
       ONTRAK_SESSION__MAX_PER_STUDENT: ${ONTRAK_SESSION__MAX_PER_STUDENT:-1}
       ONTRAK_SESSION__PERSIST_PROGRESS: ${ONTRAK_SESSION__PERSIST_PROGRESS:-false}
       ONTRAK_POOL__ENABLED: ${ONTRAK_POOL__ENABLED:-true}
@@ -198,8 +218,6 @@ services:
       ONTRAK_POOL__MAX_TOTAL: ${ONTRAK_POOL__MAX_TOTAL:-60}
       ONTRAK_SELECTION__STRATEGY: ${ONTRAK_SELECTION__STRATEGY:-balanced}
 
-      # ── demo mode (no hypervisor, no Windows, no secrets) ──
-      ONTRAK_DEMO__ENABLED: ${ONTRAK_DEMO__ENABLED:-false}
     volumes:
       # Durable portal state: accounts, sessions, submitted results, tickets,
       # audit log. This is the only thing in the stack that matters after a
@@ -215,8 +233,8 @@ services:
       # `incus` CLI, and `incus.remote: local` is the socket inside it. This is
       # why the container is effectively a hypervisor admin. Mounted as the
       # directory rather than the socket file so a host without Incus yet — or a
-      # remote/demo setup — gets an empty directory instead of Docker creating a
-      # stray file where the daemon will later want its own socket.
+      # remote setup — gets an empty directory instead of Docker creating a stray
+      # file where the daemon will later want its own socket.
       - /var/lib/incus:/var/lib/incus
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
@@ -292,10 +310,12 @@ services:
   # share this one address: `/` to the portal, `/guacamole/` (websocket included)
   # to the console. It holds the stack's only published port.
   #
-  # This is where the stack's posture meets the network: loopback by default, so
-  # a TLS proxy goes in front of it and nothing is served in the clear off-host.
-  # Set ONTRAK_BIND_ADDR=0.0.0.0 in .env for a lab where students reach this host
-  # directly — and then make ONTRAK_GUAC__BASE_URL the URL their browsers use.
+  # This is where the stack's posture meets the network, and the posture is
+  # **0.0.0.0**: OnTrak is a setup-anywhere lab — the point of it is that the phone,
+  # tablet or laptop next to the host can open it. Narrow it to 127.0.0.1 in .env to
+  # keep the range on one machine, or to a single address to pin it to one interface;
+  # the console follows the address the browser used, so neither choice needs a
+  # second setting.
   gateway:
     image: ${ONTRAK_GATEWAY_IMAGE:-nginx:1.27-alpine}
     container_name: ontrak-gateway
@@ -306,9 +326,14 @@ services:
       guacamole:
         condition: service_started
     ports:
-      - "${ONTRAK_BIND_ADDR:-127.0.0.1}:${ONTRAK_PORTAL__PORT:-8080}:8080"
+      - "${ONTRAK_BIND_ADDR:-0.0.0.0}:${ONTRAK_PORTAL__PORT:-8080}:8080"
     volumes:
       - ./deploy/gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # What the gateway proxies, shared with the TLS listener
+      # (docker-compose.tls.yml) so the two can never drift apart. Named `.inc`
+      # on purpose: nginx's own `include conf.d/*.conf` would otherwise load it as
+      # a config file, where its `location` directives are not legal.
+      - ./deploy/gateway/ontrak-upstreams.inc:/etc/nginx/conf.d/ontrak-upstreams.inc:ro
     networks: [ontrak]
 
 volumes:

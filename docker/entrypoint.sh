@@ -3,7 +3,6 @@
 # OnTrak container entrypoint.
 #
 #   docker run --rm -p 8080:8080 --env-file .env ontrak              # portal
-#   docker run --rm ontrak demo run --students 3                     # a class, in memory
 #   docker run --rm ontrak doctor                                    # preflight
 #   docker run --rm -it ontrak bash                                  # a shell
 #
@@ -11,8 +10,9 @@
 # `docker run ontrak catalog list` works exactly like `ontrak catalog list` on a
 # host. The only work this script does on the way in is the work a boot needs:
 # make the state and media directories exist (they may be fresh volumes). There
-# is no account seeding: sign-in is Authentik's, so accounts are created by a
-# sign-in, not by this container.
+# is no account seeding here: an SSO account is created by a sign-in, and a local
+# one by the portal itself — the /setup page on first run, the admin panel after
+# that, or ONTRAK_PORTAL__ADMIN_PASSWORD at startup for an unattended box.
 # ============================================================================
 set -euo pipefail
 
@@ -49,7 +49,7 @@ if [ "$#" -gt 0 ]; then
 fi
 
 case "$command" in
-  serve|demo-serve)
+  serve)
     # An empty session key means nobody can sign in, and compose happily starts
     # a container with it; say so here rather than let the portal 500 on login.
     if [ -z "${ONTRAK_PORTAL__SECRET:-}" ]; then
@@ -64,13 +64,9 @@ case "$command" in
       log "no Incus socket on the host: training machines are unavailable"
       log "  install it on the host:  sudo infra/bootstrap-host.sh"
       log "  or point at a cluster:   ONTRAK_INCUS__REMOTE=<name> (docs/docker.md)"
-      log "  or run without one:      ONTRAK_DEMO__ENABLED=true"
     fi
     log "starting the portal on ${ONTRAK_PORTAL__HOST:-0.0.0.0}:${ONTRAK_PORTAL__PORT:-8080}"
     exec python3 -m ontrak serve
-    ;;
-  demo)
-    exec python3 -m ontrak demo "$@"
     ;;
   bash|sh)
     exec "$command" "$@"

@@ -44,4 +44,15 @@ Start-Sleep -Seconds 2
 $status = (Get-NetAdapter -Name $target.Name -ErrorAction SilentlyContinue).Status
 Write-OnTrakStep ('adapter status after fault: ' + $status + ' (expected Disabled)')
 
+# The fault is what Device Manager shows, so assert on the device state rather than
+# on Disable-PnpDevice having returned without throwing.
+Require-OnTrak ('adapter ' + $target.Name + ' is disabled') {
+    (Get-NetAdapter -Name $target.Name -ErrorAction SilentlyContinue).Status -eq 'Disabled'
+}
+# Grading names the device from this manifest, so a build that skipped it would hand
+# the student generic feedback about "an adapter".
+Require-OnTrak 'the manifest grading reads was written' {
+    Test-OnTrakFileExists -Path (Join-Path $faultDir 'hw-manifest.txt')
+}
+
 Write-OnTrakSetupOk -Note ('disabled=' + $target.Name)

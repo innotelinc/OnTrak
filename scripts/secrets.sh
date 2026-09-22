@@ -99,4 +99,4 @@ report_stale_keys
 
 echo
 echo "==> done. ${ENV_FILE} is gitignored; never commit it."
-echo "    next: make up      (portal on http://localhost:8080, console on :8080/guacamole/)"
+echo "    next: make up      (portal on https://localhost:8443, console on :8443/guacamole/)"
