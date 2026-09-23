@@ -9,6 +9,13 @@
    for the student to look over (see PRUNABLE_STATES). `address.host` is what tells the
    two apart: it is the address the guest actually answered on. #}
 {% set machine_up = address.host %}
+{% set has_machine = session.host_ip %}
+{# Whether a student is looking at a machine this page has to keep alive. A submitted
+   session usually has no machine left, but `destroy_on_complete: false` keeps one for a
+   debrief — and the reaper takes a *kept* machine back for idleness exactly as it takes a
+   live one, which is not what "reclaimed when the clock runs out" promises. The beat is
+   what makes that sentence true. #}
+{% set showing_machine = has_machine and (state in live_states or state in ["passed", "failed"]) %}
 {# What is booting, said in the platform's terms: the site's golden image is a Windows
    build, so "waiting for Windows" was the copy for a Linux container too, and read as
    the wrong machine being started. #}
@@ -371,6 +378,17 @@
         </label>
         <button type="submit" class="secondary">Set</button>
       </form>
+      {% if showing_machine %}
+      {# The reaper's own rule, stated where the student can act on it. The console is a
+         frame on this page, so leaving this page open (the pop-out console leaves it open
+         behind it) is what tells the range somebody is still working: an unattended
+         machine is reclaimed, and the clock in the header is the other limit. #}
+      <p class="muted small">
+        Keep this page open while you work: your machine is taken back after
+        {{ idle_recycle_minutes }} minutes with no sign of you, and this page is that sign.
+        The time limit above is the other end of it.
+      </p>
+      {% endif %}
       <div class="actions">
         {% if state in live_states %}
         <form method="post" action="/sessions/{{ session.id }}/extend" class="inline">
@@ -419,6 +437,28 @@
       if (data.ready || data.state === 'error') { window.location.reload(); }
     } catch (err) { /* keep polling */ }
   }, 5000);
+  {% endif %}
+
+  {% if showing_machine %}
+  // "Still here." The idle reaper reads activity from the portal, and a student works in
+  // the console — a different upstream — so without this a page opened once both looked
+  // idle and was treated as such: session #8 of a live range (45 minutes chosen) was
+  // destroyed `idle_20m` twenty-one minutes in, with its console frame still on screen.
+  // What it buys is the whole point of the page: while you are looking at it, your
+  // machine is yours until its clock runs out.
+  setInterval(async function () {
+    try {
+      var response = await fetch('/sessions/{{ session.id }}/heartbeat', { cache: 'no-store' });
+      var data = await response.json();
+      // And the other half: a machine can still be taken back while this page sits open
+      // (the clock ran out, grading threw it away, an instructor ended it, the reset
+      // failed). Reload so the page says so, instead of leaving a console pointed at a
+      // machine that is gone.
+      if (data.state && (!data.machine_up || data.state === 'error')) {
+        window.location.reload();
+      }
+    } catch (err) { /* a missed beat is not something the student can act on */ }
+  }, 60000);
   {% endif %}
 
   {% if console_url and machine_up %}

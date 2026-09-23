@@ -1222,9 +1222,37 @@ class SessionManager:
         if not driver.wait_ready(session, timeout=remaining):
             raise SessionError(
                 f"{session.instance} at {ip} never became reachable over the "
-                f"{driver.name} transport"
+                f"{driver.name} transport{self._guest_verdict(session)}"
             )
         return ip
+
+    def _guest_verdict(self, session: Session) -> str:
+        """Add the one fact that tells a slow guest apart from a machine that is gone.
+
+        "Never became reachable over the winrm transport" is true and misleading in
+        equal measure: an operator reads it and goes to WinRM, the golden image and the
+        port. On a live range that exact message was written for a guest whose QEMU
+        process the kernel had already killed — three 4 GiB guests resident on a 7.8 GiB
+        host, so a *global* out-of-memory kill took one of them mid-boot — and the
+        transport, the image and the network were all fine. Both cases leave the guest
+        silent, which is why Incus is asked rather than the reader left to guess.
+
+        Empty for a machine that is still running: a guest that is up and silent is a
+        transport problem, and the plain message is the right one for it.
+        """
+        try:
+            status = self._require_incus().instance_status(session.instance)
+        except IncusError:
+            return ""
+        if status is None:
+            return "; the machine is gone — it was deleted while it was still starting"
+        if status.upper() != "RUNNING":
+            return (
+                f"; the machine is {status.lower()}, so nothing was left to answer — a host "
+                "that runs out of memory kills a guest this way (see `ontrak doctor` for how "
+                "many guests this host holds)"
+            )
+        return ""
 
     # ------------------------------------------------------------------
     # scenario files

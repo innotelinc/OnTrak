@@ -423,6 +423,62 @@ def test_allocate_marks_a_failed_guest_handshake(settings, store, repo, incus, b
     session = manager.allocate("alice", SCENARIO)
     assert session.state is SessionState.ERROR
     assert "never became reachable" in session.error
+    # The machine is up and quiet, which is exactly what the plain message is for: the
+    # guest's own state must not be guessed at when there is nothing wrong with it.
+    assert "the machine is" not in session.error
+
+
+def test_a_guest_the_host_killed_is_reported_as_a_machine_that_stopped(
+    settings, store, repo, incus, built_template
+):
+    """A silent guest must not send an operator to WinRM over a machine that is gone.
+
+    Session #22 of a live range failed with "never became reachable over the winrm
+    transport", and nothing was wrong with the transport, the golden image or the port:
+    the host had three 4 GiB guests resident on 7.8 GiB of RAM, and its global OOM killer
+    took that guest's QEMU process mid-boot. Both cases leave the guest silent, so the
+    message carries the one fact that tells them apart — what Incus says the machine is
+    doing.
+    """
+
+    class KilledGuest(NullDriver):
+        """The machine stops under the transport, the way an OOM kill reaches it."""
+
+        def __init__(self, settings, incus):
+            super().__init__(settings, responses={"setup.ps1": "ONTRAK-SETUP-OK"})
+            self.incus = incus
+
+        def wait_ready(self, session, timeout=None):
+            self.incus.instances[session.instance]["status"] = "STOPPED"
+            return False
+
+    manager = SessionManager(
+        settings, store, repo=repo, incus=incus, driver=KilledGuest(settings, incus)
+    )
+    session = manager.allocate("alice", SCENARIO)
+    assert session.state is SessionState.ERROR
+    assert "never became reachable" in session.error
+    assert "the machine is stopped" in session.error
+    assert "out of memory" in session.error
+    assert "ontrak doctor" in session.error
+
+
+def test_a_guest_that_vanished_is_reported_as_gone(settings, store, repo, incus, built_template):
+    """No instance at all is a different sentence again, and not a silent empty one."""
+
+    class Vanished(NullDriver):
+        def __init__(self, settings, incus):
+            super().__init__(settings, responses={"setup.ps1": "ONTRAK-SETUP-OK"})
+            self.incus = incus
+
+        def wait_ready(self, session, timeout=None):
+            del self.incus.instances[session.instance]
+            return False
+
+    manager = SessionManager(settings, store, repo=repo, incus=incus, driver=Vanished(settings, incus))
+    session = manager.allocate("alice", SCENARIO)
+    assert session.state is SessionState.ERROR
+    assert "the machine is gone" in session.error
 
 
 def test_randomised_credentials_are_applied_when_enabled(settings, store, repo, incus, built_template):

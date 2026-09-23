@@ -96,7 +96,7 @@ referenced by any non-terminal session` — no separate pool bookkeeping to drif
 | `ready` | address + transport confirmed | student opens the page → `in_use` |
 | `in_use` | student is working | check → `in_use`; reset → `recycling` |
 | `checking` | grading in flight | manager → `in_use` (the state it found) |
-| `passed`, `failed` | **submitted**: Complete & End graded the machine and the write-up | machine destroyed, or kept for review (`session.destroy_on_complete: false`) and reclaimed by `reap` when the clock runs out |
+| `passed`, `failed` | **submitted**: Complete & End graded the machine and the write-up | machine destroyed, or kept for review (`session.destroy_on_complete: false`) and reclaimed by `reap` when the clock runs out — or for idleness once the page showing it closes, since that page is what marks the student present |
 | `recycling` | destroy + re-clone in progress | manager → `ready` / `error` / `destroyed` |
 | `destroyed`, `error` | terminal (error is recoverable only by reset) | — |
 

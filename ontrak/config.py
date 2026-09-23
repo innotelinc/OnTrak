@@ -154,6 +154,12 @@ class GuestConfig:
 @dataclass
 class SessionConfig:
     ttl_minutes: int = 90
+    # A machine is taken back after this long with no *sign* of the student, and the sign
+    # is the portal: the session page beats `/sessions/<id>/heartbeat` while it is open,
+    # which is where the console lives. The console itself is the gateway's own upstream,
+    # so working inside the machine reaches this app only through that beat — without it a
+    # student using their machine reads as abandoned, and `idle_20m` destroyed a 45-minute
+    # session mid-scenario while its console frame was still on screen.
     idle_recycle_minutes: int = 20
     max_per_student: int = 1
 

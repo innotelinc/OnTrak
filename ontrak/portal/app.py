@@ -850,6 +850,7 @@ def create_app(
                 "events": store.events_for(session.id, limit=15) if session.id else [],
                 "states": SessionState,
                 "time_limits": settings.session.time_limit_choices,
+                "idle_recycle_minutes": settings.session.idle_recycle_minutes,
                 "workload": catalog_entry(request.app.state.catalog, session.workload),
                 "workloads": _workload_groups(request.app.state.catalog),
                 "ticket_form": ticket_form.public() if ticket_form else None,
@@ -921,6 +922,46 @@ def create_app(
                 "time_limit_minutes": session.time_limit_minutes,
                 "workload": session.workload,
                 "console_available": bool(_session_link(request, session)),
+            }
+        )
+
+    @app.get("/sessions/{session_id}/heartbeat")
+    def session_heartbeat(request: Request, session_id: int, user=Depends(require_user)):
+        """The student's browser saying "still here", so the reaper does not take a busy machine.
+
+        The idle reaper frees a machine nobody is sitting in front of, and it reads
+        activity from this app — but a student works *inside the console*, which the
+        gateway serves from its own upstream: nothing they do in the machine ever
+        reaches the portal. So a session whose page was opened once and then left alone
+        (the console is a frame *on* that page) went on looking idle, and a 45-minute
+        session was destroyed `idle_20m`, twenty-one minutes in, mid-scenario, with the
+        console still on screen — the machine did not fail, it was reclaimed.
+
+        The page hosting the console beats this while it is open, and that is what
+        counts as a student being there. What it deliberately does not do is revive
+        anything: only a session with a machine on screen is touched, so a destroyed or
+        errored row cannot be kept alive by a stale tab.
+
+        A GET with a side effect, on purpose. A beacon must not need a CSRF token, and
+        what this does — mark the session active — is exactly what rendering the session
+        page already does, on the same authentication.
+        """
+        try:
+            session = load_session(request, user, session_id)
+        except SessionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        if session.host_ip and not session.state.is_terminal:
+            request.app.state.manager.touch(session)
+        return JSONResponse(
+            {
+                "id": session.id,
+                "state": session.state.value,
+                # Whether there is still a machine on screen. A submitted session can keep
+                # its machine for review (`session.destroy_on_complete: false`), and the
+                # page it is showing has to know when that ends — the frame is otherwise
+                # left pointing at a machine that is gone.
+                "machine_up": bool(session.host_ip),
+                "seconds_remaining": session.seconds_remaining(),
             }
         )
 

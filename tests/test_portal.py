@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from ontrak.models import Session, SessionState
@@ -319,6 +321,123 @@ def test_instructor_watch_goes_through_the_same_bootstrap(app_client):
     response = client.get(f"/instructor/sessions/{session.id}/console", follow_redirects=False)
     assert response.status_code == 307
     assert response.headers["location"] == f"/sessions/{session.id}/console"
+
+
+# --------------------------------------------------------------------------- #
+# the heartbeat
+#
+# The idle reaper frees a machine nobody is sitting in front of, and it reads activity
+# from this app — but a student works *inside the console*, which the gateway serves
+# from its own upstream. Nothing they do in the machine reaches the portal, so a session
+# whose page was opened once and then left alone looked abandoned: session #8 of a live
+# range, a 45-minute limit, was destroyed `idle_20m` twenty-one minutes in, mid-scenario,
+# with its console frame still on screen. The machine had not failed — it was reclaimed.
+# These pin the fix and its two edges: only a machine on screen is kept, and only its own
+# student can keep it.
+# --------------------------------------------------------------------------- #
+def _idle_for(app, session, minutes: int) -> str:
+    """Move a session's activity clock back, as if nobody had touched it for `minutes`."""
+    when = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat(timespec="seconds")
+    app.state.store.update_session(session.id, last_activity_at=when)
+    return when
+
+
+def _machine_for(app, student: str) -> Session:
+    """A provisioned machine for a second student (the suite's `provision` is alice's)."""
+    app.state.manager.allocate(student, SCENARIO)
+    return provision(app, student)
+
+
+def test_a_live_session_page_pings_the_heartbeat(app_client):
+    """The page has to carry the beat, and say what it is for."""
+    client, app = app_client
+    session = _session_with_a_machine(client, app)
+
+    page = client.get(f"/sessions/{session.id}")
+    assert f"/sessions/{session.id}/heartbeat" in page.text
+    assert "with no sign of you" in page.text
+
+
+def test_the_heartbeat_is_what_keeps_a_machine_a_student_is_working_in(app_client):
+    """Two sessions idle past the window; only the one that beats survives the reaper.
+
+    Same staleness on both rows, one difference: the student's page is open behind the
+    console and pings. That difference is the whole bug — and the machine that goes
+    without it is the one the range used to take back mid-scenario.
+    """
+    client, app = app_client
+    idle = app.state.settings.session.idle_recycle_minutes
+    working = _session_with_a_machine(client, app)
+    forgotten = _machine_for(app, "bob")
+    for session in (working, forgotten):
+        _idle_for(app, session, idle + 10)
+
+    beat = client.get(f"/sessions/{working.id}/heartbeat")
+    assert beat.status_code == 200
+    assert beat.json()["state"] in {"ready", "in_use"}
+
+    assert app.state.manager.reap(refill=False)["recycled"] == [forgotten.id]
+    survived = app.state.store.get_session(working.id)
+    assert survived.state in {SessionState.READY, SessionState.IN_USE}
+    assert survived.host_ip, "the working student's machine was taken back anyway"
+
+
+def test_a_finished_session_cannot_be_kept_alive_by_a_stale_tab(app_client):
+    """The beat is a presence signal, not a revival: a destroyed row stays untouched.
+
+    A student's page left open on a machine that has since gone must not hold the row
+    active — it is the *absence* of a machine that makes the point moot, and the page
+    stops beating as soon as it reloads on the reaper's own state change.
+    """
+    client, app = app_client
+    session = _session_with_a_machine(client, app)
+    app.state.manager.recycle(session, reason="ended by an instructor")
+    stale = _idle_for(app, session, 5)
+
+    response = client.get(f"/sessions/{session.id}/heartbeat")
+    assert response.status_code == 200
+    assert response.json()["state"] == "destroyed"
+    assert app.state.store.get_session(session.id).last_activity_at == stale
+    assert "/heartbeat" not in client.get(f"/sessions/{session.id}").text
+
+
+def test_a_machine_kept_for_a_debrief_is_kept_by_the_page_that_shows_it(app_client):
+    """`destroy_on_complete: false` promises the machine until the clock runs out.
+
+    A submitted session's machine is still reaped for idleness like any other, so without a
+    beat the page said one thing ("taken back when this session's clock runs out") while the
+    reaper did another — twenty minutes of a student reading their own console and the
+    machine goes.
+    """
+    client, app = app_client
+    app.state.settings.session.destroy_on_complete = False
+    session = _session_with_a_machine(client, app)
+
+    form = app.state.manager.ticket_form_for(session)
+    client.post(
+        f"/sessions/{session.id}/complete",
+        data={**synthesise_ticket(form), WRITEUP_ACTION: "complete", "csrf": csrf(client)},
+    )
+    submitted = app.state.store.get_session(session.id)
+    assert submitted.state is SessionState.PASSED
+    assert submitted.host_ip, "the debrief machine was thrown away anyway"
+    page = client.get(f"/sessions/{session.id}")
+    assert f"/sessions/{session.id}/heartbeat" in page.text, "a kept machine stops beating"
+
+    _idle_for(app, submitted, app.state.settings.session.idle_recycle_minutes + 10)
+    client.get(f"/sessions/{session.id}/heartbeat")
+    assert app.state.manager.reap(refill=False)["recycled"] == []
+    assert app.state.store.get_session(session.id).host_ip
+
+
+def test_the_heartbeat_is_not_a_way_into_another_students_session(app_client):
+    """A beacon that writes to the session is guarded like the page that reads it."""
+    client, app = app_client
+    _machine_for(app, "bob")
+    other = app.state.store.live_sessions_for("bob")[0]
+    login(client, "alice")
+
+    assert client.get(f"/sessions/{other.id}/heartbeat").status_code == 404
 
 
 def test_starting_a_scenario_this_range_cannot_run_is_refused(app_client):

@@ -49,6 +49,21 @@ latency rather than access. Raise both only when the host itself grows — with 
 storage every clone is a full 20-30 GB copy, so the second student is the expensive
 one.
 
+### RAM belongs to the host, not to the table
+
+The arithmetic above is a function of the machine the range is on, so `ontrak doctor`
+prints it from `/proc/meminfo` for the host being asked — run it on the host that is
+failing rather than trusting the rows. A 2 vCPU / 7.7 GiB host (a laptop, one student)
+has about 3.6 GiB free behind a single Windows guest, which is not enough for another:
+a template boot, a hardware probe or a second session becomes a kernel *global* OOM
+kill, and the guest the kernel picks dies mid-boot. That does not look like swapping. It
+looks like a session that "never became reachable over the winrm transport", because the
+machine that message names was already gone — and until the error started carrying the
+machine's own state (the troubleshooting row below), the reading sent an operator to
+WinRM and the golden image instead. Treat the one-student policy as a ceiling on every
+guest the host may hold at once — a booted template is a guest too — and keep the build
+work out of teaching hours.
+
 ### CPU: mind the performance scenario
 
 `os-perf-startup` deliberately burns one core per student. In that scenario CPU
@@ -184,6 +199,13 @@ capacity policy (`pool.targets`, `ontrak schedule tick`, `ontrak pool refill`) a
 a background thread booting machines on a small host is nobody's idea of
 lightweight.
 
+*Idle* means no sign of the student, and the sign is this portal: the session page
+carries a `/sessions/<id>/heartbeat` while it is open, and the console is a frame on
+it — the page says so, in the student's own words. Work done inside the console never
+reaches the portal at all (the gateway serves it), so a student who closes that page
+and keeps working in a popped-out console reads as absent and loses the machine at
+this limit, whatever time limit they chose.
+
 There is a roster if you sign in locally — create the class under **Admin →
 Accounts** (or seed the first instructor with `ONTRAK_PORTAL__ADMIN_PASSWORD` on a
 headless box). With SSO on there is none to import: the portal creates an account
@@ -203,8 +225,10 @@ their email either way.
 * A session left open on a screenless desktop is recycled automatically — by the
   portal's own housekeeping loop (`session.idle_recycle_minutes`), or by a cron
   `ontrak schedule tick` on a range that has one — so you rarely need to end
-  sessions by hand. Either way the event log records the recycle and the machine
-  is destroyed.
+  sessions by hand. The exception is a session whose page a student left *open*:
+  that page is what marks them present, so the machine lives until its own time
+  limit. End it from `/instructor` if you need the RAM back. Either way the event
+  log records the recycle and the machine is destroyed.
 
 ### The student's console: RDP for Windows, SSH for Linux
 
@@ -298,6 +322,7 @@ for the whole class: a cluster does not make a cold Windows boot faster.
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | Session sits in `provisioning`, then `error` | guest transport never answered | Check `session.error` on the page, then `ONTRAK_INCUS__REMOTE=... incus --project ontrak info <instance>`; confirm the guest has an IP on `ontrak0`. If RDP is up but WinRM is not, the image's `post-install.ps1` step did not run — rebuild the golden image. |
+| A session fails with `never became reachable over the winrm transport`, and the error also says the machine is stopped or gone | the host ran out of memory and killed the guest, so nothing was left to answer. Measured on a real range: three QEMU processes resident on a 7.8 GiB host — a session clone, a template VM being started, and a third guest — a *global* OOM kill, and the kernel took one of them mid-boot. WinRM, the golden image and the port were all fine | Fixed — the error now carries the machine's own state from Incus, which is the one fact that separates a killed guest from a slow one. `journalctl -k -g oom` has the kill, and `ontrak doctor` prints what the host actually holds (one 4 GiB guest on 7.8 GiB). Every guest counts against the same RAM — a booted template is a guest too — so do not build a template, sweep or probe while a class is on. Re-run the session once the other machines are gone. |
 | `make golden` reports success but every Windows template then hangs at the firmware boot prompt, and `ontrak doctor` still says the golden image is present | the ISO install was OOM-killed and the half-applied disk was published as the image. Incus gives a VM disk the host write cache by default, so applying the ~7 GiB Windows image is charged to the container's memory cgroup; on a 16 GiB range host the kernel kills qemu part-way through the apply. The pinned builder (`tools/click.py`) then only waits for `incus ls` to report STOPPED — it cannot tell that kill from the clean sysprep shutdown it expects — and `pack.sh` publishes the truncated disk anyway | `infra/build-golden-image.sh` now sets the build disk to `io.cache=none` and bounds the guest RAM (`ONTRAK_GOLDEN_CPUS`/`ONTRAK_GOLDEN_MEMORY`), which removes the pressure that caused the kill. Re-run `make golden`. To check a suspect image, inspect its ESP: a formatted-but-empty ESP (no `EFI/Microsoft/Boot/bootmgfw.efi`) means the apply never finished |
 | `make golden` gets all the way through the install and then fails part-way through publishing, and from that point every `incus` command fails with `Failed to begin transaction: no available cowsql leader server found` or `context deadline exceeded` | `incus publish` tars the build disk's *apparent* size into the image — holes are not skipped — and the image store shares a dataset with Incus's own cowsql database, so a long enough copy starves the database's leader election and takes the daemon's DB with it. The bigger the build disk, the worse it gets: a 60 GiB disk copied with `--compression none` ran for fourteen minutes before wedging the DB, and a 29 GiB one ran fifteen | Size the build disk small (already done: `ONTRAK_GOLDEN_DISK`, default 32 GiB) and let `incus publish` keep its default gzip (`--compression none` is the mistake, not the fix). If the DB is already wedged, `systemctl restart incus` clears it — the installed disk survives, so recover rather than rebuild: publish that instance instead of re-running the 30-60 minute install |
 | `ontrak template build` fails with `incus list --format=json failed (124): timed out after 120s`, even though `ONTRAK_INCUS__OPERATION_TIMEOUT_SECONDS` is raised | the plumbing used to fall back to its own 120 s default for reads, ignoring the operator's setting. `incus list` is not a cheap read on a busy host: it reports each instance's state, agent status and address, so it blocks for minutes on a VM that is still booting | Fixed — the configured timeout is the ceiling for every call. If you are on an older build, raise the default in `incus.py` or pacify the host first |
@@ -312,6 +337,7 @@ for the whole class: a cluster does not make a cold Windows boot faster.
 | A student's console opens the **previous** session's machine — typically one that has since been destroyed — and says "the remote desktop server has encountered an error and has closed the connection" | Guacamole keeps its auth token in the browser's `localStorage` and re-authenticates with it on every load, and the gateway *reuses the session that token belongs to*: a still-valid stored token beats the fresh, correctly signed payload the portal just handed over, so the console keeps dialling the machine that browser opened last. Nothing about the failing machine is wrong | Fixed — the console frame now loads the portal's own `/sessions/<id>/console` page first, which clears `GUAC_AUTH_TOKEN` before opening the signed URL. A browser that still shows it is on the old build; recreating the portal (`make up`) is enough. The one case the portal cannot clear is a console on a *different origin* than the portal (a cross-origin `guac.base_url`), because `localStorage` is per origin — use `auto`, or a name that serves both the portal and `/guacamole/`. `ontrak doctor` warns about a pinned `guac.base_url`, and the student's session page says it in a card above the console, so the misconfiguration is stated rather than left to look like a broken machine |
 | Console says "the remote desktop server is currently unreachable" | the console iframe is an **RDP** connection pointed at a Linux *container*, which answers no RDP at all — the template was built while `guac.linux_ssh` was off, so no sshd is in its snapshot | Rebuild that scenario's template with `guac.linux_ssh` on: `ontrak template build <scenario> --force`, or `make templates` for every one. The build installs and configures `sshd` (see below) and the console becomes a shell |
 | Console is refused the same way **after** switching `guac.linux_ssh` on | the template predates the setting | Templates are snapshots: re-run `ontrak template build <scenario> --force` for each Linux scenario, or `infra/build-templates.sh`. A template built before the setting was on has no sshd in it |
+| A student's machine is destroyed mid-scenario, `destroyed` with `[idle_Nm]` on the row and its console frame still on screen | the reaper read *portal* activity, and a student works in the console — a different upstream — so a session whose page was opened once and then left alone looked abandoned. On this range that was session #8: 45 minutes chosen, destroyed `idle_20m` twenty-one minutes in | Fixed — the session page beats `/sessions/<id>/heartbeat` (once a minute, while the machine is on screen) and that is what activity means; the page says so in its Session card. A beat never revives anything: only a session with a machine is touched, so a destroyed row cannot be held open by a stale tab. If a student closes that page and works only in a popped-out console, the machine still ages out — reopen the session page, or give them `+15 minutes` from `/instructor` |
 | Students say "no machine available" | pool empty and clones are slow | Prewarm more, or move the pool to ZFS/btrfs |
 | Pool keeps growing and the host swaps | refill targets too high for a full class | Lower `pool.targets`, or `pool.max_total`; remember targets count claimed VMs, so `target = class size` is the right shape |
 | Grading returns 0% with "grading could not run" | `check.ps1` failed or never printed the markers | Run it manually in a session; `make validate` first, then check the guest-side error in the network detail line |

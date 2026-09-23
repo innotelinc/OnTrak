@@ -37,7 +37,12 @@ guest:
 
 session:
   ttl_minutes: 90                # hard cap, even with activity
-  idle_recycle_minutes: 20       # reclaimed after this long with no activity
+  # Reclaimed after this long with no sign of the student. That sign is the portal: the
+  # session page carries a `/sessions/<id>/heartbeat` while it is open, and the console
+  # is a frame on it. Work done inside the console does not reach the portal at all — the
+  # gateway serves it — so a student who only uses their machine still needs that page
+  # open, or they read as idle and their machine is taken back mid-scenario.
+  idle_recycle_minutes: 20
   max_per_student: 1             # concurrent sessions per student account
   randomize_credentials: false   # give each session a unique local password
   # A template is a snapshot, and a snapshot goes stale: editing a scenario, or
