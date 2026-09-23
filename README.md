@@ -149,6 +149,7 @@ credential is baked into the image. [docs/installer.md](docs/installer.md).
 | [docs/scenarios.md](docs/scenarios.md) | The five scenario families, why they are ranked that way, how to write one, and how generation works |
 | [docs/operations.md](docs/operations.md) | Host sizing, capacity maths, warm pools, schedules, media management, backups and troubleshooting |
 | [docs/docker.md](docs/docker.md) | The container stack: what runs in Docker and what cannot, the three ways to reach a hypervisor, volumes, secrets, upgrades |
+| [docs/product-builds.md](docs/product-builds.md) | The `product-on-base` recipe: Microsoft server products and Microsoft 365 Apps built onto a base image, and the lab run that proves one install |
 | [docs/installer.md](docs/installer.md) | The bootable installer ISO: building it, the one screen it stops on, what first boot provisions, and its settings |
 | [docs/roadmap.md](docs/roadmap.md) | What is verified, what is planned, and what is explicitly out of scope |
 
@@ -179,7 +180,7 @@ OnTrak/
 
 ## Status
 
-- **Verified here:** the Python control plane — `pytest` (577 tests; the only two that skip
+- **Verified here:** the Python control plane — `pytest` (578 tests; the only two that skip
   themselves are the live-Guacamole interop test and the range walk below), `ruff` clean,
   scenario validation, catalog validation, the CLI, generated scenarios validated, the
   admin panel rendering without a reachable hypervisor, and the Guacamole link format

@@ -51,6 +51,7 @@ tell the two apart.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -299,3 +300,85 @@ def test_unattended_installs_carry_the_switches_their_modes_require():
         "m365-apps.ps1 sets AUTOACTIVATE, which the Deployment Tool's documentation "
         "says not to set for Microsoft 365 Apps — it activates automatically"
     )
+
+
+def _sql_configuration_file(text: str) -> list[str]:
+    """The ini lines ``sql-server.ps1``'s ``$options`` block writes.
+
+    The two values built at run time from the descriptor (``SAPWD`` and
+    ``SQLSYSADMINACCOUNTS``) come back with ``…`` in the value slot: which keys the
+    file carries is the contract, and what the lab puts in them is the lab's to choose.
+    """
+    bodies = [body for _, body in _array_literals(text) if "'[OPTIONS]'" in body]
+    assert len(bodies) == 1, "sql-server.ps1 no longer writes exactly one [OPTIONS] block"
+    lines: list[str] = []
+    for element, _ in _elements(bodies[0]):
+        element = element.strip()
+        if not element or element.startswith("#"):
+            continue
+        if element.startswith("'"):
+            lines.append(element[1:-1].replace("''", "'"))
+            continue
+        # ('SAPWD="' + $config.sa_password + '"') and its sibling: the key is
+        # written in the script and the value is the descriptor's.
+        match = re.match(r"^\(\s*'([A-Z0-9]+)=", element)
+        assert match, f"unexpected expression in the ini block: {element}"
+        lines.append(match.group(1) + '="…"')
+    return lines
+
+
+def test_sql_server_configuration_file_is_the_quiet_install_microsoft_documents():
+    """The ConfigurationFile.ini `sql-server.ps1` writes, rebuilt and read.
+
+    A configuration file is a wall of `KEY="VALUE"` lines in which the required keys
+    are not marked required: Microsoft's command-prompt reference is the only place
+    that says which ones a quiet install cannot run without ("Required, when the /Q
+    or /QS parameter is specified for unattended installations"), and a missing one
+    is discovered at the end of a long silent setup. So the block that generates the
+    file is reconstructed and checked against that contract — including the table's
+    one implication (`/SAPWD` is required when `/SECURITYMODE=SQL`) and the
+    cross-check that the instance the file installs is the one the script's own
+    verification then goes looking for.
+    """
+    text = (REPO_ROOT / "infra" / "windows" / "products" / "sql-server.ps1").read_text(
+        encoding="utf-8"
+    )
+    lines = _sql_configuration_file(text)
+    assert lines[0] == "[OPTIONS]", "what the script writes is not a setup configuration file"
+    options: dict[str, str] = {}
+    for line in lines[1:]:
+        key, _, value = line.partition("=")
+        options[key] = value.strip('"')
+
+    # The quiet mode, and the two acceptances it makes required.
+    assert options.get("QUIET") == "True"
+    assert options.get("IACCEPTSQLSERVERLICENSETERMS") == "True"
+    assert options.get("SUPPRESSPRIVACYSTATEMENTNOTICE") == "True"
+
+    # The install the catalog entry promises: the engine, under the name the
+    # verification's `Get-Service` goes on to check, with the TCP the fault scenarios
+    # need ("a SQL Server that only answers on shared memory is not something a
+    # student can be given a network fault to fix").
+    assert options.get("ACTION") == "Install"
+    assert "SQLEngine" in options.get("FEATURES", "")
+    instance = options.get("INSTANCENAME")
+    assert instance == "MSSQLSERVER"
+    assert "Get-Service -Name " + instance in text, (
+        "the verification does not check the instance the configuration file installs"
+    )
+    assert options.get("TCPENABLED") == "1"
+    assert "-LocalPort 1433" in text, "nothing proves the TCP the configuration file enables"
+
+    # The table's implication, and the key that is required for every edition but
+    # Express: a mixed-mode instance with no sa password, or an instance nobody can
+    # administer, is a build that failed late and expensively.
+    if options.get("SECURITYMODE") == "SQL":
+        assert "SAPWD" in options, "/SAPWD is documented as required when /SECURITYMODE=SQL"
+    assert "SQLSYSADMINACCOUNTS" in options
+
+    # Virtual service accounts, whose passwords the documentation allows to be
+    # omitted — and omitting them is the point while there is no directory to put a
+    # service account in.
+    assert options.get("SQLSVCACCOUNT") == "NT SERVICE\\MSSQLSERVER"
+    assert options.get("AGTSVCACCOUNT") == "NT SERVICE\\SQLSERVERAGENT"
+    assert "SQLSVCPASSWORD" not in options and "AGTSVCPASSWORD" not in options

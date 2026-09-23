@@ -6,7 +6,7 @@ planned. Anything in the last two sections is a statement of intent, not a featu
 ## Verified in this repository
 
 - Python control plane: catalog, scenarios, sessions, scoring, selection, scheduler,
-  generator, portal (student and admin), CLI — `pytest` (577 tests) and `ruff` clean. Only two
+  generator, portal (student and admin), CLI — `pytest` (578 tests) and `ruff` clean. Only two
   tests skip themselves, and both switch on from the environment rather than from a device:
   the Guacamole interop test (`ONTRAK_GUAC_INTEROP_URL`) and the real-range walk
   (`ONTRAK_E2E`, below).
@@ -154,7 +154,9 @@ These paths are reviewed and tested only up to the Incus boundary; they need a l
   SharePoint setup must carry `/IAcceptTheLicenseTerms` over `/config`; and the Deployment
   Tool's configuration must not name a `SourcePath` no payload populated (the documented CDN
   fallback is for language packs) nor set `AUTOACTIVATE` for a product that activates on its
-  own. None of that is an install, and the label stays until media meets a guest.
+  own. None of that is an install, and the label stays until media meets a guest — the plan
+  for letting media meet one, product by product and with each setup log read afterwards, is
+  [product-builds.md](product-builds.md).
 - The Windows half of the browser console check. `ontrak console browser` asks a desktop for
   the Windows key and requires the screen to change, because that is the only proof a GUI can
   give that the student's keyboard reaches it — a canvas that paints and takes no keystroke is
