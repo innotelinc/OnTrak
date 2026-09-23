@@ -17,7 +17,8 @@
 #      enterprise rights, and the base image's is whatever incus-windows chose);
 #   2. promote the guest, ask for the reboot that finishes it, and resume here after;
 #   3. `/PrepareSchema`, then `/PrepareAD`, then `/mode:Install /role:Mailbox`, all as
-#      `<domain>\Administrator`.
+#      `<domain>\Administrator`, and finally the restart Microsoft's own post-install
+#      list asks for, before anything is verified.
 #
 # Each expensive step records that it finished, so a re-run after a reboot continues
 # instead of extending a schema twice. Budget an hour: schema preparation and the role
@@ -89,10 +90,29 @@ function Invoke-ExchangeStep {
 # /PrepareSchema first and on its own: it is the step that changes the directory's
 # schema, and when it fails the log says which attribute it refused.
 Invoke-ExchangeStep -Name 'PrepareSchema' -Arguments @('/PrepareSchema') -StateName 'schema-prepared'
-Invoke-ExchangeStep -Name 'PrepareAD' -Arguments @('/PrepareAD', '/OrganizationName:' + $config.org) `
+# The parentheses around the organization are load-bearing: PowerShell's comma binds
+# tighter than `+`, so an unparenthesized concatenation after a comma builds an array
+# and then appends the pieces to it — setup would be handed '/OrganizationName:"',
+# the organization and '"' as three separate arguments and refuse all of them.
+Invoke-ExchangeStep -Name 'PrepareAD' `
+    -Arguments @('/PrepareAD', ('/OrganizationName:"' + $config.org + '"')) `
     -StateName 'ad-prepared'
-Invoke-ExchangeStep -Name 'InstallMailboxRole' -Arguments @('/mode:Install', '/role:Mailbox') `
+# /InstallWindowsComponents is Microsoft's documented switch for the Windows roles
+# and features Exchange needs (the base image is a plain Windows Server), and if one
+# of them needs a restart, setup resumes where it stopped rather than failing an
+# hour in over a missing prerequisite.
+Invoke-ExchangeStep -Name 'InstallMailboxRole' `
+    -Arguments @('/mode:Install', '/role:Mailbox', '/InstallWindowsComponents') `
     -StateName 'mailbox-installed'
+
+# "Restart the server after the Exchange installation is complete" is Microsoft's
+# own next step after unattended setup, so the verification below runs on the
+# restarted machine the students will get — not on the half-settled one setup left
+# behind.
+if (-not (Test-StepDone 'exchange-restarted')) {
+    Set-StepDone 'exchange-restarted'
+    Request-Reboot 'Exchange setup is complete and Microsoft asks for a restart before verification'
+}
 
 # -- verification --------------------------------------------------------------
 # Services and the installed tree, not a mailbox round trip: reading mail needs the

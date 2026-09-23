@@ -173,3 +173,26 @@ def test_ci_still_runs_the_control_plane_checks():
     text = "\n".join(_scripts(_load(CI)))
     for command in ("ruff check", "pytest -q"):
         assert command in text, f"ci.yml no longer runs {command!r}"
+
+
+def test_the_guest_script_gate_is_the_repository_script_and_not_a_copy_of_it():
+    """One gate, one implementation, and it is the one `make ps-check` runs.
+
+    The parse loop used to be written out twice in this workflow, and the container has
+    no way to run a copy that only lives in a YAML file: the same check has to be a file
+    in the repository for `make ps-check`, the CI job and anything else to agree on what
+    it means. Two implementations of one gate agree today and not in a month — and this
+    is the gate that catches a bug by *reading* the scripts, so it has one implementation
+    on purpose (scripts/check-powershell.ps1).
+    """
+    text = "\n".join(_scripts(_load(CI)))
+    assert "scripts/check-powershell.ps1" in text, (
+        "ci.yml no longer runs the repository's own guest-script check, so the gate "
+        "`make ps-check` runs is not the one a push is held to"
+    )
+    assert "Parser]::ParseFile" not in text, (
+        "ci.yml has grown its own copy of the parse loop again — run the repository's "
+        "script instead, so the two cannot drift"
+    )
+    script = REPO_ROOT / "scripts" / "check-powershell.ps1"
+    assert script.is_file(), f"ci.yml calls {script.name}, which is not there"

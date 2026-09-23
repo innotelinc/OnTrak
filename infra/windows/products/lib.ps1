@@ -11,7 +11,7 @@
 # host):
 #
 #   C:\ProgramData\OnTrak\product.json       what to install, and from where
-#   C:\ProgramData\OnTrak\product-state.txt  the last completed step, so a re-run after a
+#   C:\ProgramData\OnTrak\product-state.txt  every completed step, so a re-run after a
 #                                            reboot continues instead of starting over
 #   ONTRAK-PRODUCT-OK                        installed and verified
 #   ONTRAK-PRODUCT-REBOOT                    the guest has to restart first
@@ -59,20 +59,26 @@ function Get-ProductConfig {
 }
 
 # -- resuming after a reboot ---------------------------------------------------
-# The state file holds one word: the last step that *completed*. A step that is
-# expensive or has to happen exactly once (forest promotion, schema preparation)
-# checks it first, so the builder can restart the guest and run the script again
-# without redoing — or half-redoing — what is already done.
+# The state file holds one step name per line: every step that *completed*. A step
+# that is expensive or has to happen exactly once (forest promotion, schema
+# preparation) checks it first, so the builder can restart the guest and run the
+# script again without redoing — or half-redoing — what is already done.
+#
+# A list and not one word, because Microsoft's sequences reboot more than once:
+# with only the newest step recorded, the pass after the third reboot re-ran steps
+# one and two — an /PrepareSchema "extended twice" is exactly what this file exists
+# to prevent.
 function Test-StepDone {
     param([string] $Name)
     if (-not (Test-Path $productStatePath)) { return $false }
-    $done = (Get-Content -Path $productStatePath -Raw).Trim()
-    return $done -eq $Name
+    $done = @(Get-Content -Path $productStatePath | ForEach-Object { $_.Trim() })
+    return $done -contains $Name
 }
 
 function Set-StepDone {
     param([string] $Name)
-    Set-Content -Path $productStatePath -Value $Name -Encoding ASCII
+    if (Test-StepDone $Name) { return }
+    Add-Content -Path $productStatePath -Value $Name -Encoding ASCII
     Step ('done: ' + $Name)
 }
 
@@ -203,17 +209,28 @@ function Ensure-AdministratorPassword {
     Step 'the built-in Administrator password is set from the descriptor'
 }
 
+# The computer's domain, asked of the machine rather than of the process: this
+# script runs as SYSTEM over the agent, and USERDNSDOMAIN is a *logon* variable a
+# non-interactive process does not reliably have. A wrong "no domain" here would
+# fail a perfectly promoted guest on its very next pass.
+function Get-ComputerDomain {
+    try {
+        $system = Get-CimInstance -ClassName Win32_ComputerSystem
+        if ($system.PartOfDomain) { return [string] $system.Domain }
+    } catch { }
+    return ''
+}
+
 function Assert-Forest {
     param([string] $Domain, [string] $SafeModePassword)
-    $existing = $env:USERDNSDOMAIN
+    $existing = Get-ComputerDomain
     if ($existing) {
         Step ('this guest is already in the ' + $existing + ' domain')
         return
     }
     if (Test-StepDone 'forest-promoted') {
         # Promoted on an earlier pass; the reboot is what made the domain live.
-        if ($env:USERDNSDOMAIN) { return }
-        Fail ('the forest was promoted on the last pass but the guest still has no domain: ' +
+        Fail ('the forest was promoted on an earlier pass but the guest still has no domain: ' +
             'the reboot did not complete the promotion, so nothing after this can work')
     }
     if (-not $Domain) { Fail 'this product needs an AD forest and the descriptor names no domain' }

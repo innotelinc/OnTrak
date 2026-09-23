@@ -6,7 +6,7 @@ planned. Anything in the last two sections is a statement of intent, not a featu
 ## Verified in this repository
 
 - Python control plane: catalog, scenarios, sessions, scoring, selection, scheduler,
-  generator, portal (student and admin), CLI — `pytest` (565 tests) and `ruff` clean. Only two
+  generator, portal (student and admin), CLI — `pytest` (576 tests) and `ruff` clean. Only two
   tests skip themselves, and both switch on from the environment rather than from a device:
   the Guacamole interop test (`ONTRAK_GUAC_INTEROP_URL`) and the real-range walk
   (`ONTRAK_E2E`, below).
@@ -16,9 +16,21 @@ planned. Anything in the last two sections is a statement of intent, not a featu
   it is accepted, and CI generates the full matrix on every push.
 - Guacamole's JSON-auth payload format, cross-checked against the `openssl` CLI (an
   independent implementation of HMAC-prepend → AES-128-CBC → PKCS#7 with a zero IV).
-- Guest PowerShell: every `scenarios/**/*.ps1` and `infra/**/*.ps1` is parsed by `pwsh` in CI;
-  the Linux and identity scenarios are run end to end against the real `chmod`, `chown`,
-  `useradd`, `groupadd` and `sudo` tooling in a mount namespace, setup and check scripts both.
+- Guest PowerShell: `scripts/check-powershell.ps1` parses every `scenarios/**/*.ps1` and
+  `infra/**/*.ps1` with `pwsh`, then audits the parse trees for the precedence trap a
+  parse-only check cannot see — PowerShell's comma binds tighter than `+`, so a concatenation
+  next to a comma in an array literal is not the element it looks like. It is one file run
+  from two places rather than two copies of one gate: CI, and `make ps-check` in the container,
+  whose image carries its own pinned and checksummed `pwsh` (`tests/test_workflows.py` pins
+  that CI calls the repository's script and has not grown a copy).
+  `tests/test_powershell_scripts.py` reads the same scripts as text, with no PowerShell
+  involved, so the check is available on a machine that has none. Both directions were
+  live in this tree and both are now checked: `@('a', 'b' + $x)` is four arguments, not two,
+  and `@('a' + $x, 'b')` flattens to *one* space-joined argument, which is what
+  `sql-server.ps1` was handing SQL Server setup. A newline separates the elements safely; only
+  the comma does not, which is why the check keys on it. The Linux and identity scenarios are
+  run end to end against the real `chmod`, `chown`, `useradd`, `groupadd` and `sudo` tooling in
+  a mount namespace, setup and check scripts both.
 - The repository's own tooling, held to the same bar as the platform: `scripts/tests` runs in
   CI and covers the secret scanner, the Cerulean provisioner's certificate and DNS planning,
   and the grade sweep's reading half — the part that decides whether a run means `ok`,
@@ -129,7 +141,15 @@ These paths are reviewed and tested only up to the Incus boundary; they need a l
   dispatches it, and the reboot-and-resume contract is tested up to the Incus boundary —
   and what is not is the install itself: no product media has met a real guest, so the
   unattended steps in those scripts are read against Microsoft's documentation and not yet
-  against a setup log.
+  against a setup log. Reading them is not nothing — three bugs that would each have cost an
+  install attempt were found that way. Two are the argument-construction slips
+  `tests/test_powershell_scripts.py` pins. The third is in the descriptor:
+  `apply-product-install.py` named an unpacked-archive folder for *every* product, and
+  `Get-MediaFolder` searches the attached CD-ROM drives only when it is given no folder at
+  all — so an ISO product (Exchange, SharePoint, SQL Server, which is to say every product
+  whose media is a disc) failed before it looked at its media. `tests/test_product_install.py`
+  now pins that `media_folder` is empty unless the media is an archive the builder unpacked.
+  None of that is an install, and the label stays until media meets a guest.
 - The Windows half of the browser console check. `ontrak console browser` asks a desktop for
   the Windows key and requires the screen to change, because that is the only proof a GUI can
   give that the student's keyboard reaches it — a canvas that paints and takes no keystroke is

@@ -10,6 +10,7 @@ make up                       # the whole installation, first run included, over
 make ps                       # health of every service
 make logs                     # follow
 make setup-log                # what the first run set up (secrets, Incus on the host)
+make ps-check                 # parse and audit the guest PowerShell, in the container
 make down                     # stop (the state and media volumes survive)
 ```
 
@@ -368,6 +369,49 @@ finished session history older than `ONTRAK_SESSION__HISTORY_DAYS` (30; `0` keep
 it forever, and a session a result or ticket points at is never deleted). It
 never refills the warm pool — `ONTRAK_POOL__DEFAULT_TARGET` and `ONTRAK_POOL__TARGETS`
 are yours to set, and nothing in the stack grows the pool behind your back.
+
+## The tools container: PowerShell, and a prompt
+
+The training machines are Windows, and their automation is PowerShell:
+`infra/windows/products/*.ps1` installs Exchange, SQL Server, SharePoint and
+Microsoft 365 Apps *inside* a guest, and `scenarios/**/*.ps1` injects and checks
+the faults. None of that can run on this host — a guest needs a hypervisor,
+licensed media and the better part of an hour. What *can* happen here is reading
+the scripts, and that is worth more than it sounds: two argument-construction bugs
+that would each have cost an install attempt were found by reading them, and no
+other check in this repository would have caught either.
+
+So the image carries `pwsh` (see the `Dockerfile` — pinned to a release, and
+checksummed), and a `tools` service gives it the checkout:
+
+```bash
+make ps-check                 # parse every script, then audit the parse trees
+make pwsh                     # a pwsh prompt, with this checkout at /project
+docker compose --profile tools run --rm tools bash   # the same container, a bash prompt
+```
+
+`make ps-check` runs `scripts/check-powershell.ps1` — the *same* script CI runs, so
+the local gate and the CI gate cannot drift apart. It parses every `.ps1` under
+`scenarios/` and `infra/`, and then audits each parse tree for the trap that parsing
+alone cannot see: PowerShell's comma binds tighter than `+`, so a concatenation
+next to a comma inside an array literal is not the element it looks like.
+
+```powershell
+@('/PrepareAD', '/OrganizationName:"' + $org + '"')   # four arguments, not two
+@('/ConfigurationFile=' + $ini, '/QUIET')             # one argument, not two
+```
+
+Both of those were live in this tree. A newline separates the elements safely;
+only the comma does not, which is why the audit keys on it, and the fix is always
+a pair of parentheses. A deliberate array concatenation (`@('a', 'b') + $c`) trips
+the same audit and is fixed the same way — which is what makes it unambiguous to
+the next reader.
+
+The container mounts the checkout at `/project` rather than shadowing `/app`, so
+what gets checked is the tree you are editing rather than the revision the image was
+built from. It is deliberately **not** part of a running range: it sits behind the
+`tools` profile, so a plain `docker compose up` still starts the four containers a
+range needs and nothing else.
 
 ## Upgrades
 

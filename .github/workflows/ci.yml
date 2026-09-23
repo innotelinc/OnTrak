@@ -149,42 +149,21 @@ jobs:
           python -m ontrak schedule show >/dev/null
 
   guest-scripts:
-    name: Guest PowerShell parses
+    name: Guest PowerShell parses and audits
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Parse every scenario script
+      # One call into the repository's own script rather than two inline blocks,
+      # because the same check has to run where the rest of the work happens:
+      # `make ps-check` runs *this* file in the container, and a gate that exists
+      # in two copies drifts. It parses every script under scenarios/ and infra/,
+      # and then audits the parse trees for the precedence trap those files have
+      # actually carried — `@('a', 'b' + $x)` is not the two-element list it looks
+      # like, and it parses cleanly, so parsing alone waved both live bugs through.
+      - name: Parse and audit the guest scripts
         shell: pwsh
-        run: |
-          $failed = @()
-          $files = Get-ChildItem -Path scenarios -Recurse -Filter *.ps1
-          Write-Host "checking $($files.Count) PowerShell file(s)"
-          foreach ($file in $files) {
-            $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors) | Out-Null
-            if ($errors.Count -gt 0) {
-              $failed += $file.FullName
-              foreach ($e in $errors) { Write-Host "::error file=$($file.FullName)::$($e.Message)" }
-            }
-          }
-          if ($failed.Count -gt 0) { throw "$($failed.Count) guest script(s) do not parse" }
-          Write-Host "guest scripts: ok"
-
-      - name: Parse the infrastructure scripts
-        shell: pwsh
-        run: |
-          $failed = @()
-          foreach ($file in Get-ChildItem -Path infra -Recurse -Filter *.ps1) {
-            $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors) | Out-Null
-            if ($errors.Count -gt 0) {
-              $failed += $file.FullName
-              foreach ($e in $errors) { Write-Host "::error file=$($file.FullName)::$($e.Message)" }
-            }
-          }
-          if ($failed.Count -gt 0) { throw "$($failed.Count) infra script(s) do not parse" }
-          Write-Host "infra scripts: ok"
+        run: ./scripts/check-powershell.ps1 -Annotations
 
   shell-and-compose:
     name: Shell and compose

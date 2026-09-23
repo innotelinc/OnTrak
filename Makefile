@@ -37,7 +37,8 @@ TLS_OVERLAY := -f docker-compose.yml -f docker-compose.tls.yml
         catalog catalog-validate media-status media-fetch generate schedule \
         templates pool reap host-image landing \
         installer-iso installer-iso-smoke installer-iso-test \		      docker build up up-plain up-remote run down logs ps exec check-compose \
-		      setup-log docker-shell provision provision-plan console-recreate lan boot sweep sweep-key
+		      setup-log docker-shell provision provision-plan console-recreate lan boot sweep sweep-key \
+		      ps-check pwsh
 
 help: ## Show this help message
 	@echo "OnTrak — operator workflow"
@@ -212,6 +213,35 @@ exec: ## Run a CLI command inside the running portal (make exec ARGS="user list"
 
 docker-shell: docker build ## Open a shell in the image (for `ontrak catalog list`, debugging, …)
 	docker run --rm -it --entrypoint /bin/bash $(IMAGE)
+
+## ---- Guest PowerShell ----------------------------------------------------
+# The training machines are Windows and their automation is PowerShell, so the
+# image carries pwsh (see the Dockerfile) and these two targets are what it is
+# for: a guest script can be parsed, audited and poked at with no Windows VM, no
+# lab host, and no PowerShell on this machine at all.
+#
+# `ps-check` runs the *same* script CI runs (scripts/check-powershell.ps1) — one
+# gate, two places, so neither can drift from the other. It parses every script
+# under scenarios/ and infra/ and then audits the parse trees for the comma/plus
+# trap those files have really carried: `@('a', 'b' + $x)` is not the two-element
+# list it looks like, and it parses cleanly, so parsing alone would have waved
+# both live bugs through.
+#
+# The checkout is mounted at /project rather than shadowed into /app, so what is
+# checked is the tree you are editing, not the revision the image was built from.
+
+# The image is built by the stack (`make build`, or `make up`), and both targets
+# would rather say so than fail inside compose with "image not found".
+PWSH := $(COMPOSE) --profile tools run --rm --no-deps
+IMAGE_GUARD := docker image inspect $(IMAGE) >/dev/null 2>&1 || { echo "no $(IMAGE) image yet — run 'make build' first (or 'make up')"; exit 2; }
+
+ps-check: ## Parse every guest PowerShell script and audit it for the comma/plus trap
+	@$(IMAGE_GUARD)
+	@$(PWSH) tools pwsh -NoProfile -File /project/scripts/check-powershell.ps1
+
+pwsh: ## Open a PowerShell prompt with this checkout mounted at /project
+	@$(IMAGE_GUARD)
+	@$(PWSH) -it tools pwsh -NoProfile
 
 ## ---- Development --------------------------------------------------------
 

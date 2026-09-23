@@ -336,6 +336,48 @@ services:
       - ./deploy/gateway/ontrak-upstreams.inc:/etc/nginx/conf.d/ontrak-upstreams.inc:ro
     networks: [ontrak]
 
+  # ── the tools container: PowerShell, and a prompt ─────────────────────────
+  # Not part of a running range — a range needs four containers, and this is not
+  # one of them. It is the fifth *capability*: the machines are Windows, their
+  # automation is PowerShell, and the image carries pwsh for exactly this
+  # (Dockerfile). So this is the one place a guest script can be parsed, poked at
+  # and audited without a Windows VM, a lab host or a second toolchain.
+  #
+  # Behind a profile, so `docker compose up` starts the range and nothing else.
+  #   make ps-check   parse + audit every script, one-shot
+  #   make pwsh       a prompt with the checkout mounted
+  #
+  # It deliberately has no `build:` and no `ports:` and no `depends_on:`: the
+  # first two are what scripts/check-first-run-contract.py holds the stack to
+  # (one builder of the tag, one published port, and both are the portal's and the
+  # gateway's), and the third would make a language tool wait for a hypervisor.
+  tools:
+    image: ${ONTRAK_IMAGE:-ontrak:local}
+    container_name: ontrak-tools
+    restart: "no"
+    init: true
+    profiles: [tools]
+    # The checkout, at the path the shared check script expects to be reading. Read
+    # for real, not shadowed into /app: `pwsh` and the file paths are the point, and
+    # the image's own copy is the revision it was built from, not the one you are
+    # editing.
+    working_dir: /project
+    volumes:
+      - .:/project
+    # The image's entrypoint hands anything that is not a verb to the `ontrak` CLI,
+    # which is the wrong language for this container: `docker compose run tools
+    # pwsh -File …` would arrive as `python3 -m ontrak pwsh -File …`. This entrypoint
+    # execs its arguments instead, so `run` means what it says — and the default
+    # `command` keeps it alive when it is started rather than run.
+    entrypoint: ["/bin/sh", "-c", "exec \"$@\"", "--"]
+    command: ["sleep", "infinity"]
+    # The image's HEALTHCHECK polls the portal on 8080, and this container runs no
+    # portal — leaving it on reports "unhealthy" for a container that is doing its
+    # job, which is the kind of signal that teaches people to ignore the column.
+    healthcheck:
+      disable: true
+    networks: [ontrak]
+
 volumes:
   ontrak-state:
     name: ontrak-state

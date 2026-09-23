@@ -68,6 +68,35 @@ RUN apt-get update \
       openssl \
  && rm -rf /var/lib/apt/lists/*
 
+# ── PowerShell: the guest automation's own language ──────────────────────────
+# The machines this control plane drives are Windows, and their automation —
+# `infra/windows/products/*.ps1`, `apply-product-install.py`'s guest scripts,
+# `scenarios/**/*.ps1` — is PowerShell. pwsh is the only parser of it, and parsing
+# is not a formality: the two argument-construction bugs those scripts carried (a
+# comma binding tighter than `+`, so a two-element list becomes four arguments,
+# or one) parse *cleanly* and only show up when the text or the AST is read. CI
+# gets pwsh free from the runner; this image carries its own so the same check runs
+# anywhere the stack does, which is what `make ps-check` is.
+#
+# Pinned and checksummed: a tarball from the release, not a third-party apt repo,
+# so the image gains no extra source. Bump PWSH_VERSION and the hash together.
+ARG PWSH_VERSION=7.4.6
+ARG PWSH_SHA256=6f6015203c47806c5cc444c19d8ed019695e610fbd948154264bf9ca8e157561
+RUN curl -fsSL -o /tmp/pwsh.tar.gz \
+      "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell-${PWSH_VERSION}-linux-x64.tar.gz" \
+ && echo "${PWSH_SHA256}  /tmp/pwsh.tar.gz" | sha256sum -c - \
+ # `libicu` is what the release notes list for Ubuntu 24.04 and it is not in the
+ # base image; without it pwsh starts and then dies loading its own assemblies.
+ && apt-get update \
+ && apt-get install -y --no-install-recommends libicu74 \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /opt/microsoft/powershell/7 \
+ && tar -xzf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7 \
+ && rm /tmp/pwsh.tar.gz \
+ && chmod +x /opt/microsoft/powershell/7/pwsh \
+ && ln -sf /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh \
+ && pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+
 COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app

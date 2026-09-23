@@ -64,7 +64,7 @@ Set-Content -Path $ini -Value $options -Encoding ASCII
 Step ('wrote ' + $ini)
 
 Invoke-InstallStep -FilePath $setup -What 'SQL Server setup' -Arguments @(
-    '/ConfigurationFile=' + $ini,
+    ('/ConfigurationFile=' + $ini),
     '/IACCEPTSQLSERVERLICENSETERMS',
     '/QUIET'
 ) | Out-Null

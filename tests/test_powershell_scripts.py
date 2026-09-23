@@ -1,0 +1,256 @@
+"""The repository's PowerShell, read as text rather than run.
+
+CI runs `scripts/check-powershell.ps1`, which parses every `.ps1` here with
+PowerShell itself and then audits the parse trees for the trap described below.
+This file is that same check with no PowerShell involved — cheap enough to run
+anywhere, and the reason the trap is checked twice rather than once. Most of these
+scripts are
+Windows ones: they inject faults in a Windows guest, or install Exchange, SQL
+Server, SharePoint and Microsoft 365 Apps inside one, and no Windows VM or
+licensed media runs in this checkout. So the mistakes worth pinning here are the
+ones that parse cleanly and only surface on a lab host, forty minutes into an
+install, with a setup log as the only witness.
+
+The one that bit is a precedence trap, and it is PowerShell's rather than anyone's
+typo: **the comma binds tighter than `+`** (PowerShell/PowerShell#8495). Every shape
+below was evaluated against pwsh 7.4.6 rather than reasoned about, because the two
+that look alike behave differently:
+
+    # comma first: the pieces are appended to a two-element array — four arguments
+    @('/PrepareAD', '/OrganizationName:"' + $org + '"')
+    # => '/PrepareAD', '/OrganizationName:"', 'contoso', '"'
+
+    # comma after: what follows the comma is folded in *first*, and string `+` array
+    # flattens to one space-joined string — a single argument setup cannot parse
+    @('/ConfigurationFile=' + $ini, '/IACCEPTSQLSERVERLICENSETERMS', '/QUIET')
+    # => '/ConfigurationFile=C:\\cfg.ini /IACCEPTSQLSERVERLICENSETERMS /QUIET'
+
+    # newline-separated is fine: a newline inside `@(...)` ends the element, so the
+    # `+` keeps its own element and the list still has three
+    @(
+        '/ConfigurationFile=' + $ini
+        '/IAcceptsSQLServerLicenseTerms'
+    )
+    # => '/ConfigurationFile=C:\\cfg.ini', '/IAcceptsSQLServerLicenseTerms'
+
+So the comma is the whole hazard, and the fix is always the same: give the
+concatenation its own parentheses, as the scenario scripts already do
+(`scenarios/sw-app-crash/check.ps1` wraps its own concatenated path). `@(('a' + $x),
+'b')` is two elements and `@('a', ('b' + $x))` is two as well.
+
+Both comma shapes were live in the tree when this file was written — the "comma
+after" one in `infra/windows/products/sql-server.ps1`, handing SQL Server setup a
+single argument, and the "comma first" one in `exchange-server.ps1`. The blind spot
+is what the file is shaped around: a check for one direction would have declared the
+tree clean with the other still in it. The check is scoped to `@(...)` bodies on
+purpose — a comma in a *method call* is an argument separator, not an array
+operator, so `[regex]::Match($text, '^\\s*' + [regex]::Escape($Field) + '$')` in
+`scenarios/_lib/OnTrak.Common.ps1` is correct code and a line-level pattern cannot
+tell the two apart.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SCRIPT_ROOTS = (REPO_ROOT / "scenarios", REPO_ROOT / "infra")
+
+_QUOTES = ("'", '"')
+_OPENERS = "([{"
+_CLOSERS = ")]}"
+
+
+def _string_end(text: str, start: int) -> int:
+    """Index just past the PowerShell string literal opening at ``start``.
+
+    Doubled quotes are an escaped quote in both kinds of PowerShell string, and a
+    backtick escapes the next character inside a double-quoted one, so a paren in
+    the middle of either does not close the array literal it sits in.
+    """
+    quote = text[start]
+    index = start + 1
+    while index < len(text):
+        if text[index] == quote:
+            if text.startswith(quote * 2, index):
+                index += 2
+                continue
+            if quote == '"' and text[index - 1] == "`":
+                index += 1
+                continue
+            return index + 1
+        index += 1
+    return index
+
+
+def _here_string_end(text: str, start: int) -> int:
+    """Index just past the ``@'...'@`` / ``@"..."@`` starting at ``start``."""
+    terminator = text[start + 1] + "@"
+    index = text.find("\n", start)
+    while index != -1:
+        end = text.find("\n", index + 1)
+        line = text[index + 1 : end if end != -1 else len(text)]
+        if line.startswith(terminator):
+            return end if end != -1 else len(text)
+        index = end
+    return len(text)
+
+
+def _skip_comment(text: str, start: int) -> int:
+    end = text.find("\n", start)
+    return end if end != -1 else len(text)
+
+
+def _array_literals(text: str) -> list[tuple[int, str]]:
+    """``(line number, body)`` for every ``@(...)`` literal in ``text``.
+
+    Nested literals are reported in their own right as well: walking straight past
+    the outer one would hide a concatenation sitting in the inner one.
+    """
+    found: list[tuple[int, str]] = []
+    index = 0
+    while index < len(text) - 1:
+        char = text[index]
+        if char == "#":
+            index = _skip_comment(text, index)
+            continue
+        if char == "@" and text[index + 1] in _QUOTES:
+            index = _here_string_end(text, index)
+            continue
+        if char == "@" and text[index + 1] == "(":
+            line = text.count("\n", 0, index) + 1
+            depth = 1
+            cursor = index + 2
+            while cursor < len(text) and depth:
+                inner = text[cursor]
+                if inner in _QUOTES:
+                    cursor = _string_end(text, cursor)
+                    continue
+                if inner == "#":
+                    cursor = _skip_comment(text, cursor)
+                    continue
+                if inner == "(":
+                    depth += 1
+                elif inner == ")":
+                    depth -= 1
+                cursor += 1
+            found.append((line, text[index + 2 : cursor - 1]))
+        index += 1
+    return found
+
+
+def _elements(body: str) -> list[tuple[str, str | None]]:
+    """``(element, separator that ended it)`` for the body's top-level elements.
+
+    Both a comma and a newline separate elements here, which is the distinction that
+    matters: only the comma one is a hazard.
+    """
+    elements: list[tuple[str, str | None]] = []
+    depth = 0
+    chunk_start = 0
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if char in _QUOTES:
+            index = _string_end(body, index)
+            continue
+        if char == "#":
+            index = _skip_comment(body, index)
+            continue
+        if char == "@" and index + 1 < len(body) and body[index + 1] in _QUOTES:
+            index = _here_string_end(body, index)
+            continue
+        if char in _OPENERS:
+            depth += 1
+        elif char in _CLOSERS:
+            depth -= 1
+        elif depth == 0 and char in ",\n":
+            elements.append((body[chunk_start:index], char))
+            chunk_start = index + 1
+        index += 1
+    elements.append((body[chunk_start:], None))
+    return elements
+
+
+def _is_wrapped(element: str) -> bool:
+    """True when the element is one parenthesized expression from end to end."""
+    stripped = element.strip()
+    if not stripped.startswith("("):
+        return False
+    depth = 0
+    index = 0
+    while index < len(stripped):
+        char = stripped[index]
+        if char in _QUOTES:
+            index = _string_end(stripped, index)
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return not stripped[index + 1 :].strip()
+        index += 1
+    return False
+
+
+def _has_top_level_plus(element: str) -> bool:
+    """True when the element concatenates at its own level, not inside a call."""
+    depth = 0
+    index = 0
+    while index < len(element):
+        char = element[index]
+        if char in _QUOTES:
+            index = _string_end(element, index)
+            continue
+        if char == "#":
+            index = _skip_comment(element, index)
+            continue
+        if char in _OPENERS:
+            depth += 1
+        elif char in _CLOSERS:
+            depth -= 1
+        elif char == "+" and depth == 0:
+            return True
+        index += 1
+    return False
+
+
+def _concatenations_next_to_commas(text: str) -> list[str]:
+    """One line per array element whose concatenation sits next to a comma.
+
+    ``elements`` are comma-adjacent when the comma ended them or ended the element
+    before them, which is the two directions of the same trap.
+    """
+    offenders: list[str] = []
+    for line, body in _array_literals(text):
+        elements = _elements(body)
+        for position, (element, separator) in enumerate(elements):
+            comma_adjacent = separator == "," or (
+                position > 0 and elements[position - 1][1] == ","
+            )
+            if not comma_adjacent or _is_wrapped(element) or not _has_top_level_plus(element):
+                continue
+            offenders.append(f"array literal at line {line}: {element.strip()}")
+    return offenders
+
+
+def test_no_array_literal_concatenates_next_to_a_comma():
+    """An array element built by `+` needs its own parentheses. Nothing in this
+    checkout runs a Windows guest, so reading the scripts is the only place the
+    mistake can be caught before licensed media and an hour of setup are spent on
+    it — and setup takes the arguments it is handed without complaint either way."""
+    files = []
+    for root in SCRIPT_ROOTS:
+        files.extend(sorted(root.rglob("*.ps1")))
+    assert len(files) > 10, f"the scripts were not found under {SCRIPT_ROOTS}"
+
+    offenders = [
+        f"{path.relative_to(REPO_ROOT)}:{finding}"
+        for path in files
+        for finding in _concatenations_next_to_commas(path.read_text(encoding="utf-8"))
+    ]
+    assert not offenders, (
+        "PowerShell's comma binds tighter than '+', so this concatenation is not an "
+        "element of the list — wrap it in parentheses:\n  " + "\n  ".join(offenders)
+    )

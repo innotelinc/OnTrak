@@ -80,15 +80,18 @@ def descriptor(entry, settings) -> dict:
     script finds for itself, so there is no path in it to get wrong.
     """
     password = settings.guest.password
+    archive = entry.media.kind == "archive"
     return {
         "entry": entry.id,
         "product": entry.install_script.rsplit("/", 1)[-1].removesuffix(".ps1"),
         "version": entry.released[:4] if entry.released[:4].isdigit() else entry.edition,
         "media_kind": entry.media.kind,
-        "media_folder": GUEST_MEDIA_DIR + "\\" + entry.id,
-        "media_archive": (
-            GUEST_MEDIA_DIR + "\\" + entry.media.filename if entry.media.kind == "archive" else ""
-        ),
+        # Empty for an ISO, and that is load-bearing: `Get-MediaFolder` searches the
+        # attached CD-ROM drives only when it is given no folder, so naming one that
+        # no ISO build ever creates made every ISO product fail before it looked at
+        # the media at all.
+        "media_folder": GUEST_MEDIA_DIR + "\\" + entry.id if archive else "",
+        "media_archive": GUEST_MEDIA_DIR + "\\" + entry.media.filename if archive else "",
         "domain": os.environ.get("ONTRAK_PRODUCT_DOMAIN", "ontrak.test"),
         "org": os.environ.get("ONTRAK_PRODUCT_ORG", "OnTrak"),
         "sql_instance": os.environ.get("ONTRAK_PRODUCT_SQL_INSTANCE", "localhost"),
@@ -115,7 +118,12 @@ def main(argv: list[str]) -> int:
     args = argv[2:]
     entry_id = ""
     address = ""
-    attempts = 4
+    # Passes, not minutes. Microsoft's sequences restart a machine several times —
+    # the forest promotion, one restart per prerequisite the tool settles that way,
+    # and the documented restarts after Exchange and SharePoint setup — and every
+    # restart is a pass. Four was one too few for SharePoint's documented worst case
+    # (promotion, two prerequisite restarts, the post-setup restart).
+    attempts = 8
     index = 0
     while index < len(args):
         flag = args[index]
