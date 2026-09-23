@@ -6,7 +6,7 @@ planned. Anything in the last two sections is a statement of intent, not a featu
 ## Verified in this repository
 
 - Python control plane: catalog, scenarios, sessions, scoring, selection, scheduler,
-  generator, portal (student and admin), CLI — `pytest` (576 tests) and `ruff` clean. Only two
+  generator, portal (student and admin), CLI — `pytest` (577 tests) and `ruff` clean. Only two
   tests skip themselves, and both switch on from the environment rather than from a device:
   the Guacamole interop test (`ONTRAK_GUAC_INTEROP_URL`) and the real-range walk
   (`ONTRAK_E2E`, below).
@@ -141,15 +141,20 @@ These paths are reviewed and tested only up to the Incus boundary; they need a l
   dispatches it, and the reboot-and-resume contract is tested up to the Incus boundary —
   and what is not is the install itself: no product media has met a real guest, so the
   unattended steps in those scripts are read against Microsoft's documentation and not yet
-  against a setup log. Reading them is not nothing — three bugs that would each have cost an
-  install attempt were found that way. Two are the argument-construction slips
-  `tests/test_powershell_scripts.py` pins. The third is in the descriptor:
-  `apply-product-install.py` named an unpacked-archive folder for *every* product, and
-  `Get-MediaFolder` searches the attached CD-ROM drives only when it is given no folder at
-  all — so an ISO product (Exchange, SharePoint, SQL Server, which is to say every product
-  whose media is a disc) failed before it looked at its media. `tests/test_product_install.py`
-  now pins that `media_folder` is empty unless the media is an archive the builder unpacked.
-  None of that is an install, and the label stays until media meets a guest.
+  against a setup log. Reading them is not nothing — every one of the four scripts carried
+  something the vendor's own documentation contradicts, and each would have cost an install
+  attempt. Two are the argument-construction slips `tests/test_powershell_scripts.py` pins;
+  `tests/test_product_install.py` pins the third, where `apply-product-install.py` named an
+  unpacked-archive folder for *every* product and `Get-MediaFolder` searches the attached
+  CD-ROM drives only when it is given no folder at all — so every ISO product failed before
+  it looked at its media. The rest are documented contracts the same tests hold the scripts
+  to: quiet SQL Server setup must accept the privacy notice as well as the license terms and
+  mind exit code 3010's two documented meanings ("installed, restart", and "restart before
+  I install"); Exchange setup must carry `/InstallWindowsComponents` on a plain Server base;
+  SharePoint setup must carry `/IAcceptTheLicenseTerms` over `/config`; and the Deployment
+  Tool's configuration must not name a `SourcePath` no payload populated (the documented CDN
+  fallback is for language packs) nor set `AUTOACTIVATE` for a product that activates on its
+  own. None of that is an install, and the label stays until media meets a guest.
 - The Windows half of the browser console check. `ontrak console browser` asks a desktop for
   the Windows key and requires the screen to change, because that is the only proof a GUI can
   give that the student's keyboard reaches it — a canvas that paints and takes no keystroke is

@@ -254,3 +254,48 @@ def test_no_array_literal_concatenates_next_to_a_comma():
         "PowerShell's comma binds tighter than '+', so this concatenation is not an "
         "element of the list — wrap it in parentheses:\n  " + "\n  ".join(offenders)
     )
+
+
+def test_unattended_installs_carry_the_switches_their_modes_require():
+    """The switches Microsoft documents as *required* for the mode each setup runs in.
+
+    Read against the vendors' own unattended-install documentation, and pinned here
+    for the same reason as the trap above: each omission parses cleanly, runs for
+    forty minutes, and fails on a lab host with nothing but a setup log. These are
+    documented contracts rather than preferences — "required, when the /Q or /QS
+    parameter is specified", "required, when /SECURITYMODE=SQL", and the exit code
+    whose meaning decides between a reboot and a re-run.
+    """
+    products = REPO_ROOT / "infra" / "windows" / "products"
+
+    sql = (products / "sql-server.ps1").read_text(encoding="utf-8")
+    for accepted in ('IACCEPTSQLSERVERLICENSETERMS="True"', 'SUPPRESSPRIVACYSTATEMENTNOTICE="True"'):
+        assert accepted in sql, (
+            f"sql-server.ps1 runs setup quietly without {accepted} in its configuration "
+            "file — Microsoft's parameter table marks the license terms and the privacy "
+            "notice as required whenever /Q or /QS is in play"
+        )
+    assert "3010" in sql, (
+        "sql-server.ps1 does not look at setup's exit code 3010 — the documented "
+        "'restart required' code whose two meanings (installed-restart, and "
+        "restart-first) decide between a reboot and a re-run"
+    )
+
+    sharepoint = (products / "sharepoint-server.ps1").read_text(encoding="utf-8")
+    assert "/IAcceptTheLicenseTerms" in sharepoint, (
+        "sharepoint-server.ps1 runs setup.exe /config without /IAcceptTheLicenseTerms, "
+        "which the documented command-line mode requires"
+    )
+
+    exchange = (products / "exchange-server.ps1").read_text(encoding="utf-8")
+    assert "/InstallWindowsComponents" in exchange, (
+        "exchange-server.ps1 runs unattended setup without /InstallWindowsComponents — "
+        "Microsoft's documented switch for the Windows roles and features Exchange "
+        "needs on a plain Server base"
+    )
+
+    m365 = (products / "m365-apps.ps1").read_text(encoding="utf-8")
+    assert '<Property Name="AUTOACTIVATE"' not in m365, (
+        "m365-apps.ps1 sets AUTOACTIVATE, which the Deployment Tool's documentation "
+        "says not to set for Microsoft 365 Apps — it activates automatically"
+    )

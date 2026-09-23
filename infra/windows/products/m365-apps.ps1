@@ -40,15 +40,31 @@ Step ('Deployment Tool: ' + $folder)
 $channel = if ($config.channel) { $config.channel } else { 'Current' }
 $productId = if ($config.product_id) { $config.product_id } else { 'O365ProPlusRetail' }
 $configXml = Join-Path $folder 'ontrak-configuration.xml'
+
+# SourcePath only when the operator's archive carried the payload (the documented
+# download layout is <SourcePath>\Office\Data). Microsoft's documented lookup without
+# the attribute is "the same folder as the tool, and then the CDN" — which is exactly
+# where this build's bits come from either way — while naming a SourcePath with no
+# payload under it is naming a source that is not there, and the documented CDN
+# fallback (AllowCdnFallback) is for language packs, not for a missing source.
+$source = ''
+if (Test-Path (Join-Path $folder 'Office')) {
+    $source = ' SourcePath="' + $folder + '"'
+} else {
+    Step ('no offline payload under ' + (Join-Path $folder 'Office') +
+        ': the tool''s own folder is the source and the Office CDN stands behind it')
+}
+
+# No AUTOACTIVATE: Microsoft 365 Apps activates on its own and the Deployment Tool's
+# documentation says not to set that property for it.
 @"
 <Configuration>
-  <Add OfficeClientEdition="64" Channel="$channel" SourcePath="$folder">
+  <Add OfficeClientEdition="64" Channel="$channel"$source>
     <Product ID="$productId">
       <Language ID="en-us" />
     </Product>
   </Add>
   <Display Level="None" AcceptEULA="TRUE" />
-  <Property Name="AUTOACTIVATE" Value="1" />
   <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
   <Logging Level="Standard" Path="C:\ProgramData\OnTrak\logs" />
 </Configuration>

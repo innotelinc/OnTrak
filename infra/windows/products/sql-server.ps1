@@ -44,7 +44,11 @@ $options = @(
     '[OPTIONS]'
     'ACTION="Install"'
     'QUIET="True"'
+    # The license terms and the privacy notice both have to be accepted for a quiet
+    # run: Microsoft's parameter table marks each as required whenever /Q or /QS is
+    # in play, and the ini is where this build keeps such decisions.
     'IACCEPTSQLSERVERLICENSETERMS="True"'
+    'SUPPRESSPRIVACYSTATEMENTNOTICE="True"'
     'FEATURES="SQLEngine,FullText"'
     'INSTANCENAME="MSSQLSERVER"'
     'SQLCOLLATION="SQL_Latin1_General_CP1_CI_AS"'
@@ -63,11 +67,32 @@ $options = @(
 Set-Content -Path $ini -Value $options -Encoding ASCII
 Step ('wrote ' + $ini)
 
-Invoke-InstallStep -FilePath $setup -What 'SQL Server setup' -Arguments @(
-    ('/ConfigurationFile=' + $ini),
-    '/IACCEPTSQLSERVERLICENSETERMS',
-    '/QUIET'
-) | Out-Null
+# The instance's registration key, read by the install and the verification alike.
+$instances = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL'
+
+# Guarded and resumed like the domain products' expensive steps, because SQL setup
+# owns a restart of its own and its exit code 3010 carries both of Microsoft's
+# documented meanings: "the install finished, restart to complete it", and "a restart
+# is pending, so I will not install anything". Which one it was is told by the
+# registry: an instance that got registered means the first, so the done-mark goes
+# down and the reboot happens before verification; no instance means the second, and
+# nothing is marked done, so the next pass runs setup again on the restarted machine.
+# A re-run against an installed instance is a failure ("already installed"), which is
+# what the done-mark makes impossible.
+if (-not (Test-StepDone 'sql-installed')) {
+    $code = Invoke-InstallStep -FilePath $setup -What 'SQL Server setup' -Arguments @(
+        ('/ConfigurationFile=' + $ini),
+        '/IACCEPTSQLSERVERLICENSETERMS',
+        '/QUIET'
+    )
+    if ($code -eq 3010 -and -not (Test-Path $instances)) {
+        Request-Reboot 'SQL Server setup will not install while a restart is pending, and asks for one first'
+    }
+    Set-StepDone 'sql-installed'
+    if ($code -eq 3010) {
+        Request-Reboot 'SQL Server setup is complete and says the machine must restart before anything is verified'
+    }
+}
 
 # -- verification --------------------------------------------------------------
 # Three independent readings, because setup can report success for an instance that
@@ -84,7 +109,6 @@ if ((Get-Service -Name MSSQLSERVER).Status -ne 'Running') {
     Fail 'the instance exists and will not start — its log is the next thing to read'
 }
 
-$instances = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL'
 if (-not (Test-Path $instances)) {
     Fail 'no instance registry key: the install did not get as far as registering one'
 }
