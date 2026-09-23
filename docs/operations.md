@@ -181,8 +181,10 @@ make doctor                                                    # host healthy? (
 
 .venv/bin/ontrak scenario validate                           # catalogue healthy?
 .venv/bin/ontrak template build --all                        # after any scenario edit
-.venv/bin/ontrak console verify --linux \
-    --base-url https://localhost:8443/guacamole/              # each Linux console opens? one machine at a time
+.venv/bin/ontrak console verify --linux --workloads \
+    --base-url https://localhost:8443/guacamole/              # every Linux console opens? one machine at a time
+.venv/bin/ontrak console browser linux-user-lifecycle \
+    --portal-url https://localhost:8443/                     # and one of them opens in a real browser
 .venv/bin/ontrak pool prewarm --scenario net-dns-failure --count 30
 make serve          # the portal — it reaps expiry, idle sessions and history itself
 ```
@@ -284,6 +286,34 @@ for a process with no browser to open a tunnel on, so `console verify` asks for 
 `--base-url https://localhost:8443/guacamole/` on a TLS stack's own host, or
 `http://localhost:8080/guacamole/` for `make up` — and `ontrak doctor` reports its
 console checks as skipped rather than guessing at one.
+
+`--workloads` is what makes "every Linux console" true: a scenario offered on Ubuntu *and*
+Debian is one template per platform, so a sweep without it opens the one the catalogue lists
+first and reports a green range with the other half unchecked. And one thing none of that
+can see is the **page**: `ontrak console browser <scenario>` signs in to the portal, starts
+the scenario through the portal, opens the session page in Chromium and types into the
+terminal, then destroys the machine. It is the only check that can tell a console which is
+perfect over the wire from one whose frame never loads, whose bootstrap page cannot clear
+Guacamole's cached token, or whose canvas no keystroke reaches. Three things it needs:
+
+- **A browser engine**, which is a download of its own and deliberately not in
+  `requirements.txt`: `pip install playwright && playwright install chromium`. Set
+  `PLAYWRIGHT_BROWSERS_PATH` to a directory inside the checkout to keep the ~170 MB there.
+  Without an engine the command fails and says so — it does not quietly do nothing.
+- **The portal's own address** (`--portal-url`), because this drives the portal's pages and
+  not just the gateway's WebSocket. `guac.base_url: auto` is derived from each browser's
+  address, so a process has none and must be told one.
+- **An account that can open a session**, `--browser-user`/`--browser-password`, defaulting
+  to `portal.admin_username`/`portal.admin_password` (an instructor may view any session).
+  On a container stack the portal keeps its accounts in its **own volume** (`ontrak-state`),
+  not in this checkout's `state/` — so if it refuses the sign-in, the password it wants is
+  the one in the portal's database, and the error says exactly that.
+
+One machine at a time, on purpose: this allocates a real scenario through the portal and a
+sweep of them is a class's worth of work. The wire sweep above is the one that scales, and
+the nightly range walk runs both — the sweep over both Linux workloads, then this for one
+scenario (`ONTRAK_BROWSER_SCENARIO`, `ONTRAK_BROWSER_USER`/`ONTRAK_BROWSER_PASSWORD` when
+the runner should not hold the admin password).
 
 ### After
 

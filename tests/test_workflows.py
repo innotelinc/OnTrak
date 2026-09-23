@@ -99,11 +99,27 @@ def test_the_nightly_opens_every_linux_console():
     every assertion it makes passes, and the student sees a blank iframe."""
     text = "\n".join(_scripts(_load(NIGHTLY)))
     assert "console verify --linux" in text, "the nightly never opens a console"
+    assert "--workloads" in text, (
+        "the sweep opens one platform per scenario, so a scenario offered on two images "
+        "has half its consoles unchecked"
+    )
     assert "--base-url" in text, "the sweep is given no address to open a tunnel on"
 
 
+def test_the_nightly_opens_the_console_in_a_real_browser():
+    """The wire sweep is not the student's page: it never loads the session page, never
+    runs the bootstrap that clears Guacamole's stored token, and never sends a keystroke."""
+    text = "\n".join(_scripts(_load(NIGHTLY)))
+    assert "console browser" in text, "the nightly never opens the student's page in a browser"
+    assert "playwright install" in text, "the browser check is asked to run with no engine installed"
+    assert "--browser-password" in text, "the browser check would drive the page as nobody"
+    # No credentials, no browser check — and a step that found neither must fail rather
+    # than skip itself, which is the silent pass this whole workflow exists to prevent.
+    assert "ONTRAK_BROWSER_PASSWORD" in text and "ONTRAK_PORTAL__ADMIN_PASSWORD" in text
+
+
 def test_the_console_sweep_cannot_pass_without_opening_anything():
-    """`0 of 7 console(s) opened, 7 skipped` exits 0.
+    """`0 of 14 console(s) opened, 14 skipped` exits 0.
 
     A range whose Linux templates predate `guac.linux_ssh`, or one whose catalogue has no
     Linux scenario, produces exactly that — and it reads as a green nightly that opened

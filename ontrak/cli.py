@@ -9,6 +9,7 @@ Everything an instructor or operator needs, without touching Python:
     ontrak pool status|prewarm|refill
     ontrak session start|check|reset|console|end
     ontrak console verify --linux          # open real consoles, end to end
+    ontrak console browser <scenario>      # the student's page, in a real browser
     ontrak ticket form|show|grade|complete # the in-house write-up
     ontrak reap --loop                    # pool refill + idle/expiry reaping
     ontrak user list|remove
@@ -25,8 +26,9 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
-from . import __version__, guac, selection
+from . import __version__, browser, guac, selection
 from .catalog import Catalog
 from .config import ConfigError, load_settings, require_secrets
 from .generator import GenerationError, generate, generate_matrix, primitive_matrix, suggest_combinations
@@ -654,6 +656,117 @@ def _console_targets(repo, ids, *, all_scenarios: bool = False, linux_only: bool
     return [scenario.id for scenario in scenarios]
 
 
+def _console_jobs(
+    repo,
+    ids,
+    *,
+    all_scenarios: bool = False,
+    linux_only: bool = False,
+    every_workload: bool = False,
+    workload: str = "",
+) -> list[tuple[str, str]]:
+    """Which ``(scenario, workload)`` pairs a console check should open, in catalogue order.
+
+    A console belongs to a *machine*, and a scenario that names more than one platform
+    is more than one machine: ``linux-user-lifecycle`` has a template per platform, so a
+    sweep that opens one of them has checked half the range and cannot say so. With
+    ``every_workload`` each scenario is walked over the platforms it declares
+    (``scenario.platform_workloads``, in the order the scenario lists them) — what the
+    nightly range walk runs, and what an operator wants before a class that may land on
+    either image. ``workload`` pins one instead, for a run aimed at a single image.
+    A scenario that declares no platform is the site's golden image, which is the empty
+    workload — the same value `ontrak template build` uses for it.
+    """
+    jobs: list[tuple[str, str]] = []
+    for scenario_id in _console_targets(
+        repo, ids, all_scenarios=all_scenarios, linux_only=linux_only
+    ):
+        scenario = repo.get(scenario_id)
+        platforms = scenario.platform_workloads if every_workload else []
+        for platform in platforms or [workload]:
+            jobs.append((scenario_id, platform))
+    return jobs
+
+
+def _portal_origin(settings) -> str:
+    """The portal's own address, when the console's address says where it is.
+
+    `guac.base_url: auto` — the shipped default — is derived from each *browser's*
+    address, so a process has no portal to talk to and must be told one. An absolute
+    console URL is a path on the stack's one published port, and the portal is that
+    origin's `/`, which is the whole reason the shipped gateway serves both.
+    """
+    base = str(settings.guac.base_url or "").strip()
+    if not base or base.lower() == guac.AUTO_BASE_URL:
+        return ""
+    parsed = urlparse(base if "//" in base else f"//{base}")
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}/"
+
+
+def cmd_console_browser(ctx, args) -> int:
+    """Open one scenario's console the way a student does: in a real browser.
+
+    `console verify` proves the stack — the gateway, the webapp and guacd — with the same
+    requests a browser makes, and it cannot see the page itself: a frame that never loads,
+    a bootstrap page on another origin, or a canvas no keystroke reaches. So this signs in
+    to the portal, starts the scenario through it, opens the session page in Chromium and
+    types into the terminal. One scenario at a time, on purpose: a sweep of these is a
+    class's worth of machines, and the wire sweep is the one that scales.
+    """
+    settings = ctx.settings
+    missing = browser.engine_missing()
+    if missing:
+        # Asked for by name, so an engine that is not installed is an error rather than a
+        # silent pass: a check that quietly does nothing is the thing this repo keeps
+        # finding and removing.
+        _say(FAIL, missing)
+        return 2
+    portal = args.portal_url or _portal_origin(settings)
+    if not portal:
+        _say(
+            FAIL,
+            "this check drives the portal's own pages, so it needs the portal's address: "
+            "pass --portal-url (https://localhost:8443/ is the TLS stack's own, and "
+            "http://localhost:8080/ is what `make up-plain` publishes)",
+        )
+        return 2
+    if len(args.scenarios) != 1:
+        _say(
+            FAIL,
+            "name exactly one scenario: this starts a real machine and drives a real "
+            "browser, so it is one console at a time (use `console verify` to sweep)",
+        )
+        return 2
+    scenario_id = args.scenarios[0]
+    try:
+        ctx.repo.get(scenario_id)
+    except ScenarioError as exc:
+        _say(FAIL, str(exc))
+        return 1
+    state, detail, report = browser.verify_console_in_browser(
+        settings,
+        portal_url=portal,
+        scenario_id=scenario_id,
+        workload=args.workload or "",
+        user=args.browser_user or settings.portal.admin_username,
+        password=args.browser_password or settings.portal.admin_password,
+        seconds=args.seconds,
+        # How long a machine gets to come up before the console is called unreachable:
+        # the same budget `ontrak session check` uses, since it is the same wait.
+        wait_seconds=args.wait or float(settings.session.check_timeout_seconds),
+        keep=args.keep,
+    )
+    _say(OK if state == "ok" else FAIL, f"{scenario_id}: {detail}")
+    if report.frames and state != "ok":
+        # Shortened: a console frame's URL carries the whole signed payload, which is noise
+        # in a report whose point is which frames the browser ended up on.
+        for url in report.frames[:4]:
+            _say(INFO, f"  frame: {browser.console_address(url)}")
+    return 0 if state == "ok" else 1
+
+
 def cmd_console(args) -> int:
     """Open each target's console through the whole stack, and report what came back.
 
@@ -661,7 +774,8 @@ def cmd_console(args) -> int:
     `session console` prints the link, and this opens it. Per target it allocates a
     session, drives the portal's own signed link through the gateway, the webapp and
     guacd — the same three requests a browser makes — and destroys the machine again
-    unless ``--keep`` asks to leave it for a look.
+    unless ``--keep`` asks to leave it for a look. ``--workloads`` makes one target per
+    platform a scenario declares, so a scenario offered on two images is *two* rows.
 
     A row that is not ``ok`` is a console a student would have to report; ``degraded``
     still opens, over the slower HTTP tunnel, so it is printed but does not fail the run.
@@ -671,6 +785,15 @@ def cmd_console(args) -> int:
     """
     ctx = Context(args.config)
     settings = ctx.settings
+    if args.action == "browser":
+        return cmd_console_browser(ctx, args)
+    if args.workload and args.workloads:
+        _say(
+            FAIL,
+            "--workload pins one platform and --workloads opens every platform the "
+            "scenarios declare; pass one of them",
+        )
+        return 2
     if args.base_url:
         settings.guac.base_url = args.base_url
     # There is no fixed console URL under `auto`: it follows each browser's own address, and
@@ -698,10 +821,15 @@ def cmd_console(args) -> int:
         _say(OK if state == "ok" else FAIL, f"session {session.id}: {detail}")
         return 0 if state == "ok" else 1
 
-    targets = _console_targets(
-        ctx.repo, args.scenarios, all_scenarios=args.all, linux_only=args.linux
+    jobs = _console_jobs(
+        ctx.repo,
+        args.scenarios,
+        all_scenarios=args.all,
+        linux_only=args.linux,
+        every_workload=args.workloads,
+        workload=args.workload or "",
     )
-    if not targets:
+    if not jobs:
         _say(
             FAIL,
             "specify scenario ids, --all or --linux (or --session-id to check a session "
@@ -710,16 +838,19 @@ def cmd_console(args) -> int:
         return 2
 
     rows, results = [], []
-    for scenario_id in targets:
+    for scenario_id, workload in jobs:
         scenario = ctx.repo.get(scenario_id)
         protocol = guac.protocol_for(settings, scenario) or "none"
-        # One student per scenario: `session.max_per_student` would otherwise refuse the
-        # second allocation, and the name says in `session list` where the machine came
-        # from if one is left behind with --keep.
+        # One student per *target*: `session.max_per_student` would otherwise refuse the
+        # second allocation — two platforms of one scenario are two machines — and the
+        # name says in `session list` where a machine came from if one is left behind
+        # with --keep.
+        student = f"{args.student}-{scenario_id}" + (f"-{workload}" if workload else "")
+        label = f"{scenario_id}@{workload}" if workload else scenario_id
         session = ctx.manager.allocate(
-            f"{args.student}-{scenario_id}",
+            student,
             scenario_id,
-            workload=args.workload,
+            workload=workload or None,
             time_limit_minutes=args.time_limit,
         )
         if session.state == SessionState.ERROR:
@@ -729,7 +860,7 @@ def cmd_console(args) -> int:
                 settings, session, scenario, seconds=args.seconds
             )
         rows.append([scenario_id, session.workload or "-", protocol, state, str(session.id)])
-        results.append((scenario_id, state, detail))
+        results.append((label, state, detail))
         if not args.keep:
             ctx.manager.end(session)
 
@@ -750,7 +881,7 @@ def cmd_console(args) -> int:
     failed = [row for row in results if row[1] not in ("ok", "skipped", "degraded")]
     _say(
         OK if not failed else FAIL,
-        f"{opened} of {len(targets)} console(s) opened"
+        f"{opened} of {len(jobs)} console(s) opened"
         + (f", {skipped} skipped" if skipped else "")
         + ("" if args.keep else "; the machines have been destroyed"),
     )
@@ -1422,7 +1553,7 @@ def build_parser() -> argparse.ArgumentParser:
     session.set_defaults(func=cmd_session)
 
     console = sub.add_parser("console", help="open real consoles end to end")
-    console.add_argument("action", choices=["verify"])
+    console.add_argument("action", choices=["verify", "browser"])
     console.add_argument("scenarios", nargs="*", help="scenario ids (or --all / --linux)")
     console.add_argument("--all", action="store_true", help="every scenario in the catalogue")
     console.add_argument(
@@ -1442,12 +1573,39 @@ def build_parser() -> argparse.ArgumentParser:
         "(e.g. https://localhost:8443/guacamole/)",
     )
     console.add_argument("--workload", help="catalog entry to build the guest from, e.g. debian-12")
+    console.add_argument(
+        "--workloads",
+        action="store_true",
+        help="open one console per platform the scenario declares (e.g. ubuntu-24.04 *and* "
+        "debian-12) instead of only the default; what the nightly range walk runs",
+    )
     console.add_argument("--time-limit", type=int, default=None)
     console.add_argument(
         "--seconds",
         type=float,
         default=guac.TUNNEL_SECONDS,
         help="how long to listen on each console's tunnel (default: %(default)s)",
+    )
+    console.add_argument(
+        "--portal-url",
+        help="the portal's own address, for `console browser` (e.g. https://localhost:8443/); "
+        "defaults to the origin of --base-url / guac.base_url when it is an absolute URL",
+    )
+    console.add_argument(
+        "--browser-user",
+        help="account `console browser` signs in with; defaults to portal.admin_username. "
+        "An instructor can open any session's page, so this is normally the range's admin",
+    )
+    console.add_argument(
+        "--browser-password",
+        help="password for --browser-user; defaults to portal.admin_password",
+    )
+    console.add_argument(
+        "--wait",
+        type=float,
+        default=None,
+        help="how long `console browser` waits for the machine it started (default: "
+        "session.check_timeout_seconds)",
     )
     console.add_argument("--keep", action="store_true", help="leave the machines up for a look")
     console.set_defaults(func=cmd_console)

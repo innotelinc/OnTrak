@@ -16,7 +16,7 @@ from ontrak import guac
 
 # `console verify`'s target selection: a pure function of the catalogue and the flags,
 # which is why the sweep can be tested without opening a console at all.
-from ontrak.cli import _console_targets
+from ontrak.cli import _console_jobs, _console_targets
 from ontrak.models import Session
 
 from .conftest import GUAC_KEY
@@ -743,6 +743,67 @@ def test_the_tunnel_check_reports_a_handshake_that_never_happened(settings):
     assert "Connection refused" in report.closed
 
 
+def test_a_handshake_that_gets_no_answer_is_the_one_thing_asked_twice(settings):
+    """1 upgrade in 14 on a busy range is never answered, and the next one works.
+
+    Measured with `console verify --linux --workloads` on a real range, clone and destroy
+    running beside the sweep: one session's WebSocket handshake got no HTTP response at
+    all — the gateway logged no request for it — so the check spent its entire 30-second
+    upgrade deadline and then reported a console that a student could have opened. A
+    browser has no such deadline: it waits, or the student reloads. Only this case is
+    retried, and the retry stays in the sentence, so a range that drops the occasional
+    handshake is visible rather than smoothed over.
+    """
+    attempts = []
+
+    class Flaky(FakeTunnel):
+        def __call__(self, url, timeout):
+            attempts.append(url)
+            if len(attempts) == 1:
+                raise TimeoutError("timed out while waiting for handshake response")
+            return super().__call__(url, timeout)
+
+    tunnel = Flaky(wire("", TUNNEL_UUID), wire("img", "1", "0", "0", "0", "14"))
+    report = guac.drive_tunnel("ws://guac.test/guacamole/websocket-tunnel", seconds=5, connect=tunnel)
+    assert len(attempts) == 2, "a handshake that was never answered is the case for a retry"
+    assert report.opened and report.retried_from, "the retry is not recorded, so nothing says it happened"
+    state, detail = guac.tunnel_verdict(report, base="https://guac.test/guacamole/")
+    assert state == "ok"
+    assert "second attempt opened it" in detail and "never answered" in detail
+
+
+def test_a_refused_handshake_is_a_verdict_and_not_a_retry(settings):
+    """A gateway that answered `403` answers `403` again — that *is* the console's answer."""
+    attempts = []
+
+    class Refused(Exception):
+        response = type("Response", (), {"status_code": 403})()
+
+    def connect(url, timeout):
+        attempts.append(url)
+        raise Refused("403")
+
+    report = guac.drive_tunnel("ws://guac.test/guacamole/websocket-tunnel", seconds=5, connect=connect)
+    assert len(attempts) == 1
+    state, detail = guac.tunnel_verdict(report, base="https://guac.test/guacamole/")
+    assert state == "unreachable" and "HTTP 403" in detail
+
+
+def test_two_unanswered_attempts_say_so_instead_of_asking_a_third_time(settings):
+    """One retry is a flake; a range where both attempts go unanswered is a finding."""
+    attempts = []
+
+    def connect(url, timeout):
+        attempts.append(url)
+        raise TimeoutError("timed out while waiting for handshake response")
+
+    report = guac.drive_tunnel("ws://guac.test/guacamole/websocket-tunnel", seconds=5, connect=connect)
+    assert len(attempts) == guac.TUNNEL_ATTEMPTS == 2
+    state, detail = guac.tunnel_verdict(report, base="https://guac.test/guacamole/")
+    assert state == "unreachable"
+    assert "on either of two attempts" in detail
+
+
 def _probe_fakes(*frames, **kwargs):
     """The probe's two HTTP steps (as real ones answer) and then the tunnel."""
     tunnel = FakeTunnel(*frames, **kwargs)
@@ -929,3 +990,36 @@ def test_the_console_sweep_takes_what_it_was_asked_for(repo):
     assert _console_targets(repo, windows[:1], linux_only=True) == []
     # ...and asking for nothing is not the same as asking for everything.
     assert _console_targets(repo, []) == []
+
+
+def test_the_console_sweep_can_walk_every_platform_a_scenario_declares(repo):
+    """`--workloads` makes one row per platform, because each platform is a machine.
+
+    A scenario offered on Ubuntu *and* Debian is two templates, two pools and two
+    machines, so a sweep that opens only the first reports a green range that a class
+    landing on the other image would not see — and cannot tell that it did. The
+    nightly walk runs this shape, which is why the count it demands is the number of
+    platforms and not the number of scenarios.
+    """
+    linux = [scenario for scenario in repo.list() if scenario.is_linux]
+    assert linux, "the catalogue is meant to hold Linux scenarios"
+    assert any(
+        len(scenario.platform_workloads) > 1 for scenario in linux
+    ), "a Linux scenario is meant to be offered on more than one distribution"
+
+    first = linux[0]
+    assert _console_jobs(repo, [first.id], every_workload=True) == [
+        (first.id, workload) for workload in first.platform_workloads
+    ]
+    assert len(_console_jobs(repo, [], linux_only=True, every_workload=True)) == sum(
+        len(scenario.platform_workloads) for scenario in linux
+    ), "every declared platform is a target"
+
+    # A pinned platform is one row per scenario; no flag at all is the scenario's own
+    # default — which for one that declares none is the empty workload, the site's
+    # golden image, exactly as `ontrak template build` reads it.
+    ids = [scenario.id for scenario in linux]
+    assert _console_jobs(repo, ids[:2], workload="debian-12") == [
+        (scenario_id, "debian-12") for scenario_id in ids[:2]
+    ]
+    assert _console_jobs(repo, ids[:1]) == [(ids[0], "")]

@@ -2,6 +2,10 @@
 PyYAML>=6.0
 cryptography>=42.0          # Guacamole signed/encrypted JSON payloads
 websockets>=12              # opening the console's tunnel in the console checks
+playwright>=1.40            # `ontrak console browser`: the student's console page, in a real
+                            # browser. The *engine* is a separate download on purpose
+                            # (`playwright install chromium`) — 170 MB that a range which only
+                            # runs the wire checks should not have to carry
 pywinrm>=0.4.3              # guest automation over WinRM (default driver)
 fastapi>=0.110
 uvicorn[standard]>=0.29

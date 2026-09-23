@@ -51,3 +51,7 @@ deploy/guacamole/recordings/
 
 # compose env check (generated, never committed)
 .env.compose-check
+
+# browser engines for `ontrak console browser` when PLAYWRIGHT_BROWSERS_PATH keeps them
+# inside the checkout (170 MB: playwright's own default lives in the user's cache)
+.playwright/

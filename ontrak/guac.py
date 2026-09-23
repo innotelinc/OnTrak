@@ -574,6 +574,17 @@ KEEPALIVE_SECONDS = 5.0
 # so a check that gives up sooner is the one that is wrong.
 TUNNEL_OPEN_SECONDS = 30.0
 
+# How many times the tunnel is *opened* before a check answers, and the second one is for
+# the transport rather than the console. Measured on a real range with the sweep cloning a
+# machine beside it: 1 upgrade in 14, and 1 in 28 on another sweep, was never answered at
+# all — the gateway logged no request for it, so the handshake did not complete — and the
+# identical check passed on the next try. A browser has no such deadline: a student waits,
+# or reloads. Reporting that one connection as "this console is broken" is wrong about the
+# range, and a nightly that goes red for it is a nightly nobody reads. Only the
+# never-answered case is retried; a console that refused, or answered with an error, or
+# painted, is a verdict on the first attempt.
+TUNNEL_ATTEMPTS = 2
+
 
 def tunnel_url(
     base: str,
@@ -686,6 +697,14 @@ class TunnelReport:
     opcodes: dict[str, int] = field(default_factory=dict)
     errors: list[list[str]] = field(default_factory=list)
     closed: str = ""
+    # The handshake was never answered — no HTTP response at all, which is a transport
+    # failure rather than a console that refused. The only failure worth asking twice:
+    # see :data:`TUNNEL_ATTEMPTS`.
+    unanswered: bool = False
+    # What a previous attempt that went unanswered said, when this report is the retry.
+    # Kept so a console that needed a second try *says so*, rather than the retry being
+    # invisible in the one report an operator reads.
+    retried_from: str = ""
 
     @property
     def opened(self) -> bool:
@@ -780,6 +799,7 @@ def drive_tunnel(
     seconds: float = TUNNEL_SECONDS,
     open_seconds: float = TUNNEL_OPEN_SECONDS,
     connect=None,
+    attempts: int = TUNNEL_ATTEMPTS,
 ) -> TunnelReport:
     """Open the console's WebSocket tunnel and listen, the way a browser does.
 
@@ -794,9 +814,26 @@ def drive_tunnel(
     ``connect`` the seam the tests use — a callable ``(url, timeout)`` returning a context
     manager whose ``recv(timeout=...)`` yields frames and raises ``TimeoutError`` when none
     arrive in time — defaulting to the `websockets` client.
+
+    ``attempts`` bounds how many times the tunnel is opened, and only a handshake that was
+    never answered uses the second one (see :data:`TUNNEL_ATTEMPTS`). The retry is recorded
+    in :attr:`TunnelReport.retried_from`, so the caller's sentence can say the console
+    needed one.
     """
-    report = TunnelReport()
     opener = connect or _open_tunnel
+    report = _listen(opener, url, seconds=seconds, open_seconds=open_seconds)
+    first_failure = report.closed if report.unanswered else ""
+    for _ in range(max(0, attempts - 1)):
+        if not report.unanswered:
+            break
+        report = _listen(opener, url, seconds=seconds, open_seconds=open_seconds)
+        report.retried_from = first_failure
+    return report
+
+
+def _listen(opener, url: str, *, seconds: float, open_seconds: float) -> TunnelReport:
+    """One attempt: open the tunnel, listen, and report what came back."""
+    report = TunnelReport()
     deadline = time.monotonic() + seconds
     try:
         with opener(url, open_seconds) as socket:
@@ -831,6 +868,11 @@ def drive_tunnel(
         # Every way this can fail is one finding — refused, 403, wrong subprotocol, DNS,
         # TLS — and it belongs in the report rather than in a traceback out of `doctor`.
         report.closed = _tunnel_failure(exc, url)
+        # No `response` on the exception means the handshake got no answer at all, as
+        # against one the gateway refused. That distinction is the whole of
+        # :data:`TUNNEL_ATTEMPTS`, so it is read off the exception rather than guessed at
+        # from the sentence.
+        report.unanswered = getattr(exc, "response", None) is None
     return report
 
 
@@ -841,9 +883,28 @@ def tunnel_verdict(report: TunnelReport, *, base: str, placeholder: bool = False
     own error about it the *expected* answer rather than a finding.
     """
     where = f"the console tunnel at {base}"
+
+    def retried(sentence: str) -> str:
+        """Say that the console needed a second attempt, where one was needed.
+
+        The retry is in the sentence on purpose: a check that silently tried twice would
+        hide a range whose gateway drops the odd handshake, which is a thing an operator
+        can do something about (and the reason :data:`TUNNEL_ATTEMPTS` is not larger).
+        """
+        if not report.retried_from:
+            return sentence
+        if report.unanswered:
+            # Both attempts went unanswered, so the second one says nothing new: this is
+            # the same transport failure twice, not a console that half-works.
+            return f"{sentence} — on either of two attempts"
+        return (
+            f"{sentence} (a second attempt opened it; the first was never answered: "
+            f"{report.retried_from})"
+        )
+
     if not report.opened:
         if report.closed:
-            return "unreachable", f"{report.closed}, so no tunnel UUID ever arrived"
+            return "unreachable", retried(f"{report.closed}, so no tunnel UUID ever arrived")
         return "unreachable", (
             f"{where} opened but nothing at all came back: the webapp sends the tunnel's "
             "UUID only once it has a guacd to talk to, so this is guacd (down, or "
@@ -851,7 +912,7 @@ def tunnel_verdict(report: TunnelReport, *, base: str, placeholder: bool = False
         )
     negotiated = f"{where} opened with the {TUNNEL_SUBPROTOCOL!r} subprotocol"
     if report.subprotocol != TUNNEL_SUBPROTOCOL:
-        return "degraded", (
+        return "degraded", retried(
             f"{where} opened, but the gateway did not negotiate the "
             f"{TUNNEL_SUBPROTOCOL!r} subprotocol (got {report.subprotocol or 'none'!r}); a "
             "browser refuses a WebSocket whose subprotocol was not accepted and falls "
@@ -864,7 +925,7 @@ def tunnel_verdict(report: TunnelReport, *, base: str, placeholder: bool = False
                 f"{negotiated} and guacd answered for the placeholder connection: "
                 f"{message!r} — the expected answer, since this check names no real guest"
             )
-        return "error", f"{negotiated}, but guacd reported {message!r}"
+        return "error", retried(f"{negotiated}, but guacd reported {message!r}")
     if not PAINTED_OPCODES.intersection(report.opcodes):
         # guacd answered, but never drew anything and never complained: a console that
         # opens onto a blank frame is the failure this exists to name, and "it replied"
@@ -875,10 +936,10 @@ def tunnel_verdict(report: TunnelReport, *, base: str, placeholder: bool = False
         )
     described = f"{report.instructions} instructions ({report.opcode_summary})"
     if placeholder:
-        return "ok", (
+        return "ok", retried(
             f"{negotiated} and guacd sent {described} for the placeholder connection"
         )
-    return "ok", f"{negotiated} and guacd painted {described}, with no error"
+    return "ok", retried(f"{negotiated} and guacd painted {described}, with no error")
 
 
 def probe_tunnel(

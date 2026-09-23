@@ -179,7 +179,7 @@ OnTrak/
 
 ## Status
 
-- **Verified here:** the Python control plane — `pytest` (525 tests; the only two that skip
+- **Verified here:** the Python control plane — `pytest` (551 tests; the only two that skip
   themselves are the live-Guacamole interop test and the range walk below), `ruff` clean,
   scenario validation, catalog validation, the CLI, generated scenarios validated, the
   admin panel rendering without a reachable hypervisor, and the Guacamole link format
@@ -193,13 +193,18 @@ OnTrak/
   **nightly** on a self-hosted runner labelled `incus`
   (`.github/workflows/range-nightly.yml`), which fails rather than reports green if the
   walk skips itself, and opens every Linux console on the same run — a console sweep that
-  opens nothing fails too, for the same reason a skipped walk does. `ontrak console verify --linux` opened all 14 `(scenario, workload)`
-  Linux consoles the way a browser does — through the real gateway, webapp and guacd, over
-  the TLS listener, each painting its terminal — and guacd's own typescript for one of them
-  reads back the shell prompt, the typed command and its output. A Windows scenario's
-  template was rebuilt from the golden image the same way (`ontrak template build
-  sw-app-crash --force`) and its RDP console opened onto a painted desktop: guacd signing in
-  as the training user, `img`/`blob` tiles, `rect`, `cfill`, no error. `make sweep` stays an
+  opens nothing fails too, for the same reason a skipped walk does. `ontrak console verify
+  --linux --workloads` opened all 14 `(scenario, workload)` Linux consoles the way a browser
+  does — through the real gateway, webapp and guacd, over the TLS listener, each painting its
+  terminal — and guacd's own typescript for one of them reads back the shell prompt, the
+  typed command and its output. A Windows scenario's template was rebuilt from the golden
+  image the same way (`ontrak template build sw-app-crash --force`) and its RDP console
+  opened onto a painted desktop: guacd signing in as the training user, `img`/`blob` tiles,
+  `rect`, `cfill`, no error. And `ontrak console browser` opened one scenario's console **in
+  Chromium**, the way a student does: signing in to the portal, starting the machine through
+  it, loading the session page, and typing `echo BROWSER_OK` into the terminal in the frame —
+  4 canvases painted and the screen changed, which is the keystroke half no wire-level check
+  can see. `make sweep` stays an
   operator command: it boots the whole pool
   (see [docs/operations.md](docs/operations.md#maintenance)).
 - **Verified in Docker:** the image builds and validates a checkout with no hypervisor, every

@@ -6,7 +6,7 @@ planned. Anything in the last two sections is a statement of intent, not a featu
 ## Verified in this repository
 
 - Python control plane: catalog, scenarios, sessions, scoring, selection, scheduler,
-  generator, portal (student and admin), CLI — `pytest` (525 tests) and `ruff` clean. Only two
+  generator, portal (student and admin), CLI — `pytest` (551 tests) and `ruff` clean. Only two
   tests skip themselves, and both switch on from the environment rather than from a device:
   the Guacamole interop test (`ONTRAK_GUAC_INTEROP_URL`) and the real-range walk
   (`ONTRAK_E2E`, below).
@@ -58,11 +58,14 @@ planned. Anything in the last two sections is a statement of intent, not a featu
 - The nightly range walk, as a workflow: it is scheduled, only a self-hosted runner labelled
   `incus` takes it, it switches the walk's test on with `ONTRAK_E2E`, and it fails instead of
   reporting green when the walk skips itself — all four pinned by `tests/test_workflows.py`,
-  which runs in CI. It then opens every Linux console (`ontrak console verify --linux`) over
-  the same stack and fails if one does not open, because the walk is blind to the console:
-  the gateway, the webapp and guacd can each be down while every assertion above passes. That
-  sweep is held to the walk's own rule — opening nothing is not a pass — and those two
-  properties are pinned there too. A skipped pytest is a green pytest, so the one thing this job must never
+  which runs in CI. It then opens every Linux console (`ontrak console verify --linux
+  --workloads`) over the same stack and fails if one does not open, because the walk is blind
+  to the console: the gateway, the webapp and guacd can each be down while every assertion
+  above passes. That sweep is held to the walk's own rule — opening nothing is not a pass —
+  and those two properties are pinned there too. Last it opens one scenario's console in a
+  real browser (`ontrak console browser`), which is the one layer the wire sweep cannot see:
+  the session page, the portal's bootstrap frame that clears Guacamole's stored token, and a
+  keystroke. A skipped pytest is a green pytest, so the one thing this job must never
   do is skip its way to a passing nightly. What the walk proves is a statement about the
   range it runs against, which is exactly why the job lives on the range and not on a
   hosted runner: it is the layer no double here can stand in for.
@@ -85,7 +88,25 @@ planned. Anything in the last two sections is a statement of intent, not a featu
   client it has not heard from for fifteen seconds (status 776, "Aborted. See logs."), so
   the check sends the browser's own five-second `nop` — without it, a console that paints
   slowly was reported as a console that is broken. That is the protocol and the stack, not
-  the browser: nothing here clicks inside an iframe.
+  the browser: nothing *there* clicks inside an iframe. A third thing the real stack taught,
+  from the sweep that walks both Linux workloads: one upgrade in 28 was never answered at
+  all — the gateway logged no request for it — and the same check passed when it was asked
+  again, so a handshake that gets no HTTP response at all is retried once, and the retry
+  stays in the sentence rather than being smoothed over.
+- The student's console page, in a real browser (`ontrak console browser`, and a step of the
+  nightly). It signs in to the portal, starts the scenario *through* the portal, opens the
+  session page in Chromium, waits for the console frame, and types into the terminal — into a
+  machine it started itself, never a student's. On the range: signed in, session started,
+  the frame painted 4 canvases, and `echo BROWSER_OK` changed the screen, for a Linux
+  scenario and (painted, nothing typed into a GUI) for a Windows one. It is portal-driven
+  rather than another `console verify` mode because a container stack keeps the portal's
+  accounts and sessions in its own volume: a host-side allocation is a machine the portal
+  has never heard of, and its page answers 404. What it needs is an account that can open a
+  session — the range's admin by default, or one kept for the check — and what it does *not*
+  do is prove the same thing for all 14 consoles: it is one machine and one page, because
+  the wire sweep is the one that scales. And it checks a *page*: pixels. The terminal's text
+  is in pixels, so "the prompt is really there" is still read from guacd's own typescript by
+  the sweep above rather than from this frame.
 
 ## Built, but not proven on real hardware
 
