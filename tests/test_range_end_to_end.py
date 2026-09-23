@@ -73,10 +73,12 @@ pytestmark = pytest.mark.skipif(
 def _env_file(path: Path) -> dict[str, str]:
     """Read a compose-style ``.env`` into a mapping, without running it.
 
-    A shell ``eval`` is not good enough and this was measured, not assumed: the brand
-    note is an unquoted value with spaces, so it runs as a command and the key is
-    quietly left unset — and a different environment is a different recipe for every
-    template. ``scripts/grade-sweep.py`` reads it the same way, for the same reason.
+    A shell ``eval`` is the wrong tool: this file is compose's and the app's *data*, not a
+    script, and evaluating it runs whatever an operator put in it. The quoting that lets a
+    value with a space survive `set -a; . ./.env` is stripped again here, the way compose
+    strips it — and a different environment is a different recipe for every template, so
+    reading the *right* file is the difference between a green run and a red one.
+    ``scripts/grade-sweep.py`` reads it the same way, for the same reason.
     """
     values: dict[str, str] = {}
     if not path.exists():

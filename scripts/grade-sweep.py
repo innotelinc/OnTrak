@@ -63,9 +63,10 @@ DEFAULT_REPAIRS = ROOT / "dist" / "sweep-repairs.json"
 def load_env_file(path: Path) -> None:
     """Read a compose-style ``.env`` into the environment, without running it.
 
-    A shell ``eval`` of the file is not good enough and this was measured, not
-    assumed: a value with spaces in it (the brand note) is then run as a command and
-    the key is quietly left unset — and a *different* environment is a different
+    A shell ``eval`` of the file is the wrong tool: it is compose's and the app's
+    *data*, not a script, and evaluating it runs whatever an operator put in it. The
+    quoting that lets a value with a space survive `set -a; . ./.env` is stripped again
+    here, the way compose strips it — and a *different* environment is a different
     template recipe, which is how one probe called the whole pool stale.
     """
     if not path.exists():
