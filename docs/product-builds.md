@@ -106,3 +106,50 @@ moves in [roadmap.md](roadmap.md). Not before.
 Each of them retires its own sentence in the roadmap when its own setup log has been
 read. The scripts were written against the documentation; the point of the lab run is
 to find out where the documentation and the media disagree.
+
+## Exchange and SharePoint: what each pass should show
+
+SQL Server's run is one or two passes and its own log is one file. The two domain
+products are *sequences* of passes, and each restart hands the next pass a machine
+that has changed underneath it — Exchange's promotion turns a workgroup guest into
+the domain's own controller between the first pass and the second. What each pass
+owes the transcript:
+
+### `exchange-server-2019` / `exchange-server-se` — budget an hour
+
+| Pass | What runs | What the transcript must show |
+| --- | --- | --- |
+| 1 | the Administrator password set from the descriptor, then the forest promotion | the reboot marker — promotion completes across a restart |
+| 2 | `/PrepareSchema`, then `/PrepareAD`, then `/mode:Install /role:Mailbox /InstallWindowsComponents` | `this guest is already in the <domain> domain` on arrival (the identity flip survived the reboot), each step's exit 0 |
+| last | the post-setup restart Microsoft asks for, then the verification | services running, the installed tree, `ONTRAK-PRODUCT-OK` |
+
+- The one line to watch: a resumed pass must print `done:` for the steps already
+  finished and skip them. A `/PrepareSchema` printed twice is a schema extended
+  twice.
+- On failure, `C:\ExchangeSetupLogs\ExchangeSetup.log` is the record (the failure
+  message names it), and `C:\ProgramData\OnTrak\product-state.txt` says which steps
+  had completed when it stopped.
+
+### `sharepoint-server-se` — budget an hour and a half, the longest pass list of the four
+
+| Pass | What runs | What the transcript must show |
+| --- | --- | --- |
+| 1 | the farm account's SQL login on the local instance (from the `sql-server-2022` base this is layered onto), then `PrerequisiteInstaller.exe /unattended` | exit 0 — or a restart request (3010/1001), which means "restart and re-run with `/continue`", not "done" |
+| 2..n | `PrerequisiteInstaller.exe /continue /unattended` | `prerequisites-restarted` in the state file, `/continue` on the command line, until the tool exits 0 |
+| next | `setup.exe /config ... /IAcceptTheLicenseTerms`, then the restart Microsoft asks for | `binaries-installed`, then the reboot marker |
+| farm | `psconfig` in the configuration wizard's own order: configdb → Update-SPFlightsConfigFile → helpcollections → secureresources → services → installfeatures → adminvs → applicationcontent | one exit 0 per command, in that order, as the domain Administrator |
+| verify | the timer service and Central Administration answering on its port | `ONTRAK-PRODUCT-OK` |
+
+- The state file is the spine: one line per completed step, and a resumed pass runs
+  only what is missing.
+- If a prerequisite asks for a restart and nothing resumes with `/continue`, look
+  at the startup task: the script deletes the installer's own re-run-at-logon task
+  (Microsoft's documented workaround), because nobody logs on to a guest the agent
+  drives — and in the published image that task would fire at a student's first logon.
+- Where to read: `%TEMP%\PrerequisiteInstaller.<date>.log` for the prerequisites and
+  which one asked for the restart; `C:\ProgramData\OnTrak\logs` for the setup trace
+  and the psconfig output.
+
+Pass budget, worst case: promotion (1) + two prerequisite restarts + the post-setup
+restart + the final verification pass — six of the driver's eight passes are spoken
+for, and `--attempts` raises the fence if a media set needs more.

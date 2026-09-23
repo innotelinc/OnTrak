@@ -51,6 +51,7 @@ Scenarios share one fictional estate so that tickets reinforce each other:
 | DNS server | the bridge gateway, e.g. `10.20.0.1` (supplied by DHCP) |
 | File server | `fileserver.ontrak.lab` — HTTP on 80, `10.20.0.53`, from `infra/lab-services.sh` |
 | Staff portal | `portal.ontrak.lab` — HTTP on 8080, `10.20.0.54` |
+| Database | `TrainingDB` on the SQL Server workloads (APPDB-01 in tickets) |
 
 The two service names are **explicit DNS records** on the lab bridge
 (`incus network get ontrak0 raw.dnsmasq`), not Incus's automatic per-instance
@@ -264,6 +265,67 @@ so there is no malware to remove — the marks are for recognising the indicator
 the artifact that could run, undoing the change the user made, and documenting all three.
 A student who quarantines but writes nothing gets partial credit, which is the correct
 outcome for a triage ticket.
+
+### 8. `sw-db-service-account` — "The application cannot connect to the database" (software, 2/4)
+
+* **Broken:** the SQL Server service logs on as a local account (`svc-sql`) whose password
+  identity rotated on Saturday. Windows services hold their *own* copy of the password, so
+  the service cannot start at all (System log, error 1069) and every client reports
+  "cannot connect to the database" — while the database is never the problem.
+* **Fix:** move the service to the estate standard — the virtual account
+  `NT SERVICE\MSSQLSERVER`, which has no password to rotate — and start it.
+* **Graded:** service running (critical) / a real query answers (critical) / the service
+  logs on as the standard virtual account.
+* **Common wrong answer:** hunting for a database fault while the service is stopped.
+  Fixing `svc-sql`'s password also passes the machine objectives but loses the standard
+  one — on purpose, since it would be stranded again by the next rotation.
+* **Workloads:** `sql-server-2019`, `sql-server-2022`.
+
+### 9. `net-db-protocols` — "The app server cannot reach the database — but it works on the box" (network, 3/4)
+
+* **Broken:** TCP/IP and Named Pipes are disabled in the instance's network configuration;
+  shared memory — SQL Server's always-on local "protocol" — is left alone. Every tool on
+  the box works; nothing answers the network.
+* **Fix:** re-enable both protocols (SQL Server Configuration Manager) and restart the
+  SQL Server service — the protocols load with the service.
+* **Graded:** TCP/IP enabled / named pipes enabled / the port answers (critical) / a
+  forced-TCP connection runs a query (critical).
+* **Common wrong answer:** "it works when I test it" — tested by a local tool riding
+  shared memory. The graded connection forces `tcp:` into the data source so the shortcut
+  cannot fake a fix.
+* **Gotcha:** the registry path is instance-versioned (`MSSQL15` on 2019, `MSSQL16` on
+  2022), so the scripts resolve it from `Instance Names\SQL` rather than assuming one.
+* **Workloads:** `sql-server-2019`, `sql-server-2022`.
+
+### 10. `net-db-firewall` — "The database stopped answering after the change window" (network, 2/4)
+
+* **Broken:** the change window's "temporary lockdown": the estate's allow rule for the
+  database port is disabled and an enabled block rule takes its place on TCP 1433. The
+  database is untouched and healthy.
+* **Fix:** remove the block rule and leave inbound 1433 allowed by an enabled rule.
+* **Graded:** no enabled block rule on 1433 (critical) / an enabled allow rule on 1433 /
+  the instance itself still answers — a guard against "fixing" a firewall ticket inside
+  SQL Server.
+* **Gotcha:** grading reads the *rule list* on purpose. Loopback traffic does not cross
+  Windows Firewall rules, so no probe from the machine itself can see the block at all —
+  a socket test would pass before the fix and grade the fault as healthy.
+* **Workloads:** `sql-server-2019`, `sql-server-2022`.
+
+### 11. `os-db-log-full` — "Saving records fails: the transaction log is full" (os, 3/4)
+
+* **Broken:** `TrainingDB`'s transaction log is capped at 4 MB with autogrowth off, in full
+  recovery with no backup job — so it fills with committed transactions it can never
+  clear and refuses every write, on a server whose disks are nearly empty.
+* **Fix:** get saving again *and* take the lid off: autogrowth (or a bigger cap), plus
+  either a log backup or the recovery model the estate uses.
+* **Graded:** a write succeeds (critical) / the log can grow again / the log has room
+  again. All three legitimate fixes pass, whichever door the student used.
+* **Common wrong answer:** "the disk is full". The log is a file with a size cap, and in
+  full recovery a checkpoint alone provably clears nothing.
+* **Gotcha:** the check runs a `CHECKPOINT` before its probe write — fairness to the
+  simple-recovery fix (whose first save would race an auto-checkpoint) and, in full
+  recovery, a free demonstration that the log stays full.
+* **Workloads:** `sql-server-2019`, `sql-server-2022`.
 
 ## Generating scenarios from fault primitives
 

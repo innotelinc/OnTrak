@@ -1,0 +1,99 @@
+id: net-db-firewall
+title: "The database stopped answering after the change window"
+category: network
+platform: windows
+workloads: [sql-server-2019, sql-server-2022]
+difficulty: 2
+minutes: 25
+pass_score: 80
+tags: [sql, firewall, change-window, level-2]
+requires_internet: false
+
+ticket:
+  from: "Priya Raman (Accounting)"
+  system: "APPDB-01 (SQL Server)"
+  priority: "High"
+  channel: "Phone"
+  reported: "Since Saturday's change window"
+  form:
+    title: Incident write-up — database reachability
+    intro: >
+      A "temporary" change outlived its change window and Accounting cannot work.
+      The change manager wants the write-up before the retro: what was wrong,
+      what you changed, and how you proved it.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom, in your own words
+        kind: textarea
+        weight: 15
+        min_words: 8
+        placeholder: "What Accounting sees, and what the app team's error said."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [firewall, block, rule, lockdown, change window, inbound, port]
+        none_of: [reinstall, "the database was corrupted", "the service was down"]
+        hint: "Name the mechanism: which rule did what to the database's port."
+      - id: category
+        label: Classification
+        kind: select
+        weight: 15
+        options: [Network, Software configuration, Account, Permissions, Driver and device]
+        expected: Network
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 25
+        min_words: 8
+        any_of: [rule, firewall, removed, deleted, disabled, enabled, wf.msc, New-NetFirewallRule]
+        hint: "Say which rules you left behind, and in what state."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [rule, allowed, block, port 1433, tested, connected, Get-NetFirewallRule]
+        hint: "A removed block rule and an enabled allow rule are two different checks."
+
+briefing: |
+  Accounting's line-of-business app cannot reach the database on APPDB-01 since
+  Saturday's change window. The change record says a "temporary lockdown" was
+  applied to the database server during the window and "rolled back"; the app
+  team says it was never rolled back, and the change manager is asking for
+  evidence either way.
+
+  The database itself is healthy — nobody restarted it, nobody changed it. What
+  the estate normally leaves in place is a firewall rule allowing the database's
+  port (TCP 1433) inbound; the build puts it there and it is named OnTrak SQL
+  Server (TCP 1433).
+
+  Get the database reachable again and leave the firewall in the state the
+  estate expects. In your write-up, name the rule that caused this so the change
+  record can be corrected.
+
+objectives:
+  - id: block-rule-gone
+    text: "No enabled firewall rule blocks inbound TCP 1433"
+    weight: 45
+    critical: true
+    hint: "wf.msc, or Get-NetFirewallRule with the port filters: sort Inbound rules by Action and look for anything blocking 1433 that somebody added."
+  - id: allow-rule-enabled
+    text: "Inbound TCP 1433 is allowed by an enabled rule again"
+    weight: 35
+    hint: "The estate rule is still there — the lockdown disabled it rather than deleting it."
+  - id: instance-still-answers
+    text: "The database instance itself is untouched — the fix belongs in the firewall"
+    weight: 20
+    hint: "Do not 'fix' this by restarting or reconfiguring SQL Server. Check the service is running and its port answers."
+
+hints:
+  - "Start with the firewall rule list, not the database: Get-NetFirewallRule | Where-Object { $_.Direction -eq 'Inbound' -and $_.Action -eq 'Block' }."
+  - "A rule added during a change window usually carries the window's name in its display name. Read them all before touching anything."
+  - "Two things have to be right: the block rule gone, and the estate's allow rule enabled again. Removing only the block leaves the port closed if the allow rule is still switched off."
+
+reset_notes: |
+  Reset re-clones the clean snapshot, so the lockdown block rule is back on
+  TCP 1433 and the estate allow rule is disabled again.

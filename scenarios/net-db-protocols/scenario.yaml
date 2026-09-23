@@ -1,0 +1,103 @@
+id: net-db-protocols
+title: "The app server cannot reach the database — but it works on the box"
+category: network
+platform: windows
+workloads: [sql-server-2019, sql-server-2022]
+difficulty: 3
+minutes: 30
+pass_score: 80
+tags: [sql, tcp-ip, named-pipes, shared-memory, level-3]
+requires_internet: false
+
+ticket:
+  from: "Marcus Bell (Line-of-business app team)"
+  system: "APPDB-01 (SQL Server)"
+  priority: "High"
+  channel: "Ticket queue"
+  reported: "Since last week's tuning session"
+  form:
+    title: Incident write-up — database connectivity
+    intro: >
+      The app team cannot reach the database from their server, and they are not
+      happy that everything "looks fine" when anyone checks. Explain what was
+      wrong, what you changed, and how you proved it from where the problem is.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom, in your own words
+        kind: textarea
+        weight: 15
+        min_words: 8
+        placeholder: "What the app team sees, and what you saw on the box."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [protocol, TCP/IP, named pipes, shared memory, network configuration, listener, enabled]
+        none_of: [firewall rule, "the network cable"]
+        hint: "Name the mechanism, and why the tools on the box kept working while the app could not."
+      - id: category
+        label: Classification
+        kind: select
+        weight: 15
+        options: [Network, Software configuration, Account, Permissions, Driver and device]
+        expected: Network
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 25
+        min_words: 8
+        any_of: [SQL Server Configuration Manager, protocols, TCP/IP, named pipes, restart, network configuration, registry]
+        hint: "Say where you changed it and what had to happen afterwards for the change to load."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [Test-NetConnection, 1433, connected, query, TCP, telnet, listened]
+        hint: "Prove it over the network, not with a local tool that rides shared memory."
+
+briefing: |
+  The app team's integration tests against APPDB-01 fail with "connection
+  refused" or "no connection could be made". But sit at the server and open SSMS
+  and everything is fine: the service is healthy, the databases are there, the
+  queries run. Their application connects from another machine, over the
+  network.
+
+  Last week's tuning session touched "SQL Server Network Configuration". The
+  estate standard leaves both TCP/IP and Named Pipes enabled; the application
+  dials TCP.
+
+  Make the instance answer network connections again. In your write-up, say why
+  the tools on the box kept working while the application could not — that
+  distinction is the heart of this ticket.
+
+objectives:
+  - id: tcp-enabled
+    text: "TCP/IP is enabled again in the instance's network configuration"
+    weight: 30
+    hint: "SQL Server Configuration Manager > SQL Server Network Configuration > Protocols for MSSQLSERVER > TCP/IP > Enabled."
+  - id: named-pipes-enabled
+    text: "Named Pipes is enabled as well (the estate standard leaves both on)"
+    weight: 15
+    hint: "The same list as TCP/IP, one row down."
+  - id: listener-answers
+    text: "The instance accepts TCP connections on its port (1433)"
+    weight: 30
+    critical: true
+    hint: "Test-NetConnection localhost -Port 1433. Protocol changes only load when the SQL Server service restarts."
+  - id: app-can-connect
+    text: "A TCP connection runs a query, the way the application dials in"
+    weight: 25
+    critical: true
+    hint: "Force TCP in the connection string (Data Source=tcp:<host>,1433): a default local connection can succeed over shared memory even with every network protocol off."
+
+hints:
+  - "Everything working *on the box* is the clue. A local connection rides shared memory, which is not a network protocol at all — it bypasses everything the app needs."
+  - "The switches live in SQL Server Configuration Manager, or where it reads from: HKLM\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\<instance>\\MSSQLServer\\SuperSocketNetLib."
+  - "Enable the protocols, then restart the SQL Server service. A checked box the instance has not loaded is still the fault."
+
+reset_notes: |
+  Reset re-clones the clean snapshot, so TCP/IP and Named Pipes are disabled
+  again and the instance answers on shared memory only.

@@ -526,3 +526,49 @@ function Get-OnTrakUptimeMinutes {
         return [math]::Round(((Get-Date) - $os.LastBootUpTime).TotalMinutes, 1)
     } catch { return -1 }
 }
+
+# --------------------------------------------------------------- database ---
+function Invoke-OnTrakSql {
+    <#
+    .SYNOPSIS
+        Run a T-SQL batch against the SQL Server instance and return the first
+        result set's rows. Throws when the batch cannot run.
+    .DESCRIPTION
+        The database scenarios have to speak SQL and there is no sqlcmd to help
+        them: the product build installs the SQLENGINE feature and none of the
+        client tools. ADO.NET ships with Windows, connects as the signed-in
+        account (which the product build made a SQL sysadmin), and surfaces SQL
+        errors as exceptions -- which is the shape both callers want, since "the
+        write failed" is a fault to assert on and "the query could not run at
+        all" is a different thing to report honestly.
+
+        Pass -Server 'tcp:<host>,1433' to force the TCP protocol: a default local
+        connection rides shared memory and succeeds even when nothing answers the
+        network, which is the whole point of `net-db-protocols`.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Query,
+        [string] $Database = 'master',
+        [string] $Server = 'localhost',
+        [int] $TimeoutSeconds = 30
+    )
+    $builder = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
+    $builder['Data Source'] = $Server
+    $builder['Initial Catalog'] = $Database
+    $builder['Integrated Security'] = $true
+    $builder['Connect Timeout'] = $TimeoutSeconds
+    $connection = New-Object System.Data.SqlClient.SqlConnection $builder.ConnectionString
+    $table = New-Object System.Data.DataTable
+    try {
+        $connection.Open()
+        $command = $connection.CreateCommand()
+        $command.CommandText = $Query
+        $command.CommandTimeout = $TimeoutSeconds
+        $adapter = New-Object System.Data.SqlClient.SqlDataAdapter $command
+        [void] $adapter.Fill($table)
+    } finally {
+        $connection.Close()
+    }
+    return @($table.Rows | ForEach-Object { $_ })
+}

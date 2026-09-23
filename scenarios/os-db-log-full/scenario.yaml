@@ -1,0 +1,88 @@
+id: os-db-log-full
+title: "Saving records fails: the transaction log is full"
+category: os
+platform: windows
+workloads: [sql-server-2019, sql-server-2022]
+difficulty: 3
+minutes: 35
+pass_score: 80
+tags: [sql, transaction-log, autogrowth, capacity, level-3]
+requires_internet: false
+
+ticket:
+  from: "Dana Okafor (Sales)"
+  system: "APPDB-01 (SQL Server)"
+  priority: "High"
+  channel: "Walk-up"
+  reported: "This morning, mid-shift"
+  form:
+    title: Incident write-up — database out of space
+    intro: >
+      Sales cannot save anything and the error text is alarming. The database is
+      small and the server's disks are mostly empty, so expect to be asked why
+      this happened at all. Cover it in the write-up.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom, in your own words
+        kind: textarea
+        weight: 20
+        min_words: 8
+        placeholder: "What Sales sees, and the error text you reproduced."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [transaction log, log, autogrowth, full, growth, recovery, backup]
+        none_of: [disk full, "out of disk space", reinstall]
+        hint: "The disks are not full. Name what was full, and why it could neither grow nor clear."
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 30
+        min_words: 8
+        any_of: [autogrowth, growth, max size, shrink, checkpoint, backup, recovery model, log]
+        hint: "Say how the database cannot get into this state again by next month's trading."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 20
+        min_words: 6
+        any_of: [insert, saved, write, tested, space, percentage, recovered]
+        hint: "A write that succeeds, and a log with room in it, are two different proofs."
+
+briefing: |
+  Sales cannot save records to the TrainingDB database on APPDB-01. The
+  application reports the database "is full", and the server's disks disagree:
+  the data drive has plenty of room. The database is small — a few hundred rows.
+
+  This is a capacity ticket wearing a database costume. Find what is actually
+  full and why it cannot make room for itself, fix the saving, and — because
+  this is the second time this quarter — leave the database so an ordinary day
+  of trading cannot fill it again. The write-up should say what was full, since
+  the disk counters will be quoted at you in the retro.
+
+objectives:
+  - id: app-can-save
+    text: "The application can write records to TrainingDB again"
+    weight: 45
+    critical: true
+    hint: "Reproduce the failure with a simple INSERT in SSMS or a query window — the error number names what ran out."
+  - id: log-can-grow
+    text: "The log can grow again (autogrowth on, or the size cap lifted)"
+    weight: 35
+    hint: "Database Properties > Files > the log file's Autogrowth column. The lid that caused this is a setting, not a number of rows."
+  - id: log-has-room
+    text: "The transaction log has room in it again"
+    weight: 20
+    hint: "Freeing the existing log needs a log backup or a recovery-model change — a checkpoint alone does not clear a log in full recovery."
+
+hints:
+  - "The error text is literal: 'The transaction log for database TrainingDB is full'. Query the log's size and growth settings before touching anything."
+  - "In full recovery, committed transactions stay in the log until a log backup clears it. No backup job and no autogrowth is a log that only goes up."
+  - "Two halves to the fix: let the log grow (or lift its cap) so saving works now, and get the standing volume of log out (a log backup, or the recovery model the estate uses) so this cannot repeat."
+
+reset_notes: |
+  Reset re-clones the clean snapshot, so TrainingDB's log is capped at 4 MB with
+  autogrowth off and full of transactions nothing can clear.

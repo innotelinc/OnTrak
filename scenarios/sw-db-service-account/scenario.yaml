@@ -1,0 +1,101 @@
+id: sw-db-service-account
+title: "The application cannot connect to the database"
+category: software
+platform: windows
+workloads: [sql-server-2019, sql-server-2022]
+difficulty: 2
+minutes: 30
+pass_score: 80
+tags: [sql, service-account, logon, level-2]
+requires_internet: false
+
+ticket:
+  from: "Marcus Bell (Line-of-business app team)"
+  system: "APPDB-01 (SQL Server)"
+  priority: "High"
+  channel: "Phone"
+  reported: "Since the weekend password rotation"
+  form:
+    title: Incident write-up — database service account
+    intro: >
+      The app team wants the database back and identity wants to know what their
+      password rotation broke. Write both up: what was wrong, what you changed,
+      and how you proved it.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom, in your own words
+        kind: textarea
+        weight: 15
+        min_words: 8
+        placeholder: "What the app team reported, and what you saw when you looked."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [password, logon, service account, log on as a service, rotated, 1069]
+        none_of: [reinstall, "the database was corrupted"]
+        hint: "Name the mechanism: what the service tries to log on as, and why that stopped working."
+      - id: category
+        label: Classification
+        kind: select
+        weight: 15
+        options: [Account, Network, Software configuration, Permissions, Driver and device]
+        expected: Account
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 25
+        min_words: 8
+        any_of: [virtual account, NT SERVICE, password, logon, services.msc, sc.exe, account]
+        hint: "Say what the service logs on as now, and why that cannot be stranded by a rotation."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [service, running, connected, query, SSMS, restarted, 1433]
+        hint: "A running service and a working connection are two different proofs."
+
+briefing: |
+  The line-of-business app on APPDB-01 cannot connect to its database. The app
+  team sees a plain connection failure and it started right after identity's
+  service-account password rotation on Saturday.
+
+  What the app team knows: the SQL Server service on this machine had been
+  logging on as the local account svc-sql. That account belonged to a vendor
+  integration; the requirement was withdrawn in March and identity will not
+  rotate a retired account back. The estate standard for SQL services is the one
+  this machine was built with: the virtual account NT SERVICE\MSSQLSERVER, which
+  needs no password and belongs to the instance.
+
+  Get the database answering connections again and leave the service logging on
+  the way the estate standard says it should — the point of the standard is that
+  the next rotation cannot strand it. Note in your write-up what identity should
+  record about svc-sql.
+
+objectives:
+  - id: service-running
+    text: 'The SQL Server (MSSQLSERVER) service is running'
+    weight: 40
+    critical: true
+    hint: "When a service will not start, the System event log says why: error 1069 is a logon failure, and it names the mechanism."
+  - id: app-can-connect
+    text: "The database answers a real query, the way the application reaches it"
+    weight: 35
+    critical: true
+    hint: "Prove the connection, not just the service state — a healthy service and a reachable instance are two different checks."
+  - id: logon-standard
+    text: 'The service logs on as the estate-standard virtual account (NT SERVICE\MSSQLSERVER)'
+    weight: 25
+    hint: "The service properties' Log On tab, or `sc.exe qc MSSQLSERVER`: the virtual account is written NT SERVICE\\MSSQLSERVER and takes no password."
+
+hints:
+  - "Start with the System event log around the last time the service tried to start. Error 1069 is the clue; the database is a red herring."
+  - "A password the service does not know is not a database fault — the service never started, so nothing is wrong with the instance itself."
+  - "services.msc > SQL Server > Properties > Log On > 'This account' = NT SERVICE\\MSSQLSERVER, clear both password boxes, then start the service."
+
+reset_notes: |
+  Reset re-clones the clean snapshot, so the service is back on svc-sql holding a
+  password the account no longer has, and the instance is stopped.
