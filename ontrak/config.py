@@ -9,7 +9,10 @@ Precedence, lowest to highest:
 
 Nested values are addressed with a double underscore, e.g.
 ``ONTRAK_GUEST__PASSWORD`` -> ``guest.password``. Values are parsed as YAML,
-so booleans/ints/lists do not need quoting.
+so booleans/ints/lists do not need quoting — and one pair of surrounding quotes
+is removed first, because `.env` is also meant to be *sourced* (``set -a; .
+./.env; set +a``) and a value with a space or a comma has to be quoted for the
+shell. See :func:`_unquote_shell`.
 """
 
 from __future__ import annotations
@@ -447,11 +450,36 @@ def _read_yaml(path: Path) -> dict:
     return loaded
 
 
+def _unquote_shell(text: str) -> str:
+    """Remove one matching pair of surrounding quotes, the way a shell would.
+
+    ``.env`` is written to be *sourced* — ``set -a; . ./.env; set +a`` is the
+    documented way to run a host command with the range's own settings
+    (scripts/cerulean-provision.py needs it) — and a value the shell has to quote,
+    one with a space or a comma in it, arrives here with the quotes still on. This
+    is what lets one file be both valid shell and the value the YAML parse below
+    expects: ``ONTRAK_SESSION__TIME_LIMIT_CHOICES='[45, 90, 180]'`` stays a list
+    rather than becoming the string ``"[45, 90, 180]"``.
+    """
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+        return text[1:-1]
+    return text
+
+
 def _parse_env_value(raw: str) -> Any:
+    """Parse one ``ONTRAK_<SECTION>__<KEY>`` value as YAML, shell quoting removed.
+
+    An empty value is ``""`` and not ``None``: the field it lands in is typed
+    ``str`` throughout, and ``ONTRAK_GUEST__PASSWORD=`` meaning *the string None*
+    is a config file that reads as set when it is empty.
+    """
+    text = _unquote_shell(raw.strip())
+    if not text:
+        return ""
     try:
-        return yaml.safe_load(raw)
+        return yaml.safe_load(text)
     except yaml.YAMLError:
-        return raw
+        return text
 
 
 def _env_overrides(environ: dict[str, str] | None = None) -> dict:

@@ -75,6 +75,76 @@ def test_the_shipped_env_template_is_loadable():
     assert settings.pool.targets == {}
 
 
+def test_a_quoted_env_value_is_the_value_not_the_quotes():
+    """`'[45, 90, 180]'` is the list, in a file that is both sourced *and* parsed.
+
+    `.env.example` has to be valid shell and valid config at once: bash needs quotes
+    around a value with a space or a comma in it, while YAML would read
+    `'[45, 90, 180]'` as the *string* `"[45, 90, 180]"` — a time-limit list whose
+    first entry is `[`, on every command that read it, with nothing in the failure
+    pointing back at the quotes. The shell quotes are stripped before the YAML parse,
+    which is what lets one file be both.
+    """
+    from ontrak.config import _parse_env_value
+
+    assert _parse_env_value("'[45, 90, 180]'") == [45, 90, 180]
+    assert _parse_env_value('"IT support range"') == "IT support range"
+    assert _parse_env_value("90") == 90
+    assert _parse_env_value("auto") == "auto"
+    assert _parse_env_value("false") is False
+    # `ONTRAK_GUEST__PASSWORD=` is an empty *string*, not the string "None": every
+    # field it lands in is typed `str`, and `require_secrets` has to see it as unset.
+    assert _parse_env_value("") == ""
+    assert _parse_env_value("''") == ""
+
+
+def test_the_shipped_env_template_sources_without_a_shell_error():
+    """`set -a; . ./.env; set +a` is documented, so every line has to survive it.
+
+    An unquoted value with a space is not an assignment to bash: it runs the second
+    word as a *command*, prints `support: command not found`, and carries on with a
+    half-set environment — one stray line, and then every command that follows runs
+    against the shipped defaults instead of the operator's. `set -e` turns that into
+    the failure this test wants, and the quoted values it reads back are the two the
+    template used to carry unquoted.
+    """
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("bash is not on this host, and this test is about bash")
+
+    template = Path(__file__).resolve().parent.parent / ".env.example"
+    script = (
+        "set -eu; set -a; . \"$1\" >/dev/null; set +a; "
+        "printf '%s\\n' \"$ONTRAK_SESSION__TIME_LIMIT_CHOICES\" \"$ONTRAK_PORTAL__BRAND_NOTE\""
+    )
+    done = subprocess.run(
+        [bash, "-c", script, "bash", str(template)], capture_output=True, text=True
+    )
+    assert done.returncode == 0, f"sourcing .env.example failed: {done.stderr.strip()}"
+    assert done.stderr == "", f"sourcing .env.example printed: {done.stderr.strip()}"
+    assert done.stdout.splitlines() == [
+        "[45, 90, 180]",
+        "IT support training range — powered by Innotel OnTrak",
+    ]
+
+    # And the app reads the same two lines to the values they look like, quotes and all.
+    listed = dict(re.findall(r"^([A-Z][A-Z0-9_]*)=(.*)$", template.read_text(), re.MULTILINE))
+    settings = load_settings(
+        path=None,
+        environ={
+            "ONTRAK_SESSION__TIME_LIMIT_CHOICES": listed["ONTRAK_SESSION__TIME_LIMIT_CHOICES"],
+            "ONTRAK_PORTAL__BRAND_NOTE": listed["ONTRAK_PORTAL__BRAND_NOTE"],
+        },
+    )
+    assert settings.session.time_limit_choices == [45, 90, 180]
+    assert settings.session.default_time_limit == 45
+    assert settings.portal.brand_note == "IT support training range — powered by Innotel OnTrak"
+
+
 def test_bad_key_is_rejected(tmp_path):
     config = tmp_path / "cfg.yaml"
     config.write_text("guest:\n  nope: 1\n")
