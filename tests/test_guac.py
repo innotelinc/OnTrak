@@ -6,12 +6,17 @@ import hmac
 import json
 import shutil
 import subprocess
+import sys
 import time
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import pytest
 
 from ontrak import guac
+
+# `console verify`'s target selection: a pure function of the catalogue and the flags,
+# which is why the sweep can be tested without opening a console at all.
+from ontrak.cli import _console_targets
 from ontrak.models import Session
 
 from .conftest import GUAC_KEY
@@ -539,3 +544,388 @@ def test_an_unknown_scenario_still_gets_rdp(settings):
     # No scenario means the payload cannot be classified; RDP is the pre-existing
     # behaviour and the safer guess (a Windows VM is what the pool holds).
     assert guac.protocol_for(settings, None) == "rdp"
+
+
+# --------------------------------------------------------------------------- #
+# the console tunnel
+#
+# The third request a browser makes, and the only one that can tell a healthy
+# gateway from a webapp with no guacd behind it: with guacd stopped, measured on a
+# real range, the WebSocket still upgrades and the subprotocol is still negotiated
+# and then *nothing arrives at all*, because the webapp sends the tunnel's UUID
+# only once it has guacd to talk to. Every other check in this module passes on
+# that stack, so this is the one that has to catch it. Driven offline: a fake
+# connector feeds the frames a real tunnel sent.
+# --------------------------------------------------------------------------- #
+def wire(opcode: str, *arguments: str) -> str:
+    """One instruction, spelled the way the Guacamole protocol spells it."""
+    elements = [opcode, *arguments]
+    return "".join(f"{len(element)}.{element}," for element in elements)[:-1] + ";"
+
+
+# The UUID a real range's webapp assigned the tunnel these tests replay.
+TUNNEL_UUID = "b1b29cb4-c8f3-4251-bc2e-c391129694f8"
+
+
+class FakeTunnel:
+    """A stand-in for the WebSocket ``drive_tunnel`` opens.
+
+    It *is* the connector: calling it records the URL it was handed, and the instance it
+    returns behaves like the `websockets` client does — ``subprotocol`` from the
+    handshake, frames out of ``recv``, ``TimeoutError`` when the far end has gone quiet,
+    and an exception out of ``__enter__`` for a refused upgrade.
+    """
+
+    def __init__(self, *frames, subprotocol="guacamole", handshake_fails=None):
+        self.frames = list(frames)
+        self.subprotocol = subprotocol
+        self.handshake_fails = handshake_fails
+        self.url = ""
+        self.timeout = None
+        self.sent: list[str] = []
+        self.asked_after_draining = 0
+
+    def __call__(self, url, timeout):
+        self.url, self.timeout = url, timeout
+        return self
+
+    def __enter__(self):
+        if self.handshake_fails:
+            raise self.handshake_fails
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def send(self, data):
+        self.sent.append(data)
+
+    def recv(self, timeout=None):
+        if not self.frames:
+            # Reached only when a check wanted more than the far end had: the counter is
+            # how a test tells a listener that stops early from one that drains its clock.
+            self.asked_after_draining += 1
+            raise TimeoutError("nothing more on the tunnel")
+        return self.frames.pop(0)
+
+
+def test_the_instruction_parser_streams_an_instruction_across_frames():
+    parser = guac.InstructionParser()
+    assert parser.feed("4.size,1.0") == []
+    assert parser.feed(",4.1024,3.768;") == [["size", "0", "1024", "768"]]
+
+
+def test_the_instruction_parser_returns_every_instruction_in_a_frame():
+    parser = guac.InstructionParser()
+    frame = wire("", TUNNEL_UUID) + wire("sync", "170895439", "0") + wire("nop")
+    assert parser.feed(frame) == [["", TUNNEL_UUID], ["sync", "170895439", "0"], ["nop"]]
+
+
+def test_the_tunnel_url_is_the_one_the_webapp_builds(settings):
+    """The wire contract with a browser, taken from the deployed webapp.
+
+    `Guacamole.WebSocketTunnel` for the path and the subprotocol and `ManagedClient` for
+    these parameters — a check that assembles its own URL proves nothing about the URL a
+    student's page hands over, and the parameters are what tell the webapp which
+    connection to open, at what size, with which codecs.
+    """
+    url = guac.tunnel_url(settings.guac.base_url, token="tok-1", connection_id="OnTrak #42")
+    parsed = urlparse(url)
+    # The test range's console is plain http, so the browser's tunnel is plain ws.
+    assert parsed.scheme == "ws"
+    assert parsed.path == "/guacamole/websocket-tunnel"
+    query = parse_qs(parsed.query)
+    assert query["token"] == ["tok-1"]
+    assert query["GUAC_DATA_SOURCE"] == ["json"]
+    assert query["GUAC_ID"] == ["OnTrak #42"]
+    assert query["GUAC_TYPE"] == ["c"]
+    assert query["GUAC_WIDTH"] == ["1024"] and query["GUAC_HEIGHT"] == ["768"]
+    assert query["GUAC_DPI"] == ["96"]
+    assert query["GUAC_TIMEZONE"] == ["UTC"]
+    assert query["GUAC_AUDIO"] == ["audio/L8", "audio/L16"]
+    assert query["GUAC_IMAGE"] == ["image/png", "image/jpeg", "image/webp"]
+    # `encodeURIComponent`, not form encoding: a connection name with a space must not
+    # arrive as `+`, which is a different connection name and an unrecognised token.
+    assert "GUAC_ID=OnTrak%20%2342" in url
+
+
+def test_the_tunnel_url_follows_the_console_scheme(settings):
+    assert guac.tunnel_url("https://range:8443/guacamole/", token="t", connection_id="c").startswith(
+        "wss://range:8443/guacamole/websocket-tunnel?"
+    )
+    # A base without its trailing slash is the same console, not a different URL.
+    assert guac.tunnel_url("https://range:8443/guacamole", token="t", connection_id="c").startswith(
+        "wss://range:8443/guacamole/websocket-tunnel?"
+    )
+
+
+def test_the_tunnel_url_refuses_a_base_that_is_not_a_url(settings):
+    with pytest.raises(guac.GuacError, match="http://"):
+        guac.tunnel_url("guac.test/guacamole/", token="t", connection_id="c")
+
+
+def test_the_tunnel_check_reports_what_guacd_painted(settings):
+    tunnel = FakeTunnel(
+        wire("", TUNNEL_UUID),
+        # One frame, three instructions: how a real range sends a terminal's first paint.
+        wire("size", "0", "1024", "768") + wire("img", "1", "0", "0", "0", "14") + wire("sync", "1", "0"),
+    )
+    report = guac.drive_tunnel("ws://guac.test/guacamole/websocket-tunnel", seconds=5, connect=tunnel)
+    assert report.opened and report.uuid == TUNNEL_UUID
+    assert report.subprotocol == "guacamole"
+    assert report.opcodes == {"size": 1, "img": 1, "sync": 1}
+    assert report.instructions == 3 and report.errors == []
+    # The tunnel's own UUID is bookkeeping, not something the console painted.
+    assert "size" in report.opcode_summary and "<internal>" not in report.opcode_summary
+    # The upgrade has a deadline of its own, and a generous one: one measured on a real
+    # range took longer than eight seconds, and a check that gives up sooner than a browser
+    # is the thing that is wrong.
+    assert tunnel.timeout == guac.TUNNEL_OPEN_SECONDS >= 10
+
+
+def test_the_tunnel_check_stops_at_an_error_without_waiting_out_its_window(settings):
+    """`ontrak doctor` runs this on every host: a bad answer must not cost the window."""
+    tunnel = FakeTunnel(
+        wire("", TUNNEL_UUID),
+        wire("error", "Server refused connection (wrong security type?)", "519"),
+    )
+    report = guac.drive_tunnel("ws://guac.test/guacamole/websocket-tunnel", seconds=30, connect=tunnel)
+    assert report.error_text == "Server refused connection (wrong security type?)"
+    assert tunnel.asked_after_draining == 0
+
+
+def test_the_tunnel_check_waits_past_the_handshake_for_a_paint(settings):
+    """An RDP console says `cursor`, `mouse` and `sync` before it has drawn anything.
+
+    Measured against a real Windows guest: guacd sends those three first, and sends its own
+    `error` *after* them when the login or the guest is bad. A check that took the first
+    instruction as its answer could not tell a desktop from a refused password — so it keeps
+    reading until something is painted or something goes wrong.
+    """
+    tunnel = FakeTunnel(
+        wire("", TUNNEL_UUID),
+        wire("cursor", "0", "0", "-2", "0", "0", "64", "64") + wire("mouse", "0", "0", "0", "1") + wire("sync", "1", "0"),
+        wire("img", "1", "0", "0", "0", "14") + wire("blob", "1", "AAAA") + wire("end", "1"),
+    )
+    report = guac.drive_tunnel("ws://guac.test/guacamole/websocket-tunnel", seconds=30, connect=tunnel)
+    assert "img" in report.opcodes, "the check answered at the handshake, before any paint"
+    assert "cursor" in report.opcodes and "sync" in report.opcodes
+    assert tunnel.asked_after_draining == 0
+
+
+def test_the_tunnel_check_keeps_the_connection_alive_the_way_a_browser_does(settings, monkeypatch):
+    """Measured against a real Windows guest: guacd sends `nop` after ten seconds of hearing
+    nothing from the client, again at fifteen, and then aborts the connection with status
+    776 — "Aborted. See logs." `Guacamole.Client` answers by sending its own `nop` every
+    five seconds, so a check that listened in silence would let a slow first frame be ended
+    by its own silence and then report the console as broken. `nop` is a no-op, and it is
+    the only thing a check ever sends.
+    """
+    monkeypatch.setattr(guac, "KEEPALIVE_SECONDS", 0.05)
+    tunnel = FakeTunnel(wire("", TUNNEL_UUID))
+    report = guac.drive_tunnel("ws://guac.test/guacamole/websocket-tunnel", seconds=0.3, connect=tunnel)
+    assert report.opened and not report.instructions, "this test is about the quiet case"
+    assert tunnel.sent, "the check listened in silence"
+    assert set(tunnel.sent) == {guac.LIVENESS_REPLY}, "a check sent something of its own"
+
+
+def test_a_tunnel_that_paints_is_sent_nothing_at_all(settings):
+    tunnel = FakeTunnel(wire("", TUNNEL_UUID), wire("img", "1", "0", "0", "0", "14"))
+    guac.drive_tunnel("ws://guac.test/guacamole/websocket-tunnel", seconds=0.3, connect=tunnel)
+    assert tunnel.sent == []
+
+
+def test_the_tunnel_check_reports_a_handshake_that_never_happened(settings):
+    tunnel = FakeTunnel(handshake_fails=OSError("Connection refused"))
+    report = guac.drive_tunnel("ws://guac.test/guacamole/websocket-tunnel", seconds=5, connect=tunnel)
+    assert not report.opened
+    assert "could not open the console tunnel" in report.closed
+    assert "Connection refused" in report.closed
+
+
+def _probe_fakes(*frames, **kwargs):
+    """The probe's two HTTP steps (as real ones answer) and then the tunnel."""
+    tunnel = FakeTunnel(*frames, **kwargs)
+
+    def post(url, fields, timeout):
+        return 200, '{"authToken":"tok-1","dataSource":"json"}'
+
+    def get(url, timeout):
+        return 200, '{"OnTrak doctor":{"name":"OnTrak doctor","identifier":"OnTrak doctor","protocol":"rdp"}}'
+
+    return tunnel, post, get
+
+
+def test_the_tunnel_probe_opens_the_connection_it_signed(settings):
+    """A placeholder connection with nothing behind it is the *expected* failure.
+
+    guacd answers an RDP connection to 127.0.0.1 with its own error — status 519, upstream
+    unavailable, as a real range does — and that answer is the whole proof: the token
+    worked, the WebSocket upgraded, the subprotocol was negotiated, and guacd was there to
+    say no.
+    """
+    tunnel, post, get = _probe_fakes(
+        wire("", TUNNEL_UUID),
+        wire("error", "Server refused connection (wrong security type?)", "519"),
+    )
+    state, detail = guac.probe_tunnel(settings, post=post, get=get, connect=tunnel)
+    assert state == "ok", detail
+    assert "expected" in detail and "Server refused connection" in detail
+    assert tunnel.url.startswith("ws://guac.test/guacamole/websocket-tunnel?")
+    # Addressed by the *identifier* the gateway listed it under, which is what the
+    # browser sends next.
+    assert "GUAC_ID=OnTrak%20doctor" in tunnel.url
+
+
+def test_the_tunnel_probe_catches_a_webapp_with_no_guacd_behind_it(settings):
+    """With guacd stopped the tunnel upgrades and then says nothing at all.
+
+    No UUID, no error, no close: the webapp had nowhere to send it. From the student's
+    side that is a console iframe that never paints, on a stack where the gateway accepts
+    every link and lists every connection.
+    """
+    tunnel, post, get = _probe_fakes()
+    # A short window: nothing arrives at all, so the check waits it out.
+    state, detail = guac.probe_tunnel(settings, post=post, get=get, connect=tunnel, seconds=0.2)
+    assert state == "unreachable"
+    assert "guacd" in detail and "UUID" in detail
+
+
+def test_the_tunnel_probe_flags_a_dropped_subprotocol(settings):
+    """A gateway that strips `Sec-WebSocket-Protocol` still serves a console, slowly."""
+    tunnel, post, get = _probe_fakes(
+        wire("", TUNNEL_UUID), wire("sync", "1", "0"), subprotocol=""
+    )
+    # `sync` alone is not a paint: the check keeps listening to its deadline here.
+    state, detail = guac.probe_tunnel(settings, post=post, get=get, connect=tunnel, seconds=0.2)
+    assert state == "degraded"
+    assert "subprotocol" in detail and "HTTP tunnel" in detail
+
+
+def test_the_tunnel_probe_skips_an_auto_console(settings):
+    settings.guac.base_url = "auto"
+    state, detail = guac.probe_tunnel(
+        settings,
+        post=lambda *a: (_ for _ in ()).throw(AssertionError()),
+        get=lambda *a: (_ for _ in ()).throw(AssertionError()),
+        connect=FakeTunnel(),
+    )
+    assert state == "skipped"
+    assert "auto" in detail
+
+
+def test_the_tunnel_probe_names_the_package_it_needs(settings, monkeypatch):
+    """A host without the WebSocket client still gets every other check."""
+    monkeypatch.setitem(sys.modules, "websockets.sync.client", None)
+    tunnel, post, get = _probe_fakes(wire("", TUNNEL_UUID))
+    state, detail = guac.probe_tunnel(settings, post=post, get=get, connect=None)
+    assert state == "skipped"
+    assert "websockets" in detail and "requirements.txt" in detail
+
+
+def _session_fakes(session, scenario, *frames, **kwargs):
+    """The three requests for one session, as the gateway answers them."""
+    name = guac.connection_name(session, scenario)
+    tunnel = FakeTunnel(*frames, **kwargs)
+
+    def post(url, fields, timeout):
+        return 200, '{"authToken":"tok-1","dataSource":"json"}'
+
+    def get(url, timeout):
+        return 200, json.dumps({name: {"name": name, "identifier": name, "protocol": "ssh"}})
+
+    return tunnel, post, get
+
+
+def test_the_session_check_reports_a_console_that_painted(settings):
+    """The end-to-end promise for one machine: its own signed link paints."""
+    settings.guac.linux_ssh = True
+    session = make_session()
+    scenario = _Scenario("linux")
+    tunnel, post, get = _session_fakes(
+        session,
+        scenario,
+        wire("", TUNNEL_UUID),
+        wire("size", "0", "1024", "768") + wire("img", "1", "0", "0", "0", "14") + wire("sync", "1", "0"),
+    )
+    state, detail, report = guac.verify_session_console(
+        settings, session, scenario, post=post, get=get, connect=tunnel
+    )
+    assert state == "ok", detail
+    assert report.instructions == 3
+    assert "guacd painted" in detail
+    assert f"GUAC_ID={quote(guac.connection_name(session, scenario))}" in tunnel.url
+
+
+def test_the_session_check_reports_guacd_refusing_the_login(settings):
+    """What a console with an sshd and a wrong password looks like from here."""
+    settings.guac.linux_ssh = True
+    scenario = _Scenario("linux")
+    tunnel, post, get = _session_fakes(
+        make_session(), scenario, wire("", TUNNEL_UUID), wire("error", "Unable to authenticate", "769")
+    )
+    state, detail, _report = guac.verify_session_console(
+        settings, make_session(), scenario, post=post, get=get, connect=tunnel
+    )
+    assert state == "error"
+    assert "Unable to authenticate" in detail
+
+
+def test_the_session_check_catches_a_login_that_fails_after_the_handshake(settings):
+    """The RDP shape, and the reason the check does not stop at the first instruction.
+
+    guacd connects, syncs and only then reports that the guest or the credentials were
+    refused. Reading one instruction and answering "ok" would call a console that never
+    paints a healthy one.
+    """
+    tunnel, post, get = _session_fakes(
+        make_session(),
+        _Scenario("windows"),
+        wire("", TUNNEL_UUID),
+        wire("cursor", "0", "0", "-2", "0", "0", "64", "64") + wire("sync", "1", "0"),
+        wire("error", "Authentication failed", "769"),
+    )
+    state, detail, _report = guac.verify_session_console(
+        settings, make_session(), _Scenario("windows"), post=post, get=get, connect=tunnel
+    )
+    assert state == "error"
+    assert "Authentication failed" in detail
+
+
+def test_the_session_check_skips_a_scenario_with_no_console(settings):
+    # The suite's own default: `guac.linux_ssh` off means a Linux ticket has no browser
+    # console at all, and the honest answer is to say that rather than to open one.
+    state, detail, _report = guac.verify_session_console(
+        settings,
+        make_session(),
+        _Scenario("linux"),
+        post=lambda *a: (_ for _ in ()).throw(AssertionError()),
+        get=lambda *a: (_ for _ in ()).throw(AssertionError()),
+        connect=FakeTunnel(),
+    )
+    assert state == "skipped"
+    assert "guac.linux_ssh" in detail
+
+
+def test_the_session_check_refuses_a_session_with_no_machine(settings):
+    settings.guac.linux_ssh = True
+    state, detail, _report = guac.verify_session_console(
+        settings, make_session(host_ip=""), _Scenario("linux"), connect=FakeTunnel()
+    )
+    assert state == "refused"
+    assert "no machine address" in detail
+
+
+def test_the_console_sweep_takes_what_it_was_asked_for(repo):
+    """`--linux` is the sweep that fits a host: the catalogue, minus the VMs."""
+    every = [scenario.id for scenario in repo.list()]
+    linux = [scenario.id for scenario in repo.list() if scenario.is_linux]
+    windows = [scenario_id for scenario_id in every if scenario_id not in linux]
+    assert windows, "the catalogue is meant to hold both kinds of scenario"
+    assert _console_targets(repo, linux[:2]) == linux[:2]
+    assert _console_targets(repo, [], all_scenarios=True) == every
+    assert _console_targets(repo, [], linux_only=True) == linux
+    # A Windows scenario named to a Linux sweep is dropped, not silently opened.
+    assert _console_targets(repo, windows[:1], linux_only=True) == []
+    # ...and asking for nothing is not the same as asking for everything.
+    assert _console_targets(repo, []) == []

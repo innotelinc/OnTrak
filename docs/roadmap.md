@@ -6,7 +6,7 @@ planned. Anything in the last two sections is a statement of intent, not a featu
 ## Verified in this repository
 
 - Python control plane: catalog, scenarios, sessions, scoring, selection, scheduler,
-  generator, portal (student and admin), CLI — `pytest` (501 tests) and `ruff` clean. Only two
+  generator, portal (student and admin), CLI — `pytest` (525 tests) and `ruff` clean. Only two
   tests skip themselves, and both switch on from the environment rather than from a device:
   the Guacamole interop test (`ONTRAK_GUAC_INTEROP_URL`) and the real-range walk
   (`ONTRAK_E2E`, below).
@@ -58,10 +58,34 @@ planned. Anything in the last two sections is a statement of intent, not a featu
 - The nightly range walk, as a workflow: it is scheduled, only a self-hosted runner labelled
   `incus` takes it, it switches the walk's test on with `ONTRAK_E2E`, and it fails instead of
   reporting green when the walk skips itself — all four pinned by `tests/test_workflows.py`,
-  which runs in CI. A skipped pytest is a green pytest, so the one thing this job must never
+  which runs in CI. It then opens every Linux console (`ontrak console verify --linux`) over
+  the same stack and fails if one does not open, because the walk is blind to the console:
+  the gateway, the webapp and guacd can each be down while every assertion above passes. That
+  sweep is held to the walk's own rule — opening nothing is not a pass — and those two
+  properties are pinned there too. A skipped pytest is a green pytest, so the one thing this job must never
   do is skip its way to a passing nightly. What the walk proves is a statement about the
   range it runs against, which is exactly why the job lives on the range and not on a
   hosted runner: it is the layer no double here can stand in for.
+- The console's wire contract, both halves of it. Offline: the tunnel URL and the
+  `guacamole` subprotocol a browser builds, the instruction parser, and a verdict for every
+  way a tunnel fails — the two worth naming are a gateway that does not negotiate the
+  subprotocol (browsers then fall back to the slower HTTP tunnel, so it warns rather than
+  fails) and a webapp with no guacd behind it, which on a real range is a WebSocket that
+  upgrades and then says *nothing at all*, because the webapp sends the tunnel's UUID only
+  once it has guacd to talk to. On the range: `ontrak console verify --linux` opened every
+  Linux console — 14 of 14 `(scenario, workload)` pairs — through the real gateway, webapp
+  and guacd, over the TLS listener, each painting its terminal; guacd's own typescript for
+  one of them reads back the shell prompt, the typed command and its output. A Windows
+  scenario's template was rebuilt from the golden image on the same host and its RDP console
+  opened onto a painted desktop — guacd signing in as the training user, `img`/`blob` tiles,
+  `rect`, `cfill`, no error, and guacd's own log showing the RDP client join. Two things
+  only the real stack taught, both now in the check: guacd sends `cursor`, `mouse` and
+  `sync` and only *then* its `error` when the login or the guest is bad, so the check waits
+  for a paint or a failure rather than answering at the first instruction; and it aborts a
+  client it has not heard from for fifteen seconds (status 776, "Aborted. See logs."), so
+  the check sends the browser's own five-second `nop` — without it, a console that paints
+  slowly was reported as a console that is broken. That is the protocol and the stack, not
+  the browser: nothing here clicks inside an iframe.
 
 ## Built, but not proven on real hardware
 
@@ -70,8 +94,12 @@ These paths are reviewed and tested only up to the Incus boundary; they need a l
 - Unattended Windows image builds (the `incus-windows` and `answer-file` builders) and the
   golden-image pipeline.
 - WinRM and Incus-agent guest transports against real Windows guests.
-- Windows, Server and Office template builds and their scenario fault injection.
-- Guacamole deployment, console embedding and TLS in front of the gateway.
+- Windows **Server** and Office template builds — their images, fault injection and
+  consoles. The Windows 11 half is exercised on the lab range (a template rebuilt from the
+  golden image, its fault injected and verified, all seven Windows consoles opened), but
+  Server and Office need a host of their own to prove.
+- The browser half of any console: no check here clicks inside an iframe, presses a real
+  key or copies to a real clipboard, and those are the browser's half of the contract.
 - ZFS/btrfs clone performance at class scale (the capacity model in
   [operations.md](operations.md) is arithmetic, not a benchmark).
 

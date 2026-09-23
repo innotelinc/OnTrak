@@ -17,6 +17,10 @@
 # itself when there is no hypervisor, and a skipped pytest is a green pytest. A
 # nightly that skips every night is worse than no nightly, because it reads as
 # coverage. So the walk is asserted to have actually run, and a skip is an error.
+#
+# The same job then opens every Linux console (`ontrak console verify --linux`), which
+# is the layer the walk cannot see, and holds that sweep to the same rule: a run that
+# opened nothing is not a pass either.
 # ═══════════════════════════════════════════════════════════════════════════
 
 name: Range walk
@@ -105,6 +109,58 @@ jobs:
           if ran < 1:
               raise SystemExit(
                   "::error::the range walk did not run — it skipped itself, which is not a pass"
+              )
+          PY
+
+      # The walk proves a student can *reach* the machine. It never opens the thing they
+      # work in: that is a WebSocket through the gateway, the webapp and guacd, and any of
+      # the three can be down while the walk passes every assertion it makes. So each Linux
+      # console is opened the way a browser opens it, against a real machine, and destroyed
+      # again — the same three requests, in the same order, over the real stack.
+      - name: Every Linux console opens
+        run: |
+          set -euo pipefail
+          command -v curl >/dev/null 2>&1 \
+            || { echo "::error::curl is missing from this runner, so the console address cannot be found"; exit 1; }
+          # `guac.base_url: auto` — the shipped default — follows each *browser's* own
+          # address, so a process has to be told one. ONTRAK_CONSOLE_URL wins; otherwise the
+          # two addresses a range publishes for itself are tried in order.
+          url=""
+          for candidate in "${ONTRAK_CONSOLE_URL:-}" \
+                           "https://127.0.0.1:8443/guacamole/" \
+                           "http://127.0.0.1:8080/guacamole/"; do
+            [ -n "$candidate" ] || continue
+            code="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "$candidate" || true)"
+            echo "$candidate -> ${code:-no answer}"
+            case "$code" in
+              200|302|303) url="$candidate"; break ;;
+            esac
+          done
+          if [ -z "$url" ]; then
+            echo "::error::no console answered on this host — set ONTRAK_CONSOLE_URL, e.g. https://localhost:8443/guacamole/"
+            exit 1
+          fi
+          .venv/bin/ontrak console verify --linux --base-url "$url" | tee /tmp/console-verify.txt
+
+          # `0 of 7 console(s) opened, 7 skipped` exits 0: a range whose Linux templates
+          # predate `guac.linux_ssh`, or one whose catalogue has no Linux scenario, would
+          # otherwise report a green nightly that opened nothing. The walk's own skip check
+          # exists for exactly this shape of lie, so this one demands the sweep opened every
+          # console it asked for rather than merely that none failed.
+          .venv/bin/python - <<'PY'
+          import re
+          import sys
+
+          text = open("/tmp/console-verify.txt", encoding="utf-8").read()
+          match = re.search(r"(\d+) of (\d+) console\(s\) opened", text)
+          if not match:
+              raise SystemExit("::error::the console sweep printed no summary line")
+          opened, total = int(match.group(1)), int(match.group(2))
+          print(f"consoles opened={opened} targets={total}")
+          if total < 1 or opened != total:
+              raise SystemExit(
+                  f"::error::only {opened} of {total} Linux consoles opened — the console a "
+                  "student works in is broken, and the lifecycle walk cannot see that"
               )
           PY
 

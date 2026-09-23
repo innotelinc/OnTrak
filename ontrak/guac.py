@@ -26,6 +26,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass, field
 from urllib.parse import quote, urlparse
 
 from .models import Session
@@ -215,6 +216,18 @@ def protocol_for(settings, scenario: Scenario | None) -> str:
     return "rdp"
 
 
+def connection_name(session: Session, scenario: Scenario | None = None) -> str:
+    """The name this session's console connection is signed and listed under.
+
+    One string, in three places at once: the key the portal signs the payload with, the
+    name the gateway lists the connection under (what a student sees in the console's
+    menu), and — under the JSON auth extension, where a connection's identifier is its
+    name — the value the browser sends back as ``GUAC_ID`` when it opens the tunnel.
+    """
+    title = scenario.title if scenario else session.scenario_id
+    return f"OnTrak #{session.id} - {title}"
+
+
 def build_payload(settings, session: Session, scenario: Scenario | None = None, now: float | None = None) -> dict:
     """Full Guacamole auth payload for one session."""
     if not session.host_ip:
@@ -228,12 +241,11 @@ def build_payload(settings, session: Session, scenario: Scenario | None = None, 
         )
     ttl_seconds = settings.guac.link_ttl_minutes * 60
     expires_ms = int(((now if now is not None else time.time()) + ttl_seconds) * 1000)
-    title = scenario.title if scenario else session.scenario_id
     return {
         "username": session.student,
         "expires": expires_ms,
         "connections": {
-            f"OnTrak #{session.id} - {title}": {
+            connection_name(session, scenario): {
                 "id": f"ontrak-session-{session.id}",
                 "protocol": protocol,
                 "parameters": (
@@ -396,6 +408,73 @@ def probe_gateway(settings, *, timeout: float = PROBE_TIMEOUT_SECONDS, post=None
     return kind, detail
 
 
+def _open_connection(
+    settings,
+    base: str,
+    payload: dict,
+    timeout: float,
+    post=None,
+    get=None,
+    *,
+    name: str = PROBE_CONNECTION_NAME,
+) -> tuple[str, str, str, str]:
+    """Sign, authenticate and look up the connection a browser would then open.
+
+    ``(kind, detail, token, identifier)``. Both the two probes and the real-session
+    check walk these two requests in the browser's own order, so they walk them here,
+    once: a second copy is how they would come to disagree about what "listed" means.
+    ``kind`` is one of ``accepted`` / ``refused`` / ``unreachable``.
+    """
+    kind, detail, token = _request_token(settings, base, payload, timeout, post)
+    if kind != "accepted":
+        return kind, detail, "", ""
+    if not token:
+        return "unreachable", (
+            f"the console gateway at {base} accepted a payload signed with guac.secret_key "
+            "but returned no authToken, so there is no session for a browser to open"
+        ), "", ""
+    url = f"{base}api/session/data/json/connections?token={quote(token, safe='')}"
+    reader = get or _get
+    try:
+        status, body = reader(url, timeout)
+    except (OSError, ValueError) as exc:
+        return "unreachable", f"could not read the console's connection list from {base}: {exc}", "", ""
+    if status != 200:
+        return "unreachable", (
+            f"the console gateway at {base} accepted the payload but answered HTTP "
+            f"{status} for its connection list: {body[:200]}"
+        ), "", ""
+    identifier = _listed_connection(body, name)
+    if not identifier:
+        return "refused", (
+            f"the console gateway at {base} issued a token but its connection list does "
+            f"not contain {name!r}, so a student's freshly signed link opens nothing. "
+            "Its JSON auth extension is not registering the payload — check that "
+            "JSON_ENABLED is true on the gateway (docker-compose.yml)."
+        ), "", ""
+    return "accepted", "", token, identifier
+
+
+def _listed_connection(body: str, name: str) -> str:
+    """The identifier the gateway lists ``name`` under, or "".
+
+    Matched on the connection's *name*, which is what a student sees in the console's
+    menu and what the portal signs the payload under — that key is also the connection's
+    identifier under the JSON auth extension, which is what the tunnel is addressed by.
+    """
+    try:
+        listing = json.loads(body)
+    except ValueError:
+        return ""
+    if not isinstance(listing, dict):
+        return ""
+    for key, connection in listing.items():
+        if not isinstance(connection, dict) or connection.get("name") != name:
+            continue
+        return str(connection.get("identifier") or key)
+    return ""
+
+
 def probe_console(settings, *, timeout: float = PROBE_TIMEOUT_SECONDS, post=None, get=None):
     """Follow a signed link all the way, the way a browser does. ``(state, detail)``.
 
@@ -414,47 +493,504 @@ def probe_console(settings, *, timeout: float = PROBE_TIMEOUT_SECONDS, post=None
     The token is left to expire (the payload says one minute) rather than revoked, so
     this stays two requests and one code path.
 
+    :func:`probe_tunnel` is the third and last request; a link that passes this one can
+    still fail there.
+
     Same states as :func:`probe_gateway`: ``ok``, ``refused``, ``unreachable``,
     ``skipped``.
     """
     base, skip = _probe_base(settings)
     if skip is not None:
         return skip
-    kind, detail, token = _request_token(settings, base, _probe_payload(settings), timeout, post)
+    kind, detail, _token, _identifier = _open_connection(
+        settings, base, _probe_payload(settings), timeout, post, get
+    )
     if kind != "accepted":
         return kind, detail
-    if not token:
-        return "unreachable", (
-            f"the console gateway at {base} accepted a payload signed with guac.secret_key "
-            "but returned no authToken, so there is no session for a browser to open"
-        )
-    url = f"{base}api/session/data/json/connections?token={quote(token, safe='')}"
-    reader = get or _get
-    try:
-        status, body = reader(url, timeout)
-    except (OSError, ValueError) as exc:
-        return "unreachable", f"could not read the console's connection list from {base}: {exc}"
-    if status != 200:
-        return "unreachable", (
-            f"the console gateway at {base} accepted the payload but answered HTTP "
-            f"{status} for its connection list: {body[:200]}"
-        )
-    # Matched on the connection's *name*: that is the key Guacamole lists a connection
-    # under (and what a student sees in the console's menu), so it is the string the
-    # browser's next request would have to find. The payload's `id` is what the
-    # connection is addressed by internally.
-    if PROBE_CONNECTION_NAME not in body:
-        return "refused", (
-            f"the console gateway at {base} issued a token but its connection list does "
-            f"not contain {PROBE_CONNECTION_NAME!r}, so a student's freshly signed link "
-            "opens nothing. Its JSON auth extension is not registering the payload — "
-            "check that JSON_ENABLED is true on the gateway (docker-compose.yml)."
-        )
     return "ok", (
         f"the console gateway registered {PROBE_CONNECTION_NAME!r} for a freshly signed "
         f"payload and listed it back at {base} — a student's console link opens the "
         "connection this portal signed"
     )
+
+
+# ---------------------------------------------------------------------------
+# the tunnel
+#
+# The third request a browser makes, and the only one that carries the console:
+# after the token and the connection list, `Guacamole.WebSocketTunnel` opens a
+# WebSocket to `<base>websocket-tunnel` and speaks the Guacamole protocol over it.
+# Everything the *portal* can get wrong is decided by then; everything the *stack* can
+# get wrong — a gateway that does not forward `Upgrade`, a webapp with no guacd to talk
+# to, an sshd that is not listening — shows up here and nowhere else.
+# ---------------------------------------------------------------------------
+
+# The endpoint and query parameters the webapp builds its tunnel from
+# (`Guacamole.WebSocketTunnel` for the path and the subprotocol, `ManagedClient` for the
+# parameters). Named rather than inlined because they are a wire contract with a browser
+# that this repository does not get to change, and because a test pins each of them.
+TUNNEL_PATH = "websocket-tunnel"
+TUNNEL_SUBPROTOCOL = "guacamole"
+TUNNEL_DATA_SOURCE = "json"
+TUNNEL_CONNECTION_TYPE = "c"
+TUNNEL_WIDTH = 1024
+TUNNEL_HEIGHT = 768
+TUNNEL_DPI = 96
+TUNNEL_TIMEZONE = "UTC"
+TUNNEL_AUDIO = ("audio/L8", "audio/L16")
+TUNNEL_IMAGE = ("image/png", "image/jpeg", "image/webp")
+
+# How long a tunnel check listens before answering, and deliberately generous: reading
+# stops early at the first sign either way (see PAINTED_OPCODES), so this only bounds a
+# console that says *nothing*, and a Windows RDP login on a small host can take tens of
+# seconds to paint its first frame. A window that closed before that would call a healthy
+# desktop broken.
+TUNNEL_SECONDS = 30.0
+
+# The opcodes that mean a console has put something on the screen. Everything before them
+# is handshaking, and for RDP the handshake is long: measured against a real Windows guest,
+# guacd sends `cursor`, `mouse` and `sync` first, and sends its own `error` *after* them
+# when the guest or the login is bad. So a check that answers at the first instruction
+# cannot tell a desktop from a refused password — it waits for one of these, or for an
+# error, and a Linux terminal reaches `img` within about a frame.
+PAINTED_OPCODES = frozenset(
+    {"arc", "blob", "cfill", "copy", "distort", "img", "png", "rect", "transfer", "webp"}
+)
+
+# The one instruction a check ever sends, and how often. Measured against a real Windows
+# guest: guacd sends `nop` after ten seconds of hearing nothing from the client, again at
+# fifteen, and then aborts the connection with status 776, "Aborted. See logs." A browser is
+# never silent that long — `Guacamole.Client` sends a bare `nop` every five seconds
+# (`KEEP_ALIVE_FREQUENCY`) — so a check that listened in silence would let a slow first
+# frame be ended by its own silence and then blame the console for it. `nop` is a no-op
+# (guacd answers it, the remote program never sees it), and this is the only thing sent.
+LIVENESS_REPLY = "3.nop;"
+KEEPALIVE_SECONDS = 5.0
+
+# How long the WebSocket upgrade itself may take, which is a different question and needs a
+# looser answer. Measured on a real range while the sweep cloned and destroyed a machine
+# beside it: 1 upgrade in 28 took longer than 8 seconds and was reported as a console that
+# does not open, and every retry of it was instant. A browser waits far longer than that,
+# so a check that gives up sooner is the one that is wrong.
+TUNNEL_OPEN_SECONDS = 30.0
+
+
+def tunnel_url(
+    base: str,
+    *,
+    token: str,
+    connection_id: str,
+    width: int = TUNNEL_WIDTH,
+    height: int = TUNNEL_HEIGHT,
+    dpi: int = TUNNEL_DPI,
+    timezone: str = TUNNEL_TIMEZONE,
+) -> str:
+    """The ``wss://`` URL the webapp's WebSocket tunnel is opened on.
+
+    Built here rather than in the portal because it is the one piece of the console a
+    browser *must* agree with: a check that assembles its own URL can pass while the page
+    hands over something else. The scheme follows the console's own — a range served over
+    plain HTTP has no certificate to upgrade to, and `ws://` is what the webapp's own
+    client would derive from it.
+    """
+    parsed = urlparse(base)
+    scheme = {"http": "ws", "https": "wss"}.get(parsed.scheme.lower())
+    if not scheme or not parsed.netloc:
+        raise GuacError(
+            f"the console base URL must be http:// or https:// for a tunnel to open on, got {base!r}"
+        )
+    # The path is kept as given (the webapp is base-relative and the portal passes it
+    # through unchanged) with only the trailing slash it needs to be joined to.
+    path = parsed.path if parsed.path.endswith("/") else f"{parsed.path}/"
+    query = [
+        ("token", token),
+        ("GUAC_DATA_SOURCE", TUNNEL_DATA_SOURCE),
+        ("GUAC_ID", connection_id),
+        ("GUAC_TYPE", TUNNEL_CONNECTION_TYPE),
+        ("GUAC_WIDTH", str(width)),
+        ("GUAC_HEIGHT", str(height)),
+        ("GUAC_DPI", str(dpi)),
+        ("GUAC_TIMEZONE", timezone),
+        *(("GUAC_AUDIO", mimetype) for mimetype in TUNNEL_AUDIO),
+        *(("GUAC_IMAGE", mimetype) for mimetype in TUNNEL_IMAGE),
+    ]
+    # `quote`, not `quote_plus`: the webapp builds this string with encodeURIComponent,
+    # which leaves spaces as %20 — and the token is the one parameter that must survive
+    # the trip byte for byte (a gateway that reads it as `+` rejects the tunnel).
+    encoded = urllib.parse.urlencode(query, quote_via=quote, safe="")
+    return f"{scheme}://{parsed.netloc}{path}{TUNNEL_PATH}?{encoded}"
+
+
+class InstructionParser:
+    """A streaming parser for the Guacamole protocol's instruction format.
+
+    ``LENGTH.VALUE,LENGTH.VALUE,...;`` — the length prefixes are what make the format
+    streamable, which is also why it cannot be line- or JSON-based here: frames arrive
+    mid-instruction, and one frame can carry several instructions. The unfinished tail is
+    kept between calls.
+    """
+
+    def __init__(self) -> None:
+        self._buffer = ""
+
+    def feed(self, data: str) -> list[list[str]]:
+        """Add a chunk and return the instructions it completed."""
+        self._buffer += data
+        instructions: list[list[str]] = []
+        position = 0
+        while True:
+            index, elements, complete = position, [], False
+            while True:
+                dot = self._buffer.find(".", index)
+                if dot < 0 or not self._buffer[index:dot].isdigit():
+                    break
+                length = int(self._buffer[index:dot])
+                start = dot + 1
+                end = start + length
+                if end > len(self._buffer):
+                    break
+                elements.append(self._buffer[start:end])
+                index = end
+                if index >= len(self._buffer):
+                    break
+                separator = self._buffer[index]
+                if separator == ",":
+                    index += 1
+                    continue
+                if separator == ";":
+                    complete = True
+                    break
+                # Anything else means this is not an instruction boundary: keep the
+                # whole thing and let the next chunk make sense of it.
+                break
+            if not complete:
+                break
+            instructions.append(elements)
+            position = index + 1
+        self._buffer = self._buffer[position:]
+        return instructions
+
+
+@dataclass
+class TunnelReport:
+    """What one trip through the console tunnel saw.
+
+    A record, deliberately, and not a verdict: the doctor probe, the per-session check
+    and the tests all read the same events, and the sentence each of them says about
+    them is that caller's own.
+    """
+
+    subprotocol: str = ""
+    uuid: str = ""
+    instructions: int = 0
+    opcodes: dict[str, int] = field(default_factory=dict)
+    errors: list[list[str]] = field(default_factory=list)
+    closed: str = ""
+
+    @property
+    def opened(self) -> bool:
+        """The webapp accepted the token and started a tunnel for this connection."""
+        return bool(self.uuid)
+
+    @property
+    def error_text(self) -> str:
+        """The message of the first error the far end sent, or ""."""
+        return self.errors[0][0] if self.errors and self.errors[0] else ""
+
+    @property
+    def opcode_summary(self) -> str:
+        """The opcodes seen, commonest first — what the console *did*, in one line."""
+        ordered = sorted(self.opcodes.items(), key=lambda item: (-item[1], item[0]))
+        return ", ".join(name for name, _count in ordered[:8])
+
+
+def _record(report: TunnelReport, instruction: list[str]) -> None:
+    """Fold one parsed instruction into the report. The tunnel's UUID is not an opcode."""
+    opcode = instruction[0] if instruction else ""
+    arguments = instruction[1:]
+    if not opcode:
+        # `Guacamole.Tunnel.INTERNAL_DATA_OPCODE`: the empty opcode, which the webapp's
+        # tunnel uses for its own bookkeeping. The first one carries the tunnel's UUID.
+        if arguments and not report.uuid:
+            report.uuid = arguments[0]
+        return
+    report.instructions += 1
+    report.opcodes[opcode] = report.opcodes.get(opcode, 0) + 1
+    if opcode == "error":
+        report.errors.append(arguments)
+
+
+def _websocket_client():
+    """The WebSocket client, imported where it is used and named when it is missing.
+
+    Every other check in this module is stdlib-only, and `ontrak doctor` exists to run on
+    a host whose dependencies are half-installed — the reason it checks for its own
+    modules in the first place. So the one check that needs more says which package is
+    absent rather than taking the import of the whole module down with it, and the probes
+    ask for it *before* they start: a check that cannot be run is a different answer from
+    a console that does not open.
+    """
+    try:
+        from websockets.sync.client import connect  # noqa: PLC0415
+    except ImportError as exc:
+        raise GuacError(
+            "the `websockets` package is not installed, so the console tunnel cannot be "
+            "opened: pip install -r requirements.txt"
+        ) from exc
+    return connect
+
+
+def _open_tunnel(url: str, timeout: float):
+    """Open one tunnel with the WebSocket client above."""
+    connect = _websocket_client()
+    return connect(
+        url,
+        subprotocols=[TUNNEL_SUBPROTOCOL],
+        # The same deliberate leniency as the HTTP probes: `make up` serves the console
+        # over a local self-signed certificate, and a check that verified it would fail
+        # on the shipped default.
+        ssl=_probe_tls_context() if url.lower().startswith("wss:") else None,
+        open_timeout=timeout,
+        close_timeout=2,
+        max_size=None,
+        # Never through a proxy the host happens to have configured: the console address
+        # is the operator's own, and the client library would otherwise honour
+        # HTTP_PROXY, which no part of this stack is designed around.
+        proxy=None,
+    )
+
+
+def _tunnel_failure(exc: Exception, url: str) -> str:
+    """One sentence for any way the WebSocket handshake can fail."""
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    where = url.split("?")[0]
+    if status:
+        return (
+            f"the console gateway refused the tunnel at {where} with HTTP {status} — the "
+            "token is not valid for this connection, or the WebSocket upgrade never "
+            "reached the webapp"
+        )
+    return f"could not open the console tunnel at {where}: {exc}"
+
+
+def drive_tunnel(
+    url: str,
+    *,
+    seconds: float = TUNNEL_SECONDS,
+    open_seconds: float = TUNNEL_OPEN_SECONDS,
+    connect=None,
+) -> TunnelReport:
+    """Open the console's WebSocket tunnel and listen, the way a browser does.
+
+    Nothing is sent that means anything: the tunnel speaks first, and the only thing a check
+    ever sends is the keep-alive a browser also sends (see :data:`LIVENESS_REPLY`) — a check
+    must not type into a student's shell. Reading stops at the first instruction that means
+    something arrived — a paint, or an error (see :data:`PAINTED_OPCODES`) — so a healthy
+    console costs about a frame and a dead one costs the whole window.
+
+    ``seconds`` is how long to listen once it is open, ``open_seconds`` how long the
+    upgrade itself may take (see :data:`TUNNEL_OPEN_SECONDS` for why they differ), and
+    ``connect`` the seam the tests use — a callable ``(url, timeout)`` returning a context
+    manager whose ``recv(timeout=...)`` yields frames and raises ``TimeoutError`` when none
+    arrive in time — defaulting to the `websockets` client.
+    """
+    report = TunnelReport()
+    opener = connect or _open_tunnel
+    deadline = time.monotonic() + seconds
+    try:
+        with opener(url, open_seconds) as socket:
+            # Not merely recorded for its own sake: a browser refuses a WebSocket whose
+            # subprotocol the server did not accept, so this decides whether the tunnel
+            # is usable at all. Judged by the caller, not here.
+            report.subprotocol = str(getattr(socket, "subprotocol", None) or "")
+            parser = InstructionParser()
+            last_keepalive = time.monotonic()
+            while True:
+                now = time.monotonic()
+                if now >= deadline:
+                    break
+                # The browser's own keep-alive, at the browser's own cadence. Bounding the
+                # read by it is also what makes the loop wake often enough to send it.
+                if now - last_keepalive >= KEEPALIVE_SECONDS:
+                    socket.send(LIVENESS_REPLY)
+                    last_keepalive = time.monotonic()
+                try:
+                    frame = socket.recv(timeout=max(0.01, min(deadline - now, KEEPALIVE_SECONDS)))
+                except TimeoutError:
+                    # Nothing yet. The deadline is what ends a wait, not one quiet read —
+                    # a console that is about to paint may say nothing for a while first.
+                    continue
+                if isinstance(frame, bytes):
+                    frame = frame.decode("utf-8", "replace")
+                for instruction in parser.feed(frame):
+                    _record(report, instruction)
+                if report.errors or PAINTED_OPCODES.intersection(report.opcodes):
+                    break
+    except Exception as exc:  # noqa: BLE001 - see below
+        # Every way this can fail is one finding — refused, 403, wrong subprotocol, DNS,
+        # TLS — and it belongs in the report rather than in a traceback out of `doctor`.
+        report.closed = _tunnel_failure(exc, url)
+    return report
+
+
+def tunnel_verdict(report: TunnelReport, *, base: str, placeholder: bool = False) -> tuple[str, str]:
+    """The state and the sentence for one tunnel report. ``(state, detail)``.
+
+    ``placeholder`` says the connection named nothing real, which is what makes guacd's
+    own error about it the *expected* answer rather than a finding.
+    """
+    where = f"the console tunnel at {base}"
+    if not report.opened:
+        if report.closed:
+            return "unreachable", f"{report.closed}, so no tunnel UUID ever arrived"
+        return "unreachable", (
+            f"{where} opened but nothing at all came back: the webapp sends the tunnel's "
+            "UUID only once it has a guacd to talk to, so this is guacd (down, or "
+            "unreachable from the webapp) or the webapp itself"
+        )
+    negotiated = f"{where} opened with the {TUNNEL_SUBPROTOCOL!r} subprotocol"
+    if report.subprotocol != TUNNEL_SUBPROTOCOL:
+        return "degraded", (
+            f"{where} opened, but the gateway did not negotiate the "
+            f"{TUNNEL_SUBPROTOCOL!r} subprotocol (got {report.subprotocol or 'none'!r}); a "
+            "browser refuses a WebSocket whose subprotocol was not accepted and falls "
+            "back to the HTTP tunnel, which is slower but keeps working"
+        )
+    if report.errors:
+        message = report.error_text or "(no message)"
+        if placeholder:
+            return "ok", (
+                f"{negotiated} and guacd answered for the placeholder connection: "
+                f"{message!r} — the expected answer, since this check names no real guest"
+            )
+        return "error", f"{negotiated}, but guacd reported {message!r}"
+    if not PAINTED_OPCODES.intersection(report.opcodes):
+        # guacd answered, but never drew anything and never complained: a console that
+        # opens onto a blank frame is the failure this exists to name, and "it replied"
+        # would be the wrong answer for it.
+        return "empty", (
+            f"{negotiated} and guacd answered, but nothing was painted within the check's "
+            f"window ({report.instructions} instruction(s): {report.opcode_summary or 'none'})"
+        )
+    described = f"{report.instructions} instructions ({report.opcode_summary})"
+    if placeholder:
+        return "ok", (
+            f"{negotiated} and guacd sent {described} for the placeholder connection"
+        )
+    return "ok", f"{negotiated} and guacd painted {described}, with no error"
+
+
+def probe_tunnel(
+    settings,
+    *,
+    timeout: float = PROBE_TIMEOUT_SECONDS,
+    seconds: float = TUNNEL_SECONDS,
+    open_seconds: float = TUNNEL_OPEN_SECONDS,
+    post=None,
+    get=None,
+    connect=None,
+):
+    """Open the console's WebSocket tunnel, the way a browser does. ``(state, detail)``.
+
+    The last of the three requests a console makes, and the one that decides whether a
+    student actually sees a machine. It signs the same placeholder connection as the other
+    probes — a name, not a guest — so what it proves is the path: the gateway forwarded
+    the WebSocket upgrade, the webapp negotiated the ``guacamole`` subprotocol, and the
+    webapp had a guacd to talk to.
+
+    That last point is why this is worth asking separately. Measured on a real range with
+    guacd stopped: the WebSocket still upgrades, the subprotocol is still negotiated, and
+    then **nothing arrives at all** — the webapp sends the tunnel's UUID only once it has
+    a guacd connection. So an instruction after the UUID means the whole chain from the
+    browser to guacd is up, and silence is a missing link no other check here can see:
+    the gateway is healthy, the key agrees, the connection is listed, and the console
+    still opens onto nothing.
+
+    States: ``ok``, ``degraded`` (the tunnel works, but browsers fall back to the slower
+    HTTP tunnel), ``refused`` (the tunnel was rejected), ``unreachable`` (it opened and
+    stayed silent, or would not open at all), ``skipped`` (no console configured, or no
+    WebSocket client installed).
+    """
+    base, skip = _probe_base(settings)
+    if skip is not None:
+        return skip
+    if connect is None:
+        try:
+            _websocket_client()
+        except GuacError as exc:
+            return "skipped", str(exc)
+    kind, detail, token, identifier = _open_connection(
+        settings, base, _probe_payload(settings), timeout, post, get
+    )
+    if kind != "accepted":
+        return kind, detail
+    try:
+        url = tunnel_url(base, token=token, connection_id=identifier)
+    except GuacError as exc:
+        return "skipped", str(exc)
+    report = drive_tunnel(url, seconds=seconds, open_seconds=open_seconds, connect=connect)
+    return tunnel_verdict(report, base=base, placeholder=True)
+
+
+def verify_session_console(
+    settings,
+    session: Session,
+    scenario: Scenario | None = None,
+    *,
+    timeout: float = PROBE_TIMEOUT_SECONDS,
+    seconds: float = TUNNEL_SECONDS,
+    open_seconds: float = TUNNEL_OPEN_SECONDS,
+    post=None,
+    get=None,
+    connect=None,
+) -> tuple[str, str, TunnelReport]:
+    """Open *one student's* console over the real stack. ``(state, detail, report)``.
+
+    What `ontrak console verify` and its scenario sweep run: the same three requests a
+    browser makes, for a session that exists, against the guest that session was given —
+    so the connection this portal signed for *this* machine is the one that has to paint.
+
+    States: ``ok``, ``error`` (the tunnel opened and guacd reported a failure — a refused
+    login, an sshd that is not running, a guest that is gone), ``empty`` (opened, and guacd
+    said nothing at all), ``refused``, ``degraded``, ``skipped`` — the last four as in
+    :func:`tunnel_verdict`.
+    """
+    report = TunnelReport()
+    base, skip = _probe_base(settings)
+    if skip is not None:
+        return skip[0], skip[1], report
+    if connect is None:
+        try:
+            _websocket_client()
+        except GuacError as exc:
+            return "skipped", str(exc), report
+    if not session.host_ip:
+        return (
+            "refused",
+            f"session {session.id} has no machine address yet, so there is no console to open",
+            report,
+        )
+    if protocol_for(settings, scenario) == "":
+        return (
+            "skipped",
+            f"scenario {session.scenario_id} gets no browser console on this range "
+            "(guac.linux_ssh is off), so there is nothing to open",
+            report,
+        )
+    name = connection_name(session, scenario)
+    kind, detail, token, identifier = _open_connection(
+        settings, base, build_payload(settings, session, scenario), timeout, post, get, name=name
+    )
+    if kind != "accepted":
+        return kind, detail, report
+    try:
+        url = tunnel_url(base, token=token, connection_id=identifier)
+    except GuacError as exc:
+        return "refused", str(exc), report
+    report = drive_tunnel(url, seconds=seconds, open_seconds=open_seconds, connect=connect)
+    state, detail = tunnel_verdict(report, base=base)
+    return state, detail, report
 
 
 def same_origin(first: str, second: str) -> bool:

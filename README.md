@@ -50,7 +50,7 @@
 - **A session lifecycle** — request → clone → boot → hand over → grade → submit → destroy, with per-session time limits, progressive hints, reset-on-demand and a reset that is always a fresh clone. The portal reaps expiry, idle sessions and finished history itself, so an abandoned machine is taken back without anyone remembering a command — and without a cron job, which the container stack does not have.
 - **A student portal** — FastAPI app with local accounts by default and Authentik SSO one toggle away, ticket dashboard, HTML5 console via the gateway, time-limit control, `Complete & End`, and results-only reporting.
 - **A container stack** — `docker compose up` brings up the portal and the Guacamole console gateway; the training machines stay Incus VMs on the host, reached over its socket or a cluster endpoint.
-- **An operator surface** — CLI (`doctor`, `catalog`, `media`, `image`, `template`, `pool`, `schedule`, `session`, `generate`), warm-pool management, scheduled prewarm/teardown, and an instructor view with CSV export.
+- **An operator surface** — CLI (`doctor`, `catalog`, `media`, `image`, `template`, `pool`, `schedule`, `session`, `console`, `generate`), warm-pool management, scheduled prewarm/teardown, and an instructor view with CSV export.
 - **Setup anywhere** — one script installs what a machine is missing (Python, `make`, Docker, `openssl`) and `make` builds its own environment, so a checkout carried onto a laptop, a mini-PC or a phone-hosted daemon runs with one command and no editing.
 
 ## Quick start
@@ -179,7 +179,7 @@ OnTrak/
 
 ## Status
 
-- **Verified here:** the Python control plane — `pytest` (501 tests; the only two that skip
+- **Verified here:** the Python control plane — `pytest` (525 tests; the only two that skip
   themselves are the live-Guacamole interop test and the range walk below), `ruff` clean,
   scenario validation, catalog validation, the CLI, generated scenarios validated, the
   admin panel rendering without a reachable hypervisor, and the Guacamole link format
@@ -192,7 +192,15 @@ OnTrak/
   the account to the hand-in and the state it leaves the page in. The walk also runs
   **nightly** on a self-hosted runner labelled `incus`
   (`.github/workflows/range-nightly.yml`), which fails rather than reports green if the
-  walk skips itself. `make sweep` stays an operator command: it boots the whole pool
+  walk skips itself, and opens every Linux console on the same run — a console sweep that
+  opens nothing fails too, for the same reason a skipped walk does. `ontrak console verify --linux` opened all 14 `(scenario, workload)`
+  Linux consoles the way a browser does — through the real gateway, webapp and guacd, over
+  the TLS listener, each painting its terminal — and guacd's own typescript for one of them
+  reads back the shell prompt, the typed command and its output. A Windows scenario's
+  template was rebuilt from the golden image the same way (`ontrak template build
+  sw-app-crash --force`) and its RDP console opened onto a painted desktop: guacd signing in
+  as the training user, `img`/`blob` tiles, `rect`, `cfill`, no error. `make sweep` stays an
+  operator command: it boots the whole pool
   (see [docs/operations.md](docs/operations.md#maintenance)).
 - **Verified in Docker:** the image builds and validates a checkout with no hypervisor, every
   compose file renders — the base stack, the remote override and the TLS overlay — the portal

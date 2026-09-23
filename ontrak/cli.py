@@ -8,6 +8,7 @@ Everything an instructor or operator needs, without touching Python:
     ontrak template build --all           # tpl-<scenario> + clean snapshot
     ontrak pool status|prewarm|refill
     ontrak session start|check|reset|console|end
+    ontrak console verify --linux          # open real consoles, end to end
     ontrak ticket form|show|grade|complete # the in-house write-up
     ontrak reap --loop                    # pool refill + idle/expiry reaping
     ontrak user list|remove
@@ -148,6 +149,7 @@ def cmd_doctor(args) -> int:
     for module, purpose in (
         ("yaml", "scenario manifests"),
         ("cryptography", "Guacamole link signing"),
+        ("websockets", "the console tunnel check"),
         ("fastapi", "student portal"),
         ("winrm", "guest automation over WinRM"),
     ):
@@ -287,30 +289,32 @@ def cmd_doctor(args) -> int:
 
     print()
     print("Console gateway")
-    # Two checks, in the order a browser meets them. The first catches the silent
-    # failure: the portal signs every console link and a gateway with a different key
-    # refuses all of them while both sides look healthy. The second follows the signed
-    # link the rest of the way — token, then the connection list the browser reads —
-    # because a gateway can accept our key and still not register the connection, which
-    # looks identical from the student's side (an empty console).
-    state, detail = guac.probe_gateway(settings)
-    if state == "ok":
-        _say(OK, detail)
-        state, detail = guac.probe_console(settings)
+    # Three checks, in the order a browser meets them, and each of them for a failure the
+    # others cannot see. The first catches the silent one: the portal signs every console
+    # link and a gateway with a different key refuses all of them while both sides look
+    # healthy. The second follows the signed link the rest of the way — token, then the
+    # connection list the browser reads — because a gateway can accept our key and still
+    # not register the connection. The third opens the console's own WebSocket, which is
+    # the only one that notices a webapp with no guacd behind it. All three look identical
+    # from the student's side (an empty console), so all three are asked.
+    for probe in (guac.probe_gateway, guac.probe_console, guac.probe_tunnel):
+        state, detail = probe(settings)
         if state == "ok":
             _say(OK, detail)
-        elif state == "refused":
+            continue
+        if state == "refused":
             _say(FAIL, detail)
             failures += 1
+        elif state == "skipped":
+            _say(INFO, detail)
         else:
+            # `unreachable` (which this section treats as a warning: split-horizon DNS and
+            # a console pinned to a name this host cannot resolve are both normal) and
+            # `degraded` (the console works, over the slower HTTP tunnel).
             _say(WARN, detail)
-    elif state == "refused":
-        _say(FAIL, detail)
-        failures += 1
-    elif state == "unreachable":
-        _say(WARN, detail)
-    else:
-        _say(INFO, detail)
+        # Whatever went wrong here is upstream of the next request, so stop rather than
+        # report on a request that was never made.
+        break
     # A console pinned to an absolute URL is a deliberate choice behind a TLS edge and
     # a trap on a LAN range reached by IP. The portal cannot detect this per request
     # (there is no request here), so the note is what stands in for the guard.
@@ -628,6 +632,129 @@ def cmd_reap(args) -> int:
         if not args.loop:
             return 0
         time.sleep(interval)
+
+
+def _console_targets(repo, ids, *, all_scenarios: bool = False, linux_only: bool = False) -> list[str]:
+    """Which scenarios a console check should open, in catalogue order.
+
+    Named ids are taken as given (an unknown one raises, the way every other command
+    treats a typo). ``--all`` and ``--linux`` both mean "the catalogue", and ``--linux``
+    narrows it to the scenarios that get the SSH console — the sweep an operator wants
+    before a Linux class, and the one a host that cannot hold every Windows VM can still
+    afford to run.
+    """
+    if ids:
+        scenarios = [repo.get(scenario_id) for scenario_id in ids]
+    elif all_scenarios or linux_only:
+        scenarios = repo.list()
+    else:
+        return []
+    if linux_only:
+        scenarios = [scenario for scenario in scenarios if scenario.is_linux]
+    return [scenario.id for scenario in scenarios]
+
+
+def cmd_console(args) -> int:
+    """Open each target's console through the whole stack, and report what came back.
+
+    The one question no other command answers: `session check` marks a machine,
+    `session console` prints the link, and this opens it. Per target it allocates a
+    session, drives the portal's own signed link through the gateway, the webapp and
+    guacd — the same three requests a browser makes — and destroys the machine again
+    unless ``--keep`` asks to leave it for a look.
+
+    A row that is not ``ok`` is a console a student would have to report; ``degraded``
+    still opens, over the slower HTTP tunnel, so it is printed but does not fail the run.
+    Under ``guac.base_url: auto`` — the shipped default — there is no fixed console URL for
+    a process with no browser to open a tunnel on, so this asks for ``--base-url`` rather
+    than inventing one that is certainly wrong somewhere.
+    """
+    ctx = Context(args.config)
+    settings = ctx.settings
+    if args.base_url:
+        settings.guac.base_url = args.base_url
+    # There is no fixed console URL under `auto`: it follows each browser's own address, and
+    # this command is a process with no browser. Rather than invent one — the one address
+    # that is *certainly* wrong on a remote range is this host's own — say what to pass.
+    if str(settings.guac.base_url).strip().lower() == guac.AUTO_BASE_URL:
+        _say(
+            FAIL,
+            "guac.base_url is 'auto', so the console address is derived from each browser's "
+            "own and there is no fixed URL for this check to open a tunnel on. Pass "
+            "--base-url: https://localhost:8443/guacamole/ is the TLS stack's console on "
+            "its own host, and http://localhost:8080/guacamole/ is the one `make up` "
+            "publishes (inside the stack, use the gateway's service name).",
+        )
+        return 2
+
+    if args.session_id:
+        session = _session_or_die(ctx, args)
+        if session is None:
+            return 1
+        scenario = ctx.repo.get(session.scenario_id)
+        state, detail, _report = guac.verify_session_console(
+            settings, session, scenario, seconds=args.seconds
+        )
+        _say(OK if state == "ok" else FAIL, f"session {session.id}: {detail}")
+        return 0 if state == "ok" else 1
+
+    targets = _console_targets(
+        ctx.repo, args.scenarios, all_scenarios=args.all, linux_only=args.linux
+    )
+    if not targets:
+        _say(
+            FAIL,
+            "specify scenario ids, --all or --linux (or --session-id to check a session "
+            "a student is already on)",
+        )
+        return 2
+
+    rows, results = [], []
+    for scenario_id in targets:
+        scenario = ctx.repo.get(scenario_id)
+        protocol = guac.protocol_for(settings, scenario) or "none"
+        # One student per scenario: `session.max_per_student` would otherwise refuse the
+        # second allocation, and the name says in `session list` where the machine came
+        # from if one is left behind with --keep.
+        session = ctx.manager.allocate(
+            f"{args.student}-{scenario_id}",
+            scenario_id,
+            workload=args.workload,
+            time_limit_minutes=args.time_limit,
+        )
+        if session.state == SessionState.ERROR:
+            state, detail = "error", session.error or "the session failed to provision"
+        else:
+            state, detail, _report = guac.verify_session_console(
+                settings, session, scenario, seconds=args.seconds
+            )
+        rows.append([scenario_id, session.workload or "-", protocol, state, str(session.id)])
+        results.append((scenario_id, state, detail))
+        if not args.keep:
+            ctx.manager.end(session)
+
+    print()
+    _table(["scenario", "workload", "console", "state", "session"], rows)
+    print()
+    for scenario_id, state, detail in results:
+        # Every row that is not a working console gets its sentence on its own line: the
+        # table cell cannot hold it, and the sentence is the actionable part. `skipped` is
+        # a posture rather than a fault (no console configured, or a range whose Linux
+        # templates predate `guac.linux_ssh`), ``degraded`` still opens over the slower
+        # HTTP tunnel, and the rest are consoles a student would have to report.
+        if state == "ok":
+            continue
+        _say({"skipped": INFO, "degraded": WARN}.get(state, FAIL), f"{scenario_id}: {detail}")
+    opened = sum(1 for _id, state, _detail in results if state == "ok")
+    skipped = sum(1 for _id, state, _detail in results if state == "skipped")
+    failed = [row for row in results if row[1] not in ("ok", "skipped", "degraded")]
+    _say(
+        OK if not failed else FAIL,
+        f"{opened} of {len(targets)} console(s) opened"
+        + (f", {skipped} skipped" if skipped else "")
+        + ("" if args.keep else "; the machines have been destroyed"),
+    )
+    return 1 if failed else 0
 
 
 def cmd_stats(args) -> int:
@@ -1293,6 +1420,37 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="prune: report what would go, delete nothing"
     )
     session.set_defaults(func=cmd_session)
+
+    console = sub.add_parser("console", help="open real consoles end to end")
+    console.add_argument("action", choices=["verify"])
+    console.add_argument("scenarios", nargs="*", help="scenario ids (or --all / --linux)")
+    console.add_argument("--all", action="store_true", help="every scenario in the catalogue")
+    console.add_argument(
+        "--linux", action="store_true", help="only the scenarios that get the SSH console"
+    )
+    console.add_argument(
+        "--session-id", type=int, help="check one session that already exists, and do not end it"
+    )
+    console.add_argument(
+        "--student",
+        default="console-verify",
+        help="name to allocate under; the scenario is appended, one machine per scenario",
+    )
+    console.add_argument(
+        "--base-url",
+        help="the console URL to open the tunnel on; required when guac.base_url is 'auto' "
+        "(e.g. https://localhost:8443/guacamole/)",
+    )
+    console.add_argument("--workload", help="catalog entry to build the guest from, e.g. debian-12")
+    console.add_argument("--time-limit", type=int, default=None)
+    console.add_argument(
+        "--seconds",
+        type=float,
+        default=guac.TUNNEL_SECONDS,
+        help="how long to listen on each console's tunnel (default: %(default)s)",
+    )
+    console.add_argument("--keep", action="store_true", help="leave the machines up for a look")
+    console.set_defaults(func=cmd_console)
 
     reap = sub.add_parser("reap", help="expire sessions and refill pools")
     reap.add_argument("--loop", action="store_true")

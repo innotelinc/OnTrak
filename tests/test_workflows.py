@@ -94,6 +94,26 @@ def test_a_skipped_walk_is_an_error_rather_than_a_pass():
     assert "::error::" in text, "a skipped walk does not report anything"
 
 
+def test_the_nightly_opens_every_linux_console():
+    """The walk is blind to the console: gateway, webapp and guacd can all be down while
+    every assertion it makes passes, and the student sees a blank iframe."""
+    text = "\n".join(_scripts(_load(NIGHTLY)))
+    assert "console verify --linux" in text, "the nightly never opens a console"
+    assert "--base-url" in text, "the sweep is given no address to open a tunnel on"
+
+
+def test_the_console_sweep_cannot_pass_without_opening_anything():
+    """`0 of 7 console(s) opened, 7 skipped` exits 0.
+
+    A range whose Linux templates predate `guac.linux_ssh`, or one whose catalogue has no
+    Linux scenario, produces exactly that — and it reads as a green nightly that opened
+    nothing, which is the same lie the walk's own skip check is here to catch.
+    """
+    text = "\n".join(_scripts(_load(NIGHTLY)))
+    assert "console(s) opened" in text, "nothing reads the sweep's summary line"
+    assert "Linux consoles opened" in text, "a sweep that opened fewer than it asked for would pass"
+
+
 def test_the_walk_never_deletes_machines():
     """It runs against a range a class may be using, and a session's instance name
     cannot be told apart from a student's by name alone."""

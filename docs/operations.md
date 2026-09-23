@@ -181,6 +181,8 @@ make doctor                                                    # host healthy? (
 
 .venv/bin/ontrak scenario validate                           # catalogue healthy?
 .venv/bin/ontrak template build --all                        # after any scenario edit
+.venv/bin/ontrak console verify --linux \
+    --base-url https://localhost:8443/guacamole/              # each Linux console opens? one machine at a time
 .venv/bin/ontrak pool prewarm --scenario net-dns-failure --count 30
 make serve          # the portal — it reaps expiry, idle sessions and history itself
 ```
@@ -262,6 +264,27 @@ takes effect on a rebuilt template (`ontrak template build --all --force`, or
 `make templates`), so a Linux scenario built under the old setting keeps whatever
 console it was snapshotted with.
 
+A console is opened by three requests, and they can fail one at a time while looking
+identical from the student's side (a blank frame). Two are HTTP: the signed payload
+becomes a token, and the token lists the connection. The third is the console itself — a
+WebSocket to `<guac.base_url>websocket-tunnel`, opened with the `guacamole` subprotocol,
+answered by guacd with the terminal's or desktop's own instructions. That third one is
+the only check that notices a webapp with no guacd behind it: with guacd stopped,
+measured on a real range, the WebSocket still upgrades and the subprotocol is still
+negotiated, and then *nothing* arrives at all, because the webapp sends the tunnel's UUID
+only once it has something to send it to. `ontrak doctor` opens that tunnel once, against
+a placeholder connection, and says so when nothing comes back; `ontrak console verify
+--linux` opens it for every Linux scenario in turn — allocating one machine at a time and
+destroying it again — which is a sweep a host that cannot hold a whole class can still
+run before one. The check itself sends nothing but what a browser sends — a bare `nop` every
+five seconds — because guacd aborts a client it has not heard from for fifteen seconds
+(status 776, "Aborted. See logs."); without it, a console that is merely slow to paint is
+reported as a console that is broken. Under the shipped `guac.base_url: auto` there is no fixed console address
+for a process with no browser to open a tunnel on, so `console verify` asks for one —
+`--base-url https://localhost:8443/guacamole/` on a TLS stack's own host, or
+`http://localhost:8080/guacamole/` for `make up` — and `ontrak doctor` reports its
+console checks as skipped rather than guessing at one.
+
 ### After
 
 ```bash
@@ -331,7 +354,8 @@ for the whole class: a cluster does not make a cold Windows boot faster.
 | Template build fails with "did not report ONTRAK-SETUP-OK" | the setup script threw | The error includes the output tail; run the VM manually and execute `setup.ps1` to see the full error |
 | "template is missing snapshot clean" | scenario edited, template not rebuilt | `ontrak template build <scenario> --force` |
 | Guacamole shows "connection failed" | target 3389 unreachable from guacd, or wrong credentials | `ontrak session console <id>` to inspect; confirm the VM answers on 3389 from the control node; check `guest.rdp_port` |
-| Console opens an empty session, or one with no connection in it, while the gateway looks healthy | the gateway accepted the signed payload as a token but did not register the connection the browser then reads (its JSON auth extension is not enabled: `JSON_ENABLED: "false"`) | `ontrak doctor` follows the whole path — token, then the connection list the browser reads — and **fails** when the connection is missing. Enable `JSON_ENABLED` on the gateway and recreate it (docker-compose.yml) |
+| Console opens an empty session, or one with no connection in it, while the gateway looks healthy | the gateway accepted the signed payload as a token but did not register the connection the browser then reads (its JSON auth extension is not enabled: `JSON_ENABLED: "false"`) | `ontrak doctor` follows the whole path — token, then the connection list the browser reads, then the console's own WebSocket — and **fails** when the connection is missing. Enable `JSON_ENABLED` on the gateway and recreate it (docker-compose.yml) |
+| The console frame opens and stays blank — no error on screen, no desktop or shell — while the gateway and the student's link both look healthy | the webapp has no guacd to open the connection with. With guacd stopped the WebSocket still upgrades and the subprotocol is still negotiated, and then nothing at all arrives: the webapp sends the tunnel's UUID only once it has a guacd connection, so there is nothing to render and nothing to report | `ontrak doctor` opens that tunnel and **warns** (`unreachable`) when nothing comes back, and `ontrak console verify <scenario>` says the same about one real machine. Check `docker compose ps` for `guacd` and `docker compose logs guacamole`; every other check in `doctor` passes on this stack |
 | Console loads but every session is refused ("Permission denied"), or the iframe never opens | the gateway signs off on a different `JSON_SECRET_KEY` than the portal's `guac.secret_key`, or its `guacamole-auth-json` extension is not enabled | `ontrak doctor` probes this directly and now **fails** on it (it posts a payload signed with `guac.secret_key` to `<guac.base_url>/api/tokens`). Make `JSON_SECRET_KEY` equal `ONTRAK_GUAC__SECRET_KEY` and recreate the gateway: `make console-recreate` (or `docker compose up -d --force-recreate guacamole`). A stack started before the key was set keeps the empty one until it is recreated. The student's page says so too instead of showing an empty console |
 | Console iframe blank | `guac.base_url` is not the URL the student's browser uses, or the page is HTTP while Guacamole is HTTPS | Set `guac.base_url` to the browser-visible HTTPS URL and put a TLS proxy in front |
 | A student's console opens the **previous** session's machine — typically one that has since been destroyed — and says "the remote desktop server has encountered an error and has closed the connection" | Guacamole keeps its auth token in the browser's `localStorage` and re-authenticates with it on every load, and the gateway *reuses the session that token belongs to*: a still-valid stored token beats the fresh, correctly signed payload the portal just handed over, so the console keeps dialling the machine that browser opened last. Nothing about the failing machine is wrong | Fixed — the console frame now loads the portal's own `/sessions/<id>/console` page first, which clears `GUAC_AUTH_TOKEN` before opening the signed URL. A browser that still shows it is on the old build; recreating the portal (`make up`) is enough. The one case the portal cannot clear is a console on a *different origin* than the portal (a cross-origin `guac.base_url`), because `localStorage` is per origin — use `auto`, or a name that serves both the portal and `/guacamole/`. `ontrak doctor` warns about a pinned `guac.base_url`, and the student's session page says it in a card above the console, so the misconfiguration is stated rather than left to look like a broken machine |

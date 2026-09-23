@@ -1,6 +1,7 @@
 # Control plane runtime dependencies.
 PyYAML>=6.0
 cryptography>=42.0          # Guacamole signed/encrypted JSON payloads
+websockets>=12              # opening the console's tunnel in the console checks
 pywinrm>=0.4.3              # guest automation over WinRM (default driver)
 fastapi>=0.110
 uvicorn[standard]>=0.29

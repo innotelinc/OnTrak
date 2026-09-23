@@ -413,8 +413,10 @@ is what *students' browsers* resolve, not what the container can reach. It is
 `auto` by default, which works out the address from the browser's own request, so
 the usual cause is now a stack whose portal and console are reached under
 different names — set the absolute public console URL in that case (`make exec
-ARGS=doctor` reports the console check as skipped under `auto`, since there is no
-fixed URL here for it to probe).
+ARGS=doctor` reports the console checks as skipped under `auto`, since there is no
+fixed URL here for them to probe; to check a console anyway, run the tunnel check
+against one from the lab host, where the console has an address of its own:
+`ontrak console verify --linux --base-url https://localhost:8443/guacamole/`).
 
 **`make exec ARGS=doctor` says there is no hypervisor, but Incus is installed.**
 The first run says which of the three ways to reach a hypervisor it took; read it
