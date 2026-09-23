@@ -20,10 +20,11 @@
 #
 # The same job then opens every Linux console (`ontrak console verify --linux
 # --workloads`), which is the layer the walk cannot see, and holds that sweep to the same
-# rule: a run that opened nothing is not a pass either. Last it opens one scenario's
-# console in a real browser (`ontrak console browser`), because the wire sweep knows
+# rule: a run that opened nothing is not a pass either. Last it opens a Linux console *and*
+# a Windows one in a real browser (`ontrak console browser`), because the wire sweep knows
 # nothing about the page a student actually looks at — a frame that never loads, a
-# bootstrap page on another origin, a canvas no keystroke reaches.
+# bootstrap page on another origin, a canvas no keystroke reaches — and a terminal and a
+# desktop are different protocols, different guests and different proofs.
 # ═══════════════════════════════════════════════════════════════════════════
 
 name: Range walk
@@ -184,11 +185,14 @@ jobs:
               )
           PY
 
-      # The wire sweep proves the stack. This proves the *page*: it signs in to the real
-      # portal, starts the scenario through the portal, opens the session page in Chromium
-      # and types into the terminal. It is the only step here that can see a console which
-      # is perfect on the wire and blank in the browser a student is looking at.
-      - name: The student's console page, in a real browser
+      # The wire sweep proves the stack. This proves the *page*, for both kinds of console
+      # OnTrak offers: it signs in to the real portal, starts each scenario through the
+      # portal, opens the session page in Chromium and asks the console for the proof its
+      # protocol can give — a shell command into a Linux terminal, the Windows key on a
+      # Windows desktop — and fails if the screen does not change. It is the only step here
+      # that can see a console which is perfect on the wire and blank in the browser a
+      # student is looking at.
+      - name: The student's console page, in a real browser, on both kinds of console
         run: |
           set -euo pipefail
           command -v curl >/dev/null 2>&1 \
@@ -222,7 +226,21 @@ jobs:
             echo "::error::the browser check needs an account it can sign in with: set ONTRAK_BROWSER_USER and ONTRAK_BROWSER_PASSWORD (or ONTRAK_PORTAL__ADMIN_PASSWORD)"
             exit 1
           fi
-          .venv/bin/ontrak console browser "${ONTRAK_BROWSER_SCENARIO:-linux-user-lifecycle}" \
+          # One scenario per kind of console: a terminal and a desktop are different
+          # Guacamole protocols against different guests, so a range that only ever opened
+          # the Linux one has never looked at the page a Windows student sits in front of.
+          # Each named scenario gets its own machine, one at a time.
+          scenarios=("${ONTRAK_BROWSER_SCENARIO:-linux-user-lifecycle}")
+          windows="${ONTRAK_BROWSER_WINDOWS_SCENARIO:-sw-app-crash}"
+          if [ "$windows" = "off" ]; then
+            # The one way to leave the Windows half out of a run, and it says so in the
+            # log: a range that carries no Windows media is a deployment decision, not a
+            # reason for a nightly to go quiet about a console nobody opened.
+            echo "::notice::ONTRAK_BROWSER_WINDOWS_SCENARIO=off — this run opens no Windows console in a browser"
+          else
+            scenarios+=("$windows")
+          fi
+          .venv/bin/ontrak console browser "${scenarios[@]}" \
             --portal-url "$portal" \
             --browser-user "$user" \
             --browser-password "$password" \

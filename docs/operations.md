@@ -183,8 +183,8 @@ make doctor                                                    # host healthy? (
 .venv/bin/ontrak template build --all                        # after any scenario edit
 .venv/bin/ontrak console verify --linux --workloads \
     --base-url https://localhost:8443/guacamole/              # every Linux console opens? one machine at a time
-.venv/bin/ontrak console browser linux-user-lifecycle \
-    --portal-url https://localhost:8443/                     # and one of them opens in a real browser
+.venv/bin/ontrak console browser linux-user-lifecycle sw-app-crash \
+    --portal-url https://localhost:8443/                     # and one of each console opens in a real browser
 .venv/bin/ontrak pool prewarm --scenario net-dns-failure --count 30
 make serve          # the portal — it reaps expiry, idle sessions and history itself
 ```
@@ -290,11 +290,13 @@ console checks as skipped rather than guessing at one.
 `--workloads` is what makes "every Linux console" true: a scenario offered on Ubuntu *and*
 Debian is one template per platform, so a sweep without it opens the one the catalogue lists
 first and reports a green range with the other half unchecked. And one thing none of that
-can see is the **page**: `ontrak console browser <scenario>` signs in to the portal, starts
-the scenario through the portal, opens the session page in Chromium and types into the
-terminal, then destroys the machine. It is the only check that can tell a console which is
-perfect over the wire from one whose frame never loads, whose bootstrap page cannot clear
-Guacamole's cached token, or whose canvas no keystroke reaches. Three things it needs:
+can see is the **page**: `ontrak console browser <scenario>…` signs in to the portal, starts
+each named scenario through the portal, opens the session page in Chromium and asks the
+console for a keystroke it has to answer — `echo BROWSER_OK` into a Linux terminal, the
+Windows key on a Windows desktop — then destroys the machine. It is the only check that can
+tell a console which is perfect over the wire from one whose frame never loads, whose
+bootstrap page cannot clear Guacamole's cached token, or whose canvas no keystroke reaches.
+Three things it needs:
 
 - **A browser engine**, which is a download of its own and deliberately not in
   `requirements.txt`: `pip install playwright && playwright install chromium`. Set
@@ -309,11 +311,21 @@ Guacamole's cached token, or whose canvas no keystroke reaches. Three things it 
   not in this checkout's `state/` — so if it refuses the sign-in, the password it wants is
   the one in the portal's database, and the error says exactly that.
 
-One machine at a time, on purpose: this allocates a real scenario through the portal and a
-sweep of them is a class's worth of work. The wire sweep above is the one that scales, and
-the nightly range walk runs both — the sweep over both Linux workloads, then this for one
-scenario (`ONTRAK_BROWSER_SCENARIO`, `ONTRAK_BROWSER_USER`/`ONTRAK_BROWSER_PASSWORD` when
-the runner should not hold the admin password).
+One machine at a time, on purpose, and one machine per scenario named: this allocates a real
+scenario through the portal and a sweep of them is a class's worth of work — the wire sweep
+above is the one that scales. A Linux scenario and a Windows one are the pair worth naming,
+because a terminal and a desktop are different protocols against different guests with
+different proofs, so a range that has only ever opened the Linux page has never looked at
+the page a Windows student sits in front of. A scenario that gets no browser console at all
+(or a machine that never comes up) fails the run rather than quietly dropping out of it: a
+console the operator asked for and did not get is a finding, not a pass.
+
+The nightly range walk runs both halves — the wire sweep over every Linux workload, then a
+Linux console and a Windows one in a browser. `ONTRAK_BROWSER_SCENARIO` names the Linux
+scenario (default `linux-user-lifecycle`) and `ONTRAK_BROWSER_WINDOWS_SCENARIO` the Windows
+one (default `sw-app-crash`); a range that carries no Windows media sets the latter to
+`off`, which the job logs rather than skipping quietly. `ONTRAK_BROWSER_USER` and
+`ONTRAK_BROWSER_PASSWORD` are for a runner that should not hold the range's admin password.
 
 ### After
 

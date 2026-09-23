@@ -9,7 +9,7 @@ Everything an instructor or operator needs, without touching Python:
     ontrak pool status|prewarm|refill
     ontrak session start|check|reset|console|end
     ontrak console verify --linux          # open real consoles, end to end
-    ontrak console browser <scenario>      # the student's page, in a real browser
+    ontrak console browser <scenario>…     # the student's page, per scenario
     ontrak ticket form|show|grade|complete # the in-house write-up
     ontrak reap --loop                    # pool refill + idle/expiry reaping
     ontrak user list|remove
@@ -706,14 +706,21 @@ def _portal_origin(settings) -> str:
 
 
 def cmd_console_browser(ctx, args) -> int:
-    """Open one scenario's console the way a student does: in a real browser.
+    """Open the named scenarios' consoles the way a student does: in a real browser.
 
     `console verify` proves the stack — the gateway, the webapp and guacd — with the same
     requests a browser makes, and it cannot see the page itself: a frame that never loads,
     a bootstrap page on another origin, or a canvas no keystroke reaches. So this signs in
-    to the portal, starts the scenario through it, opens the session page in Chromium and
-    types into the terminal. One scenario at a time, on purpose: a sweep of these is a
-    class's worth of machines, and the wire sweep is the one that scales.
+    to the portal, starts each named scenario through it, opens the session page in
+    Chromium and asks the console for a keystroke: `echo BROWSER_OK` into a terminal, the
+    Windows key on a desktop. A terminal and a desktop are different protocols, different
+    guests and different proofs, so naming one of each is the point — and every scenario
+    gets its own machine, one at a time. A sweep of these is a class's worth of machines,
+    which is why the wire sweep above is the one that scales.
+
+    Naming a scenario means opening it: a scenario that gets no browser console (or a
+    machine that never comes up) fails the run rather than quietly dropping out, since a
+    check nobody can read as a pass is the only kind worth running.
     """
     settings = ctx.settings
     missing = browser.engine_missing()
@@ -732,39 +739,69 @@ def cmd_console_browser(ctx, args) -> int:
             "http://localhost:8080/ is what `make up-plain` publishes)",
         )
         return 2
-    if len(args.scenarios) != 1:
+    if args.all or args.linux or args.workloads:
         _say(
             FAIL,
-            "name exactly one scenario: this starts a real machine and drives a real "
-            "browser, so it is one console at a time (use `console verify` to sweep)",
+            "console browser opens the scenario(s) you name, one machine at a time: "
+            "--all, --linux and --workloads are `console verify`'s sweep, which is the one "
+            "that scales",
         )
         return 2
-    scenario_id = args.scenarios[0]
-    try:
-        ctx.repo.get(scenario_id)
-    except ScenarioError as exc:
-        _say(FAIL, str(exc))
-        return 1
-    state, detail, report = browser.verify_console_in_browser(
-        settings,
-        portal_url=portal,
-        scenario_id=scenario_id,
-        workload=args.workload or "",
-        user=args.browser_user or settings.portal.admin_username,
-        password=args.browser_password or settings.portal.admin_password,
-        seconds=args.seconds,
-        # How long a machine gets to come up before the console is called unreachable:
-        # the same budget `ontrak session check` uses, since it is the same wait.
-        wait_seconds=args.wait or float(settings.session.check_timeout_seconds),
-        keep=args.keep,
+    if args.session_id:
+        _say(
+            FAIL,
+            "console browser starts a machine of its own and cannot be pointed at an "
+            "existing session: --session-id is `console verify`'s",
+        )
+        return 2
+    if not args.scenarios:
+        _say(
+            FAIL,
+            "name the scenario(s) to open: this starts a real machine and drives a real "
+            "browser for each one (a Linux scenario and a Windows one are two machines, "
+            "and two different proofs that the page works)",
+        )
+        return 2
+    # Everything is checked before anything is started: a typo in the second id should not
+    # cost a machine to find out about.
+    for scenario_id in args.scenarios:
+        try:
+            ctx.repo.get(scenario_id)
+        except ScenarioError as exc:
+            _say(FAIL, str(exc))
+            return 1
+
+    results = []
+    for scenario_id in args.scenarios:
+        state, detail, report = browser.verify_console_in_browser(
+            settings,
+            portal_url=portal,
+            scenario_id=scenario_id,
+            workload=args.workload or "",
+            user=args.browser_user or settings.portal.admin_username,
+            password=args.browser_password or settings.portal.admin_password,
+            seconds=args.seconds,
+            # How long a machine gets to come up before the console is called unreachable:
+            # the same budget `ontrak session check` uses, since it is the same wait.
+            wait_seconds=args.wait or float(settings.session.check_timeout_seconds),
+            keep=args.keep,
+        )
+        _say(OK if state == "ok" else FAIL, f"{scenario_id}: {detail}")
+        if report.frames and state != "ok":
+            # Shortened: a console frame's URL carries the whole signed payload, which is
+            # noise in a report whose point is which frames the browser ended up on.
+            for url in report.frames[:4]:
+                _say(INFO, f"  frame: {browser.console_address(url)}")
+        results.append(state)
+
+    opened = sum(1 for state in results if state == "ok")
+    failed = [state for state in results if state != "ok"]
+    _say(
+        OK if not failed else FAIL,
+        f"{opened} of {len(results)} console(s) opened in a browser"
+        + ("" if args.keep else "; the machines have been destroyed"),
     )
-    _say(OK if state == "ok" else FAIL, f"{scenario_id}: {detail}")
-    if report.frames and state != "ok":
-        # Shortened: a console frame's URL carries the whole signed payload, which is noise
-        # in a report whose point is which frames the browser ended up on.
-        for url in report.frames[:4]:
-            _say(INFO, f"  frame: {browser.console_address(url)}")
-    return 0 if state == "ok" else 1
+    return 1 if failed else 0
 
 
 def cmd_console(args) -> int:
@@ -1554,7 +1591,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     console = sub.add_parser("console", help="open real consoles end to end")
     console.add_argument("action", choices=["verify", "browser"])
-    console.add_argument("scenarios", nargs="*", help="scenario ids (or --all / --linux)")
+    console.add_argument(
+        "scenarios",
+        nargs="*",
+        help="scenario ids — `console browser` opens each one in a real browser; "
+        "`console verify` takes ids too, or --all / --linux",
+    )
     console.add_argument("--all", action="store_true", help="every scenario in the catalogue")
     console.add_argument(
         "--linux", action="store_true", help="only the scenarios that get the SSH console"

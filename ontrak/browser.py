@@ -9,8 +9,9 @@ another origin, the client falls back to the slower HTTP tunnel, or a keystroke 
 nowhere because nothing on the page has focus.
 
 So this drives the real thing: it signs in to the portal, starts a scenario through it,
-opens the session page in Chromium, waits for the console frame to paint, and types into
-it — into a machine *this check just created*, never a student's.
+opens the session page in Chromium, waits for the console frame to paint, and asks the
+console for a keystroke it has to answer — `echo BROWSER_OK` into a terminal, the Windows
+key on a desktop — into a machine *this check just created*, never a student's.
 
 It is deliberately portal-driven rather than an extra `ontrak console verify` mode.
 `console verify` allocates its machine through this checkout's own state directory, and a
@@ -60,11 +61,21 @@ TYPING_SECONDS = 15.0
 # busy as one that could not sign anyone in.
 PORTAL_TIMEOUT_SECONDS = 60.0
 
-# What a terminal check types into the machine it created, and what the frame must do
+# What a terminal console is asked to prove itself with, and what the frame must do
 # about it. `echo` on purpose: it changes the screen without changing the machine, so the
 # check leaves nothing behind in a template or a scenario's state even if the session it
 # started is kept for a look.
 TYPED_COMMAND = "echo BROWSER_OK"
+
+# ...and what a *desktop* is asked instead. There is no command a GUI has to obey, but
+# there is a key: the Windows key opens the Start menu, which changes the screen without
+# this check knowing or caring which window has focus. That change is the desktop's
+# version of the same claim a terminal makes with `echo` — the pixels are really the
+# machine and the machine is really listening to the student's keyboard — and it is the
+# half a canvas that paints but never takes a keystroke cannot pass. Playwright's name
+# for the key is `Meta`; `DESKTOP_KEY_SPOKEN` is what a report calls it.
+DESKTOP_KEY = "Meta"
+DESKTOP_KEY_SPOKEN = "the Windows key"
 
 # Text the Guacamole client puts on the screen when it gives up — the phrases a student
 # reads back to their instructor ("the remote desktop server has encountered an error and
@@ -90,8 +101,12 @@ class BrowserReport:
     canvases: int = 0
     painted: int = 0
     hash: int = 0
-    after_typing_hash: int = 0
-    typed: str = ""
+    # The frame's hash once the console had been asked to react — see `keystroke`.
+    after_keystroke_hash: int = 0
+    # What the check sent the machine's keyboard — a shell command, or the Windows key —
+    # in the words the verdict uses. Empty means nothing was asked, which is its own report
+    # rather than an assumed answer.
+    keystroke: str = ""
     changed: bool = False
     console_error: str = ""
     error: str = ""
@@ -320,7 +335,12 @@ def console_address(url: str) -> str:
 
 
 def browser_verdict(report: BrowserReport, *, protocol: str = "") -> tuple[str, str]:
-    """The state and the sentence for one browser report. ``(state, detail)``."""
+    """The state and the sentence for one browser report. ``(state, detail)``.
+
+    A console that was asked for a keystroke and did not react is the finding, and which
+    proof was asked for is the protocol's: a terminal is typed into, a desktop is pressed
+    with the Windows key (see :func:`console_proof`).
+    """
     where = console_address(report.console_url)
     if report.error:
         return "unreachable", report.error
@@ -342,18 +362,31 @@ def browser_verdict(report: BrowserReport, *, protocol: str = "") -> tuple[str, 
             f"({report.canvases} canvas(es) on the page) — the frame is there and the screen "
             "inside it is blank"
         )
-    if report.typed and not report.changed:
+    terminal = protocol == "ssh"
+    if report.keystroke and not report.changed:
+        asked = (
+            f"typing {report.keystroke!r} into the console"
+            if terminal
+            else f"pressing {report.keystroke} on the desktop"
+        )
+        missed = (
+            "the machine may be up and still not be listening to the student's keyboard"
+            if terminal
+            else "the desktop may be painted and still not be listening to the student's keyboard"
+        )
         return "error", (
-            f"a real browser opened {where} and {report.painted} canvas(es) painted, but typing "
-            f"{report.typed!r} into the console changed nothing on screen — the machine may be "
-            "up and still not be listening to the student's keyboard"
+            f"a real browser opened {where} and {report.painted} canvas(es) painted, but "
+            f"{asked} changed nothing on screen — {missed}"
         )
-    if report.typed:
-        return "ok", (
-            f"a real browser opened {where}: {report.painted} canvas(es) painted, and typing "
-            f"{report.typed!r} into the terminal changed the screen, so the student's "
-            "keystrokes reach the machine"
+    if report.keystroke:
+        answered = (
+            f"typing {report.keystroke!r} into the terminal changed the screen, so the "
+            "student's keystrokes reach the machine"
+            if terminal
+            else f"pressing {report.keystroke} changed the screen, so the student's keys "
+            "reach the desktop"
         )
+        return "ok", f"a real browser opened {where}: {report.painted} canvas(es) painted, and {answered}"
     return "ok", (
         f"a real browser opened {where} and {report.painted} canvas(es) painted "
         f"({report.canvases} on the page)"
@@ -441,6 +474,24 @@ def _console_frame(page, deadline: float):
     return None
 
 
+def console_proof(protocol: str) -> tuple[str, str, str]:
+    """What a console of this protocol is asked to prove itself with. ``(action, keys, spoken)``.
+
+    ``action`` is ``"type"`` or ``"press"``, ``keys`` is what goes to the machine's
+    keyboard, and ``spoken`` is how a report says it. A terminal (``ssh``) gets a shell
+    command, the same one every time, so a console that answers leaves nothing behind. A
+    desktop gets the Windows key, whose whole use here is that it changes the screen
+    whatever has focus — see :data:`DESKTOP_KEY`. Anything else gets nothing: an unknown
+    protocol is reported as what was seen (a painted frame) rather than assumed to answer
+    a keystroke nothing sent.
+    """
+    if protocol == "ssh":
+        return "type", TYPED_COMMAND, TYPED_COMMAND
+    if protocol:
+        return "press", DESKTOP_KEY, DESKTOP_KEY_SPOKEN
+    return "", "", ""
+
+
 def _open_page(
     page_url: str,
     *,
@@ -513,10 +564,8 @@ def _open_page(
             report.console_error = console_error_in(text or "")
             if report.console_error or not report.painted:
                 return report
-            if protocol != "ssh":
-                # An RDP desktop is verified by having painted: there is no command whose
-                # effect on a GUI can be asserted without guessing at whatever window has
-                # focus, and a check that types blind into a desktop proves nothing.
+            action, keys, spoken = console_proof(protocol)
+            if not action:
                 return report
             try:
                 # `force=True`, and a real mouse event rather than a synthetic one: what
@@ -526,20 +575,23 @@ def _open_page(
                 # click the student's own browser would deliver happily. Which layer takes
                 # the click is the client's business.
                 frame.locator("canvas").first.click(force=True, timeout=5000)
-                page.keyboard.type(TYPED_COMMAND)
-                page.keyboard.press("Enter")
+                if action == "type":
+                    page.keyboard.type(keys)
+                    page.keyboard.press("Enter")
+                else:
+                    page.keyboard.press(keys)
             except PlaywrightError as exc:
                 report.error = f"the console frame would not take a keystroke: {exc}"
                 return report
-            report.typed = TYPED_COMMAND
-            typing_deadline = time.monotonic() + min(TYPING_SECONDS, max(1.0, seconds))
-            while time.monotonic() < typing_deadline:
+            report.keystroke = spoken
+            keystroke_deadline = time.monotonic() + min(TYPING_SECONDS, max(1.0, seconds))
+            while time.monotonic() < keystroke_deadline:
                 page.wait_for_timeout(500)
                 after = frame.evaluate(_FINGERPRINT_JS)
                 if int(after.get("hash") or 0) != report.hash:
                     report.changed = True
                     break
-            report.after_typing_hash = int(after.get("hash") or 0)
+            report.after_keystroke_hash = int(after.get("hash") or 0)
             return report
         finally:
             context.close()

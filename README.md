@@ -179,7 +179,7 @@ OnTrak/
 
 ## Status
 
-- **Verified here:** the Python control plane — `pytest` (551 tests; the only two that skip
+- **Verified here:** the Python control plane — `pytest` (556 tests; the only two that skip
   themselves are the live-Guacamole interop test and the range walk below), `ruff` clean,
   scenario validation, catalog validation, the CLI, generated scenarios validated, the
   admin panel rendering without a reachable hypervisor, and the Guacamole link format
@@ -200,13 +200,17 @@ OnTrak/
   typed command and its output. A Windows scenario's template was rebuilt from the golden
   image the same way (`ontrak template build sw-app-crash --force`) and its RDP console
   opened onto a painted desktop: guacd signing in as the training user, `img`/`blob` tiles,
-  `rect`, `cfill`, no error. And `ontrak console browser` opened one scenario's console **in
-  Chromium**, the way a student does: signing in to the portal, starting the machine through
-  it, loading the session page, and typing `echo BROWSER_OK` into the terminal in the frame —
-  4 canvases painted and the screen changed, which is the keystroke half no wire-level check
-  can see. `make sweep` stays an
-  operator command: it boots the whole pool
-  (see [docs/operations.md](docs/operations.md#maintenance)).
+  `rect`, `cfill`, no error. And `ontrak console browser` opened a console **in Chromium**,
+  the way a student does: signing in to the portal, starting the machine through it, loading
+  the session page, and typing `echo BROWSER_OK` into the terminal in the frame — 4 canvases
+  painted and the screen changed, which is the keystroke half no wire-level check can see.
+  The check takes the scenarios to open as arguments and now names both kinds of console — a
+  Linux terminal and a Windows desktop — because a GUI has no command to obey, so a desktop
+  is asked for the proof it can give instead (the Windows key, which has to change the
+  screen). A desktop has only been seen to paint so far; that key press is what the nightly
+  measures, since it opens both consoles and fails if either does not open
+  ([docs/roadmap.md](docs/roadmap.md)). `make sweep` stays an operator command: it boots the
+  whole pool (see [docs/operations.md](docs/operations.md#maintenance)).
 - **Verified in Docker:** the image builds and validates a checkout with no hypervisor, every
   compose file renders — the base stack, the remote override and the TLS overlay — the portal
   and the console gateway both report healthy, and the doors behave: first-run setup on a

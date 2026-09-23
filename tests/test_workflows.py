@@ -118,6 +118,27 @@ def test_the_nightly_opens_the_console_in_a_real_browser():
     assert "ONTRAK_BROWSER_PASSWORD" in text and "ONTRAK_PORTAL__ADMIN_PASSWORD" in text
 
 
+def test_the_nightly_opens_a_windows_console_too():
+    """A terminal and a desktop are two consoles, and both are a student's page.
+
+    The wire sweep is Linux-only by design — a Linux guest is the one with an SSH console —
+    so without this the page a Windows student sits in front of is opened by nothing
+    automated here: a desktop whose canvas paints and never takes a keystroke, or a frame
+    that never loads for an RDP connection, would pass every other step in the job.
+    """
+    text = "\n".join(_scripts(_load(NIGHTLY)))
+    assert "ONTRAK_BROWSER_WINDOWS_SCENARIO" in text, "the nightly opens no Windows console"
+    assert "sw-app-crash" in text, "the Windows console the check opens has no default"
+    assert "linux-user-lifecycle" in text, "the Linux console the check opens has no default"
+    # Both go to one run, as two machines one at a time — and the only way to leave the
+    # Windows half out is an env var that says so in the log, because a scenario that
+    # quietly dropped out of the run is the silent pass this job exists to prevent.
+    assert "${scenarios[@]}" in text, "the two consoles are not opened by the same check"
+    assert "=off" in text and "::notice::" in text, (
+        "a range without Windows media has no visible way to leave the Windows half out"
+    )
+
+
 def test_the_console_sweep_cannot_pass_without_opening_anything():
     """`0 of 14 console(s) opened, 14 skipped` exits 0.
 

@@ -6,7 +6,7 @@ planned. Anything in the last two sections is a statement of intent, not a featu
 ## Verified in this repository
 
 - Python control plane: catalog, scenarios, sessions, scoring, selection, scheduler,
-  generator, portal (student and admin), CLI — `pytest` (551 tests) and `ruff` clean. Only two
+  generator, portal (student and admin), CLI — `pytest` (556 tests) and `ruff` clean. Only two
   tests skip themselves, and both switch on from the environment rather than from a device:
   the Guacamole interop test (`ONTRAK_GUAC_INTEROP_URL`) and the real-range walk
   (`ONTRAK_E2E`, below).
@@ -94,19 +94,21 @@ planned. Anything in the last two sections is a statement of intent, not a featu
   again, so a handshake that gets no HTTP response at all is retried once, and the retry
   stays in the sentence rather than being smoothed over.
 - The student's console page, in a real browser (`ontrak console browser`, and a step of the
-  nightly). It signs in to the portal, starts the scenario *through* the portal, opens the
-  session page in Chromium, waits for the console frame, and types into the terminal — into a
-  machine it started itself, never a student's. On the range: signed in, session started,
-  the frame painted 4 canvases, and `echo BROWSER_OK` changed the screen, for a Linux
-  scenario and (painted, nothing typed into a GUI) for a Windows one. It is portal-driven
+  nightly). It signs in to the portal, starts each named scenario *through* the portal, opens
+  the session page in Chromium, waits for the console frame, and asks the console for a
+  keystroke it has to answer — `echo BROWSER_OK` into a terminal, the Windows key on a
+  desktop — into a machine it started itself, never a student's. On the range: signed in,
+  session started, the frame painted 4 canvases, and `echo BROWSER_OK` changed the screen, on
+  a Linux scenario; a Windows scenario's desktop painted as well, while the key press that
+  now *proves* a desktop is unmeasured until a nightly runs it (below). It is portal-driven
   rather than another `console verify` mode because a container stack keeps the portal's
-  accounts and sessions in its own volume: a host-side allocation is a machine the portal
-  has never heard of, and its page answers 404. What it needs is an account that can open a
+  accounts and sessions in its own volume: a host-side allocation is a machine the portal has
+  never heard of, and its page answers 404. What it needs is an account that can open a
   session — the range's admin by default, or one kept for the check — and what it does *not*
-  do is prove the same thing for all 14 consoles: it is one machine and one page, because
-  the wire sweep is the one that scales. And it checks a *page*: pixels. The terminal's text
-  is in pixels, so "the prompt is really there" is still read from guacd's own typescript by
-  the sweep above rather than from this frame.
+  do is prove the same thing for all 14 consoles: it is one machine per scenario named, which
+  is why the wire sweep is the one that scales. And it checks a *page*: pixels. The terminal's
+  text is in pixels, so "the prompt is really there" is still read from guacd's own typescript
+  by the sweep above rather than from this frame.
 
 ## Built, but not proven on real hardware
 
@@ -119,8 +121,15 @@ These paths are reviewed and tested only up to the Incus boundary; they need a l
   consoles. The Windows 11 half is exercised on the lab range (a template rebuilt from the
   golden image, its fault injected and verified, all seven Windows consoles opened), but
   Server and Office need a host of their own to prove.
-- The browser half of any console: no check here clicks inside an iframe, presses a real
-  key or copies to a real clipboard, and those are the browser's half of the contract.
+- The Windows half of the browser console check. `ontrak console browser` asks a desktop for
+  the Windows key and requires the screen to change, because that is the only proof a GUI can
+  give that the student's keyboard reaches it — a canvas that paints and takes no keystroke is
+  a console a student cannot use. A Linux terminal has been through a range answering exactly
+  this way; a Windows desktop has only been seen to paint, so whether the key survives
+  Chromium, the client, guacd and RDP intact is measured by the nightly and not yet by a
+  person. (The nightly names both consoles and fails if either does not open.)
+- The browser's clipboard: no check here copies to a real clipboard, so paste-through is the
+  one interactive path nothing in this repository exercises.
 - ZFS/btrfs clone performance at class scale (the capacity model in
   [operations.md](operations.md) is arithmetic, not a benchmark).
 

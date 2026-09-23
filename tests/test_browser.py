@@ -74,8 +74,8 @@ def test_a_console_that_painted_and_answered_a_keystroke_is_ok():
         canvases=4,
         painted=4,
         hash=11,
-        after_typing_hash=22,
-        typed="echo BROWSER_OK",
+        after_keystroke_hash=22,
+        keystroke="echo BROWSER_OK",
         changed=True,
         seconds=30,
     )
@@ -93,8 +93,8 @@ def test_a_terminal_that_paints_but_ignores_the_keyboard_is_an_error():
         canvases=4,
         painted=4,
         hash=11,
-        after_typing_hash=11,
-        typed="echo BROWSER_OK",
+        after_keystroke_hash=11,
+        keystroke="echo BROWSER_OK",
         changed=False,
         seconds=30,
     )
@@ -103,8 +103,66 @@ def test_a_terminal_that_paints_but_ignores_the_keyboard_is_an_error():
     assert "changed nothing on screen" in detail
 
 
-def test_a_desktop_is_verified_by_having_painted():
-    """Nothing is typed into a GUI: whatever window has focus is not something to assert on."""
+def test_the_proof_a_console_is_asked_for_follows_its_protocol():
+    """A terminal is typed into; a desktop is pressed with the Windows key.
+
+    There is no shell command a GUI has to obey, but the Windows key opens the Start
+    menu, so the screen changes without the check knowing or caring what has focus —
+    which is the same claim `echo BROWSER_OK` makes for a terminal, and the one a canvas
+    that paints but never takes a keystroke cannot pass. An unknown protocol is asked for
+    nothing, rather than sent a keystroke whose effect nothing would be able to judge.
+    """
+    assert browser.console_proof("ssh") == (
+        "type",
+        browser.TYPED_COMMAND,
+        browser.TYPED_COMMAND,
+    )
+    assert browser.console_proof("rdp") == (
+        "press",
+        browser.DESKTOP_KEY,
+        browser.DESKTOP_KEY_SPOKEN,
+    )
+    assert browser.console_proof("") == ("", "", "")
+
+
+def test_a_desktop_that_answers_the_windows_key_is_ok():
+    report = BrowserReport(
+        url="https://range.test/sessions/8",
+        console_url="https://range.test/guacamole/#/client/x",
+        canvases=2,
+        painted=2,
+        hash=11,
+        after_keystroke_hash=31,
+        keystroke=browser.DESKTOP_KEY_SPOKEN,
+        changed=True,
+        seconds=30,
+    )
+    state, detail = browser.browser_verdict(report, protocol="rdp")
+    assert state == "ok"
+    assert "pressing the Windows key" in detail and "keys reach the desktop" in detail
+
+
+def test_a_desktop_that_ignores_the_windows_key_is_the_finding():
+    """The desktop painted and the machine is up, and the student's keyboard goes nowhere."""
+    report = BrowserReport(
+        url="https://range.test/sessions/8",
+        console_url="https://range.test/guacamole/#/client/x",
+        canvases=2,
+        painted=2,
+        hash=11,
+        after_keystroke_hash=11,
+        keystroke=browser.DESKTOP_KEY_SPOKEN,
+        changed=False,
+        seconds=30,
+    )
+    state, detail = browser.browser_verdict(report, protocol="rdp")
+    assert state == "error"
+    assert "pressing the Windows key on the desktop changed nothing" in detail
+    assert "still not be listening to the student's keyboard" in detail
+
+
+def test_a_frame_that_painted_answers_for_itself_when_nothing_was_asked():
+    """No proof was asked for (an unknown protocol), so the report says what was seen."""
     report = BrowserReport(
         url="https://range.test/sessions/8",
         console_url="https://range.test/guacamole/#/client/x",
@@ -199,20 +257,25 @@ def portal(monkeypatch):
     return fake
 
 
-def _driver(state="ok"):
-    """A stand-in for the Playwright page driver, reporting whatever the test needs."""
+def _driver():
+    """A stand-in for the Playwright page driver, reporting whatever the test needs.
+
+    It answers the proof the protocol asks for — the same as the real driver, which is
+    what makes the flow tests meaningful for a desktop as well as a terminal.
+    """
 
     def drive(page_url, *, cookies, protocol, seconds):
         drive.seen = (page_url, cookies, protocol, seconds)
+        action, _keys, spoken = browser.console_proof(protocol)
         return BrowserReport(
             url=page_url,
             console_url="https://range.test/guacamole/#/client/x",
             canvases=4,
             painted=4,
             hash=1,
-            after_typing_hash=2,
-            typed=browser.TYPED_COMMAND,
-            changed=True,
+            after_keystroke_hash=2,
+            keystroke=spoken,
+            changed=bool(action),
             seconds=seconds,
         )
 
@@ -234,6 +297,28 @@ def test_the_check_signs_in_starts_the_scenario_and_ends_the_machine_it_made(set
     assert portal.started == [("linux-user-lifecycle", "")]
     assert portal.ended == [7], "the check left its machine behind"
     assert report.console_url.endswith("#/client/x")
+
+
+def test_a_windows_scenario_is_driven_as_a_desktop(settings, portal):
+    """A Linux scenario and a Windows one are two consoles, and the proof is the protocol's.
+
+    `sw-app-crash` is a Windows scenario, so its console is RDP: the driver is handed
+    ``rdp`` and asks for the Windows key rather than typing a shell command into a shell
+    that is not there. Everything else is the same shape — its own machine, and destroyed
+    again afterwards.
+    """
+    drive = _driver()
+    state, detail, _report = browser.verify_console_in_browser(
+        settings,
+        portal_url="https://range.test",
+        scenario_id="sw-app-crash",
+        user="admin",
+        password="pw",
+        driver=drive,
+    )
+    assert drive.seen[2] == "rdp", "a Windows scenario was driven as a terminal"
+    assert state == "ok" and "keys reach the desktop" in detail
+    assert portal.ended == [7], "the check left its machine behind"
 
 
 def test_keep_leaves_the_machine_for_a_look(settings, portal):
