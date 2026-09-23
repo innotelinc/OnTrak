@@ -1034,6 +1034,18 @@ def cmd_catalog(args) -> int:
         )
         print(f"  automation: {entry.automation}   scenarios: {', '.join(entry.scenario_families) or 'any'}")
         print(f"  media: {entry.media.source}/{entry.media.kind} {entry.media.filename or ''}".rstrip())
+        if entry.install:
+            # One line, and it is an interface: `infra/build-workload-image.sh` picks its
+            # builder from this line, because a shell script cannot import the catalog.
+            # It was missing, and every ISO-based `ontrak image build` died with
+            # "unknown builder" while the script looked correct.
+            parts = [f"recipe {entry.recipe}"]
+            parts += [
+                f"{key} {entry.install[key]}"
+                for key in ("builder", "target", "unattended", "script")
+                if entry.install.get(key)
+            ]
+            print(f"  install: {', '.join(parts)}")
         if entry.requires:
             print(f"  requires: {', '.join(entry.requires)}")
         if entry.notes:

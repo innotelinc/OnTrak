@@ -1,0 +1,112 @@
+# Microsoft's server products, each a Windows Server guest with the product on it.
+#
+# A product entry is not an operating system: `requires` names the Windows Server it
+# is layered onto and `install.script` names the unattended install that turns that
+# guest into this one (see `infra/windows/products/`). The product's own media comes
+# from the operator's store — Microsoft server products are never redistributable,
+# and the download is a licensed image, not an evaluation ISO.
+#
+# What that means for a build: the base image has to exist first
+# (`ontrak image build win2022`), then this one (`ontrak image build sql-server-2022`),
+# which launches the base, installs the product inside the guest, and publishes
+# `ontrak-<entry>`. Nothing here is a shortcut around the base.
+#
+# Two of these entries are not standalone in another sense as well: Exchange and
+# SharePoint need an Active Directory forest, and no image built by
+# `infra/build-golden-image.sh` is sysprep'd — clones share a machine SID, so domain
+# *joins* cannot be trusted. The install scripts make their own single-machine forest
+# instead, which is the only domain these guests can honestly have; the notes say so
+# on each entry.
+group: server-products
+label: Microsoft server products
+era: 2018-present
+description: >
+  Exchange Server, SQL Server and SharePoint, each layered onto the Windows Server
+  it runs on. Mail-flow, database-connectivity, farm-health, service-account and
+  licensing tickets all live here. A product guest is still a Windows Server, so the
+  os and security families apply to it as well; hardware faults belong on the base
+  platforms, where the devices are chosen.
+family: microsoft-server
+defaults:
+  kind: vm
+  family: microsoft-server
+  scenario_families: [software, network, os, security]
+  device_profile: modern
+  automation: agent
+  resources: {cpu: 4, memory: 8GiB, disk: 80GiB}
+  install: {recipe: product-on-base, builder: product}
+
+entries:
+  - id: sql-server-2019
+    name: Microsoft SQL Server 2019
+    edition: Standard
+    released: "2019-11"
+    support: extended
+    requires: [win2019]
+    media: {source: operator, kind: iso, filename: sql-server-2019.iso}
+    install: {script: infra/windows/products/sql-server.ps1}
+    resources: {cpu: 4, memory: 8GiB, disk: 100GiB}
+    tags: [database, common, connected]
+    notes: >
+      The database server a line-of-business app cannot reach: service accounts,
+      TCP/IP and named pipes, log growth, backup schedules and the firewall rule
+      somebody added. Attached as a second disk-heavy guest in a network scenario.
+  - id: sql-server-2022
+    name: Microsoft SQL Server 2022
+    edition: Standard
+    released: "2022-11"
+    support: supported
+    requires: [win2022]
+    media: {source: operator, kind: iso, filename: sql-server-2022.iso}
+    install: {script: infra/windows/products/sql-server.ps1}
+    resources: {cpu: 4, memory: 8GiB, disk: 100GiB}
+    tags: [database, supported, connected]
+    notes: >
+      Current-generation SQL Server. Also the base for the SharePoint entry below,
+      because a farm without its database server is not a farm.
+  - id: exchange-server-2019
+    name: Microsoft Exchange Server 2019
+    edition: Standard
+    released: "2018-10"
+    support: extended
+    requires: [win2019]
+    media: {source: operator, kind: iso, filename: exchange-server-2019.iso}
+    install: {script: infra/windows/products/exchange-server.ps1}
+    resources: {cpu: 4, memory: 12GiB, disk: 120GiB}
+    tags: [mail, active-directory, connected]
+    notes: >
+      Mail flow, mailboxes, queues and the certificate that expires on a Friday.
+      Exchange needs an AD forest and a schema it can extend; the install script
+      promotes this VM to the single domain controller of its own forest first (see
+      the header of this file for why joining one is not an option), then runs
+      /PrepareAD and installs the Mailbox role. Budget an hour, and expect a reboot
+      in the middle of it.
+  - id: exchange-server-se
+    name: Microsoft Exchange Server Subscription Edition
+    edition: RTM
+    released: "2025-07"
+    support: supported
+    requires: [win2022]
+    media: {source: operator, kind: iso, filename: exchange-server-se.iso}
+    install: {script: infra/windows/products/exchange-server.ps1}
+    resources: {cpu: 4, memory: 16GiB, disk: 120GiB}
+    tags: [mail, active-directory, supported, newest]
+    notes: >
+      The subscription release on the current server platform. Same forest
+      requirement and the same install path as Exchange 2019.
+  - id: sharepoint-server-se
+    name: Microsoft SharePoint Server Subscription Edition
+    edition: RTM
+    released: "2025-07"
+    support: supported
+    requires: [sql-server-2022]
+    media: {source: operator, kind: iso, filename: sharepoint-server-se.iso}
+    install: {script: infra/windows/products/sharepoint-server.ps1}
+    resources: {cpu: 4, memory: 16GiB, disk: 120GiB}
+    tags: [sharepoint, active-directory, supported]
+    notes: >
+      The farm the intranet lives on: Central Administration, the timer job that
+      stopped running, search that returns nothing, and the app pool identity
+      nobody wrote down. Layered onto the SQL Server entry because a farm needs its
+      database server — build sql-server-2022 first — and, like Exchange, makes its
+      own single-machine forest. Budget an hour and 16 GiB.

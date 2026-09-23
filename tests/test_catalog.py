@@ -4,12 +4,17 @@ that the host can actually deliver?"""
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 import yaml
 
 from ontrak.catalog import DEVICE_PROFILES, Catalog, CatalogError
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture()
@@ -131,6 +136,14 @@ def test_plans_are_ordered_fastest_first(catalog):
 def _write(tmp_path, name: str, body: str) -> Catalog:
     (tmp_path / name).write_text(textwrap.dedent(body))
     return Catalog(tmp_path)
+
+
+def _write_alone(tmp_path, name: str, body: str) -> Catalog:
+    """A second catalog for the same test: its own directory, so the group isn't twice."""
+    root = tmp_path / Path(name).stem
+    root.mkdir()
+    (root / name).write_text(textwrap.dedent(body))
+    return Catalog(root)
 
 
 BASE = """
@@ -286,3 +299,149 @@ def test_import_images_writes_a_loadable_group(catalog, tmp_path):
 def test_every_referenced_device_profile_exists(catalog):
     for entry in catalog.list():
         assert entry.device_profile in DEVICE_PROFILES
+
+
+# --------------------------------------------------------------------------- #
+# product entries: one OS, one product, installed inside the guest
+# --------------------------------------------------------------------------- #
+
+PRODUCTS = """
+group: products
+label: Products
+defaults:
+  kind: vm
+  family: microsoft-server
+  device_profile: modern
+  automation: agent
+  resources: {cpu: 2, memory: 4GiB, disk: 60GiB}
+entries:
+  - id: base-os
+    name: Base OS
+    media: {source: operator, kind: iso, filename: base.iso}
+    install: {recipe: iso-unattended, builder: incus-windows}
+    notes: the OS a product is layered onto
+  - id: a-product
+    name: A product
+    requires: [base-os]
+    media: {source: operator, kind: iso, filename: product.iso}
+    install: {recipe: product-on-base, builder: product, script: infra/windows/products/sql-server.ps1}
+    notes: a product on the base above
+"""
+
+
+def test_the_shipped_catalog_carries_the_server_products(catalog):
+    """Exchange, SQL Server and SharePoint, each named on the OS it is layered onto.
+
+    The catalog shape could always describe these — a product entry names its base — and
+    what it lacked was a recipe, so every one of them was a weekend of clicking. What
+    this pins is that the entries exist, that they are layered (never standalone) and
+    that each names a script the checkout actually has.
+    """
+    layered = {
+        "exchange-server-2019": "win2019",
+        "exchange-server-se": "win2022",
+        "sql-server-2019": "win2019",
+        "sql-server-2022": "win2022",
+        "sharepoint-server-se": "sql-server-2022",
+    }
+    for entry_id, base in layered.items():
+        entry = catalog.get(entry_id)
+        assert entry.layered_on == base, f"{entry_id} is layered onto the wrong thing"
+        assert entry.recipe == "product-on-base"
+        assert entry.media.source == "operator", f"{entry_id} must not be redistributable"
+        assert catalog.product_script_path(entry) is not None, f"{entry_id} names no real script"
+
+    # A farm needs its database server, so SharePoint is layered onto the SQL entry and
+    # that onto Windows Server: the chain is the build order.
+    assert catalog.get("sql-server-2022").layered_on == "win2022"
+    # Microsoft 365 Apps is the one Office entry with a recipe rather than a readme.
+    m365 = catalog.get("m365-apps-on-win11")
+    assert m365.recipe == "product-on-base"
+    assert catalog.product_script_path(m365) is not None
+
+
+def test_a_product_script_has_to_be_in_this_checkout(tmp_path):
+    """The catalog names the script, so it is the catalog's job to notice a rename."""
+    missing = _write(tmp_path, "products.yaml", PRODUCTS)
+    problems = " ".join(missing.validate())
+    assert "infra/windows/products/sql-server.ps1" in problems
+    assert "not in this checkout" in problems
+
+    escaped = _write_alone(
+        tmp_path,
+        "elsewhere.yaml",
+        PRODUCTS.replace("infra/windows/products/sql-server.ps1", "/etc/passwd"),
+    )
+    assert "must be a path inside the checkout" in " ".join(escaped.validate())
+
+
+def test_a_product_needs_a_base_something_can_drive(tmp_path):
+    """The install happens inside the guest, so a base nothing can reach is a dead end."""
+    undrivable = _write(
+        tmp_path,
+        "products.yaml",
+        PRODUCTS.replace("automation: agent", "automation: none"),
+    )
+    assert "whose automation is 'none'" in " ".join(undrivable.validate())
+
+    without = _write_alone(tmp_path, "bare.yaml", PRODUCTS.replace("    requires: [base-os]\n", ""))
+    assert "must name the OS it is layered onto" in " ".join(without.validate())
+
+
+def test_a_product_recipe_is_the_one_a_product_entry_uses(tmp_path):
+    """A product is built onto its base or by hand; an OS recipe makes no sense for it."""
+    wrong = _write(
+        tmp_path,
+        "products.yaml",
+        PRODUCTS.replace("recipe: product-on-base", "recipe: iso-unattended"),
+    )
+    assert "either product-on-base" in " ".join(wrong.validate())
+
+
+def test_a_product_image_plans_the_base_before_itself(catalog):
+    plan = catalog.plan("exchange-server-se", media_ready=False, image_ready=False)
+    assert plan.strategy == "build-image" and plan.needs_operator
+    steps = " ".join(plan.steps)
+    assert "ontrak image build win2022" in steps, "the base image is not built first"
+    assert "infra/windows/products/exchange-server.ps1" in steps
+    assert any("media store" in blocker for blocker in plan.blockers)
+    assert any("rebuilt base" in note for note in plan.notes), plan.notes
+
+    warm = catalog.plan("exchange-server-se", media_ready=True, image_ready=True)
+    assert warm.strategy == "image-launch" and warm.ready
+
+
+@pytest.mark.parametrize(
+    ("entry_id", "expected"),
+    [
+        ("win11-24h2", "incus-windows"),
+        ("win2003-r2", "answer-file"),
+        ("office2016-on-win10", "manual"),
+        ("sql-server-2022", "product"),
+    ],
+)
+def test_the_image_builder_can_dispatch_every_recipe(entry_id, expected):
+    """`infra/build-workload-image.sh` chooses its builder from `catalog show`'s install line.
+
+    A shell script cannot import the catalog, so that one line is the interface between
+    them — and it was missing, which made every ISO-based `ontrak image build` die with
+    "unknown builder" while the script looked correct. This runs the same greps the
+    script runs, so a builder that is added without a line to dispatch on fails here
+    rather than on a range.
+    """
+    done = subprocess.run(
+        [sys.executable, "-m", "ontrak", "catalog", "show", entry_id],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # Exit 1 is "known, and not provisionable yet" — the facts are printed either way.
+    assert done.returncode in (0, 1), done.stderr
+    facts = done.stdout
+    if "recipe manual, builder manual" in facts:
+        assert expected == "manual"
+        return
+    install_line = next((line for line in facts.splitlines() if "install:" in line.lower()), "")
+    assert install_line, f"catalog show prints no install line for {entry_id}"
+    assert expected in install_line, install_line

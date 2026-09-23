@@ -159,7 +159,10 @@ entries:
       kind: archive
       filename: m365-apps-c2r.zip
       notes: Deployment Tool download from your tenant; OnTrak never fetches it.
-    install: {recipe: manual, builder: manual}
+    # The one Office entry with a recipe rather than a weekend of clicking: the
+    # Deployment Tool is exactly what Microsoft provides for this, so the click-to-run
+    # install is scripted like the server products are.
+    install: {recipe: product-on-base, builder: product, script: infra/windows/products/m365-apps.ps1}
     device_profile: modern
     automation: agent
     resources: {cpu: 4, memory: 8GiB, disk: 64GiB}

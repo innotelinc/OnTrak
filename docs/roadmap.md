@@ -6,7 +6,7 @@ planned. Anything in the last two sections is a statement of intent, not a featu
 ## Verified in this repository
 
 - Python control plane: catalog, scenarios, sessions, scoring, selection, scheduler,
-  generator, portal (student and admin), CLI — `pytest` (556 tests) and `ruff` clean. Only two
+  generator, portal (student and admin), CLI — `pytest` (565 tests) and `ruff` clean. Only two
   tests skip themselves, and both switch on from the environment rather than from a device:
   the Guacamole interop test (`ONTRAK_GUAC_INTEROP_URL`) and the real-range walk
   (`ONTRAK_E2E`, below).
@@ -121,6 +121,15 @@ These paths are reviewed and tested only up to the Incus boundary; they need a l
   consoles. The Windows 11 half is exercised on the lab range (a template rebuilt from the
   golden image, its fault injected and verified, all seven Windows consoles opened), but
   Server and Office need a host of their own to prove.
+- The product builds (the `product-on-base` recipe): Exchange Server, SQL Server,
+  SharePoint and Microsoft 365 Apps installed *inside* a guest made from the base image by
+  `infra/windows/apply-product-install.py` and the scripts under
+  `infra/windows/products/`, then published as an image. What is proven here is the shape
+  — the catalog validates the recipe and the script it names, `ontrak image build`
+  dispatches it, and the reboot-and-resume contract is tested up to the Incus boundary —
+  and what is not is the install itself: no product media has met a real guest, so the
+  unattended steps in those scripts are read against Microsoft's documentation and not yet
+  against a setup log.
 - The Windows half of the browser console check. `ontrak console browser` asks a desktop for
   the Windows key and requires the screen to change, because that is the only proof a GUI can
   give that the student's keyboard reaches it — a canvas that paints and takes no keystroke is
@@ -138,9 +147,10 @@ scenario end to end, then size the pool.
 
 ## Next
 
-1. **Microsoft products beyond Office.** Exchange Server, SQL Server, SharePoint and
-   Microsoft 365 Apps in more fidelity. The catalog shape already supports it — a product
-   entry names the OS it is layered onto — but each needs a build recipe worth trusting.
+1. **Microsoft products beyond Office.** The build recipes are written — Exchange Server,
+   SQL Server, SharePoint and Microsoft 365 Apps are `product-on-base` entries whose
+   install runs inside the guest (above) — so what each needs now is a lab host to prove
+   the install against licensed media, and then the fault scenarios its tickets call for.
 2. **Cloud identity beyond the simulation.** The identity family runs against a simulated
    directory service. Entra ID / Microsoft 365 sign-in failures, MFA resets and
    conditional-access tickets are a large share of real service-desk volume; they need a

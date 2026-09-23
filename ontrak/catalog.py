@@ -128,7 +128,13 @@ AUTOMATION_LEVELS = {
 }
 
 VALID_KINDS = {"vm", "container"}
-VALID_RECIPES = {"iso-unattended", "image-alias", "container-image", "manual"}
+VALID_RECIPES = {"iso-unattended", "image-alias", "container-image", "product-on-base", "manual"}
+
+# Where a product entry's install script has to live, relative to the checkout. The
+# catalog names a path rather than embedding the script, for the same reason it names
+# media rather than shipping it: the manifest stays readable and the script stays
+# reviewable as a script.
+PRODUCT_SCRIPT_ROOT = Path("infra/windows/products")
 
 
 class CatalogError(RuntimeError):
@@ -219,6 +225,25 @@ class CatalogEntry:
     @property
     def recipe(self) -> str:
         return str(self.install.get("recipe", "manual"))
+
+    @property
+    def layered_on(self) -> str:
+        """The catalog entry this one is a product *on top of*, or ``""``.
+
+        A product entry (Office, Exchange, SQL Server, SharePoint) is not an operating
+        system: it names the OS it is layered onto, and its image is that guest with the
+        product installed. One base, because one product image is one machine.
+        """
+        return self.requires[0] if self.requires else ""
+
+    @property
+    def install_script(self) -> str:
+        """The install script a ``product-on-base`` entry names, or ``""``.
+
+        Relative to the checkout root, so the catalog file says where to look without
+        saying where *this* checkout is — see :data:`PRODUCT_SCRIPT_ROOT`.
+        """
+        return str(self.install.get("script") or "").strip()
 
     @property
     def image_alias(self) -> str:
@@ -349,10 +374,32 @@ class ProvisionPlan:
 
 
 class Catalog:
-    def __init__(self, root: str | Path):
+    def __init__(self, root: str | Path, repo_root: str | Path | None = None):
         self.root = Path(root)
+        # Product scripts are named relative to the checkout, not to the catalog, so the
+        # root has to be known here to check that one exists. Defaulting to the catalog's
+        # own parent is right for a checkout (catalog/ sits in the repo root) and harmless
+        # for a test that points the catalog at a directory of its own: the file simply
+        # is not there, which is what such a test is usually asserting.
+        self.repo_root = Path(repo_root) if repo_root else self.root.parent
         self.groups: dict[str, CatalogGroup] = {}
         self.entries: dict[str, CatalogEntry] = {}
+
+    def product_script_path(self, entry: CatalogEntry) -> Path | None:
+        """The host path of a product entry's install script, or ``None`` when it is
+        missing or escapes the checkout.
+
+        ``None`` covers both "no such file" and "the manifest points outside the tree",
+        because both mean the same thing to a build: there is nothing here to run.
+        """
+        script = entry.install_script
+        if not script:
+            return None
+        path = Path(script)
+        if path.is_absolute() or ".." in path.parts:
+            return None
+        resolved = self.repo_root / path
+        return resolved if resolved.is_file() else None
 
     # -- loading -------------------------------------------------------
     def load(self, force: bool = False) -> dict[str, CatalogEntry]:
@@ -520,6 +567,15 @@ class Catalog:
                         f"{prefix} requires {required!r}, which is not in the catalog "
                         "(a product entry must name the OS it is layered onto)"
                     )
+            if entry.requires and entry.recipe not in {"manual", "product-on-base"}:
+                problems.append(
+                    f"{prefix} is a product entry — it requires {entry.layered_on!r} — so "
+                    "its recipe is either product-on-base (built onto that base) or manual "
+                    f"(got {entry.recipe!r})"
+                )
+            if entry.recipe == "product-on-base":
+                for problem in self._product_problems(entry, prefix):
+                    problems.append(problem)
             if (
                 entry.recipe == "iso-unattended"
                 and entry.install.get("builder") == "incus-windows"
@@ -529,6 +585,66 @@ class Catalog:
                     f"{prefix} uses the incus-windows builder with device profile "
                     f"{entry.device_profile!r}; that builder targets Secure Boot/TPM guests "
                     "(use the answer-file builder for older releases)"
+                )
+        return problems
+
+    def _product_problems(self, entry: CatalogEntry, prefix: str) -> list[str]:
+        """What is wrong with one ``product-on-base`` entry, if anything.
+
+        A product image is a base guest plus an unattended install, so every one of these
+        is a way that build would fail somewhere expensive (an hour into an Exchange
+        setup, say) instead of here:
+
+        * no base, or more than one: one product image is one machine;
+        * a base nothing can drive: the install happens *inside* the guest, so a base
+          with no automation is a product that could only be installed by hand;
+        * a base that is itself a container: a Windows product does not install into a
+          Linux container;
+        * no script, or one that is missing/outside the checkout: the catalog names the
+          script, so it is the catalog's job to say when it is not there.
+        """
+        problems: list[str] = []
+        if not entry.requires:
+            problems.append(
+                f"{prefix} recipe product-on-base must name the OS it is layered onto "
+                "in requires"
+            )
+        elif len(entry.requires) > 1:
+            problems.append(
+                f"{prefix} is layered onto {', '.join(entry.requires)}; a product image "
+                "is one base plus one product, so name exactly one"
+            )
+        base = self.entries.get(entry.layered_on) if entry.layered_on else None
+        if base is not None:
+            if base.kind != "vm":
+                problems.append(
+                    f"{prefix} layers onto {base.id}, which is a {base.kind}: a product "
+                    "installs into a guest, not into a container"
+                )
+            if not base.automated:
+                problems.append(
+                    f"{prefix} layers onto {base.id}, whose automation is "
+                    f"{base.automation!r}: the install runs inside the guest, so nothing "
+                    "could drive it"
+                )
+        if not entry.install_script:
+            problems.append(
+                f"{prefix} recipe product-on-base needs install.script (the script that "
+                f"installs the product in the guest, under {PRODUCT_SCRIPT_ROOT})"
+            )
+        else:
+            script = Path(entry.install_script)
+            if script.is_absolute() or ".." in script.parts:
+                problems.append(
+                    f"{prefix} install.script {entry.install_script!r} must be a path "
+                    "inside the checkout"
+                )
+            elif self.product_script_path(entry) is None:
+                problems.append(
+                    f"{prefix} install.script {entry.install_script!r} is not in this "
+                    f"checkout ({self.repo_root}) — the catalog names the script, so a "
+                    "rename that missed the manifest is caught here rather than at build "
+                    "time"
                 )
         return problems
 
@@ -580,6 +696,38 @@ class Catalog:
                 "apply the profile's devices and config (legacy profiles differ: IDE disk, e1000 NIC)",
                 "boot, run the scenario setup script, snapshot as clean",
             ]
+            plan.estimate_seconds = STRATEGY_COST_SECONDS["image-launch"]
+            return plan
+
+        # A product: someone else's guest, with the product installed inside it. The
+        # build is two steps the operator can see and repeat — the base image, then this
+        # one on top — because the base is shared: rebuilding it means rebuilding every
+        # product layered onto it.
+        if entry.recipe == "product-on-base":
+            base = entry.layered_on
+            if not media_ready:
+                plan.blockers.append(
+                    "the product's own media is not in the media store; "
+                    f"place {entry.media.filename} there from your licensed source"
+                )
+            if not image_ready:
+                plan.strategy = "build-image"
+                plan.steps = [
+                    f"ontrak image build {base}   # the OS it is layered onto, if it is not published",
+                    f"ontrak media status {entry.id}   # {entry.media.filename} is operator-supplied",
+                    f"ontrak image build {entry.id}  # launches {base}, runs {entry.install_script} "
+                    f"in the guest, publishes ontrak-{entry.id}",
+                    f"ontrak template build <scenario> --workload {entry.id}",
+                ]
+                plan.estimate_seconds = STRATEGY_COST_SECONDS["build-image"]
+                plan.notes.append(
+                    f"a product image is {base} plus an install, so a rebuilt base means "
+                    f"rebuilding {entry.id} too"
+                )
+                for note in DEVICE_PROFILES.get(entry.device_profile, {}).get("notes", []) or []:
+                    plan.notes.append(note)
+                return plan
+            plan.strategy = "image-launch"
             plan.estimate_seconds = STRATEGY_COST_SECONDS["image-launch"]
             return plan
 

@@ -179,7 +179,7 @@ OnTrak/
 
 ## Status
 
-- **Verified here:** the Python control plane — `pytest` (556 tests; the only two that skip
+- **Verified here:** the Python control plane — `pytest` (565 tests; the only two that skip
   themselves are the live-Guacamole interop test and the range walk below), `ruff` clean,
   scenario validation, catalog validation, the CLI, generated scenarios validated, the
   admin panel rendering without a reachable hypervisor, and the Guacamole link format
