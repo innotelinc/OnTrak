@@ -784,6 +784,102 @@ Add-OnTrakCheck -Objective 'db-log-has-room' -Passed $roomOk -Detail $roomDetail
 
 
 # --------------------------------------------------------------------------- #
+# messaging and collaboration — Exchange and SharePoint
+# --------------------------------------------------------------------------- #
+
+primitive(
+    id="mail-transport-stopped",
+    label="Mail transport service stopped and disabled",
+    category=Category.NETWORK.value,
+    title="Mail is just sitting in the Outbox",
+    briefing=(
+        "Nothing has sent or arrived since this morning: messages sit in the "
+        "Outbox and time out, and external senders say the server refuses them. "
+        "The server pings, and port 25 answers."
+    ),
+    objectives=[
+        Objective("mail-transport-running", "The mail transport service is running again", 3, critical=True),
+        Objective("mail-smtp-accepts", "The server accepts an SMTP message end to end", 2, critical=True),
+        Objective("mail-transport-automatic", "The transport service starts automatically again", 1),
+    ],
+    setup_ps="""$serviceName = 'MSExchangeTransport'
+Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+Set-Service -Name $serviceName -StartupType Disabled -ErrorAction SilentlyContinue
+Write-OnTrakStep ('the hardening script left ' + $serviceName + ' stopped and disabled')""",
+    assert_ps="""Require-OnTrak 'the transport service is stopped and disabled' {
+    (Get-OnTrakServiceState -Name 'MSExchangeTransport') -ne 'Running'
+}
+Require-OnTrak 'the fault is observable: the server no longer takes mail' {
+    -not (Test-OnTrakSmtpProbe)
+}""",
+    check_ps="""$serviceName = 'MSExchangeTransport'
+$state = Get-OnTrakServiceState -Name $serviceName
+Add-OnTrakCheck -Objective 'mail-transport-running' -Passed ($state -eq 'Running') -Detail ($serviceName + ' is ' + $state)
+$accepted = $false
+try { $accepted = Test-OnTrakSmtpProbe } catch { }
+Add-OnTrakCheck -Objective 'mail-smtp-accepts' -Passed $accepted -Detail ('an SMTP transaction was accepted end to end: ' + $accepted)
+$startType = 'Missing'
+try { $startType = '' + (Get-Service -Name $serviceName -ErrorAction Stop).StartType } catch { }
+Add-OnTrakCheck -Objective 'mail-transport-automatic' -Passed ($startType -eq 'Automatic') -Detail ('startup type is ' + $startType)""",
+    difficulty=3,
+    minutes=25,
+    hints=[
+        "A TCP connect to port 25 is the test this ticket passes before the fix: a banner is a listener, not mail flow.",
+        "Mail in the Outbox is local submission failing; senders refused is delivery failing. Both are the same service, and it is not the one answering the port.",
+    ],
+    tags=["mail", "smtp", "exchange"],
+    notes=(
+        "Exchange-aware: the graded probe is Test-OnTrakSmtpProbe — a complete SMTP "
+        "transaction — because a socket proves nothing about mail."
+    ),
+)
+
+primitive(
+    id="farm-timer-stopped",
+    label="SharePoint farm services stopped and disabled",
+    category=Category.SOFTWARE.value,
+    title="The intranet stopped doing its scheduled work",
+    briefing=(
+        "The intranet serves every page, but nothing scheduled has happened since "
+        "the weekend: alerts stopped, the dashboard is stale, and creating a site "
+        "collection hangs."
+    ),
+    objectives=[
+        Objective("farm-timer-running", "The farm's timer service is running", 3, critical=True),
+        Objective("farm-admin-running", "The farm's administration service is running", 2),
+        Objective("farm-services-automatic", "Both farm services start automatically again", 1),
+    ],
+    setup_ps="""$services = @('SPTimerV4', 'SPAdminV4')
+foreach ($serviceName in $services) {
+    Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+    Set-Service -Name $serviceName -StartupType Disabled -ErrorAction SilentlyContinue
+    Write-OnTrakStep ($serviceName + ' is stopped and disabled')
+}""",
+    assert_ps="""Require-OnTrak 'both farm services are down' {
+    (@(@('SPTimerV4', 'SPAdminV4') | Where-Object { (Get-OnTrakServiceState $_) -eq 'Running' }).Count -eq 0)
+}
+Require-OnTrak 'the trap is in place: the farm still answers web requests' {
+    Test-OnTrakTcpPort -ComputerName '127.0.0.1' -Port 8080
+}""",
+    check_ps="""$services = @('SPTimerV4', 'SPAdminV4')
+$timerState = Get-OnTrakServiceState -Name 'SPTimerV4'
+Add-OnTrakCheck -Objective 'farm-timer-running' -Passed ($timerState -eq 'Running') -Detail ('SPTimerV4 is ' + $timerState)
+$adminState = Get-OnTrakServiceState -Name 'SPAdminV4'
+Add-OnTrakCheck -Objective 'farm-admin-running' -Passed ($adminState -eq 'Running') -Detail ('SPAdminV4 is ' + $adminState)
+$notAutomatic = @($services | Where-Object { ('' + (Get-Service -Name $_ -ErrorAction SilentlyContinue).StartType) -ne 'Automatic' })
+Add-OnTrakCheck -Objective 'farm-services-automatic' -Passed ($notAutomatic.Count -eq 0) -Detail ('not automatic: ' + ($notAutomatic -join ', '))""",
+    difficulty=2,
+    minutes=25,
+    hints=[
+        "The sites serving pages is the web server, not the farm. The farm's own work is two Windows services underneath the product.",
+        "One symptom is scheduled work not happening; the other is provisioning hanging. Two services, stopped together.",
+    ],
+    tags=["sharepoint", "farm", "services"],
+    notes="SharePoint-aware: the trap assert is the Central Admin port answering while the farm does nothing.",
+)
+
+
+# --------------------------------------------------------------------------- #
 # lookup helpers
 # --------------------------------------------------------------------------- #
 

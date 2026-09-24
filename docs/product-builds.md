@@ -153,3 +153,28 @@ owes the transcript:
 Pass budget, worst case: promotion (1) + two prerequisite restarts + the post-setup
 restart + the final verification pass — six of the driver's eight passes are spoken
 for, and `--attempts` raises the fence if a media set needs more.
+
+## Walking a ticket on the product
+
+The product images exist to host training tickets, and the tickets are already drafted
+— `os-db-backup-job` (SQL Server), `net-mail-queue` (Exchange), `sw-farm-timer`
+(SharePoint) and `sw-office-wont-open` (Microsoft 365 Apps). They go in the same lab
+run as the install proof, because their setup scripts are another reader of the same
+guest state:
+
+    ontrak template build os-db-backup-job --workload sql-server-2022
+    ontrak session start --student you --scenario os-db-backup-job
+    ontrak session check <id>
+
+Each scenario's setup asserts its fault is *observable* before the template snapshots
+— a log backup that is missing while the backup report stays green, a mail server that
+no longer takes an SMTP transaction — so a template build that succeeds is itself
+evidence the fault landed on real product media. Walk the intended fix to the pass
+mark, then reset and confirm the fault is back (the checklist at the end of
+[scenarios.md](scenarios.md)).
+
+What was verifiable without a lab host: `ontrak image plan sql-server-2022` renders
+the whole plan and stops at exactly one step — `sql-server-2022.iso` is
+operator-supplied and not in the media store. Nothing in this section can start until
+that file is placed there from a licensed source, which is the first line of the lab
+run above.

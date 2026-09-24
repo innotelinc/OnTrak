@@ -664,3 +664,37 @@ function Test-OnTrakSmtpProbe {
         try { $client.Close() } catch { }
     }
 }
+
+# -------------------------------------------------------------- automation --
+function Test-OnTrakComLaunch {
+    <#
+    .SYNOPSIS
+        Prove a COM automation application really starts: create its automation
+        object in a child process, quit it, and report whether that worked.
+    .DESCRIPTION
+        "The process exists" is no proof an application opened: an error dialog
+        is a process too, and with Office's launcher broken WINWORD.EXE still
+        spawns and shows one. Creating and quitting the automation object is
+        what every launch does underneath, and it only succeeds when the
+        application genuinely comes up.
+
+        The probe runs in its own powershell.exe and is bounded twice over: a
+        first-run dialog or a hung activation is killed with its process rather
+        than hanging the grade (WaitForExit with a timeout, then Kill), and the
+        calling script survives whatever the application does to its host.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $ProgId,
+        [int] $TimeoutSeconds = 60
+    )
+    $inner = ('try { $app = New-Object -ComObject ' + $ProgId + '; $app.Quit(); exit 0 } catch { exit 1 }')
+    $proc = Start-Process -FilePath 'powershell.exe' `
+        -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', $inner) `
+        -PassThru -WindowStyle Hidden -ErrorAction Stop
+    if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
+        try { $proc.Kill() } catch { }
+        return $false
+    }
+    return ($proc.ExitCode -eq 0)
+}

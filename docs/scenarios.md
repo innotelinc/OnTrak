@@ -27,7 +27,7 @@ Two practical caveats:
   is dying" into a measurable symptom.
 * **Weight the mix to your organisation.** If your learner cohort supports a
   warehouse of thin clients, wireless and roaming profiles deserve more than a
-  device-driver exercise. Use the shipped six as a template of *kinds* of exercise
+  device-driver exercise. Use the shipped set as a template of *kinds* of exercise
   and replace the specifics with your own estate's stories — you will find the
   fault-injection and grading machinery is the reusable part, not the ticket text.
 
@@ -54,6 +54,7 @@ Scenarios share one fictional estate so that tickets reinforce each other:
 | Database | `TrainingDB` on the SQL Server workloads (APPDB-01 in tickets) |
 | Mail server | `APPMAIL-01` — the Exchange Server workloads, SMTP on 25 |
 | Intranet farm | `SPINTRA-01` — the SharePoint Server workloads, Central Admin on `8080` |
+| Export host | `export-01` (Ubuntu) — the nightly export to the file server |
 
 The two service names are **explicit DNS records** on the lab bridge
 (`incus network get ontrak0 raw.dnsmasq`), not Incus's automatic per-instance
@@ -380,6 +381,45 @@ outcome for a triage ticket.
 * **Gotcha:** the sites never stop — the build-time trap assert is Central
   Administration answering `8080` while both farm services are down.
 * **Workloads:** `sharepoint-server-se`.
+
+### 15. `sw-office-wont-open` — "None of the Office apps will open" (software, 2/4)
+
+* **Broken:** the Microsoft Office Click-to-Run Service (`ClickToRunSvc`) — the launcher
+  every app in the suite starts through — is stopped and disabled by a weekend
+  inventory agent's "optimisation". Every app dies at the splash screen with the same
+  generic error.
+* **Fix:** the service running and set to automatic again. A repair install also works,
+  for 3 GB and an hour of the user's day.
+* **Graded:** the launcher service running (critical) / set to automatic / an Office app
+  genuinely starts again (critical).
+* **Common wrong answer:** the repair install suggested in the ticket thread. The whole
+  suite failing identically is the clue: the fault is in what the suite shares, not in
+  any one app.
+* **Gotcha:** grading launches Word through its *automation object* in a bounded child
+  process — "WINWORD.EXE is running" proves nothing, because an error dialog is a
+  process too. First-run wizards are suppressed at setup so the probe measures the
+  fault rather than a wizard.
+* **Workloads:** `m365-apps-on-win11`.
+
+### 16. `linux-log-flood` — "The nightly export fails: no space left on device" (os, 2/4)
+
+* **Broken:** the export service's logging was turned up to debug for a weekend
+  debugging session, and its logrotate config was moved aside "so the log is kept" —
+  neither put back. The flood filled the `/var/log` filesystem, and the nightly export
+  to the file server now fails every night with "No space left on device".
+* **Fix:** reclaim the space (truncate or rotate — in place, so the writer survives)
+  and bound the log again: rotation back where logrotate reads it, or the debug flood
+  off. Both doors pass. The moved-aside config is cleaned up either way — the ticket
+  asks what changed, and to undo it.
+* **Graded:** the flood log is small again (critical) / the log cannot grow without
+  bound (critical) / the weekend's temporary change is cleaned up.
+* **Common wrong answer:** "the disk is full, get a bigger one" — and clearing only
+  tonight's space without bounding the log, which re-runs this ticket on the next busy
+  week.
+* **Gotcha:** the moved-aside config is correct and complete — it is a file named for
+  what it used to be, sitting in the application's directory where logrotate will
+  never read it. Walkthrough: the `linux-log-rotation` lesson.
+* **Workloads:** `ubuntu-24.04`, `debian-12`.
 
 ## Generating scenarios from fault primitives
 

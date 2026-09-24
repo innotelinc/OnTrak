@@ -1,0 +1,90 @@
+id: linux-log-flood
+title: "The nightly export fails: no space left on device"
+category: os
+platform: linux
+workloads: [ubuntu-24.04, debian-12]
+difficulty: 2
+minutes: 30
+pass_score: 80
+tags: [linux, logs, logrotate, disk, capacity, level-2]
+requires_internet: false
+lessons: [linux-files-and-dirs, linux-log-rotation]
+
+ticket:
+  from: "Sofia Marino (Platform team)"
+  system: "export-01 (Ubuntu)"
+  priority: "High"
+  channel: "Ticket queue"
+  reported: "This morning, from monitoring"
+  form:
+    title: Incident write-up — the export disk
+    intro: >
+      Monitoring saw the disk first and the export failures second. The write-up
+      connects them, names what changed over the weekend, and says what stops
+      next month from ending here again.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom, in your own words
+        kind: textarea
+        weight: 20
+        min_words: 8
+        placeholder: "What monitoring reported, and what the disk actually looked like."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [log, debug, rotation, logrotate, growing, verbose]
+        none_of: ["bigger disk", "add disk", reinstall]
+        hint: "The disk is not what broke. Name what filled it, and what stopped trimming it."
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 30
+        min_words: 8
+        any_of: [truncated, rotated, rotation, logrotate, cleared, trimmed, debug, log_level, removed]
+        hint: "Both halves: the space on disk now, and next month's logs."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 20
+        min_words: 6
+        any_of: [df, du, size, tested, export, checked, rotated]
+        hint: "df shows the space is back; the export going through tonight is the other half of the proof."
+
+briefing: |
+  The nightly export from export-01 to fileserver.ontrak.lab has failed every
+  night since Sunday with "No space left on device", and this morning's failure
+  took the on-call page: the filesystem that holds /var/log is at 100%. The
+  vendor-export service itself is healthy and its application directory is tiny.
+
+  Get the space back so tonight's export can run, and leave the machine so this
+  cannot happen again — the log that did this is going to keep writing whatever
+  you do today. Somebody made a temporary change over the weekend and never put
+  it back; the write-up should say what it was.
+
+objectives:
+  - id: log-space-reclaimed
+    text: "The space the flood log ate is back — the log is small again"
+    weight: 45
+    critical: true
+    hint: "`du -sh /var/log/*` sorts the offenders in one line. The size on disk is what 'full' feels like — truncate the file or rotate it now."
+  - id: log-bounded
+    text: "The log cannot grow without bound again"
+    weight: 40
+    critical: true
+    hint: "There is a rotation config for this log — or there was. Turning the weekend's debug flood back down bounds it too; either door closes this half of the ticket."
+  - id: weekend-change-undone
+    text: "The weekend's temporary change is cleaned up"
+    weight: 15
+    hint: "Something was moved aside 'temporarily' and never returned. Put it back or replace it — and do not leave the moved copy lying around."
+
+hints:
+  - "A healthy application and a 100%-full log filesystem is a log nobody rotated. `du -sh /var/log/*` names the file."
+  - "Two things changed at the weekend: a debug setting that made the log grow fast, and the thing that used to trim it. One of them is now a file in the application's directory, named for what it used to be."
+  - "Clearing the space fixes tonight. The ticket is not fixed until next month's logs are somebody else's problem — rotation back in place, or the debug flood off."
+
+reset_notes: |
+  Reset re-clones the clean snapshot, so the flood log is back at full size, the
+  debug logging is up again, and the rotation config is back in its hiding place.

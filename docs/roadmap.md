@@ -6,7 +6,7 @@ planned. Anything in the last two sections is a statement of intent, not a featu
 ## Verified in this repository
 
 - Python control plane: catalog, scenarios, sessions, scoring, selection, scheduler,
-  generator, portal (student and admin), CLI — `pytest` (581 tests) and `ruff` clean. Only two
+  generator, portal (student and admin), CLI — `pytest` (582 tests) and `ruff` clean. Only two
   tests skip themselves, and both switch on from the environment rather than from a device:
   the Guacamole interop test (`ONTRAK_GUAC_INTEROP_URL`) and the real-range walk
   (`ONTRAK_E2E`, below).
@@ -176,8 +176,13 @@ scenario end to end, then size the pool.
 
 1. **Microsoft products beyond Office.** The build recipes are written — Exchange Server,
    SQL Server, SharePoint and Microsoft 365 Apps are `product-on-base` entries whose
-   install runs inside the guest (above) — so what each needs now is a lab host to prove
-   the install against licensed media, and then the fault scenarios its tickets call for.
+   install runs inside the guest (above) — and the fault scenarios their tickets call for
+   are drafted and validating beside them: the SQL backup gap and log-full tickets, the
+   silent mail queue, the farm that looks up and does nothing, and the Office suite that
+   will not start. What they need now is a lab host: prove each install against licensed
+   media, then walk each ticket's template on the product image —
+   [product-builds.md](product-builds.md) is the plan, install proof and ticket walk in
+   one run.
 2. **Cloud identity beyond the simulation.** The identity family runs against a simulated
    directory service. Entra ID / Microsoft 365 sign-in failures, MFA resets and
    conditional-access tickets are a large share of real service-desk volume; they need a

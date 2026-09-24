@@ -237,6 +237,20 @@ def test_database_primitives_compose_into_one_ticket(repository):
     assert {"db-tcp-enabled", "db-can-save"} <= ids
 
 
+def test_the_product_primitives_grade_what_their_products_are_about():
+    """Exchange is graded on mail being accepted — a complete SMTP transaction, not
+    a socket — and SharePoint on the two services that do the farm's work. Both
+    mirror their hand-written scenarios' grading, so a generated ticket teaches the
+    same lesson as its hand-written sibling."""
+    mail = get("mail-transport-stopped")
+    assert "Test-OnTrakSmtpProbe" in mail.check_ps
+    assert "Test-OnTrakSmtpProbe" in mail.assert_ps
+    farm = get("farm-timer-stopped")
+    for service in ("SPTimerV4", "SPAdminV4"):
+        assert service in farm.setup_ps, service
+        assert service in farm.check_ps, service
+
+
 def test_every_helper_a_primitive_calls_exists_and_takes_its_switches(settings):
     """The contract the hand-written scenario scripts owe, for primitives too: a
     helper name or switch the library does not declare is a binding error the

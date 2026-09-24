@@ -1,0 +1,101 @@
+id: sw-office-wont-open
+title: "\"None of the Office apps will open\""
+category: software
+platform: windows
+workloads: [m365-apps-on-win11]
+difficulty: 2
+minutes: 30
+pass_score: 80
+tags: [office, click-to-run, services, level-2]
+requires_internet: false
+
+ticket:
+  from: "Ruth Adeyemi (Logistics)"
+  system: "WORKSTATION-214 (Windows 11)"
+  priority: "Medium"
+  channel: "Service desk"
+  reported: "This morning"
+  form:
+    title: Incident write-up — the whole Office suite will not start
+    intro: >
+      Ruth needs her desktop back, and the service desk thread already contains a
+      suggestion to repair-install 3 GB of Office. The write-up is where that
+      suggestion gets priced: say what the whole suite shares before anyone spends
+      an hour on it.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom, in your own words
+        kind: textarea
+        weight: 15
+        min_words: 8
+        placeholder: "What every app did, and the error text you reproduced."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [service, click-to-run, clicktorunsvc, stopped, disabled, startup]
+        none_of: [reinstall, "repair install", corrupt]
+        hint: "Name the Windows service every app in the suite starts through, and the two states it was left in."
+      - id: category
+        label: Classification
+        kind: select
+        weight: 15
+        options:
+          - Software configuration
+          - Driver and device
+          - Network
+          - Permissions
+          - Account
+        expected: Software configuration
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 25
+        min_words: 8
+        any_of: [service, started, enabled, automatic, startup]
+        hint: "Two halves: the state today, and the startup type. Both were changed over the weekend."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [opened, launched, started, tested, word, excel, service]
+        hint: "An app opening is the proof. A service window showing 'Running' is half of it."
+
+briefing: |
+  Ruth cannot open anything in Office. Word, Excel and Outlook all fail the same
+  way: a splash screen, then "Something went wrong — we can't start right now"
+  with an error code. Windows is otherwise fine; yesterday everything worked.
+
+  Everything in the suite broke at the same moment, which narrows this down more
+  than it looks. Before anyone spends an hour on the repair install suggested in
+  the thread: find what the whole suite has in common, get Office starting again,
+  and write up why the suite failed together — that answer is what stops the
+  next ticket ending in a reinstall.
+
+objectives:
+  - id: office-service-running
+    text: "The Microsoft Office Click-to-Run Service is running"
+    weight: 45
+    critical: true
+    hint: "When the whole suite fails at once, the fault is underneath the apps. services.msc (or Get-Service '*Office*') shows the one service every app starts through."
+  - id: office-service-automatic
+    text: "The service starts automatically again"
+    weight: 25
+    hint: "The startup type was changed over the weekend too — check it, or Monday's restart repeats this ticket."
+  - id: office-apps-launch
+    text: "An Office application actually starts again"
+    weight: 30
+    critical: true
+    hint: "An error dialog is a process too, so 'WINWORD.EXE is running' proves nothing. What proves it: Office's own automation object creating and quitting cleanly (that is what a launch is, underneath)."
+
+hints:
+  - "When every app in a suite fails the same way at the same time, the thing they share is the fault — and it is not inside any one of them."
+  - "The error text is a startup failure, not a document failure. Look for what starts Office, not for what Office starts."
+  - "Starting the service fixes today; the startup type fixes Monday. The repair install in the thread touches neither."
+
+reset_notes: |
+  Reset re-clones the clean snapshot, so the Click-to-Run service is stopped and
+  disabled again and the whole suite fails at the splash screen.

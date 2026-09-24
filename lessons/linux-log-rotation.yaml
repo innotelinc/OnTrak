@@ -1,0 +1,78 @@
+id: linux-log-rotation
+title: Disk space, logs and rotation
+platform: linux
+category: os
+difficulty: 2
+minutes: 20
+summary: >-
+  Find what filled the filesystem, reclaim the space from a log a service is
+  still writing, and put rotation in charge of the future — the two halves of
+  every "disk full" ticket that is really a logging ticket.
+tags: [cli, logs, logrotate, disk, capacity]
+objectives:
+  - See where the space actually went, per filesystem and per file
+  - Reclaim space from a live log safely, without breaking the writer
+  - Put a logrotate stanza in place and verify it before relying on it
+prerequisites: [linux-files-and-dirs]
+commands:
+  - command: df -h /var/log
+    what: Filesystem usage per mount — how full "full" actually is, and which filesystem is in trouble.
+    example: df -h /var
+  - command: du -sh /var/log/* | sort -h
+    what: Size of each entry under the directory, largest last. The fastest route to the file that ate the disk.
+  - command: truncate -s 0 /var/log/app/app.log
+    what: Empty a file without unlinking it. The writer's open handle keeps working and the space comes back immediately.
+    danger: The contents are gone. Copy the file somewhere first if anyone might need it as evidence (cp app.log /root/).
+  - command: ": > /var/log/app/app.log"
+    what: The shell-only equivalent of truncate -s 0 — empty the file in place.
+  - command: cat /etc/logrotate.d/app
+    what: The per-application rotation stanzas logrotate reads on every run. A file not in this directory (or /etc/logrotate.conf) is a config nothing will ever read.
+  - command: logrotate -d /etc/logrotate.d/app
+    what: "Dry-run it: show what logrotate would do with this config, without doing it. The check that a new stanza is valid."
+  - command: logrotate -f /etc/logrotate.d/app
+    what: Force one rotation now — how you prove a restored config works instead of waiting for its schedule.
+steps:
+  - title: See where the space went
+    body: >-
+      "The disk is full" is a statement about one filesystem, not the machine.
+      df narrows it to the mount; du narrows it to the file. In practice the
+      answer is almost always a log, and almost always one file.
+    command: du -sh /var/log/* | sort -h
+  - title: Reclaim the space without breaking the writer
+    body: >-
+      A service holds its log open. `rm` unlinks the name but frees nothing
+      until the writer closes the handle or restarts — the disk stays full and
+      the file is now unfindable. Empty the file in place instead: the handle
+      survives, the bytes come back instantly, and the path stays where the
+      service and everyone else expects it.
+    command: ": > /var/log/app/app.log"
+  - title: Put the future in logrotate's hands
+    body: >-
+      Every recurring problem deserves a mechanism, not a memory. A stanza under
+      /etc/logrotate.d names the log, how often to rotate it and how many to
+      keep — and logrotate will refuse to run a config it cannot read, so check
+      a restored file with the dry run before trusting it.
+    command: logrotate -d /etc/logrotate.d/app
+exercises:
+  - id: trim-the-flood
+    prompt: >-
+      /var/log/app/app.log is 2 GB and the service is still writing it. Reclaim
+      the space without restarting the service, and prove the space came back.
+    solution: |
+      cp /var/log/app/app.log /root/app.log-evidence
+      : > /var/log/app/app.log
+      df -h /var/log
+    verify: stat -c %s /var/log/app/app.log
+  - id: restore-rotation
+    prompt: >-
+      A rotation config for /var/log/app/ was moved to /root/app.logrotate.off
+      "temporarily". Put rotation back and verify the stanza before it runs at
+      midnight.
+    solution: |
+      sudo mv /root/app.logrotate.off /etc/logrotate.d/app
+      sudo logrotate -d /etc/logrotate.d/app
+    verify: test -f /etc/logrotate.d/app && echo in place
+docs:
+  - man 8 logrotate
+  - man 1 df
+  - man 1 truncate
