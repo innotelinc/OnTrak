@@ -1,0 +1,89 @@
+id: sw-farm-timer
+title: "The intranet stopped doing its scheduled work"
+category: software
+platform: windows
+workloads: [sharepoint-server-se]
+difficulty: 2
+minutes: 30
+pass_score: 80
+tags: [sharepoint, services, timer, farm, level-2]
+requires_internet: false
+
+ticket:
+  from: "Ken Whitfield (Intranet team)"
+  system: "SPINTRA-01 (SharePoint intranet)"
+  priority: "Medium"
+  channel: "Email"
+  reported: "Monday morning"
+  form:
+    title: Incident write-up — the farm that looks healthy and does nothing
+    intro: >
+      Every page answers and every scheduled job has stopped — those two facts
+      together are the interesting part, and the write-up is where they get
+      explained. Say what the sites serving pages actually proved.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom, in your own words
+        kind: textarea
+        weight: 20
+        min_words: 8
+        placeholder: "What stopped working, and what — confusingly — kept working."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [timer, service, stopped, disabled, startup, tuning, script]
+        none_of: [iis, sql, reboot needed, network]
+        hint: "The sites are served by the web server and are fine. Name the services that run the farm's own work, and the state they were left in."
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 30
+        min_words: 8
+        any_of: [started, enabled, automatic, service, timer, administration]
+        hint: "Starting them fixes today. The ticket is not fixed until they come back on their own after a restart."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 20
+        min_words: 6
+        any_of: [running, service, timer, job, tested, checked, started]
+        hint: "Timer job history moving again is the proof scheduled work resumed; services running is only half of it."
+
+briefing: |
+  The intranet site answers every page, but nothing scheduled has happened since
+  the weekend: the dashboard's news web part still shows Friday, alert emails
+  stopped arriving, and Central Administration's timer job history has nothing
+  newer than Saturday. The attempt to create a test site collection also sat at
+  "processing" until somebody gave up.
+
+  The farm is up — the sites prove that. Find what does SharePoint's scheduled
+  and background work and why it stopped, put it back so this cannot happen at
+  the next restart, and write up why a farm can look perfectly healthy while
+  doing none of its work.
+
+objectives:
+  - id: timer-running
+    text: "The SharePoint timer service is running"
+    weight: 45
+    critical: true
+    hint: "SharePoint's scheduled work is done by a Windows service, not by the web front end — the sites serving pages proves nothing about it."
+  - id: admin-running
+    text: "The SharePoint administration service is running"
+    weight: 25
+    hint: "Provisioning work — new site collections, farm changes — runs through a second service, down for the same reason. Friday's stuck site collection is this, not the timer."
+  - id: farm-services-automatic
+    text: "Both farm services start automatically again"
+    weight: 30
+    hint: "Check the startup types as well as today's state: the estate expects these two back after a restart without anyone touching them."
+
+hints:
+  - "A web page serving is the web server. The farm's own work — timer jobs, provisioning, alerts — is Windows services underneath the product."
+  - "Both symptoms share one cause: two services were stopped and disabled together, by the 'performance tuning' script somebody ran on Friday."
+  - "Starting the services fixes today. The ticket is not fixed until they start on their own after a restart."
+
+reset_notes: |
+  Reset re-clones the clean snapshot, so the SharePoint timer and administration
+  services are stopped and disabled again while the sites keep serving pages.

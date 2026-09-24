@@ -199,3 +199,69 @@ def test_combination_suggestions_only_name_real_primitives():
     for combo in matrix["combinations"]:
         for primitive_id in combo["primitives"]:
             assert primitive_id in PRIMITIVES
+
+
+# --------------------------------------------------------------------------- #
+# database primitives
+# --------------------------------------------------------------------------- #
+
+
+def test_the_database_primitives_speak_sql_through_the_library():
+    """The SQL workloads install the engine and no client tools, so the database
+    primitives must reach the instance through ``Invoke-OnTrakSql`` — the shared
+    lib's ADO.NET helper. A primitive that reached for sqlcmd would fail on every
+    run against the very workloads it was written for."""
+    database = [item for item in list_all() if item.id.startswith("db-")]
+    assert {item.id for item in database} == {
+        "db-service-stopped",
+        "db-tcp-protocol-off",
+        "db-log-capped",
+    }
+    for item in database:
+        script = item.setup_ps + item.assert_ps + item.check_ps
+        assert "Invoke-OnTrakSql" in script, item.id
+        assert "sqlcmd" not in script.lower(), item.id
+
+
+def test_database_primitives_compose_into_one_ticket(repository):
+    """The curated database pair generates and validates together: two faults a
+    single unhappy database server could plausibly carry at once."""
+    result = generate(
+        ["db-tcp-protocol-off", "db-log-capped"],
+        repository,
+        scenario_id="gen-db-bad-week",
+    )
+    assert result.ok, result.problems
+    scenario = repository.get("gen-db-bad-week")
+    ids = {o.id for o in scenario.objectives}
+    assert {"db-tcp-enabled", "db-can-save"} <= ids
+
+
+def test_every_helper_a_primitive_calls_exists_and_takes_its_switches(settings):
+    """The contract the hand-written scenario scripts owe, for primitives too: a
+    helper name or switch the library does not declare is a binding error the
+    moment grading runs on a real guest."""
+    from .test_scenarios import (
+        _PS_ON_TRAK_NAME,
+        _power_shell_calls,
+        _power_shell_library,
+    )
+
+    declared = {
+        name: {param.lower() for param in params}
+        for name, params in _power_shell_library(settings).items()
+    }
+    problems: list[str] = []
+    for item in list_all():
+        scripts = (("setup", item.setup_ps), ("assert", item.assert_ps), ("check", item.check_ps))
+        for label, script in scripts:
+            for name in set(_PS_ON_TRAK_NAME.findall(script)):
+                if name not in declared:
+                    problems.append(f"{item.id}/{label}: {name}")
+            for function, switch in _power_shell_calls(script):
+                if function in declared and switch.lower() not in declared[function]:
+                    problems.append(f"{item.id}/{label}: {function} -{switch}")
+    assert not problems, (
+        "primitives call helpers the library does not define or pass switches it "
+        "does not declare:\n  " + "\n  ".join(sorted(set(problems)))
+    )

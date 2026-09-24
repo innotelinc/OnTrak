@@ -52,6 +52,8 @@ Scenarios share one fictional estate so that tickets reinforce each other:
 | File server | `fileserver.ontrak.lab` — HTTP on 80, `10.20.0.53`, from `infra/lab-services.sh` |
 | Staff portal | `portal.ontrak.lab` — HTTP on 8080, `10.20.0.54` |
 | Database | `TrainingDB` on the SQL Server workloads (APPDB-01 in tickets) |
+| Mail server | `APPMAIL-01` — the Exchange Server workloads, SMTP on 25 |
+| Intranet farm | `SPINTRA-01` — the SharePoint Server workloads, Central Admin on `8080` |
 
 The two service names are **explicit DNS records** on the lab bridge
 (`incus network get ontrak0 raw.dnsmasq`), not Incus's automatic per-instance
@@ -326,6 +328,58 @@ outcome for a triage ticket.
   simple-recovery fix (whose first save would race an auto-checkpoint) and, in full
   recovery, a free demonstration that the log stays full.
 * **Workloads:** `sql-server-2019`, `sql-server-2022`.
+
+### 12. `os-db-backup-job` — "Audit wants a point-in-time restore and there is nothing to restore from" (os, 3/4)
+
+* **Broken:** `TrainingDB`'s log-backup job is disabled and SQL Server Agent — the thing
+  that runs both backup jobs — is stopped on manual startup. The database is in full
+  recovery with a healthy nightly *full* backup and not one log backup in its history,
+  so the chain a point-in-time restore needs does not exist.
+* **Fix:** close the gap that can still be closed (a log backup now) and put the
+  recurring routine back — the job enabled and scheduled, the Agent running and
+  automatic. Routing the backups through Task Scheduler instead counts as an
+  equivalent fix.
+* **Graded:** a log backup exists (critical) / the recurring routine is in place and
+  able to run (critical) / full recovery with a full and a log backup — the objective
+  that fails the "switch it to simple" shortcut.
+* **Common wrong answer:** taking one manual log backup and calling it done. The gap
+  opens again at the next transaction.
+* **Gotcha:** the backup report is the red herring — it shows the full backup and a
+  green tick. The evidence is the backup *history*, filtered to log backups.
+* **Workloads:** `sql-server-2019`, `sql-server-2022`.
+
+### 13. `net-mail-queue` — "Mail is just sitting in the Outbox" (network, 3/4)
+
+* **Broken:** the Microsoft Exchange Transport service is stopped and disabled by a
+  weekend "hardening" script. Nothing can be submitted (messages sit in the Outbox)
+  and nothing can be delivered (external senders are refused).
+* **Fix:** the transport service running and set to automatic again.
+* **Graded:** the transport service running (critical) / a complete SMTP transaction
+  accepted (critical) / the service starts automatically again.
+* **Common wrong answer:** trusting the facts the ticket already carries — the server
+  pings, *port 25 answers*, the mail database is mounted. A TCP banner is a listener,
+  not mail flow: Exchange's frontend keeps answering the port while the transport
+  service behind it is dead.
+* **Gotcha:** grading walks the SMTP conversation as far as the server taking
+  responsibility for a message (banner, EHLO, MAIL FROM, RCPT TO, DATA) —
+  `Test-OnTrakSmtpProbe` in the shared lib — because connecting is exactly the test
+  the ticket passes before the fix.
+* **Workloads:** `exchange-server-2019`, `exchange-server-se`.
+
+### 14. `sw-farm-timer` — "The intranet stopped doing its scheduled work" (software, 2/4)
+
+* **Broken:** the SharePoint timer service (`SPTimerV4`, every scheduled job) and the
+  administration service (`SPAdminV4`, provisioning work) are stopped and disabled by
+  Friday's "performance tuning" script. The sites keep serving pages the whole time.
+* **Fix:** both services running and set to automatic.
+* **Graded:** the timer service running (critical) / the administration service
+  running / both starting automatically — the half that survives a restart.
+* **Common wrong answer:** fixing the web server, because the symptom list is
+  "scheduled things stopped" while the site is demonstrably up. The stuck
+  site-collection creation is the administration service, not the timer.
+* **Gotcha:** the sites never stop — the build-time trap assert is Central
+  Administration answering `8080` while both farm services are down.
+* **Workloads:** `sharepoint-server-se`.
 
 ## Generating scenarios from fault primitives
 

@@ -1,0 +1,92 @@
+id: net-mail-queue
+title: "\"Mail is just sitting in the Outbox\" — nothing sends or arrives"
+category: network
+platform: windows
+workloads: [exchange-server-2019, exchange-server-se]
+difficulty: 3
+minutes: 35
+pass_score: 80
+tags: [mail, smtp, exchange, mail-flow, level-3]
+requires_internet: false
+
+ticket:
+  from: "Priya Raman (Accounting)"
+  system: "APPMAIL-01 (Exchange Server)"
+  priority: "High"
+  channel: "Service desk"
+  reported: "This morning, since 08:40"
+  form:
+    title: Incident write-up — the silent mail queue
+    intro: >
+      Mail is not moving in either direction and a colleague has already
+      "checked the obvious things". Their facts are all true and none of them
+      are the problem — the service desk will quote them at you, so the write-up
+      needs to explain what each one actually proved.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom, in your own words
+        kind: textarea
+        weight: 20
+        min_words: 8
+        placeholder: "Both directions are broken: what senders see, and what recipients see."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [transport, service, stopped, disabled, exchange, queue, startup]
+        none_of: [dns, outlook, reboot needed, certificate]
+        hint: "Port 25 answers on this server while mail does not move. Name the Windows service that actually carries mail, and the state it was left in."
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 30
+        min_words: 8
+        any_of: [started, enabled, automatic, service, transport, startup]
+        hint: "Starting the service fixes today's mail. The ticket is not fixed until it survives the next restart of the server."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 20
+        min_words: 6
+        any_of: [sent, received, smtp, message, telnet, tested, accepted]
+        hint: "Connecting to port 25 is the test the ticket already passes. Carry a message as far as the server accepting it."
+
+briefing: |
+  Since about 08:40 this morning nothing sends from APPMAIL-01: messages sit in
+  the Outbox and eventually time out, and two external senders have rung to say
+  the server is refusing their mail. A colleague has already checked the
+  obvious things and reported the facts confidently: the server pings, port 25
+  answers, and the mail database is mounted.
+
+  Those facts are all true and none of them are the problem. Find what actually
+  carries mail on this server and why it is not doing it, get mail flowing in
+  both directions again, and leave it so a restart of the box cannot repeat
+  Monday. The write-up needs to say why the port test looked healthy — the
+  service desk will quote it at you.
+
+objectives:
+  - id: transport-running
+    text: "The Exchange transport service is running again"
+    weight: 45
+    critical: true
+    hint: "Mail moves through Windows services, not through the mail database or the web server. Check the Transport services and what state they are in."
+  - id: smtp-accepts-mail
+    text: "The server accepts an SMTP message end to end"
+    weight: 35
+    critical: true
+    hint: "Telnet to port 25 is the classic test and connecting is not the test: carry the conversation as far as DATA and see whether the server actually takes the message."
+  - id: transport-automatic
+    text: "The transport service starts automatically again"
+    weight: 20
+    hint: "Whatever else changes, the fix must survive the next restart of the server."
+
+hints:
+  - "The classic test is telnet to port 25. Do it — and then notice what it proves: a banner is a listener, not mail flow."
+  - "Mail sitting in the Outbox is local submission failing; senders being refused is delivery failing. Both point at the same service, and it is not the one answering the port."
+  - "Two halves to the fix: get the service that carries mail running, and put its startup back — the state it is in was set deliberately, by a script somebody ran over the weekend."
+
+reset_notes: |
+  Reset re-clones the clean snapshot, so the Exchange transport service is
+  stopped and disabled again behind a port 25 that still answers.

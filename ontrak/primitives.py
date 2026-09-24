@@ -577,6 +577,213 @@ Add-OnTrakCheck -Objective 'incident-documented' -Passed $documented `
 
 
 # --------------------------------------------------------------------------- #
+# database — SQL Server (composed against the sql-server-* workloads)
+# --------------------------------------------------------------------------- #
+
+# These speak T-SQL through Invoke-OnTrakSql, the scenario library's ADO.NET
+# helper: the product build installs the SQLENGINE feature and no client tools,
+# so sqlcmd is not there to reach for.
+
+primitive(
+    id="db-service-stopped",
+    label="SQL Server service stopped and disabled",
+    category=Category.SOFTWARE.value,
+    title="The application cannot connect to the database server",
+    briefing=(
+        "The line-of-business application reports it cannot connect to the "
+        "database server since this morning. The server itself is up and answers "
+        "ping, and restarting the application changed nothing."
+    ),
+    objectives=[
+        Objective("db-service-running", "The SQL Server service is running", 3, critical=True),
+        Objective("db-service-autostart", "The SQL Server service starts automatically again", 2),
+        Objective("db-query-answers", "The instance answers a query again", 1),
+    ],
+    setup_ps="""$serviceName = 'MSSQLSERVER'
+Write-OnTrakStep ('stopping and disabling ' + $serviceName)
+Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+Set-Service -Name $serviceName -StartupType Disabled -ErrorAction SilentlyContinue""",
+    assert_ps="""Require-OnTrak 'the SQL Server service is not running' {
+    (Get-OnTrakServiceState -Name 'MSSQLSERVER') -ne 'Running'
+}
+Require-OnTrak 'the fault is observable: the instance answers no query' {
+    $answers = $true
+    try { Invoke-OnTrakSql -Query 'SELECT 1' | Out-Null } catch { $answers = $false }
+    -not $answers
+}""",
+    check_ps="""$serviceName = 'MSSQLSERVER'
+$state = Get-OnTrakServiceState -Name $serviceName
+Add-OnTrakCheck -Objective 'db-service-running' -Passed ($state -eq 'Running') -Detail ($serviceName + ' is ' + $state)
+$startType = 'Missing'
+try { $startType = '' + (Get-Service -Name $serviceName -ErrorAction Stop).StartType } catch { }
+Add-OnTrakCheck -Objective 'db-service-autostart' -Passed ($startType -eq 'Automatic') -Detail ('startup type is ' + $startType)
+$answers = $false
+try { Invoke-OnTrakSql -Query 'SELECT 1' | Out-Null; $answers = $true } catch { }
+Add-OnTrakCheck -Objective 'db-query-answers' -Passed $answers -Detail ('the instance answers a query: ' + $answers)""",
+    difficulty=2,
+    minutes=20,
+    hints=[
+        '"Cannot connect" is the client\'s description of anything. Check the state of the database service before the database itself.',
+        "Both halves matter: the service running now, and its startup type back to automatic so the next restart is not this ticket again.",
+    ],
+    tags=["sql", "service"],
+    notes=(
+        "SQL-aware: grading speaks T-SQL through Invoke-OnTrakSql, the scenario "
+        "lib's ADO.NET helper, because the product build ships no sqlcmd."
+    ),
+)
+
+primitive(
+    id="db-tcp-protocol-off",
+    label="SQL Server's network protocol switched off",
+    category=Category.NETWORK.value,
+    title="The app server cannot reach the database — but it works on the box",
+    briefing=(
+        "The application server cannot reach the database since it was rebuilt "
+        "this morning, while every tool run on the database box itself works "
+        "fine. The network between the two servers is healthy."
+    ),
+    objectives=[
+        Objective("db-tcp-enabled", "TCP/IP is enabled on the instance again", 3, critical=True),
+        Objective("db-listener-answers", "The database port answers connections again", 2),
+        Objective("db-app-can-connect", "A TCP connection can run a query again", 1),
+    ],
+    setup_ps="""$instanceMap = 'HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\Instance Names\\SQL'
+$instanceId = (Get-ItemProperty -Path $instanceMap -Name 'MSSQLSERVER' -ErrorAction Stop).MSSQLSERVER
+$protocols = 'HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\' + $instanceId + '\\MSSQLServer\\SuperSocketNetLib'
+Write-OnTrakStep 'switching off TCP/IP (shared memory is always on, which is the trap)'
+Set-ItemProperty -Path ($protocols + '\\Tcp') -Name 'Enabled' -Value 0 -Type DWord
+Restart-Service -Name 'MSSQLSERVER' -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 3""",
+    assert_ps="""Require-OnTrak 'TCP/IP is switched off' {
+    $instanceMap = 'HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\Instance Names\\SQL'
+    $instanceId = (Get-ItemProperty -Path $instanceMap -Name 'MSSQLSERVER' -ErrorAction Stop).MSSQLSERVER
+    $tcp = 'HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\' + $instanceId + '\\MSSQLServer\\SuperSocketNetLib\\Tcp'
+    ((Get-ItemProperty -Path $tcp -Name 'Enabled' -ErrorAction Stop).Enabled) -eq 0
+}
+Require-OnTrak 'the fault is observable: the database port answers nothing' {
+    -not (Test-OnTrakTcpPort -ComputerName '127.0.0.1' -Port 1433)
+}""",
+    check_ps="""$instanceMap = 'HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\Instance Names\\SQL'
+$instanceId = (Get-ItemProperty -Path $instanceMap -Name 'MSSQLSERVER' -ErrorAction Stop).MSSQLSERVER
+$tcp = 'HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\' + $instanceId + '\\MSSQLServer\\SuperSocketNetLib\\Tcp'
+$enabled = ((Get-ItemProperty -Path $tcp -Name 'Enabled' -ErrorAction Stop).Enabled)
+Add-OnTrakCheck -Objective 'db-tcp-enabled' -Passed ($enabled -eq 1) -Detail ('TCP/IP enabled: ' + $enabled)
+$listens = Test-OnTrakTcpPort -ComputerName '127.0.0.1' -Port 1433
+Add-OnTrakCheck -Objective 'db-listener-answers' -Passed $listens -Detail ('port 1433 accepts a connection: ' + $listens)
+$answers = $false
+try { Invoke-OnTrakSql -Server 'tcp:localhost,1433' -Query 'SELECT 1' | Out-Null; $answers = $true } catch { }
+Add-OnTrakCheck -Objective 'db-app-can-connect' -Passed $answers -Detail ('a forced-TCP connection can run a query: ' + $answers)""",
+    difficulty=3,
+    minutes=25,
+    hints=[
+        "'It works when I test it' is the trap: a local tool rides shared memory and proves nothing about the network.",
+        "The protocols load with the service — re-enabling them changes nothing until the SQL Server service is restarted.",
+    ],
+    tags=["sql", "network"],
+    notes=(
+        "Shared memory is left on deliberately: the graded connection forces "
+        "'tcp:' into the data source so the local shortcut cannot fake a fix."
+    ),
+)
+
+primitive(
+    id="db-log-capped",
+    label="Transaction log capped with no autogrowth",
+    category=Category.OS.value,
+    title="Saving records fails: the transaction log is full",
+    briefing=(
+        "The application cannot save anything and the error text is alarming. "
+        "The server's disks disagree: the data drive has plenty of room."
+    ),
+    objectives=[
+        Objective("db-can-save", "The application can write records again", 3, critical=True),
+        Objective("db-log-can-grow", "The log can grow again (autogrowth on, or the cap lifted)", 2),
+        Objective("db-log-has-room", "The transaction log has room in it again", 1),
+    ],
+    setup_ps="""$database = 'TrainingDB'
+Write-OnTrakStep ('capping the transaction log of ' + $database + ' at 4 MB')
+Invoke-OnTrakSql -Query ('IF DB_ID(''' + $database + ''') IS NULL EXEC(''CREATE DATABASE ' + $database + '')') | Out-Null
+Invoke-OnTrakSql -Query ('ALTER DATABASE ' + $database + ' SET RECOVERY FULL') | Out-Null
+Invoke-OnTrakSql -Database $database -Query @"
+IF OBJECT_ID('dbo.ledger', 'U') IS NULL
+    CREATE TABLE dbo.ledger (id INT IDENTITY PRIMARY KEY, logged DATETIME2 NOT NULL, payload VARCHAR(4000) NOT NULL);
+"@ | Out-Null
+$logRow = Invoke-OnTrakSql -Query ('SELECT name FROM sys.master_files WHERE database_id = DB_ID(''' + $database + ''') AND type = 1')
+$logName = '' + $logRow[0].name
+Invoke-OnTrakSql -Query ('DBCC SHRINKFILE (' + $logName + ', 4)') | Out-Null
+Invoke-OnTrakSql -Query ('ALTER DATABASE ' + $database + ' MODIFY FILE (NAME = ' + $logName + ', MAXSIZE = 4MB, FILEGROWTH = 0)') | Out-Null
+# Fill the log until the lid stops it: 'saving records fails' is the ticket.
+$full = $false
+for ($round = 0; $round -lt 40 -and -not $full; $round++) {
+    try {
+        Invoke-OnTrakSql -Database $database -Query "INSERT INTO dbo.ledger (logged, payload) SELECT SYSDATETIME(), REPLICATE('x', 3800) FROM (SELECT TOP (400) 1 AS n FROM sys.all_columns) AS t" | Out-Null
+        Invoke-OnTrakSql -Database $database -Query 'CHECKPOINT' | Out-Null
+    } catch {
+        $full = $true
+    }
+}""",
+    assert_ps="""Require-OnTrak 'the fault is observable: saving records fails' {
+    $saved = $true
+    try {
+        Invoke-OnTrakSql -Database 'TrainingDB' -Query "INSERT INTO dbo.ledger (logged, payload) VALUES (SYSDATETIME(), 'probe')" | Out-Null
+    } catch { $saved = $false }
+    -not $saved
+}""",
+    check_ps="""$database = 'TrainingDB'
+# The probe runs a CHECKPOINT first: fairness to the simple-recovery fix (whose
+# first save would race an auto-checkpoint) and, in full recovery, a free
+# demonstration that the log stays full.
+$saved = $false
+$saveDetail = ''
+try {
+    Invoke-OnTrakSql -Database $database -Query 'CHECKPOINT' | Out-Null
+    Invoke-OnTrakSql -Database $database -Query "INSERT INTO dbo.ledger (logged, payload) VALUES (SYSDATETIME(), 'probe')" | Out-Null
+    $saved = $true
+    $saveDetail = 'a record saved'
+} catch {
+    $saveDetail = 'the write fails: ' + $_.Exception.Message
+}
+Add-OnTrakCheck -Objective 'db-can-save' -Passed $saved -Detail $saveDetail
+$growOk = $false
+$growDetail = ''
+try {
+    $fileRow = Invoke-OnTrakSql -Query ('SELECT growth, max_size FROM sys.master_files WHERE database_id = DB_ID(''' + $database + ''') AND type = 1')
+    $growth = [int] $fileRow[0].growth
+    $maxSize = [int] $fileRow[0].max_size
+    $growOk = ($growth -gt 0) -or ($maxSize -eq -1)
+    $growDetail = ('autogrowth: ' + $growth + '; max size: ' + $maxSize)
+} catch {
+    $growDetail = ('the log settings could not be read: ' + $_.Exception.Message)
+}
+Add-OnTrakCheck -Objective 'db-log-can-grow' -Passed $growOk -Detail $growDetail
+$roomOk = $false
+$roomDetail = ''
+try {
+    $space = Invoke-OnTrakSql -Database $database -Query 'SELECT used_log_space_in_bytes, total_log_size_in_bytes FROM sys.dm_db_log_space_usage'
+    $usedPct = 0
+    if (([double] $space[0].total_log_size_in_bytes) -gt 0) {
+        $usedPct = [math]::Round(100 * ([double] $space[0].used_log_space_in_bytes) / ([double] $space[0].total_log_size_in_bytes), 1)
+    }
+    $roomOk = $usedPct -lt 90
+    $roomDetail = ('the log is ' + $usedPct + '% full')
+} catch {
+    $roomDetail = ('log space could not be read: ' + $_.Exception.Message)
+}
+Add-OnTrakCheck -Objective 'db-log-has-room' -Passed $roomOk -Detail $roomDetail""",
+    difficulty=3,
+    minutes=25,
+    hints=[
+        "'The log is full' is literal and the disk is not the resource: the log file's size cap is.",
+        "In full recovery, committed transactions stay in the log until a log backup clears them — a checkpoint alone provably clears nothing here.",
+        "Two halves: give the log room now (autogrowth, or a bigger cap) and get the standing volume of log out (a log backup, or the recovery model the estate uses) so this cannot repeat.",
+    ],
+    tags=["sql", "capacity"],
+    notes="The check probes with CHECKPOINT first so the simple-recovery fix works the moment it is set.",
+)
+
+
+# --------------------------------------------------------------------------- #
 # lookup helpers
 # --------------------------------------------------------------------------- #
 

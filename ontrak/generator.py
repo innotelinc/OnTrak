@@ -282,6 +282,10 @@ def suggest_combinations() -> list[list[str]]:
         ["disk-space-exhausted", "startup-bloat"],
         ["proxy-hijacked", "app-config-corrupt"],
         ["malware-persistence", "malware-persistence"],
+        # The plausible database pair: a network repair and a capacity lid on one
+        # unhappy server. (Not db-service-stopped + anything SQL: the service being
+        # down makes every other SQL fault's setup unreachable.)
+        ["db-tcp-protocol-off", "db-log-capped"],
     ]
 
 

@@ -1,0 +1,92 @@
+id: os-db-backup-job
+title: "Audit wants a point-in-time restore and there is nothing to restore from"
+category: os
+platform: windows
+workloads: [sql-server-2019, sql-server-2022]
+difficulty: 3
+minutes: 40
+pass_score: 80
+tags: [sql, backup, sql-agent, recovery, level-3]
+requires_internet: false
+
+ticket:
+  from: "Marcus Bell (Internal audit)"
+  system: "APPDB-01 (SQL Server)"
+  priority: "High"
+  channel: "Email"
+  reported: "Yesterday, before close of business"
+  form:
+    title: Incident write-up — the missing log backups
+    intro: >
+      Audit asked for a restore to a specific time and the plan fell apart at
+      the first question. They will ask why the backup report was green while
+      the database was unrestorable — expect it in the retro, and cover it in
+      the write-up.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom, in your own words
+        kind: textarea
+        weight: 20
+        min_words: 8
+        placeholder: "What audit asked for, and why it could not be produced."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [log backup, backup job, agent, disabled, stopped, schedule, full recovery]
+        none_of: [disk full, reinstall, corruption]
+        hint: "The full backup is not the gap. Name the routine that was supposed to take log backups, and the state it was left in."
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 30
+        min_words: 8
+        any_of: [backup log, log backup, enabled, started, schedule, agent, job]
+        hint: "Two halves: close the gap that exists right now, and put the routine back so it cannot open again unnoticed."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 20
+        min_words: 6
+        any_of: [backup, history, msdb, restored, job, ran, tested]
+        hint: "The backup history is the auditor's evidence — a new log backup row in it is the proof."
+
+briefing: |
+  Internal audit asked for TrainingDB to be restored to 14:30 yesterday — a
+  deleted batch of invoices — and the restore plan fell apart at the first
+  question: where are the log backups? The backup report shows the nightly full
+  backup and a green tick. There is no log backup for this database. Anywhere.
+
+  TrainingDB runs in full recovery and has been trading for months. Find out
+  what happened to the routine that should have been taking log backups, close
+  the gap as far as it can still be closed, and leave the database so the next
+  audit request has an answer. The write-up needs to say honestly what can and
+  cannot be restored to 14:30 — and why.
+
+objectives:
+  - id: log-backup-exists
+    text: "A transaction-log backup of TrainingDB exists"
+    weight: 40
+    critical: true
+    hint: "The evidence is the backup history, not the backup report — msdb's backup history (the backupset table, or Management Studio's backup history report) filtered to log backups."
+  - id: routine-will-run
+    text: "The recurring log-backup routine is in place and able to run"
+    weight: 35
+    critical: true
+    hint: "A one-off manual backup closes today's gap but not the ticket. The job exists — and so does the thing that runs jobs. Both were knocked out."
+  - id: restore-ready
+    text: "Point-in-time recovery is intact: full recovery with a full backup and a log backup"
+    weight: 25
+    hint: "The estate keeps full recovery for a reason; 'switch it to simple' trades the auditor's request away."
+
+hints:
+  - "Start where the evidence is: the backup history filtered to TrainingDB. Compare the full backups against the log backups and the picture writes itself."
+  - "In full recovery, committed transactions stay in the log until a log backup clears them — and the chain a restore needs only exists if somebody takes them on a schedule."
+  - "Two halves to the fix: close the gap that exists right now with a log backup, and put the routine back — the job is there, and so is the thing that runs jobs. Both were knocked out."
+
+reset_notes: |
+  Reset re-clones the clean snapshot, so TrainingDB is back in full recovery with
+  a full backup, no log backup at all, the log-backup job disabled, and SQL
+  Server Agent stopped on manual startup.

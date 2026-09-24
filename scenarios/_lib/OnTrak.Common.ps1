@@ -369,15 +369,17 @@ function Start-OnTrakServiceIfNeeded {
 function Get-OnTrakPnpDevice {
     <#
     .SYNOPSIS
-        Real (non-phantom) plug-and-play devices matching a friendly name.
-        Phantom devices are leftovers from the image build and must be ignored.
+        Real (non-phantom) plug-and-play devices matching a friendly name or
+        a device class. Phantom devices are leftovers from the image build and
+        must be ignored.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory = $true)][string] $FriendlyName)
+    param([string] $FriendlyName = '', [string] $Class = '')
     return @(Get-PnpDevice -ErrorAction SilentlyContinue |
         Where-Object {
-            $_.FriendlyName -like ('*' + $FriendlyName + '*') -and
-            $_.Problem -ne 'CM_PROB_PHANTOM'
+            ($_.Problem -ne 'CM_PROB_PHANTOM') -and
+            ((-not $FriendlyName) -or ($_.FriendlyName -like ('*' + $FriendlyName + '*'))) -and
+            ((-not $Class) -or (('' + $_.Class) -eq $Class))
         })
 }
 
@@ -388,6 +390,28 @@ function Enable-OnTrakPnpDevice {
     foreach ($device in $devices) {
         Enable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false -ErrorAction SilentlyContinue
     }
+}
+
+# ---------------------------------------------------------------- processes --
+function Start-OnTrakProcess {
+    <#
+    .SYNOPSIS
+        Launch a process from a full command line, without waiting for it.
+    .DESCRIPTION
+        Setup scripts register persistence and move on: the launched thing is a
+        GUI payload or a logon task meant to outlive the script, so blocking on
+        it would hang the template build. Win32_Process.Create takes the command
+        line exactly as written — quoting and all — and returns as soon as the
+        process exists. A process that does not start is an error: a fault that
+        silently does not land must fail the build, not reach a student.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string] $CommandLine)
+    $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $CommandLine } -ErrorAction Stop
+    if ($result.ReturnValue -ne 0) {
+        throw ('the process did not start (Win32_Process.Create returned ' + $result.ReturnValue + ')')
+    }
+    return [int] $result.ProcessId
 }
 
 # -------------------------------------------------------------- persistence --
@@ -571,4 +595,72 @@ function Invoke-OnTrakSql {
         $connection.Close()
     }
     return @($table.Rows | ForEach-Object { $_ })
+}
+
+# -------------------------------------------------------------------- mail --
+function Test-OnTrakSmtpProbe {
+    <#
+    .SYNOPSIS
+        Submit a complete SMTP transaction and report whether the server took the
+        message.
+    .DESCRIPTION
+        A TCP connect to port 25 proves a listener exists and nothing about mail
+        flow: Exchange's frontend answers the port while the transport service
+        behind it is dead, which is exactly the trap in `net-mail-queue`. This
+        walks the SMTP conversation (banner, EHLO, MAIL FROM, RCPT TO, DATA) and
+        only reports true when the server accepts responsibility for a message --
+        which is what a sender actually experiences.
+    #>
+    [CmdletBinding()]
+    param(
+        [string] $ComputerName = '127.0.0.1',
+        [int] $Port = 25,
+        [string] $Sender = 'probe@ontrak.lab',
+        [string] $Recipient = 'postmaster@ontrak.lab',
+        [int] $TimeoutSeconds = 15
+    )
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $client.Connect($ComputerName, $Port)
+        $stream = $client.GetStream()
+        $stream.ReadTimeout = $TimeoutSeconds * 1000
+        $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::ASCII)
+        $writer = New-Object System.IO.StreamWriter($stream, [System.Text.Encoding]::ASCII)
+        $writer.NewLine = "`r`n"
+        $writer.AutoFlush = $true
+
+        function Read-OnTrakSmtpCode {
+            # SMTP replies are "NNN-text" continuation lines until "NNN text".
+            $line = $reader.ReadLine()
+            $code = 0
+            while ($null -ne $line) {
+                if ($line.Length -ge 3) { $code = [int] $line.Substring(0, 3) }
+                if ($line.Length -lt 4 -or $line[3] -ne '-') { break }
+                $line = $reader.ReadLine()
+            }
+            return $code
+        }
+
+        if ((Read-OnTrakSmtpCode) -ne 220) { return $false }
+        $writer.WriteLine('EHLO ontrak.lab')
+        if ((Read-OnTrakSmtpCode) -ne 250) { return $false }
+        $writer.WriteLine(('MAIL FROM:<' + $Sender + '>'))
+        if ((Read-OnTrakSmtpCode) -ne 250) { return $false }
+        $writer.WriteLine(('RCPT TO:<' + $Recipient + '>'))
+        $rcpt = Read-OnTrakSmtpCode
+        if ($rcpt -ne 250 -and $rcpt -ne 251) { return $false }
+        $writer.WriteLine('DATA')
+        if ((Read-OnTrakSmtpCode) -ne 354) { return $false }
+        $writer.WriteLine('Subject: OnTrak SMTP probe')
+        $writer.WriteLine('')
+        $writer.WriteLine('Automated mail-flow probe.')
+        $writer.WriteLine('.')
+        if ((Read-OnTrakSmtpCode) -ne 250) { return $false }
+        $writer.WriteLine('QUIT')
+        return $true
+    } catch {
+        return $false
+    } finally {
+        try { $client.Close() } catch { }
+    }
 }
