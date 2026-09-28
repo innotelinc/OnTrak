@@ -646,6 +646,47 @@ export const en = {
   "report.next.passed": "Nice work. Try a harder scenario, or run this one again inside the time limit.",
   "report.findAnother": "Find another scenario",
 
+  // Certificates & verification
+  "certificate.title": "Certificate",
+  "certificate.hint":
+    "Clearing the pass mark earns a tamper-evident completion record. Its code can be checked later by anyone you give it to.",
+  "certificate.code": "Certificate code",
+  "certificate.issued": "Issued",
+  "certificate.learner": "Learner",
+  "certificate.completedAt": "Completed",
+  "certificate.issuer": "Issuer",
+  "certificate.skills": "Competencies demonstrated",
+  "certificate.json": "Show the completion record (JSON)",
+  "certificate.verifyHint": "Hand the record to an auditor, or check one yourself at",
+  "certificate.verifyLink": "Verify a certificate",
+  "certificate.regraded":
+    "This attempt was re-graded after the certificate was issued. The certificate still shows the result at issue time ({percent}%).",
+  "certificate.revoked.title": "Certificate revoked",
+  "certificate.revoked.badge": "Revoked",
+  "certificate.revoked.body":
+    "A re-grade on {when} left this attempt below the pass mark, so the completion record issued for it no longer stands.",
+  "results.certificate": "Certificate {code}",
+  "verify.title": "Verify a certificate",
+  "verify.description":
+    "Paste a completion record or an assurance packet and this page will re-hash it. Anything edited after it was issued fails the check.",
+  "verify.label": "Completion record or assurance packet (JSON)",
+  "verify.hint": "Copied from a certificate report, or sent to you by the learner.",
+  "verify.placeholder": '{ "format": "ontrak.training.completion/v1", … }',
+  "verify.submit": "Check this record",
+  "verify.valid.title": "Valid",
+  "verify.valid.body": "The digest matches the content, so this record has not been altered.",
+  "verify.invalid.title": "Not valid",
+  "verify.invalid.body":
+    "The content does not match its digest — it has been edited, or it was never issued by this deployment.",
+  "verify.kind.record": "completion record",
+  "verify.kind.packet": "assurance packet",
+  "verify.how": "How this works",
+  "verify.howBody":
+    "A record carries a SHA-256 digest over its own canonical content. Checking it means recomputing that digest — no account, no database and no trust in this page's data is required. An assurance packet adds a digest over its whole record set, so removing or reordering records invalidates it too.",
+  "verify.format.record": "Completion record",
+  "verify.format.packet": "Assurance packet",
+  "verify.signIn": "Sign in to your training account",
+
   // Simulator surfaces — terminal chrome, Office panels and Windows desktop
   "console.sessionNote": "simulated session · nothing here touches a real machine",
   "console.aria":

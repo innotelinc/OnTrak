@@ -12,6 +12,8 @@ import { gradeAttempt } from "@/lib/sim/grade";
 import { ATTEMPT_STATUS_LABELS, coerceSubmittedState, toDefinition } from "@/lib/scenarios";
 import { attemptScopeFor } from "@/lib/attempt-scope";
 import { canRegrade, regradedStatus } from "@/lib/grading-rules";
+import { certificateAction, readStoredCertificate } from "@/lib/certificate-rules";
+import { attemptPassed, certificatePatchFor } from "@/lib/certificates";
 import type { ScenarioDefinition } from "@/lib/sim/types";
 
 async function requireStaff() {
@@ -438,7 +440,7 @@ export async function regradeAttempt(formData: FormData): Promise<void> {
   const scope = await attemptScopeFor(instructor);
   const attempt = await prisma.attempt.findFirst({
     where: { id: attemptId, ...scope },
-    include: { scenario: true },
+    include: { scenario: true, user: { select: { name: true } } },
   });
   if (!attempt) backTo("/instructor/attempts", "That attempt no longer exists.", false);
 
@@ -456,6 +458,27 @@ export async function regradeAttempt(formData: FormData): Promise<void> {
   const definition = toDefinition(attempt.scenario);
   const state = coerceSubmittedState(attempt.snapshot, definition);
   const report = gradeAttempt(definition, state, attempt.scenario.passScore);
+
+  // A re-grade moves the score, but it must not rewrite a certificate the
+  // learner already holds: an existing record is kept as issued, and one is
+  // issued only if this is now a pass that never had one. The single thing a
+  // re-grade can take away is a certificate whose pass no longer stands.
+  const stored = readStoredCertificate(attempt);
+  const gradedAt = new Date();
+  const certificateFacts = {
+    learnerId: attempt.userId,
+    learnerName: attempt.user.name,
+    scenarioId: attempt.scenarioId,
+    scenarioTitle: attempt.scenario.title,
+    platform: attempt.scenario.platform,
+    score: report.score,
+    maxScore: report.maxScore,
+    passScore: attempt.scenario.passScore,
+    completedAt: gradedAt,
+    skills: attempt.scenario.tags,
+  };
+  const action = certificateAction(attemptPassed(certificateFacts), stored);
+  const certificate = certificatePatchFor(certificateFacts, stored, gradedAt);
 
   await prisma.$transaction([
     prisma.checkResult.deleteMany({ where: { attemptId } }),
@@ -475,8 +498,9 @@ export async function regradeAttempt(formData: FormData): Promise<void> {
       data: {
         score: report.score,
         maxScore: report.maxScore,
-        gradedAt: new Date(),
+        gradedAt,
         status: regradedStatus(attempt.status),
+        ...certificate,
       },
     }),
   ]);
@@ -486,11 +510,21 @@ export async function regradeAttempt(formData: FormData): Promise<void> {
     action: "attempt.regrade",
     targetType: "attempt",
     targetId: attemptId,
-    detail: { score: report.score, maxScore: report.maxScore },
+    detail: { score: report.score, maxScore: report.maxScore, certificate: action },
   });
 
   revalidatePath(`/instructor/attempts/${attemptId}`);
-  backTo(`/instructor/attempts/${attemptId}`, `Re-graded: ${report.score}/${report.maxScore}.`);
+  revalidatePath("/student/results");
+  const certificateNote =
+    action === "revoke"
+      ? " The certificate issued for this attempt has been revoked."
+      : action === "issue"
+        ? " This attempt now passes, so a certificate has been issued."
+        : "";
+  backTo(
+    `/instructor/attempts/${attemptId}`,
+    `Re-graded: ${report.score}/${report.maxScore}.${certificateNote}`,
+  );
 }
 
 /** Detach a software dependency from a scenario. */

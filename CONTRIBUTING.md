@@ -11,7 +11,7 @@ change merged.
 cp .env.example .env      # set AUTH_SECRET to a long random value
 npm install
 npm run docker:db         # Postgres 16, or point DATABASE_URL at your own
-npm run setup             # prisma generate + db push + seed
+npm run setup             # prisma generate + db push + reset attempts + seed
 npm run dev
 ```
 

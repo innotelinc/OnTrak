@@ -269,6 +269,16 @@ model Attempt {
   /// Feedback the student has unlocked by spending hints.
   hintsUsed String[] @default([])
 
+  /// The completion record issued when this attempt first cleared the pass mark.
+  /// Stored rather than derived so the code a learner was handed keeps verifying
+  /// after a re-grade — see `src/lib/certificates.ts`.
+  certificate           Json?
+  certificateIssuedAt   DateTime?
+  /// Set when a re-grade dropped the attempt back below the pass mark, which
+  /// revokes the record above. A self-contained record cannot carry this flag,
+  /// so the product reads it here; `/verify` still only reports on the artifact.
+  certificateRevokedAt  DateTime?
+
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   scenario     Scenario      @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
   assignment   Assignment?   @relation(fields: [assignmentId], references: [id], onDelete: SetNull)

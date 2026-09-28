@@ -16,6 +16,7 @@ import {
 } from "@/lib/scenarios";
 import { evaluateScenario, loadAvailabilityContext } from "@/lib/availability";
 import { recordAudit } from "@/lib/audit";
+import { certificatePatchFor, readStoredCertificate } from "@/lib/certificates";
 import type { Prisma } from "@prisma/client";
 import type { EngineState } from "@/lib/sim/types";
 
@@ -149,7 +150,7 @@ export async function submitAttempt(formData: FormData): Promise<void> {
 
   const attempt = await prisma.attempt.findUnique({
     where: { id: attemptId },
-    include: { scenario: true },
+    include: { scenario: true, user: { select: { name: true } } },
   });
   if (!attempt) fail("/student", "That attempt no longer exists.");
   if (attempt.userId !== user.id && user.role === "STUDENT") fail("/student", "That attempt is not yours.");
@@ -162,6 +163,25 @@ export async function submitAttempt(formData: FormData): Promise<void> {
     // attempt closed after `expiresAt` is expired. `reason` only records how
     // it ended (audit + the report's wording), never whether it ran out of time.
     const expired = attempt.expiresAt.getTime() <= Date.now();
+    const gradedAt = new Date();
+    // A pass earns a certificate, stored here so the code the learner is handed
+    // keeps verifying even if an instructor re-grades this attempt later.
+    const certificate = certificatePatchFor(
+      {
+        learnerId: attempt.userId,
+        learnerName: attempt.user.name,
+        scenarioId: attempt.scenarioId,
+        scenarioTitle: attempt.scenario.title,
+        platform: attempt.scenario.platform,
+        score: report.score,
+        maxScore: report.maxScore,
+        passScore: attempt.scenario.passScore,
+        completedAt: gradedAt,
+        skills: attempt.scenario.tags,
+      },
+      readStoredCertificate(attempt),
+      gradedAt,
+    );
 
     await prisma.$transaction([
       prisma.checkResult.deleteMany({ where: { attemptId } }),
@@ -180,11 +200,12 @@ export async function submitAttempt(formData: FormData): Promise<void> {
         where: { id: attemptId },
         data: {
           status: expired ? "EXPIRED" : "GRADED",
-          submittedAt: new Date(),
-          gradedAt: new Date(),
+          submittedAt: gradedAt,
+          gradedAt,
           score: report.score,
           maxScore: report.maxScore,
-          timeSpentSec: Math.round((Date.now() - attempt.startedAt.getTime()) / 1000),
+          timeSpentSec: Math.round((gradedAt.getTime() - attempt.startedAt.getTime()) / 1000),
+          ...certificate,
         },
       }),
     ]);

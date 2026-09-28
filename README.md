@@ -56,7 +56,7 @@ cp .env.example .env          # then edit AUTH_SECRET
 npm install
 
 npm run docker:db             # starts Postgres 16 on :5432 (or point DATABASE_URL elsewhere)
-npm run setup                 # prisma generate + db push + seed demo data
+npm run setup                 # prisma generate + db push + reset + seed demo data
 npm run dev                   # http://localhost:3000
 ```
 
@@ -68,7 +68,11 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 
 ### Demo accounts
 
-`npm run db:seed` provisions a small school so you can click around immediately:
+`npm run db:seed` provisions a small school so you can click around immediately —
+including one finished, passing attempt for the demo student, so the certificate
+on the report page has something real to show. (`npm run setup` clears attempts
+*before* seeding, so the run it performs ends with that attempt in place; a bare
+`npm run db:reset-demo` removes it again, as "start fresh" should.)
 
 | Role       | Email                        | Password       |
 | ---------- | ---------------------------- | -------------- |
@@ -142,7 +146,7 @@ disabled"* or *"requires a license key for Contoso Asset Suite"*.
 | `npm run start` | Serve the production build. |
 | `npm run typecheck` | `tsc --noEmit`. |
 | `npm test` | Engine, grading, validator and desktop-surface test suite. |
-| `npm run setup` | Generate the client, push the schema, seed demo data. |
+| `npm run setup` | Generate the client, push the schema, reset attempts, seed demo data. |
 | `npm run db:push` | Push `schema.prisma` to the database. |
 | `npm run db:migrate` | Create a versioned migration. |
 | `npm run db:seed` | Re-seed demo data (idempotent). |
