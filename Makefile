@@ -1,0 +1,110 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# OnTrak — operator workflow.
+#
+# `make help` is the first stop. Every target carries a `##` description, so
+# help stays accurate without being maintained twice.
+#
+# Two apps live here and stay independently deployable, so the targets that
+# only make sense for one of them say so: `TIX` targets run in ontrak-tix/,
+# everything else runs in the training app at the repo root. Nothing above
+# `## ---- Delivery ----` talks to a remote or changes published state.
+# ═══════════════════════════════════════════════════════════════════════════
+
+SHELL := /bin/bash
+.DEFAULT_GOAL := help
+TIX_DIR := ontrak-tix
+
+## ---- Bootstrap ----
+
+.PHONY: help
+help: ## Show this help
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2} /^## / {printf "\n\033[1m%s\033[0m\n", substr($$0, 4)}' $(MAKEFILE_LIST)
+
+.PHONY: setup
+setup: hooks ## Install guard hooks, create .env, install dependencies
+	@if [ ! -f .env ]; then cp .env.example .env; echo "created .env (edit AUTH_SECRET before deploying)"; fi
+	npm install
+
+.PHONY: hooks
+hooks: ## Point git at the shared attribution/secret guard hooks
+	git config core.hooksPath .githooks
+	@echo "hooks: .githooks installed"
+
+## ---- The training app ----
+
+.PHONY: db
+db: ## Start the development PostgreSQL (Docker)
+	docker compose up -d db
+
+.PHONY: migrate
+migrate: ## Generate the Prisma client and apply migrations
+	npx prisma generate && npx prisma migrate deploy
+
+.PHONY: seed
+seed: ## Reset and seed the demo scenarios, courses and accounts
+	npm run setup
+
+.PHONY: dev
+dev: ## Run the training app (http://localhost:3000)
+	npm run dev
+
+## ---- OnTrak Tix ----
+
+.PHONY: tix-setup
+tix-setup: ## Install dependencies for the service desk
+	cd $(TIX_DIR) && npm install
+
+.PHONY: tix-db
+tix-db: ## Start Tix's own development PostgreSQL (Docker)
+	cd $(TIX_DIR) && docker compose up -d db
+
+.PHONY: tix-schema
+tix-schema: ## Generate the Prisma client and sync Tix's schema
+	cd $(TIX_DIR) && npx prisma generate && npx prisma db push
+
+.PHONY: tix-dev
+tix-dev: ## Run the service desk (http://localhost:3000)
+	cd $(TIX_DIR) && npm run dev
+
+.PHONY: tix-sweep
+tix-sweep: ## Run the retention sweep without HTTP (a dry run unless FORCE=1)
+	cd $(TIX_DIR) && npm run sweep:retention
+
+## ---- Checks (what CI runs) ----
+
+.PHONY: check
+check: typecheck test build ## Everything CI runs, in the order CI runs it
+
+.PHONY: typecheck
+typecheck: ## Typecheck both apps
+	npm run typecheck
+	cd $(TIX_DIR) && npm run typecheck
+
+.PHONY: test
+test: ## Run both unit-test suites
+	npm test
+	cd $(TIX_DIR) && npm test
+
+.PHONY: build
+build: ## Production-build both apps
+	npm run build
+	cd $(TIX_DIR) && npm run build
+
+.PHONY: conform
+conform: ## Audit this repo against the Innotel Platform Stack standard
+	@if [ -d .stack ]; then bash .stack/scripts/conform-project.sh .; \
+	else echo "fetch it first: git clone https://github.com/innotelinc/innotel-platform-stack .stack"; exit 1; fi
+
+.PHONY: guard
+guard: ## Prove the attribution guard still rejects what it must
+	bash -o pipefail -c 'source .githooks/guard-lib; guard_selftest --self-commit'
+
+.PHONY: secrets
+secrets: ## Scan the tracked tree for credential-shaped content
+	python3 scripts/secret-scan.py
+
+## ---- Delivery ----
+
+.PHONY: clean
+clean: ## Remove build output and test artifacts
+	rm -rf .next out $(TIX_DIR)/.next test-results playwright-report tsconfig.tsbuildinfo
