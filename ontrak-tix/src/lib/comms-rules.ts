@@ -17,6 +17,7 @@
  */
 
 import { TEMPLATE_VARS } from "./canned-rules";
+import { isRegimeKey, NOTIFICATION_REGIMES } from "./regulatory-rules";
 
 /* -------------------------------------------------------------------------- */
 /*  Who the notice goes to                                                    */
@@ -240,6 +241,12 @@ export interface IncidentCommsTemplate {
   body: string;
   /** What a message of this kind must not forget. */
   guidance: string;
+  /**
+   * The tenant's own draft, authored on the console — which is why it is offered
+   * ahead of the shipped defaults for the same regime: a desk's own words are
+   * what it wants to send.
+   */
+  custom?: boolean;
 }
 
 /**
@@ -413,14 +420,104 @@ export function commsTemplateByKey(key: string): IncidentCommsTemplate | null {
  * generic ones, flagged as such so the console can say it is offering a fallback
  * rather than pretending to have a template for that duty.
  */
-export function templatesForRegime(regimeKey: string): { template: IncidentCommsTemplate; fallback: boolean }[] {
-  const exact = INCIDENT_COMMS_TEMPLATES.filter((template) => template.regimes.includes(regimeKey));
-  if (exact.length > 0) return exact.map((template) => ({ template, fallback: false }));
-  return INCIDENT_COMMS_TEMPLATES.filter((template) => template.regimes.length === 0).map((template) => ({
-    template,
-    fallback: true,
-  }));
+export function templatesForRegime(
+  regimeKey: string,
+  custom: readonly IncidentCommsTemplate[] = [],
+): { template: IncidentCommsTemplate; fallback: boolean }[] {
+  const mine = custom.map((template) => ({ ...template, custom: true }));
+  const ours = INCIDENT_COMMS_TEMPLATES.map((template) => ({ ...template, custom: false }));
+
+  // The drafts that name this regime, the desk's own first: a desk's own words
+  // are what it wants to send, and ours are the fallback.
+  const exact = [...mine, ...ours].filter((template) => template.regimes.includes(regimeKey));
+
+  // A desk's *generic* draft is offered on every duty, not only where we have
+  // nothing — writing one is a request to have it available everywhere. Our own
+  // generic drafts are the last resort, so they only appear when nothing at all
+  // names the regime.
+  const generic = [...mine.filter((template) => template.regimes.length === 0)];
+  if (exact.length === 0) generic.push(...ours.filter((template) => template.regimes.length === 0));
+
+  return [
+    ...exact.map((template) => ({ template, fallback: false })),
+    ...generic.map((template) => ({ template, fallback: exact.length === 0 })),
+  ];
 }
+
+/* -------------------------------------------------------------------------- */
+/*  A tenant's own drafts                                                     */
+/* -------------------------------------------------------------------------- */
+
+export const COMMS_TEMPLATE_LABEL_MAX = 120;
+
+export interface CommsTemplateIssue {
+  field: string;
+  message: string;
+}
+
+/**
+ * Validate a tenant's draft before it is stored. Returns every problem, not the
+ * first — a screen that fixes one error at a time is a screen nobody finishes.
+ */
+export function validateCommsTemplate(input: {
+  label?: string;
+  audience?: string;
+  regimes?: readonly string[];
+  subject?: string;
+  body?: string;
+  guidance?: string | null;
+}): CommsTemplateIssue[] {
+  const issues: CommsTemplateIssue[] = [];
+
+  const label = input.label?.trim() ?? "";
+  if (!label) issues.push({ field: "label", message: "A name is required." });
+  else if (label.length > COMMS_TEMPLATE_LABEL_MAX) {
+    issues.push({ field: "label", message: `The name may be at most ${COMMS_TEMPLATE_LABEL_MAX} characters.` });
+  }
+
+  if (!input.audience) issues.push({ field: "audience", message: "Choose who the message goes to." });
+  else if (!(COMMS_AUDIENCES as readonly string[]).includes(input.audience)) {
+    issues.push({ field: "audience", message: `Unknown audience "${input.audience}".` });
+  }
+
+  for (const regime of input.regimes ?? []) {
+    if (!isRegimeKey(regime)) {
+      issues.push({ field: "regimes", message: `Unknown notification regime "${regime}".` });
+    }
+  }
+
+  const subject = input.subject?.trim() ?? "";
+  if (!subject) issues.push({ field: "subject", message: "A subject is required." });
+  else if (subject.length > COMMS_SUBJECT_MAX) {
+    issues.push({ field: "subject", message: `The subject may be at most ${COMMS_SUBJECT_MAX} characters.` });
+  }
+
+  const body = input.body?.trim() ?? "";
+  if (!body) issues.push({ field: "body", message: "A body is required." });
+  else if (body.length > COMMS_MESSAGE_MAX) {
+    issues.push({ field: "body", message: `The body may be at most ${COMMS_MESSAGE_MAX} characters.` });
+  }
+
+  // Placeholders are checked rather than corrected: a typo should be refused at
+  // authoring time, when there is a person to tell, not discovered by a duty at
+  // three in the morning.
+  const unknown = unknownPlaceholders(`${subject}\n${body}`);
+  if (unknown.length > 0) {
+    issues.push({
+      field: "body",
+      message: `Unknown placeholders: ${unknown.map((name) => `{{${name}}}`).join(", ")}. Available: ${COMMS_VALUE_PLACEHOLDERS.map((name) => `{{${name}}}`).join(", ")}, plus the fields you fill in: ${COMMS_FILL_IN.map((name) => `{{${name}}}`).join(", ")}.`,
+    });
+  }
+
+  return issues;
+}
+
+/** The regimes a tenant's draft can be aimed at, for the authoring screen. */
+export function authorableRegimes(): { key: string; label: string }[] {
+  return NOTIFICATION_REGIMES.map((regime) => ({ key: regime.key, label: regime.label }));
+}
+
+export const COMMS_SUBJECT_MAX = 300;
 
 /* -------------------------------------------------------------------------- */
 /*  The M1 bridge                                                             */
@@ -467,6 +564,8 @@ export interface CommsDraft {
   fillIn: string[];
   /** True when no template names this regime and a generic one was offered. */
   fallback: boolean;
+  /** True when this is the tenant's own draft rather than a shipped default. */
+  custom: boolean;
 }
 
 /** What is wrong with a notice text, if anything. Empty means it is sendable. */
@@ -489,9 +588,9 @@ export function commsIssues(message: string): string[] {
  * is offered whether or not it is "ready": a notice that still has fields to
  * fill in is exactly the thing a person needs to see, with the gaps named.
  */
-export function commsDrafts(context: CommsContext): CommsDraft[] {
+export function commsDrafts(context: CommsContext, custom: readonly IncidentCommsTemplate[] = []): CommsDraft[] {
   const values = commsValues(context);
-  return templatesForRegime(context.obligation.regime).map(({ template, fallback }) => {
+  return templatesForRegime(context.obligation.regime, custom).map(({ template, fallback }) => {
     const subject = renderCommsText(template.subject, values).trim();
     const body = renderCommsText(template.body, values).trim();
     const message = `${subject}\n\n${body}`;
@@ -505,11 +604,16 @@ export function commsDrafts(context: CommsContext): CommsDraft[] {
       issues,
       fillIn: commsFillInFields(message),
       fallback,
+      custom: template.custom === true,
     };
   });
 }
 
 /** One draft by key, for a caller that knows which template it wants. */
-export function commsDraft(context: CommsContext, templateKey: string): CommsDraft | null {
-  return commsDrafts(context).find((draft) => draft.template.key === templateKey) ?? null;
+export function commsDraft(
+  context: CommsContext,
+  templateKey: string,
+  custom: readonly IncidentCommsTemplate[] = [],
+): CommsDraft | null {
+  return commsDrafts(context, custom).find((draft) => draft.template.key === templateKey) ?? null;
 }

@@ -58,7 +58,19 @@ test.describe("OnTrak Tix desk", () => {
     await signIn(page);
   });
 
-  for (const path of ["/inbox", "/reports", "/notifications", "/canned", "/templates", "/inbox/new", "/security", "/incidents"]) {
+  const staffPaths = [
+    "/inbox",
+    "/reports",
+    "/notifications",
+    "/canned",
+    "/templates",
+    "/inbox/new",
+    "/security",
+    "/incidents",
+    "/incidents/templates",
+  ];
+
+  for (const path of staffPaths) {
     test(`a11y (browser): Tix ${path} passes WCAG A/AA`, async ({ page }) => {
       await auditPath(page, path);
     });
@@ -347,6 +359,95 @@ test.describe("OnTrak Tix desk", () => {
     await expect(incidentDuty).toContainText("Notice text as sent");
     await expect(incidentDuty).toContainText("CSIRT-2026-0043");
     await expect(incidentDuty).toContainText(/Incident notification — INC-\d+/);
+  });
+
+  test("incidents: a draft the desk writes is offered on its duty", async ({ page }) => {
+    // Write a draft of our own, aimed at a regime…
+    await page.goto(url("/incidents/templates"), { waitUntil: "load" });
+    const stamp = Date.now();
+    const label = `Contract notice ${stamp}`;
+    await page.getByLabel("Name").fill(label);
+    await page.getByLabel("Who it goes to").selectOption("CLIENT");
+    await page.getByRole("checkbox", { name: "Client contract breach notice" }).check();
+    await page.getByLabel("Subject").fill(`Service notice — {{ref}} (${stamp})`);
+    await page.getByLabel("Body").fill("Dear {{requester}},\n\n{{ref}} — we are responding. Contact {{author}} at {{tenant}}.");
+    await page.getByLabel("What it must not forget (optional, one line)").fill("Say what is affected before saying what happened.");
+    await page.getByRole("button", { name: "Save draft" }).click();
+    await expect(page.locator("body")).toContainText(`${label} can now be drafted on a duty.`, { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText("Say what is affected before saying what happened.");
+
+    // …and see it offered first on an incident that owes that notice.
+    await page.goto(url("/incidents"), { waitUntil: "load" });
+    await page.getByLabel("Title").fill(`Draft sweep ${stamp}`);
+    await page.getByLabel("Summary").fill("Exercises a desk's own notification draft.");
+    await page.locator('select[name="impact"]').selectOption("EXTENSIVE");
+    await page.locator('select[name="urgency"]').selectOption("CRITICAL");
+    await page.getByRole("button", { name: "Declare incident" }).click();
+    await expect(page.locator("body")).toContainText(/INC-\d+/, { timeout: 20_000 });
+
+    const card = page
+      .locator("li")
+      .filter({ has: page.getByRole("heading", { name: `Draft sweep ${stamp}`, exact: true }) })
+      .first();
+    await card.getByRole("button", { name: "Track Client contract breach notice" }).click();
+    await expect(page.locator("body")).toContainText(/is now tracked/, { timeout: 20_000 });
+
+    const duty = card.locator("li").filter({ hasText: "Client contract breach notice" }).first();
+    await duty.getByText(/^Draft this notice/).click();
+    await expect(duty).toContainText(label);
+    // The desk's wording is offered ahead of the shipped one, and marked as theirs.
+    await expect(duty).toContainText("yours");
+    // Ours is offered first and the shipped one still follows it. (The draft is
+    // retired at the end of this test, so the tenant stays free of sweep residue.)
+    const drafts = duty.locator('textarea[name="message"]');
+    await expect(drafts).toHaveCount(2);
+    await expect(drafts.first()).toHaveValue(new RegExp(`Service notice — INC-\\d+ \\(${stamp}\\)`));
+    await expect(drafts.first()).toHaveValue(/Contact .+ at Acme/);
+    await expect(drafts.nth(1)).toHaveValue(/Service incident notice/);
+
+    // Retiring the draft stops it being offered and leaves it readable, so a
+    // notice that cited it stays explainable. (It also keeps this sweep from
+    // piling drafts up in the demo tenant on every run.)
+    await page.goto(url("/incidents/templates"), { waitUntil: "load" });
+    const ours = page.locator("li").filter({ hasText: label }).first();
+    await ours.getByRole("button", { name: "Retire" }).click();
+    await expect(page.locator("body")).toContainText(`${label} retired.`, { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText("Retired");
+    await expect(page.locator("li").filter({ hasText: label }).first()).toContainText("Offer again");
+
+    // …and the duty it named goes back to the shipped wording, then records it.
+    await page.goto(url("/incidents"), { waitUntil: "load" });
+    const after = page
+      .locator("li")
+      .filter({ has: page.getByRole("heading", { name: `Draft sweep ${stamp}`, exact: true }) })
+      .first();
+    const afterDuty = after.locator("li").filter({ hasText: "Client contract breach notice" }).first();
+    await afterDuty.getByText(/^Draft this notice/).click();
+    await expect(afterDuty).not.toContainText(label);
+    await expect(afterDuty).toContainText("Service incident notice");
+
+    // The shipped draft leaves a field only a person can fill, and the service
+    // refuses to record it while that field is blank — in the browser's words,
+    // not a stack trace. Filling it in is what makes it sendable.
+    await afterDuty.getByRole("button", { name: "Record this notice as sent" }).first().click();
+    await expect(page.locator("body")).toContainText(/Still to fill in: \{\{servicesAffected\}\}/, { timeout: 20_000 });
+
+    const reopened = page
+      .locator("li")
+      .filter({ has: page.getByRole("heading", { name: `Draft sweep ${stamp}`, exact: true }) })
+      .first()
+      .locator("li")
+      .filter({ hasText: "Client contract breach notice" })
+      .first();
+    // React does not own the `<details>` open flag, so a soft navigation can
+    // leave the panel open — only click the summary when it is closed.
+    const notice = reopened.locator('textarea[name="message"]').first();
+    if (!(await notice.isVisible())) await reopened.getByText(/^Draft this notice/).click();
+    await expect(notice).toBeVisible();
+    await notice.fill((await notice.inputValue()).replace("{{servicesAffected}}", "mail and file services"));
+    await reopened.getByRole("button", { name: "Record this notice as sent" }).first().click();
+    await expect(page.locator("body")).toContainText(/with the notice text on the record/, { timeout: 20_000 });
+    await expect(reopened).toContainText("Notice text as sent");
   });
 
   test("incidents: the phase ladder, the published review and the assembled timeline", async ({ page }) => {

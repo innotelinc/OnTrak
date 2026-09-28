@@ -13,7 +13,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
 import { requireActor } from "../../lib/session";
-import { complianceServicesFor, incidentDocsServicesFor, incidentServicesFor } from "../../lib/db";
+import { commsTemplateServicesFor, complianceServicesFor, incidentDocsServicesFor, incidentServicesFor } from "../../lib/db";
 import {
   INCIDENT_IMPACTS,
   INCIDENT_PHASES,
@@ -301,6 +301,44 @@ export async function waiveNotificationAction(formData: FormData): Promise<void>
   const result = await complianceServicesFor().waive(actor, incidentId, notificationId, text(formData, "reason"));
   if (!result.ok) fail(result.error);
   ok("Notification waived.");
+}
+
+/* ------------------------------------------------- notification templates */
+
+/**
+ * Author the desk's own draft for a notification regime.
+ *
+ * The templates are managed on their own page, so the flash and the error go
+ * back there rather than to the console.
+ */
+export async function createCommsTemplateAction(formData: FormData): Promise<void> {
+  const actor = await requireActor();
+
+  const result = await commsTemplateServicesFor().create(actor, {
+    label: text(formData, "label"),
+    audience: text(formData, "audience"),
+    regimes: formData.getAll("regimes").map((value) => String(value)),
+    subject: String(formData.get("subject") ?? ""),
+    body: String(formData.get("body") ?? ""),
+    guidance: String(formData.get("guidance") ?? ""),
+  });
+  revalidatePath("/incidents/templates");
+  if (!result.ok) redirect(`/incidents/templates?error=${encodeURIComponent(result.error)}`);
+  redirect(`/incidents/templates?flash=${encodeURIComponent(`${result.value.label} can now be drafted on a duty.`)}`);
+}
+
+/** Retire a draft (or bring it back). Retired, never deleted. */
+export async function retireCommsTemplateAction(formData: FormData): Promise<void> {
+  const actor = await requireActor();
+  const templateId = text(formData, "templateId");
+  if (!templateId) redirect("/incidents/templates?error=Choose%20a%20template%20first.");
+
+  const result = await commsTemplateServicesFor().retire(actor, templateId, text(formData, "retired") === "true");
+  revalidatePath("/incidents/templates");
+  if (!result.ok) redirect(`/incidents/templates?error=${encodeURIComponent(result.error)}`);
+  redirect(
+    `/incidents/templates?flash=${encodeURIComponent(result.value.retiredAt ? `${result.value.label} retired.` : `${result.value.label} is offered again.`)}`,
+  );
 }
 
 /* ------------------------------------------------------ post-incident review */

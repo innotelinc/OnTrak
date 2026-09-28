@@ -39,6 +39,11 @@ import { AssuranceService } from "./assurance-service";
 import { assuranceSigner } from "./assurance-sign";
 import { IncidentComplianceService } from "./compliance-service";
 import { PrismaComplianceStore, type CompliancePrismaClient } from "./compliance-store-prisma";
+import { IncidentCommsTemplateService } from "./comms-template-service";
+import {
+  PrismaCommsTemplateStore,
+  type CommsTemplatePrismaClient,
+} from "./comms-template-store-prisma";
 import { WarRoomService } from "./war-room-service";
 
 /**
@@ -77,6 +82,7 @@ let incidents: IncidentService | null = null;
 let incidentDocs: IncidentDocsService | null = null;
 let assurance: AssuranceService | null = null;
 let compliance: IncidentComplianceService | null = null;
+let commsTemplates: IncidentCommsTemplateService | null = null;
 let warRoom: WarRoomService | null = null;
 
 function csat(): CsatService {
@@ -268,6 +274,17 @@ export function complianceServicesFor(): IncidentComplianceService {
     ticketServices().audit,
   );
   return compliance;
+}
+
+/**
+ * The configured incident-communications template service: the tenant's own
+ * drafts for a notification duty, which the console offers ahead of ours.
+ */
+export function commsTemplateServicesFor(): IncidentCommsTemplateService {
+  commsTemplates ??= new IncidentCommsTemplateService(
+    new PrismaCommsTemplateStore(prisma as unknown as CommsTemplatePrismaClient),
+  );
+  return commsTemplates;
 }
 
 /**

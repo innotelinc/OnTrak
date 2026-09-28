@@ -35,9 +35,22 @@ import {
   renderCommsText,
   templatesForRegime,
   unknownPlaceholders,
+  authorableRegimes,
+  validateCommsTemplate,
   type CommsContext,
+  type IncidentCommsTemplate,
 } from "../src/lib/comms-rules";
 import { IncidentComplianceService, MemoryComplianceStore } from "../src/lib/compliance-service";
+import {
+  IncidentCommsTemplateService,
+  MemoryCommsTemplateStore,
+  toCommsTemplate,
+} from "../src/lib/comms-template-service";
+import {
+  toCommsTemplateData,
+  toCommsTemplateRecord,
+  type CommsTemplateRow,
+} from "../src/lib/comms-template-store-prisma";
 import { IncidentService, MemoryIncidentStore, type IncidentRecord } from "../src/lib/incident-service";
 import { NOTIFICATION_REGIMES, type NotificationObligation } from "../src/lib/regulatory-rules";
 import { NotificationPanel } from "../src/components/IncidentCompliance";
@@ -181,6 +194,195 @@ test("what is wrong with a notice text is a rule, not a judgement", () => {
   assert.deepEqual(commsIssues("x".repeat(COMMS_MESSAGE_MAX)), []);
   assert.deepEqual(commsIssues("Everything the authority needs."), []);
   assert.match(commsIssues("{{scope}}").join(" "), /Still to fill in: \{\{scope\}\}/);
+});
+
+/* ------------------------------------------------- the desk's own drafts */
+
+const MY_CONTRACT_DRAFT: IncidentCommsTemplate = {
+  key: "tenant:ct-1",
+  label: "Contract notice (our wording)",
+  audience: "CLIENT",
+  regimes: ["contract-24h"],
+  subject: "Service interruption — {{ref}}",
+  body: "Dear {{requester}},\n\nWe are responding to an incident affecting {{ref}}.\n\n— {{author}}",
+  guidance: "Our own wording, from the contract.",
+  custom: true,
+};
+
+const MY_GENERIC_DRAFT: IncidentCommsTemplate = {
+  key: "tenant:ct-2",
+  label: "Holding note (ours)",
+  audience: "STAFF",
+  regimes: [],
+  subject: "Update on {{ref}}",
+  body: "Team: we are engaged on {{ref}}.\n\n— {{author}}",
+  guidance: "",
+  custom: true,
+};
+
+test("a draft the desk wrote is validated where a person can fix it", () => {
+  assert.match(validateCommsTemplate({})[0].message, /A name is required/);
+  assert.match(validateCommsTemplate({ label: "X" })[0].message, /Choose who the message goes to/);
+  assert.match(validateCommsTemplate({ label: "X", audience: "EVERYONE" })[0].message, /Unknown audience/);
+  assert.match(validateCommsTemplate({ label: "X", audience: "CLIENT" })[0].message, /A subject is required/);
+  assert.match(validateCommsTemplate({ label: "X", audience: "CLIENT", subject: "s" })[0].message, /A body is required/);
+  assert.match(
+    validateCommsTemplate({ label: "X", audience: "CLIENT", subject: "s", body: "b", regimes: ["made-up"] })[0].message,
+    /Unknown notification regime/,
+  );
+  // Aiming a draft at no regime is how a desk writes a generic one, so it is valid.
+  assert.deepEqual(validateCommsTemplate({ label: "X", audience: "CLIENT", subject: "s", body: "b", regimes: [] }), []);
+
+  // A placeholder this deployment cannot fill is refused at authoring time, and
+  // the refusal lists what is available — a typo should not survive to 03:00.
+  const typo = validateCommsTemplate({ label: "X", audience: "CLIENT", subject: "{{ref}}", body: "Hi {{requester}}, re {{refrence}}" });
+  assert.equal(typo.length, 1);
+  assert.match(typo[0].message, /Unknown placeholders: \{\{refrence\}\}\./);
+  assert.match(typo[0].message, /\{\{detectedAt\}\}/);
+  assert.match(typo[0].message, /\{\{dataCategories\}\}/);
+
+  assert.match(
+    validateCommsTemplate({ label: "X", audience: "CLIENT", subject: "s", body: "x".repeat(COMMS_MESSAGE_MAX + 1) })[0].message,
+    /at most 20000 characters/,
+  );
+  assert.deepEqual(
+    validateCommsTemplate({ label: "Our notice", audience: "REGULATOR", regimes: ["nis2-incident"], subject: "{{ref}}", body: "{{ref}} — {{authority}}" }),
+    [],
+  );
+  assert.deepEqual(validateCommsTemplate({ label: "Generic", audience: "STAFF", regimes: [], subject: "{{ref}}", body: "{{ref}}" }), []);
+
+  // The regimes a screen offers to aim a draft at are the tracked ones.
+  assert.equal(authorableRegimes().length, NOTIFICATION_REGIMES.length);
+});
+
+test("the desk's own draft is offered ahead of ours, and a generic one is offered everywhere", () => {
+  const contract = templatesForRegime("contract-24h", [MY_CONTRACT_DRAFT, MY_GENERIC_DRAFT]);
+  assert.equal(contract[0].template.label, "Contract notice (our wording)");
+  assert.equal(contract[0].template.custom, true);
+  assert.equal(contract[0].fallback, false);
+  // Ours for the same regime still follows, then the desk's generic one — which
+  // is offered on a duty that already has an exact draft, because a desk writing
+  // a generic draft asked for it everywhere.
+  assert.deepEqual(
+    contract.map((entry) => [entry.template.label, entry.fallback]),
+    [
+      ["Contract notice (our wording)", false],
+      ["Client breach notice", false],
+      ["Holding note (ours)", false],
+    ],
+  );
+  // Our generic drafts stay out of the way when something names the regime.
+  assert.ok(!contract.some((entry) => entry.template.key === "incident-holding-statement"));
+
+  // An unknown regime: the desk's generic draft first, then ours, all flagged.
+  const unknown = templatesForRegime("made-up", [MY_GENERIC_DRAFT]);
+  assert.equal(unknown[0].template.label, "Holding note (ours)");
+  assert.ok(unknown.every((entry) => entry.fallback === true));
+  assert.ok(unknown.length > 1);
+});
+
+test("a draft is authored, refused when it duplicates a name, and retired rather than deleted", async () => {
+  const service = new IncidentCommsTemplateService(new MemoryCommsTemplateStore(), {
+    id: (() => {
+      let n = 0;
+      return () => `ct-${++n}`;
+    })(),
+    now: () => "2026-09-20T12:00:00.000Z",
+  });
+
+  const created = await service.create(AGENT, {
+    label: "  Our CSIRT wording  ",
+    audience: "REGULATOR",
+    regimes: ["nis2-early-warning", "nis2-early-warning", "  "],
+    subject: "  {{ref}} — {{title}}  ",
+    body: "  To: {{authority}}\n\nWe are giving early warning.  ",
+    guidance: "  Keep it short.  ",
+  });
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  // Trimmed and de-duplicated on the way in, so the row holds what will be sent.
+  assert.equal(created.value.label, "Our CSIRT wording");
+  assert.deepEqual(created.value.regimes, ["nis2-early-warning"]);
+  assert.equal(created.value.subject, "{{ref}} — {{title}}");
+  assert.equal(created.value.guidance, "Keep it short.");
+  assert.equal(created.value.retiredAt, null);
+  assert.equal(created.value.createdBy, "agent-1");
+
+  // The same name is how somebody picks a draft, so it cannot be ambiguous.
+  const duplicate = await service.create(AGENT, { label: "our csirt wording", audience: "REGULATOR", subject: "s", body: "b" });
+  assert.equal(duplicate.ok, false);
+  if (!duplicate.ok) assert.match(duplicate.error, /already exists/);
+
+  // A bad draft is refused with the first problem, and nothing is stored.
+  const bad = await service.create(AGENT, { label: "Broken", audience: "REGULATOR", subject: "s", body: "see {{nope}}" });
+  assert.equal(bad.ok, false);
+  assert.equal((await service.list("tenant-a")).length, 1);
+
+  // Editing keeps the identity and moves the updated stamp only.
+  const edited = await service.update(AGENT, created.value.id, {
+    label: "Our CSIRT wording v2",
+    audience: "REGULATOR",
+    regimes: [],
+    subject: "{{ref}}",
+    body: "{{ref}}: early warning.",
+  });
+  assert.equal(edited.ok, true);
+  if (!edited.ok) return;
+  assert.equal(edited.value.id, created.value.id);
+  assert.deepEqual(edited.value.regimes, []);
+
+  // Retiring stops it being offered and keeps it readable; offering it again undoes that.
+  const retired = await service.retire(AGENT, created.value.id, true);
+  assert.equal(retired.ok, true);
+  assert.deepEqual(await service.list("tenant-a"), []);
+  assert.equal((await service.list("tenant-a", { includeRetired: true })).length, 1);
+  assert.deepEqual(await service.templatesFor("tenant-a"), []);
+  const back = await service.retire(AGENT, created.value.id, false);
+  assert.equal(back.ok, true);
+  assert.equal((await service.templatesFor("tenant-a")).length, 1);
+
+  // A requester reads, but does not write, and tenants do not see each other.
+  const outsider = { id: "agent-9", tenantId: "tenant-b", role: "AGENT" as const };
+  assert.equal((await service.create(REQUESTER, { label: "Nope", audience: "STAFF", subject: "s", body: "b" })).ok, false);
+  assert.equal((await service.list("tenant-b")).length, 0);
+  assert.equal((await service.update(outsider, created.value.id, { label: "x", audience: "STAFF", subject: "s", body: "b" })).ok, false);
+  assert.equal((await service.retire(outsider, created.value.id, true)).ok, false);
+});
+
+test("the Prisma adapter narrows the audience and round-trips the regimes", () => {
+  const row: CommsTemplateRow = {
+    id: "ct-1",
+    tenantId: "tenant-a",
+    label: "Our wording",
+    audience: "CLIENT",
+    regimes: ["contract-24h"],
+    subject: "{{ref}}",
+    body: "Dear {{requester}}",
+    guidance: null,
+    retiredAt: null,
+    createdBy: "agent-1",
+    createdAt: new Date("2026-09-20T12:00:00.000Z"),
+    updatedAt: new Date("2026-09-20T12:00:00.000Z"),
+  };
+
+  const record = toCommsTemplateRecord(row);
+  assert.equal(record.audience, "CLIENT");
+  assert.deepEqual(record.regimes, ["contract-24h"]);
+  assert.equal(record.createdAt, "2026-09-20T12:00:00.000Z");
+  assert.equal(record.retiredAt, null);
+  // An audience a newer version wrote degrades to the internal one, not to a string.
+  assert.equal(toCommsTemplateRecord({ ...row, audience: "WHOEVER" }).audience, "STAFF");
+  assert.equal(toCommsTemplateRecord({ ...row, retiredAt: new Date("2026-10-01T00:00:00.000Z") }).retiredAt, "2026-10-01T00:00:00.000Z");
+
+  const data = toCommsTemplateData(record);
+  assert.equal(data.createdAt instanceof Date, true);
+  assert.deepEqual(data.regimes, ["contract-24h"]);
+
+  // The stored row becomes a template the rules offer, marked as the desk's own.
+  const template = toCommsTemplate(record);
+  assert.equal(template.key, "tenant:ct-1");
+  assert.equal(template.custom, true);
+  assert.equal(template.guidance, "");
 });
 
 /* ------------------------------------------------------------------ service */
@@ -401,4 +603,30 @@ test("the panel offers a draft on an open duty, and shows what was sent once it 
   assert.doesNotMatch(sent, /Draft this notice/);
   assert.match(sent, /Notice text as sent/);
   assert.match(sent, /We are giving early warning\./);
+});
+
+test("the panel offers the desk's own draft first, and says it is theirs", () => {
+  const html = renderToStaticMarkup(
+    createElement(NotificationPanel, {
+      incidentId: "inc-1",
+      obligations: [
+        obligation({ regime: "contract-24h", label: "Client contract breach notice", authority: "Affected client(s)" }),
+      ],
+      suggestions: [],
+      comms: { ...COMMS_FACTS, templates: [MY_CONTRACT_DRAFT, MY_GENERIC_DRAFT] },
+      now: "2026-09-20T10:00:00.000Z",
+      actions: NO_ACTIONS,
+    }),
+  );
+
+  // The desk's wording is offered ahead of ours, marked, and rendered from the
+  // incident's facts like any other draft — including the generic one, which is
+  // available on every duty.
+  assert.match(html, /Contract notice \(our wording\)/);
+  assert.match(html, /Holding note \(ours\)/);
+  assert.match(html, /Client breach notice/);
+  assert.match(html, /yours/);
+  assert.match(html, /Draft this notice \(3\)/);
+  assert.ok(html.indexOf("Contract notice (our wording)") < html.indexOf("Client breach notice"));
+  assert.match(html, /Dear Affected client\(s\)/);
 });

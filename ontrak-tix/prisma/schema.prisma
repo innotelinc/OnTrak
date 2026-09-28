@@ -55,6 +55,7 @@ model Tenant {
   incidentNotifications IncidentNotification[]
   incidentReviews IncidentReview[]
   reviewActions IncidentReviewAction[]
+  commsTemplates IncidentCommsTemplate[]
 
   @@index([slug])
 }
@@ -873,6 +874,32 @@ enum NotificationStatus {
 /// adopted, rather than looked up on read: what the desk notified stays readable
 /// after the rule it was measured against changes. `dueAt` is derived from the
 /// regime's clock (`detected` or `declared`), so the arithmetic is auditable.
+/// A tenant's own draft for an incident notification (M3 comms templates). A
+/// regime key it names is what it drafts; an empty list means it fits any duty.
+model IncidentCommsTemplate {
+  id       String @id @default(cuid())
+  tenantId String
+  label    String
+  /// Who the message goes to: `REGULATOR` | `CLIENT` | `AFFECTED` | `STAFF`.
+  audience String
+  /// Regime keys from `src/lib/regulatory-rules.ts` this drafts, e.g. `gdpr-breach`.
+  regimes  String[]
+  subject  String
+  body     String
+  /// What a message of this kind must not forget, in one line.
+  guidance String?
+  /// Retired rather than deleted, so a notice that cited it stays explainable.
+  retiredAt DateTime?
+  createdBy String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, label])
+  @@index([tenantId])
+}
+
 model IncidentNotification {
   id         String   @id @default(cuid())
   tenantId   String

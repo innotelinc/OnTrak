@@ -294,6 +294,13 @@ generate without a local install would rewrite the parent project's client.
   Fields only a person can supply are named, and a notice with one unresolved is
   refused rather than recorded as sent; the text that went out is stored on the
   duty, so the record holds what was said rather than what a template would say.
+- `src/lib/comms-template-service.ts` +
+  `src/app/(desk)/incidents/templates/page.tsx` (M3) — **a desk's own notice
+  drafts**: author a template aimed at a regime (offered ahead of the shipped
+  ones on that duty) or at none (offered on every duty), with placeholders
+  validated at authoring time so a typo is refused while somebody is looking at
+  the form. Drafts are retired rather than deleted, so a notice that cited one
+  stays explainable.
 - `scripts/verify-packet.ts` (`npm run verify:packet`) — the **offline packet
   verifier** (M3): a third party holding only a packet and the key can check it,
   importing the packet rules, the signer and the verifier and nothing else — no
@@ -312,7 +319,8 @@ generate without a local install would rewrite the parent project's client.
   append-only timeline and their playbook steps, evidence items, custody entries,
   legal holds and stored artifacts under object lock, their notification duties
   with the notice text that went out and their post-incident review with its
-  tracked actions, and the hash-chained audit event).
+  tracked actions, the tenant's own incident notice templates, and the
+  hash-chained audit event).
 
 Run the tests with:
 
@@ -349,8 +357,8 @@ severity matrix, phase ladder, roles and timeline; `tix-m3-playbooks.test.ts`
 covers playbook planning and step transitions, evidence validation, the chain of
 custody, legal hold and retention, manifest determinism, the docs service and its
 Prisma adapter, and the rendered incident console; `tix-m3-comms.test.ts` covers
-the incident communication drafts (placeholders, regime selection, readiness, the
-M1 bridge and the rendered duty panel); `tix-m3-retention.test.ts` covers the
+the incident communication drafts (placeholders, regime selection, readiness,the M1 bridge and the rendered duty panel), plus authoring and retirement of the
+desk's own drafts; `tix-m3-retention.test.ts` covers the
 retention sweep's planning, the service that carries it out (bytes, tombstones,
 timeline, audit, dry runs, tenant scoping) and the Prisma worklist query;
 `tix-m3-assurance.test.ts`
@@ -374,7 +382,8 @@ It runs the strict axe rule set over the staff surfaces (`/inbox`, `/reports`,
 declares an incident and downloads its manifest, walks a chain of custody through
 a hand-off and a legal hold and downloads the signed packet (asserting the record
 digest is stable across exports while the packet digest moves), tracks a
-regulatory clock and records the drafted notice onto it, confirms a
+regulatory clock and records the drafted notice onto it, writes a notice draft of
+its own at `/incidents/templates` and records a notice from it, confirms a
 requester cannot reach the worklist, and — as an administrator — audits
 `/admin/identity` and confirms a desk agent is turned away from it.
 
