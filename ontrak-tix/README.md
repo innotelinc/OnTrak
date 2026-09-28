@@ -387,6 +387,15 @@ ONTRAK_TIX_BASE_URL=http://127.0.0.1:3001 \
   npx tsx --tsconfig tests/tsconfig.json --test ontrak-tix/tests/tix-m2-sso-live.test.ts
 ```
 
+The scheduled retention sweep has one for the same reason — it POSTs to the
+running app as a cron would, and asserts that the app removed a real file from
+its own evidence directory and recorded why:
+
+```bash
+ONTRAK_TIX_BASE_URL=http://127.0.0.1:3001 ONTRAK_TIX_CRON_SECRET=… \
+  npx tsx --tsconfig tests/tsconfig.json --test ontrak-tix/tests/tix-m3-retention-live.test.ts
+```
+
 See [ROADMAP.md](./ROADMAP.md) for the full milestone sequence.
 
 ## Documentation
