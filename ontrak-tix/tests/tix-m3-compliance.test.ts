@@ -511,6 +511,7 @@ const NOTIFICATION_ROW: NotificationRow = {
   acknowledgedBy: null,
   reference: "SA-42",
   note: null,
+  message: "To: Supervisory authority (Art. 33)\n\nNotification of a personal-data breach.",
   waivedAt: null,
   waivedBy: null,
   waiverReason: null,
@@ -553,6 +554,9 @@ test("the Prisma adapter narrows enums and dates, and writes back an ISO instant
   assert.equal(data.dueAt instanceof Date, true);
   assert.equal(data.tenantId, "tenant-a");
   assert.equal(toNotificationData({ ...obligation, sentAt: null, waivedAt: null, acknowledgedAt: null }).sentAt, null);
+  // The notice text survives the round trip, since it is what was actually sent.
+  assert.equal(obligation.message, NOTIFICATION_ROW.message);
+  assert.equal(data.message, NOTIFICATION_ROW.message);
 
   // A row written before a vocabulary change degrades instead of leaking `string`.
   assert.equal(toNotificationObligation({ ...NOTIFICATION_ROW, status: "GONE", clock: "somewhen" }).status, "PENDING");
@@ -645,6 +649,7 @@ const OBLIGATION: NotificationObligation = {
   acknowledgedBy: null,
   reference: null,
   note: null,
+  message: null,
   waivedAt: null,
   waivedBy: null,
   waiverReason: null,

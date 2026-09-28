@@ -121,6 +121,14 @@ export default async function IncidentsPage({
     orderBy: { displayName: "asc" },
   });
 
+  // A notification draft speaks for the desk (its name) and is signed by whoever
+  // records it, so those two names are read once for the page.
+  const tenant = await prisma.tenant.findUnique({ where: { id: actor.tenantId }, select: { name: true } });
+  const comms = {
+    tenant: tenant?.name ?? actor.tenantId,
+    author: staff.find((person) => person.id === actor.id)?.displayName ?? actor.id,
+  };
+
   const canAct = hasPermission(actor.role, "ticket:update");
   const open = views.filter((view) => !isIncidentClosed(view.incident.phase));
   const critical = open.filter((view) => severityRank(view.incident.severity) <= severityRank("SEV2"));
@@ -235,6 +243,7 @@ export default async function IncidentsPage({
       <IncidentList
         incidents={views}
         staff={staff}
+        comms={comms}
         now={now}
         {...(canAct
           ? {
