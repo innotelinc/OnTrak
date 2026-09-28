@@ -15,6 +15,10 @@
  */
 
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { PrismaClient } from "@prisma/client";
@@ -22,6 +26,14 @@ import { PrismaClient } from "@prisma/client";
 import type { Actor } from "../src/lib/access-rules";
 import { createTicketServices } from "../src/lib/ticket-server";
 import { PrismaAuditSink, type TicketPrismaClient } from "../src/lib/ticket-store-prisma";
+import { IncidentDocsService } from "../src/lib/incident-docs-service";
+import {
+  PrismaIncidentDocsStore,
+  type IncidentDocsPrismaClient,
+} from "../src/lib/incident-docs-store-prisma";
+import { IncidentService } from "../src/lib/incident-service";
+import { PrismaIncidentStore, type IncidentPrismaClient } from "../src/lib/incident-store-prisma";
+import { FileEvidenceObjectStore } from "../src/lib/object-lock-file";
 
 /** Connect, or return null so the test can skip cleanly. */
 async function connect(): Promise<PrismaClient | null> {
@@ -97,6 +109,126 @@ test("postgres: a ticket flows create → reply → resolve with a verifiable ch
     assert.deepEqual(await new PrismaAuditSink(client).verify(tenant.id), { ok: true, length: 4 });
   } finally {
     // Cascade removes the tenant's users, tickets, messages and audit rows.
+    await db.tenant.delete({ where: { slug } }).catch(() => undefined);
+    await db.$disconnect().catch(() => undefined);
+  }
+});
+
+test("postgres: the retention sweep purges a closed window and leaves a held artifact alone", async (t) => {
+  const db = await connect();
+  if (!db) {
+    t.skip("no Postgres reachable — set DATABASE_URL and run npm run setup");
+    return;
+  }
+
+  const slug = `itest-sweep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  // Real bytes on a real filesystem: the point of this test is that the sweep
+  // removes files and rows together, so neither can drift from the other.
+  const evidenceDir = await mkdtemp(join(tmpdir(), "ontrak-sweep-"));
+  t.after(async () => {
+    await rm(evidenceDir, { recursive: true, force: true }).catch(() => undefined);
+  });
+
+  try {
+    const tenant = await db.tenant.create({ data: { name: "Sweep Test", slug } });
+    const agent = await db.user.create({
+      data: { tenantId: tenant.id, email: `agent-${slug}@test`, displayName: "Sam Agent", role: "AGENT" },
+    });
+    const actor: Actor = { id: agent.id, tenantId: tenant.id, role: "AGENT" };
+
+    const client = db as unknown as TicketPrismaClient;
+    const audit = new PrismaAuditSink(client);
+    const incidentStore = new PrismaIncidentStore(db as unknown as IncidentPrismaClient);
+    // The clock is injected, so "thirty days later" is a variable, not a wait.
+    let clock = "2026-09-20T09:00:00.000Z";
+    const ids = { id: () => randomUUID(), now: () => clock };
+    const objects = new FileEvidenceObjectStore(evidenceDir);
+    const docs = new IncidentDocsService(
+      new PrismaIncidentDocsStore(db as unknown as IncidentDocsPrismaClient),
+      incidentStore,
+      audit,
+      ids,
+      undefined,
+      { objects, retentionDays: 1 },
+    );
+
+    const incidents = new IncidentService(incidentStore, audit, ids);
+    const declare = async (title: string) => {
+      const declared = await incidents.declare(actor, {
+        title,
+        summary: "A key was used from an unfamiliar address.",
+        impact: "EXTENSIVE",
+        urgency: "CRITICAL",
+      });
+      assert.equal(declared.ok, true, `${title} is declared`);
+      if (!declared.ok) throw new Error("declare failed");
+      return declared.value;
+    };
+
+    const stored = async (incidentId: string, label: string) => {
+      clock = new Date(Date.parse(clock) + 60_000).toISOString();
+      const result = await docs.recordArtifact(actor, incidentId, {
+        kind: "LOG",
+        label,
+        contentType: "text/plain",
+        bytes: new TextEncoder().encode(`${label} — bastion host kerberos log`),
+      });
+      assert.equal(result.ok, true, `${label} is stored`);
+      if (!result.ok) throw new Error("recordArtifact failed");
+      return result.value.artifact;
+    };
+
+    // A legal hold covers the incident, so the two artifacts are on two
+    // incidents: one the clock may act on, one somebody has said to preserve.
+    const ordinary = await declare("Compromised bastion host");
+    const expiry = await stored(ordinary.id, "expiry");
+    const held = await declare("Compromised bastion host (under claim)");
+    const hold = await docs.placeLegalHold(actor, held.id, "Preserve pending the adjuster");
+    assert.equal(hold.ok, true);
+    const preserved = await stored(held.id, "preserved");
+
+    // Nobody has to ask: the window closes and the sweep acts on it.
+    clock = "2026-09-23T09:00:00.000Z";
+    const sweep = await docs.sweepRetention(tenant.id);
+    assert.equal(sweep.ok, true, "the sweep runs against real Postgres");
+    if (!sweep.ok) return;
+    assert.equal(sweep.value.considered, 2);
+    assert.equal(sweep.value.purged, 1);
+    assert.equal(sweep.value.held, 1);
+
+    // The file went with the row, and the held artifact's bytes are still there.
+    assert.equal(await objects.get(expiry.key), null, "the purged artifact's bytes are gone from disk");
+    assert.notEqual(await objects.get(preserved.key), null, "a legal hold keeps the bytes");
+    const rows = await db.evidenceArtifact.findMany({ where: { tenantId: tenant.id }, orderBy: { lockedAt: "asc" } });
+    assert.deepEqual(
+      rows.map((row) => (row.key === expiry.key ? row.purgedAt !== null : row.purgedAt)),
+      [true, null],
+    );
+    assert.equal(sweep.value.skipped[0].key, preserved.key);
+
+    // Release the hold and the same sweep takes the rest.
+    const released = await docs.releaseLegalHold(actor, held.id, "Claim settled");
+    assert.equal(released.ok, true);
+    clock = "2026-09-23T09:05:00.000Z";
+    const second = await docs.sweepRetention(tenant.id);
+    assert.equal(second.ok, true);
+    if (!second.ok) return;
+    assert.equal(second.value.purged, 1);
+    assert.equal(await objects.get(preserved.key), null);
+
+    // Both runs are on the chain, and the chain still verifies.
+    const sweeps = await db.auditEvent.count({ where: { tenantId: tenant.id, action: "incident.retention.sweep" } });
+    const purges = await db.auditEvent.count({ where: { tenantId: tenant.id, action: "incident.evidence.purge" } });
+    assert.equal(sweeps, 2);
+    assert.equal(purges, 2);
+    const verified = await new PrismaAuditSink(client).verify(tenant.id);
+    assert.equal(verified.ok, true, "the audit chain verifies after the sweep");
+
+    // A sweep with nothing left to do purges nothing — safe to schedule hourly.
+    const idle = await docs.sweepRetention(tenant.id);
+    assert.equal(idle.ok, true);
+    if (idle.ok) assert.equal(idle.value.purged, 0);
+  } finally {
     await db.tenant.delete({ where: { slug } }).catch(() => undefined);
     await db.$disconnect().catch(() => undefined);
   }

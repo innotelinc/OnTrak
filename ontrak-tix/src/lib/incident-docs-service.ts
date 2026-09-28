@@ -41,7 +41,9 @@ import {
   objectLockFor,
   objectPutDecision,
   objectPurgeDecision,
+  planRetentionSweep,
   retentionModeFromEnv,
+  retentionSweepReason,
   type EvidenceObjectStore,
   type RetentionMode,
   type StorePutResult,
@@ -57,6 +59,12 @@ import {
 } from "./playbook-rules";
 import { sha256Hex } from "./ticket-store-prisma";
 import type { ServiceResult } from "./ticket-service";
+
+/** The actor a scheduled sweep writes under, since no person asked for it. */
+export const SWEEP_ACTOR = "system:retention-sweep";
+
+/** How many artifacts one run will consider, so a first sweep cannot run away. */
+export const RETENTION_SWEEP_LIMIT = 500;
 
 export interface PlaybookStepRecord {
   id: string;
@@ -134,11 +142,36 @@ export interface IncidentDocsStore {
   /** The only mutation an artifact row ever takes: its bytes are gone. */
   markArtifactPurged(tenantId: string, artifactId: string, at: string): Promise<void>;
   /**
+   * The tenant's artifacts whose retention window has closed and which are still
+   * stored — what a retention sweep looks at. Optional: a store that cannot
+   * answer it tenant-wide is swept incident by incident instead, which is slower
+   * but reaches the same artifacts.
+   */
+  listExpiredArtifacts?(tenantId: string, now: string, limit: number): Promise<EvidenceArtifactRecord[]>;
+  /**
    * Several incidents' documentation in one pass. Optional, like the incident
    * store's event pages: a store that cannot batch still works, it is just more
    * round trips on a page that lists every incident.
    */
   listPages?(tenantId: string, incidentIds: readonly string[]): Promise<Map<string, IncidentDocsPage>>;
+}
+
+/** What one run of the retention sweep did, for the scheduler's log. */
+export interface RetentionSweepReport {
+  tenantId: string;
+  at: string;
+  /** A dry run reports what it would have purged and touches nothing. */
+  dryRun: boolean;
+  considered: number;
+  purged: number;
+  /** Still inside the window, or in a mode that will not shorten. */
+  retained: number;
+  held: number;
+  bytesFreed: number;
+  /** What it removed (or, on a dry run, would remove). */
+  purges: { artifactId: string; incidentId: string; incidentRef: string; key: string; bytes: number; reason: string }[];
+  /** What it left alone, with the reason — the interesting half of the report. */
+  skipped: { artifactId: string; key: string; reason: string }[];
 }
 
 export interface IncidentDocsIds {
@@ -440,6 +473,156 @@ export class IncidentDocsService {
   /** Whether this deployment stores artifact bytes at all. */
   get artifactStorageEnabled(): boolean {
     return this.storage !== null;
+  }
+
+  /**
+   * The retention sweep: remove the artifacts the clock and the lock both say
+   * may go, without waiting for somebody to ask.
+   *
+   * The decision is not made here — `planRetentionSweep` makes it with the same
+   * `objectPurgeDecision` an administrator's manual purge uses, so a scheduled
+   * sweep and a button press cannot disagree about a COMPLIANCE artifact. What
+   * this method adds is the carrying out: the bytes, the tombstone, the timeline
+   * line and the audit event, all under `system:retention-sweep` rather than a
+   * person, because nobody pressed anything.
+   *
+   * A legal hold stops the sweep in both directions, and the report says so —
+   * "we left this alone" is the half of a sweep's output that matters when an
+   * auditor asks why something is still here.
+   */
+  async sweepRetention(
+    tenantId: string,
+    options: { limit?: number; dryRun?: boolean; bypassGovernance?: boolean } = {},
+  ): Promise<ServiceResult<RetentionSweepReport>> {
+    if (!this.storage) return { ok: false, error: "Evidence storage is not configured for this deployment." };
+
+    const at = this.ids.now();
+    const limit = Math.max(1, options.limit ?? RETENTION_SWEEP_LIMIT);
+    const candidates = await this.expiredArtifacts(tenantId, at, limit);
+
+    // The hold is per incident, so it is read once per incident rather than once
+    // per artifact — a sweep over a busy tenant is otherwise a query per object.
+    const holds = new Map<string, boolean>();
+    const holdFor = async (incidentId: string): Promise<boolean> => {
+      const known = holds.get(incidentId);
+      if (known !== undefined) return known;
+      const active = (await this.activeHold(tenantId, incidentId)) !== null;
+      holds.set(incidentId, active);
+      return active;
+    };
+
+    const decisionCandidates = await Promise.all(
+      candidates.map(async (artifact) => ({
+        artifactId: artifact.id,
+        incidentId: artifact.incidentId,
+        key: artifact.key,
+        bytes: artifact.bytes,
+        lock: { mode: artifact.mode, retainUntil: artifact.retainUntil, lockedAt: artifact.lockedAt },
+        holdActive: await holdFor(artifact.incidentId),
+        purgedAt: artifact.purgedAt,
+      })),
+    );
+    const plan = planRetentionSweep(decisionCandidates, at, { bypassGovernance: options.bypassGovernance });
+
+    const report: RetentionSweepReport = {
+      tenantId,
+      at,
+      dryRun: options.dryRun === true,
+      considered: plan.summary.considered,
+      purged: 0,
+      retained: plan.summary.retained,
+      held: plan.summary.held,
+      bytesFreed: 0,
+      purges: [],
+      skipped: plan.decisions
+        .filter((entry) => entry.outcome !== "PURGE")
+        .map((entry) => ({ artifactId: entry.candidate.artifactId, key: entry.candidate.key, reason: entry.reason })),
+    };
+
+    for (const decision of plan.purge) {
+      const artifact = candidates.find((entry) => entry.id === decision.candidate.artifactId)!;
+      const incident = await this.incidents.findIncident(tenantId, artifact.incidentId);
+      if (!incident) continue;
+
+      const reason = retentionSweepReason(decision.candidate.lock);
+      report.purges.push({
+        artifactId: artifact.id,
+        incidentId: artifact.incidentId,
+        incidentRef: incident.ref,
+        key: artifact.key,
+        bytes: artifact.bytes,
+        reason,
+      });
+      report.purged += 1;
+      report.bytesFreed += artifact.bytes;
+      if (report.dryRun) continue;
+
+      await this.storage.objects.delete(artifact.key);
+      await this.store.markArtifactPurged(tenantId, artifact.id, at);
+
+      await this.timeline(SWEEP_ACTOR, incident, "evidence", `Artifact purged: ${artifact.key}`, {
+        reason,
+        sweep: true,
+        bypassed: decision.requiresBypass,
+      });
+      if (this.audit) {
+        await this.audit.append(
+          docsAudit(incident, SWEEP_ACTOR, "incident.evidence.purge", at, {
+            key: artifact.key,
+            sha256: artifact.sha256,
+            bytes: artifact.bytes,
+            reason,
+            sweep: true,
+            bypassedGovernance: decision.requiresBypass,
+          }),
+        );
+      }
+    }
+
+    // One event per run, whatever it found, so "the sweep ran and did nothing"
+    // is on the record too — a gap in the sweep's history is itself a finding.
+    if (this.audit && !report.dryRun) {
+      await this.audit.append({
+        id: this.ids.id(),
+        tenantId,
+        at,
+        actor: SWEEP_ACTOR,
+        action: "incident.retention.sweep",
+        targetType: "tenant",
+        targetId: tenantId,
+        detail: {
+          considered: report.considered,
+          purged: report.purged,
+          retained: report.retained,
+          held: report.held,
+          bytesFreed: report.bytesFreed,
+        },
+      });
+    }
+
+    return { ok: true, value: report };
+  }
+
+  /**
+   * The artifacts a sweep should look at: past their window and still stored.
+   * Falls back to walking the tenant's incidents when the store cannot answer
+   * the question directly.
+   */
+  private async expiredArtifacts(tenantId: string, now: string, limit: number): Promise<EvidenceArtifactRecord[]> {
+    if (this.store.listExpiredArtifacts) return this.store.listExpiredArtifacts(tenantId, now, limit);
+
+    const incidents = await this.incidents.listIncidents(tenantId);
+    const found: EvidenceArtifactRecord[] = [];
+    for (const incident of incidents) {
+      const artifacts = await this.store.listArtifacts(tenantId, incident.id);
+      for (const artifact of artifacts) {
+        if (artifact.purgedAt) continue;
+        if (artifact.retainUntil > now) continue;
+        found.push(artifact);
+        if (found.length >= limit) return found;
+      }
+    }
+    return found;
   }
 
   /**

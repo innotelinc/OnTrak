@@ -11,9 +11,11 @@ incident roles, runbook-style **playbooks with step tracking**, **evidence
 collection with a chain of custody, object-lock (WORM) storage and legal hold**,
 regulatory **notification duties** with **drafted notices**, the **post-incident
 review** with tracked actions, the **war-room timeline** assembled from the
-incident log, the audit chain, the alert stream and the decisions taken, and the
+incident log, the audit chain, the alert stream and the decisions taken, the
+**retention sweep** that acts on a closed lock without being asked, and the
 one-click signed **Assurance Packet** — all surfaced in a console at
-`/incidents`, and checkable by a third party with `npm run verify:packet`.
+`/incidents`, checkable by a third party with `npm run verify:packet`, and
+sweepable with `npm run sweep:retention`.
 
 ## Pieces
 
@@ -35,6 +37,8 @@ one-click signed **Assurance Packet** — all surfaced in a console at
 | Pure rules: assemble the war-room timeline from other sources | `src/lib/war-room-rules.ts` |
 | Service: read the log, the chain, the alerts and the decisions, and merge them | `src/lib/war-room-service.ts` |
 | Offline packet verifier for a third party | `scripts/verify-packet.ts` (`npm run verify:packet`) |
+| Retention sweep: decide what the clock allows, then carry it out | `planRetentionSweep` (`src/lib/object-lock-rules.ts`), `IncidentDocsService.sweepRetention` |
+| Scheduled entry point and operator script | `src/app/api/incidents/retention-sweep/route.ts`, `scripts/retention-sweep.ts` (`npm run sweep:retention`) |
 | Models | `prisma/schema.prisma` (`Incident`, `IncidentEvent`, `PlaybookStep`, `EvidenceItem`, `CustodyEntry`, `LegalHold`, `EvidenceArtifact`, `IncidentNotification`, `IncidentReview`, `IncidentReviewAction`) |
 | Console | `src/app/(desk)/incidents/page.tsx`, `src/components/IncidentList.tsx`, `src/app/actions/incidents.ts` |
 | Manifest download | `src/app/api/incidents/[id]/manifest/route.ts` |
@@ -217,6 +221,48 @@ stored, then asks to remove them — refused for an agent (a `tenant:manage` rol
 is required) and refused again for an administrator, in the rule's own words,
 with the artifact still locked afterwards.
 
+### The retention sweep
+
+A lock that nobody acts on is the same as no lock: a purged artifact would sit
+there for ten years because somebody had to press a button. `sweepRetention`
+(`incident-docs-service.ts`) walks the tenant's artifacts **whose window has
+closed and which are still stored**, and decides each one with the *same*
+`objectPurgeDecision` a manual purge uses — so a scheduled sweep and an
+administrator's button cannot disagree about a `COMPLIANCE` artifact.
+
+What it does per artifact, in the same operation: deletes the bytes, stamps the
+tombstone, appends an `Artifact purged` timeline entry, and writes an
+`incident.evidence.purge` audit event with `sweep: true`. It then writes one
+`incident.retention.sweep` event for the run itself — **including a run that
+found nothing**, because a gap in a sweep's history is itself a finding. Every
+one of those is written under `system:retention-sweep`: nobody pressed anything,
+and the record should say so.
+
+The report is the other half of it. Alongside the purges it returns what it
+*left alone* and why — still inside the window, in a mode that will not shorten,
+or held — because "why is this evidence still here?" is the question a sweep
+gets asked. A legal hold stops it in both directions, exactly as it stops a
+manual purge.
+
+It is safe to schedule as often as you like: a purged artifact is out of the
+worklist (its `purgedAt` is set), so a second run purges nothing. Three ways to
+run it, all the same code path:
+
+- `POST /api/incidents/retention-sweep` — the scheduler's entry point, `Bearer`
+  authenticated with `ONTRAK_TIX_CRON_SECRET`. `?tenant=acme` limits it to one
+  tenant and `?dryRun=1` reports without changing anything.
+- `npm run sweep:retention -- --dry-run` — the same run from a terminal or a
+  non-HTTP scheduler, using the deployment's own database and storage directly.
+  Its exit codes separate "the sweep ran" (0) from "it could not run" (1/2).
+- `IncidentDocsService.sweepRetention` — for a worker that already holds the
+  service, and for the tests.
+
+The Postgres integration test (`tests/tix-db.test.ts`) proves it against a real
+database and a real filesystem: two incidents, one artifact each, a legal hold on
+the second — the sweep removes the first's bytes *and* its row's contents, leaves
+the held one's files alone, then takes them once the hold is released, with the
+audit chain still verifying afterwards.
+
 ## The war-room timeline
 
 The incident timeline is what the operations wrote. The **war-room timeline** is
@@ -362,6 +408,7 @@ exported rather than at boot.
   through it, but a shared bucket with object lock enabled is what would enforce
   the retention date against *every* writer, including someone with the storage
   credentials.
-- **Retention sweeps.** Nothing yet walks expired artifacts and purges them; a
-  purge has to be asked for. The rules that decide whether it is allowed are
-  tested, which is the part that needed deciding.
+- **Sweep scheduling is yours.** The sweep exists and is idempotent, but nothing
+  in this repository schedules it: point a cron, a worker or a Kubernetes job at
+  the endpoint or the script. A deployment that never does gets a lock that
+  nobody acts on, which is the failure mode it was written to remove.
