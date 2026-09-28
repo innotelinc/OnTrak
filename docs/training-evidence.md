@@ -108,8 +108,33 @@ results index lists the code against every passed attempt.
   page (`src/app/verify`), where anyone can paste a record or a packet and have
   it re-hashed — no account, no database, and no need to trust this deployment's
   data to check it.
-- `buildAssurancePacket` is the export used by the proof-of-training flow for
-  compliance and insurance (see [ROADMAP.md](../ROADMAP.md), v1.5).
+- `/certificate/<attempt>` is the sheet a learner prints (see below).
+- `/instructor/cohorts/<class>/packet` is the class's proof-of-training packet,
+  built with `buildAssurancePacket` for compliance and insurance
+  (see [ROADMAP.md](../ROADMAP.md), v1.5).
+
+### Getting it out
+
+Two exports turn a record into something a person can hand over.
+
+**The printable certificate** (`src/app/certificate/[id]`) is deliberately
+outside the application shell: no sidebar, no header, just the sheet, so printing
+produces a certificate rather than a screenshot of a product. It renders the
+*stored* record, so the code on paper is the code that was issued even if the
+attempt has been re-graded since, and it is pinned to the light palette —
+printed pages do not follow the screen's colour scheme, and a dark-mode print
+would otherwise put light ink on white paper. There is no server-side PDF
+renderer: the sheet is styled for paper and `@page` margins, so the browser's own
+print-to-PDF is the PDF path, with no extra dependency to keep patched.
+
+**A class's assurance packet** (`src/app/(app)/instructor/cohorts/[id]/packet`)
+is one signed JSON document holding every live certificate the class's members
+hold. It is scoped like the rest of the staff surface — an instructor exports
+their own classes, an administrator any of them — and each export is written to
+the audit log with the number of records it carried. Revoked records are left
+out: a certificate whose pass no longer stands has no business in an evidence
+pack. The download verifies at `/verify` with nothing but the file itself, which
+is the point of handing it to an auditor or an insurer.
 
 ### Records are issued once and then stored
 

@@ -40,6 +40,7 @@ flowchart LR
 | PWA / mobile quick-keys / offline shell | `[x]` |
 | Test suite (208) + typecheck + production build green | `[x]` |
 | Pure, unit-tested form/rule modules; ownership-guarded actions | `[x]` |
+| Versioned migrations (`prisma/migrations`) applied identically by every environment | `[x]` |
 
 **v1 is complete as a training product.** The remaining work is depth, reach, and
 enterprise readiness.
@@ -123,12 +124,15 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
 - `[~]` Verifiable completion records reach the product surface: clearing the
   pass mark issues a **certificate** — a tamper-evident completion record — shown
   on the attempt report with its code and competency tags, listed on the results
-  index, and checkable by anyone at the public `/verify` page (record or
-  assurance packet). The record is now **stored on the attempt** when it is
-  issued, so the code a learner holds keeps verifying after a re-grade instead of
-  being silently re-pointed at a different record; a re-grade that drops the
-  attempt below the pass mark revokes it, visibly. Printable certificates are
-  still to come (v1.5).
+  index, printable as its own sheet, and checkable by anyone at the public
+  `/verify` page (record or assurance packet). The record is now **stored on the
+  attempt** when it is issued, so the code a learner holds keeps verifying after a
+  re-grade instead of being silently re-pointed at a different record; a re-grade
+  that drops the attempt below the pass mark revokes it, visibly. A class's
+  certificates export together as a signed packet (v1.5).
+- `[x]` Versioned migrations: `prisma/migrations` is the schema history, applied
+  by `prisma migrate deploy` in every environment (see CONTRIBUTING.md), so a
+  deploy no longer depends on a `db push` having been run by hand at some point.
 - **Exit:** a cohort dashboard renders trends (`[x]`); strings are externalised
   and a non-English locale ships (`[~]`, in progress); the a11y implementation,
   the automated axe/keyboard audit (`npm test`) and the browser paint-rule sweep
@@ -174,12 +178,14 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   verifiable completion records. A pass issues a certificate and the record is
   **stored immutably** on the attempt (`certificate`/`certificateIssuedAt`/
   `certificateRevokedAt`), presented on the report with its code and
-  competencies, and verifiable without an account (see v1.1). Still to come: the
-  skills matrix and a printable certificate/PDF.
-- **Auditable training evidence**: immutable completion records, exportable
-  proof-of-training packets (who was trained, on what, when, outcome) — the
-  training-side counterpart to OnTrak Tix's assurance packets, useful for
-  compliance and insurance.
+  competencies, printable as its own sheet (`/certificate/<attempt>`), and
+  verifiable without an account (see v1.1). Still to come: the skills matrix.
+- `[x]` **Auditable training evidence**: immutable completion records and an
+  exportable proof-of-training packet per class — every live certificate its
+  members hold, bundled into one signed document at
+  `/instructor/cohorts/<id>/packet`, scoped to the instructor who runs the class
+  and recorded in the audit log. The training-side counterpart to OnTrak Tix's
+  assurance packets, for compliance and insurance.
 - Optional proctoring/timing integrity controls for higher-stakes assessment.
 - **Exit:** a learner earns a verifiable certificate; an auditor can pull a
   signed proof-of-training packet for a cohort.

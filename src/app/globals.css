@@ -235,6 +235,36 @@
   box-shadow: var(--shadow-card);
 }
 
+/* --------------------------------------------------------------------------
+   The certificate sheet.
+
+   A certificate is meant to be printed, and a printed page does not follow the
+   screen's colour scheme: in dark mode this would put light ink on white paper.
+   Pinning the light palette to the sheet keeps it readable on screen and on
+   paper, whatever theme the viewer happens to be using.
+   -------------------------------------------------------------------------- */
+.certificate-sheet {
+  --canvas: #f7f5ff;
+  --surface: #ffffff;
+  --surface-muted: #f3f1fb;
+  --line: #e6e2f5;
+  --ink: #1c1633;
+  --ink-soft: #4a4266;
+  --ink-faint: #6a6386;
+  color-scheme: light;
+}
+
+@media print {
+  /* On paper only the sheet matters: a white page and honest margins. */
+  body {
+    background: #ffffff;
+  }
+
+  @page {
+    margin: 14mm;
+  }
+}
+
 /* The xterm canvas needs a transparent background so the panel shows through. */
 .xterm .xterm-viewport {
   background-color: transparent !important;

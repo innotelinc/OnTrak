@@ -550,6 +550,10 @@ async function main() {
   }
 
   /* --------------------------------------------------------------- classes */
+  // The class is repaired, not just renamed: a demo database outlives a change
+  // of demo accounts, and a class left owned by an account nobody signs in as is
+  // a class its instructor cannot see. Re-seeding puts it back under the
+  // instructor it belongs to.
   const cohort = await prisma.cohort.upsert({
     where: { joinCode: "NET101" },
     create: {
@@ -558,7 +562,7 @@ async function main() {
       joinCode: "NET101",
       instructorId: instructor.id,
     },
-    update: { name: "Networking 101 — Autumn" },
+    update: { name: "Networking 101 — Autumn", instructorId: instructor.id },
   });
 
   for (const email of ["student@ontrak.local", "katherine@ontrak.local", "linus@ontrak.local"]) {
@@ -577,26 +581,31 @@ async function main() {
   const wiki = savedScenarios["restore-internal-wiki"];
   const spooler = savedScenarios["spooler-recovery-rdp-hardening"];
 
-  const existingAssignments = await prisma.assignment.count({ where: { createdById: instructor.id } });
-  if (existingAssignments === 0) {
-    if (wiki) {
-      await prisma.assignment.create({
-        data: {
-          scenarioId: wiki.id,
-          cohortId: cohort.id,
-          dueAt: new Date(Date.now() + 7 * 24 * 3600 * 1000),
-          maxAttempts: 3,
-          instructions: "Work through it once with hints off, then again if you need to. Bring questions on Tuesday.",
-          createdById: instructor.id,
-        },
-      });
+  // Keyed on what an assignment *is* — this scenario, for this class or this
+  // student — rather than on who happened to create it. "Any assignment by this
+  // instructor" reads as "none" after a change of demo accounts, and re-seeding
+  // then stacks duplicates instead of converging.
+  async function assignOnce(where: { scenarioId: string; cohortId?: string; studentId?: string }) {
+    const existing = await prisma.assignment.findFirst({ where });
+    if (existing) {
+      await prisma.assignment.update({ where: { id: existing.id }, data: { createdById: instructor.id } });
+      return;
     }
-    if (spooler && student) {
-      await prisma.assignment.create({
-        data: { scenarioId: spooler.id, studentId: student.id, maxAttempts: 0, createdById: instructor.id },
-      });
-    }
+    await prisma.assignment.create({
+      data: {
+        ...where,
+        maxAttempts: where.studentId ? 0 : 3,
+        dueAt: where.cohortId ? new Date(Date.now() + 7 * 24 * 3600 * 1000) : null,
+        instructions: where.cohortId
+          ? "Work through it once with hints off, then again if you need to. Bring questions on Tuesday."
+          : null,
+        createdById: instructor.id,
+      },
+    });
   }
+
+  if (wiki) await assignOnce({ scenarioId: wiki.id, cohortId: cohort.id });
+  if (spooler && student) await assignOnce({ scenarioId: spooler.id, studentId: student.id });
 
   /* ------------------------------------------------ one finished pass, demoed */
   // A certificate is only worth auditing on a real page, and a fresh lab has no

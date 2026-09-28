@@ -56,7 +56,7 @@ cp .env.example .env          # then edit AUTH_SECRET
 npm install
 
 npm run docker:db             # starts Postgres 16 on :5432 (or point DATABASE_URL elsewhere)
-npm run setup                 # prisma generate + db push + reset + seed demo data
+npm run setup                 # prisma generate + migrate deploy + reset + seed demo data
 npm run dev                   # http://localhost:3000
 ```
 
@@ -147,8 +147,9 @@ disabled"* or *"requires a license key for Contoso Asset Suite"*.
 | `npm run typecheck` | `tsc --noEmit`. |
 | `npm test` | Engine, grading, validator and desktop-surface test suite. |
 | `npm run setup` | Generate the client, push the schema, reset attempts, seed demo data. |
-| `npm run db:push` | Push `schema.prisma` to the database. |
-| `npm run db:migrate` | Create a versioned migration. |
+| `npm run db:migrate` | Create a versioned migration from `schema.prisma`. |
+| `npm run db:deploy` | Apply the committed migrations (what a deployment runs). |
+| `npm run db:push` | Push `schema.prisma` without a migration — throwaway databases only. |
 | `npm run db:seed` | Re-seed demo data (idempotent). |
 | `npm run db:reset-demo` | Clear demo students' attempts and synthetic test accounts. |
 | `npm run db:studio` | Browse the database in Prisma Studio. |
@@ -163,7 +164,9 @@ src/
   app/
     (app)/                    authenticated shell: student / instructor / admin
     actions/                  server actions (auth, student, instructor, admin)
+    certificate/              the printable certificate sheet (no app shell)
     login/  register/         public auth pages
+    verify/                   public certificate + packet verification
   components/
     console/                  xterm terminal, Office panel, attempt runner
     instructor/               scenario editor + validator feedback
@@ -183,7 +186,8 @@ src/
     templates.ts              starter definitions for the scenario editor
 prisma/
   schema.prisma               data model
-  seed.ts                     idempotent demo school
+  migrations/                 the versioned schema history every environment applies
+  seed.ts                     idempotent demo school + one finished pass to demo a certificate
 tests/
   sim.test.ts                 engine + grading + validator + desktop tests
   desktop-render.test.ts      the desktop surface still server-renders

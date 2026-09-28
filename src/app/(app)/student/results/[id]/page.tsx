@@ -179,8 +179,15 @@ export default async function ResultPage({ params }: { params: Promise<{ id: str
       {/* Certificate — only work that cleared the pass mark earns one */}
       {certificate ? (
         <section className="mt-8">
-          <h2 className="font-display text-lg font-semibold text-ink">{t("certificate.title")}</h2>
-          <p className="text-sm text-ink-soft">{t("certificate.hint")}</p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-display text-lg font-semibold text-ink">{t("certificate.title")}</h2>
+              <p className="text-sm text-ink-soft">{t("certificate.hint")}</p>
+            </div>
+            <ButtonLink href={`/certificate/${attempt.id}`} variant="secondary" size="sm">
+              {t("certificate.print.action")}
+            </ButtonLink>
+          </div>
 
           {certificateRegraded ? (
             <p className="mt-3 rounded-xl2 border border-amber/25 bg-amber/10 px-3 py-2 text-sm text-ink-soft">

@@ -148,6 +148,14 @@ test.describe("student attempt report", () => {
     await page.waitForLoadState("load");
     await expect(page.getByRole("heading", { name: /certificate/i })).toHaveCount(1);
     expectAccessible(await audit(page), "an attempt report with a certificate");
+
+    // The printable sheet is the version a learner hands to an auditor, and it is
+    // deliberately on its own route with its own palette, so audit that too.
+    await page.getByRole("link", { name: /print certificate/i }).click();
+    await page.waitForURL(/\/certificate\/[^/]+$/, { timeout: 20_000 }).catch(() => undefined);
+    await page.waitForLoadState("load");
+    await expect(page.getByRole("heading", { name: /certificate/i })).toHaveCount(1);
+    expectAccessible(await audit(page), "the printable certificate");
   });
 });
 
