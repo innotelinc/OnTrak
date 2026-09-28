@@ -85,11 +85,34 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
 
 ## 6. Milestones
 
-### S0 — Foundations `[ ]`
+### S0 — Foundations `[~]`
 **Goal:** the identity spine and the evidence log.
 
 - Org/tenant model, users, sessions, credentials; append-only hash-chained audit
   from day one.
+  - `[x]` **The spine** (`identity-service.ts`, `identity-rules.ts`,
+    `audit-chain.ts`): organizations, identities and sessions, with every read
+    and write scoped to the caller's organization, and an identity in another
+    organization simply *absent* rather than forbidden — the answer is the same
+    as for an id that never existed, which is the only answer a caller can act on
+    without learning about another tenant. There is **one evidence chain per
+    organization** rather than one chain filtered by tenant: a filter is a query
+    somebody can forget, a separate chain is a different object. An organization
+    cannot be left with no active administrator, an identifier is unique within
+    an organization and not across them, and ending a session — or every session
+    an identity holds — needs a reason on the record.
+  - `[x]` **Sessions are policy-gated at grant *and* at read**, through the same
+    pure `sessionDecision`: an inactive identity, a second factor owed under a
+    policy that requires one, an idle timeout and an absolute lifetime each
+    refuse a session — and a deactivated identity loses its sessions without
+    anyone having to revoke them.
+  - `[x]` **A project of its own**: `package.json`, `tsconfig.json`, its own test
+    harness (`npm test`) and a job in the shared CI run. The exit criterion asks
+    for tenant isolation to be covered by CI tests, so it is — including that one
+    organization's audit trail is not reachable from another's.
+  - `[ ]` The Prisma adapter and the first migration — `prisma/schema.prisma` is
+    still a draft, and the spine runs on an in-memory store until it is not —
+    plus the API surface and an admin console shell.
 - Admin console shell; APIs; policy skeleton.
 - **Exit:** an admin creates an identity, sees every action in the tamper-evident
   log, and tenant isolation is covered by CI tests.

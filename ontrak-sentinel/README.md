@@ -56,17 +56,28 @@ this, what can they reach, and what have they done"* in one place.
 
 - `src/lib/audit-chain.ts` — the hash-chained, append-only audit log with
   tamper detection (the evidence spine).
-- `src/lib/identity-rules.ts` — pure session and enforcement-approval rules.
+- `src/lib/identity-rules.ts` — pure session, validation and
+  enforcement-approval rules.
+- `src/lib/identity-service.ts` — the spine itself: organizations, identities and
+  sessions, every read and write scoped to one organization, with one evidence
+  chain per organization.
 - `prisma/schema.prisma` — the S0 data model draft (organizations, identities,
   sessions, the chained `AuditEvent`).
 
 The full platform is built *after* OnTrak Tix; see [ROADMAP.md](./ROADMAP.md).
 
-Run the S0 tests with:
+Like the other two products, this one is a project in its own right:
 
 ```bash
-npx tsx --test ontrak-sentinel/tests/sentinel.test.ts
+cd ontrak-sentinel
+npm install
+npm run typecheck
+npm test
 ```
+
+There is no server yet, which is why it is the one product without a `Dockerfile`:
+at S0 the spine is pure logic over an in-memory store, and it has nothing to
+serve. The image and compose stack arrive with the first runnable service.
 
 ## Containers
 

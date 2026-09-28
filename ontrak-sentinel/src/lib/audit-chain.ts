@@ -169,7 +169,18 @@ export function verifyAuditChain(chain: AuditChain, hash: HashFn): ChainVerifica
 }
 
 /** A tiny in-memory log for tests and single-process use. */
-export class AuditLog {
+/**
+ * Where an audit event goes. The identity service depends on this rather than on
+ * the concrete in-memory `AuditLog`, so a deployment can hand it a durable,
+ * per-organization hash-chained sink without the service knowing how history is
+ * stored. Returning `unknown` keeps both the synchronous log and an asynchronous
+ * store assignable, and callers simply `await` it.
+ */
+export interface AuditSink {
+  append(event: AuditEventInput): unknown;
+}
+
+export class AuditLog implements AuditSink {
   private chain: AuditChain = createAuditChain();
 
   constructor(private readonly hash: HashFn) {}

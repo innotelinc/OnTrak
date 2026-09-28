@@ -1,0 +1,19 @@
+{
+  "name": "ontrak-sentinel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OnTrak Sentinel — identity provider and intrusion detection/prevention for the Innotel Labs family. An Innotel Labs product, built after OnTrak Tix.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --tsconfig tests/tsconfig.json --test tests/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.14",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
