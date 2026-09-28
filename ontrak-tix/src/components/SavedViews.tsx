@@ -41,7 +41,7 @@ export function SavedViews({ views, activeFilter, actorId, canShare, basePath = 
               className={`px-3 py-1 text-xs font-semibold ${active ? "bg-brand text-white" : "bg-surface text-ink-soft hover:text-brand"}`}
             >
               {view.name}
-              {view.shared ? <span className="ml-1 opacity-70">· shared</span> : null}
+              {view.shared ? <span className="ml-1">· shared</span> : null}
             </a>
             {view.ownerId === actorId ? (
               <form action={deleteAction}>
