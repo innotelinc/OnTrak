@@ -1,3 +1,22 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# OnTrak IT Support Training — the app and its database.
+#
+#   docker compose up -d          build the image, migrate, serve on :3000
+#   docker compose --profile demo run --rm seed    load the demo data
+#
+# `app` waits for `migrate` to finish, so a container never serves against a
+# schema it has not been given. Postgres and uploaded packages each live on a
+# named volume, so neither a rebuild nor a `down` discards them.
+#
+# This file is the training app's stack only. OnTrak Tix has its own
+# (`ontrak-tix/docker-compose.yml`) because the two products are independently
+# deployable — each keeps a separate database, and running both stacks means
+# starting both files. Only the *published* database port would collide, so
+# each one takes an override: ONTRAK_DB_PORT here, ONTRAK_TIX_DB_PORT in Tix.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: ontrak-training
+
 services:
   db:
     image: postgres:16-alpine
@@ -8,7 +27,7 @@ services:
       POSTGRES_PASSWORD: ontrak
       POSTGRES_DB: ontrak
     ports:
-      - "5432:5432"
+      - "${ONTRAK_DB_PORT:-5432}:5432"
     volumes:
       - ontrak-pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -17,5 +36,70 @@ services:
       timeout: 5s
       retries: 10
 
+  # Applies the tracked migrations, then exits. Runs in the builder stage, which
+  # is the one that carries the Prisma CLI and the `prisma/migrations/` tree.
+  migrate:
+    build:
+      context: .
+      target: builder
+    command: npx prisma migrate deploy
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Inside the network the database is the `db` service. Never 127.0.0.1:
+      # in a container that address is the container itself.
+      DATABASE_URL: postgresql://ontrak:ontrak@db:5432/ontrak?schema=public
+
+  app:
+    build:
+      context: .
+      target: runner
+      args:
+        # Compiled into the client bundle at build time, not read at run time —
+        # see the `next build` note in the Dockerfile.
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-OnTrak IT Support Training}
+        NEXT_PUBLIC_ALLOW_SELF_REGISTRATION: ${NEXT_PUBLIC_ALLOW_SELF_REGISTRATION:-true}
+    container_name: ontrak-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "3000:3000"
+    # AUTH_SECRET and the rest of the app's configuration. `.env` is gitignored;
+    # `make setup` (or `npm run setup`) creates it from `.env.example`.
+    env_file:
+      - .env
+    environment:
+      # Overrides the host-oriented DATABASE_URL in `.env`, which points at
+      # 127.0.0.1 and would name the app container itself from in here.
+      DATABASE_URL: postgresql://ontrak:ontrak@db:5432/ontrak?schema=public
+      STORAGE_DIR: ./storage/packages
+      NODE_ENV: production
+    volumes:
+      - ontrak-storage:/app/storage
+
+  # Development/demo data: scenarios, courses and the seeded accounts. Opt-in,
+  # because a production deployment wants an empty database, not a demo one.
+  seed:
+    build:
+      context: .
+      target: builder
+    profiles: ["demo"]
+    command: npm run setup
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://ontrak:ontrak@db:5432/ontrak?schema=public
+
 volumes:
   ontrak-pgdata:
+  ontrak-storage:

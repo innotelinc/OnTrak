@@ -30,6 +30,13 @@ const configuredOrigins = (process.env.ONTRAK_ALLOWED_DEV_ORIGINS ?? "")
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // The container build asks for a self-contained server (`.next/standalone`)
+  // so the image needs only the files serving actually uses, not the whole
+  // dependency tree. It is opt-in because that server also requires
+  // `.next/static` and `public/` to be copied *inside* it — which the Dockerfile
+  // does and a checkout does not, so running it from source would serve pages
+  // without their assets. Not set, the build is byte-for-byte what it was.
+  output: process.env.NEXT_STANDALONE === "1" ? "standalone" : undefined,
   allowedDevOrigins: configuredOrigins.length > 0 ? configuredOrigins : detectedDevOrigins(),
   experimental: {
     // Scenario definitions and attempt snapshots are JSON blobs; allow generous bodies.
