@@ -62,6 +62,9 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
               <Link href="/incidents" className="hover:text-brand">
                 Incidents
               </Link>
+              <Link href="/clients" className="hover:text-brand">
+                Clients
+              </Link>
               {canManageTenant ? (
                 <Link href="/admin/identity" className="hover:text-brand">
                   Identity

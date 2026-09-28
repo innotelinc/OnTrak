@@ -45,6 +45,8 @@ import {
   type CommsTemplatePrismaClient,
 } from "./comms-template-store-prisma";
 import { WarRoomService } from "./war-room-service";
+import { ClientService } from "./client-service";
+import { PrismaClientStore, type ClientPrismaClient } from "./client-store-prisma";
 
 /**
  * The OnTrak Tix database client and service bootstrap.
@@ -83,6 +85,7 @@ let incidentDocs: IncidentDocsService | null = null;
 let assurance: AssuranceService | null = null;
 let compliance: IncidentComplianceService | null = null;
 let commsTemplates: IncidentCommsTemplateService | null = null;
+let clients: ClientService | null = null;
 let warRoom: WarRoomService | null = null;
 
 function csat(): CsatService {
@@ -274,6 +277,17 @@ export function complianceServicesFor(): IncidentComplianceService {
     ticketServices().audit,
   );
   return compliance;
+}
+
+/**
+ * The configured client service (M4): who the desk serves, who serves them, and
+ * the recorded windows in which somebody is looking through a client's eyes. It
+ * shares the ticket stack's audit sink, so an assignment or an act-as joins the
+ * same per-tenant hash chain as the work it touches.
+ */
+export function clientServicesFor(): ClientService {
+  clients ??= new ClientService(new PrismaClientStore(prisma as unknown as ClientPrismaClient), ticketServices().audit);
+  return clients;
 }
 
 /**

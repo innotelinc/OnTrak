@@ -59,7 +59,7 @@ reconstructed from memory.
 
 ## Status
 
-**M0–M2 complete; M3 in progress.** The foundations have landed:
+**M0–M3 complete; M4 in progress.** The foundations have landed:
 
 - `src/lib/access-rules.ts` — roles, the permission matrix, and the
   tenant-isolation checks every server action runs before touching a row.
@@ -301,6 +301,18 @@ generate without a local install would rewrite the parent project's client.
   validated at authoring time so a typo is refused while somebody is looking at
   the form. Drafts are retired rather than deleted, so a notice that cited one
   stays explainable.
+- `src/lib/client-rules.ts` + `client-service.ts` + `client-store-prisma.ts`
+  (M4) — **clients, contacts, scope and acting as a client**: the companies one
+  desk serves and the people at them — an address a reply can reach, refused
+  when the desk already has it — an assignment row that *is* the agent's
+  scope (`queue:manage` sees every client, an agent only the ones they serve,
+  and work naming no client stays visible to the whole desk), and an "act as
+  client" window that takes a permission, a client in scope, a reason on the
+  record and one window at a time, recorded both as a row and as an audit event.
+  The same slice gives the SLA ladder its client rung (`SlaPolicy.clientId`,
+  `resolveSlaPolicy`, see [docs/clients.md](./docs/clients.md)), and the console
+  is [`/clients`](./src/app/(desk)/clients/page.tsx), which prints each client's
+  promise per priority *and which rung answered it*.
 - `scripts/verify-packet.ts` (`npm run verify:packet`) — the **offline packet
   verifier** (M3): a third party holding only a packet and the key can check it,
   importing the packet rules, the signer and the verifier and nothing else — no
@@ -319,7 +331,8 @@ generate without a local install would rewrite the parent project's client.
   append-only timeline and their playbook steps, evidence items, custody entries,
   legal holds and stored artifacts under object lock, their notification duties
   with the notice text that went out and their post-incident review with its
-  tracked actions, the tenant's own incident notice templates, and the
+  tracked actions, the tenant's own incident notice templates, the desk's clients
+  with their contacts, their staff assignments and their acted-as windows, and the
   hash-chained audit event).
 
 Run the tests with:
@@ -363,7 +376,10 @@ retention sweep's planning, the service that carries it out (bytes, tombstones,
 timeline, audit, dry runs, tenant scoping) and the Prisma worklist query;
 `tix-m3-assurance.test.ts`
 covers the packet's digests and signature, offline verification, completeness and
-the export that records itself; `tix-db.test.ts`
+the export that records itself; `tix-m4-clients.test.ts` covers the SLA ladder's
+client and queue rungs and the rung it reports, the client scope, the act-as
+guardrails and lifecycle, client/contact validation, the service's refusals and
+their audit events, and the Prisma mappers; `tix-db.test.ts`
 exercises the real Prisma store and hash-chained audit against Postgres, and the
 retention sweep against real Postgres plus real files on disk (a held artifact
 survives, the rest are purged, the chain still verifies), skipping cleanly when
@@ -378,13 +394,16 @@ ONTRAK_TIX_BASE_URL=http://127.0.0.1:3001 npm run test:e2e:tix
 
 It runs the strict axe rule set over the staff surfaces (`/inbox`, `/reports`,
 `/notifications`, `/canned`, `/templates`, `/inbox/new`, `/security`,
-`/incidents`), checks the template prefill end-to-end, promotes a security alert,
+`/incidents`, `/incidents/templates`, `/clients`), checks the template prefill
+end-to-end, promotes a security alert,
 declares an incident and downloads its manifest, walks a chain of custody through
 a hand-off and a legal hold and downloads the signed packet (asserting the record
 digest is stable across exports while the packet digest moves), tracks a
 regulatory clock and records the drafted notice onto it, writes a notice draft of
-its own at `/incidents/templates` and records a notice from it, confirms a
-requester cannot reach the worklist, and — as an administrator — audits
+its own at `/incidents/templates` and records a notice from it, records a client
+with its promise ladder and a contact and looks through its eyes at `/clients`
+(then checks the client is in scope only for the agents assigned to it), confirms
+a requester cannot reach the worklist, and — as an administrator — audits
 `/admin/identity` and confirms a desk agent is turned away from it.
 
 The SSO routes have a live test too, which is the honest answer to "does single
@@ -422,6 +441,9 @@ See [ROADMAP.md](./ROADMAP.md) for the full milestone sequence.
 - [docs/incidents.md](./docs/incidents.md) — the incident severity matrix, the
   lifecycle phases, incident roles, the append-only timeline, playbooks, evidence
   with its chain of custody and legal hold, and the signed Assurance Packet.
+- [docs/clients.md](./docs/clients.md) — the clients a desk serves, the SLA
+  ladder's client rung, the scope that keeps two clients apart, and the
+  guardrails on acting as a client.
 
 ## Relationship to OnTrak IT Support Training
 

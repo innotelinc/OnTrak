@@ -163,7 +163,7 @@ to stand on its own.
 
 ## 8. Milestones
 
-### M0 — Foundations & intake `[~]`
+### M0 — Foundations & intake `[x]`
 **Goal:** a ticket can arrive, be stored, and be seen by an agent.
 
 - Tenant model, auth, RBAC (admin/dispatcher/agent/requester) in middleware *and*
@@ -322,6 +322,26 @@ to stand on its own.
 > [docs/incidents.md](./docs/incidents.md) — a real object-locked backend,
 > scheduling the sweep yourself, and notice-template versioning.
 >
+> M4 progress (started): the first slice has landed — **clients, contacts and
+> the scope that keeps two clients apart**. The SLA ladder gained a client rung
+> and a queue rung (`SlaPolicy.clientId`/`queueId`, `resolveSlaPolicy` in
+> `sla-rules.ts`), most specific first and reporting *which* rung answered, with
+> one resolver shared by the inbox flags, the dispatcher report and the
+> escalation sweep. The scoping rules, the act-as guardrails and their validation
+> are pure in `client-rules.ts`; `client-service.ts` and
+> `client-store-prisma.ts` persist the clients, their contacts, who serves them
+> and the recorded "act as client" windows (`Client`, `Contact`,
+> `ClientAssignment`, `ClientActAsSession`); the console is `/clients`; and the
+> inbox worklist is filtered by the reader's client scope before SLA flags, saved
+> views and counts are computed, so an agent assigned to two clients never sees a
+> third's work. Covered by `ontrak-tix/tests/tix-m4-clients.test.ts` and by the
+> Tix browser sweep (which records a client, its ladder, a contact and an
+> acted-as window, and checks that a client appears only for the people assigned
+> to it). Documented in [docs/clients.md](./docs/clients.md). Still open in M4:
+> authoring a client's own policies from the console (the schema and the ladder
+> are ready; today they are inserted directly), branding and portal identity,
+> time tracking and rate cards, the rota, and per-client reporting.
+>
 > M1 progress: the SLA engine (clocks, escalations and the scheduled sweep),
 > queue routing, CSAT surveys, attachments, the dispatcher report, canned
 > responses, ticket links/merge and escalation notifications have landed as pure
@@ -333,7 +353,7 @@ to stand on its own.
 > `tix-saved-views.test.ts`. The M1 checklist is complete; what remains across
 > the roadmap is M2 and beyond.
 
-### M1 — Service desk basics `[~]`
+### M1 — Service desk basics `[x]`
 **Goal:** a working desk for one internal team.
 
 - Queues, statuses, priorities, types, assignment and reassignment.
@@ -631,11 +651,32 @@ up to an adjuster or auditor.
   without manual reconstruction; a signed evidence packet exports; the
   post-incident review is published with owners and due dates.
 
-### M4 — MSP & multi-client `[ ]`
+### M4 — MSP & multi-client `[~]`
 **Goal:** one desk serving many clients safely.
 
 - Clients/companies, contacts, per-client SLAs, branding and portal identity.
+  - `[x]` **Clients and contacts**: `Client`/`Contact` with name and address
+    validation (an address a reply can reach, not a regex-shaped guess), one
+    address per person — case-insensitively, and refused if another client
+    already has it — and an audit event per write
+    (`src/lib/client-rules.ts`, `client-service.ts`, `client-store-prisma.ts`).
+  - `[x]` **Per-client SLAs**: a policy may belong to a client or a queue, and
+    `resolveSlaPolicy` answers most-specific-first — the client's priority
+    policy, then its catch-all, then the queue's, then the desk's — reporting the
+    rung that won and falling back to pre-M4 behaviour rather than leaving a desk
+    with no promise at all. One resolver, three consumers (inbox flags, report
+    attainment, escalation sweep).
+  - `[ ]` Branding and portal identity per client.
 - Cross-client agent views with strict scoping and "act as client" guardrails.
+  - `[x]` **Scope**: `clientScopeFor` gives `queue:manage` every client and an
+    agent the clients they are assigned to, while work naming no client stays
+    visible to the whole desk; `scopeByClient` returns the filtered rows so a
+    caller cannot forget it, and the inbox applies it before computing anything
+    else.
+  - `[x]` **Act as client**: a permission, a client in scope, a reason on the
+    record and one window at a time, with a 30-minute expiry and the window
+    recorded both as a row and as an audit event (`ClientActAsSession`).
+  - `[x]` The multi-client console, `/clients`.
 - Time tracking, rate cards, billable vs non-billable, invoice-ready exports.
 - Shift handoff: on-call schedules, rota, coverage windows.
 - Per-client reporting and a client-facing satisfaction (CSAT) survey.

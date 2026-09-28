@@ -2,7 +2,14 @@ import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../lib/session";
 import { hasPermission } from "../../../lib/access-rules";
-import { ticketServicesFor, slaPolicyStoreFor, linkServicesFor, savedViewServicesFor } from "../../../lib/db";
+import {
+  clientServicesFor,
+  ticketServicesFor,
+  slaPolicyStoreFor,
+  linkServicesFor,
+  savedViewServicesFor,
+} from "../../../lib/db";
+import { scopeByClient } from "../../../lib/client-rules";
 import { bulkAction, deleteViewAction, saveViewAction } from "../../actions/tickets";
 import { buildInboxView, parseInboxFilter, selectedTicket, type InboxSearchParams } from "../../../lib/inbox-view";
 import { slaFlagsByTicket, slaStatusFor } from "../../../lib/report-rules";
@@ -24,11 +31,20 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
   if (!hasPermission(actor.role, "ticket:read:any")) redirect("/portal");
 
   const params = await searchParams;
-  const [all, policies, views] = await Promise.all([
+  const clients = clientServicesFor();
+  const [everything, policies, views, scope] = await Promise.all([
     ticketServicesFor().store.listTickets(actor.tenantId),
     slaPolicyStoreFor().listForTenant(actor.tenantId),
     savedViewServicesFor().list(actor),
+    clients.scope(actor),
   ]);
+  // One desk serving many clients means the worklist is scoped before it is
+  // rendered: an agent sees their clients' work and the work that names no
+  // client, never a third client's. Filtering here (rather than in the list
+  // component) keeps every rung below — SLA flags, saved views, counts — computed
+  // over exactly the rows the reader may see. When the scope is the whole desk,
+  // this is the identity filter and nothing changes.
+  const all = scopeByClient(scope, everything);
   const filter = parseInboxFilter(params);
   const now = new Date().toISOString();
   const sla = slaFlagsByTicket(all, policies, now);
@@ -46,6 +62,11 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
         <p className="text-sm text-ink-soft">
           Open work first, most urgent first — resolved tickets never bury live ones.
         </p>
+        {scope.kind === "assigned" ? (
+          <p className="text-sm text-ink-soft">
+            Scoped to your clients: this desk {scope.because}. Work that names no client stays visible.
+          </p>
+        ) : null}
       </div>
 
       {flash ? (

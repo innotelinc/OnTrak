@@ -51,6 +51,17 @@ async function signIn(page: Page, email: string = EMAIL): Promise<void> {
   await page.waitForURL((next) => !next.pathname.startsWith("/sign-in"), { timeout: 20_000 });
 }
 
+/** Hand the browser to somebody else, the way two people share a desk. */
+async function switchUser(page: Page, email: string): Promise<void> {
+  await page.goto(url("/notifications"), { waitUntil: "load" });
+  await page.getByRole("button", { name: /sign out/i }).click();
+  await page.waitForURL(/\/sign-in/, { timeout: 20_000 });
+  await signIn(page, email);
+}
+
+const ADMIN = process.env.ONTRAK_TIX_ADMIN_EMAIL ?? "admin@acme.test";
+const AGENT_NAME = "Sam Agent";
+
 test.describe("OnTrak Tix desk", () => {
   test.skip(!BASE_URL, "set ONTRAK_TIX_BASE_URL to run the Tix sweep");
 
@@ -68,6 +79,7 @@ test.describe("OnTrak Tix desk", () => {
     "/security",
     "/incidents",
     "/incidents/templates",
+    "/clients",
   ];
 
   for (const path of staffPaths) {
@@ -543,6 +555,78 @@ test.describe("OnTrak Tix desk", () => {
     await page.getByLabel("or paste it").fill(JSON.stringify(edited));
     await page.getByRole("button", { name: "Verify packet" }).click();
     await expect(page.locator("body")).toContainText(/The packet contents do not match its content hash/);
+  });
+
+  test("clients: the console records a client, its promise, a contact and an acted-as window", async ({ page }) => {
+    // The multi-client console is a manager's, so the seeded agent signs out of it.
+    await switchUser(page, ADMIN);
+
+    const stamp = Date.now();
+    const name = `Northwind sweep ${stamp}`;
+    await page.goto(url("/clients"), { waitUntil: "load" });
+    expect(await page.getByRole("heading", { name: "Clients", exact: true }).count()).toBe(1);
+
+    await page.getByLabel("New client").fill(name);
+    await page.getByRole("button", { name: "Add client" }).click();
+    await expect(page.locator("body")).toContainText(`${name} added.`, { timeout: 20_000 });
+
+    const card = page.locator("li").filter({ has: page.getByRole("heading", { name, exact: true }) }).first();
+    await expect(card).toBeVisible();
+    // The promise is stated per priority, and every rung says *which* policy
+    // answered: a client with no policy of its own falls through to the desk's and
+    // the console admits it rather than implying the promise is the client's.
+    await expect(card).toContainText("the tenant's URGENT policy");
+    await expect(card).toContainText("the tenant's fallback policy");
+
+    // A contact, because a client nothing can reach is not a client.
+    await card.getByLabel("Contact name").fill("Dana Reyes");
+    await card.getByLabel("Email").fill(`dana.${stamp}@northwind.test`);
+    await card.getByRole("button", { name: "Add contact" }).click();
+    await expect(page.locator("body")).toContainText("Dana Reyes added as a contact.", { timeout: 20_000 });
+    await expect(card).toContainText("1 contact");
+
+    // Looking through the client's eyes takes a reason, says so while it is live,
+    // and is a window somebody has to close again.
+    await card.getByLabel("Reason to act as this client").fill("reproducing their complaint");
+    await card.getByRole("button", { name: "Act as client" }).click();
+    await expect(page.locator("body")).toContainText("Acting as the client until", { timeout: 20_000 });
+    await expect(page.getByRole("heading", { name: `Acting as ${name}` })).toHaveCount(1);
+    await expect(page.locator("body")).toContainText("reproducing their complaint");
+
+    await page.getByRole("button", { name: "Stop acting as the client" }).click();
+    await expect(page.locator("body")).toContainText("No longer acting as the client.", { timeout: 20_000 });
+    await expect(page.getByRole("heading", { name: `Acting as ${name}` })).toHaveCount(0);
+  });
+
+  test("clients: a client's work is in scope only for the people assigned to it", async ({ page }) => {
+    await switchUser(page, ADMIN);
+    await page.goto(url("/clients"), { waitUntil: "load" });
+
+    const stamp = Date.now();
+    const assigned = `Assigned sweep ${stamp}`;
+    const other = `Other desk sweep ${stamp}`;
+    for (const name of [assigned, other]) {
+      await page.getByLabel("New client").fill(name);
+      await page.getByRole("button", { name: "Add client" }).click();
+      await expect(page.locator("body")).toContainText(`${name} added.`, { timeout: 20_000 });
+    }
+
+    // Put the seeded agent on one of them, and leave the other with nobody.
+    const card = page.locator("li").filter({ has: page.getByRole("heading", { name: assigned, exact: true }) }).first();
+    await card.getByLabel("Assign someone").selectOption({ label: `${AGENT_NAME} (AGENT)` });
+    await card.getByRole("button", { name: "Assign", exact: true }).click();
+    await expect(page.locator("body")).toContainText("Assignment recorded.", { timeout: 20_000 });
+    await expect(card).toContainText("Served by:");
+    await expect(card).toContainText(AGENT_NAME);
+
+    // Through the agent's eyes: the client they serve is here, the one they do not
+    // is not, and the console offers them no way to change any of it.
+    await switchUser(page, EMAIL);
+    await page.goto(url("/clients"), { waitUntil: "load" });
+    await expect(page.getByRole("heading", { name: assigned, exact: true })).toHaveCount(1);
+    await expect(page.getByRole("heading", { name: other, exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Add client" })).toHaveCount(0);
+    await expect(page.locator("body")).toContainText("You can see the clients in your scope but not change them.");
   });
 
   test("inbox: a requester cannot reach the staff worklist", async ({ page }) => {

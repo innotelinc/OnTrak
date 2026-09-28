@@ -73,6 +73,14 @@ export interface SlaPolicy {
   warningFraction: number;
   /** Optional priority this policy is scoped to; omitted means "any". */
   priority?: TicketPriority;
+  /**
+   * Optional client this policy belongs to (M4); omitted means "the tenant's".
+   * A client policy outranks a queue or tenant one at the same priority, because
+   * the client is who the promise was made to. See `resolveSlaPolicy`.
+   */
+  clientId?: string | null;
+  /** Optional queue this policy is scoped to; omitted means "any". */
+  queueId?: string | null;
 }
 
 const MINUTE_MS = 60_000;
@@ -581,6 +589,76 @@ export function slaSummary(instance: SlaInstance, policy: SlaPolicy, now: Date |
 /** The policy that applies to a ticket of this priority, most specific first. */
 export function policyForPriority(policies: readonly SlaPolicy[], priority: TicketPriority): SlaPolicy | null {
   return policies.find((policy) => policy.priority === priority) ?? policies.find((policy) => policy.priority === undefined) ?? null;
+}
+
+/** Which rung of the ladder answered, which is what a reader argues about. */
+export type SlaPolicyScope = "client" | "queue" | "tenant" | "none";
+
+export interface SlaResolution {
+  policy: SlaPolicy | null;
+  scope: SlaPolicyScope;
+  /** Why this one won, in a sentence — the answer to "which SLA applies?". */
+  because: string;
+}
+
+/**
+ * The policy that applies to a ticket, **most specific first** (M4).
+ *
+ * An MSP runs many clients under one desk, and the promise made to a client is
+ * not the desk's default. So the ladder is: the client's policy for this
+ * priority, then the client's catch-all, then the queue's, then the tenant's —
+ * and the winning rung is reported rather than inferred, because "which SLA
+ * applied, and why?" is the first question asked when a client claims a breach.
+ *
+ * Scoping is by *match*, not by exclusion: a policy that names no client applies
+ * to every client, which is what keeps this backwards-compatible with the M1
+ * policies that were written before clients existed.
+ */
+export function resolveSlaPolicy(input: {
+  policies: readonly SlaPolicy[];
+  priority: TicketPriority;
+  clientId?: string | null;
+  queueId?: string | null;
+}): SlaResolution {
+  const { policies, priority } = input;
+
+  if (input.clientId) {
+    const forClient = policies.filter((policy) => policy.clientId === input.clientId);
+    const exact = forClient.find((policy) => policy.priority === priority);
+    if (exact) return { policy: exact, scope: "client", because: `the client's ${priority} policy` };
+    const any = forClient.find((policy) => policy.priority === undefined);
+    if (any) return { policy: any, scope: "client", because: "the client's policy for any priority" };
+  }
+
+  if (input.queueId) {
+    const forQueue = policies.filter((policy) => policy.queueId === input.queueId);
+    const exact = forQueue.find((policy) => policy.priority === priority);
+    if (exact) return { policy: exact, scope: "queue", because: `the queue's ${priority} policy` };
+    const any = forQueue.find((policy) => policy.priority === undefined);
+    if (any) return { policy: any, scope: "queue", because: "the queue's policy for any priority" };
+  }
+
+  // The desk's own policies, meaning the ones scoped to neither a client nor a
+  // queue — the shape every M1 policy had.
+  const tenantWide = policies.filter((policy) => !policy.clientId && !policy.queueId);
+  const exact = tenantWide.find((policy) => policy.priority === priority);
+  if (exact) return { policy: exact, scope: "tenant", because: `the tenant's ${priority} policy` };
+  const any = tenantWide.find((policy) => policy.priority === undefined);
+  if (any) return { policy: any, scope: "tenant", because: "the tenant's fallback policy" };
+
+  // Last resort, and deliberately the pre-M4 behaviour: a deployment whose only
+  // policies are queue-scoped still resolves, so adding clients to the ladder
+  // cannot leave an existing desk with no SLA at all. The reason names it, so a
+  // reader is not told they got the queue's promise when they did not.
+  const loose = policies.filter((policy) => !policy.clientId);
+  const looseExact = loose.find((policy) => policy.priority === priority);
+  if (looseExact) {
+    return { policy: looseExact, scope: "tenant", because: `the desk's ${priority} policy, scoped to a queue this ticket is not in` };
+  }
+  const looseAny = loose.find((policy) => policy.priority === undefined);
+  if (looseAny) return { policy: looseAny, scope: "tenant", because: "the desk's fallback policy, scoped to a queue" };
+
+  return { policy: null, scope: "none", because: "no policy covers this ticket" };
 }
 
 export interface SlaPolicyIssue {

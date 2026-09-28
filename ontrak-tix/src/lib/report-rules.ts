@@ -15,6 +15,7 @@ import {
   clockDurationMinutes,
   policyForPriority,
   resolutionClock,
+  resolveSlaPolicy,
   responseClock,
   slaInstanceFor,
   slaSummary,
@@ -34,6 +35,9 @@ export interface ReportTicket {
   status: TicketStatus;
   priority: TicketPriority;
   assigneeId: string | null;
+  /** The client the work is for, so a per-client policy can win (M4). */
+  clientId?: string | null;
+  queueId?: string | null;
   createdAt: string;
   firstResponseAt: string | null;
   resolvedAt: string | null;
@@ -128,7 +132,12 @@ export function buildSlaReport(
       if (ticket.assigneeId === null) unassigned += 1;
     }
 
-    const policy = policyForPriority(policies, ticket.priority);
+    const { policy } = resolveSlaPolicy({
+      policies,
+      priority: ticket.priority,
+      clientId: ticket.clientId,
+      queueId: ticket.queueId,
+    });
     if (!policy) {
       withoutPolicy += 1;
       continue;
@@ -202,7 +211,14 @@ export function slaStatusFor(
   policies: readonly SlaPolicy[],
   now: Date | string,
 ): TicketSlaStatus | null {
-  const policy = policyForPriority(policies, ticket.priority);
+  // Which policy applies is the client-aware resolver's call (M4): a policy
+  // written for this client outranks the queue's and the desk's own default.
+  const { policy } = resolveSlaPolicy({
+    policies,
+    priority: ticket.priority,
+    clientId: ticket.clientId,
+    queueId: ticket.queueId,
+  });
   return policy ? statusRow(ticket, policy, now) : null;
 }
 

@@ -64,6 +64,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       firstResponseAt: record.firstResponseAt,
       resolvedAt: record.resolvedAt,
       pauses: record.pauses,
+      // Carried through so a per-client policy's clock is the one swept (M4).
+      clientId: record.clientId,
+      queueId: record.queueId,
       status: record.status,
     }));
 
