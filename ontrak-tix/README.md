@@ -469,10 +469,16 @@ See [ROADMAP.md](./ROADMAP.md) for the full milestone sequence.
   lifecycle phases, incident roles, the append-only timeline, playbooks, evidence
   with its chain of custody and legal hold, and the signed Assurance Packet.
 - [docs/clients.md](./docs/clients.md) — the clients a desk serves, the SLA
-  ladder's client rung, the scope that keeps two clients apart, the guardrails on
-  acting as a client, per-client reporting, and the client-facing survey.
+  ladder's client rung and its queue rung, the scope that keeps two clients
+  apart, the guardrails on acting as a client, per-client branding and portal
+  identity, per-client reporting, and the client-facing survey.
 - [docs/billing.md](./docs/billing.md) — time entries, rate cards and their
-  rounding, and why issuing an invoice and downloading it are two steps.
+  rounding, tax rules and the credit notes that reverse an invoice, retainers and
+derived balances, one invoice per currency, and why issuing an invoice and
+  downloading it are two steps.
+- [docs/handoff.md](./docs/handoff.md) — the rota, on-call windows and the
+  coverage gaps they leave, on-call load per person, and the handoff record that
+  names the work still open.
 
 ## Relationship to OnTrak IT Support Training
 

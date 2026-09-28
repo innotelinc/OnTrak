@@ -344,9 +344,24 @@ to stand on its own.
 > `/clients`), together with per-client attainment and CSAT on `/reports` and a
 > client-facing survey a contact can answer without an account. Documented in
 > [docs/clients.md](./docs/clients.md) and
-> [docs/billing.md](./docs/billing.md). Still open in M4: a form for queue-scoped
-> promises, branding and portal identity, retainers/tax on an invoice, and the
-> rota.
+> [docs/billing.md](./docs/billing.md). The last M4 slice has landed as well:
+> **queue-scoped promises** (a promise belongs to a client *or* a queue, not
+> both, and an edit that does not mention the scope keeps it),
+> **branding and portal identity** (`client-branding-rules.ts` — the name,
+> colour, logo and voice one client is shown in, with the colour checked for
+> contrast and the logo restricted to an image the page can render rather than a
+> URL it has to trust), **the rota** (`rota-rules.ts`, `rota-service.ts`, the
+> `/handoff` page: cover derived from the shifts, the uncovered hours named,
+> on-call load per person, and a handover that requires a note and names the work
+> still open), and **billing depth** (`billing-rules.ts`: tax resolved
+> client-first and snapshotted onto the entries it priced, credit notes capped by
+> what an invoice still owes, retainers whose balance is derived from the ledger,
+> and one invoice per currency rather than a total that adds dollars to euros).
+> Covered by `tests/tix-m4-sla-authoring.test.ts`, `tests/tix-m4-branding.test.ts`,
+> `tests/tix-m4-handoff.test.ts` and `tests/tix-m4-billing-depth.test.ts`.
+> M4's checklist is complete; the honest gaps that remain are recorded per
+> document (no client portal beyond the survey link, no shift-swap approval, no
+> accounting-system sync, one tax line per invoice).
 >
 > M1 progress: the SLA engine (clocks, escalations and the scheduled sweep),
 > queue routing, CSAT surveys, attachments, the dispatcher report, canned
@@ -681,7 +696,18 @@ up to an adjuster or auditor.
     scope keeps it, so a form carrying only the numbers cannot move a client's
     contract onto the whole desk. Covered by
     `ontrak-tix/tests/tix-m4-sla-authoring.test.ts`.
-  - `[ ]` Branding and portal identity per client.
+  - `[x]` **Branding and portal identity per client**
+    (`client-branding-rules.ts`, `client-branding-service.ts`, the branding form
+    on `/clients`): the name, accent colour, logo, reply-to address and signature
+    one client is shown in, resolved by one `brandFor` so a client with no
+    branding of its own is simply shown as the desk rather than being a case
+    every page has to handle. A colour has to stay readable on the portal
+    background (checked as a contrast ratio, not a preference) and a logo has to
+    be an `https:` URL or an inline base64 image — never `http:`, never
+    `data:text/html`, never an unbounded data URI. The client-facing survey at
+    `/survey/[token]` reads the brand through a separate, narrower entry point
+    than the actor-scoped one, so the unauthenticated page can resolve a brand
+    without ever being able to list clients.
 - Cross-client agent views with strict scoping and "act as client" guardrails.
   - `[x]` **Scope**: `clientScopeFor` gives `queue:manage` every client and an
     agent the clients they are assigned to, while work naming no client stays
@@ -707,6 +733,46 @@ up to an adjuster or auditor.
     re-reads it — and an entry on an invoice is frozen (the refusal names the
     credit note that is the real remedy).
 - Shift handoff: on-call schedules, rota, coverage windows.
+  - `[x]` **The rota** (`rota-rules.ts`, `rota-service.ts`,
+    `rota-store-prisma.ts`, the `/handoff` page): shifts and on-call windows per
+    person and queue, with an overlapping window for the same person refused at
+    the point of writing (and the refusal naming the shift it collided with), and
+    a shift longer than a day refused as a mis-typed on-call week.
+  - `[x]` **Coverage as a question with an answer**: `coverageAt` says who is
+    covering a moment and who to wake; `coverageGaps` returns the uncovered
+    intervals inside a window — measured from on-call shifts only, because being
+    at a desk is not cover at 03:00 — and `rotaLoad` makes "one name on every
+    window" visible rather than merely present in a list.
+  - `[x]` **The handoff** (`Handoff`): outlives the shift it happened in. It
+    names who handed over, who took it, and the work that was still open by
+    reference, and it needs a note — an empty handoff is the failure mode the
+    record exists to prevent. Recording one resolves the shift that is on at that
+    moment rather than trusting a form, and a handoff from somebody who is not on
+    duty is refused unless they run the desk.
+
+- Billing depth: tax, credit notes and retainers.
+  - `[x]` **Tax** (`billing-rules.ts`, the tax form on `/clients`): basis points
+    on a rule that belongs to a client or to the desk, resolved client-first,
+    validated at the point of writing (a rate above 100% is a typo), charged on
+    the labour subtotal at the moment the invoice is issued and **snapshotted
+    onto the entries it priced** — so a rate changed in April cannot restate what
+    March was charged, and an issued invoice reports the rate that produced it
+    rather than today's rule.
+  - `[x]` **Credit notes** (`CreditNote`, `time.credit_note.issue`): the only
+    remedy for an invoice that was wrong, because an invoiced entry is frozen.
+    The refusal is the feature: a credit may not exceed what the invoice still
+    owes, so the same money cannot be credited twice; it needs a reason somebody
+    can read back; and each note carries its own reference beside the invoice it
+    answers.
+  - `[x]` **Retainers** (`Retainer`): money paid up front for a period, drawn
+    down by the invoices issued inside it — and the balance is always *derived*,
+    funded minus what the entries carrying its id drew, never a stored counter
+    that can drift from the ledger. A retainer is money in one currency, so it
+    only ever absorbs invoices denominated in it.
+  - `[x]` **One invoice per currency**: a period that spans two currencies issues
+    two documents with two references rather than one total nobody can pay. The
+    currency is part of a line's identity, the CSV states `Subtotal`, `Tax` and
+    `Amount due` in that order, and `issued()` re-reads all of it.
 - Per-client reporting and a client-facing satisfaction (CSAT) survey.
   - `[x]` **Per-client attainment and CSAT** (`clientScorecards` in
     `report-rules.ts`, the *By client* table on `/reports`, and

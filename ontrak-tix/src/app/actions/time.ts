@@ -132,11 +132,21 @@ export async function issueInvoiceAction(formData: FormData): Promise<void> {
   });
   if (!result.ok) back("/time", result.error, "error");
 
-  const { ref, totals } = result.value;
+  // One invoice per currency, so an issue can produce more than one document.
+  // Saying how many is part of saying what happened: a desk that expected one
+  // invoice and got two is owed the explanation, not the surprise.
+  const issued = result.value;
+  const money = issued
+    .map((invoice) => `${((invoice.totalCents ?? invoice.totals.amountCents) / 100).toFixed(2)} ${invoice.totals.currency ?? ""}`)
+    .join(" + ");
+  const tax = issued.some((invoice) => invoice.tax) ? `, including tax` : "";
+  const summary =
+    issued.length === 1
+      ? `Invoice ${issued[0].ref} issued: ${money} for ${issued[0].totals.billedMinutes} billed minutes${tax}.`
+      : `${issued.length} invoices issued (one per currency): ${money}${tax}. ${issued.map((invoice) => invoice.ref).join(", ")}`;
+
   revalidatePath("/time");
-  redirect(
-    `/time?flash=${encodeURIComponent(`Invoice ${ref} issued: ${(totals.amountCents / 100).toFixed(2)} ${totals.currency ?? ""} for ${totals.billedMinutes} billed minutes.`)}&invoice=${encodeURIComponent(ref)}`,
-  );
+  redirect(`/time?flash=${encodeURIComponent(summary)}&invoice=${encodeURIComponent(issued[0].ref)}`);
 }
 
 /** An hourly rate typed as money, stored as cents. `12.50` is 1250. */

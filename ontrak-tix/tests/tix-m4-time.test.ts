@@ -88,6 +88,9 @@ function entry(overrides: Partial<TimeEntryRecord> = {}): TimeEntryRecord {
     note: null,
     invoicedAt: null,
     invoiceRef: null,
+    taxCents: null,
+    taxRateBasisPoints: null,
+    retainerId: null,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
@@ -487,19 +490,22 @@ test("an invoice stamps what it covers, so the same hour cannot be billed twice"
   assert.equal(issued.ok, true);
   if (!issued.ok) return;
 
-  assert.match(issued.value.ref, /^INV-20260920-ID\d+$/);
-  assert.equal(issued.value.lines.length, 2, "one line per ticket, both at the client's rate");
-  assert.equal(issued.value.totals.billedMinutes, 90);
-  assert.equal(issued.value.totals.amountCents, 21_750);
-  assert.equal(issued.value.skipped.nonBillable, 1);
+  // One invoice per currency, so a single-currency period is one document.
+  assert.equal(issued.value.length, 1);
+  const one = issued.value[0];
+  assert.match(one.ref, /^INV-20260920-ID\d+$/);
+  assert.equal(one.lines.length, 2, "one line per ticket, both at the client's rate");
+  assert.equal(one.totals.billedMinutes, 90);
+  assert.equal(one.totals.amountCents, 21_750);
+  assert.equal(one.skipped.nonBillable, 1);
   // The desk's own time is not in this period's *client* set at all, so it is not
   // reported as skipped — it stays logged and uninvoiced for its own invoice.
-  assert.equal(issued.value.skipped.unpriced, 0);
+  assert.equal(one.skipped.unpriced, 0);
   const untouched = await h.service.entries(ADMIN, { ticketId: "t3" });
   assert.equal(untouched.ok && untouched.value[0].invoicedAt, null);
 
   // Every entry it covered is stamped, and stays readable.
-  const stamped = await h.service.entries(ADMIN, { invoiceRef: issued.value.ref });
+  const stamped = await h.service.entries(ADMIN, { invoiceRef: one.ref });
   assert.equal(stamped.ok, true);
   if (stamped.ok) {
     assert.equal(stamped.value.length, 2);
@@ -519,14 +525,17 @@ test("an invoice stamps what it covers, so the same hour cannot be billed twice"
   if (!again.ok) assert.match(again.error, /already on an invoice/);
 
   // Re-reading it by reference gives the same figures, and stamps nothing new.
-  const reread = await h.service.issued(ADMIN, issued.value.ref);
+  const reread = await h.service.issued(ADMIN, one.ref);
   assert.equal(reread.ok, true);
   if (reread.ok) {
-    assert.equal(reread.value.totals.amountCents, 21_750);
-    assert.equal(reread.value.totals.billedMinutes, 90);
-    assert.equal(reread.value.totals.currency, "USD");
-    assert.equal(reread.value.clientId, northwind);
-    assert.equal(reread.value.from, MONDAY);
+    assert.equal(reread.value.invoice.totals.amountCents, 21_750);
+    assert.equal(reread.value.invoice.totals.billedMinutes, 90);
+    assert.equal(reread.value.invoice.totals.currency, "USD");
+    assert.equal(reread.value.invoice.clientId, northwind);
+    assert.equal(reread.value.invoice.from, MONDAY);
+    // Nothing has been credited, so the whole thing is still owed.
+    assert.equal(reread.value.creditedCents, 0);
+    assert.equal(reread.value.outstandingCents, 21_750);
   }
   assert.equal((await h.service.issued(ADMIN, "INV-19700101-NOPE00")).ok, false);
 
@@ -535,7 +544,7 @@ test("an invoice stamps what it covers, so the same hour cannot be billed twice"
   assert.equal(ledger.ok, true);
   if (ledger.ok) {
     assert.equal(ledger.value.length, 1);
-    assert.equal(ledger.value[0].ref, issued.value.ref);
+    assert.equal(ledger.value[0].ref, one.ref);
     assert.equal(ledger.value[0].entries, 2);
     assert.equal(ledger.value[0].amountCents, 21_750);
   }
@@ -544,7 +553,7 @@ test("an invoice stamps what it covers, so the same hour cannot be billed twice"
   const events = h.audit.snapshot().events;
   const exports = events.filter((event) => event.action === "time.invoice.export");
   assert.equal(exports.length, 1);
-  assert.equal(exports[0].targetId, issued.value.ref);
+  assert.equal(exports[0].targetId, one.ref);
   assert.equal(exports[0].detail?.amountCents, 21_750);
   assert.equal(exports[0].detail?.entries, 2);
   assert.deepEqual(exports[0].detail?.skipped, { alreadyInvoiced: 0, unpriced: 0, nonBillable: 1 });
@@ -588,8 +597,8 @@ test("issuing is a manager's act, removing a card keeps history, and the period 
   const desk = await h.service.invoice(ADMIN, { clientId: null, from: MONDAY, to: MONDAY });
   assert.equal(desk.ok, true);
   if (desk.ok) {
-    assert.equal(desk.value.clientId, null);
-    assert.equal(desk.value.totals.amountCents, 9_000);
+    assert.equal(desk.value[0].clientId, null);
+    assert.equal(desk.value[0].totals.amountCents, 9_000);
   }
 
   // Dropping the card does not touch what it already priced.
@@ -620,20 +629,21 @@ test("the CSV says who, what, how long and how much — and never a formatted nu
   assert.equal(invoice.ok, true);
   if (!invoice.ok) return;
 
-  const csv = buildInvoiceCsv(invoice.value, { generatedAt: NOW, clientName: 'Contoso "East", Ltd' });
+  const csv = buildInvoiceCsv(invoice.value[0], { generatedAt: NOW, clientName: 'Contoso "East", Ltd' });
   const rows = csv.trim().split("\r\n");
   assert.match(rows[0], /^OnTrak Tix invoice INV-20260920-/);
   // A comma and a quote in a client's name survive the trip.
   assert.equal(rows[1], 'Client,"Contoso ""East"", Ltd"');
   assert.ok(csv.includes("Rate per hour,Currency,Billed minutes,Billed hours,Amount,Entries,Worked by"));
   assert.ok(csv.includes("TIX-000001,Support for TIX-000001,120.00,USD,30,0.50,60.00,1,agent-1"));
-  assert.ok(csv.includes("Total,,,USD,30,0.50,60.00,1"));
+  assert.ok(csv.includes("Subtotal,,,USD,30,0.50,60.00,1"));
+  assert.ok(csv.includes("Amount due,,,USD,,,60.00"));
   // Nothing was left out, so there is nothing to explain…
   assert.ok(!csv.includes("Not billed"));
   assert.ok(!csv.includes("$"), "money is a decimal for the spreadsheet, not a formatted string");
 
   // …and when hours are unbillable, the invoice says so rather than just costing more.
-  const partial: Invoice = { ...invoice.value, skipped: { alreadyInvoiced: 1, unpriced: 2, nonBillable: 3 } };
+  const partial: Invoice = { ...invoice.value[0], skipped: { alreadyInvoiced: 1, unpriced: 2, nonBillable: 3 } };
   const explained = buildInvoiceCsv(partial, { generatedAt: NOW });
   assert.ok(explained.includes("Not billed,2 unbillable (no rate),1 already invoiced,3 not chargeable"));
   assert.ok(explained.includes("Client,the desk"), "with no client named, the file says the desk rather than the id");
@@ -659,6 +669,9 @@ test("the Prisma store keeps a work day a day, and carries the ticket's referenc
     note: "printer",
     invoicedAt: null,
     invoiceRef: null,
+    taxCents: null,
+    taxRateBasisPoints: null,
+    retainerId: null,
     createdAt: new Date(NOW),
     updatedAt: new Date(NOW),
     ticket: { ref: "TIX-000001" },

@@ -64,9 +64,52 @@ export function buildInvoiceCsv(invoice: Invoice, options: InvoiceCsvOptions): s
     );
   }
 
+  // Labour, then what was added to it, then what was already paid. The order is
+  // the order a person checks an invoice in: subtotal, tax, amount due — never a
+  // single number that hides which of the three it is.
   lines.push(
     "",
-    csvRow(["Total", "", "", invoice.totals.currency ?? "", invoice.totals.billedMinutes, hours(invoice.totals.billedMinutes), money(invoice.totals.amountCents), invoice.totals.entries]),
+    csvRow(["Subtotal", "", "", invoice.totals.currency ?? "", invoice.totals.billedMinutes, hours(invoice.totals.billedMinutes), money(invoice.totals.amountCents), invoice.totals.entries]),
+  );
+
+  if (invoice.tax) {
+    lines.push(
+      csvRow([
+        "Tax",
+        `${invoice.tax.label} (${(invoice.tax.rateBasisPoints / 100).toFixed(2)}%)`,
+        "",
+        "",
+        "",
+        "",
+        money(invoice.tax.taxCents),
+      ]),
+    );
+  }
+
+  if (invoice.retainer) {
+    lines.push(
+      csvRow([
+        "Retainer",
+        `drawn from retainer ${invoice.retainer.id}`,
+        "",
+        invoice.retainer.currency,
+        "",
+        "",
+        money(invoice.retainer.drawnCents),
+      ]),
+    );
+  }
+
+  lines.push(
+    csvRow([
+      "Amount due",
+      "",
+      "",
+      invoice.totals.currency ?? "",
+      "",
+      "",
+      money(invoice.totalCents ?? invoice.totals.amountCents),
+    ]),
     "",
     csvRow(["Generated", generatedAt]),
   );
