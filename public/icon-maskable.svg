@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="OnTrak IT Support Training">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6c4cf1" />
+      <stop offset="55%" stop-color="#ff5fa2" />
+      <stop offset="100%" stop-color="#ffab1f" />
+    </linearGradient>
+  </defs>
+  <!-- Full bleed: Android masks the shape, so the mark sits inside the safe zone -->
+  <rect width="512" height="512" fill="url(#brand)" />
+  <g fill="none" stroke="#ffffff" stroke-width="26" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M204 198 L140 256 L204 314" />
+    <path d="M308 198 L372 256 L308 314" />
+    <path d="M278 166 L234 346" />
+  </g>
+</svg>

@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+/*
+ * OnTrak Tix design tokens.
+ *
+ * The same palette and radius scale as OnTrak IT Support Training, so the two
+ * products share one component language. Font variables are intentionally left
+ * to fall back when the tix app does not load the brand webfonts.
+ */
+
+:root {
+  --canvas: #f7f5ff;
+  --surface: #ffffff;
+  --surface-muted: #f3f1fb;
+  --line: #e6e2f5;
+  --ink: #1c1633;
+  --ink-soft: #4a4266;
+  /* Secondary text: darkened to clear the 4.5:1 AA floor on white and canvas. */
+  --ink-faint: #6a6386;
+
+  /* Accents are used as *text* on light tints at small sizes, so the tokens are
+     the AA-compliant darker shades. Tinted fills keep their low alpha, so the
+     palette still reads as bright — and it matches the training app exactly. */
+  --brand: #5f3fe6;
+  --brand-soft: #ede8ff;
+  --pink: #b0246a;
+  --amber: #8a5a00;
+  --teal: #05685e;
+  --sky: #0a5c9e;
+  --lime: #4d6b00;
+
+  --shadow-card: 0 1px 2px rgb(28 22 51 / 4%), 0 12px 32px -12px rgb(28 22 51 / 16%);
+}
+
+.dark {
+  --canvas: #100c22;
+  --surface: #1a1433;
+  --surface-muted: #221a40;
+  --line: #332a55;
+  --ink: #f5f3ff;
+  --ink-soft: #c3bce0;
+  --ink-faint: #8f87b3;
+
+  --brand: #9b83ff;
+  --brand-soft: #2a2154;
+  --pink: #ff7cb4;
+  --amber: #ffc157;
+  --teal: #3fd3c1;
+  --sky: #6cc0ff;
+  --lime: #b4e85c;
+}
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --font-display: ui-sans-serif, system-ui, sans-serif;
+  --font-sans: ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-pink: var(--pink);
+  --color-amber: var(--amber);
+  --color-teal: var(--teal);
+  --color-sky: var(--sky);
+  --color-lime: var(--lime);
+
+  --shadow-card: var(--shadow-card);
+
+  --radius-xl2: 1.25rem;
+  --radius-xl3: 1.75rem;
+}
+
+@layer base {
+  body {
+    background-color: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+}
+
+@utility card-surface {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-card);
+}

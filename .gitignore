@@ -1,0 +1,35 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# env
+.env
+.env*.local
+
+# prisma
+prisma/migrations/dev.db*
+
+# uploaded software packages (kept on disk, not in git)
+storage/uploads/*
+!storage/uploads/.gitkeep
+storage/packages/*
+!storage/packages/.gitkeep
+
+# misc
+.DS_Store
+*.pem
+npm-debug.log*
+yarn-error.log*
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+coverage/
+
+# playwright browser-a11y sweep
+playwright-report/
+test-results/
+
+# tix attachment blob storage (local/single-node)
+.ontrak-tix-blobs/

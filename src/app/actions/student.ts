@@ -1,0 +1,235 @@
+"use server";
+
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { prisma } from "@/lib/db";
+import { requireSession } from "@/lib/auth";
+import { gradeAttempt } from "@/lib/sim/grade";
+import { createInitialState } from "@/lib/sim/state";
+import {
+  coerceSubmittedState,
+  createAttempt,
+  effectiveTimeLimit,
+  isExpired,
+  SCENARIO_INCLUDE,
+  toDefinition,
+} from "@/lib/scenarios";
+import { evaluateScenario, loadAvailabilityContext } from "@/lib/availability";
+import { recordAudit } from "@/lib/audit";
+import type { Prisma } from "@prisma/client";
+import type { EngineState } from "@/lib/sim/types";
+
+function fail(path: string, message: string): never {
+  redirect(`${path}?error=${encodeURIComponent(message)}`);
+}
+
+/** Start (or resume) an attempt at a scenario. */
+export async function startAttempt(formData: FormData): Promise<void> {
+  const user = await requireSession();
+  const scenarioId = String(formData.get("scenarioId") ?? "");
+  if (!scenarioId) fail("/student", "Choose a scenario first.");
+
+  const scenario = await prisma.scenario.findUnique({ where: { id: scenarioId }, include: SCENARIO_INCLUDE });
+  if (!scenario) fail("/student", "That scenario no longer exists.");
+
+  // An attempt already running? Resume it rather than burning a second clock.
+  const running = await prisma.attempt.findFirst({
+    where: { userId: user.id, scenarioId, status: "IN_PROGRESS" },
+    orderBy: { startedAt: "desc" },
+  });
+  if (running && !isExpired(running)) {
+    redirect(`/student/attempt/${running.id}`);
+  }
+
+  const context = await loadAvailabilityContext();
+  const availability = evaluateScenario(
+    { id: scenario.id, platform: scenario.platform, published: scenario.published, software: scenario.software },
+    context,
+  );
+  if (!availability.available && user.role === "STUDENT") {
+    fail("/student", availability.blockers[0]?.message ?? "That scenario is not available right now.");
+  }
+
+  // Assignment rules: attempt caps and per-student time overrides.
+  //
+  // Only the student's own classes count. Matching on `cohortId !== null` would
+  // let a scenario handed to somebody else's cohort leak *its* due date, time
+  // limit and attempt cap onto this student, so membership is resolved first.
+  // A direct assignment to the student always wins over a class-wide one.
+  const memberships = await prisma.cohortMember.findMany({
+    where: { userId: user.id },
+    select: { cohortId: true },
+  });
+  const myCohorts = new Set(memberships.map((membership) => membership.cohortId));
+  const assignment =
+    scenario.assignments.find((item) => item.studentId === user.id) ??
+    scenario.assignments.find((item) => item.cohortId !== null && myCohorts.has(item.cohortId)) ??
+    null;
+
+  if (assignment?.maxAttempts && assignment.maxAttempts > 0) {
+    const used = await prisma.attempt.count({
+      where: { userId: user.id, scenarioId, status: { in: ["SUBMITTED", "GRADED", "EXPIRED"] } },
+    });
+    if (used >= assignment.maxAttempts) {
+      fail("/student", `You have used all ${assignment.maxAttempts} attempts for this scenario.`);
+    }
+  }
+
+  const attempt = await createAttempt(scenario, {
+    userId: user.id,
+    scenarioId,
+    assignmentId: assignment?.id ?? null,
+    timeLimitSec: effectiveTimeLimit(scenario, assignment?.timeLimitSec),
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    action: "attempt.start",
+    targetType: "attempt",
+    targetId: attempt.id,
+    detail: { scenarioId, title: scenario.title },
+  });
+
+  redirect(`/student/attempt/${attempt.id}`);
+}
+
+/** Persist work in progress. Called by the console on a debounce. */
+export async function autosaveAttempt(input: {
+  attemptId: string;
+  state: EngineState;
+}): Promise<{ ok: boolean; error?: string; remaining?: number }> {
+  const user = await requireSession();
+  const attempt = await prisma.attempt.findUnique({
+    where: { id: input.attemptId },
+    include: { scenario: { select: { definition: true, timeLimitSec: true } } },
+  });
+
+  if (!attempt || (attempt.userId !== user.id && user.role === "STUDENT")) {
+    return { ok: false, error: "That attempt is not yours." };
+  }
+  if (attempt.status !== "IN_PROGRESS") {
+    return { ok: false, error: "This attempt has already been submitted." };
+  }
+
+  const definition = toDefinition(attempt.scenario);
+  const mine = attempt.userId === user.id;
+  const state = coerceSubmittedState(input.state, definition);
+  const elapsed = Math.round((Date.now() - attempt.startedAt.getTime()) / 1000);
+
+  await prisma.attempt.update({
+    where: { id: attempt.id },
+    data: {
+      snapshot: state as unknown as Prisma.InputJsonValue,
+      events: {
+        history: state.machine.history.slice(-500).map((entry) => ({ input: entry.input, at: entry.at })),
+        notes: state.machine.notes,
+      } as unknown as Prisma.InputJsonValue,
+      hintsUsed: state.meta.hintsUsed,
+      timeSpentSec: elapsed,
+    },
+  });
+
+  return {
+    ok: true,
+    remaining: mine ? Math.max(0, Math.floor((attempt.expiresAt.getTime() - Date.now()) / 1000)) : 0,
+  };
+}
+
+/**
+ * Grade and close an attempt.
+ *
+ * Grading always runs server-side against the submitted snapshot, so a student
+ * cannot hand-edit their score, and an instructor can re-grade later by calling
+ * the same function.
+ */
+export async function submitAttempt(formData: FormData): Promise<void> {
+  const user = await requireSession();
+  const attemptId = String(formData.get("attemptId") ?? "");
+  const reason = String(formData.get("reason") ?? "student");
+
+  const attempt = await prisma.attempt.findUnique({
+    where: { id: attemptId },
+    include: { scenario: true },
+  });
+  if (!attempt) fail("/student", "That attempt no longer exists.");
+  if (attempt.userId !== user.id && user.role === "STUDENT") fail("/student", "That attempt is not yours.");
+
+  if (attempt.status === "IN_PROGRESS" || attempt.status === "SUBMITTED") {
+    const definition = toDefinition(attempt.scenario);
+    const state = coerceSubmittedState(attempt.snapshot, definition);
+    const report = gradeAttempt(definition, state, attempt.scenario.passScore);
+    // The server owns the clock: whatever the client's timer believed, an
+    // attempt closed after `expiresAt` is expired. `reason` only records how
+    // it ended (audit + the report's wording), never whether it ran out of time.
+    const expired = attempt.expiresAt.getTime() <= Date.now();
+
+    await prisma.$transaction([
+      prisma.checkResult.deleteMany({ where: { attemptId } }),
+      prisma.checkResult.createMany({
+        data: report.results.map((result) => ({
+          attemptId,
+          checkId: result.checkId,
+          label: result.label,
+          passed: result.passed,
+          points: result.points,
+          maxPoints: result.maxPoints,
+          detail: result.detail,
+        })),
+      }),
+      prisma.attempt.update({
+        where: { id: attemptId },
+        data: {
+          status: expired ? "EXPIRED" : "GRADED",
+          submittedAt: new Date(),
+          gradedAt: new Date(),
+          score: report.score,
+          maxScore: report.maxScore,
+          timeSpentSec: Math.round((Date.now() - attempt.startedAt.getTime()) / 1000),
+        },
+      }),
+    ]);
+
+    await recordAudit({
+      actorId: user.id,
+      action: "attempt.submit",
+      targetType: "attempt",
+      targetId: attemptId,
+      detail: { score: report.score, maxScore: report.maxScore, reason, timedOut: expired },
+    });
+  }
+
+  revalidatePath("/student/results");
+  redirect(`/student/results/${attemptId}`);
+}
+
+/** Give up on an attempt without grading it. */
+export async function abandonAttempt(formData: FormData): Promise<void> {
+  const user = await requireSession();
+  const attemptId = String(formData.get("attemptId") ?? "");
+  const attempt = await prisma.attempt.findUnique({ where: { id: attemptId } });
+  if (!attempt || attempt.userId !== user.id) fail("/student", "That attempt is not yours.");
+  if (attempt.status !== "IN_PROGRESS") redirect(`/student/results/${attemptId}`);
+
+  await prisma.attempt.update({ where: { id: attemptId }, data: { status: "ABANDONED", submittedAt: new Date() } });
+  revalidatePath("/student");
+  redirect("/student?flash=Attempt+discarded");
+}
+
+/** Reset an in-progress attempt back to the scenario's opening state. */
+export async function restartAttempt(formData: FormData): Promise<void> {
+  const user = await requireSession();
+  const attemptId = String(formData.get("attemptId") ?? "");
+  const attempt = await prisma.attempt.findUnique({
+    where: { id: attemptId },
+    include: { scenario: { select: { definition: true } } },
+  });
+  if (!attempt || attempt.userId !== user.id) fail("/student", "That attempt is not yours.");
+  if (attempt.status !== "IN_PROGRESS") fail(`/student/results/${attemptId}`, "That attempt is already finished.");
+
+  const fresh = createInitialState(toDefinition(attempt.scenario));
+  await prisma.attempt.update({
+    where: { id: attemptId },
+    data: { snapshot: fresh as unknown as Prisma.InputJsonValue, hintsUsed: [] },
+  });
+  revalidatePath(`/student/attempt/${attemptId}`);
+}

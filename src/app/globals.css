@@ -1,0 +1,245 @@
+@import "tailwindcss";
+
+/* --------------------------------------------------------------------------
+   Dark mode is class-driven so the toggle is instant and SSR-safe.
+   -------------------------------------------------------------------------- */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* --------------------------------------------------------------------------
+   Raw palette. Bright, saturated and friendly — this is a learning product,
+   not a network operations center.
+   -------------------------------------------------------------------------- */
+:root {
+  --canvas: #f7f5ff;
+  --canvas-2: #fff8f3;
+  --surface: #ffffff;
+  --surface-muted: #f3f1fb;
+  --line: #e6e2f5;
+  --ink: #1c1633;
+  --ink-soft: #4a4266;
+  /* Secondary text: darkened to clear the 4.5:1 AA floor on white and canvas. */
+  --ink-faint: #6a6386;
+
+  --brand: #5f3fe6;
+  --brand-soft: #ede8ff;
+  /* Accents are used as *text* on light tints at small sizes, so the tokens are
+     the AA-compliant darker shades. Tinted fills (`bg-pink/14`) stay light
+     because of their low alpha, so the palette still reads as bright. */
+  --pink: #b0246a;
+  --amber: #8a5a00;
+  --teal: #05685e;
+  --sky: #0a5c9e;
+  --lime: #4d6b00;
+
+  --shadow-card: 0 1px 2px rgb(28 22 51 / 4%), 0 12px 32px -12px rgb(28 22 51 / 16%);
+  --shadow-lift: 0 2px 4px rgb(28 22 51 / 6%), 0 24px 48px -16px rgb(28 22 51 / 24%);
+}
+
+.dark {
+  --canvas: #100c22;
+  --canvas-2: #17102b;
+  --surface: #1a1433;
+  --surface-muted: #221a40;
+  --line: #332a55;
+  --ink: #f5f3ff;
+  --ink-soft: #c3bce0;
+  --ink-faint: #8f87b3;
+
+  --brand: #9b83ff;
+  --brand-soft: #2a2154;
+  --pink: #ff7cb4;
+  --amber: #ffc157;
+  --teal: #3fd3c1;
+  --sky: #6cc0ff;
+  --lime: #b4e85c;
+
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 30%), 0 16px 40px -16px rgb(0 0 0 / 55%);
+  --shadow-lift: 0 2px 6px rgb(0 0 0 / 35%), 0 28px 56px -20px rgb(0 0 0 / 65%);
+}
+
+@theme inline {
+  --font-display: var(--font-outfit), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono-code), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-canvas: var(--canvas);
+  --color-canvas-2: var(--canvas-2);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-pink: var(--pink);
+  --color-amber: var(--amber);
+  --color-teal: var(--teal);
+  --color-sky: var(--sky);
+  --color-lime: var(--lime);
+
+  --shadow-card: var(--shadow-card);
+  --shadow-lift: var(--shadow-lift);
+
+  --radius-xl2: 1.25rem;
+  --radius-xl3: 1.75rem;
+
+  --animate-float: float 7s ease-in-out infinite;
+  --animate-rise: rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-pop: pop 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  --animate-shimmer: shimmer 2.4s linear infinite;
+  --animate-pulse-ring: pulse-ring 1.8s ease-out infinite;
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-14px) rotate(2deg);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--brand) 45%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 12px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Base
+   -------------------------------------------------------------------------- */
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--brand) 28%, transparent);
+  }
+
+  :focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--brand) 70%, transparent);
+    outline-offset: 2px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--ink-faint) 40%, transparent) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--ink-faint) 35%, transparent);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Utilities
+   -------------------------------------------------------------------------- */
+@utility gradient-brand {
+  background-image: linear-gradient(120deg, var(--brand) 0%, var(--pink) 50%, var(--amber) 100%);
+}
+
+@utility text-gradient {
+  background-image: linear-gradient(100deg, var(--brand), var(--pink) 55%, var(--amber));
+  background-clip: text;
+  color: transparent;
+}
+
+@utility mesh-bg {
+  background-image:
+    radial-gradient(at 8% 6%, color-mix(in oklab, var(--brand) 22%, transparent) 0px, transparent 55%),
+    radial-gradient(at 92% 4%, color-mix(in oklab, var(--pink) 20%, transparent) 0px, transparent 50%),
+    radial-gradient(at 84% 92%, color-mix(in oklab, var(--teal) 18%, transparent) 0px, transparent 52%),
+    radial-gradient(at 12% 96%, color-mix(in oklab, var(--amber) 20%, transparent) 0px, transparent 50%);
+}
+
+@utility grid-lines {
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--line) 70%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--line) 70%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+@utility glass {
+  background: color-mix(in oklab, var(--surface) 78%, transparent);
+  backdrop-filter: blur(14px) saturate(140%);
+}
+
+@utility card-surface {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-card);
+}
+
+/* The xterm canvas needs a transparent background so the panel shows through. */
+.xterm .xterm-viewport {
+  background-color: transparent !important;
+}
+
+.xterm-screen {
+  padding: 2px 0;
+}

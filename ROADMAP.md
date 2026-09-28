@@ -1,0 +1,215 @@
+# OnTrak IT Support Training — Product & Engineering Roadmap
+
+> An [Innotel Labs](INNOTEL-LABS.md) product.
+>
+> Status legend: `[x]` shipped · `[~]` in progress · `[ ]` planned · `[-]` out of scope for v1
+>
+> This is the single source of truth for **what** the training platform does and
+> **what comes next**. v1 is feature-complete; this roadmap finishes v1 and lays
+> out the path beyond it.
+
+---
+
+## 1. Vision
+
+Teach hands-on IT support the way it is actually done — in a realistic, timed,
+automatically graded environment that runs in a browser, with no virtual machines
+to provision. Then make the resulting **training evidence** usable: who was
+trained, on what, when, and how well.
+
+```mermaid
+flowchart LR
+  A[Scenario] --> B[Timed attempt]
+  B --> C[Server re-grades snapshot]
+  C --> D[Result + evidence]
+```
+
+## 2. v1 status (shipped)
+
+| Capability | Status |
+| --- | --- |
+| Linux (bash), Windows (PowerShell), Office (sheet/doc/mail) simulators | `[x]` |
+| Clickable Windows 11 desktop surface driving the same machine state | `[x]` |
+| Deterministic server-side grading, re-grade, hint penalties | `[x]` |
+| Derived availability + licence gate (OPEN / EVALUATION / LICENSED) | `[x]` |
+| RBAC (admin / instructor / student) on middleware **and** every action | `[x]` |
+| Scenario authoring + validator ("passes before work" warnings) + templates | `[x]` |
+| Cohorts, join codes, assignments, due dates, attempt caps, time limits | `[x]` |
+| Admin control room: platform toggles, software inventory, keys, users, audit | `[x]` |
+| Student experience: timed attempts, autosave, results, personal bests | `[x]` |
+| PWA / mobile quick-keys / offline shell | `[x]` |
+| Test suite (146) + typecheck + production build green | `[x]` |
+| Pure, unit-tested form/rule modules; ownership-guarded actions | `[x]` |
+
+**v1 is complete as a training product.** The remaining work is depth, reach, and
+enterprise readiness.
+
+## 3. Architecture recap
+
+- **Pure simulator** (`src/lib/sim/`) — no framework imports; runs in the
+  browser, on the server, and in tests.
+- **Driver seam** — every console implements `ShellDriver`; today the drivers are
+  in-browser simulations, and a container-backed driver can slot in behind the
+  same interface without touching the UI, scenario format or grader.
+- **Server-side grading** — `coerceSubmittedState` → `gradeAttempt`; client
+  scores are never trusted.
+- **Stack** — Next.js + React + TypeScript + Prisma + PostgreSQL; pure
+  `*-rules.ts` modules for all form/unit/date logic.
+
+## 4. Milestones
+
+### v1.0 — Complete (shipped) `[x]`
+The feature set in §2. Exit already met: a class can sign in, run graded
+scenarios on three platforms, and instructors can author, assign and re-grade.
+
+### v1.1 — Content, insight & polish `[~]`
+**Goal:** more practice, better feedback, a smoother surface.
+
+- `[x]` An analytics dashboard for instructors: per-check pass rates,
+  time-on-task, trends and per-scenario rollups (`/instructor/analytics`).
+- `[x]` More bundled scenarios and a richer template gallery: Linux
+  networking, Linux accounts lifecycle, Windows endpoint/accounts and a
+  service-desk mailbox triage starter, each validated and added to the demo
+  seed. The `file_not_contains` check kind makes "the stale entry is gone"
+  gradeable.
+- `[x]` Accessibility pass (keyboard-first console, screen-reader labels). The
+  workspace tab strip is a real `tablist` with roving arrow/Home/End keys and
+  `aria-selected`; the file editor is a focus-trapped `role="dialog"` that
+  closes on Escape and restores focus; the countdown is a `role="timer"` that
+  announces in its final minute; the console region, progress bars and window
+  controls carry accessible names; decorative icons are `aria-hidden`; the
+  active nav item is marked `aria-current="page"`. An automated axe-core WCAG
+  A/AA audit now runs in `npm test` (`tests/a11y.test.ts`) against the
+  server-rendered desktop and Office surfaces in both locales, plus explicit
+  keyboard checks (every control named, no positive `tabindex`), with a
+  planted-violation guard so the audit cannot silently become a no-op. The
+  paint-dependent rules that need layout and paint (`color-contrast` above all)
+  are now covered by a browser sweep — `tests/browser/a11y.spec.ts`, run with
+  `npm run test:a11y` — which drives real Chromium and audits the public pages
+  plus the signed-in student dashboard and attempt workspace, and it is strict:
+  every WCAG A/AA violation fails, `color-contrast` included. It caught a
+  scrollable region without keyboard access on the landing page, and drove the
+  accent palette to be darkened to clear the 4.5:1 floor.
+- `[x]` A visible case-notes pad in the attempt workspace. Notes are a graded
+  artefact (`note_matches` reads `machine.notes`), but on a Linux scenario the
+  only way to write one was the `note` command — easy to miss. The workspace now
+  has a **Notes** tab with a labelled input, an add button and a removable list,
+  rendered alongside the other panels on wide screens and writable on mobile. It
+  writes to the same `machine.notes` the command and the grader use, so grading
+  and autosave are unchanged.
+- `[~]` Localization groundwork: translator + `en`/`es` dictionaries, a locale
+  cookie and a shell language switch are in place. The staff and admin surfaces
+  are now fully translated through a shared `getTranslator()` server helper
+  (with a client `LocaleProvider`/`useTranslator()` for the scenario editor):
+  the shell, sign-in and registration, the attempt console, the instructor
+  overview, analytics, scenarios (list/new/detail and the editor), attempts
+  (list/review), classes, the admin control room, audit log, software inventory
+  and people, plus the student queue, results index and attempt report and the
+  attempt console shell (header, checklist, machine, help, hints, editor). The
+  deep simulator surfaces are now translated too: the Terminal chrome and
+  quick-keys, the Office panels (spreadsheets, documents and the mailbox) and
+  the Windows desktop (window chrome, all eight apps, taskbar and start menu).
+  Remaining: the server-generated task/check text, which comes from the
+  scenario definition rather than the UI.
+- **Exit:** a cohort dashboard renders trends (`[x]`); strings are externalised
+  and a non-English locale ships (`[~]`, in progress); the a11y implementation
+  and both the automated axe/keyboard audit (`npm test`) and the browser
+  paint-rule sweep (`npm run test:a11y`) have landed and pass (`[x]`)
+  (`[ ]`).
+
+### v1.2 — Real drivers `[ ]`
+**Goal:** higher-fidelity practice behind the existing seam.
+
+- A container-backed `ShellDriver` for genuine bash and PowerShell, sandboxed and
+  resource-capped, with the same prompt/run/banner contract.
+- Graceful fallback to the in-browser driver when no sandbox is available, so the
+  product never becomes unavailable.
+- Scenario metadata declaring `simulated | container` fidelity, surfaced in the
+  UI and honoured by the availability rule.
+- **Exit:** a scenario authored for real bash runs in a sandbox and grades
+  identically to the simulated driver on the bundled checks.
+
+### v1.3 — Identity & integrations `[ ]`
+**Goal:** fit into an organisation.
+
+- SSO via the **OnTrak Sentinel** IdP (OIDC/SAML), with SCIM roster sync; keep a
+  local JWT fallback for standalone deployments.
+- LTI 1.3 so scenarios can be launched and graded from an LMS.
+- Public API + webhooks for attempt/grading events, and bulk CSV import/export of
+  rosters and results.
+- **Exit:** an org signs in through its IdP, rosters sync over SCIM, and results
+  flow to an LMS and a webhook consumer.
+
+### v1.4 — Authoring at scale `[ ]`
+**Goal:** a catalog a team can maintain.
+
+- Scenario versioning with draft/preview/rollback and change history.
+- Collaborative authoring (comments, review/approval before publish).
+- Import/export bundles and an optional shared scenario marketplace.
+- **Exit:** two authors co-edit a scenario through review to publish, with full
+  history and one-click rollback.
+
+### v1.5 — Assessment, credentials & training evidence `[ ]`
+**Goal:** turn results into credible, portable proof of competence.
+
+- Rubrics beyond pass/fail; partial-credit and competency tagging per check.
+- Certificates and a skills matrix (who is competent in what), with verifiable
+  completion records.
+- **Auditable training evidence**: immutable completion records, exportable
+  proof-of-training packets (who was trained, on what, when, outcome) — the
+  training-side counterpart to OnTrak Tix's assurance packets, useful for
+  compliance and insurance.
+- Optional proctoring/timing integrity controls for higher-stakes assessment.
+- **Exit:** a learner earns a verifiable certificate; an auditor can pull a
+  signed proof-of-training packet for a cohort.
+
+### v2.0 — Enterprise training platform `[ ]`
+**Goal:** multi-organisation, evidence-grade, assistive.
+
+- Multi-tenant organisations with isolated catalogs, branding and reporting.
+- BI/warehouse export and scheduled reporting.
+- Opt-in AI tutor: hints, misconception detection, and scenario suggestions —
+  always assistive, never auto-grading.
+- Hardening: deeper audit trail, retention controls, SSO/SCIM at org scale.
+- **Exit:** two organisations run isolated catalogs and reports under one
+  deployment with audited, retained training records.
+
+## 5. Cross-cutting requirements
+
+- **Accessibility** — WCAG AA target; keyboard-only console fully usable.
+- **Performance** — attempt page interactive < 1.5 s p95; grading < 200 ms.
+- **Security** — never trust the client; re-grade server-side; audit every
+  privileged action (already the standard).
+- **Testing** — every bug fix ships a regression test; pure logic stays in
+  `*-rules.ts` and `src/lib/sim/`.
+
+## 6. Success metrics
+
+| Metric | Why |
+| --- | --- |
+| Scenarios completed per learner | Engagement |
+| Pass rate & median score by scenario | Difficulty calibration |
+| Time-to-first-scenario for a new cohort | Onboarding friction |
+| Instructor authoring time per scenario | Content velocity |
+| % learners with a verifiable certificate | Outcome |
+| Proof-of-training packets exported | Compliance/insurance value |
+| Container-driver parity on shared checks | Fidelity trust |
+
+## 7. Risks & open questions
+
+- **Container drivers** cost and complexity — sandboxing, cost caps and fallback
+  behaviour need explicit limits.
+- **LMS/LTI scope** — decide how much to build versus integrate.
+- **AI tutor** — keep it assistive and opt-in; never let it auto-grade.
+- **Localization** — sequencing (v1.1 groundwork vs later full locales).
+- **Evidence vs privacy** — training records are personal data; retention and
+  consent must be designed, not bolted on.
+
+## 8. Immediate next steps
+
+1. Ship the v1.1 analytics dashboard (highest instructor value, no new infra).
+2. Prototype the container-backed bash driver behind the existing `ShellDriver`
+   seam with a resource cap and fallback.
+3. Design the certificate/completion-record model (shared shape with OnTrak Tix
+   evidence) so v1.5's proof-of-training packet is a first-class export.
+4. Externalise user-facing strings to prepare localization.

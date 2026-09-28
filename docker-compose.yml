@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ontrak-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ontrak
+      POSTGRES_PASSWORD: ontrak
+      POSTGRES_DB: ontrak
+    ports:
+      - "5432:5432"
+    volumes:
+      - ontrak-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ontrak -d ontrak"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ontrak-pgdata:

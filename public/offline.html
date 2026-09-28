@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Offline · OnTrak IT Support Training</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --brand: #6c4cf1;
+        --pink: #ff5fa2;
+        --amber: #ffab1f;
+        --ink: #1c1633;
+        --soft: #4a4266;
+        --canvas: #f7f5ff;
+        --surface: #ffffff;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --ink: #f5f3ff;
+          --soft: #c3bce0;
+          --canvas: #100c22;
+          --surface: #1a1433;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background:
+          radial-gradient(at 8% 6%, color-mix(in oklab, var(--brand) 22%, transparent) 0, transparent 55%),
+          radial-gradient(at 92% 8%, color-mix(in oklab, var(--pink) 20%, transparent) 0, transparent 50%),
+          var(--canvas);
+        color: var(--ink);
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      .card {
+        max-width: 30rem;
+        padding: 40px 32px;
+        border-radius: 28px;
+        background: var(--surface);
+        box-shadow: 0 24px 48px -20px rgba(28, 22, 51, 0.3);
+        text-align: center;
+      }
+      .mark {
+        width: 56px;
+        height: 56px;
+        margin: 0 auto 20px;
+        border-radius: 18px;
+        background: linear-gradient(120deg, var(--brand), var(--pink) 55%, var(--amber));
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+        color: #fff;
+        font-size: 22px;
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-size: 1.5rem;
+        letter-spacing: -0.02em;
+      }
+      p {
+        margin: 0 0 22px;
+        color: var(--soft);
+        line-height: 1.6;
+        font-size: 0.95rem;
+      }
+      button {
+        border: 0;
+        cursor: pointer;
+        border-radius: 999px;
+        padding: 12px 26px;
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: #fff;
+        background: linear-gradient(120deg, var(--brand), var(--pink));
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="mark">&gt;_</div>
+      <h1>You are offline</h1>
+      <p>
+        Simulated machines run in your browser, but your attempts and grades live on the server. Reconnect and this page
+        will load straight away.
+      </p>
+      <button onclick="location.reload()">Try again</button>
+    </div>
+  </body>
+</html>
