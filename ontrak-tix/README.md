@@ -130,6 +130,22 @@ schema rather than deploying migrations. Attachments and incident evidence each
 live on their own volume, because evidence sits under object-lock retention and
 a rebuild must never discard it.
 
+As a deployment, `docker-compose.prod.yml` overlays the above: the database stops
+being published on a host port, the secrets become required instead of defaulted,
+and the containers restart by themselves. It refuses to start while
+`TIX_AUTH_SECRET` or `POSTGRES_PASSWORD` is unset, because the development
+placeholders in `.env` are public knowledge.
+
+```bash
+cp .env.production.example .env.production   # then fill in the two REQUIRED values
+make tix-prod-up      # from the repository root, or:
+docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+Give it a fresh volume. Postgres applies `POSTGRES_PASSWORD` only when it creates
+the role, so pointing this at an existing development database will not change
+that database's password and the app will fail to authenticate.
+
 From source:
 
 ```bash

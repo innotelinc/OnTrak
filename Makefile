@@ -71,11 +71,45 @@ images: ## Build both production images without starting anything
 	cd $(TIX_DIR) && docker build --target runner -t ontrak-tix:local .
 
 .PHONY: check-compose
-check-compose: ## Validate both compose files against their .env.example
+check-compose: ## Validate both development compose files against their .env.example
 	@cp -n .env.example .env 2>/dev/null || true
 	docker compose config --quiet && echo "compose: training ok"
 	@cp -n $(TIX_DIR)/.env.example $(TIX_DIR)/.env 2>/dev/null || true
 	cd $(TIX_DIR) && docker compose config --quiet && echo "compose: tix ok"
+
+.PHONY: prod-check
+prod-check: ## Validate both deployment overlays (throwaway secrets, cleaned up)
+	@set -e; for d in . $(TIX_DIR); do \
+	  made=; \
+	  if [ ! -f "$$d/.env.production" ]; then \
+	    cp "$$d/.env.production.example" "$$d/.env.production"; made=1; \
+	  fi; \
+	  ( cd "$$d" && AUTH_SECRET=check TIX_AUTH_SECRET=check POSTGRES_PASSWORD=check \
+	      docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet ); \
+	  echo "compose: $$d prod ok"; \
+	  if [ -n "$$made" ]; then rm -f "$$d/.env.production"; fi; \
+	done
+
+## ---- Deployments ----
+# The overlays demand real secrets, so these need `.env.production` — copy the
+# `.env.production.example` beside the compose file and fill it in. `prod-check`
+# above validates them without one.
+
+.PHONY: prod-up
+prod-up: ## Start the training app as a deployment (needs .env.production)
+	docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+.PHONY: prod-down
+prod-down: ## Stop the training app deployment (keeps its volumes)
+	docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml down
+
+.PHONY: tix-prod-up
+tix-prod-up: ## Start Tix as a deployment (needs .env.production)
+	cd $(TIX_DIR) && docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+.PHONY: tix-prod-down
+tix-prod-down: ## Stop the Tix deployment (keeps its volumes)
+	cd $(TIX_DIR) && docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml down
 
 ## ---- The training app ----
 

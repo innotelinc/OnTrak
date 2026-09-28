@@ -20,7 +20,9 @@ name: ontrak-training
 services:
   db:
     image: postgres:16-alpine
-    container_name: ontrak-db
+    # No `container_name`: that fixes the name for every project, which stops
+    # the production overlay running under its own `-p` alongside this one
+    # (compose names containers `<project>-<service>-<n>` by default).
     restart: unless-stopped
     environment:
       POSTGRES_USER: ontrak
@@ -61,7 +63,6 @@ services:
         # see the `next build` note in the Dockerfile.
         NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-OnTrak IT Support Training}
         NEXT_PUBLIC_ALLOW_SELF_REGISTRATION: ${NEXT_PUBLIC_ALLOW_SELF_REGISTRATION:-true}
-    container_name: ontrak-app
     restart: unless-stopped
     depends_on:
       db:

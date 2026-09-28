@@ -1,0 +1,68 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# OnTrak Tix — the deployment overlay.
+#
+# `docker-compose.yml` describes the development stack. This sits on top of it
+# for an actual deployment, so it is always used as an overlay, never alone:
+#
+#   cp .env.production.example .env.production   # then fill it in
+#   make tix-prod-up
+#
+# which is:
+#
+#   docker compose --env-file .env.production \
+#     -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Three things change, and each is the point of the file:
+#
+#   * The database is no longer published. Only the app needs it, and it reaches
+#     it over the compose network; a host port would hand a desk's whole ticket
+#     history to whatever else can reach the machine.
+#   * Secrets are required rather than defaulted. `.env` ships development
+#     placeholders, and an app that quietly accepted them in a deployment is
+#     worse than one that refuses to start — so the ones that matter are
+#     demanded here and startup fails without them.
+#   * Containers restart always, because a deployment is expected to come back by
+#     itself rather than wait for someone to notice.
+#
+# Note for evidence: the two volumes holding attachment bytes and locked
+# evidence carry over unchanged, which is what keeps a rebuild from discarding
+# records under a retention window nobody can shorten.
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  db:
+    restart: always
+    environment:
+      # No default on purpose: an unset password must stop the stack, not
+      # silently become the development one.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}
+    # `!override` replaces the base list rather than merging into it, so the
+    # development port mapping is genuinely dropped.
+    ports: !override []
+
+  migrate:
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://ontrak:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}@db:5432/ontrak_tix
+
+  app:
+    restart: always
+    # The whole configuration comes from the production file, exactly as `.env`
+    # supplies it in development — the development file is not read at all.
+    env_file: !override [.env.production]
+    environment:
+      DATABASE_URL: postgresql://ontrak:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}@db:5432/ontrak_tix
+      # Required, with no fallback: this is the key that signs every desk session,
+      # and the shipped development value is public knowledge.
+      TIX_AUTH_SECRET: ${TIX_AUTH_SECRET:?set TIX_AUTH_SECRET in .env.production - see .env.production.example}
+      NODE_ENV: production
+    ports: !override ["${ONTRAK_TIX_HTTP_PORT:-3001}:3000"]
+
+  # The demo tenant is deliberately left opt-in and untouched here: it still
+  # needs `--profile demo` to run, which is not something a deployment does by
+  # accident. It reads the production file so it would at least reach the right
+  # database if an operator asked for it.
+  seed:
+    env_file: !override [.env.production]
+    environment:
+      DATABASE_URL: postgresql://ontrak:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}@db:5432/ontrak_tix
