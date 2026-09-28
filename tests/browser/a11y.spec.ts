@@ -18,7 +18,7 @@ import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import type { AxeResults } from "axe-core";
 
-const PASSWORD = process.env.ONTRAK_A11Y_PASSWORD ?? "ontrak-demo";
+const PASSWORD = process.env.ONTRAK_A11Y_PASSWORD ?? "change-me-ontrak";
 const ACCOUNTS = {
   student: process.env.ONTRAK_A11Y_EMAIL ?? "student@ontrak.local",
   instructor: process.env.ONTRAK_A11Y_INSTRUCTOR_EMAIL ?? "instructor@ontrak.local",

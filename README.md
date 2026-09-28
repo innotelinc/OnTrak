@@ -89,13 +89,14 @@ on the report page has something real to show. (`npm run setup` clears attempts
 *before* seeding, so the run it performs ends with that attempt in place; a bare
 `npm run db:reset-demo` removes it again, as "start fresh" should.)
 
-| Role       | Email                        | Password       |
-| ---------- | ---------------------------- | -------------- |
-| Admin      | `admin@ontrak.local`     | `ontrak-demo` |
-| Instructor | `instructor@ontrak.local`| `ontrak-demo` |
-| Student    | `student@ontrak.local`   | `ontrak-demo` |
+| Role       | Email                        | Password          |
+| ---------- | ---------------------------- | ----------------- |
+| Admin      | `admin@ontrak.local`     | `change-me-ontrak` |
+| Instructor | `instructor@ontrak.local`| `change-me-ontrak` |
+| Student    | `student@ontrak.local`   | `change-me-ontrak` |
 
-The demo class join code is **`NET101`**. Override the password with
+The demo class join code is **`NET101`**. The password above is the shipped
+placeholder — it is meant to be changed, and says so. Override it with
 `SEED_PASSWORD` (at least 8 characters, matching the sign-in rule). Deactivate
 these accounts (or set `NEXT_PUBLIC_ALLOW_SELF_REGISTRATION=false`) before
 running a real cohort.

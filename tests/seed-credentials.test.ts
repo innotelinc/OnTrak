@@ -49,6 +49,16 @@ test("seed: SEED_PASSWORD overrides the default", () => {
   assert.equal(demoPassword({} as unknown as NodeJS.ProcessEnv), DEMO_PASSWORD_DEFAULT);
 });
 
+test("seed: the shipped default is a placeholder, and reads as one", () => {
+  // The stack's secret scan refuses a password-shaped literal in source and CI
+  // runs it over the whole tracked tree, so a default that looked like a real
+  // credential would fail the build. The rule is worth keeping on its own terms
+  // too: a deployment that forgets `SEED_PASSWORD` should end up with a value it
+  // can see it has not chosen. Pinned here so the default can never quietly
+  // drift back into one that reads like a chosen password.
+  assert.match(DEMO_PASSWORD_DEFAULT, /change[-_]?me/i, "the default must announce itself as a placeholder");
+});
+
 test("seed: a too-short password is exactly what the schema rejects", () => {
   // The regression this guards against: the old default was six characters.
   assert.equal(parses("student@ontrak.local", "ontrak"), false);

@@ -63,7 +63,11 @@ export interface LocalUser {
   home: string;
   fullName?: string;
   description?: string;
-  /** `null` when a password has been set (we never store plaintext). */
+  /**
+   * `null` while no password is set; once one is, a shaped, salted record that
+   * means "set" and nothing else — see `simulatedPasswordHash`. A real password
+   * is never stored, here or anywhere else in the sandbox.
+   */
   passwordHash: string | null;
   locked: boolean;
   enabled?: boolean;
