@@ -50,6 +50,9 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
               <Link href="/reports" className="hover:text-brand">
                 Reports
               </Link>
+              <Link href="/time" className="hover:text-brand">
+                Time
+              </Link>
               <Link href="/canned" className="hover:text-brand">
                 Canned
               </Link>

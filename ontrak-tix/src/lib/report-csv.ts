@@ -8,7 +8,7 @@
  * never disagree.
  */
 
-import { formatMinutes, type SlaReport, type TicketSlaStatus } from "./report-rules";
+import { formatMinutes, type ClientScorecard, type SlaReport, type TicketSlaStatus } from "./report-rules";
 
 /** Quote a cell only when it needs it; `null`/`undefined` export as empty. */
 export function csvEscape(value: unknown): string {
@@ -59,6 +59,61 @@ function ticketRow(row: TicketSlaStatus): string {
     dueIso(row.resolution),
     row.resolution?.state ?? "",
   ]);
+}
+
+/**
+ * The per-client report as CSV (M4): one row per client, worst attainment first,
+ * which is the order somebody chases them in. It matters more than the ticket
+ * export because this is the file an account manager forwards.
+ */
+export function buildClientCsv(
+  scorecards: readonly ClientScorecard[],
+  { generatedAt, appName = "OnTrak Tix" }: CsvOptions,
+): string {
+  const lines: string[] = [
+    csvRow([`${appName} report by client`]),
+    csvRow(["Generated", generatedAt]),
+    "",
+    csvRow([
+      "Client",
+      "Tickets",
+      "Open",
+      "Breached",
+      "At risk",
+      "Without SLA policy",
+      "First response attainment %",
+      "First response median (business minutes)",
+      "Resolution attainment %",
+      "Resolution median (business minutes)",
+      "CSAT average",
+      "CSAT responses",
+      "CSAT positive %",
+      "CSAT response rate %",
+    ]),
+  ];
+
+  for (const card of scorecards) {
+    lines.push(
+      csvRow([
+        card.name,
+        card.total,
+        card.open,
+        card.breached,
+        card.atRisk,
+        card.withoutPolicy,
+        card.response.attainmentPercent ?? "",
+        formatMinutes(card.response.timing.medianMinutes),
+        card.resolution.attainmentPercent ?? "",
+        formatMinutes(card.resolution.timing.medianMinutes),
+        card.csat.average ?? "",
+        card.csat.responses,
+        card.csat.positivePercent ?? "",
+        card.csat.responseRatePercent ?? "",
+      ]),
+    );
+  }
+
+  return `${lines.join("\r\n")}\r\n`;
 }
 
 /**

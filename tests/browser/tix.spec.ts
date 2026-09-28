@@ -80,7 +80,14 @@ test.describe("OnTrak Tix desk", () => {
     "/incidents",
     "/incidents/templates",
     "/clients",
+    "/time",
   ];
+
+  test("a11y (browser): the public survey page passes WCAG A/AA with a token nobody holds", async ({ page }) => {
+    // The one page in the product a stranger reaches: it still has to be readable.
+    await auditPath(page, "/survey/not-a-real-token");
+    await expect(page.locator("body")).toContainText("That survey link is not valid");
+  });
 
   for (const path of staffPaths) {
     test(`a11y (browser): Tix ${path} passes WCAG A/AA`, async ({ page }) => {
@@ -627,6 +634,91 @@ test.describe("OnTrak Tix desk", () => {
     await expect(page.getByRole("heading", { name: other, exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Add client" })).toHaveCount(0);
     await expect(page.locator("body")).toContainText("You can see the clients in your scope but not change them.");
+  });
+
+  test("time: an hour is logged on a ticket, priced by a rate card, and frozen by the invoice that bills it", async ({ page }) => {
+    // Money is a manager's: the seeded agent does not write rates or issue invoices.
+    await switchUser(page, ADMIN);
+    const stamp = Date.now();
+
+    // A rate card for the desk's own work, which is what a ticket with no client
+    // is. This is read back in the confirmation, so the ladder is visible.
+    await page.goto(url("/clients"), { waitUntil: "load" });
+    const deskCard = page.locator("section", { has: page.getByRole("heading", { name: "The desk's own rate card" }) });
+    await deskCard.getByLabel("Card name").fill(`Desk standard ${stamp}`);
+    await deskCard.getByLabel("Currency").fill("USD");
+    await deskCard.getByLabel("Per hour").fill("145.00");
+    await deskCard.getByLabel("Rounding").selectOption("15");
+    await deskCard.getByRole("button", { name: /^(Set|Save) rate card$/ }).click();
+    await expect(page.locator("body")).toContainText("145.00 USD/hour", { timeout: 20_000 });
+
+    // A ticket of this sweep's own, so the hours it logs and bills cannot be
+    // somebody else's work and the run stays repeatable.
+    await page.goto(url("/inbox/new"), { waitUntil: "load" });
+    await page.getByLabel("Subject").fill(`Time sweep ${stamp}`);
+    await page.getByLabel("Description").fill("Exercises logging an hour and billing it.");
+    await page.getByRole("button", { name: "Create ticket" }).click();
+    await page.waitForURL(/\/inbox\/[^/?]+\?flash=/, { timeout: 20_000 });
+
+    const timePanel = page.getByRole("region", { name: "Time on this ticket" });
+    await timePanel.getByLabel("Minutes").fill("20");
+    await timePanel.getByLabel("What was done (optional)").fill("sweep: rebuilt the print queue");
+    await timePanel.getByRole("button", { name: "Log time" }).click();
+    await expect(page.locator("body")).toContainText("20 minutes logged.", { timeout: 20_000 });
+    // 20 minutes on a 15-minute increment is charged as 30, and the panel says so.
+    await expect(timePanel).toContainText("billed 30m");
+
+    // Issue the invoice for the desk's own time, over the period on screen.
+    await page.goto(url("/time?client=desk"), { waitUntil: "load" });
+    await expect(page.locator("body")).toContainText("sweep: rebuilt the print queue");
+    await page.getByRole("button", { name: /Issue invoice for/ }).click();
+    await expect(page.locator("body")).toContainText(/Invoice INV-\d+-[A-Z0-9]+ issued/, { timeout: 20_000 });
+
+    // The reference is a link to a *read* of the invoice, and the hours it covered
+    // are now frozen: correcting them is what a credit note is for.
+    const issued = page.getByRole("link", { name: /Download INV-.* as CSV/ });
+    await expect(issued).toHaveCount(1);
+    await expect(page.locator("body")).toContainText(/On INV-\d+-[A-Z0-9]+: frozen/);
+
+    const csv = await page.request.get(url((await issued.getAttribute("href")) as string));
+    expect(csv.status()).toBe(200);
+    const body = await csv.text();
+    expect(body).toContain("Billed minutes");
+    expect(body).toContain("30,0.50,");
+    expect(body).not.toContain("$");
+  });
+
+  test("clients: a client is asked for a rating, and answers it from the link", async ({ page }) => {
+    await switchUser(page, ADMIN);
+    const stamp = Date.now();
+    const name = `Rating sweep ${stamp}`;
+
+    await page.goto(url("/clients"), { waitUntil: "load" });
+    await page.getByLabel("New client").fill(name);
+    await page.getByRole("button", { name: "Add client" }).click();
+    await expect(page.locator("body")).toContainText(`${name} added.`, { timeout: 20_000 });
+
+    const card = page.locator("li").filter({ has: page.getByRole("heading", { name, exact: true }) }).first();
+    await card.getByRole("button", { name: "Ask for a rating" }).click();
+    await expect(page.locator("body")).toContainText("Survey link ready for that period", { timeout: 20_000 });
+    await expect(card).toContainText("awaiting an answer");
+
+    // The client's own person follows the link. No account, no sign-in: the token
+    // is the whole credential, so this is the one page a stranger can answer.
+    await card.getByRole("link", { name: "open the link they were sent" }).click();
+    await page.waitForURL(/\/survey\//, { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText(`How was ${name}'s support between`);
+    await page.getByRole("radio", { name: /5 — Very satisfied/ }).check();
+    await page.getByLabel("Anything you want to add (optional)").fill("sweep: quick and clear");
+    await page.getByRole("button", { name: "Send my answer" }).click();
+    await expect(page.locator("body")).toContainText("Thank you — your answer is recorded.", { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText("quick and clear");
+
+    // …and the desk sees it back on the client, with the score spelled out.
+    await page.goto(url("/clients"), { waitUntil: "load" });
+    const answered = page.locator("li").filter({ has: page.getByRole("heading", { name, exact: true }) }).first();
+    await expect(answered).toContainText("5/5 — Very satisfied");
+    await expect(answered).toContainText("quick and clear");
   });
 
   test("inbox: a requester cannot reach the staff worklist", async ({ page }) => {

@@ -2,9 +2,21 @@ import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../lib/session";
 import { hasPermission } from "../../../lib/access-rules";
-import { clientServicesFor, prisma, slaPolicyStoreFor } from "../../../lib/db";
+import {
+  clientServicesFor,
+  clientSurveyServicesFor,
+  prisma,
+  slaPolicyStoreFor,
+  timeServicesFor,
+} from "../../../lib/db";
+import { clientSurveyAnswered, clientSurveyStatus } from "../../../lib/client-survey-rules";
+import { satisfactionLabel } from "../../../lib/csat-rules";
 import { resolveSlaPolicy } from "../../../lib/sla-rules";
+import { describeScope } from "../../../lib/sla-policy-service";
+import { formatMoney } from "../../../lib/time-rules";
 import type { TicketPriority } from "../../../lib/ticket-rules";
+import { SlaPolicyForm } from "../../../components/SlaPolicyForm";
+import { RateCardForm } from "../../../components/RateCardForm";
 import {
   addContactAction,
   assignClientAction,
@@ -13,6 +25,9 @@ import {
   startActAsAction,
   unassignClientAction,
 } from "../../actions/clients";
+import { deleteSlaPolicyAction, saveSlaPolicyAction } from "../../actions/sla";
+import { removeRateCardAction, saveRateCardAction } from "../../actions/time";
+import { requestClientSurveyAction } from "../../actions/surveys";
 
 export const metadata = { title: "Clients" };
 
@@ -38,7 +53,11 @@ export default async function ClientsPage({
   const service = clientServicesFor();
   const canManage = hasPermission(actor.role, "client:manage");
 
-  const [overview, scope, policies, active, staff] = await Promise.all([
+  const now = new Date().toISOString();
+  const today = now.slice(0, 10);
+  const monthAgo = new Date(Date.parse(`${today}T00:00:00.000Z`) - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  const [overview, scope, policies, active, staff, cards, surveys] = await Promise.all([
     service.list(actor),
     service.scope(actor),
     slaPolicyStoreFor().listForTenant(actor.tenantId),
@@ -50,10 +69,19 @@ export default async function ClientsPage({
           orderBy: { displayName: "asc" },
         })
       : Promise.resolve([]),
+    timeServicesFor().rateCards(actor),
+    clientSurveyServicesFor().all(actor),
   ]);
 
   const clients = overview.ok ? overview.value : [];
   const staffNames = new Map(staff.map((person) => [person.id, person.displayName]));
+  // Promises the desk wrote for itself, as opposed to ones it promised a client.
+  // Both are editable here; the ladder above each client decides which wins.
+  const deskPolicies = policies.filter((policy) => !policy.clientId);
+  const rateCards = cards.ok ? cards.value : [];
+  const cardOf = (clientId: string | null) => rateCards.find((card) => card.clientId === clientId);
+  const deskCard = cardOf(null);
+  const allSurveys = surveys.ok ? surveys.value : [];
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
@@ -104,7 +132,9 @@ export default async function ClientsPage({
 
       {clients.length > 0 ? (
         <ul className="space-y-3">
-          {clients.map(({ client, contacts, assignments }) => (
+          {clients.map(({ client, contacts, assignments }) => {
+            const card = cardOf(client.id);
+            return (
             <li key={client.id} className="space-y-3 rounded-xl2 border border-line bg-surface p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="font-semibold text-ink">{client.name}</h2>
@@ -139,6 +169,114 @@ export default async function ClientsPage({
                   );
                 })}
               </ul>
+
+              {/* The promises written *for this client*, which the ladder above
+                  picked up ahead of the desk's. Editable while the desk is here. */}
+              {canManage ? (
+                <div className="space-y-1.5">
+                  {policies
+                    .filter((policy) => policy.clientId === client.id)
+                    .map((policy) => (
+                      <SlaPolicyForm
+                        key={policy.id}
+                        action={saveSlaPolicyAction}
+                        deleteAction={deleteSlaPolicyAction}
+                        policy={policy}
+                        clientId={client.id}
+                      />
+                    ))}
+                  <SlaPolicyForm action={saveSlaPolicyAction} clientId={client.id} />
+                </div>
+              ) : (
+                <ul className="space-y-0.5">
+                  {policies.filter((policy) => policy.clientId === client.id).length === 0 ? (
+                    <li className="text-xs text-ink-faint">No promise has been written for this client yet.</li>
+                  ) : (
+                    policies
+                      .filter((policy) => policy.clientId === client.id)
+                      .map((policy) => (
+                        <li key={policy.id} className="text-xs text-ink-soft">
+                          <span className="font-semibold text-ink">{policy.name}</span> — {describeScope(policy)}
+                        </li>
+                      ))
+                  )}
+                </ul>
+              )}
+
+              {/* What the work costs. One card per client, replacing rather than
+                  accumulating: two cards for one client is two prices for one hour. */}
+              {canManage ? (
+                <RateCardForm
+                  action={saveRateCardAction}
+                  removeAction={removeRateCardAction}
+                  clientId={client.id}
+                  {...(card ? { card } : {})}
+                />
+              ) : card ? (
+                <p className="text-xs text-ink-soft">
+                  Rate card: {card.name} — {formatMoney(card.hourlyRateCents, card.currency)}/hour
+                </p>
+              ) : (
+                <p className="text-xs text-ink-faint">No rate card of their own; the desk&apos;s default applies.</p>
+              )}
+
+              {/* What their people said, and the link that asks them. One question
+                  per period: asking twice for the same month is how a client
+                  learns to ignore the question. */}
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-semibold text-ink-soft">Their own rating</p>
+                {canManage ? (
+                  <form action={requestClientSurveyAction} className="flex flex-wrap items-end gap-2">
+                    <input type="hidden" name="clientId" value={client.id} />
+                    <label className="text-xs text-ink-soft">
+                      Period start
+                      <input name="periodStart" type="date" required defaultValue={monthAgo} className={`block ${inputClass}`} />
+                    </label>
+                    <label className="text-xs text-ink-soft">
+                      Period end
+                      <input name="periodEnd" type="date" required defaultValue={today} className={`block ${inputClass}`} />
+                    </label>
+                    <button type="submit" className="rounded-full border border-line px-2.5 py-1.5 text-[11px] font-semibold text-ink-soft">
+                      Ask for a rating
+                    </button>
+                  </form>
+                ) : null}
+                <ul className="space-y-0.5">
+                  {allSurveys.filter((survey) => survey.clientId === client.id).length === 0 ? (
+                    <li className="text-xs text-ink-faint">Nobody has been asked how this client&apos;s support went.</li>
+                  ) : (
+                    allSurveys
+                      .filter((survey) => survey.clientId === client.id)
+                      .map((survey) => {
+                        const status = clientSurveyStatus(survey, now);
+                        return (
+                          <li key={survey.id} className="text-xs text-ink-soft">
+                            <span className="font-mono text-[11px] text-ink-faint">
+                              {survey.periodStart} → {survey.periodEnd}
+                            </span>{" "}
+                            {clientSurveyAnswered(survey) ? (
+                              <>
+                                <span className="font-semibold text-ink">
+                                  {survey.score}/5 — {satisfactionLabel(survey.score as 1 | 2 | 3 | 4 | 5)}
+                                </span>
+                                {survey.comment ? <span className="text-ink-soft"> “{survey.comment}”</span> : null}
+                              </>
+                            ) : status === "pending" ? (
+                              <>
+                                awaiting an answer —{" "}
+                                <a href={`/survey/${survey.token}`} className="text-brand hover:underline">
+                                  open the link they were sent
+                                </a>
+                              </>
+                            ) : (
+                              <span className="text-amber">the link expired unanswered</span>
+                            )}
+                          </li>
+                        );
+                      })
+                  )}
+                </ul>
+              </div>
 
               {contacts.length > 0 ? (
                 <ul className="divide-y divide-line overflow-hidden rounded-xl2 border border-line">
@@ -224,9 +362,46 @@ export default async function ClientsPage({
                 </div>
               ) : null}
             </li>
-          ))}
+            );
+          })}
         </ul>
       ) : null}
+
+      <section aria-label="The desk's own promises" className="space-y-2 rounded-xl2 border border-line bg-surface p-4">
+        <h2 className="font-display text-sm font-semibold text-ink">The desk&apos;s own promises</h2>
+        <p className="text-xs text-ink-faint">
+          {deskPolicies.length === 0
+            ? "Nothing is written for the desk itself."
+            : `${deskPolicies.length} promise${deskPolicies.length === 1 ? "" : "s"} apply to a client that has none of its own.`}
+        </p>
+        {deskPolicies.map((policy) =>
+          canManage ? (
+            <SlaPolicyForm
+              key={policy.id}
+              action={saveSlaPolicyAction}
+              deleteAction={deleteSlaPolicyAction}
+              policy={policy}
+            />
+          ) : (
+            <p key={policy.id} className="text-xs text-ink-soft">
+              <span className="font-semibold text-ink">{policy.name}</span> — {describeScope(policy)} · {policy.calendar.name}
+            </p>
+          ),
+        )}
+        {canManage ? <SlaPolicyForm action={saveSlaPolicyAction} /> : null}
+
+        <h2 className="pt-2 font-display text-sm font-semibold text-ink">The desk&apos;s own rate card</h2>
+        <p className="text-xs text-ink-faint">
+          What time costs for a client without a card of their own, and for the desk&apos;s own work.
+        </p>
+        {canManage ? (
+          <RateCardForm action={saveRateCardAction} removeAction={removeRateCardAction} {...(deskCard ? { card: deskCard } : {})} />
+        ) : deskCard ? (
+          <p className="text-xs text-ink-soft">
+            {deskCard.name} — {formatMoney(deskCard.hourlyRateCents, deskCard.currency)}/hour
+          </p>
+        ) : null}
+      </section>
 
       {canManage ? (
         <form action={createClientAction} className="flex flex-wrap items-end gap-2 rounded-xl2 border border-line bg-surface p-4">

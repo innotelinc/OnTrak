@@ -312,7 +312,25 @@ generate without a local install would rewrite the parent project's client.
   The same slice gives the SLA ladder its client rung (`SlaPolicy.clientId`,
   `resolveSlaPolicy`, see [docs/clients.md](./docs/clients.md)), and the console
   is [`/clients`](./src/app/(desk)/clients/page.tsx), which prints each client's
-  promise per priority *and which rung answered it*.
+  promise per priority *and which rung answered it* — and where the desk writes
+  its own promises (`sla-policy-service.ts`): validated before they are in force,
+  on one of two hour presets, audited on every change, editable but not deletable
+  while tickets are measured against them.
+- `src/lib/time-rules.ts` + `time-service.ts` + `time-store-prisma.ts` (M4) —
+  **time, rates and invoices**: hours logged on the ticket they belong to, priced
+  by a client's card or the desk's default and snapshotted onto the entry so a
+  later rate change cannot restate what was billed, rounding as a stated contract
+  term, and an invoice that is *issued* by a POST which stamps and freezes what it
+  covers — `/time/export?ref=…` only re-reads it, so a second click cannot bill an
+  hour twice. Documented in [docs/billing.md](./docs/billing.md).
+- `src/lib/client-survey-rules.ts` + `client-survey-service.ts` (M4) — the
+  **client-facing survey**: one question per client per period, answered from an
+  unguessable link at [`/survey/[token]`](./src/app/survey/[token]/page.tsx) by
+  somebody with no account, because the person who signs the invoice is usually
+  not the person who raised the tickets. Link answers once, expires, and both
+  halves are on the audit chain. Per-client attainment and CSAT are on
+  [`/reports`](./src/app/(desk)/reports/page.tsx), built by the same function as
+  the desk-wide figures.
 - `scripts/verify-packet.ts` (`npm run verify:packet`) — the **offline packet
   verifier** (M3): a third party holding only a packet and the key can check it,
   importing the packet rules, the signer and the verifier and nothing else — no
@@ -332,7 +350,8 @@ generate without a local install would rewrite the parent project's client.
   legal holds and stored artifacts under object lock, their notification duties
   with the notice text that went out and their post-incident review with its
   tracked actions, the tenant's own incident notice templates, the desk's clients
-  with their contacts, their staff assignments and their acted-as windows, and the
+  with their contacts, their staff assignments, their acted-as windows, their rate
+  cards and their surveys, the time entries those rates priced, and the
   hash-chained audit event).
 
 Run the tests with:
@@ -379,7 +398,13 @@ covers the packet's digests and signature, offline verification, completeness an
 the export that records itself; `tix-m4-clients.test.ts` covers the SLA ladder's
 client and queue rungs and the rung it reports, the client scope, the act-as
 guardrails and lifecycle, client/contact validation, the service's refusals and
-their audit events, and the Prisma mappers; `tix-db.test.ts`
+their audit events, and the Prisma mappers; `tix-m4-sla-authoring.test.ts` covers
+writing a promise (validation, hour presets, edits that keep their scope, the
+refusal to delete one tickets depend on); `tix-m4-time.test.ts` covers rate
+ladders, per-entry rounding, invoice lines and totals, the frozen-after-invoicing
+rule, the invoice CSV and its adapter; `tix-m4-client-reporting.test.ts` covers
+per-client attainment and CSAT, the per-client CSV, and the client-facing survey's
+period rules, one-answer-per-link and audit trail; `tix-db.test.ts`
 exercises the real Prisma store and hash-chained audit against Postgres, and the
 retention sweep against real Postgres plus real files on disk (a held artifact
 survives, the rest are purged, the chain still verifies), skipping cleanly when
@@ -402,9 +427,11 @@ digest is stable across exports while the packet digest moves), tracks a
 regulatory clock and records the drafted notice onto it, writes a notice draft of
 its own at `/incidents/templates` and records a notice from it, records a client
 with its promise ladder and a contact and looks through its eyes at `/clients`
-(then checks the client is in scope only for the agents assigned to it), confirms
-a requester cannot reach the worklist, and — as an administrator — audits
-`/admin/identity` and confirms a desk agent is turned away from it.
+(then checks the client is in scope only for the agents assigned to it), logs time
+on a ticket and issues the invoice that freezes it (checking the CSV is a read
+that cannot bill twice), asks a client for a rating and answers it from the public
+link, confirms a requester cannot reach the worklist, and — as an administrator —
+audits `/admin/identity` and confirms a desk agent is turned away from it.
 
 The SSO routes have a live test too, which is the honest answer to "does single
 sign-on work?" — it boots the test provider, writes a real `IdentityConnection`,
@@ -442,8 +469,10 @@ See [ROADMAP.md](./ROADMAP.md) for the full milestone sequence.
   lifecycle phases, incident roles, the append-only timeline, playbooks, evidence
   with its chain of custody and legal hold, and the signed Assurance Packet.
 - [docs/clients.md](./docs/clients.md) — the clients a desk serves, the SLA
-  ladder's client rung, the scope that keeps two clients apart, and the
-  guardrails on acting as a client.
+  ladder's client rung, the scope that keeps two clients apart, the guardrails on
+  acting as a client, per-client reporting, and the client-facing survey.
+- [docs/billing.md](./docs/billing.md) — time entries, rate cards and their
+  rounding, and why issuing an invoice and downloading it are two steps.
 
 ## Relationship to OnTrak IT Support Training
 

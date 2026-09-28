@@ -337,10 +337,16 @@ to stand on its own.
 > third's work. Covered by `ontrak-tix/tests/tix-m4-clients.test.ts` and by the
 > Tix browser sweep (which records a client, its ladder, a contact and an
 > acted-as window, and checks that a client appears only for the people assigned
-> to it). Documented in [docs/clients.md](./docs/clients.md). Still open in M4:
-> authoring a client's own policies from the console (the schema and the ladder
-> are ready; today they are inserted directly), branding and portal identity,
-> time tracking and rate cards, the rota, and per-client reporting.
+> to it). The desk can write its own promises from the same console
+> (`sla-policy-service.ts`), so a client's SLA is authored rather than seeded.
+> Time and billing have landed too (`time-rules.ts`, `time-service.ts`,
+> `time-store-prisma.ts`, the `/time` ledger and invoicing, rate cards on
+> `/clients`), together with per-client attainment and CSAT on `/reports` and a
+> client-facing survey a contact can answer without an account. Documented in
+> [docs/clients.md](./docs/clients.md) and
+> [docs/billing.md](./docs/billing.md). Still open in M4: a form for queue-scoped
+> promises, branding and portal identity, retainers/tax on an invoice, and the
+> rota.
 >
 > M1 progress: the SLA engine (clocks, escalations and the scheduled sweep),
 > queue routing, CSAT surveys, attachments, the dispatcher report, canned
@@ -666,6 +672,15 @@ up to an adjuster or auditor.
     rung that won and falling back to pre-M4 behaviour rather than leaving a desk
     with no promise at all. One resolver, three consumers (inbox flags, report
     attainment, escalation sweep).
+  - `[x]` **Writing a promise** (`sla-policy-service.ts`, the `/clients`
+    console): validated before it is in force (a blank is not a zero), written on
+    one of two hour presets rather than a free-form calendar, audited on every
+    change, scoped by `queue:manage`, refused when two promises would share a
+    name case-insensitively, and **not deletable** while tickets are measured
+    against it — the refusal says how many. An edit that does not mention the
+    scope keeps it, so a form carrying only the numbers cannot move a client's
+    contract onto the whole desk. Covered by
+    `ontrak-tix/tests/tix-m4-sla-authoring.test.ts`.
   - `[ ]` Branding and portal identity per client.
 - Cross-client agent views with strict scoping and "act as client" guardrails.
   - `[x]` **Scope**: `clientScopeFor` gives `queue:manage` every client and an
@@ -678,8 +693,36 @@ up to an adjuster or auditor.
     recorded both as a row and as an audit event (`ClientActAsSession`).
   - `[x]` The multi-client console, `/clients`.
 - Time tracking, rate cards, billable vs non-billable, invoice-ready exports.
+  - `[x]` **Time and rates** (`time-rules.ts`, `time-service.ts`,
+    `time-store-prisma.ts`, `/time`): hours logged on the ticket they belong to,
+    priced by a client's card or the desk's default and **snapshotted onto the
+    entry** (minutes charged, rate, rounding, currency) so a card changed later
+    cannot restate what was billed; rounding as a stated contract term; the
+    ledger scoped by the same client scope as the worklist; and an
+    invoice-ready CSV that names the labour and refuses a formatted number.
+    Covered by `ontrak-tix/tests/tix-m4-time.test.ts`.
+  - `[x]` **Invoices that cannot be billed twice**: issuing is a POST that groups
+    the period into lines, stamps every entry it covers with the reference and
+    records the totals on the audit chain, while `/time/export?ref=…` only
+    re-reads it — and an entry on an invoice is frozen (the refusal names the
+    credit note that is the real remedy).
 - Shift handoff: on-call schedules, rota, coverage windows.
 - Per-client reporting and a client-facing satisfaction (CSAT) survey.
+  - `[x]` **Per-client attainment and CSAT** (`clientScorecards` in
+    `report-rules.ts`, the *By client* table on `/reports`, and
+    `/reports/export?scope=clients`): the same function that builds the desk-wide
+    report builds each client's, so the two can never disagree; the bucket for
+    work that names no client is a row too, so the client figures add up to the
+    desk; and worst-first ordering is what makes the first row one somebody can
+    act on.
+  - `[x]` **A client-facing survey** (`client-survey-rules.ts`,
+    `client-survey-service.ts`, the public `/survey/[token]` page): one question
+    per client per period, answered from an unguessable link by somebody with no
+    account — the one write in the product a stranger can reach, and it does
+    exactly one thing. Asking is a manager's act for a client in scope; a link
+    answers once, expires, and both halves land on the audit chain
+    (`client.survey.request`, `client.survey.respond`). Covered by
+    `ontrak-tix/tests/tix-m4-client-reporting.test.ts`.
 - **Exit:** an agent works two clients without data bleed; time entries export to
   an invoice line; per-client SLA attainment is reportable.
 
