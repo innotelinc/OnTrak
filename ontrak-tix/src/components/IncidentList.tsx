@@ -92,6 +92,11 @@ export interface IncidentListProps {
   staff: StaffOption[];
   actions?: IncidentActions;
   emptyMessage?: string;
+  /**
+   * The desk's name and the signed-in person's, so a notification draft can be
+   * rendered from the incident's facts on the server (`comms-rules.ts`).
+   */
+  comms?: { tenant: string; author: string };
   /** The instant the panels judge lateness against; defaults to the render clock. */
   now?: string;
 }
@@ -145,7 +150,8 @@ function PhaseStrip({ phase }: { phase: IncidentPhase }) {
   );
 }
 
-export function IncidentList({ incidents, staff, actions, emptyMessage, now }: IncidentListProps) {
+export function IncidentList({
+  comms, incidents, staff, actions, emptyMessage, now }: IncidentListProps) {
   // One instant for the whole render, so two panels cannot disagree about what
   // "overdue" means on the same page.
   const renderNow = now ?? new Date().toISOString();
@@ -604,6 +610,23 @@ export function IncidentList({ incidents, staff, actions, emptyMessage, now }: I
               incidentId={incident.id}
               obligations={notifications}
               suggestions={suggestions}
+              {...(comms
+                ? {
+                    comms: {
+                      incident: {
+                        ref: incident.ref,
+                        title: incident.title,
+                        severity: incident.severity,
+                        phase: incident.phase,
+                        impact: incident.impact,
+                        detectedAt: incident.detectedAt,
+                        declaredAt: incident.declaredAt,
+                      },
+                      tenant: comms.tenant,
+                      author: comms.author,
+                    },
+                  }
+                : {})}
               now={renderNow}
               {...(actions?.notifications ? { actions: actions.notifications } : {})}
             />

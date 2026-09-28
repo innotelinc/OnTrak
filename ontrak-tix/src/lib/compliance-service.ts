@@ -22,6 +22,7 @@ import { randomUUID } from "node:crypto";
 
 import { hasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
+import { commsIssues, commsTemplateByKey } from "./comms-rules";
 import { docsAudit } from "./incident-docs-service";
 import type { IncidentEvent, IncidentRecord, IncidentStore } from "./incident-service";
 import {
@@ -240,7 +241,7 @@ export class IncidentComplianceService {
     actor: Actor,
     incidentId: string,
     notificationId: string,
-    input: { reference?: string | null; note?: string | null } = {},
+    input: { reference?: string | null; note?: string | null; message?: string | null; templateKey?: string | null } = {},
   ): Promise<ServiceResult<NotificationObligation>> {
     const denied = this.writable(actor);
     if (denied) return denied;
@@ -250,6 +251,14 @@ export class IncidentComplianceService {
     const { obligation, incident } = found.value;
     if (!canSend(obligation)) return { ok: false, error: `${obligation.label} is already ${obligation.status.toLowerCase()}.` };
 
+    // The notice text is the record of what was said, so it is checked before it
+    // is stored — an unresolved {{placeholder}} is unfinished, not a notice.
+    const message = input.message?.trim() || null;
+    if (message) {
+      const issues = commsIssues(message);
+      if (issues.length > 0) return { ok: false, error: issues[0] };
+    }
+
     const now = this.ids.now();
     const next: NotificationObligation = {
       ...obligation,
@@ -258,22 +267,34 @@ export class IncidentComplianceService {
       sentBy: actor.id,
       reference: input.reference?.trim() || null,
       note: input.note?.trim() || obligation.note,
+      message,
     };
     await this.store.updateNotification(next);
 
     const late = next.sentAt! > next.dueAt;
+    const template = input.templateKey ? commsTemplateByKey(input.templateKey) : null;
     await this.timeline(
       actor.id,
       incident,
       "notification",
-      `Sent ${next.label} to ${next.authority}${late ? " (after its deadline)" : ""}`,
-      { regime: next.regime, dueAt: next.dueAt, sentAt: next.sentAt, reference: next.reference, late },
+      `Sent ${next.label} to ${next.authority}${template ? ` from the "${template.label}" draft` : ""}${late ? " (after its deadline)" : ""}`,
+      {
+        regime: next.regime,
+        dueAt: next.dueAt,
+        sentAt: next.sentAt,
+        reference: next.reference,
+        late,
+        ...(template ? { template: template.key } : {}),
+        noticeChars: next.message?.length ?? 0,
+      },
     );
     await this.appendAudit(incident, actor.id, "incident.notification.sent", {
       regime: next.regime,
       dueAt: next.dueAt,
       reference: next.reference,
       late,
+      template: input.templateKey ?? null,
+      noticeChars: next.message?.length ?? 0,
     });
     return { ok: true, value: next };
   }

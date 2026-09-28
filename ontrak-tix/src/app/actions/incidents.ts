@@ -267,9 +267,16 @@ export async function sendNotificationAction(formData: FormData): Promise<void> 
   const result = await complianceServicesFor().markSent(actor, incidentId, notificationId, {
     reference: text(formData, "reference"),
     note: text(formData, "note"),
+    // The notice text, when a draft was used or one was typed into the form.
+    message: text(formData, "message"),
+    templateKey: text(formData, "templateKey"),
   });
   if (!result.ok) fail(result.error);
-  ok(`${result.value.label} marked sent.`);
+  ok(
+    result.value.message
+      ? `${result.value.label} marked sent, with the notice text on the record.`
+      : `${result.value.label} marked sent.`,
+  );
 }
 
 /** Record that the authority acknowledged a notification. */

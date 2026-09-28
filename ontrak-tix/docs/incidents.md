@@ -9,11 +9,11 @@ This covers the parts of **M3 — Incident response & defensible documentation**
 (see `ROADMAP.md`) that have landed: the lifecycle, the severity matrix, the
 incident roles, runbook-style **playbooks with step tracking**, **evidence
 collection with a chain of custody, object-lock (WORM) storage and legal hold**,
-regulatory **notification duties**, the **post-incident review** with tracked
-actions, the **war-room timeline** assembled from the incident log, the audit
-chain, the alert stream and the decisions taken, and the one-click signed
-**Assurance Packet** — all surfaced in a console at `/incidents`, and checkable by
-a third party with `npm run verify:packet`.
+regulatory **notification duties** with **drafted notices**, the **post-incident
+review** with tracked actions, the **war-room timeline** assembled from the
+incident log, the audit chain, the alert stream and the decisions taken, and the
+one-click signed **Assurance Packet** — all surfaced in a console at
+`/incidents`, and checkable by a third party with `npm run verify:packet`.
 
 ## Pieces
 
@@ -29,6 +29,7 @@ a third party with `npm run verify:packet`.
 | Service: start/step the playbook, record evidence, custody, holds, artifacts, manifest | `src/lib/incident-docs-service.ts` |
 | Prisma adapter | `src/lib/incident-docs-store-prisma.ts` |
 | Pure rules: notification regimes, duties and their clocks | `src/lib/regulatory-rules.ts` |
+| Pure rules: the notices a duty drafts (templates, placeholders, readiness) | `src/lib/comms-rules.ts` |
 | Pure rules: the review, its findings and tracked actions | `src/lib/review-rules.ts` |
 | Service: track/send/waive notifications, publish the review, run its actions | `src/lib/compliance-service.ts` |
 | Pure rules: assemble the war-room timeline from other sources | `src/lib/war-room-rules.ts` |
@@ -41,7 +42,7 @@ a third party with `npm run verify:packet`.
 | The signing key (HMAC over `contentHash`) | `src/lib/assurance-sign.ts` |
 | Service: assemble the packet from the record and the audit chain | `src/lib/assurance-service.ts` |
 | Packet download | `src/app/api/incidents/[id]/packet/route.ts` |
-| Tests | `tests/tix-m3-incidents.test.ts`, `tests/tix-m3-playbooks.test.ts`, `tests/tix-m3-object-lock.test.ts`, `tests/tix-m3-war-room.test.ts`, `tests/tix-m3-compliance.test.ts`, `tests/tix-m3-assurance.test.ts`, `tests/tix-m3-verifier.test.ts` |
+| Tests | `tests/tix-m3-incidents.test.ts`, `tests/tix-m3-playbooks.test.ts`, `tests/tix-m3-object-lock.test.ts`, `tests/tix-m3-war-room.test.ts`, `tests/tix-m3-compliance.test.ts`, `tests/tix-m3-comms.test.ts`, `tests/tix-m3-assurance.test.ts`, `tests/tix-m3-verifier.test.ts` |
 | Browser sweep (opt-in, `ONTRAK_TIX_BASE_URL`) | `tests/browser/tix.spec.ts` at the repo root — WCAG A/AA on the staff surfaces plus the flows end to end |
 
 ## Severity from a matrix
@@ -252,6 +253,35 @@ legal way, and an `OVERDUE` state derived from the date rather than stored. An
 incident is not finished while an action is open, which is what makes
 `reviewCompleteness` and the packet's `packetCompleteness` mean something.
 
+## The notice itself
+
+A tracked clock only helps if the thing being sent is written for the duty. Each
+regime therefore comes with a **draft** (`comms-rules.ts`): a subject, a body and
+a line of guidance on what a message of that kind must not forget. The incident's
+own facts are substituted in by the same `{{name}}` engine the M1 canned
+responses use — `COMMS_PLACEHOLDERS` is a *superset* of the M1 variables, so a
+desk's existing canned wording can be adopted unchanged as an incident draft
+(`cannedAsCommsTemplate`).
+
+Two details carry the design:
+
+- **A template may leave a field open on purpose.** The subjects affected, the
+  categories of data, the material impact — nobody can derive those from an
+  incident row, and a breach notice that leaves them blank is not a notice. They
+  are named as fill-ins, so the console says "3 fields to complete", and the
+  service **refuses to record the notice as sent** while one is unresolved. The
+  rule is mechanical: `commsIssues` reports what is still `{{unresolved}}`.
+- **A missing value is left visible.** Substitution never blanks a placeholder it
+  cannot fill, so a draft with a typo says `{{detectedAt}}` rather than reading as
+  finished prose — which is how this rule set caught its own camel-case bug.
+
+The console offers the applicable drafts on an open duty — with the generic ones
+flagged as generic when no template names that regime — pre-fills an editable
+textarea, and records the text **as sent** on the obligation, next to the duty it
+answered. The timeline line names the draft it came from and the audit event
+carries the template key, so the wording is traceable without trusting the email
+system.
+
 ## Verifying a packet without us
 
 The packet promises that a third party can check it holding nothing but the file
@@ -323,10 +353,10 @@ exported rather than at boot.
 
 ## What is not here yet
 
-- **Communications templates for an incident's notifications.** The notification
-  duties, their clocks and their acknowledgements are tracked, but the message a
-  responder sends is typed each time; the M1 canned-response templates are not yet
-  wired to an incident's regimes.
+- **A tenant's own incident templates.** The drafts a duty offers are shipped
+  defaults, and a desk's M1 canned responses can be adopted from them
+  (`cannedAsCommsTemplate`), but there is no screen yet for authoring an incident
+  notification template per tenant and regime.
 - **A real object-locked backend.** The rules, the lock row and the S3 headers are
   here, and the filesystem store enforces write-once for the process that goes
   through it, but a shared bucket with object lock enabled is what would enforce

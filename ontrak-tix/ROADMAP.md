@@ -307,10 +307,11 @@ to stand on its own.
 > decisions (`war-room-rules.ts`, `war-room-service.ts`), **notification duties**
 > with their regimes and clocks (`regulatory-rules.ts`), the **post-incident
 > review** with tracked actions (`review-rules.ts`) and their service
-> (`compliance-service.ts`), and a **standalone verifier** for a third party
-> holding only a packet and the key (`scripts/verify-packet.ts`). What remains in
-> M3: incident communications templates, and a retention sweep that walks expired
-> artifacts rather than waiting to be asked.
+> (`compliance-service.ts`), a **standalone verifier** for a third party
+> holding only a packet and the key (`scripts/verify-packet.ts`), and the
+> **communications templates** a duty drafts from (`comms-rules.ts`), covered by
+> `ontrak-tix/tests/tix-m3-comms.test.ts`. What remains in M3: a retention sweep
+> that walks expired artifacts rather than waiting to be asked.
 >
 > M1 progress: the SLA engine (clocks, escalations and the scheduled sweep),
 > queue routing, CSAT surveys, attachments, the dispatcher report, canned
@@ -562,9 +563,22 @@ up to an adjuster or auditor.
     `reviewCompleteness` is what makes "an incident is not finished while an
     action is open" a rule instead of a hope. Covered by
     `ontrak-tix/tests/tix-m3-compliance.test.ts`.
-  - `[ ]` Communications templates: the duty, its clock and its acknowledgement
-    are tracked, but the message itself is typed each time — the M1 canned
-    responses are not yet offered from an incident's regimes.
+  - `[x]` **Communications templates** (`src/lib/comms-rules.ts`): each regime
+    now comes with the words — a subject, a body and a line on what a message of
+    that kind must not forget — rendered from the incident's own facts by the same
+    `{{name}}` engine the M1 canned responses use, so a desk's canned wording can
+    be adopted as an incident draft unchanged (`cannedAsCommsTemplate`). A field
+    only a person can supply (categories of data, subjects affected, material
+    impact) is named as a fill-in: the console reports how many are outstanding
+    and the service refuses to record a notice as sent while one is unresolved,
+    which is what stops a half-written breach notice entering the record as a
+    notification. The console offers the drafts on an open duty (flagging the
+    generic ones when no template names that regime), pre-fills an editable
+    textarea, and stores the text **as sent** on the obligation — with the draft
+    it came from on the timeline and the template key in the audit event. Covered
+    by `ontrak-tix/tests/tix-m3-comms.test.ts`, and exercised end to end by the
+    Tix browser sweep (track a regime, open its draft, record it, read the notice
+    text back off the record).
 - One-click **Assurance Packet** export: signed timeline + decisions + approvals
   + evidence manifest + access logs + policy versions.
   - `[x]` The packet (`assurance-rules.ts`, `assurance-service.ts`,

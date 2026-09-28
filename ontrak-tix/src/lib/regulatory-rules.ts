@@ -212,6 +212,12 @@ export interface NotificationObligation {
   acknowledgedBy: string | null;
   reference: string | null;
   note: string | null;
+  /**
+   * The notice text that actually went out, kept as sent (`comms-rules.ts`).
+   * Copied in at send time rather than regenerated on read: a draft is a
+   * proposal, this is the record.
+   */
+  message: string | null;
   waivedAt: string | null;
   waivedBy: string | null;
   waiverReason: string | null;
@@ -245,6 +251,7 @@ export function buildObligation(input: {
     acknowledgedBy: null,
     reference: null,
     note: input.note?.trim() || null,
+    message: null,
     waivedAt: null,
     waivedBy: null,
     waiverReason: null,

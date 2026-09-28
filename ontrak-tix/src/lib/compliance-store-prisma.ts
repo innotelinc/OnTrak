@@ -39,6 +39,7 @@ export interface NotificationRow {
   acknowledgedBy: string | null;
   reference: string | null;
   note: string | null;
+  message: string | null;
   waivedAt: Date | null;
   waivedBy: string | null;
   waiverReason: string | null;
@@ -133,6 +134,7 @@ export function toNotificationObligation(row: NotificationRow): NotificationObli
     acknowledgedBy: row.acknowledgedBy,
     reference: row.reference,
     note: row.note,
+    message: row.message,
     waivedAt: toIsoOrNull(row.waivedAt),
     waivedBy: row.waivedBy,
     waiverReason: row.waiverReason,
@@ -158,6 +160,7 @@ export function toNotificationData(obligation: NotificationObligation) {
     acknowledgedBy: obligation.acknowledgedBy,
     reference: obligation.reference,
     note: obligation.note,
+    message: obligation.message,
     waivedAt: obligation.waivedAt === null ? null : new Date(obligation.waivedAt),
     waivedBy: obligation.waivedBy,
     waiverReason: obligation.waiverReason,

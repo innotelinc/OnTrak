@@ -894,6 +894,8 @@ model IncidentNotification {
   /// The authority's own reference for the notice, so it can be cited later.
   reference       String?
   note            String?
+  /// The notice text as it went out, kept verbatim (`comms-rules.ts`).
+  message         String?
   waivedAt        DateTime?
   waivedBy        String?
   /// A waiver is a decision, so it carries the reason it was made.

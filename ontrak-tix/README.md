@@ -275,6 +275,13 @@ generate without a local install would rewrite the parent project's client.
   recorded as late, waivers carrying a reason and a name), and the
   **post-incident review** with tracked actions that have an owner, a due date
   and a status moving only the legal way.
+- `src/lib/comms-rules.ts` (M3) — **incident communications templates**: each
+  regime comes with a draft (subject, body, guidance) rendered from the incident's
+  own facts by the same `{{name}}` engine the M1 canned responses use, so a
+  desk's own canned wording can be offered as an incident notice unchanged.
+  Fields only a person can supply are named, and a notice with one unresolved is
+  refused rather than recorded as sent; the text that went out is stored on the
+  duty, so the record holds what was said rather than what a template would say.
 - `scripts/verify-packet.ts` (`npm run verify:packet`) — the **offline packet
   verifier** (M3): a third party holding only a packet and the key can check it,
   importing the packet rules, the signer and the verifier and nothing else — no
@@ -292,8 +299,8 @@ generate without a local install would rewrite the parent project's client.
   promotion decisions, the tenant IdP connection, incidents with their
   append-only timeline and their playbook steps, evidence items, custody entries,
   legal holds and stored artifacts under object lock, their notification duties
-  and their post-incident review with its tracked actions, and the hash-chained
-  audit event).
+  with the notice text that went out and their post-incident review with its
+  tracked actions, and the hash-chained audit event).
 
 Run the tests with:
 
@@ -329,7 +336,9 @@ claims the tenant's own config forbids; `tix-m3-incidents.test.ts` covers the in
 severity matrix, phase ladder, roles and timeline; `tix-m3-playbooks.test.ts`
 covers playbook planning and step transitions, evidence validation, the chain of
 custody, legal hold and retention, manifest determinism, the docs service and its
-Prisma adapter, and the rendered incident console; `tix-m3-assurance.test.ts`
+Prisma adapter, and the rendered incident console; `tix-m3-comms.test.ts` covers
+the incident communication drafts (placeholders, regime selection, readiness, the
+M1 bridge and the rendered duty panel); `tix-m3-assurance.test.ts`
 covers the packet's digests and signature, offline verification, completeness and
 the export that records itself; `tix-db.test.ts`
 exercises the real Prisma store and hash-chained audit against Postgres,
@@ -347,7 +356,8 @@ It runs the strict axe rule set over the staff surfaces (`/inbox`, `/reports`,
 `/incidents`), checks the template prefill end-to-end, promotes a security alert,
 declares an incident and downloads its manifest, walks a chain of custody through
 a hand-off and a legal hold and downloads the signed packet (asserting the record
-digest is stable across exports while the packet digest moves), confirms a
+digest is stable across exports while the packet digest moves), tracks a
+regulatory clock and records the drafted notice onto it, confirms a
 requester cannot reach the worklist, and — as an administrator — audits
 `/admin/identity` and confirms a desk agent is turned away from it.
 

@@ -288,7 +288,7 @@ test.describe("OnTrak Tix desk", () => {
     await expect(adminCard).not.toContainText("Bytes removed");
   });
 
-  test("incidents: a regulatory clock is tracked, sent and acknowledged", async ({ page }) => {
+  test("incidents: a regulatory clock is tracked, drafted, sent and acknowledged", async ({ page }) => {
     await page.goto(url("/incidents"), { waitUntil: "load" });
 
     // A SEV1 with extensive impact is the case every regime is suggested for.
@@ -328,6 +328,25 @@ test.describe("OnTrak Tix desk", () => {
     await expect(card).toContainText("CSIRT-2026-0042");
     await card.getByRole("button", { name: "Mark acknowledged" }).click();
     await expect(card).toContainText("acknowledged");
+
+    // A second duty is drafted from the regime's own words rather than typed:
+    // the console offers the message with this incident's facts already in it.
+    await card.getByRole("button", { name: "Track NIS2 incident notification" }).click();
+    await expect(page.locator("body")).toContainText(/NIS2 incident notification is now tracked/, { timeout: 20_000 });
+    const incidentDuty = card.locator("li").filter({ hasText: "NIS2 incident notification" }).first();
+    await incidentDuty.getByText(/^Draft this notice/).click();
+    await expect(incidentDuty).toContainText("Incident notification to the authority");
+    const notice = incidentDuty.locator('textarea[name="message"]');
+    await expect(notice).toHaveValue(/Incident notification — INC-\d+/);
+    await expect(notice).toHaveValue(new RegExp(`Notification sweep ${stamp}`));
+
+    await incidentDuty.getByPlaceholder("reference for this notice (optional)").fill("CSIRT-2026-0043");
+    await incidentDuty.getByRole("button", { name: "Record this notice as sent" }).click();
+    await expect(page.locator("body")).toContainText(/with the notice text on the record/, { timeout: 20_000 });
+    // What went out is on the record, verbatim, next to the duty it answered.
+    await expect(incidentDuty).toContainText("Notice text as sent");
+    await expect(incidentDuty).toContainText("CSIRT-2026-0043");
+    await expect(incidentDuty).toContainText(/Incident notification — INC-\d+/);
   });
 
   test("incidents: the phase ladder, the published review and the assembled timeline", async ({ page }) => {

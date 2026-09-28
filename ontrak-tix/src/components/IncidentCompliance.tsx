@@ -23,6 +23,7 @@ import {
   canWaive,
   type NotificationObligation,
 } from "../lib/regulatory-rules";
+import { audienceLabel, commsDrafts, type CommsFacts } from "../lib/comms-rules";
 import type { SuggestedObligation } from "../lib/compliance-service";
 import {
   actionState,
@@ -51,6 +52,8 @@ export interface NotificationPanelProps {
   obligations: NotificationObligation[];
   /** Regimes this incident's facts suggest, and whether they are tracked. */
   suggestions: SuggestedObligation[];
+  /** The incident's own facts, so a notice can be drafted from them. */
+  comms?: CommsFacts;
   now: string;
   actions?: NotificationActions;
 }
@@ -96,7 +99,7 @@ const btnQuiet = "rounded-full border border-line px-2.5 py-1.5 text-[11px] font
 /*  Regulatory notifications                                                  */
 /* -------------------------------------------------------------------------- */
 
-export function NotificationPanel({ incidentId, obligations, suggestions, now, actions }: NotificationPanelProps) {
+export function NotificationPanel({ incidentId, obligations, suggestions, comms, now, actions }: NotificationPanelProps) {
   const untracked = suggestions.filter((entry) => !entry.tracked);
   const extra = NOTIFICATION_REGIMES.filter(
     (regime) => !obligations.some((obligation) => obligation.regime === regime.key) && !untracked.some((entry) => entry.suggestion.regime.key === regime.key),
@@ -137,6 +140,18 @@ export function NotificationPanel({ incidentId, obligations, suggestions, now, a
                   {obligation.waivedAt ? ` · waived: ${obligation.waiverReason}` : ""}
                 </p>
 
+                {/* What went out, kept verbatim — the draft was a proposal. */}
+                {obligation.message ? (
+                  <details className="pt-0.5">
+                    <summary className="cursor-pointer text-[11px] font-semibold text-ink-soft">
+                      Notice text as sent ({obligation.message.length} characters)
+                    </summary>
+                    <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap rounded-xl2 border border-line bg-surface-muted px-2 py-1.5 text-[11px] text-ink-soft">
+                      {obligation.message}
+                    </pre>
+                  </details>
+                ) : null}
+
                 {actions ? (
                   <div className="flex flex-wrap items-end gap-2 pt-0.5">
                     {canSend(obligation) ? (
@@ -152,6 +167,64 @@ export function NotificationPanel({ incidentId, obligations, suggestions, now, a
                         </button>
                       </form>
                     ) : null}
+                    {canSend(obligation) && comms
+                      ? (() => {
+                          const drafts = commsDrafts({ ...comms, obligation });
+                          return (
+                            <details className="w-full rounded-xl2 border border-line p-2">
+                              <summary className="cursor-pointer text-[11px] font-semibold text-ink-soft">
+                                Draft this notice ({drafts.length}) — the words, with this incident's facts in them
+                              </summary>
+                              <div className="space-y-2 pt-2">
+                                {drafts.map((draft) => (
+                                  <div key={draft.template.key} className="space-y-1 rounded-xl2 border border-line p-2">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="text-xs font-semibold text-ink">{draft.template.label}</span>
+                                      {chip(audienceLabel(draft.template.audience), "brand")}
+                                      {draft.fallback ? chip("generic", "amber") : null}
+                                      {draft.ready
+                                        ? chip("ready", "teal")
+                                        : chip(`${draft.fillIn.length} field${draft.fillIn.length === 1 ? "" : "s"} to complete`, "amber")}
+                                    </div>
+                                    <p className="text-[11px] text-ink-faint">{draft.template.guidance}</p>
+                                    {draft.issues.length > 0 ? (
+                                      <ul className="list-disc pl-4 text-[11px] text-amber">
+                                        {draft.issues.map((issue) => (
+                                          <li key={issue}>{issue}</li>
+                                        ))}
+                                      </ul>
+                                    ) : null}
+                                    {/* The draft is a starting point, not a constraint: edit it, then record it. */}
+                                    <form action={actions.send} className="space-y-1">
+                                      <input type="hidden" name="incidentId" value={incidentId} />
+                                      <input type="hidden" name="notificationId" value={obligation.id} />
+                                      <input type="hidden" name="templateKey" value={draft.template.key} />
+                                      <label className="block text-xs text-ink-soft">
+                                        Notice text — fill in the gaps, then record it
+                                        <textarea
+                                          name="message"
+                                          rows={10}
+                                          defaultValue={draft.message}
+                                          className={`w-full font-mono text-[11px] ${inputClass}`}
+                                        />
+                                      </label>
+                                      <div className="flex flex-wrap items-end gap-2">
+                                        <label className="text-xs text-ink-soft">
+                                          Reference
+                                          <input name="reference" placeholder="reference for this notice (optional)" className={`block ${inputClass}`} />
+                                        </label>
+                                        <button type="submit" className={btnPrimary}>
+                                          Record this notice as sent
+                                        </button>
+                                      </div>
+                                    </form>
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          );
+                        })()
+                      : null}
                     {canAcknowledge(obligation) ? (
                       <form action={actions.acknowledge}>
                         <input type="hidden" name="incidentId" value={incidentId} />
