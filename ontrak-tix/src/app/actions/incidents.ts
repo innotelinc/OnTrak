@@ -153,6 +153,60 @@ export async function recordEvidenceAction(formData: FormData): Promise<void> {
   ok("Evidence recorded.");
 }
 
+/**
+ * Upload an artifact: store its bytes under object lock, and record it as
+ * evidence.
+ *
+ * The digest and the storage key are computed from the bytes that actually
+ * arrived, never from anything the browser said about the file, so a renamed or
+ * misdescribed upload cannot put one artifact's label on another's content.
+ */
+export async function uploadArtifactAction(formData: FormData): Promise<void> {
+  const actor = await requireActor();
+  const incidentId = text(formData, "incidentId");
+  if (!incidentId) fail("Choose an incident first.");
+
+  const upload = formData.get("file");
+  if (!(upload instanceof File) || upload.size === 0) fail("Choose a file to store.");
+
+  const bytes = new Uint8Array(await upload.arrayBuffer());
+  const result = await incidentDocsServicesFor().recordArtifact(actor, incidentId, {
+    kind: pick<EvidenceKind>(formData.get("kind"), EVIDENCE_KINDS, "FILE"),
+    label: String(formData.get("label") ?? "") || upload.name,
+    contentType: upload.type || "application/octet-stream",
+    bytes,
+    note: text(formData, "note") || null,
+  });
+  if (!result.ok) fail(result.error);
+
+  const { artifact, stored } = result.value;
+  ok(
+    stored === "unchanged"
+      ? `Those bytes were already stored; recorded another collection under ${artifact.mode} retention.`
+      : `Artifact stored under ${artifact.mode} retention until ${artifact.retainUntil.slice(0, 10)}.`,
+  );
+}
+
+/**
+ * Remove an artifact's bytes, if the retention rules allow it now.
+ *
+ * A refusal is reported as a failure with the rule's own words, because "you
+ * cannot remove this yet, and here is why" is the answer the operator needs.
+ */
+export async function purgeArtifactAction(formData: FormData): Promise<void> {
+  const actor = await requireActor();
+  const incidentId = text(formData, "incidentId");
+  const artifactId = text(formData, "artifactId");
+  if (!incidentId || !artifactId) fail("Choose an incident and an artifact first.");
+
+  const result = await incidentDocsServicesFor().purgeArtifact(actor, incidentId, artifactId, {
+    reason: text(formData, "reason"),
+    bypassGovernance: formData.get("bypass") === "on",
+  });
+  if (!result.ok) fail(result.error);
+  ok("Artifact purged, and the removal is on the record.");
+}
+
 /** Hand an evidence item to a new custodian. */
 export async function transferEvidenceAction(formData: FormData): Promise<void> {
   const actor = await requireActor();

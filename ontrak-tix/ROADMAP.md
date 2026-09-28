@@ -299,8 +299,18 @@ to stand on its own.
 > `GET /api/incidents/[id]/packet`), covered by
 > `ontrak-tix/tests/tix-m3-assurance.test.ts` and proved end to end by the Tix
 > browser sweep (a hand-off, a hold, and a packet whose record digest is stable
-> across exports). Object-lock (WORM) storage, the war-room timeline assembled
-> from other sources, regulatory tracking and the post-incident review remain.
+> across exports). The rest of the slice has landed since: **object-lock (WORM)
+> storage** for the artifacts themselves (`object-lock-rules.ts`,
+> `object-lock-file.ts`, `EvidenceArtifact`, covered by
+> `ontrak-tix/tests/tix-m3-object-lock.test.ts`), the **war-room timeline**
+> assembled from the incident log, the audit chain, the alert stream and the
+> decisions (`war-room-rules.ts`, `war-room-service.ts`), **notification duties**
+> with their regimes and clocks (`regulatory-rules.ts`), the **post-incident
+> review** with tracked actions (`review-rules.ts`) and their service
+> (`compliance-service.ts`), and a **standalone verifier** for a third party
+> holding only a packet and the key (`scripts/verify-packet.ts`). What remains in
+> M3: incident communications templates, and a retention sweep that walks expired
+> artifacts rather than waiting to be asked.
 >
 > M1 progress: the SLA engine (clocks, escalations and the scheduled sweep),
 > queue routing, CSAT surveys, attachments, the dispatcher report, canned
@@ -496,8 +506,16 @@ up to an adjuster or auditor.
   - `[x]` The incident console (`/incidents`): declare, advance the phase, staff
     the four roles, run the playbook, record evidence and write the timeline —
     offering only the legal next moves, and read-only without `ticket:update`.
-  - `[ ]` The war-room timeline assembled automatically from *other* sources
-    (logins, alerts, approvals), not only from the incident operations.
+  - `[x]` The **war-room timeline** assembled automatically from *other* sources:
+    the incident log, the tenant's hash-chained audit log, the alert stream and
+    the decisions taken about the incident, merged into one ordering
+    (`src/lib/war-room-rules.ts`, `war-room-service.ts`). The same fact seen by
+    two systems is one entry attested by both rather than two lines that look
+    like two events, an audit-only fact (an export, say) is kept instead of being
+    dropped for having no incident-log twin, and reading a timeline writes
+    nothing — so assembling it cannot change the record it describes. Staff-only
+    and tenant-scoped, rendered on the console with its sources behind each line;
+    covered by `ontrak-tix/tests/tix-m3-war-room.test.ts`.
 - Evidence collection with chain of custody; object-lock storage; legal hold.
   - `[x]` Evidence items with a kind, label, reference and optional SHA-256,
     validated on the way in, recorded to the timeline, and rolled into a JSON
@@ -510,9 +528,43 @@ up to an adjuster or auditor.
   - `[x]` Legal hold: placed and released with a reason and a name, one active at
     a time, recorded on the timeline and the audit chain, and outranking routine
     retention (`LegalHold`, `retentionDecision`).
-  - `[ ]` Object-lock (WORM) storage for the artifacts themselves.
+  - `[x]` **Object-lock (WORM) storage** for the artifacts themselves
+    (`src/lib/object-lock-rules.ts`, `object-lock-file.ts`, `EvidenceArtifact`):
+    content-addressed keys (`evidence/<tenant>/<incident>/<sha256>`) so a key
+    cannot drift from its bytes and a re-upload of identical bytes is the same
+    object rather than an overwrite; `COMPLIANCE` retention that nobody can
+    shorten, `GOVERNANCE` retention that a privileged caller may remove early
+    only explicitly and on the record; a legal hold that outranks the clock in
+    both directions; and removal gated on `tenant:manage`, a reason and the lock,
+    which stamps `purgedAt` and keeps the artifact in the manifest as a
+    tombstone. The filesystem store enforces write-once with an `wx` open (for
+    the writers that go through it) and the module hands out the S3
+    `x-amz-object-lock-*` headers a real object-locked bucket needs. The lock
+    travels inside the manifest digest, so the retention that applied is part of
+    what the hash covers; covered by
+    `ontrak-tix/tests/tix-m3-object-lock.test.ts` and exercised end to end by the
+    Tix browser sweep (`tests/browser/tix.spec.ts`: upload, locked, a re-upload
+    of the same bytes, an agent's removal refused, an administrator's removal
+    refused while COMPLIANCE holds, artifact still locked).
 - Regulatory/notification tracking, communications templates, and a
   post-incident review with tracked actions.
+  - `[x]` **Notification duties**: regimes suggested from the incident's own
+    facts (severity, personal data, regulated sector), tracked deliberately,
+    then run on a clock measured from detection or declaration as the regime
+    says — `DUE_SOON` before the deadline, `OVERDUE` after it, a late send
+    recorded as late, and a waiver that carries a reason and a name
+    (`src/lib/regulatory-rules.ts`, `compliance-service.ts`,
+    `IncidentNotification`).
+  - `[x]` The **post-incident review**: published once with findings and lessons,
+    carrying actions with an owner, a due date and a status that moves only the
+    legal way, with `OVERDUE` derived from the date rather than stored
+    (`src/lib/review-rules.ts`, `IncidentReview`, `IncidentReviewAction`).
+    `reviewCompleteness` is what makes "an incident is not finished while an
+    action is open" a rule instead of a hope. Covered by
+    `ontrak-tix/tests/tix-m3-compliance.test.ts`.
+  - `[ ]` Communications templates: the duty, its clock and its acknowledgement
+    are tracked, but the message itself is typed each time — the M1 canned
+    responses are not yet offered from an incident's regimes.
 - One-click **Assurance Packet** export: signed timeline + decisions + approvals
   + evidence manifest + access logs + policy versions.
   - `[x]` The packet (`assurance-rules.ts`, `assurance-service.ts`,
@@ -523,8 +575,14 @@ up to an adjuster or auditor.
     record. Two digests separate "this packet" from "this record"
     (`contentHash` vs a stable `recordHash`) and an HMAC makes it verifiable
     offline; exporting is audited as `incident.packet.export`.
-  - `[ ]` A standalone verification tool that exposes `verifyAssurancePacket` to
-    a third party holding only the packet and the key.
+  - `[x]` A standalone verification **tool** that exposes `verifyAssurancePacket`
+    to a third party holding only the packet and the key:
+    `scripts/verify-packet.ts` (`npm run verify:packet -- packet.json`), which
+    imports the packet rules, the signer and the verifier and nothing else — no
+    Prisma, no session, no `db.ts`, no network — so it runs from a checkout that
+    was never configured with this deployment's environment. Exit codes separate
+    "the packet is forged" (1) from "the file could not be read" (2). Covered by
+    `ontrak-tix/tests/tix-m3-verifier.test.ts`.
   - `[x]` Completeness is a rule, not a judgement: `packetCompleteness` reports
     what a reviewer would still be missing, so the "% of incidents with a complete
     packet" metric has a definition.

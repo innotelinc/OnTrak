@@ -254,6 +254,31 @@ generate without a local install would rewrite the parent project's client.
   is collected with its first custody entry, hand-offs carry a recipient and a
   reason and must start from the current holder, and an active hold blocks
   routine retention (`retentionDecision`) until it is explicitly released.
+- `src/lib/object-lock-rules.ts` + `object-lock-file.ts` (M3) — **object-lock
+  (WORM) storage** for the evidence bytes themselves: content-addressed keys
+  (`evidence/<tenant>/<incident>/<sha256>`) so a key cannot drift from its
+  content and a re-upload of the same bytes is the same object rather than an
+  overwrite; `COMPLIANCE` retention nobody can shorten versus `GOVERNANCE`, which
+  a privileged caller may remove early only explicitly and on the record; a legal
+  hold that outranks the clock in both directions; and a write-once filesystem
+  store that opens each file with `wx` and hands out the S3 `x-amz-object-lock-*`
+  headers a real object-locked bucket needs. The lock travels inside the manifest
+  digest.
+- `src/lib/war-room-rules.ts` + `war-room-service.ts` (M3) — the **war-room
+  timeline**: the incident log, the tenant's audit chain, the alert stream and
+  the decisions taken about the incident, merged into one view where the same
+  fact seen by two systems is one entry attested by both. Reading it writes
+  nothing, so assembling a timeline cannot edit the record it describes.
+- `src/lib/regulatory-rules.ts` + `review-rules.ts` + `compliance-service.ts`
+  (M3) — **notification duties** with regimes suggested from the incident's own
+  facts and run on a clock measured from detection or declaration (late sends
+  recorded as late, waivers carrying a reason and a name), and the
+  **post-incident review** with tracked actions that have an owner, a due date
+  and a status moving only the legal way.
+- `scripts/verify-packet.ts` (`npm run verify:packet`) — the **offline packet
+  verifier** (M3): a third party holding only a packet and the key can check it,
+  importing the packet rules, the signer and the verifier and nothing else — no
+  Prisma, no session, no network.
 - `src/components/IdentityConnectionForm.tsx` +
   `src/app/(desk)/admin/identity/page.tsx` + `src/app/actions/identity.ts` — the
   identity admin UI (M2): an administrator configures the tenant's IdP, its
@@ -265,8 +290,10 @@ generate without a local install would rewrite the parent project's client.
   attachments, CSAT responses, canned responses, ticket links, notifications,
   normalized security alerts with their alert verdicts, suppression rules and
   promotion decisions, the tenant IdP connection, incidents with their
-  append-only timeline and their playbook steps and evidence items, and the
-  hash-chained audit event).
+  append-only timeline and their playbook steps, evidence items, custody entries,
+  legal holds and stored artifacts under object lock, their notification duties
+  and their post-incident review with its tracked actions, and the hash-chained
+  audit event).
 
 Run the tests with:
 

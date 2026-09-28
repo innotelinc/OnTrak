@@ -24,6 +24,7 @@ import {
   placeLegalHoldAction,
   playbookStepAction,
   publishReviewAction,
+  purgeArtifactAction,
   recordEvidenceAction,
   releaseLegalHoldAction,
   reviewActionStateAction,
@@ -31,6 +32,7 @@ import {
   startPlaybookAction,
   trackNotificationAction,
   transferEvidenceAction,
+  uploadArtifactAction,
   waiveNotificationAction,
 } from "../../actions/incidents";
 
@@ -86,7 +88,7 @@ export default async function IncidentsPage({
   ]);
 
   const views: IncidentView[] = recent.map((incident) => {
-    const page = pages.get(incident.id) ?? { steps: [], evidence: [], custody: [], holds: [] };
+    const page = pages.get(incident.id) ?? { steps: [], evidence: [], custody: [], holds: [], artifacts: [] };
     const overview = overviews.get(incident.id) ?? {
       notifications: [],
       summary: { total: 0, pending: 0, dueSoon: 0, overdue: 0, sent: 0, acknowledged: 0, waived: 0, nextDueAt: null },
@@ -101,6 +103,7 @@ export default async function IncidentsPage({
       steps: page.steps,
       evidence: page.evidence,
       custody: page.custody,
+      artifacts: page.artifacts,
       holds: page.holds,
       timeline: timelinePages.get(incident.id) ?? [],
       notifications: overview.notifications,
@@ -242,6 +245,8 @@ export default async function IncidentsPage({
                 startPlaybook: startPlaybookAction,
                 step: playbookStepAction,
                 recordEvidence: recordEvidenceAction,
+                uploadArtifact: uploadArtifactAction,
+                purgeArtifact: purgeArtifactAction,
                 transfer: transferEvidenceAction,
                 placeHold: placeLegalHoldAction,
                 releaseHold: releaseLegalHoldAction,

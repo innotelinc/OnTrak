@@ -33,6 +33,8 @@ import {
   type IncidentRole,
 } from "../lib/incident-rules";
 import { nextStep, playbookProgress } from "../lib/playbook-rules";
+import { RETENTION_MODE_NOTES, artifactHeld, describeLock, type RetentionMode } from "../lib/object-lock-rules";
+import type { EvidenceArtifactRecord } from "../lib/incident-docs-service";
 
 export interface IncidentActions {
   advance: (formData: FormData) => Promise<void>;
@@ -41,6 +43,9 @@ export interface IncidentActions {
   startPlaybook: (formData: FormData) => Promise<void>;
   step: (formData: FormData) => Promise<void>;
   recordEvidence: (formData: FormData) => Promise<void>;
+  /** Store a file's bytes under object-lock retention (`object-lock-rules.ts`). */
+  uploadArtifact?: (formData: FormData) => Promise<void>;
+  purgeArtifact?: (formData: FormData) => Promise<void>;
   transfer?: (formData: FormData) => Promise<void>;
   placeHold?: (formData: FormData) => Promise<void>;
   releaseHold?: (formData: FormData) => Promise<void>;
@@ -62,6 +67,8 @@ export interface IncidentView {
   evidence: EvidenceItem[];
   /** Every hand-off for this incident's evidence, as recorded. */
   custody: CustodyEntry[];
+  /** Bytes stored under object-lock retention, with the lock each one carries. */
+  artifacts?: EvidenceArtifactRecord[];
   /** Holds ever placed, newest first — released ones included. */
   holds: LegalHold[];
   timeline: IncidentEvent[];
@@ -158,6 +165,7 @@ export function IncidentList({ incidents, staff, actions, emptyMessage, now }: I
           steps,
           evidence,
           custody,
+          artifacts = [],
           holds,
           timeline,
           notifications = [],
@@ -436,6 +444,103 @@ export function IncidentList({ incidents, staff, actions, emptyMessage, now }: I
                   </label>
                   <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white">
                     Record evidence
+                  </button>
+                </form>
+              ) : null}
+            </section>
+
+            {/* Artifacts: the evidence whose bytes are stored, under an object lock.
+                The lock is shown rather than implied — "we kept it" and "nobody
+                could have deleted it yet" are different promises. */}
+            <section className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <h4 className="text-sm font-semibold text-ink">Artifacts under lock</h4>
+                <span className="text-[11px] text-ink-faint">write once, then retained by policy</span>
+              </div>
+
+              {artifacts.length === 0 ? (
+                <p className="text-xs text-ink-faint">
+                  No bytes stored. The evidence above points at references that live elsewhere.
+                </p>
+              ) : (
+                <ul className="divide-y divide-line overflow-hidden rounded-xl2 border border-line">
+                  {artifacts.map((artifact) => {
+                    const held = artifactHeld(artifact);
+                    const mode: RetentionMode = artifact.mode;
+                    return (
+                      <li key={artifact.id} className="px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {chip(held ? "locked" : "purged", held ? "teal" : "muted")}
+                          <span className="font-mono text-xs text-ink">{artifact.sha256.slice(0, 16)}…</span>
+                          <span className="text-[11px] text-ink-faint">
+                            {artifact.bytes} B · {artifact.contentType}
+                          </span>
+                          <time className="ml-auto text-[11px] text-ink-faint" dateTime={artifact.lockedAt}>
+                            locked {artifact.lockedAt}
+                          </time>
+                        </div>
+                        <p className="text-[11px] break-all text-ink-faint">{artifact.key}</p>
+                        <p className="text-[11px] text-ink-soft">
+                          {artifact.purgedAt
+                            ? `Bytes removed ${artifact.purgedAt} under the retention policy.`
+                            : describeLock(artifact)}
+                        </p>
+
+                        {actions?.purgeArtifact && held ? (
+                          <details className="mt-1">
+                            <summary className="cursor-pointer text-[11px] font-semibold text-ink-soft">
+                              Remove the bytes…
+                            </summary>
+                            <form action={actions.purgeArtifact} className="mt-1 flex flex-wrap items-end gap-2">
+                              <input type="hidden" name="incidentId" value={incident.id} />
+                              <input type="hidden" name="artifactId" value={artifact.id} />
+                              <label className="text-xs text-ink-soft">
+                                <span className="sr-only">Reason for removing {artifact.key}</span>
+                                <input name="reason" required placeholder="why the bytes are going" className={inputClass} />
+                              </label>
+                              <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+                                <input type="checkbox" name="bypass" className="size-3.5" />
+                                Remove GOVERNANCE retention early
+                              </label>
+                              <button
+                                type="submit"
+                                className="rounded-full border border-line px-2.5 py-1.5 text-[11px] font-semibold text-ink-soft"
+                              >
+                                Remove bytes
+                              </button>
+                            </form>
+                            <p className="mt-1 text-[11px] text-ink-faint">{RETENTION_MODE_NOTES[mode]}</p>
+                          </details>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+
+              {actions?.uploadArtifact ? (
+                <form action={actions.uploadArtifact} className="flex flex-wrap items-end gap-2">
+                  <input type="hidden" name="incidentId" value={incident.id} />
+                  <label className="text-xs text-ink-soft">
+                    Kind
+                    <select name="kind" defaultValue="FILE" className={`block ${inputClass}`}>
+                      {["LOG", "SNAPSHOT", "SCREENSHOT", "FILE", "NOTE", "LINK"].map((kind) => (
+                        <option key={kind} value={kind}>
+                          {kind}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-xs text-ink-soft">
+                    Label
+                    <input name="label" placeholder="defaults to the file name" className={`block ${inputClass}`} />
+                  </label>
+                  <label className="text-xs text-ink-soft">
+                    File
+                    <input name="file" type="file" required className={`block ${inputClass}`} />
+                  </label>
+                  <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white">
+                    Store artifact
                   </button>
                 </form>
               ) : null}

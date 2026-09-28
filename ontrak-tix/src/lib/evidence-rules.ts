@@ -279,7 +279,30 @@ export interface ManifestInput {
   custody?: CustodyEntry[];
   /** The legal hold in force, when there is one. */
   legalHold?: LegalHold | null;
+  /**
+   * The stored artifacts behind some of the evidence, and the object-lock
+   * retention each one carries (`object-lock-rules.ts`). Part of the record
+   * because an auditor wants to know not only that evidence exists but that its
+   * bytes are locked, until when, and whether they were ever removed — and a
+   * purge has to be visible, not invisible.
+   */
+  artifacts?: ArtifactManifestEntry[];
   generatedAt: string;
+}
+
+/** One stored artifact, as the manifest and the packet report it. */
+export interface ArtifactManifestEntry {
+  /** Content-addressed storage key: `evidence/<tenant>/<incident>/<sha256>`. */
+  key: string;
+  sha256: string;
+  bytes: number;
+  contentType: string;
+  /** The object-lock retention mode applied when it was stored. */
+  mode: string;
+  retainUntil: string;
+  lockedAt: string;
+  /** Set once the retention policy permitted the bytes to be removed. */
+  purgedAt?: string | null;
 }
 
 export interface EvidenceManifest {
@@ -289,6 +312,7 @@ export interface EvidenceManifest {
   evidence: (Omit<ManifestInput["evidence"][number], "id"> & { digest: string })[];
   custody: CustodyEntry[];
   legalHold: LegalHold | null;
+  artifacts: ArtifactManifestEntry[];
   timeline: ManifestInput["timeline"];
   /**
    * The digest of the record above — its content, *not* when the manifest was
@@ -311,6 +335,7 @@ export function buildEvidenceManifest(input: ManifestInput, hash: HashFn): Evide
   const evidence = input.evidence.map(({ id, ...item }) => ({ ...item, digest: evidenceDigest(item, hash) }));
   const custody = custodyTrail(input.custody ?? []);
   const legalHold = input.legalHold ?? null;
+  const artifacts = input.artifacts ?? [];
 
   const manifestHash = hash(
     stableStringify({
@@ -319,6 +344,7 @@ export function buildEvidenceManifest(input: ManifestInput, hash: HashFn): Evide
       evidence,
       custody,
       legalHold,
+      artifacts,
       timeline: input.timeline,
     }),
   );
@@ -330,6 +356,7 @@ export function buildEvidenceManifest(input: ManifestInput, hash: HashFn): Evide
     evidence,
     custody,
     legalHold,
+    artifacts,
     timeline: input.timeline,
     manifestHash,
   };

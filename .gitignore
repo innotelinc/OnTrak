@@ -33,3 +33,7 @@ test-results/
 
 # tix attachment blob storage (local/single-node)
 .ontrak-tix-blobs/
+
+# tix evidence artifacts stored under object lock (local/single-node); the
+# lock itself lives in the database, the bytes do not belong in git
+.ontrak-tix-evidence/
