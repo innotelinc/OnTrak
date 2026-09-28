@@ -5,7 +5,10 @@ record** that a compliance officer, auditor or insurer can rely on — and how t
 record is shaped to match the assurance packets produced by **OnTrak Tix** and
 **OnTrak Sentinel**.
 
-The implementation is pure and unit-tested: `src/lib/credentials.ts`.
+The model is pure and unit-tested: `src/lib/credentials.ts`. The wiring that
+builds a record from a graded attempt is `src/lib/certificates.ts`, and a
+certificate can be checked by anyone at `/verify` — see [Where it is wired
+in](#where-it-is-wired-in) below.
 
 ## Why it exists
 
@@ -92,7 +95,60 @@ tix incident assurance packet ┘
 
 ## Where it is wired in
 
-- `buildCompletionRecord` / `verifyCompletionRecord` / `certificateCode` power the
-  v1.5 assessment & credentials milestone (see [ROADMAP.md](../ROADMAP.md)).
-- `buildAssurancePacket` / `verifyAssurancePacket` are the export used by the
-  proof-of-training flow for compliance and insurance.
+A pass issues a certificate. Clearing the scenario's pass mark puts a
+**Certificate** card on the attempt report (`/student/results/<id>`) showing the
+code, the learner, when it was completed, the issuing organisation, the
+competencies demonstrated, and — behind a disclosure — the raw record JSON. The
+results index lists the code against every passed attempt.
+
+- `certificateForAttempt` / `certificateCodeForAttempt` (`src/lib/certificates.ts`)
+  build a record from the attempt's own facts and sign it with SHA-256; the
+  record is then **stored on the attempt** (see below).
+- `verifyCompletionRecord` / `verifyAssurancePacket` back the public `/verify`
+  page (`src/app/verify`), where anyone can paste a record or a packet and have
+  it re-hashed — no account, no database, and no need to trust this deployment's
+  data to check it.
+- `buildAssurancePacket` is the export used by the proof-of-training flow for
+  compliance and insurance (see [ROADMAP.md](../ROADMAP.md), v1.5).
+
+### Records are issued once and then stored
+
+An attempt carries the certificate it earned in three columns on `Attempt`:
+`certificate` (the record), `certificateIssuedAt`, and `certificateRevokedAt`.
+The record is written the moment the attempt first clears the pass mark — by the
+student's own submission (`submitAttempt`) or by an instructor's re-grade
+(`regradeAttempt`) — and after that it is **kept exactly as issued**.
+
+That is what makes the printed code durable. A re-grade recalculates the score,
+but it does not rewrite the certificate: the learner's copy still hashes to the
+same digest and still verifies, and the report says plainly that the attempt was
+re-graded after the fact. The decision of what a given grading should do lives in
+`certificateAction` (`src/lib/certificate-rules.ts`) and is unit tested:
+
+| After grading | Existing record | Action |
+| --- | --- | --- |
+| pass | none / revoked | **issue** a fresh record |
+| pass | live | **keep** it untouched |
+| fail | live | **revoke** it (`certificateRevokedAt`) |
+| fail | none / revoked | nothing |
+
+The one thing a re-grade can take away is a certificate whose pass no longer
+stands — the corrected grading says the work did not meet the mark, and the
+report shows the revoked record rather than hiding it. Note the honest limit:
+`/verify` is database-free by design, so a revoked record's **artifact** still
+verifies as intact, and the revocation is visible in the product, not in the
+JSON. Revocation is not written into the signed content, because a self-contained
+record cannot carry a decision made later.
+
+An attempt graded before records were stored (or one whose stored JSON is
+unrecognisable) still shows a certificate: the report falls back to deriving one,
+and the next grading stores it properly.
+
+### Issuer
+
+The `issuer` field defaults to the product name and is set per deployment with
+`ONTRAK_ISSUER`, so an organisation's certificates are attributed to *it* rather
+than to the software. The issuer is part of the signed content, which is exactly
+the argument for storing records: changing `ONTRAK_ISSUER` changes the codes
+issued from then on, and — unlike the derived-records trade-off it replaced — it
+does **not** invalidate the certificates already handed out.

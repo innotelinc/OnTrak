@@ -11,6 +11,10 @@
  * append-only audit log is never touched: this is lab data, not an evidence
  * store.
  *
+ * The one finished attempt the seed plants for the certificate demo goes too —
+ * "start fresh" has to mean fresh — so `npm run setup` resets *before* it seeds
+ * and `db:seed` re-plants that attempt.
+ *
  * The selection rules live in `src/lib/demo-reset-rules.ts` and are unit tested.
  */
 

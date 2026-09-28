@@ -38,7 +38,7 @@ flowchart LR
 | Admin control room: platform toggles, software inventory, keys, users, audit | `[x]` |
 | Student experience: timed attempts, autosave, results, personal bests | `[x]` |
 | PWA / mobile quick-keys / offline shell | `[x]` |
-| Test suite (146) + typecheck + production build green | `[x]` |
+| Test suite (208) + typecheck + production build green | `[x]` |
 | Pure, unit-tested form/rule modules; ownership-guarded actions | `[x]` |
 
 **v1 is complete as a training product.** The remaining work is depth, reach, and
@@ -111,11 +111,28 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   the Windows desktop (window chrome, all eight apps, taskbar and start menu).
   Remaining: the server-generated task/check text, which comes from the
   scenario definition rather than the UI.
+- `[x]` Hardening pass on staff-owned data: attempt viewing, the instructor
+  analytics dashboard and re-grading are scoped to the instructor's own
+  students, authored scenarios and assignments (administrators still see
+  everything); the validator rejects a `file_owner` check that compares nothing
+  and a blank label; the admin actions verify a chosen class actually exists and
+  refuse to delete an author whose scenarios — and every attempt against them —
+  would cascade away; and re-grading refuses `IN_PROGRESS`/`ABANDONED` work
+  instead of quietly marking it `GRADED`. Covered by new tests for the attempt
+  scope, the admin guards and the validator's edge cases.
+- `[~]` Verifiable completion records reach the product surface: clearing the
+  pass mark issues a **certificate** — a tamper-evident completion record — shown
+  on the attempt report with its code and competency tags, listed on the results
+  index, and checkable by anyone at the public `/verify` page (record or
+  assurance packet). The record is now **stored on the attempt** when it is
+  issued, so the code a learner holds keeps verifying after a re-grade instead of
+  being silently re-pointed at a different record; a re-grade that drops the
+  attempt below the pass mark revokes it, visibly. Printable certificates are
+  still to come (v1.5).
 - **Exit:** a cohort dashboard renders trends (`[x]`); strings are externalised
-  and a non-English locale ships (`[~]`, in progress); the a11y implementation
-  and both the automated axe/keyboard audit (`npm test`) and the browser
-  paint-rule sweep (`npm run test:a11y`) have landed and pass (`[x]`)
-  (`[ ]`).
+  and a non-English locale ships (`[~]`, in progress); the a11y implementation,
+  the automated axe/keyboard audit (`npm test`) and the browser paint-rule sweep
+  (`npm run test:a11y`) have all landed and pass (`[x]`).
 
 ### v1.2 — Real drivers `[ ]`
 **Goal:** higher-fidelity practice behind the existing seam.
@@ -152,9 +169,13 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
 ### v1.5 — Assessment, credentials & training evidence `[ ]`
 **Goal:** turn results into credible, portable proof of competence.
 
-- Rubrics beyond pass/fail; partial-credit and competency tagging per check.
-- Certificates and a skills matrix (who is competent in what), with verifiable
-  completion records.
+- `[ ]` Rubrics beyond pass/fail; partial-credit and competency tagging per check.
+- `[~]` Certificates and a skills matrix (who is competent in what), with
+  verifiable completion records. A pass issues a certificate and the record is
+  **stored immutably** on the attempt (`certificate`/`certificateIssuedAt`/
+  `certificateRevokedAt`), presented on the report with its code and
+  competencies, and verifiable without an account (see v1.1). Still to come: the
+  skills matrix and a printable certificate/PDF.
 - **Auditable training evidence**: immutable completion records, exportable
   proof-of-training packets (who was trained, on what, when, outcome) — the
   training-side counterpart to OnTrak Tix's assurance packets, useful for
@@ -207,9 +228,11 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
 
 ## 8. Immediate next steps
 
-1. Ship the v1.1 analytics dashboard (highest instructor value, no new infra).
-2. Prototype the container-backed bash driver behind the existing `ShellDriver`
-   seam with a resource cap and fallback.
-3. Design the certificate/completion-record model (shared shape with OnTrak Tix
-   evidence) so v1.5's proof-of-training packet is a first-class export.
-4. Externalise user-facing strings to prepare localization.
+1. Prototype the container-backed bash driver behind the existing `ShellDriver`
+   seam with a resource cap and fallback (v1.2).
+2. Persist completion records against the attempt and export a proof-of-training
+   packet per cohort, so the certificate work already shipped becomes auditable
+   (v1.5).
+3. Close out v1.1: the only open item is the scenario-authored task/check text,
+   which lives in the definition rather than the UI.
+4. Decide the LMS/LTI scope — build versus integrate — before starting v1.3.

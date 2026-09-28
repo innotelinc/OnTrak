@@ -4,6 +4,8 @@ import { prisma } from "@/lib/db";
 import { requireSession } from "@/lib/auth";
 import { sweepExpiredAttempts } from "@/lib/scenarios";
 import { Badge, Card, EmptyState, ProgressBar } from "@/components/ui";
+import { certificateCodeForAttempt, readStoredCertificate } from "@/lib/certificates";
+import { certificateCode } from "@/lib/credentials";
 import { PageHeader } from "@/components/PageHeader";
 import { cn, formatDateTime, formatDuration } from "@/lib/cn";
 import { getTranslator } from "@/lib/i18n-server";
@@ -18,7 +20,7 @@ export default async function ResultsIndex() {
   const attempts = await prisma.attempt.findMany({
     where: { userId: user.id, status: { not: "IN_PROGRESS" } },
     include: {
-      scenario: { select: { title: true, platform: true, difficulty: true, passScore: true } },
+      scenario: { select: { title: true, platform: true, difficulty: true, passScore: true, tags: true } },
       checkResults: { select: { passed: true } },
     },
     orderBy: { submittedAt: "desc" },
@@ -40,6 +42,33 @@ export default async function ResultsIndex() {
     const percent = Math.round((attempt.score / attempt.maxScore) * 100);
     const best = bestByScenario.get(attempt.scenarioId);
     if (best === undefined || percent > best) bestByScenario.set(attempt.scenarioId, percent);
+  }
+
+  /**
+   * The certificate code shown against a row.
+   *
+   * The record stored on the attempt is the certificate the learner actually
+   * holds, so its code wins — a re-grade does not move it. A revoked record is
+   * no certificate at all, and a pass graded before records were stored falls
+   * back to deriving one, so no passing row is left without its code.
+   */
+  function rowCertificateCode(attempt: (typeof attempts)[number]): string | null {
+    const stored = readStoredCertificate(attempt);
+    if (stored) return stored.revokedAt ? null : certificateCode(stored.record);
+    const percent = attempt.maxScore > 0 ? Math.round((attempt.score / attempt.maxScore) * 100) : 0;
+    if (percent < attempt.scenario.passScore) return null;
+    return certificateCodeForAttempt({
+      learnerId: attempt.userId,
+      learnerName: user.name,
+      scenarioId: attempt.scenarioId,
+      scenarioTitle: attempt.scenario.title,
+      platform: attempt.scenario.platform,
+      score: attempt.score,
+      maxScore: attempt.maxScore,
+      passScore: attempt.scenario.passScore,
+      completedAt: attempt.gradedAt ?? attempt.submittedAt ?? attempt.startedAt,
+      skills: attempt.scenario.tags,
+    });
   }
 
   return (
@@ -91,6 +120,7 @@ export default async function ResultsIndex() {
                   attempt.status !== "ABANDONED" &&
                   attempt.maxScore > 0 &&
                   percent === bestByScenario.get(attempt.scenarioId);
+                const code = rowCertificateCode(attempt);
 
                 return (
                   <li key={attempt.id}>
@@ -120,6 +150,11 @@ export default async function ResultsIndex() {
                             total: attempt.checkResults.length,
                           })}
                         </p>
+                        {code ? (
+                          <p className="mt-1 font-mono text-[11px] text-teal">
+                            {t("results.certificate", { code })}
+                          </p>
+                        ) : null}
                       </div>
                       <div className="flex items-center gap-4">
                         <div className="w-24">

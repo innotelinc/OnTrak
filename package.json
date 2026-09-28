@@ -20,7 +20,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:reset-demo": "tsx prisma/reset-demo.ts",
     "db:studio": "prisma studio",
-    "setup": "prisma generate && prisma db push && tsx prisma/seed.ts && npm run db:reset-demo",
+    "setup": "prisma generate && prisma db push && tsx prisma/reset-demo.ts && tsx prisma/seed.ts",
     "docker:db": "docker compose up -d db"
   },
   "prisma": {

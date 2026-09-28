@@ -622,6 +622,46 @@ export const es: Messages = {
   "report.next.passed": "Buen trabajo. Prueba un escenario más difícil o repite este dentro del tiempo límite.",
   "report.findAnother": "Buscar otro escenario",
 
+  "certificate.title": "Certificado",
+  "certificate.hint":
+    "Superar la nota de aprobación genera un registro de finalización a prueba de manipulación. Su código puede comprobarse más tarde por cualquiera a quien se lo entregues.",
+  "certificate.code": "Código del certificado",
+  "certificate.issued": "Emitido",
+  "certificate.learner": "Estudiante",
+  "certificate.completedAt": "Completado",
+  "certificate.issuer": "Emisor",
+  "certificate.skills": "Competencias demostradas",
+  "certificate.json": "Mostrar el registro de finalización (JSON)",
+  "certificate.verifyHint": "Entrega el registro a un auditor, o comprueba uno tú mismo en",
+  "certificate.verifyLink": "Verificar un certificado",
+  "certificate.regraded":
+    "Este intento se reevaluó después de emitir el certificado. El certificado sigue mostrando el resultado del momento de la emisión ({percent}%).",
+  "certificate.revoked.title": "Certificado revocado",
+  "certificate.revoked.badge": "Revocado",
+  "certificate.revoked.body":
+    "Una reevaluación del {when} dejó este intento por debajo de la nota mínima, así que el registro de finalización emitido ya no se sostiene.",
+  "results.certificate": "Certificado {code}",
+  "verify.title": "Verificar un certificado",
+  "verify.description":
+    "Pega un registro de finalización o un paquete de aseguramiento y esta página volverá a calcular su hash. Cualquier edición posterior a la emisión no supera la comprobación.",
+  "verify.label": "Registro de finalización o paquete de aseguramiento (JSON)",
+  "verify.hint": "Copiado del informe de un certificado, o enviado por el estudiante.",
+  "verify.placeholder": '{ "format": "ontrak.training.completion/v1", … }',
+  "verify.submit": "Comprobar este registro",
+  "verify.valid.title": "Válido",
+  "verify.valid.body": "El resumen coincide con el contenido, así que este registro no se ha alterado.",
+  "verify.invalid.title": "No válido",
+  "verify.invalid.body":
+    "El contenido no coincide con su resumen: se ha editado, o no fue emitido por esta instalación.",
+  "verify.kind.record": "registro de finalización",
+  "verify.kind.packet": "paquete de aseguramiento",
+  "verify.how": "Cómo funciona",
+  "verify.howBody":
+    "Un registro incluye un resumen SHA-256 de su propio contenido canónico. Comprobarlo consiste en recalcular ese resumen: no se necesita cuenta, ni base de datos, ni confiar en los datos de esta página. Un paquete de aseguramiento añade un resumen sobre todo su conjunto de registros, de modo que quitar o reordenar registros también lo invalida.",
+  "verify.format.record": "Registro de finalización",
+  "verify.format.packet": "Paquete de aseguramiento",
+  "verify.signIn": "Inicia sesión en tu cuenta de formación",
+
   // Superficies del simulador: terminal, paneles de Office y escritorio Windows
   "console.sessionNote": "sesión simulada · nada de esto afecta a una máquina real",
   "console.aria":

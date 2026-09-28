@@ -4,6 +4,12 @@
  * Everything is idempotent: re-running upserts rather than duplicating, so it is
  * safe to call on a database you have already been clicking around in.
  *
+ * It also plants one *finished, passing* attempt for the demo student, so the
+ * certificate card, the code on the results index and `/verify` all have
+ * something to show in a fresh lab. That row is synthetic — it is scored from the
+ * scenario's own checks rather than from a solved machine state — so treat it as
+ * demo furniture, not as evidence that anyone did the work.
+ *
  *   npm run db:seed
  */
 
@@ -20,7 +26,8 @@ import {
   WINDOWS_DESKTOP_TEMPLATE,
 } from "../src/lib/templates";
 import { validateDefinition } from "../src/lib/validate";
-import type { Platform, Role } from "@prisma/client";
+import { certificateForAttempt } from "../src/lib/certificates";
+import type { Platform, Prisma, Role } from "@prisma/client";
 import type { ScenarioDefinition } from "../src/lib/sim/types";
 
 const prisma = new PrismaClient();
@@ -589,6 +596,95 @@ async function main() {
         data: { scenarioId: spooler.id, studentId: student.id, maxAttempts: 0, createdById: instructor.id },
       });
     }
+  }
+
+  /* ------------------------------------------------ one finished pass, demoed */
+  // A certificate is only worth auditing on a real page, and a fresh lab has no
+  // finished attempt at all — so the demo student gets one here. The attempt
+  // earns every check but the last, which is what a realistic submission looks
+  // like: a solid pass, with something still missed on the report.
+  const triage = savedScenarios["first-line-mailbox-triage"];
+  const demoAttemptId = "seed-attempt-office-triage";
+  if (triage && student) {
+    const scenario = await prisma.scenario.findUniqueOrThrow({ where: { id: triage.id } });
+    const definition = scenario.definition as unknown as ScenarioDefinition;
+    const checks = definition.checks ?? [];
+    const maxScore = checks.reduce((total, check) => total + (check.points ?? 1), 0);
+    const passMarkPoints = Math.ceil((maxScore * scenario.passScore) / 100);
+    const lastPoints = checks.length > 0 ? (checks[checks.length - 1].points ?? 1) : 0;
+    // Unless that last check is worth so much that missing it would fail the
+    // scenario — in which case earn it, because the point here is a pass.
+    const missLast = checks.length > 1 && maxScore - lastPoints >= passMarkPoints;
+
+    const results = checks.map((check, index) => {
+      const points = check.points ?? 1;
+      const passed = !missLast || index < checks.length - 1;
+      return {
+        checkId: check.id,
+        label: check.label,
+        passed,
+        points: passed ? points : 0,
+        maxPoints: points,
+        detail: passed
+          ? (check.successDetail ?? "Confirmed in the submitted state.")
+          : (check.failureDetail ?? "Not found in the submitted state."),
+      };
+    });
+    const score = results.reduce((total, result) => total + result.points, 0);
+
+    const gradedAt = new Date(Date.now() - 3 * 24 * 3600 * 1000);
+    const startedAt = new Date(gradedAt.getTime() - 19 * 60 * 1000);
+    const learnerName = PEOPLE.find((person) => person.email === "student@ontrak.local")?.name ?? "Demo student";
+    const certificate = certificateForAttempt({
+      learnerId: student.id,
+      learnerName,
+      scenarioId: scenario.id,
+      scenarioTitle: scenario.title,
+      platform: scenario.platform,
+      score,
+      maxScore,
+      passScore: scenario.passScore,
+      completedAt: gradedAt,
+      skills: scenario.tags,
+    });
+    const record = certificate as unknown as Prisma.InputJsonValue;
+
+    // Idempotent by id: the check results are replaced rather than appended, so
+    // re-seeding repairs the row instead of stacking duplicates.
+    await prisma.checkResult.deleteMany({ where: { attemptId: demoAttemptId } });
+    await prisma.attempt.upsert({
+      where: { id: demoAttemptId },
+      create: {
+        id: demoAttemptId,
+        userId: student.id,
+        scenarioId: scenario.id,
+        status: "GRADED",
+        startedAt,
+        expiresAt: new Date(startedAt.getTime() + scenario.timeLimitSec * 1000),
+        submittedAt: gradedAt,
+        gradedAt,
+        timeSpentSec: 1_140,
+        score,
+        maxScore,
+        seed: "seed-office-triage",
+        certificate: record,
+        certificateIssuedAt: gradedAt,
+        certificateRevokedAt: null,
+        checkResults: { create: results },
+      },
+      update: {
+        status: "GRADED",
+        submittedAt: gradedAt,
+        gradedAt,
+        score,
+        maxScore,
+        certificate: record,
+        certificateIssuedAt: gradedAt,
+        certificateRevokedAt: null,
+        checkResults: { create: results },
+      },
+    });
+    console.log(`  Demo certificate: ${scenario.title} — ${score}/${maxScore} for ${learnerName}.`);
   }
 
   /* ------------------------------------------------------------- settings */

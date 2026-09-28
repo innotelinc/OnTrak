@@ -25,7 +25,7 @@ const ACCOUNTS = {
   admin: process.env.ONTRAK_A11Y_ADMIN_EMAIL ?? "admin@ontrak.local",
 };
 
-const PUBLIC_PATHS = ["/", "/login", "/register"];
+const PUBLIC_PATHS = ["/", "/login", "/register", "/verify"];
 
 /** Run the WCAG A/AA rule set — including the paint-dependent rules. */
 async function audit(page: Page) {
@@ -123,6 +123,31 @@ test.describe("student attempt workspace", () => {
 
     await page.waitForLoadState("load");
     expectAccessible(await audit(page), "the attempt workspace");
+  });
+});
+
+// The attempt report is where a certificate is drawn, so open a real one rather
+// than only the index. A deployment with no finished attempts has nothing to
+// audit here, so the test skips instead of flaking.
+test.describe("student attempt report", () => {
+  test.beforeEach(async ({ page }) => {
+    test.skip(!(await signIn(page, ACCOUNTS.student)), "no seeded student account");
+  });
+
+  test("a11y (browser): an attempt report passes WCAG A/AA, certificate included", async ({ page }) => {
+    await page.goto("/student/results", { waitUntil: "load" });
+
+    // Only a pass draws a certificate, and the index prints the code on those
+    // rows — so open one of those rather than whatever attempt happens to be
+    // first, otherwise the very thing under test would go unaudited.
+    const certified = page.locator('a[href*="/student/results/"]', { hasText: /Certificate ONTRAK-/ });
+    if ((await certified.count()) === 0) test.skip(true, "no passed attempt to show a certificate");
+
+    await certified.first().click();
+    await page.waitForURL(/\/student\/results\/[^/]+$/, { timeout: 20_000 }).catch(() => undefined);
+    await page.waitForLoadState("load");
+    await expect(page.getByRole("heading", { name: /certificate/i })).toHaveCount(1);
+    expectAccessible(await audit(page), "an attempt report with a certificate");
   });
 });
 
