@@ -1,0 +1,4 @@
+# Ontrak Sync is an internal tool. Nothing here is for indexing, and the API it
+# talks to requires a token, so a crawler would find nothing it could read.
+User-agent: *
+Disallow: /
