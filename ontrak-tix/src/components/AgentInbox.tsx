@@ -59,7 +59,12 @@ function FilterTab({ active, href, label, count, tone }: { active: boolean; href
       className={`rounded-full px-3 py-1 text-xs font-semibold ${palette}`}
     >
       {label}
-      {count === undefined ? null : <span className="ml-1.5 opacity-70">{count}</span>}
+      {/*
+        The count carries the label's own colour rather than a faded one: at 70%
+        opacity `ink-soft` on `surface-muted` measures 3.8:1, under the 4.5:1 the
+        strict axe sweep requires — and a number nobody can read is no help.
+      */}
+      {count === undefined ? null : <span className="ml-1.5">{count}</span>}
     </a>
   );
 }

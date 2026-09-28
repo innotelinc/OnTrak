@@ -635,6 +635,30 @@ test.describe("OnTrak Tix desk", () => {
     await expect(page.getByRole("heading", { name: other, exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Add client" })).toHaveCount(0);
     await expect(page.locator("body")).toContainText("You can see the clients in your scope but not change them.");
+
+    // A ticket filed for the client nobody serves, raised by the account that
+    // runs the desk. The subject is unique to this run, so finding it (or not)
+    // is unambiguous.
+    await switchUser(page, ADMIN);
+    const subject = `Other client work ${stamp}`;
+    await page.goto(url("/inbox/new"), { waitUntil: "load" });
+    await page.getByLabel("Subject").fill(subject);
+    await page.getByLabel("Description").fill("Filed for a client this desk's seeded agent does not serve.");
+    await page.getByLabel("Client").selectOption({ label: other });
+    await page.getByRole("button", { name: "Create ticket" }).click();
+    await page.waitForURL(/\/inbox\/[^/?]+\?flash=/, { timeout: 20_000 });
+    const filed = page.url();
+    await expect(page.locator("body")).toContainText(subject);
+
+    // Through the agent's eyes again: the worklist has no such ticket, and
+    // addressing it by its own URL renders no record of it either — the scope is
+    // a filter on what is read, not a hidden button on what is shown.
+    await switchUser(page, EMAIL);
+    await page.goto(url("/inbox"), { waitUntil: "load" });
+    await expect(page.locator("body")).not.toContainText(subject);
+    const refused = await page.goto(filed, { waitUntil: "load" });
+    expect(refused?.status()).toBe(404);
+    await expect(page.locator("body")).not.toContainText(subject);
   });
 
   test("time: an hour is logged on a ticket, priced by a rate card, and frozen by the invoice that bills it", async ({ page }) => {
@@ -749,6 +773,18 @@ test.describe("OnTrak Tix rota, branding and billing depth", () => {
     await page.goto(url("/handoff"), { waitUntil: "load" });
     expect(await page.getByRole("heading", { name: "Handoff" }).count()).toBe(1);
 
+    // A rota refuses to double-book one person, and this sweep runs against a
+    // database it did not create: an earlier run's cover still sits over this
+    // same hour within the day it was published. Clear this sweep's own
+    // leftovers (its note identifies them) so the run repeats rather than
+    // collides with itself.
+    const leftover = () => page.locator("li", { hasText: "browser sweep cover" });
+    while ((await leftover().count()) > 0) {
+      await leftover().first().getByRole("button", { name: "Remove" }).click();
+      await page.waitForURL(/flash=/, { timeout: 20_000 });
+      await page.goto(url("/handoff"), { waitUntil: "load" });
+    }
+
     // A window covering right now, written the way the form takes it: a local
     // `datetime-local` value, which is what the browser would submit by hand.
     const { start, end } = await page.evaluate(() => {
@@ -812,7 +848,9 @@ test.describe("OnTrak Tix rota, branding and billing depth", () => {
     const deskTax = page.locator("section", { hasText: "The desk's default tax" }).first();
     await deskTax.getByLabel("Label").fill("Browser sweep tax");
     await deskTax.getByLabel("Rate (%)").fill("8.25");
-    await deskTax.getByRole("button", { name: /tax rule/ }).click();
+    // Exact, because a desk that already has a rule also renders "Remove this
+    // tax rule" — and this sweep runs against a database it did not create.
+    await deskTax.getByRole("button", { name: "Save tax rule", exact: true }).click();
     await page.waitForURL(/flash=/, { timeout: 20_000 });
     await expect(page.locator("body")).toContainText("Browser sweep tax is in force at 8.25%");
 
