@@ -1,0 +1,19 @@
+# Secrets and per-host values. `.env.example` is the template and IS committed.
+.env
+
+# Node
+node_modules/
+.next/
+*.tsbuildinfo
+next-env.d.ts
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# The database is state, not source. It lives in a docker volume in production.
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+data/
