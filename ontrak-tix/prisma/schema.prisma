@@ -26,6 +26,8 @@ model Tenant {
   users        User[]
   clients      Client[]
   contacts     Contact[]
+  clientAssignments ClientAssignment[]
+  clientActAsSessions ClientActAsSession[]
   queues       Queue[]
   tickets      Ticket[]
   audit        AuditEvent[]
@@ -81,6 +83,7 @@ model User {
   messages     Message[]
   attachments  Attachment[]
   savedViews   SavedView[]
+  clients      ClientAssignment[]
 
   @@unique([tenantId, email])
   @@index([tenantId, role])
@@ -101,12 +104,58 @@ model Client {
   name      String
   createdAt DateTime @default(now())
 
-  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  contacts Contact[]
-  tickets  Ticket[]
+  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contacts    Contact[]
+  tickets     Ticket[]
+  assignments ClientAssignment[]
+  slaPolicies SlaPolicy[]
+  actAsSessions ClientActAsSession[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
+}
+
+///
+/// Which staff serve which client (M4). The row is the scope: an agent who is
+/// not assigned to a client does not see its work, which is what "two clients
+/// without data bleed" has to mean somewhere a query can enforce.
+///
+model ClientAssignment {
+  id         String   @id @default(cuid())
+  tenantId   String
+  clientId   String
+  userId     String
+  assignedBy String
+  assignedAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, userId])
+  @@index([tenantId, userId])
+}
+
+///
+/// An "act as client" window (M4): who assumed which client's view, why, and
+/// until when. A second window cannot start while one is open — two identities
+/// live in one session is how a mistake becomes an incident.
+///
+model ClientActAsSession {
+  id         String    @id @default(cuid())
+  tenantId   String
+  clientId   String
+  actorId    String
+  reason     String
+  startedAt  DateTime  @default(now())
+  expiresAt  DateTime
+  endedAt    DateTime?
+  endReason  String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, actorId])
 }
 
 /// A person at a client; requesters and CCs are contacts.
@@ -256,15 +305,20 @@ model SlaPolicy {
   /// Warn once this fraction of a target remains (0–1).
   warningFraction   Float           @default(0.2)
   queueId           String?
+  /// The client this policy is a promise to (M4). Null means the desk's own
+  /// default; a client policy outranks a queue or tenant one (resolveSlaPolicy).
+  clientId          String?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
   tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   queue   Queue?   @relation(fields: [queueId], references: [id], onDelete: SetNull)
+  client  Client?  @relation(fields: [clientId], references: [id], onDelete: Cascade)
   tickets Ticket[]
 
   @@unique([tenantId, name])
   @@index([tenantId, priority])
+  @@index([tenantId, clientId])
 }
 
 /// One rung of an SLA escalation ladder, raised once per `(ticket, clock, level)`

@@ -22,7 +22,7 @@ import {
   type EscalationAudience,
   type EscalationThreshold,
 } from "./escalation-rules";
-import { policyForPriority, slaInstanceFor, slaSummary, type SlaPause, type SlaPolicy } from "./sla-rules";
+import { resolveSlaPolicy, slaInstanceFor, slaSummary, type SlaPause, type SlaPolicy } from "./sla-rules";
 import type { TicketPriority } from "./ticket-rules";
 
 /** The secret a scheduler signs the sweep request with. */
@@ -53,6 +53,9 @@ export interface EscalationTicket {
   resolvedAt: string | null;
   /** Paused windows; a paused clock never advances to a new rung. */
   pauses?: readonly SlaPause[];
+  /** The client the work is for, so their policy's clock is the one that runs (M4). */
+  clientId?: string | null;
+  queueId?: string | null;
   /** Only tickets that are still open are worth escalating. */
   status: string;
 }
@@ -106,7 +109,14 @@ export class EscalationService {
     for (const ticket of input.tickets) {
       if (ticket.status === "RESOLVED" || ticket.status === "CLOSED") continue;
 
-      const policy = policyForPriority(input.policies, ticket.priority);
+      // The client's own promise drives the ladder too (M4): a client who bought
+      // a one-hour response is escalated by their clock, not the desk's default.
+      const { policy } = resolveSlaPolicy({
+        policies: input.policies,
+        priority: ticket.priority,
+        clientId: ticket.clientId,
+        queueId: ticket.queueId,
+      });
       if (!policy) continue;
 
       const summary = slaSummary(slaInstanceFor(ticket, policy.id), policy, input.now);

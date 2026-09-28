@@ -48,6 +48,12 @@ export interface TicketRecord {
   requesterId: string;
   assigneeId: string | null;
   queueId: string | null;
+  /**
+   * The client the work is for (M4). Optional so the records written before
+   * clients existed remain valid — and because a ticket with no client is a
+   * legitimate thing: the desk's own work.
+   */
+  clientId?: string | null;
   createdAt: string;
   updatedAt: string;
   /** The first public *agent* reply — the input to the SLA response clock. */

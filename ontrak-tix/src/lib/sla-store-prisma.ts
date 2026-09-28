@@ -19,6 +19,8 @@ export interface SlaPolicyRow {
   calendar: unknown;
   warningFraction: number;
   queueId: string | null;
+  /** M4: the client this policy belongs to, when it is a per-client promise. */
+  clientId?: string | null;
 }
 
 export interface SlaPolicyPrismaClient {
@@ -51,6 +53,10 @@ export function toSlaPolicy(row: SlaPolicyRow): SlaPolicy {
     resolutionMinutes: row.resolutionMinutes,
     calendar: asBusinessCalendar(row.calendar),
     warningFraction: row.warningFraction,
+    // Kept apart rather than defaulted: `undefined` is what the resolver reads as
+    // "any", so a row with no queue must not look like one scoped to "".
+    queueId: row.queueId,
+    clientId: row.clientId ?? null,
   };
 }
 

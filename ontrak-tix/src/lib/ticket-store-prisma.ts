@@ -67,6 +67,8 @@ export interface TicketRow {
   requesterId: string;
   assigneeId: string | null;
   queueId: string | null;
+  /** The client the work is for (M4); absent on rows written before clients. */
+  clientId?: string | null;
   createdAt: Date;
   updatedAt: Date;
   firstResponseAt: Date | null;
@@ -122,6 +124,7 @@ export function toTicketRecord(row: TicketRow): TicketRecord {
     requesterId: row.requesterId,
     assigneeId: row.assigneeId,
     queueId: row.queueId,
+    clientId: row.clientId ?? null,
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
     firstResponseAt: toIsoOrNull(row.firstResponseAt ?? null),
