@@ -2,7 +2,15 @@ import { notFound, redirect } from "next/navigation";
 
 import { requireActor } from "../../../../lib/session";
 import { canAssignTicket, canReplyToTicket, canUpdateTicket, hasPermission } from "../../../../lib/access-rules";
-import { ticketServicesFor, slaPolicyStoreFor, cannedServicesFor, linkServicesFor, timeServicesFor } from "../../../../lib/db";
+import {
+  ticketServicesFor,
+  slaPolicyStoreFor,
+  cannedServicesFor,
+  clientServicesFor,
+  linkServicesFor,
+  timeServicesFor,
+} from "../../../../lib/db";
+import { scopeByClient, scopeRefusal } from "../../../../lib/client-rules";
 import { slaStatusFor } from "../../../../lib/report-rules";
 import { TicketDetail, type TicketActions, type TicketOption } from "../../../../components/TicketDetail";
 import { TicketTime } from "../../../../components/TicketTime";
@@ -30,16 +38,31 @@ export default async function TicketPage({
   const { id } = await params;
   const { flash, error } = await searchParams;
 
-  const [ticket, policies, all, canned, time] = await Promise.all([
+  const [ticket, policies, everything, canned, time, scope] = await Promise.all([
     ticketServicesFor().store.findTicket(actor.tenantId, id),
     slaPolicyStoreFor().listForTenant(actor.tenantId),
     ticketServicesFor().store.listTickets(actor.tenantId),
     cannedServicesFor().list(actor.tenantId),
     timeServicesFor().entries(actor, { ticketId: id }),
+    clientServicesFor().scope(actor),
   ]);
   if (!ticket) notFound();
+  // One desk serving many clients: a ticket is readable through the client its
+  // work belongs to. Addressed by id it is *not* confirmed to exist, because
+  // the worklist already refuses to show it — a filter on one page and an open
+  // door on the next is not a scope. `notFound()` rather than a redirect, so a
+  // guessed id learns nothing about whose work it is.
+  if (scopeRefusal(scope, ticket.clientId)) notFound();
+
+  const all = scopeByClient(scope, everything);
   const sla = slaStatusFor(ticket, policies, new Date().toISOString());
-  const links = await linkServicesFor().linkedTickets(actor.tenantId, ticket.id);
+  // The links and the picker are the same question asked twice: relating work to
+  // a ticket you may not open would leak its reference and subject just as the
+  // worklist would have.
+  const visible = new Set(all.map((candidate) => candidate.id));
+  const links = (await linkServicesFor().linkedTickets(actor.tenantId, ticket.id)).filter((link) =>
+    visible.has(link.ticketId),
+  );
   const linkOptions: TicketOption[] = all
     .filter((candidate) => candidate.id !== ticket.id)
     .map((candidate) => ({ id: candidate.id, ref: candidate.ref, subject: candidate.subject }))

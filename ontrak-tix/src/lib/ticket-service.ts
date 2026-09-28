@@ -66,6 +66,22 @@ export interface TicketRecord {
 }
 
 /**
+ * What it takes to raise a ticket. A requester supplies only the first four
+ * fields; staff raising work on somebody's behalf may also name the requester,
+ * the queue it lands in and the client it is for.
+ */
+export type TicketCreationInput = Omit<TicketInput, "requesterId"> & {
+  requesterId?: string;
+  queueId?: string | null;
+  /**
+   * The client the work is for (M4). Optional because the desk's own work —
+   * a printer in the server room — belongs to no client, and because the caller
+   * has to check the client is in the actor's scope before passing it.
+   */
+  clientId?: string | null;
+};
+
+/**
  * The pause that a status implies. Moving into `PENDING` means the desk is
  * waiting on the requester, so the SLA clock stops; leaving it starts again.
  * This is the one place the ticket lifecycle and the SLA engine meet.
@@ -117,7 +133,7 @@ function audit(actor: Actor, action: string, ticket: Pick<TicketRecord, "id" | "
  */
 export function planTicketCreation(
   actor: Actor,
-  input: Omit<TicketInput, "requesterId"> & { requesterId?: string; queueId?: string | null },
+  input: TicketCreationInput,
   nextSeq: number,
   ids: IdSource,
 ): ServiceResult<{ ticket: TicketRecord; audit: AuditEventInput }> {
@@ -142,6 +158,10 @@ export function planTicketCreation(
     requesterId,
     assigneeId: null,
     queueId: input.queueId ?? null,
+    // Omitted rather than set to `null` when there is no client, so a record
+    // written for the desk's own work is shaped like the ones written before
+    // clients existed.
+    ...(input.clientId ? { clientId: input.clientId } : {}),
     createdAt: at,
     updatedAt: at,
     firstResponseAt: null,
@@ -286,10 +306,7 @@ export class TicketService {
     private readonly ids: IdSource = systemIds(),
   ) {}
 
-  async createTicket(
-    actor: Actor,
-    input: Omit<TicketInput, "requesterId"> & { requesterId?: string; queueId?: string | null },
-  ): Promise<ServiceResult<TicketRecord>> {
+  async createTicket(actor: Actor, input: TicketCreationInput): Promise<ServiceResult<TicketRecord>> {
     const plan = planTicketCreation(actor, input, await this.store.nextTicketSeq(actor.tenantId), this.ids);
     if (!plan.ok) return plan;
     await this.store.insertTicket(plan.value.ticket);

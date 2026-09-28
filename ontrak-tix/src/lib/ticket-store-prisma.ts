@@ -156,6 +156,11 @@ export function toTicketCreate(ticket: TicketRecord) {
     requesterId: ticket.requesterId,
     assigneeId: ticket.assigneeId,
     queueId: ticket.queueId,
+    // The client the work is for (M4). Written once, at creation: which company
+    // a ticket belongs to is part of what the ticket *is*, so it is not in
+    // `toTicketUpdate` — moving work between clients would restate whose SLA,
+    // rate card and reports it answers to.
+    clientId: ticket.clientId ?? null,
     createdAt: fromIso(ticket.createdAt),
     updatedAt: fromIso(ticket.updatedAt),
     firstResponseAt: ticket.firstResponseAt === null ? null : fromIso(ticket.firstResponseAt),

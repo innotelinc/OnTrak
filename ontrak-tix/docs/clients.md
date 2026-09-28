@@ -111,6 +111,35 @@ it *before* anything else is computed (SLA flags, saved views, counts), which is
 what makes every number on the page a number about the rows the reader may see.
 An agent assigned to two clients never sees a third's work.
 
+### A filter is not a scope
+
+`scopeByClient` decides what the worklist *shows*, which is not the same thing as
+what somebody may *do*: an action arrives as a ticket id in a form, and a hidden
+field is not a permission. So the same rule is asked again on every write
+(`scopeRefusal`, used by `src/app/actions/tickets.ts`): reply, status change,
+assignment and the bulk toolbar all refuse a ticket whose client the actor does
+not serve, and the bulk sweep reports the refusal per row rather than quietly
+counting it as applied. It is a staff rule — a requester reaches their own ticket
+through `canReadTicket`, and filing that ticket under a client must not lock its
+requester out of the conversation they are in.
+
+The ticket's own page (`/inbox/[id]`) is scoped too, and answers with a `404`
+rather than a redirect: the worklist already refuses to render the row, and a
+filter on one page with an open door on the next is not a scope. Its link list
+and its link picker are filtered the same way, because relating work to a ticket
+you cannot open would leak the reference and subject the worklist just withheld.
+
+### Where a ticket gets its client
+
+The quick-create form (`/inbox/new`) offers the clients the actor serves, and the
+chosen client is checked against that scope before the ticket is written — the
+picker cannot become a way of filing work into somebody else's desk. A ticket
+keeps the client it was raised for: `clientId` is written once, at creation, and
+never by an update, because which company the work belongs to is part of what the
+ticket *is* — moving it would restate whose promise, rate card and report it
+answers to. Work that names no client, the printer in the server room, is the
+default and stays shaped like the tickets written before clients existed.
+
 The client dimension is only one of the dimensions of visibility; a requester's
 own-ticket scope and the queue filters are enforced where they always were.
 

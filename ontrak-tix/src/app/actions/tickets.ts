@@ -12,11 +12,12 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
-import type { Actor } from "../../lib/access-rules";
+import { hasPermission, type Actor } from "../../lib/access-rules";
 import { requireActor } from "../../lib/session";
 import { ticketServices } from "../../lib/ticket-server";
 import {
   cannedServicesFor,
+  clientServicesFor,
   csatServicesFor,
   attachmentServicesFor,
   linkServicesFor,
@@ -24,6 +25,7 @@ import {
   savedViewServicesFor,
   templateServicesFor,
 } from "../../lib/db";
+import { scopeRefusal } from "../../lib/client-rules";
 import { parseFilterJson } from "../../lib/saved-view-rules";
 import { inboxFilterQuery } from "../../lib/inbox-view";
 import { LINK_KINDS, type TicketLinkKind } from "../../lib/link-rules";
@@ -57,11 +59,51 @@ function text(formData: FormData, field: string): string {
   return String(formData.get(field) ?? "").trim();
 }
 
+/**
+ * Which of these tickets the actor may act on, and why not for the rest.
+ *
+ * The inbox worklist already hides a client the reader does not serve, but an
+ * action carries a ticket id in a form and a hidden field is not a permission:
+ * without this, an agent assigned to one client could still reply on, assign or
+ * close another's work by posting an id they were never shown. The client scope
+ * is computed once per call so a bulk edit asks the same question the same way.
+ */
+async function blockedByClientScope(actor: Actor, ticketIds: readonly string[]): Promise<Map<string, string>> {
+  const blocked = new Map<string, string>();
+  if (ticketIds.length === 0) return blocked;
+  // Client scope is a staff rule. A requester reaches their own ticket through
+  // `canReadTicket`, and filing that ticket under a client must not lock its
+  // requester out of the conversation they are in.
+  if (!hasPermission(actor.role, "ticket:read:any")) return blocked;
+
+  const scope = await clientServicesFor().scope(actor);
+  if (scope.kind === "all") return blocked;
+
+  for (const ticketId of ticketIds) {
+    const ticket = await ticketServices().store.findTicket(actor.tenantId, ticketId);
+    // A ticket that does not exist is the service's own refusal to give.
+    if (!ticket) continue;
+    const refusal = scopeRefusal(scope, ticket.clientId);
+    if (refusal) blocked.set(ticketId, refusal);
+  }
+  return blocked;
+}
+
 /** Raise a ticket. A requester is always the requester; staff may raise one for someone else. */
 export async function createTicketAction(formData: FormData): Promise<void> {
   const actor = await requireActor();
+  const home = homePath(actor);
   const requesterId = text(formData, "requesterId");
   const queueId = text(formData, "queueId");
+  const clientId = text(formData, "clientId");
+
+  // A ticket may only be raised for a client the raiser serves, so the client
+  // picker cannot be turned into a way of filing work into somebody else's desk.
+  if (clientId) {
+    const scope = await clientServicesFor().scope(actor);
+    const refusal = scopeRefusal(scope, clientId);
+    if (refusal) fail(`${home}/new`, refusal);
+  }
 
   const result = await ticketServices().service.createTicket(actor, {
     subject: String(formData.get("subject") ?? ""),
@@ -70,9 +112,9 @@ export async function createTicketAction(formData: FormData): Promise<void> {
     priority: pick<TicketPriority>(formData.get("priority"), TICKET_PRIORITIES, "NORMAL"),
     ...(requesterId ? { requesterId } : {}),
     ...(queueId ? { queueId } : {}),
+    ...(clientId ? { clientId } : {}),
   });
 
-  const home = homePath(actor);
   if (!result.ok) fail(`${home}/new`, result.error);
   revalidatePath(home);
   redirect(`${home}/${result.value.id}?flash=Ticket+created`);
@@ -84,6 +126,9 @@ export async function replyAction(formData: FormData): Promise<void> {
   const home = homePath(actor);
   const ticketId = text(formData, "ticketId");
   if (!ticketId) fail(home, "Choose a ticket first.");
+
+  const blocked = await blockedByClientScope(actor, [ticketId]);
+  if (blocked.has(ticketId)) fail(`${home}/${ticketId}`, blocked.get(ticketId) as string);
 
   const kind = pick<MessageKind>(formData.get("kind"), MESSAGE_KINDS, "PUBLIC_REPLY");
   const result = await ticketServices().service.reply(actor, ticketId, String(formData.get("body") ?? ""), kind);
@@ -100,6 +145,9 @@ export async function setStatusAction(formData: FormData): Promise<void> {
   const home = homePath(actor);
   const ticketId = text(formData, "ticketId");
   if (!ticketId) fail(home, "Choose a ticket first.");
+
+  const blocked = await blockedByClientScope(actor, [ticketId]);
+  if (blocked.has(ticketId)) fail(`${home}/${ticketId}`, blocked.get(ticketId) as string);
 
   const status = pick<TicketStatus>(formData.get("status"), TICKET_STATUSES, "OPEN");
   const result = await ticketServices().service.setStatus(actor, ticketId, status);
@@ -206,19 +254,24 @@ export async function bulkAction(formData: FormData): Promise<void> {
 
   const op = text(formData, "op") === "assign" ? "assign" : "status";
   const outcomes: BulkOutcome[] = [];
+  // The selection arrives as ids from a form, so the client scope is asked about
+  // every one of them; a blocked row is skipped into the honest summary rather
+  // than silently counted as applied.
+  const blocked = await blockedByClientScope(actor, ids);
+  const assigneeId = op === "assign" ? text(formData, "assigneeId") || null : null;
+  const status = pick<TicketStatus>(formData.get("status"), TICKET_STATUSES, "OPEN");
 
-  if (op === "assign") {
-    const assigneeId = text(formData, "assigneeId") || null;
-    for (const id of ids) {
-      const result = await ticketServices().service.assign(actor, id, assigneeId);
-      outcomes.push(result.ok ? { ticketId: id, ok: true } : { ticketId: id, ok: false, error: result.error });
+  for (const id of ids) {
+    const refusal = blocked.get(id);
+    if (refusal) {
+      outcomes.push({ ticketId: id, ok: false, error: refusal });
+      continue;
     }
-  } else {
-    const status = pick<TicketStatus>(formData.get("status"), TICKET_STATUSES, "OPEN");
-    for (const id of ids) {
-      const result = await ticketServices().service.setStatus(actor, id, status);
-      outcomes.push(result.ok ? { ticketId: id, ok: true } : { ticketId: id, ok: false, error: result.error });
-    }
+    const result =
+      op === "assign"
+        ? await ticketServices().service.assign(actor, id, assigneeId)
+        : await ticketServices().service.setStatus(actor, id, status);
+    outcomes.push(result.ok ? { ticketId: id, ok: true } : { ticketId: id, ok: false, error: result.error });
   }
 
   const summary = summarizeBulk(outcomes);
@@ -341,6 +394,9 @@ export async function assignAction(formData: FormData): Promise<void> {
   const home = homePath(actor);
   const ticketId = text(formData, "ticketId");
   if (!ticketId) fail(home, "Choose a ticket first.");
+
+  const blocked = await blockedByClientScope(actor, [ticketId]);
+  if (blocked.has(ticketId)) fail(`${home}/${ticketId}`, blocked.get(ticketId) as string);
 
   const assigneeId = text(formData, "assigneeId") || null;
   const result = await ticketServices().service.assign(actor, ticketId, assigneeId);
