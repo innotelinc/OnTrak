@@ -46,7 +46,7 @@ sweepable with `npm run sweep:retention`.
 | The signing key (HMAC over `contentHash`) | `src/lib/assurance-sign.ts` |
 | Service: assemble the packet from the record and the audit chain | `src/lib/assurance-service.ts` |
 | Packet download | `src/app/api/incidents/[id]/packet/route.ts` |
-| Tests | `tests/tix-m3-incidents.test.ts`, `tests/tix-m3-playbooks.test.ts`, `tests/tix-m3-object-lock.test.ts`, `tests/tix-m3-war-room.test.ts`, `tests/tix-m3-compliance.test.ts`, `tests/tix-m3-comms.test.ts`, `tests/tix-m3-assurance.test.ts`, `tests/tix-m3-verifier.test.ts` |
+| Tests | `tests/tix-m3-incidents.test.ts`, `tests/tix-m3-playbooks.test.ts`, `tests/tix-m3-object-lock.test.ts`, `tests/tix-m3-war-room.test.ts`, `tests/tix-m3-compliance.test.ts`, `tests/tix-m3-comms.test.ts`, `tests/tix-m3-retention.test.ts`, `tests/tix-m3-assurance.test.ts`, `tests/tix-m3-verifier.test.ts`, `tests/tix-m3-retention-live.test.ts` (opt-in) |
 | Browser sweep (opt-in, `ONTRAK_TIX_BASE_URL`) | `tests/browser/tix.spec.ts` at the repo root — WCAG A/AA on the staff surfaces plus the flows end to end |
 
 ## Severity from a matrix
@@ -261,7 +261,12 @@ The Postgres integration test (`tests/tix-db.test.ts`) proves it against a real
 database and a real filesystem: two incidents, one artifact each, a legal hold on
 the second — the sweep removes the first's bytes *and* its row's contents, leaves
 the held one's files alone, then takes them once the hold is released, with the
-audit chain still verifying afterwards.
+audit chain still verifying afterwards. And `tests/tix-m3-retention-live.test.ts`
+(opt-in, like the SSO live test) proves the *endpoint*: it POSTs to a running app
+the way a cron would, checks that an unauthenticated call is a 401 and an unknown
+tenant a 404, that a dry run changes nothing, then that the real run removes the
+file from the app's own evidence directory, stamps the tombstone, writes the
+timeline line and the audit events, and purges nothing on a second run.
 
 ## The war-room timeline
 
