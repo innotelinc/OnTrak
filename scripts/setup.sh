@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════════════
+# OnTrak — one-shot bootstrap: guard hooks, .env files, dependencies.
+#
+# Deliberately small and idempotent: running it twice is safe, and it never
+# overwrites an existing .env (that file holds a deployment's own values and a
+# bootstrap has no business rewriting a secret it did not generate).
+#
+# It installs the attribution/secret guard by pointing git at .githooks, which
+# is what makes the local hooks real — a copied .githooks directory that git has
+# not been told about guards nothing.
+# ═══════════════════════════════════════════════════════════════════════════
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+echo "==> OnTrak bootstrap"
+
+echo "--> guard hooks"
+git config core.hooksPath .githooks
+chmod +x .githooks/* 2>/dev/null || true
+echo "    core.hooksPath = $(git config core.hooksPath)"
+
+echo "--> environment files"
+for dir in . ontrak-tix; do
+  if [ -f "$dir/.env.example" ]; then
+    if [ -f "$dir/.env" ]; then
+      echo "    $dir/.env exists — left alone"
+    else
+      cp "$dir/.env.example" "$dir/.env"
+      echo "    created $dir/.env from the template"
+    fi
+  fi
+done
+
+echo "--> dependencies"
+npm install
+
+cat <<'DONE'
+
+Next:
+  make db && make setup && make dev        # the training app
+  make tix-setup tix-db tix-schema tix-dev # the service desk
+
+Before deploying anything, replace every placeholder secret in the .env files
+(AUTH_SECRET, TIX_AUTH_SECRET, the webhook/cron/assurance secrets). A production
+deployment resolves them from Cerulean Vault — see .env.example.
+
+DONE

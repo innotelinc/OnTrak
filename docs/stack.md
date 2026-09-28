@@ -1,0 +1,92 @@
+# OnTrak in the Innotel Platform Stack
+
+**Role: TrainingOps** — the self-hosted platform where an IT support operation is
+*taught*, *run* and *evidenced*: graded simulations for the people, an MSP-grade
+service desk for the work, and a shared identity and evidence layer for both.
+
+Canonical definition of the stack lives in
+[innotelinc/innotel-platform-stack](https://github.com/innotelinc/innotel-platform-stack).
+This document only states OnTrak's place in it.
+
+## Boundaries
+
+**Owns**
+
+- **Training** — scenarios, simulated Linux/Windows/Office machines, attempt
+  lifecycle, objective evaluation, completion records and certificates.
+- **The service desk** — tickets, queues, SLAs, canned responses and templates,
+  time tracking and rate cards, invoice-ready billing exports.
+- **Multi-client MSP operation** — clients, contacts, per-client promises,
+  per-client rate cards and reporting, cross-client scoping and act-as
+  guardrails.
+- **Incident response and assurance** — incident duties and playbooks, war-room
+  comms, objection-locked evidence with a retention clock, tenant-authored
+  notification wording kept as sent, and the signed assurance packet.
+- **Its own audit chain** — append-only, hash-chained records of every
+  privileged action, verifiable without trusting the application that wrote it.
+
+**Consumes**
+
+- **Identity (Authentik, hosted in Cerulean)** — OIDC sign-in for staff and
+  students, with a local credential fallback so each app deploys standalone.
+- **Secrets (Cerulean Vault)** — runtime secret resolution
+  (`vault://<mount>/<path>#<key>`).
+- **Trust (Cerulean)** — DNS records, the stack wildcard certificate and the NPM
+  proxy host for each app. OnTrak never speaks to the NPM API itself.
+- **Storage (ONYX)** — where deployments choose object storage for attachments
+  and evidence bytes instead of local disk.
+
+**Does not own**
+
+- Identity, secrets, DNS, TLS or edge routing — those are platform services and
+  are consumed, never re-implemented.
+- Billing infrastructure — Magnate owns subscriptions and entitlements. OnTrak's
+  time and rate cards are *operational* billing (what a desk bills a client for
+  hours worked), and deliberately stop there: no payment processing, no
+  subscription lifecycle, no entitlements.
+- Telephony (Zeus) and e-signature (Signara) — integrated when a deployment has
+  them, not replaced.
+- The Intrusion-detection platform that will become **OnTrak Sentinel**; until it
+  ships, Tix ingests identity and telemetry events through a connector port.
+
+## Service map
+
+| Component | Technology | Job |
+|---|---|---|
+| `ontrak-tix` | Next.js 15, React 19, TypeScript, Prisma, PostgreSQL | The service desk: tickets, SLAs, clients, time, billing, incidents, assurance |
+| ITS training app | Next.js 15, React 19, TypeScript, Prisma, PostgreSQL, xterm.js | Graded Linux/Windows/Office simulations, attempts, certificates |
+| `ontrak-sentinel` (planned) | (unbuilt) | IdP + IDS/IPS for the family |
+| Audit chain | Append-only rows, hash-chained per tenant | Tamper-evident history shared by both apps |
+| Evidence store | Filesystem or object storage behind an object-lock port | Incident artifacts under a retention window nobody can shorten |
+
+Shared engineering layers, identical across both apps: pure logic in
+`src/lib/**/*-rules.ts` with unit tests, a store port with a Prisma adapter and
+an in-memory adapter for tests, server-side trust boundaries, and an audit event
+for every privileged write.
+
+## In the ecosystem
+
+- **Identity** — staff sign in through Authentik; Tix re-checks the role on the
+  server for every privileged action rather than trusting a session claim.
+- **Secrets & trust** — the apps read a `.env` that either carries a Vault
+  reference the deployment resolves or the resolved value where no resolver
+  exists. Public hosts and certificates come from Cerulean.
+- **Revenue** — where a deployment sells seats, Magnate owns the subscription;
+  OnTrak only ever asks whether an entitlement exists.
+- **Source of truth** — feature work and platform scope live in this repo's
+  [ROADMAP.md](../ROADMAP.md) and [ontrak-tix/ROADMAP.md](../ontrak-tix/ROADMAP.md);
+  the ecosystem definition lives in the stack repo, never here.
+
+## Where OnTrak integrates with other platforms
+
+| Platform | Direction | What crosses |
+|---|---|---|
+| Cerulean (Authentik) | consumes | OIDC issuer, client ID/secret, redirect URIs |
+| Cerulean Vault | consumes | Runtime secrets |
+| Cerulean DNS/TLS | consumes | Host records and the wildcard certificate |
+| Magnate | consumes (optional) | Seat entitlement check |
+| ONYX | consumes (optional) | Object storage for attachments and evidence |
+| Zeus / Signara | consumes (optional) | Telephony for a desk's voice channel; signature on an agreement packet |
+
+Nothing in the list is a hard dependency: OnTrak is designed to boot and be
+useful with none of them configured, and to gain each one without a rewrite.

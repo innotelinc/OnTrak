@@ -1,23 +1,38 @@
-# OnTrak IT Support Training
+<div align="center">
 
-> An [Innotel Labs](INNOTEL-LABS.md) product.
+# OnTrak
 
-An open source, browser-based **IT support training platform**. Students sign in,
-open a timed scenario, and fix it inside a realistic simulated environment — a
-Linux shell, a Windows PowerShell session (or a clickable Windows 11 desktop),
-or an Office-style spreadsheet / document / mailbox — and the attempt is graded
-automatically from the resulting machine state.
+**TrainingOps platform — self-hosted IT support training, ticketing and incident evidence.**
 
-No virtual machines. No terminal servers. The whole simulator runs in the browser
-and on your own server, so a whole class can practice on laptops or phones.
+[![CI](https://github.com/innotelinc/OnTrak/actions/workflows/ci.yml/badge.svg)](https://github.com/innotelinc/OnTrak/actions/workflows/ci.yml)
+[![Conformity](https://github.com/innotelinc/OnTrak/actions/workflows/conform.yml/badge.svg)](https://github.com/innotelinc/OnTrak/actions/workflows/conform.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-```
-        ┌────────────┐   timed, graded   ┌────────────────────────────┐
-student │  browser   │ ────────────────▶ │  pure TypeScript engine    │
-        │  console   │ ◀──────────────── │  (bash / PowerShell /      │
-        └────────────┘   live state      │   office) + grader         │
-                                          └────────────────────────────┘
-```
+</div>
+
+> **OnTrak** is the **TrainingOps** platform of the [Innotel Labs](INNOTEL-LABS.md)
+> family and a member of the [Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack):
+> one repository for the IT support operation. This app — **OnTrak IT Support
+> Training** — is an open source, browser-based training platform where students
+> fix deliberately broken machines and are graded from the resulting state,
+> while [**OnTrak Tix**](ontrak-tix/README.md) runs the real desk beside it, with
+> clients, SLAs, billing and insurance-grade incident evidence. Both consume
+> Cerulean for identity and trust and share one audit chain; no virtual machines
+> and no terminal servers are required for either.
+> **Landing page:** [https://innotelinc.github.io/OnTrak/](https://innotelinc.github.io/OnTrak/)
+
+---
+
+## Why OnTrak
+
+| Problem | OnTrak answer |
+| --- | --- |
+| A training lab is expensive to build and every rebuild is another day of work. | Scenarios are authored once as versioned templates with checkable objectives; the simulator runs in the browser, so a class practices on laptops or phones with no hypervisor and no images. |
+| Grading "did they fix it?" by hand does not scale, and two instructors grade differently. | Every submission is re-graded on the server from the submitted machine state — a forged client score cannot change a result — and any correct fix passes. |
+| A one-desk helpdesk breaks the moment it serves a second client: work runs together and SLAs stop meaning anything. | [OnTrak Tix](ontrak-tix/README.md) gives every client its own promises, rate card and reporting, and shows an agent only the clients they are assigned to. |
+| An incident that becomes a claim or an audit needs a record that was not assembled after the fact. | Incident evidence is written under object lock, notification wording is kept as it was actually sent, and the signed assurance packet can be verified without trusting the application. |
+| Training, ticketing and security tooling each invent their own identity and evidence layer. | One identity layer and one signed, tamper-evident record format: the training record a student keeps and the packet an insurer reads share the same shape. |
+| Running a support platform in-house usually means trusting a vendor with the data. | Self-hosted end to end: PostgreSQL and the app on your own host, storage behind a port you can point at your own object store, and no third-party service required to boot. |
 
 ---
 
@@ -49,8 +64,8 @@ student │  browser   │ ────────────────▶ �
 needed if you want the bundled dev database.
 
 ```bash
-git clone https://github.com/innotel-labs/ontrak-it-support-training.git
-cd ontrak-it-support-training
+git clone https://github.com/innotelinc/OnTrak.git
+cd OnTrak
 
 cp .env.example .env          # then edit AUTH_SECRET
 npm install
@@ -268,6 +283,19 @@ caught a scrollable region without keyboard access on the landing page.
 
 ---
 
+## Documentation
+
+| Doc | What it covers |
+| --- | --- |
+| [docs/stack.md](docs/stack.md) | OnTrak's role in the Innotel Platform Stack (TrainingOps) — what it owns, consumes and does not own |
+| [docs/scenario-authoring.md](docs/scenario-authoring.md) | How a scenario is written and how its objectives are graded |
+| [docs/training-evidence.md](docs/training-evidence.md) | Completion records, certificates and the signed export packet |
+| [INNOTEL-LABS.md](INNOTEL-LABS.md) | The Innotel Labs product family and how the three products fit together |
+| [ontrak-tix/docs/](ontrak-tix/docs/) | The service desk: tickets, SLAs, clients, billing, incidents, assurance |
+| [ROADMAP.md](ROADMAP.md) · [ontrak-tix/ROADMAP.md](ontrak-tix/ROADMAP.md) | What is shipped, what is next, and the honest gaps |
+
+---
+
 ## Sibling project
 
 Three [**Innotel Labs**](INNOTEL-LABS.md) products share a stack, a design
@@ -283,6 +311,21 @@ OnTrak IT Support Training **trains** the technicians; OnTrak Tix is the tool
 they **work in**; OnTrak Sentinel protects both. They link via a ticket ↔
 scenario bridge and a single identity provider.
 
+## 🏛️ Platform stack
+
+OnTrak is the ecosystem's **TrainingOps** platform in the
+[**Innotel Platform Stack**](https://github.com/innotelinc/innotel-platform-stack) —
+the canonical single-responsibility architecture where Authentik owns identity,
+Cerulean Vault owns secrets, Cerulean owns trust, ONYX owns storage, Magnate owns
+revenue, NPM Edge owns the edge, and every other platform is a business function
+that consumes them. OnTrak consumes identity, secrets and trust rather than
+re-implementing them, and owns only what a support operation is: the training,
+the desk and the evidence. See [docs/stack.md](docs/stack.md) for the full
+owns/consumes boundaries.
+
 ## License
 
 [MIT](LICENSE).
+
+*OnTrak — TrainingOps for the Innotel platform stack. © 2026*
+
