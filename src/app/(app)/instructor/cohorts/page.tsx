@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireSession } from "@/lib/auth";
 import { addCohortMember, createCohort, deleteCohort, removeCohortMember, updateCohort } from "@/app/actions/instructor";
 import { Flash, PageHeader } from "@/components/PageHeader";
-import { Badge, Button, Card, EmptyState, Field, Input, Textarea } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Field, Input, Textarea, buttonClass } from "@/components/ui";
 import { cn, initials, accentFor, formatRelative } from "@/lib/cn";
 import { getTranslator } from "@/lib/i18n-server";
 
@@ -43,6 +43,24 @@ export default async function CohortsPage({
 
   const staff = await prisma.user.count({ where: { role: { in: ["ADMIN", "INSTRUCTOR"] } } });
 
+  // One grouped count rather than a query per class: the export button needs to
+  // know whether a class actually holds certificates to export.
+  const certificatesPerCohort = new Map<string, number>();
+  if (cohorts.length > 0) {
+    const grouped = await prisma.attempt.groupBy({
+      by: ["userId"],
+      where: { certificateIssuedAt: { not: null }, certificateRevokedAt: null },
+      _count: { _all: true },
+    });
+    const heldByUser = new Map(grouped.map((row) => [row.userId, row._count._all]));
+    for (const cohort of cohorts) {
+      certificatesPerCohort.set(
+        cohort.id,
+        cohort.members.reduce((total, member) => total + (heldByUser.get(member.user.id) ?? 0), 0),
+      );
+    }
+  }
+
   return (
     <div className="mx-auto max-w-6xl">
       <PageHeader
@@ -68,6 +86,9 @@ export default async function CohortsPage({
                       </Badge>
                       <Badge tone="neutral">{t("cohorts.members", { count: cohort.members.length })}</Badge>
                       <Badge tone="neutral">{t("cohorts.assignments", { count: cohort.assignments.length })}</Badge>
+                      <Badge tone={(certificatesPerCohort.get(cohort.id) ?? 0) > 0 ? "teal" : "neutral"}>
+                        {t("cohorts.certificates", { count: certificatesPerCohort.get(cohort.id) ?? 0 })}
+                      </Badge>
                     </div>
                     {cohort.description ? <p className="mt-1.5 text-sm text-ink-soft">{cohort.description}</p> : null}
                     <p className="mt-1 text-xs text-ink-faint">
@@ -78,12 +99,27 @@ export default async function CohortsPage({
                     </p>
                   </div>
 
-                  <form action={deleteCohort}>
-                    <input type="hidden" name="id" value={cohort.id} />
-                    <Button type="submit" variant="danger" size="sm">
-                      {t("cohorts.deleteClass")}
-                    </Button>
-                  </form>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* A plain anchor: this is a file download, not a route the
+                        client router should intercept (or prefetch). */}
+                    {(certificatesPerCohort.get(cohort.id) ?? 0) > 0 ? (
+                      <a
+                        href={`/instructor/cohorts/${cohort.id}/packet`}
+                        className={buttonClass("secondary", "sm")}
+                        title={t("cohorts.packetHint")}
+                      >
+                        {t("cohorts.packet")}
+                      </a>
+                    ) : (
+                      <span className="text-xs text-ink-faint">{t("cohorts.packet.none")}</span>
+                    )}
+                    <form action={deleteCohort}>
+                      <input type="hidden" name="id" value={cohort.id} />
+                      <Button type="submit" variant="danger" size="sm">
+                        {t("cohorts.deleteClass")}
+                      </Button>
+                    </form>
+                  </div>
                 </div>
 
                 {/* Roster */}
@@ -142,7 +178,15 @@ export default async function CohortsPage({
                     <input type="hidden" name="cohortId" value={cohort.id} />
                     <h4 className="text-xs font-semibold tracking-wide text-ink-faint uppercase">{t("cohorts.addStudent")}</h4>
                     <div className="mt-2 space-y-2.5">
-                      <Input name="email" type="email" placeholder="student@college.edu" required />
+                      {/* The heading above these controls is not associated with
+                          them, so each carries its own accessible name. */}
+                      <Input
+                        name="email"
+                        type="email"
+                        aria-label={t("cohorts.addStudent")}
+                        placeholder="student@college.edu"
+                        required
+                      />
                       <label className="flex items-center gap-2 text-xs text-ink-soft">
                         <input type="checkbox" name="isMentor" className="size-3.5 accent-[var(--brand)]" />
                         {t("cohorts.markMentor")}
@@ -157,9 +201,15 @@ export default async function CohortsPage({
                     <input type="hidden" name="id" value={cohort.id} />
                     <h4 className="text-xs font-semibold tracking-wide text-ink-faint uppercase">{t("cohorts.rename")}</h4>
                     <div className="mt-2 space-y-2.5">
-                      <Input name="name" defaultValue={cohort.name} required />
+                      <Input
+                        name="name"
+                        aria-label={t("cohorts.className")}
+                        defaultValue={cohort.name}
+                        required
+                      />
                       <Textarea
                         name="description"
+                        aria-label={t("cohorts.descriptionLabel")}
                         defaultValue={cohort.description ?? ""}
                         className="min-h-16"
                         placeholder={t("cohorts.descriptionPlaceholder")}

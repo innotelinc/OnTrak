@@ -17,6 +17,9 @@ const GUARDS: { prefix: string; roles: string[] }[] = [
   { prefix: "/admin", roles: ["ADMIN"] },
   { prefix: "/instructor", roles: ["ADMIN", "INSTRUCTOR"] },
   { prefix: "/student", roles: ["ADMIN", "INSTRUCTOR", "STUDENT"] },
+  // A printable certificate is only ever shown inside a session; which attempt a
+  // student may open is decided by the page, not by the role.
+  { prefix: "/certificate", roles: ["ADMIN", "INSTRUCTOR", "STUDENT"] },
 ];
 
 const ROLE_HOME: Record<string, string> = {
@@ -65,5 +68,12 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/admin/:path*", "/instructor/:path*", "/student/:path*", "/login", "/register"],
+  matcher: [
+    "/admin/:path*",
+    "/instructor/:path*",
+    "/student/:path*",
+    "/certificate/:path*",
+    "/login",
+    "/register",
+  ],
 };

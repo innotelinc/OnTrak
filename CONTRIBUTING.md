@@ -11,7 +11,7 @@ change merged.
 cp .env.example .env      # set AUTH_SECRET to a long random value
 npm install
 npm run docker:db         # Postgres 16, or point DATABASE_URL at your own
-npm run setup             # prisma generate + db push + reset attempts + seed
+npm run setup             # prisma generate + migrate deploy + reset attempts + seed
 npm run dev
 ```
 
@@ -113,9 +113,24 @@ no database to test.
 
 ### 6. Database changes go through the schema
 
-Edit `prisma/schema.prisma`, then `npm run db:push` while developing and
-`npm run db:migrate` to produce a versioned migration for the pull request. Keep
-`prisma/seed.ts` idempotent — it is re-run by contributors constantly.
+Edit `prisma/schema.prisma`, then `npm run db:migrate` to produce a versioned
+migration under `prisma/migrations/` for the pull request.
+
+Every environment applies those migrations, so a deploy is never a guess about
+what a `db push` happened to do: `npm run setup` uses `prisma migrate deploy`, and
+a deployment runs `npm run db:deploy` before starting the app. `npm run db:push`
+is still there for throwaway iteration on a database you are happy to drop — do
+not use it on one you intend to migrate later.
+
+If you meet a database that predates the migrations (it was created by `db push`),
+baseline it once rather than recreating it:
+
+```bash
+npx prisma migrate resolve --applied 20260927000000_init
+npx prisma migrate resolve --applied 20260927000100_add_attempt_certificate
+```
+
+Keep `prisma/seed.ts` idempotent — it is re-run by contributors constantly.
 
 ### 7. Know who owns what
 

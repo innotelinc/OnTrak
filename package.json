@@ -17,10 +17,11 @@
     "test:e2e:tix": "ONTRAK_TIX_BASE_URL=${ONTRAK_TIX_BASE_URL:-http://127.0.0.1:3001} playwright test tests/browser/tix.spec.ts",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:reset-demo": "tsx prisma/reset-demo.ts",
     "db:studio": "prisma studio",
-    "setup": "prisma generate && prisma db push && tsx prisma/reset-demo.ts && tsx prisma/seed.ts",
+    "setup": "prisma generate && prisma migrate deploy && tsx prisma/reset-demo.ts && tsx prisma/seed.ts",
     "docker:db": "docker compose up -d db"
   },
   "prisma": {
