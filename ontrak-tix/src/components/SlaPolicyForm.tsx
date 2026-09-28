@@ -26,17 +26,36 @@ export function SlaPolicyForm({
   deleteAction,
   policy,
   clientId = null,
+  queues = [],
 }: {
   action: (formData: FormData) => Promise<void>;
   deleteAction?: (formData: FormData) => Promise<void>;
   policy?: SlaPolicyRecord;
   clientId?: string | null;
+  /** The desk's queues, offered as a scope for a promise written for the desk. */
+  queues?: { id: string; name: string }[];
 }) {
   return (
     <div className="space-y-1.5 rounded-xl2 border border-line/70 bg-surface-muted/40 p-2.5">
       <form action={action} className="flex flex-wrap items-end gap-2">
         {policy ? <input type="hidden" name="policyId" value={policy.id} /> : null}
         {clientId ? <input type="hidden" name="clientId" value={clientId} /> : null}
+        {/* A promise belongs to one owner. When the form is inside a client's
+            card the client is the scope and this stays hidden; at desk level it
+            is how a queue's own promise gets written. */}
+        {!clientId && queues.length > 0 ? (
+          <label className="text-xs text-ink-soft">
+            Scope
+            <select name="queueId" defaultValue={policy?.queueId ?? ""} className={`block ${inputClass}`}>
+              <option value="">the whole desk</option>
+              {queues.map((queue) => (
+                <option key={queue.id} value={queue.id}>
+                  {queue.name} only
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <label className="text-xs text-ink-soft">
           Promise name
           <input

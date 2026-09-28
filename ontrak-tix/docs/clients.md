@@ -205,11 +205,68 @@ rather than as a stack trace.
 - **Holidays and multiple concurrent SLAs.** A calendar carries fixed weekly
   windows and a UTC offset; holidays, DST and more than one promise running on a
   ticket at once are backlog.
-- **Branding and portal identity.** A client's own logo, colours and portal
-  greeting are M4 work that has not started; a requester's portal is still the
-  desk's.
-- **The rota and shift handoff** is the remaining M4 slice, and is untouched:
-  there are no on-call schedules or coverage windows yet. (Time, rates and
-  invoices are in [docs/billing.md](./docs/billing.md).)
-- **Client-scoped queues.** A queue knows nothing about clients yet, so the same
-  queue serves every client and the ladder's queue rung is shared.
+- **A client portal beyond the survey link.** The client-facing surface today is
+  `/survey/[token]` — one question, no account, no tracking. A full portal where
+  a client's own people raise and follow tickets is not built, so "portal
+  identity" currently means *how the desk's pages and notices present the client*,
+  not a place the client signs in to.
+- **Per-client queues.** A queue knows nothing about clients yet, so the same
+  queue serves every client and the ladder's queue rung is shared. A promise can
+  be scoped to a queue (see below), which is the half of the problem that can be
+  solved without client-aware routing.
+- **Branding beyond one identity.** One accent colour, one logo, one signature
+  per client — no per-queue greetings, no templates inside a brand, and no mail
+  sending from the client's own domain.
+
+## Branding and portal identity
+
+The name, colour, logo and voice one client is shown in
+(`client-branding-rules.ts`, `client-branding-service.ts`, the branding form on
+`/clients`).
+
+Three properties are decided in the rules module rather than left to a form:
+
+- **A colour is a design constraint.** A client's accent has to be a six-digit
+  hex value *and* has to stay readable against the portal's background — checked
+  as a WCAG contrast ratio at the moment it is set. Letting a client pick the
+  background colour would produce a page where the brand vanishes, which arrives
+  as "your site is broken" rather than as a colour choice.
+- **A logo is an image, not a URL to trust.** Only `https:` and inline
+  `data:image/*` (base64, capped in size) are accepted. An `http:` logo is content
+  a third party can rewrite in flight; `data:text/html` is an injection into
+  somebody else's page; an unbounded data URI is a way to fill the database from
+  a form.
+- **No branding is not an error.** `brandFor(client, branding)` resolves the
+  identity in force in one place, so a client with no row is simply shown as the
+  desk and named by the name the desk filed them under — no page has to branch.
+
+Branding follows the client scope: an agent who cannot see a client cannot
+re-brand them, and a brand change is audited
+(`client.branding.create` / `client.branding.update`) with what it replaced.
+
+### The one unauthenticated path
+
+The survey page at `/survey/[token]` is answered by somebody with a token and no
+account. It still has to read as *their* supplier, so it resolves the brand
+through a deliberately separate entry point — `forToken(tenantId, clientId, name)`
+— which can resolve one client's brand and nothing else. It can never list
+clients, and it never sees an actor, because there is not one.
+
+## Queue-scoped promises
+
+A promise belongs to **one** owner: a client, a queue, or the desk. Naming both a
+client and a queue is refused rather than resolved, because the pair would sit on
+two rungs of the ladder at once and `resolveSlaPolicy` would have to guess which
+won.
+
+Two details make the scope safe to edit:
+
+- **A queue id that does not exist is refused.** A promise on the ladder for a
+  queue nobody has would look like cover that is not there.
+- **An edit that does not mention the scope keeps it.** A form carrying only the
+  numbers cannot quietly turn a client's contract into the desk's, or a queue's
+  into everybody's. Naming the empty scope explicitly *is* a widening, and is
+  allowed to be one.
+
+The desk-level form offers the queues; the per-client card does not, because the
+card already says who the promise is for.

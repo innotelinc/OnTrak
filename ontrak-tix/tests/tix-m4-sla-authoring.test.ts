@@ -391,6 +391,62 @@ test("a promise may only name a client this desk actually has", async () => {
   assert.equal((await h.service.create(ADMIN, promise({ name: "Northwind contract", clientId: northwind }))).ok, true);
 });
 
+test("a promise can be written for one queue, and only a queue the desk actually has", async () => {
+  const audit = new AuditLog(sha256);
+  const store = new MemorySlaPolicyStore();
+  const queues = { listQueues: async () => [{ id: "queue-1", name: "Tier 2" }] };
+  let n = 0;
+  const service = new SlaPolicyService(store, audit, null, { id: () => `policy-${++n}`, now: () => NOW }, queues);
+
+  // The console is offered the queues it can scope to.
+  const offered = await service.deskQueues(ADMIN);
+  assert.equal(offered.ok && offered.value[0].name, "Tier 2");
+
+  const invented = await service.create(ADMIN, promise({ name: "Tier 2 contract", queueId: "made-up" }));
+  assert.equal(invented.ok, false);
+  if (!invented.ok) assert.match(invented.error, /Queue not found/);
+
+  const created = await service.create(ADMIN, promise({ name: "Tier 2 contract", queueId: "queue-1" }));
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  assert.equal(created.value.queueId, "queue-1");
+  assert.match(describeScope(created.value), /its queue/);
+
+  // And the queue rung is what the resolver answers when no client names one.
+  const both = await service.create(ADMIN, promise({ name: "Wrong", queueId: "queue-1", clientId: "client-1" }));
+  assert.equal(both.ok, false);
+  if (!both.ok) assert.match(both.error, /not both/);
+
+  const events = audit.snapshot().events.filter((event) => event.action === "sla.policy.create");
+  assert.equal(events.length, 1);
+  assert.equal(events[0].detail?.queueId, "queue-1");
+});
+
+test("an edit that does not mention the scope keeps it — a queue promise stays a queue promise", async () => {
+  const audit = new AuditLog(sha256);
+  const store = new MemorySlaPolicyStore();
+  const queues = { listQueues: async () => [{ id: "queue-1", name: "Tier 2" }] };
+  let n = 0;
+  const service = new SlaPolicyService(store, audit, null, { id: () => `policy-${++n}`, now: () => NOW }, queues);
+
+  const created = await service.create(ADMIN, promise({ name: "Tier 2 contract", queueId: "queue-1" }));
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+
+  // A form carrying only the numbers must not quietly widen the promise to the
+  // whole desk: that is how a queue's contract becomes everybody's promise.
+  const edited = await service.update(ADMIN, created.value.id, promise({ name: "Tier 2 contract" }));
+  assert.equal(edited.ok, true);
+  if (!edited.ok) return;
+  assert.equal(edited.value.queueId, "queue-1");
+  assert.equal(edited.value.id, created.value.id, "a promise in force keeps its id");
+
+  // Naming the empty scope explicitly *is* a widening, and is allowed to be one.
+  const widened = await service.update(ADMIN, created.value.id, promise({ name: "Tier 2 contract", queueId: null }));
+  assert.equal(widened.ok, true);
+  assert.equal(widened.ok && widened.value.queueId, null);
+});
+
 test("the memory store is the port the Prisma one implements, so tests prove the service", async () => {
   const store: SlaPolicyStore = new MemorySlaPolicyStore();
   const service = new SlaPolicyService(store, null, null, { id: () => "policy-1", now: () => NOW });
