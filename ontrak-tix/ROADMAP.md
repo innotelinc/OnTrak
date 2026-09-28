@@ -322,7 +322,7 @@ to stand on its own.
 > [docs/incidents.md](./docs/incidents.md) — a real object-locked backend,
 > scheduling the sweep yourself, and notice-template versioning.
 >
-> M4 progress (started): the first slice has landed — **clients, contacts and
+> M4 progress (complete): **clients, contacts and
 > the scope that keeps two clients apart**. The SLA ladder gained a client rung
 > and a queue rung (`SlaPolicy.clientId`/`queueId`, `resolveSlaPolicy` in
 > `sla-rules.ts`), most specific first and reporting *which* rung answered, with
@@ -679,7 +679,7 @@ up to an adjuster or auditor.
   without manual reconstruction; a signed evidence packet exports; the
   post-incident review is published with owners and due dates.
 
-### M4 — MSP & multi-client `[~]`
+### M4 — MSP & multi-client `[x]`
 **Goal:** one desk serving many clients safely.
 
 - Clients/companies, contacts, per-client SLAs, branding and portal identity.
@@ -799,17 +799,53 @@ up to an adjuster or auditor.
 - **Exit:** an agent works two clients without data bleed; time entries export to
   an invoice line; per-client SLA attainment is reportable.
 
-### M5 — Automation & knowledge `[ ]`
+### M5 — Automation & knowledge `[~]`
 **Goal:** reduce manual work and capture know-how.
 
 - Rules engine: trigger (+conditions) → actions (set field, route, notify, reply,
   tag, escalate); dry-run and rule test harness.
+  - `[x]` **The engine** (`rule-rules.ts`, `rule-service.ts`,
+    `rule-store-prisma.ts`, the `Rule` model): a trigger, the conditions that
+    narrow it, and the actions it takes. Conditions are **all** required — there
+    is deliberately no OR, because "which rule did this?" should have one answer,
+    and a second rule is a cheaper thing to read than an expression language
+    nobody can predict. Rules run in `position` order and the **first** one to set
+    a field owns it; a later rule that wanted the same field is recorded as
+    skipped *with the reason*, rather than letting a position nobody looked at
+    decide the outcome. Tags accumulate while singular fields do not, and the
+    outward-facing actions (notify, reply, escalate) all accumulate, because
+    dropping one quietly is the failure a rule exists to prevent. Writing one
+    needs `rule:manage`, names are unique case-insensitively, and every write
+    lands on the audit chain with the rule's whole body — so "who made the desk
+    reply to everything from that address?" has an answer. Covered by
+    `ontrak-tix/tests/tix-m5-rules.test.ts`.
+  - `[x]` **The dry run** (`dryRun`, `ruleHazards`, `describeAction`,
+    `describeCondition`): the *same* functions the live path runs, applied to
+    tickets that already exist, so a preview cannot disagree with what switching
+    the rule on will do. It reports what each matched rule would change and what
+    it outvoted, and it names the two ways a desk automates something it did not
+    mean to — a rule with no conditions, which therefore matches everything, and
+    an automatic reply, which leaves the desk under its own name without an agent
+    reading the thread.
+  - `[ ]` Applying the plan on the intake paths (portal, email, quick-create),
+    and a console at `/rules`.
 - Macros (multi-step agent shortcuts) and public/private knowledge base with
   article suggestions on ticket create.
 - Self-service deflection: suggested articles on the portal before submission.
 - CSAT dashboards and knowledge-gap reporting (repeat tickets with no article).
 - **Exit:** rules cover the top intake paths; ≥30% of new tickets are auto-routed
   or deflected; KB suggestions measurably cut handling time.
+
+> M5 progress (started): **the rules engine and its dry run have landed**. The
+> engine is pure in `rule-rules.ts` — matching, ordering, first-writer-wins and
+> hazards — with `rule-service.ts` storing what it decides and
+> `rule-store-prisma.ts` adapting the `Rule` table (conditions and actions as
+> JSON, because a rule is read and written whole). The preview is the same
+> `evaluateRules` + `planTicketChanges` the live path uses, applied to tickets
+> that already exist, so it cannot drift from what switching a rule on does.
+> What has *not* landed is the part that makes it useful: nothing applies the
+> plan on intake yet, and there is no console, so a rule can only be written
+> through the service until those follow.
 
 ### M6 — Platform & integrations `[ ]`
 **Goal:** fit into the surrounding toolchain.

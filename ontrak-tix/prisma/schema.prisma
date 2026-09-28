@@ -47,6 +47,7 @@ model Tenant {
   alertSuppressions     AlertSuppression[]
   alertPromotions       AlertPromotion[]
   identityConnection    IdentityConnection?
+  rules                 Rule[]
   incidents             Incident[]
   incidentEvents        IncidentEvent[]
   playbookSteps         PlaybookStep[]
@@ -237,6 +238,9 @@ model Ticket {
   /// Windows during which the SLA clock is stopped, e.g. `[{"startedAt":"…","endedAt":null}]`
   /// while the desk waits on the customer. An open pause has `endedAt === null`.
   slaPauses       Json      @default("[]")
+  /// Tags applied by hand or by an M5 rule (`add_tag`). A scoring axis, not a
+  /// classification: a ticket may carry several or none.
+  tags            String[]  @default([])
 
   tenant       Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   queue        Queue?                @relation(fields: [queueId], references: [id], onDelete: SetNull)
@@ -1338,4 +1342,39 @@ model AuditEvent {
   @@unique([tenantId, seq])
   @@index([tenantId, at])
   @@index([action])
+}
+
+/// An automation rule (M5): a trigger, the conditions that narrow it, and the
+/// actions it takes. Conditions and actions are stored as JSON because a rule is
+/// read and written whole — a table per condition kind would turn "what does this
+/// rule say?" into a join, and the validation that matters happens in
+/// `rule-rules.ts` either way.
+model Rule {
+  id         String      @id @default(cuid())
+  tenantId   String
+  name       String
+  trigger    RuleTrigger @default(TICKET_CREATED)
+  /// `RuleCondition[]` — see `src/lib/rule-rules.ts`.
+  conditions Json        @default("[]")
+  /// `RuleAction[]` — see `src/lib/rule-rules.ts`.
+  actions    Json        @default("[]")
+  enabled    Boolean     @default(true)
+  /// Lower runs first; the first rule to set a field owns it.
+  position   Int         @default(0)
+  createdBy  String
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@index([tenantId, enabled, position])
+}
+
+/// When a rule runs. Kept to the moments a desk actually automates, rather than
+/// to every write the application makes.
+enum RuleTrigger {
+  TICKET_CREATED
+  TICKET_UPDATED
+  TICKET_REPLIED
 }

@@ -26,6 +26,7 @@ export type Permission =
   | "ticket:delete"
   | "queue:manage"
   | "client:manage"
+  | "rule:manage"
   | "user:manage"
   | "tenant:manage"
   | "audit:read";
@@ -47,6 +48,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "ticket:delete",
     "queue:manage",
     "client:manage",
+    "rule:manage",
     "user:manage",
     "tenant:manage",
     "audit:read",
@@ -61,6 +63,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "ticket:close",
     "queue:manage",
     "client:manage",
+    "rule:manage",
     "user:manage",
   ],
   AGENT: [
