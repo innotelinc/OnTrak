@@ -10,6 +10,7 @@
  */
 
 import { baseName, display, dirName, homeFor } from "../paths";
+import { simulatedPasswordHash } from "../password";
 import { createRegistry, createShell, formatRows, type CommandContext, type CommandSpec } from "../shell";
 import { copy, get, listDir, listTree, mkdirp, move, remove, writeFile } from "../vfs";
 import type { CommandResult, EngineState, FirewallRule, LocalUser, RegistryValue, ShellDriver } from "../types";
@@ -896,7 +897,7 @@ const NewLocalUser: CommandSpec = {
       shell: "cmd.exe",
       home: `/c:/users/${name.toLowerCase()}`,
       description: args.value("description") ?? "Created by the student in this simulation",
-      passwordHash: password ? "simulated" : null,
+      passwordHash: password ? simulatedPasswordHash() : null,
       locked: false,
       enabled: true,
     });
@@ -923,7 +924,7 @@ const SetLocalUser: CommandSpec = {
     const name = args.positional[0] ?? args.value("name");
     const user = findUser(ctx.state, name ?? "");
     if (!user) return bad(`Set-LocalUser : User ${name} was not found.`, 1);
-    if (args.has("password")) user.passwordHash = "simulated";
+    if (args.has("password")) user.passwordHash = simulatedPasswordHash();
     if (args.has("description")) user.description = args.value("description");
     if (args.has("fullname")) user.fullName = args.value("fullname");
     return ok("");
@@ -1052,7 +1053,7 @@ const net: CommandSpec = {
           groups: ["Users"],
           shell: "cmd.exe",
           home: `/c:/users/${name.toLowerCase()}`,
-          passwordHash: "simulated",
+          passwordHash: simulatedPasswordHash(),
           locked: false,
           enabled: true,
         });

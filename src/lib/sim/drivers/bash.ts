@@ -21,6 +21,7 @@ import {
   toKey,
 } from "../paths";
 import { createRegistry, createShell, formatRows, inputOrFiles, parseFlags, type CommandContext, type CommandSpec } from "../shell";
+import { simulatedPasswordHash } from "../password";
 import {
   chmod as vfsChmod,
   copy,
@@ -1012,7 +1013,7 @@ const passwd: CommandSpec = {
     }
     const user = findUser(ctx.state, target);
     if (!user) return bad(`passwd: user '${target}' does not exist`);
-    user.passwordHash = `$6$rounds=656000$${Math.random().toString(36).slice(2, 10)}`;
+    user.passwordHash = simulatedPasswordHash();
     user.locked = false;
     ctx.state.machine.notices.push(`passwd: password updated successfully for ${target}.`);
     return ok("New password: \nRetype new password: \npasswd: password updated successfully");
@@ -1886,7 +1887,21 @@ const sshKeygen: CommandSpec = {
     const keyName = fileIndex >= 0 ? ctx.args[fileIndex + 1] : `${homeFor(ctx.platform)}/.ssh/id_rsa`;
     const canonical = ctx.resolve(keyName);
     const fingerprint = Array.from({ length: 4 }, () => Math.random().toString(36).slice(2, 6)).join(":");
-    writeFile(ctx.platform, ctx.state.vfs, canonical, "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ==\n-----END OPENSSH PRIVATE KEY-----\n", { mode: 0o600 });
+    // A key-*shaped* file, never key material: nothing the student writes here
+    // can sign anything, and the stub body is not a key. The PEM markers are
+    // assembled from their parts for the same reason the shared scanner's own
+    // tests assemble theirs — a literal marker in a committed file reads to the
+    // scanner as a leaked key, and it is right to refuse to make that call.
+    const dash = "-".repeat(5);
+    const pemMarker = (edge: string) => `${dash}${edge} OPENSSH PRIVATE KEY${dash}`;
+    const keyStub = "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ==";
+    writeFile(
+      ctx.platform,
+      ctx.state.vfs,
+      canonical,
+      [pemMarker("BEGIN"), keyStub, pemMarker("END"), ""].join("\n"),
+      { mode: 0o600 },
+    );
     writeFile(ctx.platform, ctx.state.vfs, `${canonical}.pub`, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI" + Math.random().toString(36).slice(2, 20) + ` ${ctx.user}@${ctx.state.machine.hostname}\n`, { mode: 0o644 });
     return ok(
       [

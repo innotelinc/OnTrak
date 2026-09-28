@@ -16,7 +16,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { PrismaClient, type Prisma } from "@prisma/client";
 import { certificateForAttempt } from "../../src/lib/certificates";
 
-const PASSWORD = process.env.ONTRAK_A11Y_PASSWORD ?? "ontrak-demo";
+const PASSWORD = process.env.ONTRAK_A11Y_PASSWORD ?? "change-me-ontrak";
 const STUDENT_EMAIL = process.env.ONTRAK_A11Y_EMAIL ?? "student@ontrak.local";
 const INSTRUCTOR_EMAIL = process.env.ONTRAK_A11Y_INSTRUCTOR_EMAIL ?? "instructor@ontrak.local";
 

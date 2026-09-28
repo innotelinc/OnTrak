@@ -91,7 +91,9 @@ jobs:
     env:
       DATABASE_URL: postgresql://ontrak:ontrak@127.0.0.1:5432/ontrak?schema=public
       AUTH_SECRET: ci-only-not-a-production-secret-value
-      SEED_PASSWORD: ontrak-demo
+      # The shipped placeholder, so the seeded demo accounts the a11y-free
+      # suites sign in as exist without CI holding a real credential.
+      SEED_PASSWORD: change-me-ontrak
       STORAGE_DIR: ./storage/packages
       NEXT_PUBLIC_APP_NAME: OnTrak IT Support Training
     defaults:
