@@ -17,6 +17,7 @@
  */
 
 import { hasPermission, type Actor, type Role } from "./access-rules";
+import type { InvoiceTax, RetainerDraw } from "./billing-rules";
 
 export const TIME_NOTE_MAX = 500;
 export const RATE_CARD_NAME_MAX = 120;
@@ -74,6 +75,11 @@ export interface TimeEntryRecord {
   /** Set when the entry went onto an issued invoice. */
   invoicedAt: string | null;
   invoiceRef: string | null;
+  /** Tax charged on this entry when its invoice was issued, and the rate that produced it. */
+  taxCents: number | null;
+  taxRateBasisPoints: number | null;
+  /** The retainer the invoice that covers this entry drew down, if any. */
+  retainerId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -337,7 +343,14 @@ export interface Invoice {
   /** Who issued it, on the event that issued it. A re-read cannot know, and says so. */
   issuedBy?: string;
   lines: InvoiceLine[];
+  /** Labour only. Tax is reported beside it, never folded into it. */
   totals: InvoiceTotals;
+  /** The tax block, or `null` when no rule covered this client. */
+  tax?: InvoiceTax | null;
+  /** The client's bill: labour plus tax. */
+  totalCents?: number;
+  /** What this invoice drew from the client's retainer, when one covered it. */
+  retainer?: RetainerDraw | null;
   /** What was left out, so an unbilled hour is visible rather than silently free. */
   skipped: { alreadyInvoiced: number; unpriced: number; nonBillable: number };
 }

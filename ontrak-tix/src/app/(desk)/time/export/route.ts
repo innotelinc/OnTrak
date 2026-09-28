@@ -14,7 +14,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { currentActor } from "../../../../lib/session";
-import { clientServicesFor, timeServicesFor } from "../../../../lib/db";
+import { clientBrandingServicesFor, clientServicesFor, timeServicesFor } from "../../../../lib/db";
 import { hasPermission } from "../../../../lib/access-rules";
 import { buildInvoiceCsv } from "../../../../lib/invoice-csv";
 
@@ -31,19 +31,28 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const ref = request.nextUrl.searchParams.get("ref") ?? "";
   if (!ref) return NextResponse.json({ error: "Give the invoice reference." }, { status: 400 });
 
-  const invoice = await timeServicesFor().issued(actor, ref);
-  if (!invoice.ok) return NextResponse.json({ error: invoice.error }, { status: 404 });
+  const standing = await timeServicesFor().issued(actor, ref);
+  if (!standing.ok) return NextResponse.json({ error: standing.error }, { status: 404 });
 
-  // The client's name, not its id: this file is what the client is sent.
-  let clientName: string | undefined = invoice.value.clientId ? undefined : "the desk";
-  if (invoice.value.clientId) {
+  const invoice = standing.value.invoice;
+
+  // The client's name, not its id: this file is what the client is sent. The
+  // brand's own display name wins over the filed name, because the invoice is
+  // the client's document and it should read the way the rest of their mail does.
+  let clientName: string | undefined = invoice.clientId ? undefined : "the desk";
+  if (invoice.clientId) {
     const clients = await clientServicesFor().list(actor);
     if (clients.ok) {
-      clientName = clients.value.find((entry) => entry.client.id === invoice.value.clientId)?.client.name;
+      const found = clients.value.find((entry) => entry.client.id === invoice.clientId);
+      clientName = found?.client.name;
+      if (found) {
+        const branding = await clientBrandingServicesFor().for(actor, found.client.id);
+        if (branding.ok && branding.value.branding) clientName = branding.value.brand.name;
+      }
     }
   }
 
-  const csv = buildInvoiceCsv(invoice.value, {
+  const csv = buildInvoiceCsv(invoice, {
     generatedAt: new Date().toISOString(),
     ...(clientName ? { clientName } : {}),
   });

@@ -4,7 +4,9 @@ import { requireActor } from "../../../lib/session";
 import { hasPermission } from "../../../lib/access-rules";
 import { clientServicesFor, timeServicesFor } from "../../../lib/db";
 import { entryAmountCents, formatLoggedMinutes, formatMoney } from "../../../lib/time-rules";
+import { formatRate } from "../../../lib/billing-rules";
 import { correctTimeAction, issueInvoiceAction, removeTimeAction } from "../../actions/time";
+import { creditInvoiceAction } from "../../actions/billing";
 
 export const metadata = { title: "Time" };
 
@@ -68,6 +70,11 @@ export default async function TimePage({
     : { entries: 0, minutes: 0, billableMinutes: 0, nonBillableMinutes: 0, billedMinutes: 0, amountCents: 0, currency: null, unpriced: 0, billablePercent: null };
   const scope = clients.ok ? clients.value.map((entry) => entry.client) : [];
   const invoiceRef = first(params.invoice);
+  // The invoice behind the reference in the URL, with its tax and whatever has
+  // been credited against it since — read back, never recomputed, so the panel
+  // shows what was charged rather than what today's rules would charge.
+  const issued = invoiceRef ? await service.issued(actor, invoiceRef) : null;
+  const standing = issued && issued.ok ? issued.value : null;
   const canBill = hasPermission(actor.role, "queue:manage");
   const names = new Map(scope.map((client) => [client.id, client.name]));
   const cardOf = (clientId: string | null) => cards.ok ? cards.value.find((card) => card.clientId === clientId) : undefined;
@@ -90,7 +97,84 @@ export default async function TimePage({
           {first(params.error)}
         </p>
       ) : null}
-      {invoiceRef ? (
+      {/* The invoice that was just issued, read back rather than recomputed:
+          what it charged, what was added to it, and what is still owed after
+          any credit notes. A credit note is the only way back, so it belongs
+          next to the invoice rather than on a page of its own. */}
+      {standing ? (
+        <section aria-label="Issued invoice" className="space-y-2 rounded-xl2 border border-line bg-surface p-4">
+          <h2 className="font-display text-sm font-semibold text-ink">
+            {standing.invoice.ref} — {formatMoney(standing.invoice.totals.amountCents, standing.invoice.totals.currency)} of labour
+          </h2>
+          <ul className="space-y-0.5 text-xs text-ink-soft">
+            {standing.invoice.tax ? (
+              <li>
+                {standing.invoice.tax.label} at {formatRate(standing.invoice.tax.rateBasisPoints)}:{" "}
+                {formatMoney(standing.invoice.tax.taxCents, standing.invoice.totals.currency)}
+              </li>
+            ) : (
+              <li>No tax rule covered this client when it was issued.</li>
+            )}
+            {standing.invoice.retainer ? (
+              <li>
+                Drawn from retainer {standing.invoice.retainer.id}:{" "}
+                {formatMoney(standing.invoice.retainer.drawnCents, standing.invoice.retainer.currency)}
+              </li>
+            ) : null}
+            <li className="font-semibold text-ink">
+              Charged: {formatMoney(standing.invoice.totalCents ?? 0, standing.invoice.totals.currency)} · credited:{" "}
+              {formatMoney(standing.creditedCents, standing.invoice.totals.currency)} · outstanding:{" "}
+              {formatMoney(standing.outstandingCents, standing.invoice.totals.currency)}
+            </li>
+          </ul>
+          <p className="text-sm text-ink-soft">
+            <a href={`/time/export?ref=${encodeURIComponent(standing.invoice.ref)}`} className="font-semibold text-brand hover:underline">
+              Download {standing.invoice.ref} as CSV
+            </a>
+          </p>
+
+          {canBill ? (
+            <form action={creditInvoiceAction} className="flex flex-wrap items-end gap-2">
+              <input type="hidden" name="invoiceRef" value={standing.invoice.ref} />
+              <label className="text-xs text-ink-soft">
+                Amount to credit
+                <input
+                  name="amount"
+                  type="number"
+                  min={0.01}
+                  step="0.01"
+                  required
+                  defaultValue={((standing.outstandingCents > 0 ? standing.outstandingCents : 0) / 100).toFixed(2)}
+                  className={`block w-28 ${inputClass}`}
+                />
+              </label>
+              <label className="text-xs text-ink-soft">
+                Why
+                <input
+                  name="reason"
+                  required
+                  placeholder="e.g. the first visit was logged twice"
+                  className={`block w-80 ${inputClass}`}
+                />
+              </label>
+              <button type="submit" className="rounded-full border border-line px-3 py-1.5 text-xs font-semibold text-ink-soft">
+                Issue a credit note
+              </button>
+            </form>
+          ) : null}
+
+          {standing.creditNotes.length > 0 ? (
+            <ul className="space-y-0.5 border-t border-line pt-2">
+              {standing.creditNotes.map((note) => (
+                <li key={note.id} className="text-xs text-ink-soft">
+                  <span className="font-mono font-semibold text-ink">{note.ref}</span>{" "}
+                  {formatMoney(note.amountCents, note.currency)} — {note.reason}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : invoiceRef ? (
         <p className="text-sm text-ink-soft">
           <a
             href={`/time/export?ref=${encodeURIComponent(invoiceRef)}`}
@@ -189,6 +273,8 @@ export default async function TimePage({
                 </a>
                 <span className="text-ink-soft">
                   {invoice.entries} entr{invoice.entries === 1 ? "y" : "ies"} · {formatMoney(invoice.amountCents, invoice.currency)}
+                  {invoice.taxCents > 0 ? ` + ${formatMoney(invoice.taxCents, invoice.currency)} tax` : ""}
+                  {invoice.creditedCents > 0 ? ` · ${formatMoney(invoice.creditedCents, invoice.currency)} credited` : ""}
                 </span>
                 <span className="ml-auto text-[11px] text-ink-faint">issued {invoice.issuedAt.slice(0, 10)}</span>
               </li>
