@@ -310,8 +310,14 @@ to stand on its own.
 > (`compliance-service.ts`), a **standalone verifier** for a third party
 > holding only a packet and the key (`scripts/verify-packet.ts`), and the
 > **communications templates** a duty drafts from (`comms-rules.ts`), covered by
-> `ontrak-tix/tests/tix-m3-comms.test.ts`. What remains in M3: a retention sweep
-> that walks expired artifacts rather than waiting to be asked.
+> `ontrak-tix/tests/tix-m3-comms.test.ts`, and the **retention sweep** that acts
+> on a closed lock without being asked (`planRetentionSweep`,
+> `IncidentDocsService.sweepRetention`, `POST /api/incidents/retention-sweep`,
+> `npm run sweep:retention`), covered by `ontrak-tix/tests/tix-m3-retention.test.ts`
+> and proved against real Postgres and a real filesystem in
+> `ontrak-tix/tests/tix-db.test.ts`. M3 is complete; the honest gaps that remain
+> are listed at the end of [docs/incidents.md](./docs/incidents.md) — a real
+> object-locked backend, per-tenant template authoring, and scheduling the sweep.
 >
 > M1 progress: the SLA engine (clocks, escalations and the scheduled sweep),
 > queue routing, CSAT surveys, attachments, the dispatcher report, canned
@@ -477,7 +483,7 @@ to stand on its own.
   deprovisions automatically; an IDS/IPS alert lands once (deduped), linked to
   the right asset, and can open an incident.
 
-### M3 — Incident response & defensible documentation `[~]`
+### M3 — Incident response & defensible documentation `[x]`
 **Goal:** run incidents to a playbook and produce an evidence packet that stands
 up to an adjuster or auditor.
 
@@ -547,6 +553,20 @@ up to an adjuster or auditor.
     Tix browser sweep (`tests/browser/tix.spec.ts`: upload, locked, a re-upload
     of the same bytes, an agent's removal refused, an administrator's removal
     refused while COMPLIANCE holds, artifact still locked).
+  - `[x]` The **retention sweep**: a lock nobody acts on is the same as no lock,
+    so `planRetentionSweep` decides what a closed window allows — using the same
+    `objectPurgeDecision` a manual purge uses, so a scheduled sweep and a button
+    press cannot disagree about a COMPLIANCE artifact — and
+    `IncidentDocsService.sweepRetention` carries it out: bytes, tombstone,
+    timeline line and audit event per artifact, one run event even when it found
+    nothing, all under `system:retention-sweep`. A legal hold stops it in both
+    directions, a `dryRun` reports without touching anything, and the report says
+    what it left alone and why. Reachable as
+    `POST /api/incidents/retention-sweep` (Bearer-authenticated, `?tenant=`,
+    `?dryRun=1`) and as `npm run sweep:retention`. Covered by
+    `ontrak-tix/tests/tix-m3-retention.test.ts`, and by the Postgres integration
+    test in `ontrak-tix/tests/tix-db.test.ts`, which purges real files and rows
+    with a real hold in the way and checks the audit chain afterwards.
 - Regulatory/notification tracking, communications templates, and a
   post-incident review with tracked actions.
   - `[x]` **Notification duties**: regimes suggested from the incident's own

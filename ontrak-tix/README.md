@@ -263,7 +263,19 @@ generate without a local install would rewrite the parent project's client.
   hold that outranks the clock in both directions; and a write-once filesystem
   store that opens each file with `wx` and hands out the S3 `x-amz-object-lock-*`
   headers a real object-locked bucket needs. The lock travels inside the manifest
-  digest.
+  digest. The window is acted on rather than waited on:
+  `planRetentionSweep` decides what a closed lock allows (using the same
+  `objectPurgeDecision` a manual purge uses, so a sweep and a button press cannot
+  disagree about a COMPLIANCE artifact) and `IncidentDocsService.sweepRetention`
+  purges the bytes and the row, leaving a tombstone, a timeline line and both a
+  per-artifact audit event and one for the run — a legal hold stops it in both
+  directions, `dryRun` reports without changing anything, and the report says
+  what it left alone and why.
+- `src/app/api/incidents/retention-sweep/route.ts` + `scripts/retention-sweep.ts`
+  (`npm run sweep:retention`) — the **retention sweep's** scheduled entry point
+  (Bearer-authenticated with `ONTRAK_TIX_CRON_SECRET`, `?tenant=`, `?dryRun=1`)
+  and its operator-script equivalent. Idempotent, so it is safe to run hourly:
+  a purged artifact is out of the worklist the second time.
 - `src/lib/war-room-rules.ts` + `war-room-service.ts` (M3) — the **war-room
   timeline**: the incident log, the tenant's audit chain, the alert stream and
   the decisions taken about the incident, merged into one view where the same
@@ -338,11 +350,16 @@ covers playbook planning and step transitions, evidence validation, the chain of
 custody, legal hold and retention, manifest determinism, the docs service and its
 Prisma adapter, and the rendered incident console; `tix-m3-comms.test.ts` covers
 the incident communication drafts (placeholders, regime selection, readiness, the
-M1 bridge and the rendered duty panel); `tix-m3-assurance.test.ts`
+M1 bridge and the rendered duty panel); `tix-m3-retention.test.ts` covers the
+retention sweep's planning, the service that carries it out (bytes, tombstones,
+timeline, audit, dry runs, tenant scoping) and the Prisma worklist query;
+`tix-m3-assurance.test.ts`
 covers the packet's digests and signature, offline verification, completeness and
 the export that records itself; `tix-db.test.ts`
-exercises the real Prisma store and hash-chained audit against Postgres,
-skipping cleanly when no database is reachable.
+exercises the real Prisma store and hash-chained audit against Postgres, and the
+retention sweep against real Postgres plus real files on disk (a held artifact
+survives, the rest are purged, the chain still verifies), skipping cleanly when
+no database is reachable.
 
 The Tix surfaces have a browser sweep too — opt-in, because it needs the app
 running:

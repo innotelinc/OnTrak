@@ -376,6 +376,21 @@ export class PrismaIncidentDocsStore implements IncidentDocsStore {
   }
 
   /**
+   * The tenant's artifacts whose window has closed and which are still stored —
+   * the sweep's worklist, oldest lock first so the oldest evidence goes first.
+   * The database does the filtering; a legal hold is judged per incident by the
+   * service, which is where the hold rule already lives.
+   */
+  async listExpiredArtifacts(tenantId: string, now: string, limit: number): Promise<EvidenceArtifactRecord[]> {
+    const rows = await this.db.evidenceArtifact.findMany({
+      where: { tenantId, purgedAt: null, retainUntil: { lte: new Date(now) } },
+      orderBy: { lockedAt: "asc" },
+      take: limit,
+    });
+    return rows.map(toArtifactRecord);
+  }
+
+  /**
    * Every listed incident's documentation in four queries rather than four per
    * incident. The ordering matches the single-incident methods exactly, so a
    * page renders identically either way.

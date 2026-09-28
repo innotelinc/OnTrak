@@ -210,6 +210,110 @@ export function objectPurgeDecision(
 }
 
 /* -------------------------------------------------------------------------- */
+/*  The retention sweep                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What a sweep decided about one artifact.
+ *
+ * `RETAIN` and `HELD` are both "not now", and they are kept apart because they
+ * mean different things to a reader: one is the clock still running (or a mode
+ * that will not yield), the other is somebody having said "preserve this".
+ */
+export type RetentionSweepOutcome = "PURGE" | "RETAIN" | "HELD" | "ALREADY_GONE";
+
+export interface RetentionSweepCandidate {
+  artifactId: string;
+  incidentId: string;
+  key: string;
+  bytes: number;
+  lock: ObjectLock;
+  /** Is a legal hold in force on the incident this artifact belongs to? */
+  holdActive: boolean;
+  purgedAt: string | null;
+}
+
+export interface RetentionSweepDecision {
+  candidate: RetentionSweepCandidate;
+  outcome: RetentionSweepOutcome;
+  /** Why, in words a report can print. */
+  reason: string;
+  /** Removing it now would need an explicit governance bypass, on the record. */
+  requiresBypass: boolean;
+}
+
+export interface RetentionSweepPlan {
+  decisions: RetentionSweepDecision[];
+  /** The artifacts the sweep may carry out, bytes and all. */
+  purge: RetentionSweepDecision[];
+  summary: {
+    considered: number;
+    purge: number;
+    /** Still inside the window, or in a mode that will not shorten. */
+    retained: number;
+    held: number;
+    alreadyGone: number;
+    /** Bytes the purge list would free. */
+    bytesFreed: number;
+  };
+}
+
+/**
+ * Decide what the clock allows a sweep to remove, using the *same* rule the
+ * manual purge uses.
+ *
+ * That is the whole point of putting it here: a scheduled sweep and an
+ * administrator pressing the button must not be able to disagree about whether a
+ * COMPLIANCE artifact is removable, so both call `objectPurgeDecision` and this
+ * function only classifies the answer. A sweep never bypasses GOVERNANCE unless
+ * it is explicitly told to (`options.bypassGovernance`), and a legal hold stops
+ * it in both directions.
+ */
+export function planRetentionSweep(
+  candidates: readonly RetentionSweepCandidate[],
+  now: string,
+  options: { bypassGovernance?: boolean } = {},
+): RetentionSweepPlan {
+  const decisions: RetentionSweepDecision[] = candidates.map((candidate) => {
+    const decision = objectPurgeDecision(
+      { lock: candidate.lock, holdActive: candidate.holdActive, purgedAt: candidate.purgedAt },
+      now,
+      { bypassGovernance: options.bypassGovernance },
+    );
+
+    if (decision.allowed) {
+      return { candidate, outcome: "PURGE", reason: decision.reason, requiresBypass: decision.requiresBypass };
+    }
+
+    const outcome: RetentionSweepOutcome = candidate.purgedAt
+      ? "ALREADY_GONE"
+      : candidate.holdActive
+        ? "HELD"
+        : "RETAIN";
+    return { candidate, outcome, reason: decision.reason, requiresBypass: decision.requiresBypass };
+  });
+
+  const purge = decisions.filter((entry) => entry.outcome === "PURGE");
+  return {
+    decisions,
+    purge,
+    summary: {
+      considered: decisions.length,
+      purge: purge.length,
+      retained: decisions.filter((entry) => entry.outcome === "RETAIN").length,
+      held: decisions.filter((entry) => entry.outcome === "HELD").length,
+      alreadyGone: decisions.filter((entry) => entry.outcome === "ALREADY_GONE").length,
+      bytesFreed: purge.reduce((total, entry) => total + entry.candidate.bytes, 0),
+    },
+  };
+}
+
+/** The reason a sweep records when it removes something, sentence-shaped. */
+export function retentionSweepReason(lock: ObjectLock): string {
+  return `Retention window closed at ${lock.retainUntil}; purged by the scheduled retention sweep.`;
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Handing the lock to an object store                                       */
 /* -------------------------------------------------------------------------- */
 
