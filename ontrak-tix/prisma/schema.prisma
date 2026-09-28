@@ -61,6 +61,12 @@ model Tenant {
   rateCards             RateCard[]
   timeEntries           TimeEntry[]
   clientSurveys         ClientSurvey[]
+  clientBranding        ClientBranding[]
+  taxRules              TaxRule[]
+  creditNotes           CreditNote[]
+  retainers             Retainer[]
+  rotaShifts            RotaShift[]
+  handoffs              Handoff[]
 
   @@index([slug])
 }
@@ -117,6 +123,10 @@ model Client {
   rateCards     RateCard[]
   timeEntries   TimeEntry[]
   surveys       ClientSurvey[]
+  branding      ClientBranding?
+  taxRule       TaxRule?
+  creditNotes   CreditNote[]
+  retainers     Retainer[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -193,6 +203,8 @@ model Queue {
   tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tickets     Ticket[]
   slaPolicies SlaPolicy[]
+  rotaShifts  RotaShift[]
+  handoffs    Handoff[]
 
   @@unique([tenantId, slug])
 }
@@ -361,6 +373,147 @@ model SlaEscalation {
 /// accumulating — a nullable column cannot carry the uniqueness constraint that
 /// would say so, so the rule lives where the decision is made.
 ///
+/// Per-client branding (M4). A desk that serves many clients is seen by each of
+/// them as *their* supplier, so the name, colour and voice a client reads have
+/// to be theirs. One row per client; the desk's own identity is the fallback.
+model ClientBranding {
+  id           String   @id @default(cuid())
+  tenantId     String
+  clientId     String   @unique
+  /// The name the client is called in their own notices and on their portal.
+  displayName  String
+  /// `#rrggbb`. A client's own colour, used on their pages and in their mail.
+  accentColor  String
+  /// `https:` or `data:image/...` only — a portal that fetches arbitrary URLs
+  /// leaks its visitors to whoever set them.
+  logoUrl      String?
+  /// The address a client's own people should write back to.
+  supportEmail String?
+  /// The wording appended to a notice sent on this client's behalf.
+  signature    String?
+  updatedBy    String
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+/// A tax rule: the desk's default, or one client's own (M4 billing depth).
+/// Field-for-field the same shape as `RateCard` — a nullable owner column —
+/// because the two are resolved the same way and one of them having a different
+/// notion of "the desk's default" would be a bug waiting to be written.
+model TaxRule {
+  id              String   @id @default(cuid())
+  tenantId        String
+  clientId        String?  @unique
+  label           String
+  /// Basis points (1/100th of a percent), so 8.25% is 825.
+  rateBasisPoints Int
+  updatedAt       DateTime @updatedAt
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+/// A credit note: the only remedy for an invoice that was wrong. An invoiced
+/// entry is frozen, so a mistake is corrected by crediting money — never by
+/// editing what was billed. Refund and re-issue are two acts, and the record
+/// says which happened.
+model CreditNote {
+  id          String   @id @default(cuid())
+  tenantId    String
+  ref         String
+  invoiceRef  String
+  clientId    String?
+  currency    String
+  amountCents Int
+  reason      String
+  issuedBy    String
+  issuedAt    DateTime @default(now())
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, ref])
+  @@index([tenantId, invoiceRef])
+}
+
+/// A retainer: money paid up front for a period, drawn down by the invoices
+/// issued inside it. The balance is a question answered from the ledger (what
+/// was funded, minus what invoices have drawn), never a stored counter that can
+/// drift from the invoices themselves.
+model Retainer {
+  id          String   @id @default(cuid())
+  tenantId    String
+  clientId    String
+  currency    String
+  fundedCents Int
+  periodStart DateTime
+  periodEnd   DateTime
+  note        String?
+  createdBy   String
+  createdAt   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, periodStart, periodEnd])
+  @@index([tenantId, clientId])
+}
+
+enum ShiftKind {
+  SHIFT
+  ON_CALL
+}
+
+/// One rota entry: an agent on a queue (or the desk) for a window, either
+/// working hours or on call. Overlap is refused for the same person, because a
+/// rota that double-books somebody is a rota nobody can be held to.
+model RotaShift {
+  id        String    @id @default(cuid())
+  tenantId  String
+  queueId   String?
+  userId    String
+  kind      ShiftKind @default(SHIFT)
+  startsAt  DateTime
+  endsAt    DateTime
+  note      String?
+  createdBy String
+  createdAt DateTime  @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  queue  Queue? @relation(fields: [queueId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, startsAt])
+  @@index([tenantId, userId, startsAt])
+}
+
+/// A handoff: the record that work and its context changed hands at a moment,
+/// with what was still open named on it. The note is required — a handoff with
+/// nothing written down is the thing this table exists to prevent.
+model Handoff {
+  id             String   @id @default(cuid())
+  tenantId       String
+  queueId        String?
+  fromUserId     String
+  toUserId       String?
+  note           String
+  /// The work handed over, named by ticket reference so the next person can
+  /// open each one without guessing what "the usual" meant.
+  openTicketRefs String[]
+  at             DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  queue  Queue? @relation(fields: [queueId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, at])
+}
+
 model RateCard {
   id               String   @id @default(cuid())
   tenantId         String
@@ -412,6 +565,14 @@ model TimeEntry {
   note                 String?
   invoicedAt           DateTime?
   invoiceRef           String?
+  /// Tax charged on this entry at the moment its invoice was issued, and the
+  /// rate that produced it. Held per entry for the same reason the rate is: the
+  /// invoice has to be re-readable, and a tax rule changed in April must not
+  /// restate what March was charged.
+  taxCents             Int?
+  taxRateBasisPoints   Int?
+  /// The retainer this entry's invoice drew down, when one covered the period.
+  retainerId           String?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 

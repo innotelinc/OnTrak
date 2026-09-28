@@ -3,10 +3,12 @@ import { redirect } from "next/navigation";
 import { requireActor } from "../../../lib/session";
 import { hasPermission } from "../../../lib/access-rules";
 import {
+  clientBrandingServicesFor,
   clientServicesFor,
   clientSurveyServicesFor,
   prisma,
   slaPolicyStoreFor,
+  slaPolicyServicesFor,
   timeServicesFor,
 } from "../../../lib/db";
 import { clientSurveyAnswered, clientSurveyStatus } from "../../../lib/client-survey-rules";
@@ -14,9 +16,12 @@ import { satisfactionLabel } from "../../../lib/csat-rules";
 import { resolveSlaPolicy } from "../../../lib/sla-rules";
 import { describeScope } from "../../../lib/sla-policy-service";
 import { formatMoney } from "../../../lib/time-rules";
+import { brandFor, brandingSummary } from "../../../lib/client-branding-rules";
+import { formatRate, retainerSummary } from "../../../lib/billing-rules";
 import type { TicketPriority } from "../../../lib/ticket-rules";
 import { SlaPolicyForm } from "../../../components/SlaPolicyForm";
 import { RateCardForm } from "../../../components/RateCardForm";
+import { BrandingForm, RetainerForm, TaxRuleForm } from "../../../components/ClientBilling";
 import {
   addContactAction,
   assignClientAction,
@@ -28,6 +33,8 @@ import {
 import { deleteSlaPolicyAction, saveSlaPolicyAction } from "../../actions/sla";
 import { removeRateCardAction, saveRateCardAction } from "../../actions/time";
 import { requestClientSurveyAction } from "../../actions/surveys";
+import { saveBrandingAction } from "../../actions/branding";
+import { removeTaxRuleAction, saveRetainerAction, saveTaxRuleAction } from "../../actions/billing";
 
 export const metadata = { title: "Clients" };
 
@@ -57,7 +64,7 @@ export default async function ClientsPage({
   const today = now.slice(0, 10);
   const monthAgo = new Date(Date.parse(`${today}T00:00:00.000Z`) - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-  const [overview, scope, policies, active, staff, cards, surveys] = await Promise.all([
+  const [overview, scope, policies, active, staff, cards, surveys, queues] = await Promise.all([
     service.list(actor),
     service.scope(actor),
     slaPolicyStoreFor().listForTenant(actor.tenantId),
@@ -71,7 +78,12 @@ export default async function ClientsPage({
       : Promise.resolve([]),
     timeServicesFor().rateCards(actor),
     clientSurveyServicesFor().all(actor),
+    slaPolicyServicesFor().deskQueues(actor),
   ]);
+
+  // The queues, so a promise written at desk level can be scoped to one of them
+  // rather than only to everybody.
+  const deskQueues = queues.ok ? queues.value : [];
 
   const clients = overview.ok ? overview.value : [];
   const staffNames = new Map(staff.map((person) => [person.id, person.displayName]));
@@ -82,6 +94,24 @@ export default async function ClientsPage({
   const cardOf = (clientId: string | null) => rateCards.find((card) => card.clientId === clientId);
   const deskCard = cardOf(null);
   const allSurveys = surveys.ok ? surveys.value : [];
+
+  // Branding, tax rules and retainers are per client, so they are read per
+  // client here rather than by the list endpoint: a console that showed every
+  // client's brand to an agent scoped to two of them would leak the rest.
+  const [brandingViews, taxRules, retainerViews] = await Promise.all([
+    clientBrandingServicesFor().list(actor),
+    timeServicesFor().taxRules(actor),
+    Promise.all(
+      clients.map(async (entry) => [entry.client.id, await timeServicesFor().retainers(actor, entry.client.id)] as const),
+    ),
+  ]);
+  const brandingByClient = new Map((brandingViews.ok ? brandingViews.value : []).map((view) => [view.clientId, view.branding]));
+  const brandingOf = (clientId: string) => brandingByClient.get(clientId) ?? null;
+  const taxRulesAll = taxRules.ok ? taxRules.value : [];
+  const taxOf = (clientId: string) => taxRulesAll.find((rule) => rule.clientId === clientId) ?? null;
+  const deskTax = taxRulesAll.find((rule) => !rule.clientId) ?? null;
+  const retainersByClient = new Map(retainerViews.map(([clientId, result]) => [clientId, result.ok ? result.value : []]));
+  const retainersOf = (clientId: string) => retainersByClient.get(clientId) ?? [];
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
@@ -219,6 +249,53 @@ export default async function ClientsPage({
               ) : (
                 <p className="text-xs text-ink-faint">No rate card of their own; the desk&apos;s default applies.</p>
               )}
+
+              {/* Whose colours and name this client is shown in. A client with no
+                  brand of their own reads as the desk, which is stated rather
+                  than left to be discovered on an invoice. */}
+              {canManage ? (
+                <BrandingForm
+                  action={saveBrandingAction}
+                  clientId={client.id}
+                  clientName={client.name}
+                  {...(brandingOf(client.id) ? { branding: brandingOf(client.id)! } : {})}
+                />
+              ) : (
+                <p className="text-xs text-ink-soft">
+                  Branding: {brandingSummary(brandFor({ name: client.name }, brandingOf(client.id)))}
+                </p>
+              )}
+
+              {/* What is added to a bill, and what was paid before the work.
+                  Tax is read here because it is a property of *who* is being
+                  billed, exactly like the rate card above it. */}
+              {canManage ? (
+                <TaxRuleForm
+                  action={saveTaxRuleAction}
+                  removeAction={removeTaxRuleAction}
+                  clientId={client.id}
+                  {...(taxOf(client.id) ? { rule: taxOf(client.id)! } : {})}
+                />
+              ) : taxOf(client.id) ? (
+                <p className="text-xs text-ink-soft">
+                  Tax: {taxOf(client.id)!.label} at {formatRate(taxOf(client.id)!.rateBasisPoints)}
+                </p>
+              ) : (
+                <p className="text-xs text-ink-faint">No tax rule of their own; the desk&apos;s default applies.</p>
+              )}
+
+              {canManage ? (
+                <RetainerForm action={saveRetainerAction} clientId={client.id} currency={card?.currency ?? "USD"} />
+              ) : null}
+              {retainersOf(client.id).length > 0 ? (
+                <ul className="space-y-0.5">
+                  {retainersOf(client.id).map(({ retainer, standing }) => (
+                    <li key={retainer.id} className="text-xs text-ink-soft">
+                      <span className="font-semibold text-ink">Retainer</span> {retainerSummary(retainer, standing)}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
 
               {/* What their people said, and the link that asks them. One question
                   per period: asking twice for the same month is how a client
@@ -367,6 +444,21 @@ export default async function ClientsPage({
         </ul>
       ) : null}
 
+      {canManage ? (
+        <section aria-label="The desk's default tax rule" className="space-y-2 rounded-xl2 border border-line bg-surface p-4">
+          <h2 className="font-display text-sm font-semibold text-ink">The desk&apos;s default tax</h2>
+          <p className="text-xs text-ink-faint">
+            Applied to an invoice for a client with no rule of their own, at the moment it is issued — so a rate changed
+            later never restates what was already charged.
+          </p>
+          <TaxRuleForm
+            action={saveTaxRuleAction}
+            removeAction={removeTaxRuleAction}
+            {...(deskTax ? { rule: deskTax } : {})}
+          />
+        </section>
+      ) : null}
+
       <section aria-label="The desk's own promises" className="space-y-2 rounded-xl2 border border-line bg-surface p-4">
         <h2 className="font-display text-sm font-semibold text-ink">The desk&apos;s own promises</h2>
         <p className="text-xs text-ink-faint">
@@ -378,6 +470,7 @@ export default async function ClientsPage({
           canManage ? (
             <SlaPolicyForm
               key={policy.id}
+              queues={deskQueues}
               action={saveSlaPolicyAction}
               deleteAction={deleteSlaPolicyAction}
               policy={policy}
@@ -388,7 +481,7 @@ export default async function ClientsPage({
             </p>
           ),
         )}
-        {canManage ? <SlaPolicyForm action={saveSlaPolicyAction} /> : null}
+        {canManage ? <SlaPolicyForm action={saveSlaPolicyAction} queues={deskQueues} /> : null}
 
         <h2 className="pt-2 font-display text-sm font-semibold text-ink">The desk&apos;s own rate card</h2>
         <p className="text-xs text-ink-faint">

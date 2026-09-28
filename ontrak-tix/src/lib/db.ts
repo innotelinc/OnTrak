@@ -51,6 +51,13 @@ import { SlaPolicyService } from "./sla-policy-service";
 import { TimeService } from "./time-service";
 import { PrismaTimeStore, type TimePrismaClient } from "./time-store-prisma";
 import { ClientSurveyService } from "./client-survey-service";
+import { ClientBrandingService } from "./client-branding-service";
+import {
+  PrismaClientBrandingStore,
+  type ClientBrandingPrismaClient,
+} from "./client-branding-store-prisma";
+import { RotaService } from "./rota-service";
+import { PrismaRotaStore, type RotaPrismaClient } from "./rota-store-prisma";
 import {
   PrismaClientSurveyStore,
   type ClientSurveyPrismaClient,
@@ -97,6 +104,8 @@ let assurance: AssuranceService | null = null;
 let compliance: IncidentComplianceService | null = null;
 let commsTemplates: IncidentCommsTemplateService | null = null;
 let clients: ClientService | null = null;
+let branding: ClientBrandingService | null = null;
+let rota: RotaService | null = null;
 let warRoom: WarRoomService | null = null;
 
 function csat(): CsatService {
@@ -200,8 +209,29 @@ export function slaPolicyStoreFor(): PrismaSlaPolicyStore {
  * stack's audit sink, so a promise written, changed or removed joins the same
  * per-tenant hash chain as the tickets measured against it.
  */
+/**
+ * The desk's queues, for the one thing the SLA console needs them for: checking
+ * that a promise names a queue this desk actually has. Described structurally,
+ * like every other Prisma surface here, so the service layer never depends on a
+ * generated type.
+ */
+const queueLookup = {
+  listQueues: (tenantId: string) =>
+    (
+      prisma as unknown as {
+        queue: { findMany(args: unknown): Promise<{ id: string; name: string }[]> };
+      }
+    ).queue.findMany({ where: { tenantId }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+};
+
 export function slaPolicyServicesFor(): SlaPolicyService {
-  promises ??= new SlaPolicyService(slaPolicyStoreFor(), ticketServices().audit, clientServicesFor());
+  promises ??= new SlaPolicyService(
+    slaPolicyStoreFor(),
+    ticketServices().audit,
+    clientServicesFor(),
+    undefined,
+    queueLookup,
+  );
   return promises;
 }
 
@@ -350,6 +380,32 @@ export function commsTemplateServicesFor(): IncidentCommsTemplateService {
     new PrismaCommsTemplateStore(prisma as unknown as CommsTemplatePrismaClient),
   );
   return commsTemplates;
+}
+
+/**
+ * The configured client-branding service (M4): the name, colour and voice one
+ * client's own people see. It reuses the client service for the scope a brand is
+ * read and written under — speaking as a client you do not serve is exactly what
+ * act-as exists to prevent — and shares the ticket stack's audit sink, so a
+ * colour change is on the same chain as the notices it will appear in.
+ */
+export function clientBrandingServicesFor(): ClientBrandingService {
+  branding ??= new ClientBrandingService(
+    new PrismaClientBrandingStore(prisma as unknown as ClientBrandingPrismaClient),
+    clientServicesFor(),
+    ticketServices().audit,
+  );
+  return branding;
+}
+
+/**
+ * The configured rota service (M4): who is on, when, and what changed hands. It
+ * shares the ticket stack's audit sink, so a published shift and a handoff join
+ * the same per-tenant hash chain as the work they cover.
+ */
+export function rotaServicesFor(): RotaService {
+  rota ??= new RotaService(new PrismaRotaStore(prisma as unknown as RotaPrismaClient), ticketServices().audit);
+  return rota;
 }
 
 /**

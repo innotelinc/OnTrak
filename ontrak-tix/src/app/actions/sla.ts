@@ -41,6 +41,10 @@ export async function saveSlaPolicyAction(formData: FormData): Promise<void> {
   // A form that does not carry a client is the desk's own form: absent must mean
   // "the desk", not "move this promise to the client named ''".
   const carried = formData.get("clientId");
+  // The queue scope is only offered at desk level (a client's card already says
+  // who the promise is for), so absent means "leave the scope alone" and the
+  // service keeps whatever the promise already had.
+  const carriedQueue = formData.get("queueId");
 
   const input = {
     name: text(formData, "name"),
@@ -48,6 +52,7 @@ export async function saveSlaPolicyAction(formData: FormData): Promise<void> {
     responseMinutes: text(formData, "responseMinutes"),
     resolutionMinutes: text(formData, "resolutionMinutes"),
     clientId: carried === null ? undefined : text(formData, "clientId") || null,
+    queueId: carriedQueue === null || carried !== null ? undefined : text(formData, "queueId") || null,
     hours: (hours === "always" ? "always" : "business") as SlaHours,
     warningFraction: text(formData, "warningFraction"),
   };

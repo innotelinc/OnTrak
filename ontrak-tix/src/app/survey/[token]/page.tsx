@@ -1,6 +1,7 @@
 import Link from "next/link";
 
-import { clientSurveyServicesFor, prisma } from "../../../lib/db";
+import { clientBrandingServicesFor, clientSurveyServicesFor, prisma } from "../../../lib/db";
+import { brandingStyle } from "../../../lib/client-branding-rules";
 import { CSAT_SCALE, satisfactionLabel, type CsatScore } from "../../../lib/csat-rules";
 import { clientSurveyStatus, surveyQuestion } from "../../../lib/client-survey-rules";
 import { submitClientSurveyAction } from "../../actions/surveys";
@@ -38,11 +39,25 @@ export default async function ClientSurveyPage({
       ])
     : [null, null];
 
+  // The client's own identity, resolved without an actor: whoever opened this
+  // link holds a token and no account, and the page still has to read as *their*
+  // supplier rather than as the desk. The brand falls back to the desk's own,
+  // which is why this needs no branch.
+  const brand = survey
+    ? await clientBrandingServicesFor().forToken(survey.tenantId, survey.clientId, client?.name ?? "your team")
+    : null;
+
   const shell = (children: React.ReactNode) => (
-    <main className="mx-auto max-w-2xl space-y-5 px-4 py-10">
+    <main className="mx-auto max-w-2xl space-y-5 px-4 py-10" style={brand ? brandingStyle(brand) : undefined}>
       <div className="space-y-1">
-        <p className="text-xs font-semibold tracking-wide text-ink-faint uppercase">{tenant?.name ?? "Support"}</p>
+        <p className="text-xs font-semibold tracking-wide text-ink-faint uppercase">
+          {brand && brand.source === "client" ? brand.name : (tenant?.name ?? "Support")}
+        </p>
         <h1 className="font-display text-xl font-semibold text-ink">How did we do?</h1>
+        {brand?.logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- an operator-supplied logo, rendered as a plain image on a public page
+          <img src={brand.logoUrl} alt="" className="mt-2 h-8 w-auto" />
+        ) : null}
       </div>
       {children}
     </main>
@@ -115,6 +130,8 @@ export default async function ClientSurveyPage({
           </p>
         </form>
       )}
+
+      {brand?.signature ? <p className="text-xs whitespace-pre-line text-ink-faint">{brand.signature}</p> : null}
 
       <p className="text-xs text-ink-faint">
         <Link href="/sign-in" className="font-semibold text-brand hover:underline">

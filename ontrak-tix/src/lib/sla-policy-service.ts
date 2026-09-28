@@ -63,6 +63,11 @@ export interface SlaPolicyStore {
   countTickets(tenantId: string, policyId: string): Promise<number>;
 }
 
+/** Enough of the desk's queues to check that a promise names a real one. */
+export interface QueueLookup {
+  listQueues(tenantId: string): Promise<{ id: string; name: string }[]>;
+}
+
 /** Injected so plans are deterministic under test. */
 export interface SlaPolicyIds {
   id(): string;
@@ -120,7 +125,18 @@ export class SlaPolicyService {
     /** Used to check that the client a promise names is one of this desk's. */
     private readonly clients: ClientService | null = null,
     private readonly ids: SlaPolicyIds = systemSlaPolicyIds(),
+    /** Used to check that the queue a promise names is one of this desk's. */
+    private readonly directory: QueueLookup | null = null,
   ) {}
+
+  /** The desk's queues, so the console can offer them as a promise's scope. */
+  async deskQueues(actor: Actor): Promise<ServiceResult<{ id: string; name: string }[]>> {
+    if (!hasPermission(actor.role, "ticket:read:any")) {
+      return { ok: false, error: "You do not have access to the desk's queues." };
+    }
+    if (!this.directory) return { ok: true, value: [] };
+    return { ok: true, value: await this.directory.listQueues(actor.tenantId) };
+  }
 
   /** Every policy in the tenant, so a page can render the ladder. */
   async list(actor: Actor): Promise<ServiceResult<SlaPolicyRecord[]>> {
@@ -148,6 +164,9 @@ export class SlaPolicyService {
     const unknown = await this.clientExists(actor, drafted.value.clientId);
     if (unknown) return unknown;
 
+    const badQueue = await this.queueExists(actor, drafted.value.queueId);
+    if (badQueue) return badQueue;
+
     const clash = await this.store.findByName(actor.tenantId, drafted.value.name);
     if (clash) return { ok: false, error: `The desk already has a promise called “${drafted.value.name}”.` };
 
@@ -169,6 +188,9 @@ export class SlaPolicyService {
 
     const unknown = await this.clientExists(actor, drafted.value.clientId);
     if (unknown) return unknown;
+
+    const badQueue = await this.queueExists(actor, drafted.value.queueId);
+    if (badQueue) return badQueue;
 
     const clash = await this.store.findByName(actor.tenantId, drafted.value.name);
     if (clash && clash.id !== policyId) {
@@ -232,6 +254,17 @@ export class SlaPolicyService {
       return { ok: false, error: "A promise of zero minutes is not a promise. Give it a resolution target." };
     }
 
+    // A promise belongs to one owner. Naming both a client and a queue would put
+    // it on two rungs of the ladder at once, and `resolveSlaPolicy` would have to
+    // guess which one won — so the pair is refused rather than resolved.
+    const scope = {
+      queueId: input.queueId === undefined ? (existing?.queueId ?? null) : (input.queueId?.trim() ? input.queueId.trim() : null),
+      clientId: input.clientId === undefined ? (existing?.clientId ?? null) : (input.clientId?.trim() ? input.clientId.trim() : null),
+    };
+    if (scope.queueId && scope.clientId) {
+      return { ok: false, error: "A promise belongs to a client or a queue, not both. Pick one scope." };
+    }
+
     const candidate: SlaPolicyRecord = {
       id: existing?.id ?? this.ids.id(),
       tenantId,
@@ -244,8 +277,8 @@ export class SlaPolicyService {
       // An edit that does not mention the scope keeps it. Otherwise a form that
       // only carries the numbers would quietly turn a client's promise into the
       // desk's, or a queue's into everybody's.
-      queueId: input.queueId === undefined ? (existing?.queueId ?? null) : input.queueId,
-      clientId: input.clientId === undefined ? (existing?.clientId ?? null) : input.clientId,
+      queueId: scope.queueId,
+      clientId: scope.clientId,
     };
 
     const issues = validateSlaPolicy(candidate);
@@ -267,6 +300,23 @@ export class SlaPolicyService {
     if (!known.ok) return { ok: false, error: known.error };
     if (!known.value.some((entry) => entry.client.id === clientId)) {
       return { ok: false, error: "Client not found." };
+    }
+    return null;
+  }
+
+  /**
+   * A promise written for a queue that does not exist would sit on the ladder
+   * and never win, which is worse than being refused: it looks like cover that
+   * is not there. The id arrives in a form, and a form is a suggestion.
+   */
+  private async queueExists(
+    actor: Actor,
+    queueId: string | null | undefined,
+  ): Promise<{ ok: false; error: string } | null> {
+    if (!queueId || !this.directory) return null;
+    const known = await this.directory.listQueues(actor.tenantId);
+    if (!known.some((queue) => queue.id === queueId)) {
+      return { ok: false, error: "Queue not found." };
     }
     return null;
   }
