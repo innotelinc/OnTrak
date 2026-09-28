@@ -23,11 +23,14 @@ import {
   canSeeClient,
   clientScopeFor,
   scopeByClient,
+  scopeRefusal,
   validateClient,
   validateContact,
   type ClientAssignmentRecord,
 } from "../src/lib/client-rules";
 import { ClientService, MemoryClientStore, type ClientStore } from "../src/lib/client-service";
+import { MemoryTicketStore, TicketService } from "../src/lib/ticket-service";
+import { toTicketCreate } from "../src/lib/ticket-store-prisma";
 import { resolveSlaPolicy, weekdayCalendar, type SlaPolicy } from "../src/lib/sla-rules";
 import { toClientRecord, toActAsRecord, toAssignmentRecord, type ClientRow } from "../src/lib/client-store-prisma";
 
@@ -355,6 +358,72 @@ test("an act-as window is opened, refused twice over, and closed on the record",
   assert.equal(actions.filter((action) => action === "client.act_as.end").length, 1);
   const start = h.audit.snapshot().events.find((event) => event.action === "client.act_as.start")!;
   assert.equal(start.detail?.reason, "reproducing their complaint");
+});
+
+/* ------------------------------------------------------------ the write path */
+
+test("a client the actor does not serve is refused on the write path, and blank work never is", () => {
+  const agent = clientScopeFor({ role: "AGENT", userId: "agent-1", assignments: [assignment("client-1", "agent-1")] });
+
+  // Reading is scoped by a filter; acting is scoped by a sentence, because an
+  // action arrives as an id from a form and it has to be refused, not hidden.
+  assert.equal(scopeRefusal(agent, "client-1"), null);
+  assert.equal(scopeRefusal(agent, null), null, "the desk's own work is everybody's");
+  assert.equal(scopeRefusal(agent, undefined), null);
+  assert.match(scopeRefusal(agent, "client-2") ?? "", /client you do not serve/);
+
+  // A dispatcher runs the desk, so nothing is refused to them.
+  const dispatcher = clientScopeFor({ role: "DISPATCHER", userId: "dispatcher-1", assignments: [] });
+  assert.equal(scopeRefusal(dispatcher, "client-2"), null);
+});
+
+test("a ticket keeps the client it was raised for, so the worklist has something to scope", async () => {
+  const audit = new AuditLog(sha256);
+  const store = new MemoryTicketStore();
+  const service = new TicketService(store, audit);
+  const dispatcher = { id: "dispatcher-1", tenantId: "tenant-a", role: "DISPATCHER" as const };
+
+  const northwind = await service.createTicket(dispatcher, {
+    subject: "Their print queue is stuck",
+    description: "Lobby printer answers nobody.",
+    type: "INCIDENT",
+    priority: "NORMAL",
+    clientId: "client-1",
+  });
+  const contoso = await service.createTicket(dispatcher, {
+    subject: "Their VPN drops",
+    description: "Warehouse tunnel flaps all morning.",
+    type: "INCIDENT",
+    priority: "NORMAL",
+    clientId: "client-2",
+  });
+  const ownDesk = await service.createTicket(dispatcher, {
+    subject: "The server room is hot",
+    description: "Return-air sensor reads 31C.",
+    type: "INCIDENT",
+    priority: "HIGH",
+  });
+  assert.ok(northwind.ok && contoso.ok && ownDesk.ok);
+  if (!northwind.ok || !contoso.ok || !ownDesk.ok) return;
+
+  assert.equal(northwind.value.clientId, "client-1");
+  // The desk's own work stays shaped like the tickets written before clients
+  // existed rather than carrying an explicit null.
+  assert.equal("clientId" in ownDesk.value, false);
+
+  // The agent serves Northwind, so Contoso's work is not in their worklist while
+  // the desk's own backlog still is.
+  const scope = clientScopeFor({ role: "AGENT", userId: "agent-1", assignments: [assignment("client-1", "agent-1")] });
+  const visible = scopeByClient(scope, await store.listTickets("tenant-a"));
+  assert.deepEqual(visible.map((ticket) => ticket.subject).sort(), [
+    "The server room is hot",
+    "Their print queue is stuck",
+  ]);
+
+  // …and the client survives the trip to the database, which is what makes the
+  // filter above more than a rule nobody can exercise.
+  assert.equal(toTicketCreate(northwind.value).clientId, "client-1");
+  assert.equal(toTicketCreate(ownDesk.value).clientId, null);
 });
 
 /* ------------------------------------------------------------------ the adapter */

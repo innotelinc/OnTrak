@@ -3,7 +3,7 @@ import { sessionDisplayName } from "../../../../lib/session-rules";
 import { hasPermission } from "../../../../lib/access-rules";
 import { TICKET_PRIORITIES, TICKET_TYPES } from "../../../../lib/ticket-rules";
 import { canUseTicketTemplates } from "../../../../lib/template-service";
-import { templateServicesFor } from "../../../../lib/db";
+import { clientServicesFor, templateServicesFor } from "../../../../lib/db";
 import { createTicketAction } from "../../../actions/tickets";
 
 export const metadata = { title: "New ticket" };
@@ -25,6 +25,12 @@ export default async function NewTicketPage({
   const { error, template: templateId } = await searchParams;
   const mayPickRequester = actor.role !== "REQUESTER" && hasPermission(actor.role, "ticket:create");
   const mayUseTemplates = canUseTicketTemplates(actor);
+
+  // The client the work is for, from the ones this actor serves. A desk that
+  // serves one company still sees it; a desk that serves none renders no picker,
+  // because a ticket with no client is the desk's own work and the default.
+  const clients = mayPickRequester ? await clientServicesFor().list(actor) : null;
+  const clientOptions = clients?.ok ? clients.value : [];
 
   const templates = mayUseTemplates ? await templateServicesFor().list(actor.tenantId) : [];
   const claims = mayUseTemplates ? await getTixSession() : null;
@@ -124,6 +130,27 @@ export default async function NewTicketPage({
             </select>
           </label>
         </div>
+
+        {clientOptions.length > 0 ? (
+          <label className="block text-sm font-medium text-ink">
+            Client
+            <select
+              name="clientId"
+              defaultValue=""
+              className="mt-1 w-full rounded-xl2 border border-line bg-surface px-3 py-2 text-sm text-ink"
+            >
+              <option value="">The desk&rsquo;s own work</option>
+              {clientOptions.map(({ client }) => (
+                <option key={client.id} value={client.id}>
+                  {client.name}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-xs text-ink-faint">
+              Naming a client puts the ticket on their promise ladder and hides it from agents who do not serve them.
+            </span>
+          </label>
+        ) : null}
 
         {prefill?.queueId ? <input type="hidden" name="queueId" value={prefill.queueId} /> : null}
 

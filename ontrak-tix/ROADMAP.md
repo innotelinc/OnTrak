@@ -334,10 +334,17 @@ to stand on its own.
 > `ClientAssignment`, `ClientActAsSession`); the console is `/clients`; and the
 > inbox worklist is filtered by the reader's client scope before SLA flags, saved
 > views and counts are computed, so an agent assigned to two clients never sees a
-> third's work. Covered by `ontrak-tix/tests/tix-m4-clients.test.ts` and by the
-> Tix browser sweep (which records a client, its ladder, a contact and an
-> acted-as window, and checks that a client appears only for the people assigned
-> to it). The desk can write its own promises from the same console
+> third's work. The scope is asked again where a filter would not have been
+> enough: every write (reply, status, assign, the bulk toolbar) refuses a ticket
+> whose client the actor does not serve, the ticket's own page answers a `404`
+> rather than rendering a row the worklist withheld (its links and link picker
+> filtered the same way), and the quick-create form offers the clients the actor
+> serves so a ticket keeps the client it was raised for. Covered by
+> `ontrak-tix/tests/tix-m4-clients.test.ts` and by the Tix browser sweep (which
+> records a client, its ladder, a contact and an acted-as window, checks that a
+> client appears only for the people assigned to it, and then files a ticket for a
+> client nobody serves, confirms the worklist has no such ticket and that
+> addressing it by its own URL gets a 404). The desk can write its own promises from the same console
 > (`sla-policy-service.ts`), so a client's SLA is authored rather than seeded.
 > Time and billing have landed too (`time-rules.ts`, `time-service.ts`,
 > `time-store-prisma.ts`, the `/time` ledger and invoicing, rate cards on

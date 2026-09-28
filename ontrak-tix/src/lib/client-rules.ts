@@ -161,6 +161,19 @@ export function scopeByClient<T extends { clientId?: string | null }>(scope: Cli
   return rows.filter((row) => canSeeClient(scope, row.clientId));
 }
 
+/**
+ * The reason an actor may **not** act on a row that names a client, or `null`
+ * when they may.
+ *
+ * Filtering the worklist scopes what somebody *sees*; it does not scope what
+ * they can *do*. An action arrives as a ticket id in a form, and a hidden field
+ * is not a permission — so the same rule is asked again on the write path, and
+ * the answer is a sentence a server action can show.
+ */
+export function scopeRefusal(scope: ClientScope, clientId: string | null | undefined): string | null {
+  return canSeeClient(scope, clientId) ? null : "This work belongs to a client you do not serve.";
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Acting as a client                                                        */
 /* -------------------------------------------------------------------------- */
