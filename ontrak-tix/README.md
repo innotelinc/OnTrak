@@ -462,6 +462,20 @@ ONTRAK_TIX_BASE_URL=http://127.0.0.1:3001 ONTRAK_TIX_CRON_SECRET=… \
   npx tsx --tsconfig tests/tsconfig.json --test ontrak-tix/tests/tix-m3-retention-live.test.ts
 ```
 
+The scheduled **SLA sweep** has one too: it provisions two throwaway desks whose
+tickets are past their response and resolution promises, then POSTs to
+`/api/sla/sweep` and asserts that the rung was raised on the right clock for the
+right desk only, that it is on the audit chain, and that a second run raises
+nothing:
+
+```bash
+ONTRAK_TIX_BASE_URL=http://127.0.0.1:3001 ONTRAK_TIX_CRON_SECRET=… \
+  npx tsx --tsconfig tests/tsconfig.json --test ontrak-tix/tests/tix-m1-sla-sweep-live.test.ts
+```
+
+Unlike the other two it never omits `?tenant=`: an unscoped run would sweep every
+tenant in the database, including the demo one.
+
 See [ROADMAP.md](./ROADMAP.md) for the full milestone sequence.
 
 ## Documentation
