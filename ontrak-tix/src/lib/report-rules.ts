@@ -24,6 +24,7 @@ import {
   type SlaPause,
   type SlaPolicy,
 } from "./sla-rules";
+import { summariseCsat, type CsatSummary, type CsatSurvey } from "./csat-rules";
 import { isOpen, type TicketPriority, type TicketStatus } from "./ticket-rules";
 import type { InboxSlaFlags } from "./inbox-rules";
 
@@ -293,6 +294,112 @@ export function slaRemainingLabel(status: TicketSlaStatus): string {
     .sort((a, b) => a.remainingMinutes - b.remainingMinutes);
   if (running.length === 0) return "SLA met";
   return `SLA in ${formatMinutes(running[0].remainingMinutes)}`;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The per-client view (M4)                                                  */
+/* -------------------------------------------------------------------------- */
+
+/** A client, as a scorecard needs it. */
+export interface ReportClient {
+  id: string;
+  name: string;
+}
+
+/** A survey, reduced to what a per-client roll-up needs from it. */
+export interface ReportSurvey {
+  clientId: string | null;
+  requestedAt: string;
+  respondedAt: string | null;
+  score: number | null;
+}
+
+/**
+ * One client's numbers, in the same shape the desk-wide report uses — the two
+ * are built by the same function, so a client's attainment can never disagree
+ * with the report it was read off.
+ *
+ * `clientId` is null for the bucket every desk has: work that names no client.
+ * Dropping it would make the client figures add up to less than the whole desk.
+ */
+export interface ClientScorecard {
+  clientId: string | null;
+  name: string;
+  total: number;
+  open: number;
+  breached: number;
+  atRisk: number;
+  withoutPolicy: number;
+  response: { attainmentPercent: number | null; timing: TimingStats };
+  resolution: { attainmentPercent: number | null; timing: TimingStats };
+  csat: CsatSummary;
+}
+
+/**
+ * What every client's work came to, worst attainment first.
+ *
+ * The order is the point: a report whose first row is the client about to call
+ * is a report a dispatcher can act on. Clients with nothing measurable sit last,
+ * because "no data" is not "doing badly", and the two must not be confused by a
+ * sort.
+ */
+export function clientScorecards(
+  tickets: readonly ReportTicket[],
+  policies: readonly SlaPolicy[],
+  clients: readonly ReportClient[],
+  now: Date | string,
+  surveys: readonly ReportSurvey[] = [],
+): ClientScorecard[] {
+  const buckets: { clientId: string | null; name: string; mine: ReportTicket[] }[] = clients.map((client) => ({
+    clientId: client.id,
+    name: client.name,
+    mine: tickets.filter((ticket) => ticket.clientId === client.id),
+  }));
+
+  const unassigned = tickets.filter((ticket) => !ticket.clientId);
+  if (unassigned.length > 0) buckets.push({ clientId: null, name: "No client recorded", mine: unassigned });
+
+  return buckets
+    .map((bucket) => {
+      const report = buildSlaReport(bucket.mine, policies, now);
+      const mine = surveys.filter((survey) => survey.clientId === bucket.clientId);
+      const csat = summariseCsat(
+        mine.map(toCsatSurvey),
+        mine.length,
+      );
+      return {
+        clientId: bucket.clientId,
+        name: bucket.name,
+        total: report.totals.total,
+        open: report.totals.open,
+        breached: report.breached.length,
+        atRisk: report.atRisk.length,
+        withoutPolicy: report.totals.withoutPolicy,
+        response: report.response,
+        resolution: report.resolution,
+        csat,
+      };
+    })
+    .sort(byClientHealth);
+}
+
+function toCsatSurvey(survey: ReportSurvey): CsatSurvey {
+  return {
+    token: "",
+    requestedAt: survey.requestedAt,
+    respondedAt: survey.respondedAt,
+    score: (survey.score ?? null) as CsatSurvey["score"],
+    comment: null,
+  };
+}
+
+/** Most breached, then worst attainment, then whichever answered least. */
+function byClientHealth(a: ClientScorecard, b: ClientScorecard): number {
+  return (
+    b.breached - a.breached ||
+    (a.resolution.attainmentPercent ?? 101) - (b.resolution.attainmentPercent ?? 101) ||
+    a.name.localeCompare(b.name)
+  );
 }
 
 const PRIORITY_ORDER: Record<TicketPriority, number> = { URGENT: 0, HIGH: 1, NORMAL: 2, LOW: 3 };

@@ -23,41 +23,44 @@ model Tenant {
   slug      String   @unique
   createdAt DateTime @default(now())
 
-  users        User[]
-  clients      Client[]
-  contacts     Contact[]
-  clientAssignments ClientAssignment[]
-  clientActAsSessions ClientActAsSession[]
-  queues       Queue[]
-  tickets      Ticket[]
-  audit        AuditEvent[]
-  inbound      InboundMessage[]
-  slaPolicies  SlaPolicy[]
-  satisfaction SatisfactionResponse[]
-  attachments  Attachment[]
-  escalations  SlaEscalation[]
-  canned       CannedResponse[]
-  templates    TicketTemplate[]
-  links        TicketLink[]
-  notifications Notification[]
-  notificationPrefs NotificationPreference[]
-  savedViews   SavedView[]
-  securityAlerts SecurityAlert[]
-  alertVerdicts AlertVerdict[]
-  alertSuppressions AlertSuppression[]
-  alertPromotions AlertPromotion[]
-  identityConnection IdentityConnection?
-  incidents Incident[]
-  incidentEvents IncidentEvent[]
-  playbookSteps PlaybookStep[]
-  evidenceItems EvidenceItem[]
-  evidenceArtifacts EvidenceArtifact[]
-  custodyEntries CustodyEntry[]
-  legalHolds LegalHold[]
+  users                 User[]
+  clients               Client[]
+  contacts              Contact[]
+  clientAssignments     ClientAssignment[]
+  clientActAsSessions   ClientActAsSession[]
+  queues                Queue[]
+  tickets               Ticket[]
+  audit                 AuditEvent[]
+  inbound               InboundMessage[]
+  slaPolicies           SlaPolicy[]
+  satisfaction          SatisfactionResponse[]
+  attachments           Attachment[]
+  escalations           SlaEscalation[]
+  canned                CannedResponse[]
+  templates             TicketTemplate[]
+  links                 TicketLink[]
+  notifications         Notification[]
+  notificationPrefs     NotificationPreference[]
+  savedViews            SavedView[]
+  securityAlerts        SecurityAlert[]
+  alertVerdicts         AlertVerdict[]
+  alertSuppressions     AlertSuppression[]
+  alertPromotions       AlertPromotion[]
+  identityConnection    IdentityConnection?
+  incidents             Incident[]
+  incidentEvents        IncidentEvent[]
+  playbookSteps         PlaybookStep[]
+  evidenceItems         EvidenceItem[]
+  evidenceArtifacts     EvidenceArtifact[]
+  custodyEntries        CustodyEntry[]
+  legalHolds            LegalHold[]
   incidentNotifications IncidentNotification[]
-  incidentReviews IncidentReview[]
-  reviewActions IncidentReviewAction[]
-  commsTemplates IncidentCommsTemplate[]
+  incidentReviews       IncidentReview[]
+  reviewActions         IncidentReviewAction[]
+  commsTemplates        IncidentCommsTemplate[]
+  rateCards             RateCard[]
+  timeEntries           TimeEntry[]
+  clientSurveys         ClientSurvey[]
 
   @@index([slug])
 }
@@ -77,13 +80,14 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  requested    Ticket[]     @relation("TicketRequester")
-  assigned     Ticket[]     @relation("TicketAssignee")
-  messages     Message[]
-  attachments  Attachment[]
-  savedViews   SavedView[]
-  clients      ClientAssignment[]
+  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requested   Ticket[]           @relation("TicketRequester")
+  assigned    Ticket[]           @relation("TicketAssignee")
+  messages    Message[]
+  attachments Attachment[]
+  savedViews  SavedView[]
+  clients     ClientAssignment[]
+  timeEntries TimeEntry[]
 
   @@unique([tenantId, email])
   @@index([tenantId, role])
@@ -104,12 +108,15 @@ model Client {
   name      String
   createdAt DateTime @default(now())
 
-  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  contacts    Contact[]
-  tickets     Ticket[]
-  assignments ClientAssignment[]
-  slaPolicies SlaPolicy[]
+  tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contacts      Contact[]
+  tickets       Ticket[]
+  assignments   ClientAssignment[]
+  slaPolicies   SlaPolicy[]
   actAsSessions ClientActAsSession[]
+  rateCards     RateCard[]
+  timeEntries   TimeEntry[]
+  surveys       ClientSurvey[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -142,15 +149,15 @@ model ClientAssignment {
 /// live in one session is how a mistake becomes an incident.
 ///
 model ClientActAsSession {
-  id         String    @id @default(cuid())
-  tenantId   String
-  clientId   String
-  actorId    String
-  reason     String
-  startedAt  DateTime  @default(now())
-  expiresAt  DateTime
-  endedAt    DateTime?
-  endReason  String?
+  id        String    @id @default(cuid())
+  tenantId  String
+  clientId  String
+  actorId   String
+  reason    String
+  startedAt DateTime  @default(now())
+  expiresAt DateTime
+  endedAt   DateTime?
+  endReason String?
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -191,14 +198,14 @@ model Queue {
 }
 
 model Ticket {
-  id          String        @id @default(cuid())
+  id          String         @id @default(cuid())
   tenantId    String
   /// Human-facing reference, e.g. `TIX-000123`.
   ref         String
   subject     String
   description String
-  type        TicketType    @default(INCIDENT)
-  status      TicketStatus  @default(NEW)
+  type        TicketType     @default(INCIDENT)
+  status      TicketStatus   @default(NEW)
   priority    TicketPriority @default(NORMAL)
 
   queueId     String?
@@ -232,6 +239,7 @@ model Ticket {
   satisfaction SatisfactionResponse?
   linksFrom    TicketLink[]          @relation("LinkFrom")
   linksTo      TicketLink[]          @relation("LinkTo")
+  timeEntries  TimeEntry[]
 
   @@unique([tenantId, ref])
   @@index([tenantId, status])
@@ -263,18 +271,18 @@ enum TicketPriority {
 /// The immutable conversation thread: email, portal reply, internal note or
 /// system event. Rows are append-only — corrections are new messages.
 model Message {
-  id         String      @id @default(cuid())
-  tenantId   String
-  ticketId   String
-  authorId   String?
-  kind       MessageKind @default(PUBLIC_REPLY)
-  body       String
+  id        String      @id @default(cuid())
+  tenantId  String
+  ticketId  String
+  authorId  String?
+  kind      MessageKind @default(PUBLIC_REPLY)
+  body      String
   /// Normalized `Message-ID` of the mail this message came from, when it was
   /// ingested rather than typed.
-  messageId  String?
+  messageId String?
   /// Normalized `Message-ID` this message answers, for threading.
-  inReplyTo  String?
-  createdAt  DateTime    @default(now())
+  inReplyTo String?
+  createdAt DateTime    @default(now())
 
   ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   author User?  @relation(fields: [authorId], references: [id], onDelete: SetNull)
@@ -324,7 +332,7 @@ model SlaPolicy {
 /// One rung of an SLA escalation ladder, raised once per `(ticket, clock, level)`
 /// so a repeated sweep is idempotent. `audience` widens as the level rises.
 model SlaEscalation {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   tenantId       String
   ticketId       String
   ticketRef      String
@@ -337,7 +345,7 @@ model SlaEscalation {
   reason         String
   /// `<ticketId>:<kind>:<level>` — the idempotency key.
   dedupeKey      String
-  raisedAt       DateTime @default(now())
+  raisedAt       DateTime  @default(now())
   acknowledgedAt DateTime?
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -347,17 +355,122 @@ model SlaEscalation {
   @@index([tenantId, raisedAt])
 }
 
-/// A CSAT survey for one resolved ticket. The token is the unguessable link a
-/// requester follows; `respondedAt` is null until they answer.
-model SatisfactionResponse {
-  id          String   @id @default(cuid())
+///
+/// A client's agreed price (M4). `clientId` null is the desk's own default card.
+/// **One card per client**, which the service enforces by replacing rather than
+/// accumulating — a nullable column cannot carry the uniqueness constraint that
+/// would say so, so the rule lives where the decision is made.
+///
+model RateCard {
+  id               String   @id @default(cuid())
+  tenantId         String
+  clientId         String?
+  name             String
+  /// ISO-4217, upper case: a rate without a currency is not a price.
+  currency         String
+  /// Cents per hour, so money never sits in a float.
+  hourlyRateCents  Int
+  /// Bill in whole multiples of this many minutes, rounded up (0 = exact).
+  incrementMinutes Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tenant  Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client  Client?     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  entries TimeEntry[]
+
+  @@index([tenantId, clientId])
+}
+
+///
+/// Time worked (M4). The price is **snapshotted onto the row** — the minutes
+/// charged, the rate, the rounding that produced them and the currency — so a
+/// card that changes in March cannot restate February's invoice, and a card that
+/// is deleted cannot turn last quarter's bill into a guess.
+///
+/// An entry that went onto an issued invoice (`invoicedAt`, `invoiceRef`) is
+/// frozen: the service refuses to change or remove it, because a correction to
+/// something already billed is a credit note, not an edit.
+///
+model TimeEntry {
+  id                   String    @id @default(cuid())
+  tenantId             String
+  ticketId             String?
+  clientId             String?
+  userId               String
+  /// The day the work happened, held at midnight UTC: a timesheet must not move
+  /// a day because the server is in another timezone.
+  workDate             DateTime
+  minutes              Int
+  /// Minutes charged, after the snapped rounding.
+  billedMinutes        Int?
+  billable             Boolean   @default(true)
+  rateCardId           String?
+  rateCentsPerHour     Int?
+  rateIncrementMinutes Int?
+  currency             String?
+  note                 String?
+  invoicedAt           DateTime?
+  invoiceRef           String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ticket   Ticket?   @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  client   Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rateCard RateCard? @relation(fields: [rateCardId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, workDate])
+  @@index([tenantId, clientId])
+  @@index([tenantId, ticketId])
+  @@index([tenantId, invoiceRef])
+}
+
+///
+/// A client-level satisfaction survey (M4). One per client per period, answered
+/// from a link by whoever holds the token — no portal account, because the person
+/// who owns the relationship is usually not the person who raised the ticket, and
+/// a survey behind a sign-in is answered by whoever happens to have one.
+///
+/// The unique key is `(client, period)` rather than a nullable column, so "asked
+/// twice about the same month" is something the database refuses rather than
+/// something the service has to remember to check.
+///
+model ClientSurvey {
+  id          String    @id @default(cuid())
   tenantId    String
-  ticketId    String   @unique
-  token       String   @unique
+  clientId    String
+  /// The unguessable link; the token is the only credential the page needs.
+  token       String    @unique
+  /// The period being asked about, held at midnight UTC.
+  periodStart DateTime
+  periodEnd   DateTime
+  requestedBy String
+  requestedAt DateTime  @default(now())
   /// 1–5, captured on response.
   score       Int?
   comment     String?
-  requestedAt DateTime @default(now())
+  respondedAt DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, periodStart, periodEnd])
+  @@index([tenantId, clientId])
+}
+
+/// A CSAT survey for one resolved ticket. The token is the unguessable link a
+/// requester follows; `respondedAt` is null until they answer.
+model SatisfactionResponse {
+  id          String    @id @default(cuid())
+  tenantId    String
+  ticketId    String    @unique
+  token       String    @unique
+  /// 1–5, captured on response.
+  score       Int?
+  comment     String?
+  requestedAt DateTime  @default(now())
   respondedAt DateTime?
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -457,7 +570,7 @@ model TicketLink {
 /// Addressed to a role audience so staffing can change without touching the
 /// escalation ladder; `dedupeKey` mirrors the escalation's own key.
 model Notification {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   tenantId  String
   /// `AGENT`, `DISPATCHER` or `MANAGER`.
   audience  String
@@ -470,7 +583,7 @@ model Notification {
   dedupeKey String
   /// The escalation ladder rung the notice came from, for per-user filtering.
   level     Int?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
   readAt    DateTime?
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -555,17 +668,17 @@ enum SecuritySeverity {
 /// the sensor's own call; `triageSeverity` is raised when the alert lands on a
 /// business-critical asset or a privileged identity.
 model SecurityAlert {
-  id               String           @id @default(cuid())
-  tenantId         String
-  source           SecuritySource
-  severity         SecuritySeverity
-  triageSeverity   SecuritySeverity
-  signature        String
-  description      String
-  externalId       String?
+  id             String           @id @default(cuid())
+  tenantId       String
+  source         SecuritySource
+  severity       SecuritySeverity
+  triageSeverity SecuritySeverity
+  signature      String
+  description    String
+  externalId     String?
 
   asset            String?
-  assetKnown       Boolean  @default(false)
+  assetKnown       Boolean @default(false)
   assetOwner       String?
   /// `LOW` | `NORMAL` | `HIGH` | `CRITICAL`, narrowed on read.
   assetCriticality String?
@@ -576,18 +689,18 @@ model SecurityAlert {
   identityName       String?
   identityPrivileged Boolean @default(false)
 
-  sourceIp       String?
+  sourceIp    String?
   /// Where the raw vendor payload is stored. A reference, never the payload.
-  rawRef         String?
-  dedupeKey      String
-  occurredAt     DateTime
-  firstSeenAt    DateTime
-  lastSeenAt     DateTime
-  occurrences    Int                @default(1)
+  rawRef      String?
+  dedupeKey   String
+  occurredAt  DateTime
+  firstSeenAt DateTime
+  lastSeenAt  DateTime
+  occurrences Int      @default(1)
   /// The ticket an alert was promoted to, set by the promotion rules (M2).
-  ticketId       String?
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
+  ticketId    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -712,20 +825,20 @@ enum IncidentPhase {
 /// on purpose — an incident is an event with a commander, not a work item — but
 /// it may point at the ticket and the alert it was declared from.
 model Incident {
-  id         String           @id @default(cuid())
-  tenantId   String
+  id       String           @id @default(cuid())
+  tenantId String
   /// Human-facing reference, e.g. `INC-000007`.
-  ref        String
-  title      String
-  summary    String
-  severity   IncidentSeverity
-  phase      IncidentPhase    @default(DETECTED)
+  ref      String
+  title    String
+  summary  String
+  severity IncidentSeverity
+  phase    IncidentPhase    @default(DETECTED)
   /// The matrix inputs (`EXTENSIVE`…/`CRITICAL`…), kept as the evidence for the
   /// severity call. Narrowed on read.
-  impact     String
-  urgency    String
-  ticketId   String?
-  alertId    String?
+  impact   String
+  urgency  String
+  ticketId String?
+  alertId  String?
 
   commanderId String?
   commsLeadId String?
@@ -734,8 +847,8 @@ model Incident {
 
   /// When the incident actually began, which is not when it was noticed.
   detectedAt DateTime
-  declaredAt DateTime         @default(now())
-  updatedAt  DateTime         @updatedAt
+  declaredAt DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
   resolvedAt DateTime?
   reviewedAt DateTime?
 
@@ -806,8 +919,8 @@ model EvidenceItem {
   collectedBy String
   collectedAt DateTime @default(now())
 
-  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  incident Incident      @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  incident Incident       @relation(fields: [incidentId], references: [id], onDelete: Cascade)
   custody  CustodyEntry[]
 
   @@index([tenantId, incidentId, collectedAt])
@@ -823,7 +936,7 @@ model EvidenceItem {
 /// `objectPurgeDecision` allows it, which is why a purge leaves a visible mark
 /// instead of an empty reference nobody can explain.
 model EvidenceArtifact {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   tenantId    String
   incidentId  String
   /// `evidence/<tenant>/<incident>/<sha256>` — derived from the content.
@@ -835,7 +948,7 @@ model EvidenceArtifact {
   mode        String
   /// When the retention window closes. Until then the bytes cannot be removed.
   retainUntil DateTime
-  lockedAt    DateTime @default(now())
+  lockedAt    DateTime  @default(now())
   createdBy   String
   purgedAt    DateTime?
 
@@ -931,17 +1044,17 @@ enum NotificationStatus {
 /// A tenant's own draft for an incident notification (M3 comms templates). A
 /// regime key it names is what it drafts; an empty list means it fits any duty.
 model IncidentCommsTemplate {
-  id       String @id @default(cuid())
-  tenantId String
-  label    String
+  id        String    @id @default(cuid())
+  tenantId  String
+  label     String
   /// Who the message goes to: `REGULATOR` | `CLIENT` | `AFFECTED` | `STAFF`.
-  audience String
+  audience  String
   /// Regime keys from `src/lib/regulatory-rules.ts` this drafts, e.g. `gdpr-breach`.
-  regimes  String[]
-  subject  String
-  body     String
+  regimes   String[]
+  subject   String
+  body      String
   /// What a message of this kind must not forget, in one line.
-  guidance String?
+  guidance  String?
   /// Retired rather than deleted, so a notice that cited it stays explainable.
   retiredAt DateTime?
   createdBy String
@@ -955,33 +1068,33 @@ model IncidentCommsTemplate {
 }
 
 model IncidentNotification {
-  id         String   @id @default(cuid())
-  tenantId   String
-  incidentId String
+  id          String             @id @default(cuid())
+  tenantId    String
+  incidentId  String
   /// The regime's key in `src/lib/regulatory-rules.ts`, e.g. `nis2-incident`.
-  regime     String
-  label      String
-  authority  String
+  regime      String
+  label       String
+  authority   String
   requirement String
   /// Which incident timestamp the clock ran from: `detected` | `declared`.
-  clock      String
-  dueAt      DateTime
-  status     NotificationStatus @default(PENDING)
+  clock       String
+  dueAt       DateTime
+  status      NotificationStatus @default(PENDING)
 
-  sentAt          DateTime?
-  sentBy          String?
-  acknowledgedAt  DateTime?
-  acknowledgedBy  String?
+  sentAt         DateTime?
+  sentBy         String?
+  acknowledgedAt DateTime?
+  acknowledgedBy String?
   /// The authority's own reference for the notice, so it can be cited later.
-  reference       String?
-  note            String?
+  reference      String?
+  note           String?
   /// The notice text as it went out, kept verbatim (`comms-rules.ts`).
-  message         String?
-  waivedAt        DateTime?
-  waivedBy        String?
+  message        String?
+  waivedAt       DateTime?
+  waivedBy       String?
   /// A waiver is a decision, so it carries the reason it was made.
-  waiverReason    String?
-  createdAt       DateTime @default(now())
+  waiverReason   String?
+  createdAt      DateTime  @default(now())
 
   tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
@@ -1018,18 +1131,18 @@ model IncidentReview {
 /// `OVERDUE` is never stored — it is the comparison of `dueAt` with now, so an
 /// action cannot become late because somebody forgot to flag it.
 model IncidentReviewAction {
-  id         String             @id @default(cuid())
-  tenantId   String
-  incidentId String
-  reviewId   String
-  title      String
-  ownerId    String
-  dueAt      DateTime
-  status     ReviewActionStatus @default(OPEN)
-  note       String?
+  id          String             @id @default(cuid())
+  tenantId    String
+  incidentId  String
+  reviewId    String
+  title       String
+  ownerId     String
+  dueAt       DateTime
+  status      ReviewActionStatus @default(OPEN)
+  note        String?
   completedAt DateTime?
   completedBy String?
-  createdAt   DateTime          @default(now())
+  createdAt   DateTime           @default(now())
 
   tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   incident Incident       @relation(fields: [incidentId], references: [id], onDelete: Cascade)
@@ -1044,20 +1157,20 @@ model IncidentReviewAction {
 /// `recordHash` commits to this record's canonical payload. Matches the
 /// assurance model used across Innotel Labs.
 model AuditEvent {
-  id             String   @id @default(cuid())
-  tenantId       String
+  id         String   @id @default(cuid())
+  tenantId   String
   /// Position in this tenant's chain, starting at 1.
-  seq            Int
-  at             DateTime @default(now())
-  actor          String
-  action         String
-  targetType     String?
-  targetId       String?
-  detail         Json?
-  prevHash       String
-  recordHash     String
+  seq        Int
+  at         DateTime @default(now())
+  actor      String
+  action     String
+  targetType String?
+  targetId   String?
+  detail     Json?
+  prevHash   String
+  recordHash String
   /// Optional signature over `recordHash` for periodic checkpoints.
-  signature      String?
+  signature  String?
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 

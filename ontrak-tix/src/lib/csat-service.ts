@@ -176,6 +176,15 @@ export class CsatService {
       surveys.length,
     );
   }
+
+  /**
+   * Every survey in the tenant, for a report that needs to split them per
+   * client rather than roll them up. Read-only: the caller decides what to show,
+   * exactly as the single-ticket read does.
+   */
+  async list(tenantId: string): Promise<SatisfactionRecord[]> {
+    return this.store.listByTenant(tenantId);
+  }
 }
 
 /** The status of a survey link, for a page that is deciding what to render. */

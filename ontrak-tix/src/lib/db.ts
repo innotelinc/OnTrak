@@ -47,6 +47,14 @@ import {
 import { WarRoomService } from "./war-room-service";
 import { ClientService } from "./client-service";
 import { PrismaClientStore, type ClientPrismaClient } from "./client-store-prisma";
+import { SlaPolicyService } from "./sla-policy-service";
+import { TimeService } from "./time-service";
+import { PrismaTimeStore, type TimePrismaClient } from "./time-store-prisma";
+import { ClientSurveyService } from "./client-survey-service";
+import {
+  PrismaClientSurveyStore,
+  type ClientSurveyPrismaClient,
+} from "./client-survey-store-prisma";
 
 /**
  * The OnTrak Tix database client and service bootstrap.
@@ -72,6 +80,9 @@ let satisfaction: CsatService | null = null;
 let attachments: AttachmentService | null = null;
 let escalations: EscalationService | null = null;
 let slaPolicies: PrismaSlaPolicyStore | null = null;
+let promises: SlaPolicyService | null = null;
+let time: TimeService | null = null;
+let clientSurveys: ClientSurveyService | null = null;
 let canned: CannedResponseService | null = null;
 let links: TicketLinkService | null = null;
 let notifications: NotificationService | null = null;
@@ -185,6 +196,16 @@ export function slaPolicyStoreFor(): PrismaSlaPolicyStore {
 }
 
 /**
+ * The configured SLA policy authoring service (M4). It shares the ticket
+ * stack's audit sink, so a promise written, changed or removed joins the same
+ * per-tenant hash chain as the tickets measured against it.
+ */
+export function slaPolicyServicesFor(): SlaPolicyService {
+  promises ??= new SlaPolicyService(slaPolicyStoreFor(), ticketServices().audit, clientServicesFor());
+  return promises;
+}
+
+/**
  * The configured security-alert ingest service. It shares the ticket stack's
  * audit sink, so an ingested alert joins the same per-tenant hash chain as the
  * tickets it may later be promoted to.
@@ -288,6 +309,36 @@ export function complianceServicesFor(): IncidentComplianceService {
 export function clientServicesFor(): ClientService {
   clients ??= new ClientService(new PrismaClientStore(prisma as unknown as ClientPrismaClient), ticketServices().audit);
   return clients;
+}
+
+/**
+ * The configured time-and-billing service (M4). It shares the ticket stack's
+ * audit sink, so logged hours and issued invoices join the same per-tenant hash
+ * chain as the work they charge for, and it reuses the client service for the
+ * scope an agent's timesheet is read under.
+ */
+export function timeServicesFor(): TimeService {
+  time ??= new TimeService(
+    new PrismaTimeStore(prisma as unknown as TimePrismaClient),
+    clientServicesFor(),
+    ticketServices().audit,
+  );
+  return time;
+}
+
+/**
+ * The configured client-survey service (M4): the question a client's own people
+ * answer from a link, without an account. It reuses the client service for the
+ * scope a staff reader sees it under, and shares the ticket stack's audit sink so
+ * asking and answering are on the same chain as everything else.
+ */
+export function clientSurveyServicesFor(): ClientSurveyService {
+  clientSurveys ??= new ClientSurveyService(
+    new PrismaClientSurveyStore(prisma as unknown as ClientSurveyPrismaClient),
+    clientServicesFor(),
+    ticketServices().audit,
+  );
+  return clientSurveys;
 }
 
 /**

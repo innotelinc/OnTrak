@@ -10,10 +10,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { currentActor } from "../../../../lib/session";
-import { ticketServicesFor, slaPolicyStoreFor } from "../../../../lib/db";
+import {
+  clientServicesFor,
+  clientSurveyServicesFor,
+  csatServicesFor,
+  slaPolicyStoreFor,
+  ticketServicesFor,
+} from "../../../../lib/db";
 import { hasPermission } from "../../../../lib/access-rules";
-import { buildSlaReport } from "../../../../lib/report-rules";
-import { buildSlaCsv } from "../../../../lib/report-csv";
+import { buildSlaReport, clientScorecards, type ReportSurvey } from "../../../../lib/report-rules";
+import { buildClientCsv, buildSlaCsv } from "../../../../lib/report-csv";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -31,8 +37,44 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     ticketServicesFor().store.listTickets(actor.tenantId),
     slaPolicyStoreFor().listForTenant(actor.tenantId),
   ]);
-  const csv = buildSlaCsv(buildSlaReport(tickets, policies, now), { generatedAt: now });
-  const filename = `sla-report-${now.slice(0, 10)}.csv`;
+
+  // Two exports off one screen: the ticket-level report, and the per-client one
+  // that an account manager forwards.
+  const scope = request.nextUrl.searchParams.get("scope");
+  const perClient = scope === "clients";
+
+  let csv: string;
+  let filename: string;
+  if (perClient) {
+    const [clients, ticketSurveys, clientSurveys] = await Promise.all([
+      clientServicesFor().list(actor),
+      csatServicesFor().list(actor.tenantId),
+      clientSurveyServicesFor().all(actor),
+    ]);
+    const clientOfTicket = new Map(tickets.map((ticket) => [ticket.id, ticket.clientId ?? null]));
+    const surveys: ReportSurvey[] = [
+      ...ticketSurveys.map((survey) => ({
+        clientId: clientOfTicket.get(survey.ticketId) ?? null,
+        requestedAt: survey.requestedAt,
+        respondedAt: survey.respondedAt,
+        score: survey.score,
+      })),
+      ...(clientSurveys.ok ? clientSurveys.value : []).map((survey) => ({
+        clientId: survey.clientId,
+        requestedAt: survey.requestedAt,
+        respondedAt: survey.respondedAt,
+        score: survey.score,
+      })),
+    ];
+    csv = buildClientCsv(
+      clientScorecards(tickets, policies, clients.ok ? clients.value.map((entry) => entry.client) : [], now, surveys),
+      { generatedAt: now },
+    );
+    filename = `client-report-${now.slice(0, 10)}.csv`;
+  } else {
+    csv = buildSlaCsv(buildSlaReport(tickets, policies, now), { generatedAt: now });
+    filename = `sla-report-${now.slice(0, 10)}.csv`;
+  }
 
   return new NextResponse(csv, {
     status: 200,

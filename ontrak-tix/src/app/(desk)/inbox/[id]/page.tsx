@@ -2,10 +2,12 @@ import { notFound, redirect } from "next/navigation";
 
 import { requireActor } from "../../../../lib/session";
 import { canAssignTicket, canReplyToTicket, canUpdateTicket, hasPermission } from "../../../../lib/access-rules";
-import { ticketServicesFor, slaPolicyStoreFor, cannedServicesFor, linkServicesFor } from "../../../../lib/db";
+import { ticketServicesFor, slaPolicyStoreFor, cannedServicesFor, linkServicesFor, timeServicesFor } from "../../../../lib/db";
 import { slaStatusFor } from "../../../../lib/report-rules";
 import { TicketDetail, type TicketActions, type TicketOption } from "../../../../components/TicketDetail";
+import { TicketTime } from "../../../../components/TicketTime";
 import { assignAction, linkAction, mergeAction, replyAction, setStatusAction } from "../../../actions/tickets";
+import { logTimeAction, removeTimeAction } from "../../../actions/time";
 
 export const metadata = { title: "Ticket" };
 
@@ -28,11 +30,12 @@ export default async function TicketPage({
   const { id } = await params;
   const { flash, error } = await searchParams;
 
-  const [ticket, policies, all, canned] = await Promise.all([
+  const [ticket, policies, all, canned, time] = await Promise.all([
     ticketServicesFor().store.findTicket(actor.tenantId, id),
     slaPolicyStoreFor().listForTenant(actor.tenantId),
     ticketServicesFor().store.listTickets(actor.tenantId),
     cannedServicesFor().list(actor.tenantId),
+    timeServicesFor().entries(actor, { ticketId: id }),
   ]);
   if (!ticket) notFound();
   const sla = slaStatusFor(ticket, policies, new Date().toISOString());
@@ -62,6 +65,13 @@ export default async function TicketPage({
         </p>
       ) : null}
       <TicketDetail ticket={ticket} actions={actions} sla={sla} canned={canned} links={links} linkOptions={linkOptions} />
+      <TicketTime
+        ticketId={ticket.id}
+        entries={time.ok ? time.value : []}
+        today={new Date().toISOString().slice(0, 10)}
+        canLog={canUpdateTicket(actor, ticket)}
+        {...(canUpdateTicket(actor, ticket) ? { logAction: logTimeAction, removeAction: removeTimeAction } : {})}
+      />
     </div>
   );
 }
