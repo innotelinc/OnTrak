@@ -168,10 +168,12 @@ test.describe("OnTrak Tix desk", () => {
       .first();
     await expect(card).toBeVisible();
 
-    // Record a piece of evidence; recording it opens the custody trail.
-    await card.getByLabel("Label").fill("Firewall log");
-    await card.getByLabel("Reference").fill("s3://evidence/sweep/fw.log");
-    await card.getByRole("button", { name: "Record evidence" }).click();
+    // Record a piece of evidence; recording it opens the custody trail. The
+    // artifact-upload form also has a "Label", so scope to the evidence form.
+    const evidenceForm = card.locator("form").filter({ has: page.getByRole("button", { name: "Record evidence" }) });
+    await evidenceForm.getByLabel("Label").fill("Firewall log");
+    await evidenceForm.getByLabel("Reference").fill("s3://evidence/sweep/fw.log");
+    await evidenceForm.getByRole("button", { name: "Record evidence" }).click();
     await expect(card).toContainText("Firewall log");
     await expect(card).toContainText(/Custody: 1 entry, held by/);
 
@@ -219,6 +221,71 @@ test.describe("OnTrak Tix desk", () => {
     const second = (await secondResponse.json()) as { recordHash: string; contentHash: string };
     expect(second.recordHash).toBe(packet.recordHash);
     expect(second.contentHash).not.toBe(packet.contentHash);
+  });
+
+  test("incidents: an artifact is stored under lock, and COMPLIANCE refuses to release it", async ({ page }) => {
+    await page.goto(url("/incidents"), { waitUntil: "load" });
+
+    const stamp = Date.now();
+    await page.getByLabel("Title").fill(`Artifact sweep ${stamp}`);
+    await page.getByLabel("Summary").fill("Exercises object-lock storage for evidence bytes from the console.");
+    await page.getByRole("button", { name: "Declare incident" }).click();
+    await expect(page.locator("body")).toContainText(/INC-\d+/, { timeout: 20_000 });
+
+    const card = page
+      .locator("li")
+      .filter({ has: page.getByRole("heading", { name: `Artifact sweep ${stamp}`, exact: true }) })
+      .first();
+    await expect(card).toBeVisible();
+
+    // With nothing stored, the panel says so rather than pretending.
+    await expect(card).toContainText("No bytes stored");
+
+    // The evidence form and the upload form both have a "Label", so scope to
+    // the upload form rather than matching on the label text alone.
+    const upload = card.locator("form").filter({ has: page.getByRole("button", { name: "Store artifact" }) });
+    const bytes = Buffer.from(`sweep bundle ${stamp}`);
+    await upload.getByLabel("Label").fill("Sweep bundle");
+    // `exact` because the Kind select's FILE option is inside a label too.
+    await upload.getByLabel("File", { exact: true }).setInputFiles({ name: "bundle.txt", mimeType: "text/plain", buffer: bytes });
+    await upload.getByRole("button", { name: "Store artifact" }).click();
+
+    // The flash names the mode and the date the lock expires…
+    await expect(page.locator("body")).toContainText(/Artifact stored under COMPLIANCE retention until \d{4}-\d{2}-\d{2}/);
+    // …and the console shows the lock itself, not just "we kept it".
+    await expect(card).toContainText("Artifacts under lock");
+    await expect(card).toContainText("COMPLIANCE until");
+    await expect(card).toContainText("Sweep bundle");
+    await expect(card).toContainText("text/plain");
+
+    // Uploading the same bytes again is the same object, and says so.
+    await upload.getByLabel("File", { exact: true }).setInputFiles({ name: "bundle.txt", mimeType: "text/plain", buffer: bytes });
+    await upload.getByRole("button", { name: "Store artifact" }).click();
+    await expect(page.locator("body")).toContainText(/already stored/);
+
+    // Destroying evidence is deliberately stronger than recording it: an agent
+    // cannot, and the refusal says why. The bytes are still there afterwards.
+    await card.getByText("Remove the bytes…").click();
+    await card.getByPlaceholder("why the bytes are going").fill("sweep cleanup");
+    await card.getByRole("button", { name: "Remove bytes" }).click();
+    await expect(page.locator("body")).toContainText(/needs an administrator/);
+    await expect(card).toContainText("locked");
+    await expect(card).not.toContainText("Bytes removed");
+
+    // And an administrator still cannot shorten COMPLIANCE retention: the
+    // refusal names the rule that holds it rather than failing vaguely.
+    await signIn(page, "admin@acme.test");
+    await page.goto(url("/incidents"), { waitUntil: "load" });
+    const adminCard = page
+      .locator("li")
+      .filter({ has: page.getByRole("heading", { name: `Artifact sweep ${stamp}`, exact: true }) })
+      .first();
+    await adminCard.getByText("Remove the bytes…").click();
+    await adminCard.getByPlaceholder("why the bytes are going").fill("sweep cleanup, as an administrator");
+    await adminCard.getByRole("button", { name: "Remove bytes" }).click();
+    await expect(page.locator("body")).toContainText(/COMPLIANCE mode until/);
+    await expect(adminCard).toContainText("locked");
+    await expect(adminCard).not.toContainText("Bytes removed");
   });
 
   test("incidents: a regulatory clock is tracked, sent and acknowledged", async ({ page }) => {

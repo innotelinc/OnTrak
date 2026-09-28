@@ -38,6 +38,8 @@ import { IncidentService, MemoryIncidentStore, type IncidentStore } from "../src
 import { IncidentDocsService, MemoryIncidentDocsStore, type IncidentDocsStore } from "../src/lib/incident-docs-service";
 import {
   PrismaIncidentDocsStore,
+  toArtifactData,
+  toArtifactRecord,
   toCustodyData,
   toCustodyRecord,
   toEvidenceData,
@@ -46,6 +48,7 @@ import {
   toStepData,
   toStepRecord,
   type CustodyEntryRow,
+  type EvidenceArtifactRow,
   type EvidenceItemRow,
   type IncidentDocsPrismaClient,
   type LegalHoldRow,
@@ -557,6 +560,21 @@ const holdRow: LegalHoldRow = {
   releasedAt: null,
 };
 
+const artifactRow: EvidenceArtifactRow = {
+  id: "art-1",
+  tenantId: "tenant-a",
+  incidentId: "inc-1",
+  key: `evidence/tenant-a/inc-1/${"a".repeat(64)}`,
+  sha256: "a".repeat(64),
+  bytes: 2048,
+  contentType: "application/gzip",
+  mode: "COMPLIANCE",
+  retainUntil: new Date("2036-09-20T09:05:00Z"),
+  lockedAt: new Date("2026-09-20T09:05:00Z"),
+  createdBy: "user-1",
+  purgedAt: null,
+};
+
 test("the docs mappers narrow status and kind and round-trip", () => {
   const step = toStepRecord(stepRow);
   assert.equal(step.status, "DONE");
@@ -569,6 +587,15 @@ test("the docs mappers narrow status and kind and round-trip", () => {
   assert.equal(item.collectedAt, "2026-09-20T09:05:00.000Z");
   assert.equal(toEvidenceRecord({ ...evidenceRow, kind: "VIDEO" }).kind, "NOTE");
   assert.ok(toEvidenceData(item).collectedAt instanceof Date);
+
+  const artifact = toArtifactRecord(artifactRow);
+  assert.equal(artifact.mode, "COMPLIANCE");
+  assert.equal(artifact.retainUntil, "2036-09-20T09:05:00.000Z");
+  assert.equal(artifact.purgedAt, null);
+  // A mode this version does not know degrades to the cautious one, not to "open".
+  assert.equal(toArtifactRecord({ ...artifactRow, mode: "nonsense" }).mode, "COMPLIANCE");
+  assert.ok(toArtifactData(artifact).retainUntil instanceof Date);
+  assert.equal(toArtifactData({ ...artifact, purgedAt: "2026-09-21T00:00:00.000Z" }).purgedAt instanceof Date, true);
 });
 
 test("the Prisma docs store inserts, updates and lists", async () => {
@@ -576,8 +603,10 @@ test("the Prisma docs store inserts, updates and lists", async () => {
   const createdEvidence: unknown[] = [];
   const createdCustody: unknown[] = [];
   const createdHolds: unknown[] = [];
+  const createdArtifacts: unknown[] = [];
   let updated: unknown = null;
   let updatedHold: unknown = null;
+  let updatedArtifact: unknown = null;
   const client: IncidentDocsPrismaClient = {
     playbookStep: {
       findFirst: async (args) => ((args as { where: { key: string } }).where.key === "declare" ? stepRow : null),
@@ -617,6 +646,22 @@ test("the Prisma docs store inserts, updates and lists", async () => {
         return {};
       },
     },
+    evidenceArtifact: {
+      findFirst: async (args) => {
+        const where = (args as { where: { id?: string; key?: string } }).where;
+        if (where.id) return where.id === artifactRow.id ? artifactRow : null;
+        return where.key === artifactRow.key ? artifactRow : null;
+      },
+      findMany: async () => [artifactRow],
+      create: async (args) => {
+        createdArtifacts.push(args.data);
+        return {};
+      },
+      update: async (args) => {
+        updatedArtifact = args.data;
+        return {};
+      },
+    },
   };
   const store: IncidentDocsStore = new PrismaIncidentDocsStore(client);
 
@@ -648,6 +693,17 @@ test("the Prisma docs store inserts, updates and lists", async () => {
   await store.updateHold({ ...toHoldRecord(holdRow), releasedBy: "user-1", releasedAt: "2026-09-21T09:00:00.000Z" });
   assert.equal((updatedHold as { releasedBy: string }).releasedBy, "user-1");
   assert.ok((updatedHold as { releasedAt: Date }).releasedAt instanceof Date);
+
+  await store.insertArtifact(toArtifactRecord(artifactRow));
+  assert.equal(createdArtifacts.length, 1);
+  assert.ok((createdArtifacts[0] as { retainUntil: Date }).retainUntil instanceof Date);
+  assert.equal((await store.findArtifact("tenant-a", "art-1"))?.sha256, "a".repeat(64));
+  assert.equal(await store.findArtifact("tenant-a", "missing"), null);
+  assert.equal((await store.findArtifactByKey("tenant-a", artifactRow.key))?.id, "art-1");
+  assert.equal(await store.findArtifactByKey("tenant-a", "evidence/other"), null);
+  assert.equal((await store.listArtifacts("tenant-a", "inc-1"))[0].contentType, "application/gzip");
+  await store.markArtifactPurged("tenant-a", "art-1", "2026-09-21T00:00:00.000Z");
+  assert.ok((updatedArtifact as { purgedAt: Date }).purgedAt instanceof Date);
 });
 
 test("the custody and hold mappers narrow and round-trip", () => {

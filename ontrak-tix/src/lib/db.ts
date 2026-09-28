@@ -7,6 +7,7 @@ import { PrismaCsatStore, type CsatPrismaClient } from "./csat-store-prisma";
 import { AttachmentService } from "./attachment-service";
 import { PrismaAttachmentStore, type AttachmentPrismaClient } from "./attachment-store-prisma";
 import { FileBlobStore } from "./attachment-blob-file";
+import { FileEvidenceObjectStore } from "./object-lock-file";
 import { EscalationService } from "./escalation-service";
 import { PrismaEscalationStore, type EscalationPrismaClient } from "./escalation-store-prisma";
 import { PrismaSlaPolicyStore, type SlaPolicyPrismaClient } from "./sla-store-prisma";
@@ -243,6 +244,13 @@ export function incidentDocsServicesFor(): IncidentDocsService {
     new PrismaIncidentDocsStore(prisma as unknown as IncidentDocsPrismaClient),
     new PrismaIncidentStore(prisma as unknown as IncidentPrismaClient),
     ticketServices().audit,
+    undefined,
+    undefined,
+    // Artifact bytes go to the filesystem on a single node, under the retention
+    // mode this deployment chose (`ONTRAK_TIX_EVIDENCE_LOCK_MODE`, COMPLIANCE by
+    // default). A shared, object-locked bucket replaces the store behind the
+    // same port; the rules do not change.
+    { objects: new FileEvidenceObjectStore() },
   );
   return incidentDocs;
 }

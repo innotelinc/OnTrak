@@ -14,7 +14,13 @@ import {
   type EvidenceKind,
   type LegalHold,
 } from "./evidence-rules";
-import type { IncidentDocsPage, IncidentDocsStore, PlaybookStepRecord } from "./incident-docs-service";
+import type {
+  EvidenceArtifactRecord,
+  IncidentDocsPage,
+  IncidentDocsStore,
+  PlaybookStepRecord,
+} from "./incident-docs-service";
+import { isRetentionMode, DEFAULT_RETENTION_MODE } from "./object-lock-rules";
 import { isStepStatus, type StepStatus } from "./playbook-rules";
 
 export interface PlaybookStepRow {
@@ -68,6 +74,21 @@ export interface LegalHoldRow {
   releasedAt: Date | null;
 }
 
+export interface EvidenceArtifactRow {
+  id: string;
+  tenantId: string;
+  incidentId: string;
+  key: string;
+  sha256: string;
+  bytes: number;
+  contentType: string;
+  mode: string;
+  retainUntil: Date;
+  lockedAt: Date;
+  createdBy: string;
+  purgedAt: Date | null;
+}
+
 export interface IncidentDocsPrismaClient {
   playbookStep: {
     findFirst(args: unknown): Promise<PlaybookStepRow | null>;
@@ -88,6 +109,51 @@ export interface IncidentDocsPrismaClient {
     findMany(args: unknown): Promise<LegalHoldRow[]>;
     create(args: { data: unknown }): Promise<unknown>;
     update(args: { where: unknown; data: unknown }): Promise<unknown>;
+  };
+  evidenceArtifact: {
+    findFirst(args: unknown): Promise<EvidenceArtifactRow | null>;
+    findMany(args: unknown): Promise<EvidenceArtifactRow[]>;
+    create(args: { data: unknown }): Promise<unknown>;
+    update(args: { where: unknown; data: unknown }): Promise<unknown>;
+  };
+}
+
+/**
+ * A stored artifact. `mode` is narrowed on the way out like every other
+ * vocabulary in these adapters: a row written by an older version degrades to
+ * the cautious mode rather than being trusted.
+ */
+export function toArtifactRecord(row: EvidenceArtifactRow): EvidenceArtifactRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    incidentId: row.incidentId,
+    key: row.key,
+    sha256: row.sha256,
+    bytes: row.bytes,
+    contentType: row.contentType,
+    mode: isRetentionMode(row.mode) ? row.mode : DEFAULT_RETENTION_MODE,
+    retainUntil: toIso(row.retainUntil),
+    lockedAt: toIso(row.lockedAt),
+    createdBy: row.createdBy,
+    purgedAt: row.purgedAt === null ? null : toIso(row.purgedAt),
+  };
+}
+
+export function toArtifactData(artifact: EvidenceArtifactRecord) {
+  return {
+    id: artifact.id,
+    tenantId: artifact.tenantId,
+    incidentId: artifact.incidentId,
+    key: artifact.key,
+    sha256: artifact.sha256,
+    bytes: artifact.bytes,
+    contentType: artifact.contentType,
+    mode: artifact.mode,
+    retainUntil: new Date(artifact.retainUntil),
+    lockedAt: new Date(artifact.lockedAt),
+    createdBy: artifact.createdBy,
+    purgedAt: artifact.purgedAt === null ? null : new Date(artifact.purgedAt),
   };
 }
 
@@ -280,6 +346,35 @@ export class PrismaIncidentDocsStore implements IncidentDocsStore {
     return rows.map(toHoldRecord);
   }
 
+  async insertArtifact(artifact: EvidenceArtifactRecord): Promise<void> {
+    await this.db.evidenceArtifact.create({ data: toArtifactData(artifact) });
+  }
+
+  async findArtifact(tenantId: string, artifactId: string): Promise<EvidenceArtifactRecord | null> {
+    const row = await this.db.evidenceArtifact.findFirst({ where: { tenantId, id: artifactId } });
+    return row ? toArtifactRecord(row) : null;
+  }
+
+  async findArtifactByKey(tenantId: string, key: string): Promise<EvidenceArtifactRecord | null> {
+    const row = await this.db.evidenceArtifact.findFirst({ where: { tenantId, key } });
+    return row ? toArtifactRecord(row) : null;
+  }
+
+  async listArtifacts(tenantId: string, incidentId: string): Promise<EvidenceArtifactRecord[]> {
+    const rows = await this.db.evidenceArtifact.findMany({
+      where: { tenantId, incidentId },
+      orderBy: { lockedAt: "asc" },
+    });
+    return rows.map(toArtifactRecord);
+  }
+
+  async markArtifactPurged(tenantId: string, artifactId: string, at: string): Promise<void> {
+    await this.db.evidenceArtifact.update({
+      where: { id: artifactId, tenantId },
+      data: { purgedAt: new Date(at) },
+    });
+  }
+
   /**
    * Every listed incident's documentation in four queries rather than four per
    * incident. The ordering matches the single-incident methods exactly, so a
@@ -290,18 +385,20 @@ export class PrismaIncidentDocsStore implements IncidentDocsStore {
     if (incidentIds.length === 0) return pages;
     const ids = [...incidentIds];
 
-    const [steps, evidence, custody, holds] = await Promise.all([
+    const [steps, evidence, custody, holds, artifacts] = await Promise.all([
       this.db.playbookStep.findMany({ where: { tenantId, incidentId: { in: ids } }, orderBy: { order: "asc" } }),
       this.db.evidenceItem.findMany({ where: { tenantId, incidentId: { in: ids } }, orderBy: { collectedAt: "asc" } }),
       this.db.custodyEntry.findMany({ where: { tenantId, incidentId: { in: ids } }, orderBy: { at: "asc" } }),
       this.db.legalHold.findMany({ where: { tenantId, incidentId: { in: ids } }, orderBy: { placedAt: "desc" } }),
+      this.db.evidenceArtifact.findMany({ where: { tenantId, incidentId: { in: ids } }, orderBy: { lockedAt: "asc" } }),
     ]);
 
-    for (const id of ids) pages.set(id, { steps: [], evidence: [], custody: [], holds: [] });
+    for (const id of ids) pages.set(id, { steps: [], evidence: [], custody: [], holds: [], artifacts: [] });
     for (const row of steps) pages.get(row.incidentId)?.steps.push(toStepRecord(row));
     for (const row of evidence) pages.get(row.incidentId)?.evidence.push(toEvidenceRecord(row));
     for (const row of custody) pages.get(row.incidentId)?.custody.push(toCustodyRecord(row));
     for (const row of holds) pages.get(row.incidentId)?.holds.push(toHoldRecord(row));
+    for (const row of artifacts) pages.get(row.incidentId)?.artifacts.push(toArtifactRecord(row));
     return pages;
   }
 }

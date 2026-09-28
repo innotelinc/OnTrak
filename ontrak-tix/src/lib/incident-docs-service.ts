@@ -24,15 +24,29 @@ import {
   buildEvidenceManifest,
   custodyIntegrity,
   holdActive,
+  isEvidenceKind,
   validateCustodyTransfer,
   validateEvidence,
   type CustodyEntry,
   type CustodyTransferInput,
   type EvidenceInput,
   type EvidenceItem,
+  type EvidenceKind,
   type EvidenceManifest,
   type LegalHold,
 } from "./evidence-rules";
+import {
+  EVIDENCE_ARTIFACT_MAX_BYTES,
+  artifactKeyFor,
+  objectLockFor,
+  objectPutDecision,
+  objectPurgeDecision,
+  retentionModeFromEnv,
+  type EvidenceObjectStore,
+  type RetentionMode,
+  type StorePutResult,
+} from "./object-lock-rules";
+import { sha256Bytes } from "./object-lock-file";
 import {
   DEFAULT_INCIDENT_PLAYBOOK,
   changeStepStatus,
@@ -59,12 +73,45 @@ export interface PlaybookStepRecord {
   note: string | null;
 }
 
+/**
+ * An artifact's bytes under object-lock retention (M3).
+ *
+ * The artifact is content-addressed, so it belongs to the incident rather than
+ * to any one evidence item: two collections of the same bytes cite one object,
+ * and the evidence items are the statements about it. `purgedAt` is the only
+ * field that ever moves, and only when the retention rules allow it.
+ */
+export interface EvidenceArtifactRecord {
+  id: string;
+  tenantId: string;
+  incidentId: string;
+  /** `evidence/<tenant>/<incident>/<sha256>`. */
+  key: string;
+  sha256: string;
+  bytes: number;
+  contentType: string;
+  mode: RetentionMode;
+  retainUntil: string;
+  lockedAt: string;
+  createdBy: string;
+  purgedAt: string | null;
+}
+
+/** Where artifact bytes go, and the retention this deployment applies to them. */
+export interface ArtifactStorage {
+  objects: EvidenceObjectStore;
+  /** Defaults to `COMPLIANCE`: the strong mode, because evidence is the point. */
+  mode?: RetentionMode;
+  retentionDays?: number;
+}
+
 /** Everything the console shows about one incident's documentation. */
 export interface IncidentDocsPage {
   steps: PlaybookStepRecord[];
   evidence: EvidenceItem[];
   custody: CustodyEntry[];
   holds: LegalHold[];
+  artifacts: EvidenceArtifactRecord[];
 }
 
 export interface IncidentDocsStore {
@@ -80,6 +127,12 @@ export interface IncidentDocsStore {
   insertHold(hold: LegalHold): Promise<void>;
   updateHold(hold: LegalHold): Promise<void>;
   listHolds(tenantId: string, incidentId: string): Promise<LegalHold[]>;
+  insertArtifact(artifact: EvidenceArtifactRecord): Promise<void>;
+  findArtifact(tenantId: string, artifactId: string): Promise<EvidenceArtifactRecord | null>;
+  findArtifactByKey(tenantId: string, key: string): Promise<EvidenceArtifactRecord | null>;
+  listArtifacts(tenantId: string, incidentId: string): Promise<EvidenceArtifactRecord[]>;
+  /** The only mutation an artifact row ever takes: its bytes are gone. */
+  markArtifactPurged(tenantId: string, artifactId: string, at: string): Promise<void>;
   /**
    * Several incidents' documentation in one pass. Optional, like the incident
    * store's event pages: a store that cannot batch still works, it is just more
@@ -105,6 +158,8 @@ export class IncidentDocsService {
     private readonly ids: IncidentDocsIds = systemIncidentDocsIds(),
     /** Injected so the digest is the same everywhere it is computed. */
     private readonly hash: HashFn = sha256Hex,
+    /** Absent when a deployment records evidence without storing its bytes. */
+    private readonly storage: ArtifactStorage | null = null,
     private readonly templates: readonly PlaybookStepTemplate[] = DEFAULT_INCIDENT_PLAYBOOK,
   ) {}
 
@@ -209,6 +264,182 @@ export class IncidentDocsService {
     });
     if (this.audit) await this.audit.append(docsAudit(incident, actor.id, "incident.evidence.record", now, { kind: item.kind, label: item.label }));
     return { ok: true, value: item };
+  }
+
+  /**
+   * Store an artifact's bytes under object lock, and record it as evidence.
+   *
+   * One operation, because the two halves must not be able to drift: the evidence
+   * item's `reference` *is* the object key and its `sha256` is the digest that key
+   * was derived from, so an item and its artifact can never disagree about which
+   * bytes they mean.
+   *
+   * Re-uploading identical bytes is not an error and does not create a second
+   * object — it records another collection of the same artifact, which is what a
+   * responder is actually saying when they upload it twice.
+   */
+  async recordArtifact(
+    actor: Actor,
+    incidentId: string,
+    input: { kind: EvidenceKind; label: string; contentType?: string; bytes: Uint8Array; note?: string | null },
+  ): Promise<ServiceResult<{ item: EvidenceItem; artifact: EvidenceArtifactRecord; stored: StorePutResult }>> {
+    if (!hasPermission(actor.role, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
+    if (!this.storage) return { ok: false, error: "Evidence storage is not configured for this deployment." };
+    if (!isEvidenceKind(input.kind)) return { ok: false, error: "Unknown evidence kind." };
+    if (input.bytes.byteLength === 0) return { ok: false, error: "That file is empty." };
+    if (input.bytes.byteLength > EVIDENCE_ARTIFACT_MAX_BYTES) {
+      const mb = Math.floor(EVIDENCE_ARTIFACT_MAX_BYTES / (1024 * 1024));
+      return { ok: false, error: `An evidence file may be at most ${mb} MB.` };
+    }
+
+    const incident = await this.incidents.findIncident(actor.tenantId, incidentId);
+    if (!incident) return { ok: false, error: "Incident not found." };
+
+    const now = this.ids.now();
+    const sha256 = sha256Bytes(input.bytes);
+    const key = artifactKeyFor(incident.tenantId, incidentId, sha256);
+    const existing = await this.store.findArtifactByKey(incident.tenantId, key);
+    const decision = objectPutDecision(existing, sha256);
+    // Content-addressed keys make this unreachable short of a hand-edited row,
+    // but the rule is the rule: a locked object is never overwritten.
+    if (decision.action === "conflict") return { ok: false, error: decision.reason };
+
+    const contentType = input.contentType?.trim() || "application/octet-stream";
+    // Validate before anything is written, so a label that cannot be recorded
+    // does not leave bytes behind with nothing pointing at them.
+    const issues = validateEvidence({ kind: input.kind, label: input.label, reference: key, sha256 });
+    if (issues.length > 0) return { ok: false, error: issues[0] };
+
+    const stored = await this.storage.objects.put(key, input.bytes, contentType);
+
+    let artifact = existing;
+    if (!artifact) {
+      const lock = objectLockFor({
+        collectedAt: now,
+        now,
+        mode: this.storage.mode ?? retentionModeFromEnv(),
+        retentionDays: this.storage.retentionDays,
+      });
+      artifact = {
+        id: this.ids.id(),
+        tenantId: incident.tenantId,
+        incidentId,
+        key,
+        sha256,
+        bytes: input.bytes.byteLength,
+        contentType,
+        mode: lock.mode,
+        retainUntil: lock.retainUntil,
+        lockedAt: lock.lockedAt,
+        createdBy: actor.id,
+        purgedAt: null,
+      };
+      await this.store.insertArtifact(artifact);
+    }
+
+    const recorded = await this.recordEvidence(actor, incidentId, {
+      kind: input.kind,
+      label: input.label,
+      reference: key,
+      sha256,
+      note: input.note ?? null,
+    });
+    if (!recorded.ok) return recorded;
+
+    await this.timeline(actor.id, incident, "evidence", `Artifact locked: ${key}`, {
+      mode: artifact.mode,
+      retainUntil: artifact.retainUntil,
+      bytes: artifact.bytes,
+      sha256,
+    });
+    if (this.audit) {
+      await this.audit.append(
+        docsAudit(incident, actor.id, "incident.evidence.store", now, {
+          key,
+          sha256,
+          bytes: artifact.bytes,
+          mode: artifact.mode,
+          retainUntil: artifact.retainUntil,
+          stored,
+        }),
+      );
+    }
+
+    return { ok: true, value: { item: recorded.value, artifact, stored } };
+  }
+
+  /**
+   * Remove an artifact's bytes, once the retention rules permit it.
+   *
+   * The rules are applied here rather than in the caller, and the refusal is a
+   * returned reason rather than an exception, because "you cannot delete this
+   * yet, and here is why" is the answer an operator needs.
+   */
+  async purgeArtifact(
+    actor: Actor,
+    incidentId: string,
+    artifactId: string,
+    input: { reason: string; bypassGovernance?: boolean },
+  ): Promise<ServiceResult<EvidenceArtifactRecord>> {
+    // Deliberately stronger than the write path: recording evidence is a normal
+    // act, destroying it is not.
+    if (!hasPermission(actor.role, "tenant:manage")) {
+      return { ok: false, error: "Removing evidence under retention needs an administrator." };
+    }
+    if (!this.storage) return { ok: false, error: "Evidence storage is not configured for this deployment." };
+    const reason = input.reason?.trim() ?? "";
+    if (!reason) return { ok: false, error: "Removing evidence needs a reason on the record." };
+
+    const incident = await this.incidents.findIncident(actor.tenantId, incidentId);
+    if (!incident) return { ok: false, error: "Incident not found." };
+    const artifact = await this.store.findArtifact(actor.tenantId, artifactId);
+    if (!artifact || artifact.incidentId !== incidentId) {
+      return { ok: false, error: "That artifact is not on this incident." };
+    }
+
+    const now = this.ids.now();
+    const hold = await this.activeHold(actor.tenantId, incidentId);
+    const decision = objectPurgeDecision(
+      {
+        lock: { mode: artifact.mode, retainUntil: artifact.retainUntil, lockedAt: artifact.lockedAt },
+        holdActive: hold !== null,
+        purgedAt: artifact.purgedAt,
+      },
+      now,
+      { bypassGovernance: input.bypassGovernance },
+    );
+    if (!decision.allowed) return { ok: false, error: decision.reason };
+
+    await this.storage.objects.delete(artifact.key);
+    await this.store.markArtifactPurged(artifact.tenantId, artifact.id, now);
+
+    await this.timeline(actor.id, incident, "evidence", `Artifact purged: ${artifact.key}`, {
+      reason,
+      bypassed: decision.requiresBypass,
+    });
+    if (this.audit) {
+      await this.audit.append(
+        docsAudit(incident, actor.id, "incident.evidence.purge", now, {
+          key: artifact.key,
+          sha256: artifact.sha256,
+          bytes: artifact.bytes,
+          reason,
+          bypassedGovernance: decision.requiresBypass,
+        }),
+      );
+    }
+
+    return { ok: true, value: { ...artifact, purgedAt: now } };
+  }
+
+  /** The artifacts stored for an incident, newest last. */
+  async listArtifacts(tenantId: string, incidentId: string): Promise<EvidenceArtifactRecord[]> {
+    return this.store.listArtifacts(tenantId, incidentId);
+  }
+
+  /** Whether this deployment stores artifact bytes at all. */
+  get artifactStorageEnabled(): boolean {
+    return this.storage !== null;
   }
 
   /**
@@ -361,13 +592,14 @@ export class IncidentDocsService {
 
     const pages = new Map<string, IncidentDocsPage>();
     for (const incidentId of incidentIds) {
-      const [steps, evidence, custody, holds] = await Promise.all([
+      const [steps, evidence, custody, holds, artifacts] = await Promise.all([
         this.store.listSteps(tenantId, incidentId),
         this.store.listEvidence(tenantId, incidentId),
         this.store.listCustody(tenantId, incidentId),
         this.store.listHolds(tenantId, incidentId),
+        this.store.listArtifacts(tenantId, incidentId),
       ]);
-      pages.set(incidentId, { steps, evidence, custody, holds });
+      pages.set(incidentId, { steps, evidence, custody, holds, artifacts });
     }
     return pages;
   }
@@ -381,12 +613,13 @@ export class IncidentDocsService {
     const incident = await this.incidents.findIncident(tenantId, incidentId);
     if (!incident) return { ok: false, error: "Incident not found." };
 
-    const [steps, evidence, timeline, custody, hold] = await Promise.all([
+    const [steps, evidence, timeline, custody, hold, artifacts] = await Promise.all([
       this.store.listSteps(tenantId, incidentId),
       this.store.listEvidence(tenantId, incidentId),
       this.incidents.listEvents(tenantId, incidentId),
       this.store.listCustody(tenantId, incidentId),
       this.activeHold(tenantId, incidentId),
+      this.store.listArtifacts(tenantId, incidentId),
     ]);
 
     const manifest = buildEvidenceManifest(
@@ -410,6 +643,18 @@ export class IncidentDocsService {
         evidence,
         custody,
         legalHold: hold,
+        // The lock is part of the record an auditor reads, so the artifacts and
+        // their retention go into the same digest as everything else.
+        artifacts: artifacts.map(({ key, sha256, bytes, contentType, mode, retainUntil, lockedAt, purgedAt }) => ({
+          key,
+          sha256,
+          bytes,
+          contentType,
+          mode,
+          retainUntil,
+          lockedAt,
+          purgedAt,
+        })),
         timeline: timeline.map((event) => ({ at: event.at, kind: event.kind, actor: event.actor, summary: event.summary })),
         generatedAt: this.ids.now(),
       },
@@ -534,6 +779,7 @@ export class MemoryIncidentDocsStore implements IncidentDocsStore {
   private readonly evidence = new Map<string, EvidenceItem>();
   private readonly custody = new Map<string, CustodyEntry>();
   private readonly holds = new Map<string, LegalHold>();
+  private readonly artifacts = new Map<string, EvidenceArtifactRecord>();
 
   async listPages(tenantId: string, incidentIds: readonly string[]): Promise<Map<string, IncidentDocsPage>> {
     const pages = new Map<string, IncidentDocsPage>();
@@ -543,6 +789,7 @@ export class MemoryIncidentDocsStore implements IncidentDocsStore {
         evidence: await this.listEvidence(tenantId, incidentId),
         custody: await this.listCustody(tenantId, incidentId),
         holds: await this.listHolds(tenantId, incidentId),
+        artifacts: await this.listArtifacts(tenantId, incidentId),
       });
     }
     return pages;
@@ -608,5 +855,34 @@ export class MemoryIncidentDocsStore implements IncidentDocsStore {
       .filter((hold) => hold.tenantId === tenantId && hold.incidentId === incidentId)
       .sort((a, b) => b.placedAt.localeCompare(a.placedAt))
       .map((hold) => structuredClone(hold));
+  }
+
+  async insertArtifact(artifact: EvidenceArtifactRecord): Promise<void> {
+    this.artifacts.set(artifact.id, structuredClone(artifact));
+  }
+
+  async findArtifact(tenantId: string, artifactId: string): Promise<EvidenceArtifactRecord | null> {
+    const found = this.artifacts.get(artifactId);
+    return found && found.tenantId === tenantId ? structuredClone(found) : null;
+  }
+
+  async findArtifactByKey(tenantId: string, key: string): Promise<EvidenceArtifactRecord | null> {
+    const found = [...this.artifacts.values()].find(
+      (artifact) => artifact.tenantId === tenantId && artifact.key === key,
+    );
+    return found ? structuredClone(found) : null;
+  }
+
+  async listArtifacts(tenantId: string, incidentId: string): Promise<EvidenceArtifactRecord[]> {
+    return [...this.artifacts.values()]
+      .filter((artifact) => artifact.tenantId === tenantId && artifact.incidentId === incidentId)
+      .sort((a, b) => a.lockedAt.localeCompare(b.lockedAt) || a.id.localeCompare(b.id))
+      .map((artifact) => structuredClone(artifact));
+  }
+
+  async markArtifactPurged(tenantId: string, artifactId: string, at: string): Promise<void> {
+    const found = this.artifacts.get(artifactId);
+    if (!found || found.tenantId !== tenantId) return;
+    this.artifacts.set(artifactId, { ...structuredClone(found), purgedAt: at });
   }
 }

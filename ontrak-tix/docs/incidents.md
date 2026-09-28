@@ -8,10 +8,12 @@ reconstructed afterwards.
 This covers the parts of **M3 — Incident response & defensible documentation**
 (see `ROADMAP.md`) that have landed: the lifecycle, the severity matrix, the
 incident roles, runbook-style **playbooks with step tracking**, **evidence
-collection with a chain of custody and legal hold**, and the one-click signed
-**Assurance Packet** — all surfaced in a console at `/incidents`. Object-lock
-(WORM) evidence storage and the war-room timeline assembled from other sources
-are what remains.
+collection with a chain of custody, object-lock (WORM) storage and legal hold**,
+regulatory **notification duties**, the **post-incident review** with tracked
+actions, the **war-room timeline** assembled from the incident log, the audit
+chain, the alert stream and the decisions taken, and the one-click signed
+**Assurance Packet** — all surfaced in a console at `/incidents`, and checkable by
+a third party with `npm run verify:packet`.
 
 ## Pieces
 
@@ -22,16 +24,25 @@ are what remains.
 | Prisma adapter | `src/lib/incident-store-prisma.ts` |
 | Pure rules: playbook steps, plan by severity, progress | `src/lib/playbook-rules.ts` |
 | Pure rules: evidence validation, custody, legal hold, manifest | `src/lib/evidence-rules.ts` |
-| Service: start/step the playbook, record evidence, custody, holds, manifest | `src/lib/incident-docs-service.ts` |
+| Pure rules: object lock (keys, retention modes, put/purge decisions) | `src/lib/object-lock-rules.ts` |
+| The write-once filesystem object store | `src/lib/object-lock-file.ts` |
+| Service: start/step the playbook, record evidence, custody, holds, artifacts, manifest | `src/lib/incident-docs-service.ts` |
 | Prisma adapter | `src/lib/incident-docs-store-prisma.ts` |
-| Models | `prisma/schema.prisma` (`Incident`, `IncidentEvent`, `PlaybookStep`, `EvidenceItem`, `CustodyEntry`, `LegalHold`) |
+| Pure rules: notification regimes, duties and their clocks | `src/lib/regulatory-rules.ts` |
+| Pure rules: the review, its findings and tracked actions | `src/lib/review-rules.ts` |
+| Service: track/send/waive notifications, publish the review, run its actions | `src/lib/compliance-service.ts` |
+| Pure rules: assemble the war-room timeline from other sources | `src/lib/war-room-rules.ts` |
+| Service: read the log, the chain, the alerts and the decisions, and merge them | `src/lib/war-room-service.ts` |
+| Offline packet verifier for a third party | `scripts/verify-packet.ts` (`npm run verify:packet`) |
+| Models | `prisma/schema.prisma` (`Incident`, `IncidentEvent`, `PlaybookStep`, `EvidenceItem`, `CustodyEntry`, `LegalHold`, `EvidenceArtifact`, `IncidentNotification`, `IncidentReview`, `IncidentReviewAction`) |
 | Console | `src/app/(desk)/incidents/page.tsx`, `src/components/IncidentList.tsx`, `src/app/actions/incidents.ts` |
 | Manifest download | `src/app/api/incidents/[id]/manifest/route.ts` |
 | Pure rules: the packet, its digests, its signature | `src/lib/assurance-rules.ts` |
 | The signing key (HMAC over `contentHash`) | `src/lib/assurance-sign.ts` |
 | Service: assemble the packet from the record and the audit chain | `src/lib/assurance-service.ts` |
 | Packet download | `src/app/api/incidents/[id]/packet/route.ts` |
-| Tests | `tests/tix-m3-incidents.test.ts`, `tests/tix-m3-playbooks.test.ts`, `tests/tix-m3-assurance.test.ts` |
+| Tests | `tests/tix-m3-incidents.test.ts`, `tests/tix-m3-playbooks.test.ts`, `tests/tix-m3-object-lock.test.ts`, `tests/tix-m3-war-room.test.ts`, `tests/tix-m3-compliance.test.ts`, `tests/tix-m3-assurance.test.ts`, `tests/tix-m3-verifier.test.ts` |
+| Browser sweep (opt-in, `ONTRAK_TIX_BASE_URL`) | `tests/browser/tix.spec.ts` at the repo root — WCAG A/AA on the staff surfaces plus the flows end to end |
 
 ## Severity from a matrix
 
@@ -155,6 +166,103 @@ recorded by setting `releasedBy`/`releasedAt` rather than deleting the row — t
 history of holds is part of the record, and the audit log carries
 `incident.hold.place` and `incident.hold.release`.
 
+## Object lock: the bytes themselves
+
+A reference is a claim; the bytes are the evidence. Uploading a file to an
+incident stores it under **object lock** (`object-lock-rules.ts`,
+`ONTRAK_TIX_EVIDENCE_DIR`).
+
+- **The key is derived from the content** — `evidence/<tenant>/<incident>/<sha256>`
+  (`artifactKeyFor`). "Put different bytes under an existing key" is therefore not
+  a request a caller can make, and re-uploading identical bytes is the *same
+  object*: it records another collection rather than colliding or replacing
+  anything.
+- **Two retention modes.** `COMPLIANCE` cannot be removed early by anyone,
+  including an administrator — that is the point of it. `GOVERNANCE` is locked for
+  the same window, but a privileged caller may remove it early and the record says
+  that they did. The default is `COMPLIANCE`, overridable per deployment with
+  `ONTRAK_TIX_EVIDENCE_LOCK_MODE`; either way the window is written down as a date
+  (`retainUntil`), so a reader does not have to know our defaults.
+- **A legal hold outranks the clock in both directions.** `objectPurgeDecision`
+  blocks an artifact still inside its window *and* one whose window has already
+  closed, until somebody releases the hold on the record. "The clock ran out" and
+  "you may destroy this" are different answers.
+
+Removing bytes is deliberately stronger than recording them: it needs a
+`tenant:manage` role, a reason, and a lock that permits it, and the removal is
+written as a timeline entry (`Artifact purged`) plus an `incident.evidence.purge`
+audit event carrying whether GOVERNANCE was bypassed. The row is not deleted —
+`purgedAt` is stamped, so the manifest keeps listing the artifact and the
+deletion is itself part of the record.
+
+The write-once rule is enforced wherever it can actually be enforced. The
+filesystem store opens each file with the `wx` flag, so two racing uploads cannot
+both create it, and marks it read-only; honestly, a root user on the box can
+still `chmod` and delete it. That is exactly why the retention decision is
+enforced in the service and why the lock is a database row, and why
+`objectLockHeaders` hands out the S3 `x-amz-object-lock-*` headers an object-locked
+bucket needs — adopting one is a matter of handing those over, not rediscovering
+the semantics.
+
+Storing bytes is one operation, not two, because the halves must not be able to
+drift: the evidence item's `reference` *is* the object key and its `sha256` is the
+digest that key was derived from. Each store appends an `Artifact locked` timeline
+entry and an `incident.evidence.store` audit event.
+
+The browser sweep exercises this against a real server and a real database: it
+uploads a file from the console, sees it stored under `COMPLIANCE` with its
+retention date, uploads the same bytes again and is told they were already
+stored, then asks to remove them — refused for an agent (a `tenant:manage` role
+is required) and refused again for an administrator, in the rule's own words,
+with the artifact still locked afterwards.
+
+## The war-room timeline
+
+The incident timeline is what the operations wrote. The **war-room timeline** is
+the incident seen from every source at once: the incident log, the tenant's
+hash-chained audit log, the alert stream, and the decisions taken about the
+incident, merged into one ordered view (`war-room-rules.ts`).
+
+Two rules give it its value:
+
+- **The same fact seen by two systems is one entry**, attested by both, rather
+  than two lines that look like two events (`correlate`).
+- **Nothing is invented.** Reading a timeline writes nothing, so assembling it
+  cannot change the record it is describing, and an event that only one source
+  knows about is kept and labelled with that source.
+
+It is staff-only and tenant-scoped, and the console renders it with the sources
+behind each line, so "who knew, and when" is answerable without cross-referencing
+four screens.
+
+## Notification duties and the review
+
+An incident usually owes somebody a call, with a deadline attached. Regimes are
+**suggested from the incident's own facts** (`suggestedRegimes` — severity,
+personal data, regulated sector), tracked deliberately rather than assumed, and
+then run on a clock measured from detection (or declaration, per the regime):
+`notificationState` reports `DUE_SOON` before the deadline and `OVERDUE` after it,
+and marking one sent late records that it was late rather than pretending
+otherwise. A duty can be waived, with a reason, and `notificationSummary` rolls
+them up.
+
+The **post-incident review** is published once, with findings and lessons, and it
+carries tracked **actions** — an owner, a due date, a status that moves only the
+legal way, and an `OVERDUE` state derived from the date rather than stored. An
+incident is not finished while an action is open, which is what makes
+`reviewCompleteness` and the packet's `packetCompleteness` mean something.
+
+## Verifying a packet without us
+
+The packet promises that a third party can check it holding nothing but the file
+and the key. `npm run verify:packet -- PACKET.json` is that tool: it imports the
+packet rules, the signer and the verifier and nothing else — no Prisma, no
+session, no `db.ts`, no network — so it runs from a checkout that has never been
+configured with this deployment's environment. It exits `0` for verified, `1` for
+a failed verification and `2` for a usage or read error, because "the packet is
+forged" and "the file is missing" are different answers and a script that
+conflates them is not usable in a pipeline.
+
 ## The console
 
 `/incidents` is staff-only (any staff role holding `ticket:read:any`; a requester
@@ -162,8 +270,10 @@ is redirected to the portal). It declares incidents, shows the header roll-up
 (open, at SEV2 or above, without a commander), and per incident renders the
 severity/phase chips (with a `legal hold` marker when one is in force), the four
 role cards, the playbook, the evidence list — each item with its custody trail,
-its current holder and a hand-off form — the legal-hold panel, the timeline, and
-links to download the manifest and the signed packet.
+its current holder and a hand-off form — the **artifacts under lock** with the
+retention each one carries, the notification duties and the review, the legal-hold
+panel, the timeline, the assembled **war-room** view, and links to download the
+manifest and the signed packet.
 
 Two things it deliberately does **not** do:
 
@@ -213,11 +323,15 @@ exported rather than at boot.
 
 ## What is not here yet
 
-- Object-lock (WORM) storage for the artifacts themselves — the record stores
-  references, not bytes, and nothing enforces retention at the storage layer yet.
-- The war-room timeline assembled automatically from *other* sources (logins,
-  alerts, approvals) — today the timeline is what the incident operations write.
-- Regulatory/notification tracking, comms templates and the post-incident review
-  with tracked actions.
-- A verification *tool* for a third party who holds only the packet and the key:
-  `verifyAssurancePacket` is the function, and nothing ships that exposes it.
+- **Communications templates for an incident's notifications.** The notification
+  duties, their clocks and their acknowledgements are tracked, but the message a
+  responder sends is typed each time; the M1 canned-response templates are not yet
+  wired to an incident's regimes.
+- **A real object-locked backend.** The rules, the lock row and the S3 headers are
+  here, and the filesystem store enforces write-once for the process that goes
+  through it, but a shared bucket with object lock enabled is what would enforce
+  the retention date against *every* writer, including someone with the storage
+  credentials.
+- **Retention sweeps.** Nothing yet walks expired artifacts and purges them; a
+  purge has to be asked for. The rules that decide whether it is allowed are
+  tested, which is the part that needed deciding.

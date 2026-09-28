@@ -49,6 +49,7 @@ model Tenant {
   incidentEvents IncidentEvent[]
   playbookSteps PlaybookStep[]
   evidenceItems EvidenceItem[]
+  evidenceArtifacts EvidenceArtifact[]
   custodyEntries CustodyEntry[]
   legalHolds LegalHold[]
   incidentNotifications IncidentNotification[]
@@ -687,6 +688,7 @@ model Incident {
   events        IncidentEvent[]
   steps         PlaybookStep[]
   evidence      EvidenceItem[]
+  artifacts     EvidenceArtifact[]
   custody       CustodyEntry[]
   holds         LegalHold[]
   notifications IncidentNotification[]
@@ -754,6 +756,39 @@ model EvidenceItem {
   custody  CustodyEntry[]
 
   @@index([tenantId, incidentId, collectedAt])
+}
+
+/// An evidence artifact's bytes under object-lock (WORM) retention (M3).
+///
+/// The bytes live in the object store; this row is the lock — what it is, how
+/// big, its digest, the retention mode and the date the window closes. It is
+/// content-addressed and unique per tenant, so two collections of the same bytes
+/// cite one artifact and can never disagree about which bytes they mean.
+/// `purgedAt` is the only field that ever moves, and only when
+/// `objectPurgeDecision` allows it, which is why a purge leaves a visible mark
+/// instead of an empty reference nobody can explain.
+model EvidenceArtifact {
+  id          String   @id @default(cuid())
+  tenantId    String
+  incidentId  String
+  /// `evidence/<tenant>/<incident>/<sha256>` — derived from the content.
+  key         String
+  sha256      String
+  bytes       Int
+  contentType String
+  /// `COMPLIANCE` | `GOVERNANCE`, narrowed on read.
+  mode        String
+  /// When the retention window closes. Until then the bytes cannot be removed.
+  retainUntil DateTime
+  lockedAt    DateTime @default(now())
+  createdBy   String
+  purgedAt    DateTime?
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@index([tenantId, incidentId, lockedAt])
 }
 
 enum CustodyAction {
