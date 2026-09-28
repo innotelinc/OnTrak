@@ -1,0 +1,82 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# publish.yml — the one workflow that writes to a registry.
+#
+# ci.yml builds both images on every push so they cannot rot; this publishes
+# them, and only when a release is published — or when an operator asks by hand.
+# The two are kept apart on purpose: a push to main must never produce a tag an
+# environment could pull without someone having decided to release.
+#
+# Images land at:
+#   ghcr.io/<owner>/ontrak-training
+#   ghcr.io/<owner>/ontrak-tix
+#
+# A release tags them `latest` plus the version and its major.minor; a manual
+# run tags them by commit, so it can prove the pipeline without minting a
+# version anyone might deploy.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: Publish images
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # The only elevated permission any workflow here asks for, and it is scoped to
+  # this job: pushing to GHCR needs `packages: write`.
+  packages: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  # Never cancel mid-push: a half-uploaded tag is worse than a slow one.
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: training
+            context: .
+          - app: tix
+            context: ontrak-tix
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Sign in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Work out the tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/ontrak-${{ matrix.app }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=tag
+            type=sha,format=long
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          target: runner
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,scope=${{ matrix.app }},mode=max
