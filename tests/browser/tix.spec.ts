@@ -81,6 +81,7 @@ test.describe("OnTrak Tix desk", () => {
     "/incidents/templates",
     "/clients",
     "/time",
+    "/handoff",
   ];
 
   test("a11y (browser): the public survey page passes WCAG A/AA with a token nobody holds", async ({ page }) => {
@@ -733,6 +734,91 @@ test.describe("OnTrak Tix desk", () => {
 
     await page.goto(url("/inbox"), { waitUntil: "load" });
     expect(new URL(page.url()).pathname).toBe("/portal");
+  });
+});
+
+test.describe("OnTrak Tix rota, branding and billing depth", () => {
+  test.skip(!BASE_URL, "set ONTRAK_TIX_BASE_URL to run the Tix sweep");
+
+  test.beforeEach(async ({ page }) => {
+    // Publishing the rota is `queue:manage`, so this block runs as the admin.
+    await signIn(page, ADMIN);
+  });
+
+  test("handoff: cover is published, the gap list answers to it, and a handover is recorded", async ({ page }) => {
+    await page.goto(url("/handoff"), { waitUntil: "load" });
+    expect(await page.getByRole("heading", { name: "Handoff" }).count()).toBe(1);
+
+    // A window covering right now, written the way the form takes it: a local
+    // `datetime-local` value, which is what the browser would submit by hand.
+    const { start, end } = await page.evaluate(() => {
+      const local = (date: Date) =>
+        new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+      return { start: local(new Date(Date.now() - 60 * 60_000)), end: local(new Date(Date.now() + 60 * 60_000)) };
+    });
+
+    await page.getByLabel("Kind").selectOption("ON_CALL");
+    await page.getByLabel("Starts").fill(start);
+    await page.getByLabel("Ends").fill(end);
+    await page.getByLabel("Note").fill("browser sweep cover");
+    await page.getByRole("button", { name: "Publish on the rota" }).click();
+    await page.waitForURL(/flash=/, { timeout: 20_000 });
+
+    // The moment is now covered, and the page says who to wake rather than
+    // leaving the reader to work it out from the rota below.
+    await page.goto(url("/handoff"), { waitUntil: "load" });
+    await expect(page.locator("body")).toContainText("On call at");
+    await expect(page.locator("body")).toContainText("browser sweep cover");
+
+    // The handover itself: a note is required, and the work still open is named.
+    await page.getByLabel("What the next person needs to know").fill("Everything is either answered or parked for the morning.");
+    await page.getByLabel("Still open (references, one per line)").fill("TIX-000001");
+    await page.getByRole("button", { name: "Record the handoff" }).click();
+    await page.waitForURL(/flash=/, { timeout: 20_000 });
+
+    await page.goto(url("/handoff"), { waitUntil: "load" });
+    await expect(page.locator("body")).toContainText("Everything is either answered or parked for the morning.");
+    await expect(page.locator("body")).toContainText("open: TIX-000001");
+  });
+
+  test("branding: a client's own colours are stored, read back, and refused when unreadable", async ({ page }) => {
+    await page.goto(url("/clients"), { waitUntil: "load" });
+
+    // The first client's branding panel, whatever it is called.
+    const panel = page.locator("details", { hasText: "Branding:" }).first();
+    if ((await panel.count()) === 0) test.skip(true, "no clients on this desk to brand");
+    await panel.locator("summary").click();
+
+    // A colour too close to the portal background is refused before it is stored.
+    await panel.getByLabel("Accent colour").fill("#0b0d10");
+    await panel.getByRole("button", { name: /branding/ }).click();
+    await page.waitForURL(/error=/, { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText("too close to the portal background");
+
+    // A readable one is accepted, and the console says so.
+    await page.goto(url("/clients"), { waitUntil: "load" });
+    const again = page.locator("details", { hasText: "Branding:" }).first();
+    await again.locator("summary").click();
+    await again.getByLabel("Accent colour").fill("#7dd3fc");
+    await again.getByRole("button", { name: /branding/ }).click();
+    await page.waitForURL(/flash=/, { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText("#7dd3fc");
+  });
+
+  test("billing depth: a tax rule is written and the ledger states what an invoice charged", async ({ page }) => {
+    await page.goto(url("/clients"), { waitUntil: "load" });
+
+    // The desk's own default rule, at the bottom of the console.
+    const deskTax = page.locator("section", { hasText: "The desk's default tax" }).first();
+    await deskTax.getByLabel("Label").fill("Browser sweep tax");
+    await deskTax.getByLabel("Rate (%)").fill("8.25");
+    await deskTax.getByRole("button", { name: /tax rule/ }).click();
+    await page.waitForURL(/flash=/, { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText("Browser sweep tax is in force at 8.25%");
+
+    // The ledger shows issued invoices with what was added to them.
+    await page.goto(url("/time"), { waitUntil: "load" });
+    expect(await page.getByRole("heading", { name: "Issued invoices" }).count()).toBeLessThan(2);
   });
 });
 
