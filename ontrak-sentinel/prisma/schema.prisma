@@ -1,0 +1,146 @@
+// OnTrak Sentinel — S0 schema draft.
+//
+// This is the identity spine and the evidence log. It is a design artifact for
+// the separate Sentinel project; it is NOT yet generated or migrated, and it
+// deliberately does not share a database with the OnTrak Tix or Training apps.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Isolation boundary: an MSP, or one internal IT department.
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+
+  identities Identity[]
+  policies   IdentityPolicy[]
+  sessions   Session[]
+  audit      AuditEvent[]
+}
+
+/// A human, service or machine identity.
+model Identity {
+  id           String       @id @default(cuid())
+  organizationId String
+  /// Email for humans, or a service name for machines.
+  identifier   String
+  displayName  String
+  kind         IdentityKind @default(HUMAN)
+  role         IdentityRole @default(AGENT)
+  active       Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  credentials  Credential[]
+  mfaFactors   MfaFactor[]
+  sessions     Session[]
+
+  @@unique([organizationId, identifier])
+  @@index([organizationId, role])
+}
+
+enum IdentityKind {
+  HUMAN
+  SERVICE
+}
+
+enum IdentityRole {
+  ADMIN
+  AGENT
+  SERVICE
+  AUDITOR
+}
+
+model Credential {
+  id         String   @id @default(cuid())
+  identityId String
+  /// Argon2/scrypt hash — never a plaintext secret.
+  hash       String
+  createdAt  DateTime @default(now())
+
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+
+  @@index([identityId])
+}
+
+model MfaFactor {
+  id         String   @id @default(cuid())
+  identityId String
+  kind       MfaKind
+  /// TOTP secret or WebAuthn credential id; encrypted at rest.
+  secret     String
+  createdAt  DateTime @default(now())
+
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+
+  @@index([identityId])
+}
+
+enum MfaKind {
+  TOTP
+  WEBAUTHN
+}
+
+model IdentityPolicy {
+  id             String  @id @default(cuid())
+  organizationId String
+  requireMfa     Boolean @default(true)
+  maxSessionSec  Int     @default(43200)
+  idleTimeoutSec Int     @default(1800)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model Session {
+  id         String    @id @default(cuid())
+  identityId String
+  issuedAt   DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+  /// Device/IP metadata captured at grant time, for later correlation.
+  userAgent  String?
+  ipAddress  String?
+
+  identity     Identity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([identityId])
+  @@index([organizationId])
+}
+
+/// Append-only, hash-chained evidence log. Rows are never updated or deleted.
+/// `seq` is the chain position; `prevHash` links to the previous record and
+/// `recordHash` commits to this record's canonical payload (see
+/// `src/lib/audit-chain.ts`).
+model AuditEvent {
+  seq        BigInt   @id @default(autoincrement())
+  id         String   @unique
+  organizationId String
+  at         DateTime @default(now())
+  actor      String
+  action     String
+  targetType String?
+  targetId   String?
+  detail     Json?
+  prevHash   String
+  recordHash String
+  /// Optional signature over `recordHash` for periodic checkpoints.
+  signature  String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, at])
+  @@index([action])
+}

@@ -1,0 +1,333 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+/// The three simulation surfaces.  OFFICE is document/mail work rather than a
+/// shell, so it has its own driver.
+enum Platform {
+  LINUX
+  WINDOWS
+  OFFICE
+}
+
+enum Role {
+  ADMIN
+  INSTRUCTOR
+  STUDENT
+}
+
+enum Difficulty {
+  FOUNDATION
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+/// How an administrator made the software available.
+///   UPLOAD   -> file stored in STORAGE_DIR on this server
+///   URL      -> downloaded from a vendor/CDN URL on demand
+///   INTERNAL -> simulated in-browser (no binary at all, e.g. an Office suite)
+enum SoftwareSource {
+  UPLOAD
+  URL
+  INTERNAL
+}
+
+/// OPEN          = free / open source, no key ever needed
+/// EVALUATION    = vendor trial build, works without a key but is time limited
+/// LICENSED      = requires an activation key before scenarios unlock
+enum LicenseType {
+  OPEN
+  EVALUATION
+  LICENSED
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  GRADED
+  EXPIRED
+  ABANDONED
+}
+
+// ---------------------------------------------------------------------------
+// Identity & classes
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         Role      @default(STUDENT)
+  active       Boolean   @default(true)
+  /// Stable color used for avatars so the UI stays colorful and friendly.
+  accent       String    @default("violet")
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  attempts          Attempt[]
+  memberships       CohortMember[]
+  cohortsTaught     Cohort[]          @relation("CohortInstructor")
+  scenariosAuthored Scenario[]        @relation("ScenarioAuthor")
+  assignmentsMade   Assignment[]      @relation("AssignmentAuthor")
+  softwareCreated   SoftwarePackage[]
+  auditEntries      AuditLog[]
+  assignments       Assignment[]
+
+  @@index([role])
+}
+
+model Cohort {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  /// Short code students can type to join the class themselves.
+  joinCode     String   @unique
+  instructorId String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  instructor  User           @relation("CohortInstructor", fields: [instructorId], references: [id], onDelete: Cascade)
+  members     CohortMember[]
+  assignments Assignment[]
+
+  @@index([instructorId])
+}
+
+model CohortMember {
+  id       String   @id @default(cuid())
+  cohortId String
+  userId   String
+  /// Allows a peer mentor / TA to hold elevated rights inside one class.
+  isMentor Boolean  @default(false)
+  joinedAt DateTime @default(now())
+
+  cohort Cohort @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([cohortId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Software & OS inventory (admin controlled)
+// ---------------------------------------------------------------------------
+
+/// One installable that scenarios can depend on — an operating system image,
+/// an application, or (for OFFICE) a simulated suite.  Scenarios are only
+/// offered to students while every piece of software they require is enabled.
+model SoftwarePackage {
+  id          String   @id @default(cuid())
+  name        String
+  vendor      String?
+  version     String?
+  description String?
+  /// Which simulation surface this software belongs to.
+  platform    Platform
+  /// Extra hint for the runner, e.g. "ubuntu-24.04", "win11-23h2".
+  flavour     String?
+
+  source     SoftwareSource @default(INTERNAL)
+  sourceUrl  String?
+  /// Path on this server, relative to STORAGE_DIR. Only for uploaded packages.
+  uploadPath String?
+  uploadName String?
+  sizeBytes  BigInt?
+  checksum   String?
+
+  licenseType      LicenseType @default(OPEN)
+  /// Convenience flag: true when licenseType is LICENSED. Kept denormalized so
+  /// availability queries stay simple and index friendly.
+  requiresKey      Boolean     @default(false)
+  licenseKey       String?
+  licenseSeats     Int?
+  licenseExpiresAt DateTime?
+
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  scenarios   ScenarioSoftware[]
+  createdById String?
+  createdBy   User?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([name, version, platform])
+  @@index([platform, enabled])
+}
+
+// ---------------------------------------------------------------------------
+// Scenarios
+// ---------------------------------------------------------------------------
+
+model Scenario {
+  id           String     @id @default(cuid())
+  slug         String     @unique
+  title        String
+  summary      String
+  /// Long-form markdown briefing shown before the timer starts.
+  description  String
+  platform     Platform
+  difficulty   Difficulty @default(INTERMEDIATE)
+  /// 'bash' | 'powershell' | 'office'
+  engine       String
+  timeLimitSec Int        @default(1800)
+  passScore    Int        @default(70)
+  published    Boolean    @default(false)
+  tags         String[]   @default([])
+  /// The full ScenarioDefinition JSON (see src/lib/sim/types.ts).
+  definition   Json
+  authorId     String
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  author      User               @relation("ScenarioAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  software    ScenarioSoftware[]
+  attempts    Attempt[]
+  assignments Assignment[]
+
+  @@index([platform, published])
+  @@index([authorId])
+}
+
+/// Join table: a scenario declares the software it needs.
+model ScenarioSoftware {
+  id                String  @id @default(cuid())
+  scenarioId        String
+  softwarePackageId String
+  /// Required dependencies gate availability; optional ones only annotate.
+  required          Boolean @default(true)
+
+  scenario        Scenario        @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  softwarePackage SoftwarePackage @relation(fields: [softwarePackageId], references: [id], onDelete: Cascade)
+
+  @@unique([scenarioId, softwarePackageId])
+  @@index([softwarePackageId])
+}
+
+/// An instructor hands a scenario to a whole class or to one student.
+model Assignment {
+  id           String    @id @default(cuid())
+  scenarioId   String
+  cohortId     String?
+  studentId    String?
+  dueAt        DateTime?
+  /// Overrides the scenario default when set.
+  timeLimitSec Int?
+  maxAttempts  Int       @default(0) // 0 = unlimited
+  instructions String?
+  createdById  String
+  createdAt    DateTime  @default(now())
+
+  scenario  Scenario  @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  cohort    Cohort?   @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  student   User?     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  createdBy User      @relation("AssignmentAuthor", fields: [createdById], references: [id], onDelete: Cascade)
+  attempts  Attempt[]
+
+  @@index([cohortId])
+  @@index([studentId])
+  @@index([scenarioId])
+}
+
+// ---------------------------------------------------------------------------
+// Attempts & grading
+// ---------------------------------------------------------------------------
+
+model Attempt {
+  id           String        @id @default(cuid())
+  userId       String
+  scenarioId   String
+  assignmentId String?
+  status       AttemptStatus @default(IN_PROGRESS)
+
+  startedAt    DateTime  @default(now())
+  expiresAt    DateTime
+  submittedAt  DateTime?
+  gradedAt     DateTime?
+  timeSpentSec Int       @default(0)
+
+  score    Int @default(0)
+  maxScore Int @default(0)
+
+  /// Deterministic seed so an attempt can be replayed exactly.
+  seed      String
+  /// Live engine state, autosaved while the student works: { vfs, state, docs }
+  snapshot  Json?
+  /// Ordered command history + hint usage, used for grading and review.
+  events    Json?
+  /// Feedback the student has unlocked by spending hints.
+  hintsUsed String[] @default([])
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scenario     Scenario      @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  assignment   Assignment?   @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+  checkResults CheckResult[]
+
+  @@index([userId, status])
+  @@index([scenarioId])
+  @@index([assignmentId])
+}
+
+model CheckResult {
+  id        String  @id @default(cuid())
+  attemptId String
+  checkId   String
+  label     String
+  passed    Boolean
+  points    Int
+  maxPoints Int
+  /// Human readable explanation shown in the report ("expected POSTFIX service
+  /// to be enabled, found it disabled").
+  detail    String?
+
+  attempt Attempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@unique([attemptId, checkId])
+  @@index([attemptId])
+}
+
+// ---------------------------------------------------------------------------
+// Admin switches & auditing
+// ---------------------------------------------------------------------------
+
+/// Master on/off switch for each simulation surface.  Disabling Linux here
+/// hides every Linux scenario from every student, regardless of inventory.
+model PlatformToggle {
+  id        String   @id @default(cuid())
+  platform  Platform @unique
+  enabled   Boolean  @default(true)
+  note      String?
+  updatedAt DateTime @updatedAt
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  targetType String
+  targetId   String?
+  detail     Json?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([action])
+}

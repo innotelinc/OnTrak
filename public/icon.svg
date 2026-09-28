@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="OnTrak IT Support Training">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6c4cf1" />
+      <stop offset="55%" stop-color="#ff5fa2" />
+      <stop offset="100%" stop-color="#ffab1f" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#brand)" />
+  <g fill="none" stroke="#ffffff" stroke-width="30" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M182 176 L96 256 L182 336" />
+    <path d="M330 176 L416 256 L330 336" />
+    <path d="M288 128 L224 384" />
+  </g>
+</svg>

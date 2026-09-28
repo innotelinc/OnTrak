@@ -1,0 +1,23 @@
+# A local PostgreSQL for OnTrak Tix development. Separate from the training
+# app's database on purpose: the two products are independently deployable.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ontrak-tix-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ontrak
+      POSTGRES_PASSWORD: ontrak
+      POSTGRES_DB: ontrak_tix
+    ports:
+      - "5432:5432"
+    volumes:
+      - ontrak-tix-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ontrak -d ontrak_tix"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ontrak-tix-db:

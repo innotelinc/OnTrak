@@ -1,0 +1,42 @@
+{
+  "name": "OnTrak IT Support Training — hands-on IT support training",
+  "short_name": "OnTrak Training",
+  "description": "Practice real IT support work: graded Linux, Windows and Office scenarios in the browser, timed and working on any device.",
+  "id": "/",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#f7f5ff",
+  "theme_color": "#6c4cf1",
+  "categories": ["education", "productivity", "developer"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "My scenarios",
+      "short_name": "Scenarios",
+      "url": "/student",
+      "description": "Jump straight to the training queue"
+    },
+    {
+      "name": "My results",
+      "short_name": "Results",
+      "url": "/student/results",
+      "description": "Review past attempts and scores"
+    }
+  ]
+}
