@@ -1,5 +1,25 @@
-# A local PostgreSQL for OnTrak Tix development. Separate from the training
-# app's database on purpose: the two products are independently deployable.
+# ═══════════════════════════════════════════════════════════════════════════
+# OnTrak Tix — the service desk and its database.
+#
+#   cd ontrak-tix
+#   docker compose up -d          build the image, sync the schema, serve on :3001
+#   docker compose --profile demo run --rm seed    load the demo tenant
+#
+# Tix is schema-first — there is no `prisma/migrations/` directory — so the
+# one-shot service pushes the schema (`prisma db push`) instead of deploying
+# migrations. `app` waits for it to finish before it serves.
+#
+# Blobs and evidence artifacts each get their own volume: evidence sits under
+# object-lock retention, so a rebuild must never discard it.
+#
+# This file is Tix's stack only, separate from the training app's
+# (`../docker-compose.yml`) because the two products are independently
+# deployable. To run both stacks at once, give one a different published
+# database port — ONTRAK_TIX_DB_PORT here, ONTRAK_DB_PORT there.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: ontrak-tix
+
 services:
   db:
     image: postgres:16-alpine
@@ -10,7 +30,7 @@ services:
       POSTGRES_PASSWORD: ontrak
       POSTGRES_DB: ontrak_tix
     ports:
-      - "5432:5432"
+      - "${ONTRAK_TIX_DB_PORT:-5432}:5432"
     volumes:
       - ontrak-tix-db:/var/lib/postgresql/data
     healthcheck:
@@ -19,5 +39,66 @@ services:
       timeout: 5s
       retries: 10
 
+  migrate:
+    build:
+      context: .
+      target: builder
+    command: npx prisma db push
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Inside the network the database is the `db` service. Never 127.0.0.1:
+      # in a container that address is the container itself.
+      DATABASE_URL: postgresql://ontrak:ontrak@db:5432/ontrak_tix
+
+  app:
+    build:
+      context: .
+      target: runner
+    container_name: ontrak-tix-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "3001:3000"
+    # TIX_AUTH_SECRET, the webhook/cron/assurance secrets and the rest.
+    # `.env` is gitignored; copy it from `.env.example`.
+    env_file:
+      - .env
+    environment:
+      # Overrides the host-oriented DATABASE_URL in `.env`, which points at
+      # 127.0.0.1 and would name the app container itself from in here.
+      DATABASE_URL: postgresql://ontrak:ontrak@db:5432/ontrak_tix
+      ONTRAK_TIX_BLOB_DIR: .ontrak-tix-blobs
+      ONTRAK_TIX_EVIDENCE_DIR: .ontrak-tix-evidence
+      NODE_ENV: production
+    volumes:
+      - ontrak-tix-blobs:/app/.ontrak-tix-blobs
+      - ontrak-tix-evidence:/app/.ontrak-tix-evidence
+
+  # The demo tenant: one account per role, a queue and sample tickets. Opt-in,
+  # because a production deployment wants an empty database, not a demo one.
+  seed:
+    build:
+      context: .
+      target: builder
+    profiles: ["demo"]
+    command: npm run setup
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://ontrak:ontrak@db:5432/ontrak_tix
+
 volumes:
   ontrak-tix-db:
+  ontrak-tix-blobs:
+  ontrak-tix-evidence:

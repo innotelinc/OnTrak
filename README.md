@@ -60,8 +60,28 @@
 
 ## Quick start
 
-**Requirements:** Node.js >= 20.11 and a PostgreSQL database. Docker is only
-needed if you want the bundled dev database.
+**Requirements:** Node.js >= 20.11 and a PostgreSQL database — or just Docker,
+which brings its own. Both paths below give the same app; pick either.
+
+### Run it in containers
+
+```bash
+git clone https://github.com/innotelinc/OnTrak.git
+cd OnTrak
+
+cp .env.example .env          # then edit AUTH_SECRET
+docker compose up -d --build  # build the image, apply migrations, serve on :3000
+
+docker compose --profile demo run --rm seed   # optional: the demo accounts below
+```
+
+The app waits for its migrations to finish before it starts, so it never serves
+against a schema it has not been given. The database and uploaded packages each
+live on a named volume, so neither a rebuild nor a `down` discards them. Build
+the image without starting anything with `docker build --target runner .` (or
+`make images`, which builds OnTrak Tix's too).
+
+### Run it from source
 
 ```bash
 git clone https://github.com/innotelinc/OnTrak.git
@@ -169,7 +189,7 @@ disabled"* or *"requires a license key for Contoso Asset Suite"*.
 | `npm run db:seed` | Re-seed demo data (idempotent). |
 | `npm run db:reset-demo` | Clear demo students' attempts and synthetic test accounts. |
 | `npm run db:studio` | Browse the database in Prisma Studio. |
-| `npm run docker:db` | Start the bundled Postgres container. |
+| `npm run docker:db` | Start just the Postgres container, for running the app from source. |
 
 ---
 

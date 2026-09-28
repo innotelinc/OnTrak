@@ -30,6 +30,53 @@ hooks: ## Point git at the shared attribution/secret guard hooks
 	git config core.hooksPath .githooks
 	@echo "hooks: .githooks installed"
 
+## ---- Containers ----
+# Each app is its own stack. `up`/`down`/`logs` are the training app's; the
+# `tix-`-prefixed twins are the service desk's. `ps` and `images` cover both.
+# Both stacks publish 5432 by default, so run only one at a time — or set
+# ONTRAK_DB_PORT / ONTRAK_TIX_DB_PORT to separate them.
+
+.PHONY: up
+up: ## Build and start the training app + Postgres, serving on :3000
+	docker compose up -d --build
+
+.PHONY: down
+down: ## Stop the training app stack (keeps its volumes)
+	docker compose down
+
+.PHONY: logs
+logs: ## Tail the training app stack's logs
+	docker compose logs -f
+
+.PHONY: tix-up
+tix-up: ## Build and start Tix + Postgres, serving on :3001
+	cd $(TIX_DIR) && docker compose up -d --build
+
+.PHONY: tix-down
+tix-down: ## Stop the Tix stack (keeps its volumes)
+	cd $(TIX_DIR) && docker compose down
+
+.PHONY: tix-logs
+tix-logs: ## Tail the Tix stack's logs
+	cd $(TIX_DIR) && docker compose logs -f
+
+.PHONY: ps
+ps: ## List the containers in both stacks
+	docker compose ps
+	cd $(TIX_DIR) && docker compose ps
+
+.PHONY: images
+images: ## Build both production images without starting anything
+	docker build --target runner -t ontrak-training:local .
+	cd $(TIX_DIR) && docker build --target runner -t ontrak-tix:local .
+
+.PHONY: check-compose
+check-compose: ## Validate both compose files against their .env.example
+	@cp -n .env.example .env 2>/dev/null || true
+	docker compose config --quiet && echo "compose: training ok"
+	@cp -n $(TIX_DIR)/.env.example $(TIX_DIR)/.env 2>/dev/null || true
+	cd $(TIX_DIR) && docker compose config --quiet && echo "compose: tix ok"
+
 ## ---- The training app ----
 
 .PHONY: db

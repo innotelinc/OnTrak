@@ -67,3 +67,12 @@ Run the S0 tests with:
 ```bash
 npx tsx --test ontrak-sentinel/tests/sentinel.test.ts
 ```
+
+## Containers
+
+[OnTrak Tix](../ontrak-tix/README.md) and the
+[training app](../README.md) each ship a `Dockerfile` and a `docker-compose.yml`.
+Sentinel deliberately does not yet: S0 is a set of pure library modules and a
+schema draft with no server, so there is no process to put in an image. Its own
+image and compose stack arrive with the first runnable service; see
+[ROADMAP.md](./ROADMAP.md).

@@ -1,0 +1,34 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Build context for the OnTrak Tix image.
+#
+# Two rules: never copy in what the image installs or generates itself, and
+# never let local state or a secret reach a layer. Nothing excluded here is
+# needed by `npm run build`.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Dependencies and build output — reinstalled and regenerated inside the image
+**/node_modules
+**/.next
+**/*.tsbuildinfo
+
+# Secrets. Compose injects these at run time; a layer would freeze them forever.
+.env
+.env*.local
+*.pem
+
+# Local state: attachment blobs, incident evidence under object lock, and the
+# evidence directory the packet verifier writes to. A deployment's records must
+# not be baked into an image.
+.ontrak-tix-blobs
+.ontrak-tix-evidence
+
+# Repository tooling and the image definition itself
+.git
+.gitignore
+Dockerfile
+.dockerignore
+docker-compose.yml
+test-results
+playwright-report
+npm-debug.log*
+yarn-error.log*

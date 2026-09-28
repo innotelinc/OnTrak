@@ -1,0 +1,41 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Build context for the training app image.
+#
+# Two rules: never copy in what the image installs or generates itself, and
+# never let local state or a secret reach a layer. Nothing excluded here is
+# needed by `npm run build`.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Dependencies and build output — reinstalled and regenerated inside the image
+**/node_modules
+**/.next
+**/out
+**/dist
+**/build
+**/*.tsbuildinfo
+
+# The sibling products are separate images with their own Dockerfiles
+ontrak-tix
+ontrak-sentinel
+web
+
+# Repository tooling, not application code
+.git
+.githooks
+.github
+.gitignore
+.freebuff
+
+# Secrets. Compose injects these at run time; a layer would freeze them forever.
+.env
+.env*.local
+*.pem
+
+# Local data and test artifacts
+storage/packages
+storage/uploads
+test-results
+playwright-report
+coverage
+npm-debug.log*
+yarn-error.log*

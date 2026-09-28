@@ -110,10 +110,27 @@ reconstructed from memory.
 - `src/lib/inbox-view.ts` + `src/components/` — the inbox view model and the
   presentational `AgentInbox` / `TicketDetail` / `TicketList` components.
 - `src/lib/db.ts`, `package.json`, `tsconfig.json`, `next.config.ts`,
-  `postcss.config.mjs`, `docker-compose.yml`, `.env.example` — the standalone
-  project scaffold, so the shell runs on its own.
+  `postcss.config.mjs`, `Dockerfile`, `docker-compose.yml`, `.env.example` — the
+  standalone project scaffold, so the shell runs on its own.
 
 ### Running the app
+
+In containers:
+
+```bash
+cd ontrak-tix
+cp .env.example .env      # set DATABASE_URL and TIX_AUTH_SECRET
+docker compose up -d --build                  # serve on :3001
+
+docker compose --profile demo run --rm seed   # optional: the demo tenant below
+```
+
+Tix is schema-first, so the one-shot service in front of the app pushes the
+schema rather than deploying migrations. Attachments and incident evidence each
+live on their own volume, because evidence sits under object-lock retention and
+a rebuild must never discard it.
+
+From source:
 
 ```bash
 cd ontrak-tix
@@ -123,6 +140,10 @@ npm run docker:db         # or point DATABASE_URL at your own Postgres
 npm run setup             # prisma generate, db push, then seed the demo tenant
 npm run dev
 ```
+
+> Both stacks publish their database on 5432, so run one at a time — or set
+> `ONTRAK_TIX_DB_PORT` here (and `ONTRAK_DB_PORT` in the training app) to run
+> them side by side.
 
 The seed creates tenant `acme` with an account per role — `admin@acme.test`,
 `dispatcher@acme.test`, `agent@acme.test` and `requester@acme.test`, all with the
