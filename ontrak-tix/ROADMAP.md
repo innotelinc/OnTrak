@@ -310,14 +310,17 @@ to stand on its own.
 > (`compliance-service.ts`), a **standalone verifier** for a third party
 > holding only a packet and the key (`scripts/verify-packet.ts`), and the
 > **communications templates** a duty drafts from (`comms-rules.ts`), covered by
-> `ontrak-tix/tests/tix-m3-comms.test.ts`, and the **retention sweep** that acts
+> `ontrak-tix/tests/tix-m3-comms.test.ts` (including the desk's own drafts, `IncidentCommsTemplate`
+> and `/incidents/templates`), and the **retention sweep** that acts
 > on a closed lock without being asked (`planRetentionSweep`,
 > `IncidentDocsService.sweepRetention`, `POST /api/incidents/retention-sweep`,
 > `npm run sweep:retention`), covered by `ontrak-tix/tests/tix-m3-retention.test.ts`
 > and proved against real Postgres and a real filesystem in
-> `ontrak-tix/tests/tix-db.test.ts`. M3 is complete; the honest gaps that remain
-> are listed at the end of [docs/incidents.md](./docs/incidents.md) — a real
-> object-locked backend, per-tenant template authoring, and scheduling the sweep.
+> `ontrak-tix/tests/tix-db.test.ts`, the HTTP entry point in
+> `ontrak-tix/tests/tix-m3-retention-live.test.ts`. M3 is complete; the honest
+> gaps that remain are listed at the end of
+> [docs/incidents.md](./docs/incidents.md) — a real object-locked backend,
+> scheduling the sweep yourself, and notice-template versioning.
 >
 > M1 progress: the SLA engine (clocks, escalations and the scheduled sweep),
 > queue routing, CSAT surveys, attachments, the dispatcher report, canned
@@ -595,10 +598,14 @@ up to an adjuster or auditor.
     notification. The console offers the drafts on an open duty (flagging the
     generic ones when no template names that regime), pre-fills an editable
     textarea, and stores the text **as sent** on the obligation — with the draft
-    it came from on the timeline and the template key in the audit event. Covered
-    by `ontrak-tix/tests/tix-m3-comms.test.ts`, and exercised end to end by the
-    Tix browser sweep (track a regime, open its draft, record it, read the notice
-    text back off the record).
+    it came from on the timeline and the template key in the audit event. A desk
+    can author its **own** drafts at `/incidents/templates`
+    (`comms-template-service.ts`, `IncidentCommsTemplate`): one aimed at a regime
+    is offered ahead of ours on that duty, a generic one on every duty, placeholders
+    are validated while somebody is looking at the form, and a draft is retired
+    rather than deleted. Covered by `ontrak-tix/tests/tix-m3-comms.test.ts`, and
+    exercised end to end by the Tix browser sweep (write a draft, track the
+    regime it names, record the notice from the desk's own words).
 - One-click **Assurance Packet** export: signed timeline + decisions + approvals
   + evidence manifest + access logs + policy versions.
   - `[x]` The packet (`assurance-rules.ts`, `assurance-service.ts`,

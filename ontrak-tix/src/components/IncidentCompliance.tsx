@@ -23,7 +23,7 @@ import {
   canWaive,
   type NotificationObligation,
 } from "../lib/regulatory-rules";
-import { audienceLabel, commsDrafts, type CommsFacts } from "../lib/comms-rules";
+import { audienceLabel, commsDrafts, type CommsFacts, type IncidentCommsTemplate } from "../lib/comms-rules";
 import type { SuggestedObligation } from "../lib/compliance-service";
 import {
   actionState,
@@ -52,8 +52,11 @@ export interface NotificationPanelProps {
   obligations: NotificationObligation[];
   /** Regimes this incident's facts suggest, and whether they are tracked. */
   suggestions: SuggestedObligation[];
-  /** The incident's own facts, so a notice can be drafted from them. */
-  comms?: CommsFacts;
+  /**
+   * The incident's own facts, so a notice can be drafted from them — plus any
+   * drafts the desk wrote itself, which are offered ahead of the shipped ones.
+   */
+  comms?: CommsFacts & { templates?: IncidentCommsTemplate[] };
   now: string;
   actions?: NotificationActions;
 }
@@ -169,7 +172,10 @@ export function NotificationPanel({ incidentId, obligations, suggestions, comms,
                     ) : null}
                     {canSend(obligation) && comms
                       ? (() => {
-                          const drafts = commsDrafts({ ...comms, obligation });
+                          const drafts = commsDrafts(
+                            { incident: comms.incident, obligation, tenant: comms.tenant, author: comms.author },
+                            comms.templates ?? [],
+                          );
                           return (
                             <details className="w-full rounded-xl2 border border-line p-2">
                               <summary className="cursor-pointer text-[11px] font-semibold text-ink-soft">
@@ -181,6 +187,7 @@ export function NotificationPanel({ incidentId, obligations, suggestions, comms,
                                     <div className="flex flex-wrap items-center gap-2">
                                       <span className="text-xs font-semibold text-ink">{draft.template.label}</span>
                                       {chip(audienceLabel(draft.template.audience), "brand")}
+                                      {draft.custom ? chip("yours", "teal") : null}
                                       {draft.fallback ? chip("generic", "amber") : null}
                                       {draft.ready
                                         ? chip("ready", "teal")

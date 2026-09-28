@@ -2,7 +2,14 @@ import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../lib/session";
 import { hasPermission } from "../../../lib/access-rules";
-import { complianceServicesFor, incidentDocsServicesFor, incidentServicesFor, prisma, warRoomServicesFor } from "../../../lib/db";
+import {
+  commsTemplateServicesFor,
+  complianceServicesFor,
+  incidentDocsServicesFor,
+  incidentServicesFor,
+  prisma,
+  warRoomServicesFor,
+} from "../../../lib/db";
 import {
   INCIDENT_IMPACTS,
   INCIDENT_SEVERITIES,
@@ -122,11 +129,16 @@ export default async function IncidentsPage({
   });
 
   // A notification draft speaks for the desk (its name) and is signed by whoever
-  // records it, so those two names are read once for the page.
-  const tenant = await prisma.tenant.findUnique({ where: { id: actor.tenantId }, select: { name: true } });
+  // records it, so those two names are read once for the page — along with the
+  // drafts the desk wrote itself, which are offered ahead of the shipped ones.
+  const [tenant, templates] = await Promise.all([
+    prisma.tenant.findUnique({ where: { id: actor.tenantId }, select: { name: true } }),
+    commsTemplateServicesFor().templatesFor(actor.tenantId),
+  ]);
   const comms = {
     tenant: tenant?.name ?? actor.tenantId,
     author: staff.find((person) => person.id === actor.id)?.displayName ?? actor.id,
+    templates,
   };
 
   const canAct = hasPermission(actor.role, "ticket:update");
@@ -148,6 +160,14 @@ export default async function IncidentsPage({
             : `${open.length} open · ${critical.length} at SEV2 or above · ${unstaffed.length} without a commander`}
         </p>
         {older > 0 ? <p className="text-sm text-ink-soft">…and {older} older incident{older === 1 ? "" : "s"} not shown.</p> : null}
+        <p className="text-sm text-ink-soft">
+          <a href="/incidents/templates" className="font-semibold text-brand hover:underline">
+            Notice templates
+          </a>{" "}
+          {comms.templates.length > 0
+            ? `— ${comms.templates.length} draft${comms.templates.length === 1 ? "" : "s"} of your own, offered ahead of the defaults.`
+            : "— write your own draft for a duty instead of using the shipped wording."}
+        </p>
         {overdueNotices > 0 || overdueActions > 0 ? (
           <p className="text-sm text-pink">
             {overdueNotices > 0 ? `${overdueNotices} regulatory notification${overdueNotices === 1 ? "" : "s"} past its deadline` : ""}

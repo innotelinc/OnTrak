@@ -16,6 +16,7 @@ import { custodyIntegrity, holdActive, type CustodyEntry, type EvidenceItem, typ
 import type { PlaybookStepRecord } from "../lib/incident-docs-service";
 import type { IncidentEvent, IncidentRecord } from "../lib/incident-service";
 import type { NotificationObligation } from "../lib/regulatory-rules";
+import type { IncidentCommsTemplate } from "../lib/comms-rules";
 import type { ReviewActionRecord, ReviewRecord } from "../lib/review-rules";
 import type { SuggestedObligation } from "../lib/compliance-service";
 import { WAR_ROOM_SOURCE_LABELS, type WarRoomEntry, type WarRoomSource, type WarRoomSummary } from "../lib/war-room-rules";
@@ -94,9 +95,10 @@ export interface IncidentListProps {
   emptyMessage?: string;
   /**
    * The desk's name and the signed-in person's, so a notification draft can be
-   * rendered from the incident's facts on the server (`comms-rules.ts`).
+   * rendered from the incident's facts on the server (`comms-rules.ts`) — plus
+   * the drafts the desk wrote itself, offered ahead of the shipped defaults.
    */
-  comms?: { tenant: string; author: string };
+  comms?: { tenant: string; author: string; templates?: IncidentCommsTemplate[] };
   /** The instant the panels judge lateness against; defaults to the render clock. */
   now?: string;
 }
@@ -624,6 +626,7 @@ export function IncidentList({
                       },
                       tenant: comms.tenant,
                       author: comms.author,
+                      ...(comms.templates ? { templates: comms.templates } : {}),
                     },
                   }
                 : {})}

@@ -31,7 +31,9 @@ sweepable with `npm run sweep:retention`.
 | Service: start/step the playbook, record evidence, custody, holds, artifacts, manifest | `src/lib/incident-docs-service.ts` |
 | Prisma adapter | `src/lib/incident-docs-store-prisma.ts` |
 | Pure rules: notification regimes, duties and their clocks | `src/lib/regulatory-rules.ts` |
-| Pure rules: the notices a duty drafts (templates, placeholders, readiness) | `src/lib/comms-rules.ts` |
+| Pure rules: the notices a duty drafts (templates, placeholders, readiness, authoring validation) | `src/lib/comms-rules.ts` |
+| Service + Prisma adapter: the tenant's own drafts | `src/lib/comms-template-service.ts`, `comms-template-store-prisma.ts` |
+| Authoring screen | `src/app/(desk)/incidents/templates/page.tsx` |
 | Pure rules: the review, its findings and tracked actions | `src/lib/review-rules.ts` |
 | Service: track/send/waive notifications, publish the review, run its actions | `src/lib/compliance-service.ts` |
 | Pure rules: assemble the war-room timeline from other sources | `src/lib/war-room-rules.ts` |
@@ -39,7 +41,7 @@ sweepable with `npm run sweep:retention`.
 | Offline packet verifier for a third party | `scripts/verify-packet.ts` (`npm run verify:packet`) |
 | Retention sweep: decide what the clock allows, then carry it out | `planRetentionSweep` (`src/lib/object-lock-rules.ts`), `IncidentDocsService.sweepRetention` |
 | Scheduled entry point and operator script | `src/app/api/incidents/retention-sweep/route.ts`, `scripts/retention-sweep.ts` (`npm run sweep:retention`) |
-| Models | `prisma/schema.prisma` (`Incident`, `IncidentEvent`, `PlaybookStep`, `EvidenceItem`, `CustodyEntry`, `LegalHold`, `EvidenceArtifact`, `IncidentNotification`, `IncidentReview`, `IncidentReviewAction`) |
+| Models | `prisma/schema.prisma` (`Incident`, `IncidentEvent`, `PlaybookStep`, `EvidenceItem`, `CustodyEntry`, `LegalHold`, `EvidenceArtifact`, `IncidentNotification`, `IncidentReview`, `IncidentReviewAction`, `IncidentCommsTemplate`) |
 | Console | `src/app/(desk)/incidents/page.tsx`, `src/components/IncidentList.tsx`, `src/app/actions/incidents.ts` |
 | Manifest download | `src/app/api/incidents/[id]/manifest/route.ts` |
 | Pure rules: the packet, its digests, its signature | `src/lib/assurance-rules.ts` |
@@ -333,6 +335,31 @@ answered. The timeline line names the draft it came from and the audit event
 carries the template key, so the wording is traceable without trusting the email
 system.
 
+### The desk's own wording
+
+Shipped templates can say what a notice to a CSIRT has to contain; they cannot
+say what *this* desk promises *this* client, which comes from the contract and
+the last time somebody complained about a sentence. So `/incidents/templates`
+lets a desk author its own drafts (`comms-template-service.ts`,
+`comms-template-store-prisma.ts`, `IncidentCommsTemplate`):
+
+- **Aim a draft at regimes**, or at none for a generic one. A draft naming a
+  regime is offered *ahead of ours* on that duty and is marked as the desk's own;
+  a generic draft of the desk's is offered on every duty, because writing one is
+  a request to have it available everywhere.
+- **Placeholders are checked at authoring time**, against the same vocabulary the
+  rendering engine uses, so a typo is refused while somebody is looking at the
+  form instead of surviving to 03:00. The fill-ins (`{{dataCategories}}`, and
+  friends) are allowed and reported as unfinished until a person fills them in.
+- **A draft is retired, never deleted.** Retiring stops it being offered on a
+  duty; the row stays so a notice that cited it remains explainable, and it can be
+  offered again.
+
+Managing the library is a staff action (`ticket:update`), the same gate the M1
+canned responses use, because it is the same act: writing down what the desk
+says. The browser sweep writes a draft for a regime, then declares an incident
+that owes that notice and records it from the desk's own words.
+
 ## Verifying a packet without us
 
 The packet promises that a third party can check it holding nothing but the file
@@ -404,10 +431,9 @@ exported rather than at boot.
 
 ## What is not here yet
 
-- **A tenant's own incident templates.** The drafts a duty offers are shipped
-  defaults, and a desk's M1 canned responses can be adopted from them
-  (`cannedAsCommsTemplate`), but there is no screen yet for authoring an incident
-  notification template per tenant and regime.
+- **Versioning a notice template.** Retiring keeps a draft's row, and a sent
+  notice keeps its own text, but a draft that was *edited* leaves no earlier
+  version: the timeline names the draft, not the revision of it that was sent.
 - **A real object-locked backend.** The rules, the lock row and the S3 headers are
   here, and the filesystem store enforces write-once for the process that goes
   through it, but a shared bucket with object lock enabled is what would enforce
