@@ -8,6 +8,11 @@ dist/
 .env
 .env*.local
 
+# production env for the compose overlays — a real deployment's secrets never
+# belong in git. The `.example` templates beside them are tracked on purpose.
+.env.production
+.env.production.local
+
 # prisma
 prisma/migrations/dev.db*
 

@@ -81,6 +81,27 @@ live on a named volume, so neither a rebuild nor a `down` discards them. Build
 the image without starting anything with `docker build --target runner .` (or
 `make images`, which builds OnTrak Tix's too).
 
+### Deploy it
+
+`docker-compose.prod.yml` is the deployment overlay, used on top of the file
+above rather than instead of it:
+
+```bash
+cp .env.production.example .env.production   # then fill in the two REQUIRED values
+make prod-up
+```
+
+Three things change, and each is the reason the overlay exists: the database
+stops being published on a host port, the secrets become required instead of
+defaulted, and the containers restart by themselves. It refuses to start while
+`AUTH_SECRET` or `POSTGRES_PASSWORD` is unset, because the development
+placeholders in `.env` are public knowledge — a deployment that quietly accepted
+them would be worse than one that stopped.
+
+Give it a fresh volume. Postgres applies `POSTGRES_PASSWORD` only when it
+creates the role, so pointing this at an existing development database will not
+change that database's password and the app will fail to authenticate.
+
 ### Run it from source
 
 ```bash

@@ -23,7 +23,9 @@ name: ontrak-tix
 services:
   db:
     image: postgres:16-alpine
-    container_name: ontrak-tix-db
+    # No `container_name`: that fixes the name for every project, which stops
+    # the production overlay running under its own `-p` alongside this one
+    # (compose names containers `<project>-<service>-<n>` by default).
     restart: unless-stopped
     environment:
       POSTGRES_USER: ontrak
@@ -57,7 +59,6 @@ services:
     build:
       context: .
       target: runner
-    container_name: ontrak-tix-app
     restart: unless-stopped
     depends_on:
       db:
