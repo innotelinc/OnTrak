@@ -146,6 +146,12 @@ Give it a fresh volume. Postgres applies `POSTGRES_PASSWORD` only when it create
 the role, so pointing this at an existing development database will not change
 that database's password and the app will fail to authenticate.
 
+Single sign-on needs `ONTRAK_TIX_BASE_URL` set to the desk's own address. It is not
+only for notification links: the SSO redirect URI is built from it, and a redirect
+URI has to match exactly what the provider registered. Without it the desk uses the
+address its process is bound to — `0.0.0.0:3000` inside a container — and the
+handshake is refused with a redirect-URI mismatch that reads like a bad client id.
+
 Neither stack terminates TLS, and the session cookie is not marked `Secure`
 unless the request says the connection is https — so the desk stays signed in when
 the app is reached over plain HTTP, on the host or on the LAN. That is the

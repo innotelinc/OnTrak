@@ -255,3 +255,34 @@ export function safeReturnTo(value: string | null | undefined): string | null {
 export function homePathForRole(role: string): string {
   return role === "REQUESTER" ? "/portal" : "/inbox";
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Where this deployment actually is                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The origin this deployment is reached at, as the handshake has to name it.
+ *
+ * `request.nextUrl.origin` is the *server's* idea of where it is, and the two are
+ * different the moment the app runs anywhere but on one host: in a container it is
+ * the internal address (`0.0.0.0:3000`), and behind a proxy it is whatever the
+ * socket was bound to. Neither is usable in a handshake. A redirect URI is matched
+ * **exactly** against the one the provider registered, so a request built from the
+ * internal address fails as a mismatch at the provider rather than as anything an
+ * operator can see from the desk; and a post-sign-in redirect to the internal
+ * address strands the browser somewhere it cannot reach.
+ *
+ * `ONTRAK_TIX_BASE_URL` is the deployment stating its own address, and only the
+ * deployment knows it. Unset, the request origin is the best available answer —
+ * right for a single-host development run, wrong behind a proxy — so the default is
+ * a fallback rather than a policy.
+ */
+export function deploymentOrigin(configured: string | null | undefined, requestOrigin: string): string {
+  const trimmed = (configured ?? "").trim().replace(/\/+$/, "");
+  return trimmed || requestOrigin.replace(/\/+$/, "");
+}
+
+/** The single redirect URI this deployment is registered under, given its origin. */
+export function ssoRedirectUri(origin: string): string {
+  return `${origin.replace(/\/+$/, "")}/api/sso/callback`;
+}

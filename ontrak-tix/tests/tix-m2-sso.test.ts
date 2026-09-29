@@ -13,11 +13,13 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 
 import {
   buildAuthorizationUrl,
+  deploymentOrigin,
   discoveryUrl,
   extractOidcClaims,
   homePathForRole,
   isAuthorizationState,
   safeReturnTo,
+  ssoRedirectUri,
   stateExpired,
   validateDiscovery,
   type AuthorizationState,
@@ -33,6 +35,34 @@ import {
 } from "../src/lib/security-alert-connector";
 import { MemorySecurityAlertStore, SecurityAlertService, type SecurityAlertRecord } from "../src/lib/security-alert-service";
 import type { PromotionRecord } from "../src/lib/alert-promotion-service";
+
+/* -------------------------------------------------------------------------- */
+/*  The origin the handshake names                                             */
+/* -------------------------------------------------------------------------- */
+
+test("sso: the redirect URI names the deployment, not the server's own address", () => {
+  // The bug this pins: `request.nextUrl.origin` inside a container is the address
+  // the process is bound to (`0.0.0.0:3000`), not the one the browser is on. A
+  // redirect URI is matched *exactly* by the provider, so a handshake built from it
+  // fails as a mismatch at the provider — and the post-sign-in redirect sends the
+  // browser to an address it cannot reach. Neither is visible from the desk.
+  assert.equal(
+    deploymentOrigin("http://127.0.0.1:3001", "http://0.0.0.0:3000"),
+    "http://127.0.0.1:3001",
+    "a configured address wins over the one the server happens to be bound to",
+  );
+  assert.equal(deploymentOrigin("https://tix.acme.test/", "http://0.0.0.0:3000"), "https://tix.acme.test");
+  assert.equal(deploymentOrigin("  https://tix.acme.test///  ", "http://0.0.0.0:3000"), "https://tix.acme.test");
+
+  // Unset (or blank) falls back to the request, which is right for a single-host run.
+  assert.equal(deploymentOrigin(undefined, "http://127.0.0.1:3001"), "http://127.0.0.1:3001");
+  assert.equal(deploymentOrigin(null, "http://127.0.0.1:3001"), "http://127.0.0.1:3001");
+  assert.equal(deploymentOrigin("   ", "http://127.0.0.1:3001"), "http://127.0.0.1:3001");
+
+  // One redirect URI, spelled once, so start and callback cannot disagree.
+  assert.equal(ssoRedirectUri("https://tix.acme.test"), "https://tix.acme.test/api/sso/callback");
+  assert.equal(ssoRedirectUri("https://tix.acme.test/"), "https://tix.acme.test/api/sso/callback");
+});
 import { SecurityAlertList } from "../src/components/SecurityAlertList";
 
 const ISSUER = "https://idp.acme.test";
