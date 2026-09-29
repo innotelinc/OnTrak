@@ -70,6 +70,49 @@ export interface OutcomeReport {
   source?: OutcomeDraft["source"];
   note?: string;
   its?: HandoffResult;
+  /**
+   * The drafts themselves, on a dry run only.
+   *
+   * A preview that reports a title and nothing else cannot answer the question a
+   * preview exists for — is this prose good enough to publish? — so the dry run
+   * carries the article and the scenario in full and writes neither.
+   */
+  draft?: OutcomeDraft;
+}
+
+/**
+ * Author what a sweep would write, and write nothing.
+ *
+ * The same refusals as the real pass, in the same order, so a preview is a preview
+ * of *this* sweep and not of an idealised one: a ticket resolved without a public
+ * reply is reported as skipped here too, rather than quietly missing from the
+ * preview and then missing from the article count.
+ */
+export async function previewOutcomes(
+  tickets: readonly OutcomeTranscript[],
+  author: (ticket: OutcomeTranscript) => Promise<OutcomeDraft>,
+): Promise<OutcomeReport[]> {
+  const reports: OutcomeReport[] = [];
+  for (const ticket of tickets) {
+    if (!hasResolution(ticket)) {
+      reports.push({
+        ref: ticket.ref,
+        status: "skipped",
+        reason: "resolved with no public reply, so there is no resolution to write down",
+      });
+      continue;
+    }
+    const draft = await author(ticket);
+    reports.push({
+      ref: ticket.ref,
+      status: "written",
+      source: draft.source,
+      note: draft.note,
+      draft,
+      reason: `would write “${draft.article.title}” and hand “${draft.scenario.title}” to OnTrak ITS`,
+    });
+  }
+  return reports;
 }
 
 /**

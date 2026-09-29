@@ -13,8 +13,9 @@
  *   POST /api/outcomes/sweep?tenant=acme
  *   POST /api/outcomes/sweep?limit=100       # how many tickets per tenant
  *
- * `?dry=1` authors the drafts and reports them *without writing anything*, which is
- * how somebody decides whether the prose is good enough to turn on.
+ * `?dry=1` authors the drafts and reports them — the article and the scenario in
+ * full — *without writing anything*, which is how somebody decides whether the prose
+ * is good enough to turn on.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -24,8 +25,8 @@ import { ticketServices } from "../../../../lib/ticket-server";
 import { extractSecret, secretsMatch } from "../../../../lib/intake-webhook";
 import { ESCALATION_CRON_SECRET_ENV } from "../../../../lib/escalation-service";
 import { authorConfig, authorOutcome } from "../../../../lib/ai-author";
-import { hasResolution, type OutcomeTranscript } from "../../../../lib/outcome-rules";
-import { outcomeActor, writeOutcomes, type OutcomeReport } from "../../../../lib/outcome-service";
+import type { OutcomeTranscript } from "../../../../lib/outcome-rules";
+import { outcomeActor, previewOutcomes, writeOutcomes, type OutcomeReport } from "../../../../lib/outcome-service";
 import { itsConfig } from "../../../../lib/its-client";
 import { isOpen } from "../../../../lib/ticket-rules";
 
@@ -79,25 +80,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }));
 
     if (dry) {
-      const reports: OutcomeReport[] = [];
-      for (const transcript of transcripts) {
-        if (!hasResolution(transcript)) {
-          reports.push({
-            ref: transcript.ref,
-            status: "skipped",
-            reason: "resolved with no public reply, so there is no resolution to write down",
-          });
-          continue;
-        }
-        const draft = await authorOutcome(transcript);
-        reports.push({
-          ref: transcript.ref,
-          status: "written",
-          source: draft.source,
-          note: draft.note,
-          reason: `would write “${draft.article.title}” and hand “${draft.scenario.title}” to OnTrak ITS`,
-        });
-      }
+      const reports = await previewOutcomes(transcripts, (transcript) => authorOutcome(transcript));
       perTenant.push({ tenant: tenant.slug, written: 0, skipped: 0, refused: 0, reports });
       continue;
     }
