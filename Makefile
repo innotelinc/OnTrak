@@ -19,6 +19,8 @@ SENTINEL_DIR := ontrak-sentinel
 SYNC_DIR := ontrak-sync
 PORTAL_DIR := ontrak-portal
 
+GENIE_DIR := ontrak-genie
+
 ## ---- Bootstrap ----
 
 .PHONY: help
@@ -105,6 +107,18 @@ portal-down: ## Stop the portal stack
 portal-logs: ## Tail the portal stack's logs
 	cd $(PORTAL_DIR) && docker compose logs -f
 
+.PHONY: genie-up
+genie-up: ## Build and start the agent console, serving on :3400
+	cd $(GENIE_DIR) && docker compose up -d --build
+
+.PHONY: genie-down
+genie-down: ## Stop the agent console stack
+	cd $(GENIE_DIR) && docker compose down
+
+.PHONY: genie-logs
+genie-logs: ## Tail the agent console's logs
+	cd $(GENIE_DIR) && docker compose logs -f
+
 # The family stack: all five products, one network, one command. `up`/`down`
 # above are the training app's; this brings up everything, with Tix's outbound
 # provisioning already pointed at the provider over the network and the portal's
@@ -112,7 +126,7 @@ portal-logs: ## Tail the portal stack's logs
 # docker-compose.all.yml for what single sign-on additionally needs.
 
 .PHONY: all-up
-all-up: ## Build and start all five products together (:3300, :3000, :3001, :8787, :8420/8421)
+all-up: ## Build and start all six products together (:3400, :3300, :3000, :3001, :8787, :8420/8421)
 	docker compose -f docker-compose.all.yml up -d --build
 
 .PHONY: all-down
@@ -135,6 +149,7 @@ ps: ## List the containers in all five stacks
 	cd $(SENTINEL_DIR) && docker compose ps
 	cd $(SYNC_DIR) && docker compose ps
 	cd $(PORTAL_DIR) && docker compose ps
+	cd $(GENIE_DIR) && docker compose ps
 
 .PHONY: images
 images: ## Build the training, Tix and Sentinel images without starting anything
@@ -149,6 +164,10 @@ sync-images: ## Build the OnTrak Sync API + dashboard images without starting an
 .PHONY: portal-images
 portal-images: ## Build the portal image without starting anything
 	cd $(PORTAL_DIR) && docker compose build
+
+.PHONY: genie-images
+genie-images: ## Build the agent console image without starting anything
+	cd $(GENIE_DIR) && docker compose build
 
 .PHONY: family-image
 family-image: ## Build the family stack's images without starting anything

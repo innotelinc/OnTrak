@@ -3,10 +3,10 @@
 #
 #   make all-up        (or: docker compose -f docker-compose.all.yml up -d --build)
 #
-# Five products, one command: the portal on :3300, the training app on :3000, the
-# service desk on :3001, the identity provider on :8787, and OnTrak Sync on
-# :8420/:8421 — each with its own database, all on one network. The product stacks
-# remain — `make up`, `make tix-up`, `make sentinel-up`, `make sync-up` — and this
+# Six products, one command: the portal on :3300, the training app on :3000, the
+# service desk on :3001, the identity provider on :8787, OnTrak Sync on
+# :8420/:8421, and the agent console on :3400. The product stacks
+# remain — `make up`, `make tix-up`, `make sentinel-up`, `make sync-up`, `make genie-up` — and this
 # file is for running the family together, which is the only arrangement where the
 # wiring between them can be checked in one go.
 #
@@ -30,7 +30,7 @@
 # include three. Here each service is prefixed with its product, and the *values*
 # (images, build stages, commands, healthchecks) are the same as the product files.
 # Ports are the ones the family already reserves: 3000/5432 training,
-# 3001/5433 Tix, 8787/5434 Sentinel.
+# 3001/5433 Tix, 8787/5434 Sentinel, 3400 Genie (which has no database).
 #
 # ## What is wired up for you
 #
@@ -416,6 +416,56 @@ services:
       retries: 5
       start_period: 20s
 
+  # ── OnTrak Genie (CodeOps) ────────────────────────────────────────────────
+  # The browser console for a coding agent: it reads, edits and runs code in a
+  # workspace it cannot leave, and shows each call as it happens — including the
+  # file being written, while it is still being written.
+  #
+  # No database. A workspace volume and a data volume holding sessions,
+  # transcripts and per-file snapshots, which is what makes a restart lose
+  # nothing and what lets the pane restore what it was showing.
+  #
+  # Two settings are required rather than defaulted, because both are the
+  # difference between a console and an open shell:
+  #   WEB_TOKEN      this console can read, write and run code, and publishing a
+  #                  port is what makes it reachable. Empty is acceptable only on
+  #                  loopback, which is why nothing is defaulted here.
+  #   OMNIROUTE_URL  the stack's shared OmniRoute. Supplied by the deployment so
+  #                  that no address of ours ends up in the repository.
+  genie-app:
+    build:
+      context: ontrak-genie
+    image: innotel/ontrak-genie:0.1.0
+    restart: unless-stopped
+    env_file:
+      - path: ontrak-genie/.env
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3400"
+      AGENT_WORKSPACE: /workspace
+      AGENT_DATA_DIR: /data
+      # This container is already the boundary, so run_command stays inside it
+      # rather than trying to nest Docker — there is no socket here to nest into.
+      AGENT_SANDBOX: host
+      OMNIROUTE_URL: ${OMNIROUTE_URL:-}
+      WEB_TOKEN: ${WEB_TOKEN:-}
+    volumes:
+      - ontrak-family-genie-workspace:/workspace
+      - ontrak-family-genie-data:/data
+    ports:
+      - "${ONTRAK_GENIE_PORT:-3400}:3400"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3400/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   # ── OnTrak Portal (the front door) ────────────────────────────────────────
   # One sign-in, then the products a role belongs in. It holds no data of its own
   # — no database, no migrations, no user table — which is why it can be restarted
@@ -472,3 +522,5 @@ volumes:
   ontrak-family-sentinel-db:
   ontrak-family-sentinel-keys:
   ontrak-family-sync-data:
+  ontrak-family-genie-workspace:
+  ontrak-family-genie-data:

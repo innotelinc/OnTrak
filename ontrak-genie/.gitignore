@@ -1,0 +1,13 @@
+node_modules/
+dist/
+
+# Agent runtime state: session transcripts and scratch space
+.agent/
+workspace/
+
+# Local secrets
+.env
+.env.local
+
+*.log
+.DS_Store

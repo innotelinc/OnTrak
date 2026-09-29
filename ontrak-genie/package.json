@@ -1,0 +1,33 @@
+{
+  "name": "ontrak-genie",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "OnTrak Genie — the family's browser agent console: it drives a coding agent over a sandboxed workspace, streams its tool calls, and gates risky commands behind a click. An Innotel Labs product.",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test dist/test/*.test.js",
+    "check": "npm run typecheck && npm run build && npm test && npm run ui:smoke",
+    "gateway": "npx -y omniroute",
+    "gateway:docker": "docker run --rm -p 20128:20128 diegosouzapw/omniroute",
+    "sandbox:build": "docker build -t coding-agent-sandbox:latest sandbox",
+    "provider:add": "node scripts/add-provider.mjs",
+    "model:health": "node scripts/model-health.mjs",
+    "offline:check": "node scripts/offline-check.mjs",
+    "draft:check": "node scripts/draft-check.mjs",
+    "live:check": "node scripts/offline-check.mjs && node scripts/draft-check.mjs",
+    "ui:smoke": "node scripts/ui-smoke.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
