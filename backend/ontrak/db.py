@@ -67,6 +67,12 @@ CREATE TABLE IF NOT EXISTS targets (
     discovered_at TEXT,
     last_scanned_at TEXT,
     error       TEXT,
+    -- 1 when at least one manager actually produced a verdict about this target on
+    -- the last scan, 0 when every manager failed to look. It is the durable form of
+    -- `TargetReport.scanned`, and the dashboard's `unknown` count reads it: a target
+    -- that was touched by a scan which could not read it must not age into reading
+    -- as merely unscanned, which is how a stopped instance passes for a patched one.
+    last_scanned_ok INTEGER,
     UNIQUE (host, kind, name)
 );
 
@@ -237,6 +243,11 @@ def init(conn: sqlite3.Connection) -> None:
 _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # (table, column, definition)
     ("events", "actor", "TEXT"),
+    # 1 when a manager produced a verdict about a target on the last scan, 0 when
+    # every manager failed to look. The dashboard's `unknown` count reads it, and it
+    # exists because a target that was touched by a scan which could not read it must
+    # not age into reading as merely unscanned. See `touch_target`.
+    ("targets", "last_scanned_ok", "INTEGER"),
 )
 
 
@@ -246,6 +257,21 @@ def _migrate(conn: sqlite3.Connection) -> None:
                     conn.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            if (table, column) == ("targets", "last_scanned_ok"):
+                # Backfill the rows that already exist. Before this column the only
+                # durable trace of a look that failed was `error`, so a target that
+                # was scanned and carries one is recorded as not-looked. That is a
+                # reconstruction, and the one case it gets wrong is a target read
+                # *partially* — some managers answered, some could not — which lands
+                # on the unknown side: the safe side, and where the run report
+                # already puts it.
+                conn.execute(
+                    """
+                    UPDATE targets SET last_scanned_ok =
+                        CASE WHEN error IS NULL THEN 1 ELSE 0 END
+                     WHERE last_scanned_at IS NOT NULL
+                    """
+                )
 
 
 # ── hosts ────────────────────────────────────────────────────────────────────
@@ -287,10 +313,23 @@ def ensure_target(conn, *, host, kind, name, ref=None, meta=None) -> int:
     return int(row["id"])
 
 
-def touch_target(conn, target_id: int, *, error: str | None = None) -> None:
+def touch_target(conn, target_id: int, *, error: str | None = None,
+                 looked: bool = False) -> None:
+    """Record that a scan finished with one target, and what it managed to say.
+
+    `looked` is `TargetReport.scanned` — true only when a manager produced a real
+    verdict — and it is stored rather than derived, because by the next scan the
+    error text has been overwritten and there is nothing left to derive it from:
+    "I read it and it is clean" and "I could not read it" are both no findings and
+    no error, and the dashboard has to tell them apart for weeks, not for one run.
+
+    It defaults to false on purpose. A caller that forgets it reports a target as
+    unknown, which costs an operator a second look; the other default would report
+    a machine nobody could read as up to date.
+    """
     conn.execute(
-        "UPDATE targets SET last_scanned_at=?, error=? WHERE id=?",
-        (utcnow(), error, target_id),
+        "UPDATE targets SET last_scanned_at=?, error=?, last_scanned_ok=? WHERE id=?",
+        (utcnow(), error, int(bool(looked)), target_id),
     )
 
 
@@ -310,6 +349,15 @@ def record_finding(conn, *, target_id, manager, package, current=None, candidate
     the package would be invisible to every future apply. So a candidate that
     moved clears `applied` back to `pending`: the thing that was applied is not
     the thing that is now on offer.
+
+    `detail` IS TREATED THE SAME WAY ON A FAILED ROW, for the same reason. On every
+    other row this write is the scan's detection note — the archive a package came
+    from, "newer image in registry" — and it is meant to be refreshed each run. On a
+    failed row it is the *reason the apply failed*, written by `set_status`, and a
+    scan replacing it with "newer image in registry" is the dashboard forgetting
+    why anything is red between one apply and the next. Eighteen findings read that
+    way at the start of the last investigation, with the real messages sitting in
+    one apply run's events and nowhere else.
     """
     conn.execute(
         """
@@ -321,7 +369,10 @@ def record_finding(conn, *, target_id, manager, package, current=None, candidate
             candidate=excluded.candidate,
             security=excluded.security,
             last_seen=excluded.last_seen,
-            detail=COALESCE(excluded.detail, findings.detail),
+            detail=CASE
+                WHEN findings.status='failed' THEN findings.detail
+                ELSE COALESCE(excluded.detail, findings.detail)
+            END,
             status=CASE
                 WHEN findings.status='applied'
                      AND IFNULL(excluded.candidate,'') != IFNULL(findings.candidate,'')
@@ -492,7 +543,8 @@ def list_hosts(conn) -> list[dict]:
         SELECT h.*,
                (SELECT COUNT(*) FROM targets t WHERE t.host=h.name)                  AS targets,
                (SELECT COUNT(*) FROM targets t WHERE t.host=h.name
-                  AND t.last_scanned_at IS NULL)                                     AS unscanned,
+                  AND (t.last_scanned_at IS NULL
+                       OR COALESCE(t.last_scanned_ok,0)=0))                          AS unscanned,
                (SELECT COUNT(*) FROM findings f JOIN targets t ON t.id=f.target_id
                  WHERE t.host=h.name AND f.status='pending')                          AS pending,
                (SELECT COUNT(*) FROM findings f JOIN targets t ON t.id=f.target_id
