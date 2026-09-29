@@ -14,7 +14,7 @@ import { revalidatePath } from "next/cache";
 
 import { ROLES, type Role } from "../../lib/access-rules";
 import { requireActor } from "../../lib/session";
-import { identityServicesFor } from "../../lib/db";
+import { identityServicesFor, scimSyncServicesFor } from "../../lib/db";
 import { IDENTITY_PROTOCOLS, parseRoleMappings, splitList, type IdentityProtocol } from "../../lib/identity-rules";
 
 function text(formData: FormData, field: string): string {
@@ -27,6 +27,44 @@ function pick<T extends string>(value: unknown, allowed: readonly T[], fallback:
 
 function fail(message: string): never {
   redirect(`/admin/identity?error=${encodeURIComponent(message)}`);
+}
+
+function flash(message: string): never {
+  redirect(`/admin/identity?flash=${encodeURIComponent(message)}`);
+}
+
+/**
+ * Push every account this tenant holds to the identity provider (outbound SCIM).
+ *
+ * The service decides what needs writing and records each applied change on the
+ * tenant's hash chain; this action only turns the outcome into one sentence a
+ * person can act on. A failed run reports the *first* provider refusal by name —
+ * "the sync failed" is not something anybody can fix.
+ */
+export async function pushPeopleToProviderAction(): Promise<void> {
+  const actor = await requireActor();
+  const result = await scimSyncServicesFor().push(actor);
+  if (!result.ok) fail(result.error);
+
+  const outcome = result.value;
+  const summary = [
+    `${outcome.total} account${outcome.total === 1 ? "" : "s"} checked`,
+    outcome.created > 0 ? `${outcome.created} created` : null,
+    outcome.updated > 0 ? `${outcome.updated} updated` : null,
+    outcome.deactivated > 0 ? `${outcome.deactivated} switched off` : null,
+    outcome.unchanged > 0 ? `${outcome.unchanged} already matched` : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(", ");
+
+  if (outcome.failures.length > 0) {
+    const first = outcome.failures[0];
+    const rest = outcome.failures.length > 1 ? ` (and ${outcome.failures.length - 1} more)` : "";
+    fail(`${summary}. ${first.reason} — ${first.email}${rest}`);
+  }
+
+  revalidatePath("/admin/identity");
+  flash(`${summary}.`);
 }
 
 export async function saveIdentityConnectionAction(formData: FormData): Promise<void> {

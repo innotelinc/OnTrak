@@ -5,7 +5,9 @@ import { hasPermission } from "../../../../lib/access-rules";
 import { identityServicesFor } from "../../../../lib/db";
 import { OIDC_CLIENT_SECRET_ENV } from "../../../../lib/oidc-client";
 import { IdentityConnectionForm } from "../../../../components/IdentityConnectionForm";
-import { saveIdentityConnectionAction } from "../../../actions/identity";
+import { ScimPushCard } from "../../../../components/ScimPushCard";
+import { SCIM_TARGET_ENV, scimTargetFromEnv } from "../../../../lib/scim-rules";
+import { pushPeopleToProviderAction, saveIdentityConnectionAction } from "../../../actions/identity";
 
 export const metadata = { title: "Identity" };
 
@@ -27,6 +29,7 @@ export default async function IdentityAdminPage({
 
   const { flash, error } = await searchParams;
   const connection = await identityServicesFor().connectionFor(actor.tenantId);
+  const scim = scimTargetFromEnv();
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
@@ -49,6 +52,14 @@ export default async function IdentityAdminPage({
         clientSecretConfigured={Boolean(process.env[OIDC_CLIENT_SECRET_ENV])}
         callbackUrl="/api/sso/callback"
         action={saveIdentityConnectionAction}
+      />
+
+      <ScimPushCard
+        configured={scim.target !== null}
+        issues={scim.issues}
+        baseUrl={scim.target?.baseUrl ?? null}
+        envVars={SCIM_TARGET_ENV}
+        action={pushPeopleToProviderAction}
       />
     </div>
   );

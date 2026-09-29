@@ -280,6 +280,19 @@ to stand on its own.
 > `IdentityConnection`, asserting the session, the provisioned user and the audit
 > event.
 >
+> The IdP slice now has its **other direction** too: the desk pushes its own people
+> to the provider over SCIM (`scim-rules.ts`, `scim-client.ts`,
+> `scim-sync-service.ts`, `scim-sync-store-prisma.ts`), driven from the
+> `/admin/identity` card and pointed with `ONTRAK_TIX_SCIM_BASE_URL` +
+> `ONTRAK_TIX_SCIM_TOKEN`. A person is matched by the desk's own account id before
+> their address, so a rename moves the provider's identity rather than creating a
+> second one; a quiet run writes nothing, so the provider's trail stays a record of
+> changes rather than of polling; and roles are deliberately *not* pushed, because
+> privilege at the provider is not a side effect of a desk edit. Covered by
+> `tix-m2-scim-push.test.ts`, and by the opt-in `tix-m2-scim-live.test.ts`, which
+> pushes real people at a real provider and asserts the leaver stops being able to
+> sign in.
+>
 > M3 progress: the incident lifecycle has landed as pure rules plus a service
 > and a Prisma adapter — the impact×urgency severity matrix, the phase ladder
 > (with a regression back to `CONTAINED` treated as the same incident), the four

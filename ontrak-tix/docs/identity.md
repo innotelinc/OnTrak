@@ -80,6 +80,57 @@ Applied through the same `User` row the rest of the app already trusts, so
 deprovisioning disables the desk access as well as the IdP login. Every applied
 plan is audited as `identity.scim.provision` or `identity.scim.deprovision`.
 
+### Outbound: the desk pushes its people
+
+`planScimProvision` above is the *inbound* direction — an IdP pushing users at
+Tix. The desk also speaks SCIM the other way, because that is how the family is
+deployed: **the desk is where the people are.** An administrator adds an agent
+here; nobody wants to add them a second time in the provider's console, and a
+deployment where the two disagree is one where somebody who left still has an
+identity at the IdP.
+
+| Concern | Where |
+| --- | --- |
+| Pure rules: the target, the plan, the wire shapes | `src/lib/scim-rules.ts` |
+| The client: `HttpScimClient`, and a provider in memory | `src/lib/scim-client.ts` |
+| The service: whose people, in what order, what is recorded | `src/lib/scim-sync-service.ts` |
+| Prisma adapter (the listing) | `src/lib/scim-sync-store-prisma.ts` |
+| The console card and its action | `src/components/ScimPushCard.tsx`, `/admin/identity` |
+| Tests | `tests/tix-m2-scim-push.test.ts`, and the opt-in `tests/tix-m2-scim-live.test.ts` |
+
+`ontrak-tix/.env` names the target: `ONTRAK_TIX_SCIM_BASE_URL` (the provider's
+origin) and `ONTRAK_TIX_SCIM_TOKEN` (a connector token minted in the provider's
+console — in OnTrak Sentinel, `/console/provisioning`). The token is read from the
+environment, never stored in a row, for the same reason the client secret is not:
+a database dump must not be a set of working credentials. With neither variable
+set the card says the deployment is not configured and offers no button; with one
+of them set it refuses and says which one is missing.
+
+`planScimPush` turns one person into exactly one `CREATE` / `REPLACE` /
+`DEACTIVATE` / `NOOP`:
+
+- The match is **`externalId` first** (Tix's own account id), then `userName`. A
+  person changing their address moves the provider's identity instead of creating
+  a second one.
+- A person the provider does not have is created; a person whose details moved, or
+  who is active here but switched off there, is **replaced** — the desk is the
+  system of record for its own people, so provider-side drift is what the sync
+  exists to close.
+- Somebody switched off here is **deactivated** there, and repeating it is a
+  `NOOP`, so a nightly run over an unchanged desk writes nothing at all.
+- **Roles are deliberately not pushed.** Sentinel issues its own roles
+  (ADMIN/AGENT/AUDITOR), Tix has a different set, and any mapping between them
+  would grant or remove *privilege* at the provider as a side effect of a desk
+  edit. Provisioning answers "who exists and may they sign in"; the provider's own
+  console stays the one place that decides what they may do there.
+
+One person's refusal does not abandon the run: the provider's own sentence (and
+its `scimType`, because `uniqueness` and `invalidValue` are different futures) is
+reported for that person and the rest continue. Each applied change is audited as
+`identity.scim.push` — a name distinct from `identity.scim.provision`, because
+reading the trail, the two are the two halves of one conversation and an
+investigation wants to know which side spoke.
+
 ## Single sign-on (OIDC)
 
 A staff member who types their workspace on `/sign-in` starts the
@@ -150,5 +201,8 @@ callback are each refused with a readable message.
 
 - SAML (the connection is stored, and refused at `/api/sso/start`).
 - Inbound SCIM HTTP endpoints — the provisioning *plan* is applied by the
-  service; the `/scim` routes an IdP pushes to are not mounted.
+  service; the `/scim` routes an IdP pushes to are not mounted. (Outbound, where
+  the desk pushes to the provider, is described above and is wired.)
 - IdP-initiated sign-on (the flow is SP-initiated only).
+- A scheduled outbound sync: the push runs when an administrator presses the
+  button, and a person added to the desk is not at the provider until they do.

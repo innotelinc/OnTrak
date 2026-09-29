@@ -273,6 +273,14 @@ generate without a local install would rewrite the parent project's client.
   OIDC rules (discovery validation, the authorization request with `state`,
   `nonce` and PKCE, ID-token claim extraction) and a `jose`-verified client,
   wired into a signed-cookie handshake so staff sign in through the tenant's IdP.
+- `src/lib/scim-rules.ts` + `scim-client.ts` + `scim-sync-service.ts` +
+  `scim-sync-store-prisma.ts` — outbound provisioning (M2): the desk telling the
+  identity provider who works here, over SCIM 2.0. A pure plan decides the one
+  write a person implies (create, replace, deactivate, or nothing), the client is
+  the seam that talks RFC 7644, and the service applies it per person — a refusal
+  names that person and the run continues. Pointed with
+  `ONTRAK_TIX_SCIM_BASE_URL` + `ONTRAK_TIX_SCIM_TOKEN` and driven from
+  `/admin/identity`; docs in [docs/identity.md](./docs/identity.md).
   A workspace resolves to a tenant on the sign-in screen.
 - `src/components/SecurityAlertList.tsx` + `src/app/(desk)/security/page.tsx` +
   `src/app/actions/security.ts` — the security console (M2): the alert stream
@@ -723,7 +731,9 @@ See [ROADMAP.md](./ROADMAP.md) for the full milestone sequence.
   alerts are normalized, deduped, enriched and promoted on the way in, and how
   a vendor connects.
 - [docs/identity.md](./docs/identity.md) — the tenant IdP connection, sign-in
-  gating and role mapping, SCIM provisioning, and the OIDC single sign-on flow.
+  gating and role mapping, the OIDC single sign-on flow, and SCIM in both
+  directions (an IdP provisioning into the desk, and the desk pushing its own
+  people out to the provider).
 - [docs/incidents.md](./docs/incidents.md) — the incident severity matrix, the
   lifecycle phases, incident roles, the append-only timeline, playbooks, evidence
   with its chain of custody and legal hold, and the signed Assurance Packet.
