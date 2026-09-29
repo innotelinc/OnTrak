@@ -1,8 +1,25 @@
-// OnTrak Sentinel — S0 schema draft.
+// OnTrak Sentinel — S0 schema: the identity spine and the evidence log.
 //
-// This is the identity spine and the evidence log. It is a design artifact for
-// the separate Sentinel project; it is NOT yet generated or migrated, and it
-// deliberately does not share a database with the OnTrak Tix or Training apps.
+// Deliberately its own database: Sentinel issues identity for the other products
+// but shares no tables with them, so a compromise in one cannot read the other's
+// evidence. The first migration is `prisma/migrations/20260928000000_init`;
+// the OIDC grant rows (`OidcClient`, `AuthorizationCode`, `AccessToken`) arrive
+// in `20260929000000_oidc`, and SAML service providers plus access-token
+// revocation (`SamlServiceProvider`, `AccessToken.revokedAt`) in
+// `20260930000000_logout_saml`. TOTP enrollment state (`MfaFactor.confirmedAt`,
+// `lastUsedAt`, `lastUsedCounter`) arrives in `20261001000000_mfa_totp`.
+//
+// Two shapes are worth reading before the rest:
+//
+//  - Every record below carries the `organizationId` it belongs to, and every
+//    relation is scoped by it. An organization is an MSP or one internal IT
+//    department; nothing crosses that line, so a query that forgets to scope
+//    itself is a visible mistake rather than a silent cross-tenant read.
+//  - `AuditEvent.seq` is the position *inside one organization's chain*, not a
+//    global row number: the spine keeps a separate hash chain per organization
+//    (`src/lib/audit-chain.ts`), so the uniqueness that matters is
+//    `(organizationId, seq)`. Rows are append-only — never updated, never
+//    deleted.
 
 generator client {
   provider = "prisma-client-js"
@@ -20,29 +37,44 @@ model Organization {
   slug      String   @unique
   createdAt DateTime @default(now())
 
-  identities Identity[]
-  policies   IdentityPolicy[]
-  sessions   Session[]
-  audit      AuditEvent[]
+  identities         Identity[]
+  credentials        Credential[]
+  mfaFactors         MfaFactor[]
+  webauthnChallenges WebAuthnChallenge[]
+  policies           IdentityPolicy[]
+  sessions           Session[]
+  audit              AuditEvent[]
+
+  // The OIDC surface (S1): who we issue identity to, and the grants in flight.
+  oidcClients  OidcClient[]
+  authCodes    AuthorizationCode[]
+  accessTokens AccessToken[]
+  // The SAML surface (S1): the same question — who receives identity — asked
+  // with a different protocol.
+  samlServiceProviders SamlServiceProvider[]
 }
 
 /// A human, service or machine identity.
 model Identity {
-  id           String       @id @default(cuid())
+  id             String       @id @default(cuid())
   organizationId String
   /// Email for humans, or a service name for machines.
-  identifier   String
-  displayName  String
-  kind         IdentityKind @default(HUMAN)
-  role         IdentityRole @default(AGENT)
-  active       Boolean      @default(true)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  identifier     String
+  displayName    String
+  kind           IdentityKind @default(HUMAN)
+  role           IdentityRole @default(AGENT)
+  active         Boolean      @default(true)
+  /// Whether a second factor is enrolled. Read by every session decision, so it
+  /// is stored rather than recomputed from the factors on each read.
+  mfaEnrolled    Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  credentials  Credential[]
-  mfaFactors   MfaFactor[]
-  sessions     Session[]
+  organization       Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  credentials        Credential[]
+  mfaFactors         MfaFactor[]
+  webauthnChallenges WebAuthnChallenge[]
+  sessions           Session[]
 
   @@unique([organizationId, identifier])
   @@index([organizationId, role])
@@ -60,28 +92,71 @@ enum IdentityRole {
   AUDITOR
 }
 
+/// A secret *hash* — never a plaintext secret, so a database copy is not a
+/// credential dump.
 model Credential {
-  id         String   @id @default(cuid())
-  identityId String
-  /// Argon2/scrypt hash — never a plaintext secret.
-  hash       String
-  createdAt  DateTime @default(now())
+  id             String   @id @default(cuid())
+  organizationId String
+  identityId     String
+  /// Argon2id/scrypt hash.
+  hash           String
+  createdAt      DateTime @default(now())
 
-  identity Identity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  identity     Identity     @relation(fields: [identityId], references: [id], onDelete: Cascade)
 
+  @@index([organizationId])
   @@index([identityId])
 }
 
+/// An enrolled second factor (S1).
+///
+/// `confirmedAt` is the field that decides whether this factor counts: `null`
+/// means somebody generated a secret and nobody has proved they hold it, which is
+/// an enrollment in progress and never satisfies the session policy. The policy
+/// reads `Identity.mfaEnrolled`, which `MfaService.confirmEnrollment` sets only
+/// after a code from this secret verifies — so "enrolled" is a fact about a code
+/// that was accepted, not a checkbox.
+///
+/// `secret` holds a TOTP shared secret and is therefore the one value in Sentinel
+/// that has to be readable rather than hashed (a code is computed *from* it). The
+/// deployment is expected to encrypt this column at rest, exactly as it encrypts a
+/// webhook signing secret; the columns here do not pretend otherwise. For a
+/// `WEBAUTHN` factor `secret` holds the credential id instead — a value an assertion
+/// arrives naming, and one that has to be readable to be matched — and the public key
+/// lives in `publicKey`, where being readable is not a risk at all.
 model MfaFactor {
-  id         String   @id @default(cuid())
-  identityId String
-  kind       MfaKind
-  /// TOTP secret or WebAuthn credential id; encrypted at rest.
-  secret     String
-  createdAt  DateTime @default(now())
+  id             String   @id @default(cuid())
+  organizationId String
+  identityId     String
+  kind           MfaKind
+  /// TOTP: the base32 secret. WebAuthn: the base64url credential id.
+  secret         String
+  /// WebAuthn only: the COSE public key, as JSON. A public key is not a secret, so
+  /// this one column is safe to read back — and losing it means the key can never
+  /// answer an assertion again.
+  publicKey      String?
+  /// WebAuthn only: the last signature counter an assertion reported. A counter
+  /// that goes backwards is how a cloned authenticator is noticed, so the previous
+  /// value has to outlive the assertion that replaced it.
+  signCount      Int?
+  /// What the user called it, or nothing.
+  label          String?
+  /// Set the first time a code from this factor verifies. `null` is an enrollment.
+  confirmedAt    DateTime?
+  lastUsedAt     DateTime?
+  /// The last RFC 6238 step a code was accepted for, so a code cannot be replayed
+  /// inside its own window.
+  lastUsedCounter Int?
+  createdAt      DateTime @default(now())
 
-  identity Identity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  identity     Identity     @relation(fields: [identityId], references: [id], onDelete: Cascade)
 
+  /// Deliberately not unique on `(organizationId, identityId, kind)`: v1 issues one
+  /// TOTP factor an identity, but WebAuthn wants several keys per identity, and a
+  /// unique constraint added for today's convenience is a migration tomorrow.
+  @@index([organizationId, identityId, kind])
   @@index([identityId])
 }
 
@@ -90,6 +165,40 @@ enum MfaKind {
   WEBAUTHN
 }
 
+/// A WebAuthn ceremony in progress (S1).
+///
+/// Server-side state rather than a signed blob handed to the browser, because the
+/// property that matters is **accepted exactly once** and that is a fact about a
+/// row, not about a value we emitted. `usedAt` is written by a conditional
+/// `updateMany` (the same trick `AuthorizationCode.markCodeUsed` uses), so two
+/// workers racing on one challenge produce one verified ceremony and one refusal —
+/// which a per-process cache could not promise. `expiresAt` bounds how long a
+/// challenge somebody logged is worth anything.
+model WebAuthnChallenge {
+  id             String   @id @default(cuid())
+  organizationId String
+  identityId     String
+  /// `REGISTRATION` | `AUTHENTICATION`, narrowed on read.
+  ceremony       String
+  /// Base64url. What `clientDataJSON` has to carry back.
+  challenge      String
+  /// The origin ceremonies must run on, compared exactly.
+  origin         String
+  /// The relying party id whose SHA-256 the authenticator data must carry.
+  rpId           String
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime
+  usedAt         DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  identity     Identity     @relation(fields: [identityId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, identityId, ceremony])
+  @@index([expiresAt])
+}
+
+/// The organization's session policy. One row per organization is what the spine
+/// reads today; per-role policies arrive with the rest of S1.
 model IdentityPolicy {
   id             String  @id @default(cuid())
   organizationId String
@@ -99,48 +208,154 @@ model IdentityPolicy {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  @@index([organizationId])
+  @@unique([organizationId])
 }
 
 model Session {
-  id         String    @id @default(cuid())
-  identityId String
-  issuedAt   DateTime  @default(now())
-  lastSeenAt DateTime  @default(now())
-  revokedAt  DateTime?
-  /// Device/IP metadata captured at grant time, for later correlation.
-  userAgent  String?
-  ipAddress  String?
-
-  identity     Identity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  id             String    @id @default(cuid())
   organizationId String
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  identityId     String
+  issuedAt       DateTime  @default(now())
+  lastSeenAt     DateTime  @default(now())
+  /// When the session stops being usable on age alone, computed at grant time.
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  /// Device/IP metadata captured at grant time, for later correlation.
+  userAgent      String?
+  ipAddress      String?
 
-  @@index([identityId])
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  identity     Identity     @relation(fields: [identityId], references: [id], onDelete: Cascade)
+
   @@index([organizationId])
+  @@index([identityId])
 }
 
 /// Append-only, hash-chained evidence log. Rows are never updated or deleted.
-/// `seq` is the chain position; `prevHash` links to the previous record and
-/// `recordHash` commits to this record's canonical payload (see
-/// `src/lib/audit-chain.ts`).
+/// `seq` is the position within one organization's chain; `prevHash` links to
+/// the previous record and `recordHash` commits to this record's canonical
+/// payload (see `src/lib/audit-chain.ts`).
 model AuditEvent {
-  seq        BigInt   @id @default(autoincrement())
-  id         String   @unique
+  id             String   @id
   organizationId String
-  at         DateTime @default(now())
-  actor      String
-  action     String
-  targetType String?
-  targetId   String?
-  detail     Json?
-  prevHash   String
-  recordHash String
+  /// Position inside this organization's chain, starting at 1.
+  seq            Int
+  at             DateTime
+  actor          String
+  action         String
+  targetType     String?
+  targetId       String?
+  detail         Json?
+  prevHash       String
+  recordHash     String
   /// Optional signature over `recordHash` for periodic checkpoints.
-  signature  String?
+  signature      String?
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  @@unique([organizationId, seq])
   @@index([organizationId, at])
   @@index([action])
+}
+
+/// A registered OIDC client: an application the organization has allowed to be
+/// handed its identity. `clientId` is the primary key because the token endpoint
+/// is reached with that value alone — there is no tenant hint in the request, so
+/// it has to be globally unique.
+model OidcClient {
+  clientId       String   @id
+  organizationId String
+  name           String
+  /// Exact match only, so they are stored as a list rather than as a rule.
+  redirectUris   String[]
+  scopes         String[]
+  kind           String   @default("public")
+  createdBy      String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  codes        AuthorizationCode[]
+  tokens       AccessToken[]
+
+  @@index([organizationId])
+}
+
+/// A code handed to a browser, worth one exchange inside a minute.
+///
+/// `usedAt` is written by a conditional update (`where: { code, usedAt: null }`)
+/// rather than read-then-write, because two exchanges racing on one code is
+/// exactly the replay the flow exists to prevent.
+model AuthorizationCode {
+  code                String    @id
+  organizationId      String
+  clientId            String
+  redirectUri         String
+  scopes              String[]
+  identityId          String
+  sessionId           String
+  nonce               String?
+  codeChallenge       String
+  codeChallengeMethod String    @default("S256")
+  issuedAt            DateTime
+  expiresAt           DateTime
+  usedAt              DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  client       OidcClient   @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+
+  @@index([organizationId])
+  /// For the sweep that clears codes nobody came back for.
+  @@index([expiresAt])
+}
+
+/// An issued access token, keyed by `SHA-256(token)` rather than by the token.
+/// A copy of this table is therefore a list of sessions that have ended, not a
+/// set of credentials that work.
+model AccessToken {
+  tokenHash      String    @id
+  organizationId String
+  clientId       String
+  identityId     String
+  sessionId      String
+  scopes         String[]
+  issuedAt       DateTime
+  expiresAt      DateTime
+  /// Set when the token is revoked — by RFC 7009, or because the session behind
+  /// it was signed out. A timestamp rather than a boolean, so the record says
+  /// *when* it stopped working. `null` means never revoked, not "expired".
+  revokedAt      DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  client       OidcClient   @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([expiresAt])
+  /// For sign-out, which revokes every token a session holds in one statement.
+  @@index([organizationId, sessionId, revokedAt])
+}
+
+/// A registered SAML 2.0 service provider (S1): an application the organization
+/// has allowed Sentinel to hand a signed assertion to. The SAML counterpart of
+/// `OidcClient`, and deliberately a separate table rather than a widened one —
+/// the two protocols answer the same question with different fields (`acsUrls`
+/// and a `entityId` against `redirectUris` and `scopes`), and pretending they are
+/// one record would mean every reader checking which half it is looking at.
+///
+/// `entityId` is the primary key because an AuthnRequest arrives naming it and
+/// nothing else; resolving the tenant from `acsUrls` would mean accepting a
+/// destination first and asking whose it was afterwards.
+model SamlServiceProvider {
+  entityId       String   @id
+  organizationId String
+  name           String
+  /// Assertion Consumer Service URLs. Exact match only, and `acsUrls[0]` is the
+  /// one metadata advertises as the default binding target.
+  acsUrls        String[]
+  nameIdFormat   String   @default("urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress")
+  createdBy      String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
 }
