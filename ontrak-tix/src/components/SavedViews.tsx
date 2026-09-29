@@ -38,7 +38,7 @@ export function SavedViews({ views, activeFilter, actorId, canShare, basePath = 
               href={viewHref(basePath, view.filter)}
               aria-current={active ? "true" : undefined}
               title={describeInboxFilter(view.filter)}
-              className={`px-3 py-1 text-xs font-semibold ${active ? "bg-brand text-white" : "bg-surface text-ink-soft hover:text-brand"}`}
+              className={`px-3 py-1 text-xs font-semibold ${active ? "bg-brand text-brand-ink" : "bg-surface text-ink-soft hover:text-brand"}`}
             >
               {view.name}
               {view.shared ? <span className="ml-1">· shared</span> : null}

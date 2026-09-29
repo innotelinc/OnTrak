@@ -95,7 +95,7 @@ export function VerifyPacketForm() {
         />
       </label>
 
-      <button type="submit" disabled={busy} className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-white">
+      <button type="submit" disabled={busy} className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-brand-ink">
         {busy ? "Verifying…" : "Verify packet"}
       </button>
 

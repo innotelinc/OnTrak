@@ -250,7 +250,7 @@ export default async function IncidentsPage({
             </label>
           </div>
 
-          <button type="submit" className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-white">
+          <button type="submit" className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-brand-ink">
             Declare incident
           </button>
         </form>

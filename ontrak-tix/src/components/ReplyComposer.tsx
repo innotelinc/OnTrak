@@ -76,7 +76,7 @@ export function ReplyComposer({
         <label className="text-xs text-ink-soft">
           <input type="radio" name="kind" value="INTERNAL_NOTE" /> Internal note
         </label>
-        <button type="submit" className="ml-auto rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white">
+        <button type="submit" className="ml-auto rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-brand-ink">
           Send
         </button>
       </div>

@@ -438,7 +438,7 @@ export default async function RulesPage({
             switching it on.
           </p>
 
-          <button type="submit" className="rounded-full bg-brand px-4 py-2 text-xs font-semibold text-white">
+          <button type="submit" className="rounded-full bg-brand px-4 py-2 text-xs font-semibold text-brand-ink">
             Save rule
           </button>
         </form>

@@ -144,7 +144,7 @@ export function IdentityConnectionForm({ connection, clientSecretConfigured, cal
           </label>
         </div>
 
-        <button type="submit" className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-white">
+        <button type="submit" className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-brand-ink">
           Save connection
         </button>
       </form>

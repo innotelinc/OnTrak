@@ -57,16 +57,24 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="font-display text-xl font-semibold text-ink">Inbox</h1>
-        <p className="text-sm text-ink-soft">
-          Open work first, most urgent first — resolved tickets never bury live ones.
-        </p>
-        {scope.kind === "assigned" ? (
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="font-display text-xl font-semibold text-ink">Inbox</h1>
           <p className="text-sm text-ink-soft">
-            Scoped to your clients: this desk {scope.because}. Work that names no client stays visible.
+            Open work first, most urgent first — resolved tickets never bury live ones.
           </p>
-        ) : null}
+          {scope.kind === "assigned" ? (
+            <p className="text-sm text-ink-soft">
+              Scoped to your clients: this desk {scope.because}. Work that names no client stays visible.
+            </p>
+          ) : null}
+        </div>
+        <a
+          href="/inbox/new"
+          className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-brand-ink hover:opacity-95"
+        >
+          New ticket
+        </a>
       </div>
 
       {flash ? (
@@ -87,7 +95,10 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
         deleteAction={deleteViewAction}
       />
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+      {/* The worklist is the page; the ticket opens beside it. Wide screens get the
+          pair side by side, and anything narrower stacks them so neither is squeezed
+          into an unreadable column. */}
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <AgentInbox
           all={all}
           filter={filter}
@@ -99,8 +110,9 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
         {selected ? (
           <TicketDetail ticket={selected} sla={slaStatusFor(selected, policies, now)} links={links} />
         ) : (
-          <p className="rounded-xl2 border border-line bg-surface p-5 text-sm text-ink-soft">
-            Select a ticket to see its conversation.
+          <p className="ot-note self-start">
+            Select a ticket to see its conversation. The list on the left is every ticket in your scope, most urgent
+            first.
           </p>
         )}
       </div>
