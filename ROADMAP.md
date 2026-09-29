@@ -56,6 +56,14 @@ enterprise readiness.
   scores are never trusted.
 - **Stack** — Next.js + React + TypeScript + Prisma + PostgreSQL; pure
   `*-rules.ts` modules for all form/unit/date logic.
+- **One family identity, six roles.** This app's three roles are a slice of one
+  vocabulary shared with OnTrak Tix, OnTrak Sentinel, OnTrak Sync and
+  [OnTrak Portal](ontrak-portal/README.md): `ADMIN`, `SYSADMIN`, `ANALYST`,
+  `TECHNICIAN`, `INSTRUCTOR`, `STUDENT`. The deployed estate uses Cerulean
+  (Authentik) as the directory, and OnTrak Sync owns the family's local account
+  table — which is what the portal's password sign-in delegates to rather than
+  inventing a second login. See
+  [docs/family-operations.md](docs/family-operations.md).
 
 ## 4. Milestones
 
@@ -179,6 +187,15 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   - MFA is enforced at the provider, so an organization that requires a second
     factor gets it here without the training app implementing one; a session is
     refused until a confirmed factor has been verified.
+  - `[x]` **The family has a front door, and this app is not it.**
+    [OnTrak Portal](ontrak-portal/README.md) is a relying party to the same
+    provider and the same group claims, so the role deciding which tiles it draws
+    is the role this app already checks. It authorises nothing — this app keeps
+    re-checking the caller itself — and it holds no accounts: its password form
+    delegates to [OnTrak Sync](ontrak-sync/README.md), which owns the family's
+    local account table. Deployed on Cerulean's Authentik, with the five
+    hostnames, the role groups and the redirect URIs written down in
+    [docs/family-operations.md](docs/family-operations.md).
 - LTI 1.3 so scenarios can be launched and graded from an LMS.
 - Public API + webhooks for attempt/grading events, and bulk CSV import/export of
   rosters and results.

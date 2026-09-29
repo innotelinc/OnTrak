@@ -3,11 +3,25 @@
 #
 #   make all-up        (or: docker compose -f docker-compose.all.yml up -d --build)
 #
-# Three products, one command: the training app on :3000, the service desk on
-# :3001, the identity provider on :8787, each with its own database, all on one
-# network. The three product stacks remain — `make up`, `make tix-up`,
-# `make sentinel-up` — and this file is for running the family together, which is
-# the only arrangement where the wiring between them can be checked in one go.
+# Five products, one command: the portal on :3300, the training app on :3000, the
+# service desk on :3001, the identity provider on :8787, and OnTrak Sync on
+# :8420/:8421 — each with its own database, all on one network. The product stacks
+# remain — `make up`, `make tix-up`, `make sentinel-up`, `make sync-up` — and this
+# file is for running the family together, which is the only arrangement where the
+# wiring between them can be checked in one go.
+#
+# ## Why OnTrak Sync is in the middle of it
+#
+# Sync owns the family's *local* account table, so the portal's password sign-in is
+# delegated to it (`ONTRAK_SYNC_API_URL`) rather than the portal inventing a second
+# login. Cerulean (Authentik) remains the directory; Sync is what a deployment
+# falls back to, and what a LAN with no route to the provider signs in against.
+#
+# ## Why the portal is the front door
+#
+# Every other address below is behind a role. The portal is what decides *which* —
+# it reads the role from the assertion or from Sync and draws only the products
+# that role belongs in. It has no database, so a restart loses nothing.
 #
 # ## Why the services are renamed here
 #
@@ -327,6 +341,125 @@ services:
       retries: 5
       start_period: 20s
 
+  # ── OnTrak Sync (CodeOps) ─────────────────────────────────────────────────
+  # The estate's package and container update view, and the family's *local*
+  # account table — the portal's password sign-in is delegated here, so this is
+  # the product the other four consume rather than a fifth thing beside them.
+  #
+  # It keeps its own SQLite file (the history IS the database) and its own SSH key,
+  # mounted read-only: the service may install packages through the key, it may not
+  # rewrite the key that lets it do so.
+  sync-api:
+    build:
+      context: ontrak-sync/backend
+    image: innotel/ontrak-sync-api:1.1.0
+    restart: unless-stopped
+    env_file:
+      - path: ontrak-sync/.env
+        required: false
+    environment:
+      ONTRAK_DB: /var/lib/ontrak/ontrak.sqlite3
+      ONTRAK_BIND_HOST: 0.0.0.0
+      ONTRAK_BIND_PORT: "8420"
+      # REQUIRED, and deliberately not defaulted. A service that can install
+      # packages on every machine in the estate must not come up answering
+      # unauthenticated requests while somebody remembers to set it.
+      ONTRAK_API_TOKEN: ${ONTRAK_API_TOKEN:-}
+      # The browser reaches this deployment through the portal's own origin; the
+      # redirect URI is registered against the public name and has to match.
+      ONTRAK_PUBLIC_URL: ${ONTRAK_SYNC_PUBLIC_URL:-}
+      ONTRAK_OIDC_ISSUER: ${ONTRAK_OIDC_ISSUER:-}
+      ONTRAK_OIDC_CLIENT_ID: ${ONTRAK_SYNC_OIDC_CLIENT_ID:-}
+      ONTRAK_OIDC_CLIENT_SECRET: ${ONTRAK_SYNC_OIDC_CLIENT_SECRET:-}
+      ONTRAK_OIDC_ROLE_MAPPINGS: ${ONTRAK_OIDC_ROLE_MAPPINGS:-}
+    volumes:
+      - ontrak-family-sync-data:/var/lib/ontrak
+      - ${ONTRAK_SSH_KEY:-/root/.ssh/id_ed25519}:/root/.ssh/id_ed25519:ro
+      - ${ONTRAK_SSH_KNOWN_HOSTS:-/root/.ssh/known_hosts}:/root/.ssh/known_hosts
+    ports:
+      - "${ONTRAK_SYNC_API_PORT:-8420}:8420"
+    healthcheck:
+      # Unauthenticated on purpose: /api/health is the one route that answers
+      # without a credential, so a healthcheck never needs the secret in a file.
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8420/api/health', timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  sync-web:
+    build:
+      context: ontrak-sync/web
+      args:
+        # EMPTY on purpose, unlike the product's own compose file: in the family
+        # stack the dashboard is reached on one origin and forwards /api/* to the
+        # API container itself. That is what makes the session cookie belong to one
+        # hostname and the registered SSO redirect URI land on the browser's origin.
+        NEXT_PUBLIC_ONTRAK_API: ""
+    image: innotel/ontrak-sync-web:1.1.0
+    restart: unless-stopped
+    depends_on:
+      - sync-api
+    environment:
+      ONTRAK_API_INTERNAL: http://sync-api:8420
+    ports:
+      - "${ONTRAK_SYNC_WEB_PORT:-8421}:8421"
+    healthcheck:
+      test: ["CMD", "node", "-e",
+             "fetch('http://127.0.0.1:8421/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # ── OnTrak Portal (the front door) ────────────────────────────────────────
+  # One sign-in, then the products a role belongs in. It holds no data of its own
+  # — no database, no migrations, no user table — which is why it can be restarted
+  # at any moment and why a role change in Cerulean takes effect everywhere at once
+  # instead of in five places.
+  portal-app:
+    build:
+      context: ontrak-portal
+    image: innotel/ontrak-portal:0.1.0
+    restart: unless-stopped
+    depends_on:
+      - sync-api
+    env_file:
+      - path: ontrak-portal/.env
+        required: false
+    environment:
+      ONTRAK_PORTAL_BASE_DOMAIN: ${ONTRAK_PORTAL_BASE_DOMAIN:-ontrak.innotel.us}
+      ONTRAK_PORTAL_PUBLIC_URL: ${ONTRAK_PORTAL_PUBLIC_URL:-http://127.0.0.1:3300}
+      # REQUIRED. There is no default: a session cookie signed with a placeholder
+      # is a session cookie anybody can mint.
+      ONTRAK_PORTAL_SESSION_SECRET: ${ONTRAK_PORTAL_SESSION_SECRET:-}
+      ONTRAK_OIDC_ISSUER: ${ONTRAK_OIDC_ISSUER:-}
+      ONTRAK_OIDC_CLIENT_ID: ${ONTRAK_PORTAL_OIDC_CLIENT_ID:-}
+      ONTRAK_OIDC_CLIENT_SECRET: ${ONTRAK_PORTAL_OIDC_CLIENT_SECRET:-}
+      ONTRAK_OIDC_ROLE_MAPPINGS: ${ONTRAK_OIDC_ROLE_MAPPINGS:-}
+      ONTRAK_OIDC_PROVIDER_NAME: ${ONTRAK_OIDC_PROVIDER_NAME:-Cerulean}
+      # The local account table, over the compose network — not the published port.
+      ONTRAK_SYNC_API_URL: http://sync-api:8420
+      # Probes for the tiles' status lights. Server-side, so they use the network
+      # names; the *links* still print the public addresses.
+      ONTRAK_ITS_INTERNAL_URL: http://training-app:3000
+      ONTRAK_TIX_INTERNAL_URL: http://tix-app:3000
+      ONTRAK_SENTINEL_INTERNAL_URL: http://sentinel-app:8787
+      ONTRAK_SYNC_INTERNAL_URL: http://sync-api:8420
+    ports:
+      - "${ONTRAK_PORTAL_PORT:-3300}:3300"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3300/login').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
 volumes:
   ontrak-family-training-db:
   ontrak-family-training-storage:
@@ -335,3 +468,4 @@ volumes:
   ontrak-family-tix-evidence:
   ontrak-family-sentinel-db:
   ontrak-family-sentinel-keys:
+  ontrak-family-sync-data:

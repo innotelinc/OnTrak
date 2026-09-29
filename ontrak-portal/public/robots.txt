@@ -1,0 +1,9 @@
+# The portal is the estate's front door, not a public website.
+#
+# It is intentionally not indexed: every page behind it is a sign-in page or a
+# person's own dashboard, and a search result that points at a login form is a
+# search result that teaches a phisher which URL to imitate. The names are still
+# discoverable by certificate transparency, which is unavoidable and why the
+# application itself is what refuses.
+User-agent: *
+Disallow: /

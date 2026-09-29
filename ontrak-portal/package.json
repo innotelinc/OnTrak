@@ -1,0 +1,30 @@
+{
+  "name": "ontrak-portal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OnTrak Portal — the centralized dashboard for the OnTrak family: one sign-in, then the products a role belongs in. An Innotel Labs product.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "next dev -p 3300",
+    "build": "next build",
+    "start": "next start -p 3300",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --tsconfig tests/tsconfig.json --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "jose": "^6.0.10",
+    "next": "^15.2.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.14",
+    "@types/react": "^19.0.12",
+    "@types/react-dom": "^19.0.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
