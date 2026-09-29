@@ -3,13 +3,19 @@
  *
  * ONE INTERFACE, ANY MODEL, AND A GUARANTEED ANSWER.
  *
- * The model call is the generic OpenAI *chat-completions* shape, configured by
- * environment. That is deliberately the least exotic thing available: it works
- * unchanged against OpenAI, Azure OpenAI, OpenRouter, Groq, a vLLM box, an Ollama
- * daemon, LiteLLM, or the organization's own gateway — which is what a self-hosted
- * Network actually runs, and it is the difference between "we chose a vendor" and
- * "we can change our mind". Nothing in this file imports a vendor SDK, and nothing
- * else in the product knows a model exists.
+ * The default target is **OmniRoute** — the self-hosted, MIT-licensed gateway that
+ * pools however many providers (including free ones) an operator has connected, and
+ * answers on one OpenAI-compatible endpoint at `127.0.0.1:20128/v1`. It is the right
+ * default for this Network because it is software the operator runs rather than an
+ * account somebody has to keep paying for, and because pooling free tiers is exactly
+ * the kind of cost control the whole theme of this deployment is about.
+ *
+ * The call itself is the generic OpenAI *chat-completions* shape, so nothing here is
+ * OmniRoute-specific: the same code works unchanged against OpenAI, Azure OpenAI, a
+ * vLLM box, an Ollama daemon, LiteLLM, or the organization's own gateway — which is
+ * the difference between "we chose a vendor" and "we can change our mind". Nothing
+ * in this file imports a vendor SDK, and nothing else in the product knows a model
+ * exists.
  *
  * When no key is set — which is most deployments, and every air-gapped one — the
  * deterministic author writes the draft instead. When a key *is* set and the call
@@ -39,28 +45,54 @@ export interface AuthorConfig {
   timeoutMs: number;
   /** Set to `0` to force the deterministic author even when a key is present. */
   enabled: boolean;
+  /**
+   * Whether the deployment *asked* for a model and was refused.
+   *
+   * The distinction that decides whether a fallback is worth mentioning: a desk that
+   * configured a gateway and silently got the template needs to hear about it, while
+   * one that never configured anything is working exactly as intended.
+   */
+  switchedOff: boolean;
 }
 
-export const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
-export const DEFAULT_MODEL = "openai/gpt-4o-mini";
+/**
+ * OmniRoute's default endpoint, and its `auto` combo.
+ *
+ * `auto` is the gateway's own router — it picks a connected provider per request and
+ * falls back when one runs out of quota — so naming a model here would be choosing a
+ * provider, which is the one thing this file exists not to do. A deployment that wants
+ * a specific model sets `ONTRAK_AI_MODEL`.
+ */
+export const DEFAULT_BASE_URL = "http://127.0.0.1:20128/v1";
+export const DEFAULT_MODEL = "auto";
 export const DEFAULT_TIMEOUT_MS = 20_000;
 
 /**
  * Read the author's settings.
  *
- * `ONTRAK_AI_API_KEY` is the only thing that has to be set; the base URL and model
- * have defaults that work, and `ONTRAK_AI_ENABLED=0` turns the model off without
- * removing the key — which is what a deployment wants while it is deciding whether
- * the drafts are good enough.
+ * **When the zero-config gateway runs, no key is needed** — OmniRoute answers on
+ * `auto` with nothing configured, so a deployment that has it on localhost sets
+ * `ONTRAK_AI_ENABLED=1` and nothing else.
+ *
+ * **When it does not, nothing is needed either**, and that is the more important
+ * half: with no key and no explicit switch the author stays *off* and the
+ * deterministic writer answers. The alternative — trying the default base URL on
+ * every sweep — would add a connection-refused timeout to each resolution on every
+ * air-gapped deployment and every developer's laptop, which is a real cost paid for
+ * a feature nobody asked for. `ONTRAK_AI_ENABLED=0` is the hard off, and wins over
+ * everything, which is what a deployment wants while it is deciding whether the
+ * drafts are good enough.
  */
 export function authorConfig(env: Record<string, string | undefined> = process.env): AuthorConfig {
   const apiKey = (env.ONTRAK_AI_API_KEY ?? "").trim();
+  const explicit = (env.ONTRAK_AI_ENABLED ?? "").trim();
   return {
     baseUrl: (env.ONTRAK_AI_BASE_URL ?? DEFAULT_BASE_URL).trim().replace(/\/+$/, ""),
     apiKey,
     model: (env.ONTRAK_AI_MODEL ?? DEFAULT_MODEL).trim(),
     timeoutMs: Number(env.ONTRAK_AI_TIMEOUT_MS ?? "") > 0 ? Number(env.ONTRAK_AI_TIMEOUT_MS) : DEFAULT_TIMEOUT_MS,
-    enabled: apiKey.length > 0 && (env.ONTRAK_AI_ENABLED ?? "1") !== "0",
+    enabled: explicit === "0" ? false : apiKey.length > 0 || explicit === "1",
+    switchedOff: explicit === "0",
   };
 }
 
@@ -86,7 +118,13 @@ export async function authorOutcome(ticket: OutcomeTranscript, deps: AuthorDeps 
   const template = deterministicOutcome(ticket, deps.visibility ?? "PRIVATE");
 
   if (!config.enabled) {
-    return { ...template, note: config.apiKey ? "the model is switched off (ONTRAK_AI_ENABLED=0)" : undefined };
+    return {
+      ...template,
+      // No note for the common case: a deployment that never configured a model is not
+      // a deployment with something wrong, and a "no model is configured" banner on
+      // every private draft would train people to ignore the note that matters.
+      note: config.switchedOff ? "the model is switched off (ONTRAK_AI_ENABLED=0)" : undefined,
+    };
   }
 
   const { system, user } = buildAuthorPrompt(ticket);
@@ -99,7 +137,10 @@ export async function authorOutcome(ticket: OutcomeTranscript, deps: AuthorDeps 
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${config.apiKey}`,
+        // Omitted rather than sent empty: a keyless local gateway rejects
+        // `Authorization: Bearer ` on some builds, and an empty credential is not a
+        // credential worth sending.
+        ...(config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {}),
       },
       body: JSON.stringify({
         model: config.model,
