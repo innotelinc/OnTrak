@@ -138,6 +138,14 @@ class Settings:
     # where the verdict is re-read from apt), so this number now only decides how
     # long that wait is allowed to be.
     apt_timeout: int = 900
+    # An image pull is the third kind of long job, and it shares apt's problem: the
+    # clock that suits a probe does not suit a download. This estate pulls images
+    # several gigabytes deep over a domestic uplink, so a 300-second ceiling turned
+    # the single largest update it knows about — the PBX full-stack image — into a
+    # finding that failed every apply for being slow rather than wrong. A pull does
+    # not need the re-read that apt's verdict does, because `docker pull` either
+    # finished or did not; the number only decides how long the wait may be.
+    pull_timeout: int = 900
     # The scheduler is in-process (see policy.py for the cron arithmetic and the
     # apply policy). Disabling it leaves the API and the manual scan/apply paths
     # working, which is what you want while debugging a schedule that fires at the
@@ -167,6 +175,7 @@ class Settings:
             digest_ttl_seconds=_env_int("ONTRAK_DIGEST_TTL", 6 * 3600),
             command_timeout=_env_int("ONTRAK_COMMAND_TIMEOUT", 300),
             apt_timeout=_env_int("ONTRAK_APT_TIMEOUT", 900),
+            pull_timeout=_env_int("ONTRAK_PULL_TIMEOUT", 900),
             scheduler_enabled=_env_bool("ONTRAK_SCHEDULER", True),
             scheduler_tick_seconds=_env_int("ONTRAK_SCHEDULER_TICK", 30),
             default_schedule=_env("ONTRAK_DEFAULT_SCHEDULE", "0 4 * * 0"),

@@ -144,6 +144,16 @@ class Defaults(unittest.TestCase):
         with mock.patch.dict(os.environ, {"ONTRAK_APT_TIMEOUT": "1800"}):
             self.assertEqual(1800, Settings.from_env().apt_timeout)
 
+    def test_an_image_pull_gets_a_longer_clock_than_a_probe(self):
+        # The third long job, for the same reason as apt: a download sized like a
+        # probe fails for being slow, and the PBX full-stack image failed that way at
+        # every apply.
+        with mock.patch.dict(os.environ, {}, clear=True):
+            settings = Settings.from_env()
+        self.assertGreater(settings.pull_timeout, settings.command_timeout)
+        with mock.patch.dict(os.environ, {"ONTRAK_PULL_TIMEOUT": "2400"}):
+            self.assertEqual(2400, Settings.from_env().pull_timeout)
+
 
 class FirstPolicy(unittest.TestCase):
     """Seeding the policy that exists before the form has ever been saved."""
