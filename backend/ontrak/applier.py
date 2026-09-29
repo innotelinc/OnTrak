@@ -60,10 +60,18 @@ class Outcome:
         self.messages.append(message[:400])
 
 
-def _remote(host: Host, container: str | None, argv: list[str], settings: Settings) -> Result:
+def _remote(host: Host, container: str | None, argv: list[str], settings: Settings,
+            timeout: int | None = None) -> Result:
+    """Run one command, at the container when there is one.
+
+    `timeout` overrides the generic ceiling for the commands that are transactions
+    rather than probes. See `Settings.apt_timeout` for why apt needs its own.
+    """
+    if timeout is None:
+        timeout = settings.command_timeout
     if container is None:
-        return ssh(host, argv, settings.command_timeout)
-    return incus_exec(host, container, argv, settings.command_timeout)
+        return ssh(host, argv, timeout)
+    return incus_exec(host, container, argv, timeout)
 
 
 def _docker(host: Host, container: str, args: list[str], settings: Settings) -> Result:
@@ -78,6 +86,10 @@ def apply_apt(host: Host, container: str | None, packages: list[str], settings: 
     happily *install* a package that is not present, so a stale finding row would
     become an unrequested installation. `-o Dpkg::Options::=` twice because dpkg
     takes one option per occurrence.
+
+    One transcript does two jobs — `apt-get update`, then the upgrade — so it runs on
+    `Settings.apt_timeout` rather than the generic command ceiling. A cold cache
+    behind a slow mirror is a minute of work before a single package moves.
     """
     if not packages:
         return Result("apt: nothing to do", 0)
@@ -88,7 +100,7 @@ def apply_apt(host: Host, container: str | None, packages: list[str], settings: 
         "apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "
         "install --only-upgrade " + " ".join(shlex.quote(p) for p in packages),
     ]
-    return _remote(host, container, argv, settings)
+    return _remote(host, container, argv, settings, timeout=settings.apt_timeout)
 
 
 def apt_still_pending(host: Host, container: str | None, packages: list[str],
@@ -273,7 +285,15 @@ def apply_findings(conn, settings: Settings, policy: Policy, *, finding_ids: lis
             rows_apt = managers["apt"]
             packages = [r["package"] for r in rows_apt]
             result = apply_apt(host, container, packages, settings)
-            if result.timed_out or (not result.ok and not result.stdout.strip()):
+            # A command that never ran says nothing about any package, so it fails the
+            # group at once. A TIMEOUT is deliberately not in that branch: `apt-get
+            # update` on a slow mirror and an upgrade that is still unpacking look
+            # identical to `subprocess`, and the transcript ran far enough that only
+            # apt can report what happened — which is what `apt_still_pending` asks it
+            # below, on both paths. Blanket-failing on a timeout is how one slow host
+            # became 306 findings recorded as failed, on hosts whose upgrade had
+            # already landed.
+            if not result.ok and not result.stdout.strip() and not result.timed_out:
                 for row in rows_apt:
                     db.set_status(conn, [row["id"]], "failed", result.message)
                 outcome.failed += len(rows_apt)
@@ -286,11 +306,16 @@ def apply_findings(conn, settings: Settings, policy: Policy, *, finding_ids: lis
                         db.set_status(conn, [row["id"]], "failed", detail)
                         outcome.failed += 1
                     else:
-                        db.set_status(conn, [row["id"]], "applied", result.message[:300])
+                        detail = ("apt no longer lists it, though the transcript "
+                                  f"timed out after {settings.apt_timeout}s"
+                                  if result.timed_out else result.message[:300])
+                        db.set_status(conn, [row["id"]], "applied", detail)
                         outcome.applied += 1
-                if still:
+                if still or result.timed_out:
+                    tail = (f" (the transcript timed out after {settings.apt_timeout}s; "
+                            "the verdict was re-read from apt)" if result.timed_out else "")
                     outcome.note(f"apt on {target_name}: {len(packages) - len(still)} applied, "
-                                 f"{len(still)} held back")
+                                 f"{len(still)} held back{tail}")
 
         if "snap" in managers:
             rows_snap = managers["snap"]

@@ -135,6 +135,15 @@ class Defaults(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertEqual("", Settings.from_env().api_token)
 
+    def test_apt_gets_a_longer_clock_than_a_probe(self):
+        # Two ceilings for two kinds of work. Re-tying them to the same number brings
+        # back the run that reported 306 failed packages on hosts that were patched.
+        with mock.patch.dict(os.environ, {}, clear=True):
+            settings = Settings.from_env()
+        self.assertGreater(settings.apt_timeout, settings.command_timeout)
+        with mock.patch.dict(os.environ, {"ONTRAK_APT_TIMEOUT": "1800"}):
+            self.assertEqual(1800, Settings.from_env().apt_timeout)
+
 
 class FirstPolicy(unittest.TestCase):
     """Seeding the policy that exists before the form has ever been saved."""

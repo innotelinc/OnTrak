@@ -37,6 +37,11 @@ class FakeRemote:
         self.calls: list[tuple] = []
         self.install_rc = 0
         self.install_out = ""
+        self.install_timed_out = False
+        # The clock each apt command was given, in call order: the transaction, then
+        # the verdict re-read. A list rather than a field because the order is what
+        # says which ceiling applies to which command.
+        self.timeouts: list[int] = []
         self.still_pending: dict[str | None, set[str]] = {}
         self.snap_rc = 0
         self.pull_rc = 0
@@ -54,14 +59,21 @@ class FakeRemote:
         self.compose_up_rc = 0
 
     # ── the two entry points the applier uses ────────────────────────────────
-    def _pkg(self, container, command: str) -> Result:
+    def _pkg(self, container, command: str, timeout: int = 0) -> Result:
         quoted = command
         if "install --only-upgrade" in quoted:
             self.calls.append(("apt-install", container, command))
+            self.timeouts.append(timeout)
+            if self.install_timed_out:
+                # Killed mid-flight: no exit code and no output, only the clock went
+                # off. Whatever apt says afterwards is the entire verdict.
+                return Result(command, -1, "", "", timed_out=True,
+                              error=f"timed out after {timeout}s")
             return Result(command, self.install_rc, self.install_out,
                           "" if self.install_rc == 0 else "E: Unable to correct problems")
         if "apt list --upgradable" in quoted:
             self.calls.append(("apt-list", container, command))
+            self.timeouts.append(timeout)
             names = self.still_pending.get(container, set())
             body = "Listing...\n" + "".join(
                 f"{name}/noble-security 9.9 amd64 [upgradable from: 1.0]\n" for name in sorted(names)
@@ -74,10 +86,10 @@ class FakeRemote:
         return Result(command, 0, "", "")
 
     def ssh(self, host, remote_argv, timeout):
-        return self._pkg(None, remote_argv[-1])
+        return self._pkg(None, remote_argv[-1], timeout)
 
     def incus_exec(self, host, container, command, timeout):
-        return self._pkg(container, command[-1])
+        return self._pkg(container, command[-1], timeout)
 
     def docker_in_container(self, host, container, args, timeout):
         self.calls.append(("docker", tuple(args)))
@@ -250,6 +262,77 @@ class AptApply(ApplierCase):
         self.assertIsNone(result["run_id"])
         self.assertEqual(0, result["applied"])
         self.assertEqual([], self.fake.calls)
+
+
+class AptTimeout(ApplierCase):
+    """What a timed-out apt transcript means, and what it must not mean.
+
+    One transcript is `apt-get update` plus the upgrade, and it has a ceiling. Hitting
+    that ceiling is not a fact about any individual package, so the outcome has to be
+    re-read from the machine rather than assumed in either direction — the same rule
+    the exit code already lives under, and the reason `Result.timed_out` is a field
+    rather than a non-zero return code.
+
+    The case these tests exist for is the real one: five hosts timed out, every finding
+    on them was recorded as failed, and the run summary read "37 applied, 306 failed"
+    — which is not what had happened to the estate.
+    """
+
+    def test_apt_runs_on_its_own_longer_clock(self):
+        self.finding(package="nginx")
+        self.apply()
+        self.assertGreater(self.settings.apt_timeout, self.settings.command_timeout)
+        # The transaction gets the apt budget; the verdict re-read is a probe and gets
+        # the probe budget.
+        self.assertEqual([self.settings.apt_timeout, self.settings.command_timeout],
+                         self.fake.timeouts)
+
+    def test_a_timed_out_transcript_is_applied_when_apt_says_it_landed(self):
+        # The transcript ran past the ceiling but the package is gone from apt's
+        # upgradable list: the patch happened, and calling it failed is the record
+        # lying about the estate.
+        self.finding(package="nginx")
+        self.fake.install_timed_out = True
+        result = self.apply()
+        self.assertEqual(1, result["applied"])
+        self.assertEqual(0, result["failed"])
+        row = self.status_of()
+        self.assertEqual("applied", row["status"])
+        # The row still has to say the transcript timed out, or the next reader trusts
+        # a detail that was written by a process that was killed.
+        self.assertIn("timed out", row["detail"])
+
+    def test_a_timed_out_transcript_still_fails_a_package_apt_still_lists(self):
+        self.finding(package="nginx")
+        self.fake.install_timed_out = True
+        self.fake.still_pending["monarch"] = {"nginx"}
+        result = self.apply()
+        self.assertEqual(0, result["applied"])
+        self.assertEqual(1, result["failed"])
+        row = self.status_of()
+        self.assertEqual("failed", row["status"])
+        self.assertIn("timed out", row["detail"])
+
+    def test_a_timeout_that_cannot_be_verified_is_a_failure(self):
+        # The verdict re-read cannot tell either — the host is wedged, which is the
+        # other way this looks. Failure re-runs a finished upgrade, which is cheap;
+        # success would report a patch that may not exist. So: failure.
+        self.finding(package="nginx")
+        self.fake.install_timed_out = True
+        with mock.patch.object(applier, "apt_still_pending", lambda *a, **k: {"nginx"}):
+            result = self.apply()
+        self.assertEqual(1, result["failed"])
+        self.assertEqual("failed", self.status_of()["status"])
+        self.assertIn("timed out", self.status_of()["detail"])
+
+    def test_a_timed_out_transcript_is_explained_in_the_run_log(self):
+        # Otherwise the next person reads a partial run as an unpatched estate.
+        self.finding(package="nginx")
+        self.fake.install_timed_out = True
+        result = self.apply()
+        messages = [row["message"] for row in self.conn.execute(
+            "SELECT message FROM events WHERE run_id=?", (result["run_id"],)).fetchall()]
+        self.assertTrue(any("timed out" in m for m in messages), messages)
 
 
 class SnapApply(ApplierCase):

@@ -128,6 +128,16 @@ class Settings:
     digest_ttl_seconds: int = 6 * 3600
     ssh_timeout: int = 20
     command_timeout: int = 300
+    # apt gets its own, longer clock, because one apt transcript is two jobs: an
+    # `apt-get update` from a mirror that answers in seconds on a good day and
+    # minutes on a bad one, and then the upgrade behind it. A cold cache and empty
+    # package lists are the difference between twenty seconds and a quarter of an
+    # hour. Sizing that like a probe is what turned five estate hosts into 306
+    # findings recorded as failed — on hosts whose upgrade had in some cases already
+    # finished. A timeout no longer means failure by itself (see `apply_findings`,
+    # where the verdict is re-read from apt), so this number now only decides how
+    # long that wait is allowed to be.
+    apt_timeout: int = 900
     # The scheduler is in-process (see policy.py for the cron arithmetic and the
     # apply policy). Disabling it leaves the API and the manual scan/apply paths
     # working, which is what you want while debugging a schedule that fires at the
@@ -156,6 +166,7 @@ class Settings:
             ssh_timeout=_env_int("ONTRAK_SSH_TIMEOUT", 20),
             digest_ttl_seconds=_env_int("ONTRAK_DIGEST_TTL", 6 * 3600),
             command_timeout=_env_int("ONTRAK_COMMAND_TIMEOUT", 300),
+            apt_timeout=_env_int("ONTRAK_APT_TIMEOUT", 900),
             scheduler_enabled=_env_bool("ONTRAK_SCHEDULER", True),
             scheduler_tick_seconds=_env_int("ONTRAK_SCHEDULER_TICK", 30),
             default_schedule=_env("ONTRAK_DEFAULT_SCHEDULE", "0 4 * * 0"),
