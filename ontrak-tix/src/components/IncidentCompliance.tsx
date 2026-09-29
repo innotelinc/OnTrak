@@ -80,9 +80,9 @@ function chip(text: string, tone: Tone = "muted") {
   const tones = {
     muted: "bg-surface-muted text-ink-soft",
     brand: "bg-brand/10 text-brand",
-    amber: "bg-amber/10 text-amber",
-    teal: "bg-teal/10 text-teal",
-    pink: "bg-pink/10 text-pink",
+    amber: "bg-attention/10 text-attention",
+    teal: "bg-ok/10 text-ok",
+    pink: "bg-bad/10 text-bad",
   } as const;
   return <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${tones[tone]}`}>{text}</span>;
 }
@@ -195,7 +195,7 @@ export function NotificationPanel({ incidentId, obligations, suggestions, comms,
                                     </div>
                                     <p className="text-[11px] text-ink-faint">{draft.template.guidance}</p>
                                     {draft.issues.length > 0 ? (
-                                      <ul className="list-disc pl-4 text-[11px] text-amber">
+                                      <ul className="list-disc pl-4 text-[11px] text-attention">
                                         {draft.issues.map((issue) => (
                                           <li key={issue}>{issue}</li>
                                         ))}

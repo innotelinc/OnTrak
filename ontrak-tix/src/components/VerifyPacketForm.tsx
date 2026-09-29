@@ -101,7 +101,7 @@ export function VerifyPacketForm() {
 
       <div aria-live="polite" className="space-y-2">
         {error ? (
-          <p role="alert" className="rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+          <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
             {error}
           </p>
         ) : null}
@@ -109,7 +109,7 @@ export function VerifyPacketForm() {
         {outcome ? (
           <div
             className={`space-y-2 rounded-xl2 border px-4 py-3 text-sm ${
-              outcome.ok ? "border-teal/40 bg-teal/10 text-ink" : "border-pink/40 bg-pink/10 text-ink"
+              outcome.ok ? "border-ok/40 bg-ok/10 text-ink" : "border-bad/40 bg-bad/10 text-ink"
             }`}
           >
             <p className="font-semibold text-ink">{outcome.report?.headline ?? outcome.reason}</p>

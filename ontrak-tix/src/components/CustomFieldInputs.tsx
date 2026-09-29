@@ -27,7 +27,7 @@ function FieldInput({ field }: { field: ResolvedField }) {
         <input type="checkbox" name={name} value="on" className="mt-1" />
         <span>
           {field.label}
-          {field.required ? <span className="text-pink"> *</span> : null}
+          {field.required ? <span className="text-bad"> *</span> : null}
           {help}
         </span>
       </label>
@@ -37,7 +37,7 @@ function FieldInput({ field }: { field: ResolvedField }) {
   const label = (
     <span className="block text-sm font-medium text-ink">
       {field.label}
-      {field.required ? <span className="text-pink"> *</span> : null}
+      {field.required ? <span className="text-bad"> *</span> : null}
     </span>
   );
 

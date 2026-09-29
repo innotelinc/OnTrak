@@ -66,15 +66,15 @@ export function TicketTime({
               {entry.billedMinutes !== null && entry.billedMinutes !== entry.minutes ? (
                 <span className="text-ink-faint">→ billed {formatLoggedMinutes(entry.billedMinutes)}</span>
               ) : null}
-              <span className={entry.billable ? "text-teal" : "text-ink-faint"}>{entry.billable ? "billable" : "non-billable"}</span>
-              {entry.billable && entry.rateCentsPerHour === null ? <span className="text-amber">unpriced</span> : null}
+              <span className={entry.billable ? "text-ok" : "text-ink-faint"}>{entry.billable ? "billable" : "non-billable"}</span>
+              {entry.billable && entry.rateCentsPerHour === null ? <span className="text-attention">unpriced</span> : null}
               {entry.invoiceRef ? <span className="text-ink-faint">on {entry.invoiceRef}</span> : null}
               {entry.note ? <span className="truncate text-ink-soft">{entry.note}</span> : null}
               {removeAction && entry.invoicedAt === null ? (
                 <form action={removeAction} className="ml-auto">
                   <input type="hidden" name="entryId" value={entry.id} />
                   <input type="hidden" name="home" value={`/inbox/${entry.ticketId ?? ""}`} />
-                  <button type="submit" className="text-[11px] text-pink hover:underline">
+                  <button type="submit" className="text-[11px] text-bad hover:underline">
                     Remove
                   </button>
                 </form>

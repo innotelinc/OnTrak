@@ -22,8 +22,8 @@ export function SatisfactionSurvey({
 
   if (status === "answered" && survey.score !== null) {
     return (
-      <section aria-label="Satisfaction" className="rounded-xl2 border border-teal/40 bg-teal/10 p-5">
-        <h2 className="font-display text-sm font-semibold text-teal">Thanks for your feedback</h2>
+      <section aria-label="Satisfaction" className="rounded-xl2 border border-ok/40 bg-ok/10 p-5">
+        <h2 className="font-display text-sm font-semibold text-ok">Thanks for your feedback</h2>
         <p className="mt-1 text-sm text-ink-soft">
           You rated this {survey.score}/5 — {satisfactionLabel(survey.score)}.
         </p>

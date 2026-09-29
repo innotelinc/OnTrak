@@ -65,7 +65,7 @@ export default async function ClientSurveyPage({
 
   if (!survey) {
     return shell(
-      <p role="alert" className="rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+      <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
         That survey link is not valid. Ask your support desk for a fresh one.
       </p>,
     );
@@ -78,10 +78,10 @@ export default async function ClientSurveyPage({
       </p>
 
       {flash ? (
-        <p className="rounded-xl2 border border-teal/40 bg-teal/10 px-4 py-3 text-sm text-teal">{flash}</p>
+        <p className="rounded-xl2 border border-ok/40 bg-ok/10 px-4 py-3 text-sm text-ok">{flash}</p>
       ) : null}
       {error ? (
-        <p role="alert" className="rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+        <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
           {error}
         </p>
       ) : null}
@@ -96,7 +96,7 @@ export default async function ClientSurveyPage({
           </p>
         </section>
       ) : status === "expired" ? (
-        <p role="alert" className="rounded-xl2 border border-amber/40 bg-amber/10 px-4 py-3 text-sm text-amber">
+        <p role="alert" className="rounded-xl2 border border-attention/40 bg-attention/10 px-4 py-3 text-sm text-attention">
           This survey link has expired. Ask your support desk for a fresh one — the period it asked about can be asked again
           with a new link.
         </p>

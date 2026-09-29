@@ -33,7 +33,7 @@ export default async function PortalPage({ searchParams }: { searchParams: Promi
       </div>
 
       {flash ? (
-        <p className="rounded-xl2 border border-teal/40 bg-teal/10 px-4 py-3 text-sm text-teal">{flash}</p>
+        <p className="rounded-xl2 border border-ok/40 bg-ok/10 px-4 py-3 text-sm text-ok">{flash}</p>
       ) : null}
 
       <TicketList tickets={mine} basePath="/portal" emptyMessage="You have not raised a ticket yet." />

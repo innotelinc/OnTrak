@@ -20,10 +20,10 @@ const STATUS_LABELS: Record<TicketStatus, string> = {
 };
 
 const STATUS_TONES: Record<TicketStatus, string> = {
-  NEW: "bg-sky/15 text-sky",
+  NEW: "bg-info/15 text-info",
   OPEN: "bg-brand/15 text-brand",
-  PENDING: "bg-amber/15 text-amber",
-  RESOLVED: "bg-teal/15 text-teal",
+  PENDING: "bg-attention/15 text-attention",
+  RESOLVED: "bg-ok/15 text-ok",
   CLOSED: "bg-surface-muted text-ink-faint",
 };
 
@@ -37,8 +37,8 @@ const PRIORITY_LABELS: Record<TicketPriority, string> = {
 const PRIORITY_TONES: Record<TicketPriority, string> = {
   LOW: "bg-surface-muted text-ink-faint",
   NORMAL: "bg-surface-muted text-ink-soft",
-  HIGH: "bg-amber/15 text-amber",
-  URGENT: "bg-pink/15 text-pink",
+  HIGH: "bg-attention/15 text-attention",
+  URGENT: "bg-bad/15 text-bad",
 };
 
 const KIND_LABELS: Record<MessageKind, string> = {
@@ -66,7 +66,7 @@ export function TicketTypeBadge({ type }: { type: TicketType }) {
 }
 
 export function MessageKindBadge({ kind }: { kind: MessageKind }) {
-  const tone = kind === "INTERNAL_NOTE" ? "bg-amber/15 text-amber" : "bg-surface-muted text-ink-faint";
+  const tone = kind === "INTERNAL_NOTE" ? "bg-attention/15 text-attention" : "bg-surface-muted text-ink-faint";
   return <Pill tone={tone}>{KIND_LABELS[kind]}</Pill>;
 }
 

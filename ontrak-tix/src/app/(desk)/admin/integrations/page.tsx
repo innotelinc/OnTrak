@@ -120,16 +120,16 @@ export default async function IntegrationsPage({
       </div>
 
       {error ? (
-        <p role="alert" className="rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+        <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
           {error}
         </p>
       ) : null}
       {readError ? (
-        <p role="alert" className="rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+        <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
           {readError}
         </p>
       ) : null}
-      {flash ? <p className="rounded-xl2 border border-teal/40 bg-teal/10 px-4 py-3 text-sm text-teal">{flash}</p> : null}
+      {flash ? <p className="rounded-xl2 border border-ok/40 bg-ok/10 px-4 py-3 text-sm text-ok">{flash}</p> : null}
 
       {revealedToken ? (
         <SecretPanel
@@ -175,14 +175,14 @@ export default async function IntegrationsPage({
                     <code className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] text-ink-soft">{token.tokenPrefix}…</code>
                     <span
                       className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                        active ? "bg-teal/10 text-teal" : "bg-surface-muted text-ink-faint"
+                        active ? "bg-ok/10 text-ok" : "bg-surface-muted text-ink-faint"
                       }`}
                     >
                       {token.revokedAt !== null ? "revoked" : active ? "active" : "expired"}
                     </span>
                     <form action={revokeApiTokenAction} className="ml-auto">
                       <input type="hidden" name="tokenId" value={token.id} />
-                      <button type="submit" className="text-xs font-semibold text-pink hover:underline">
+                      <button type="submit" className="text-xs font-semibold text-bad hover:underline">
                         Revoke
                       </button>
                     </form>
@@ -259,7 +259,7 @@ export default async function IntegrationsPage({
                   <span className="font-semibold text-ink">{endpoint.name}</span>
                   <span
                     className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                      endpoint.enabled ? "bg-teal/10 text-teal" : "bg-surface-muted text-ink-faint"
+                      endpoint.enabled ? "bg-ok/10 text-ok" : "bg-surface-muted text-ink-faint"
                     }`}
                   >
                     {endpoint.enabled ? "on" : "off"}
@@ -280,7 +280,7 @@ export default async function IntegrationsPage({
                     </form>
                     <form action={removeWebhookAction}>
                       <input type="hidden" name="endpointId" value={endpoint.id} />
-                      <button type="submit" className="text-pink hover:underline">
+                      <button type="submit" className="text-bad hover:underline">
                         Remove
                       </button>
                     </form>
@@ -418,7 +418,7 @@ export default async function IntegrationsPage({
                   </span>
                   <span
                     className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                      channel.enabled ? "bg-teal/10 text-teal" : "bg-surface-muted text-ink-faint"
+                      channel.enabled ? "bg-ok/10 text-ok" : "bg-surface-muted text-ink-faint"
                     }`}
                   >
                     {channel.enabled ? "on" : "off"}
@@ -439,7 +439,7 @@ export default async function IntegrationsPage({
                     </form>
                     <form action={removeChatChannelAction}>
                       <input type="hidden" name="channelId" value={channel.id} />
-                      <button type="submit" className="text-pink hover:underline">
+                      <button type="submit" className="text-bad hover:underline">
                         Remove
                       </button>
                     </form>
@@ -559,7 +559,7 @@ export default async function IntegrationsPage({
                   <span className="font-semibold text-ink">
                     {link.check} on {link.host}
                   </span>
-                  <span className="rounded-full bg-amber/10 px-2 py-0.5 text-[11px] font-semibold text-amber">{link.severity}</span>
+                  <span className="rounded-full bg-attention/10 px-2 py-0.5 text-[11px] font-semibold text-attention">{link.severity}</span>
                   <a href={`/inbox/${link.ticketId}`} className="ml-auto text-xs font-semibold text-brand hover:underline">
                     {link.ticketRef}
                   </a>
@@ -582,9 +582,9 @@ export default async function IntegrationsPage({
 const inputClass = "w-full rounded-xl2 border border-line bg-surface px-3 py-2 text-sm text-ink";
 
 const STATUS_CLASS: Record<DeliveryStatus, string> = {
-  DELIVERED: "bg-teal/10 text-teal",
-  RETRYING: "bg-amber/10 text-amber",
-  EXHAUSTED: "bg-pink/10 text-pink",
+  DELIVERED: "bg-ok/10 text-ok",
+  RETRYING: "bg-attention/10 text-attention",
+  EXHAUSTED: "bg-bad/10 text-bad",
   PENDING: "bg-surface-muted text-ink-faint",
 };
 

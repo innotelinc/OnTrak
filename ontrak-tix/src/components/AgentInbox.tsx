@@ -68,15 +68,15 @@ function FilterTab({
 }) {
   const activeTone =
     tone === "breach"
-      ? "border-pink/50 bg-pink/12 text-pink"
+      ? "border-bad/50 bg-bad/12 text-bad"
       : tone === "risk"
-        ? "border-amber/50 bg-amber/15 text-amber"
+        ? "border-attention/50 bg-attention/15 text-attention"
         : "border-brand/40 bg-brand-soft text-brand";
   const idleTone =
     tone === "breach"
-      ? "border-transparent text-pink hover:bg-pink/10"
+      ? "border-transparent text-bad hover:bg-bad/10"
       : tone === "risk"
-        ? "border-transparent text-amber hover:bg-amber/10"
+        ? "border-transparent text-attention hover:bg-attention/10"
         : "border-transparent text-ink-soft hover:bg-surface-muted hover:text-ink";
   return (
     <a
@@ -172,11 +172,11 @@ function TicketRow({
       </td>
       <td className="whitespace-nowrap">
         {risk?.breached ? (
-          <span className="inline-flex rounded-full border border-pink/40 bg-pink/10 px-2 py-0.5 text-[11px] font-semibold text-pink">
+          <span className="inline-flex rounded-full border border-bad/40 bg-bad/10 px-2 py-0.5 text-[11px] font-semibold text-bad">
             Breached
           </span>
         ) : risk?.atRisk ? (
-          <span className="inline-flex rounded-full border border-amber/40 bg-amber/10 px-2 py-0.5 text-[11px] font-semibold text-amber">
+          <span className="inline-flex rounded-full border border-attention/40 bg-attention/10 px-2 py-0.5 text-[11px] font-semibold text-attention">
             At risk
           </span>
         ) : (

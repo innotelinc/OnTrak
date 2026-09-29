@@ -242,7 +242,7 @@ export function TicketDetail({
                   </select>
                   <button
                     type="submit"
-                    className="rounded-full bg-pink/12 px-3 py-1.5 text-xs font-semibold text-pink hover:bg-pink/20"
+                    className="rounded-full bg-bad/12 px-3 py-1.5 text-xs font-semibold text-bad hover:bg-bad/20"
                   >
                     Merge into this ticket
                   </button>
