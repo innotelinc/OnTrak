@@ -12,6 +12,16 @@ import { z } from "zod";
 export const MIN_PASSWORD_LENGTH = 8;
 
 /**
+ * The session cookie's name.
+ *
+ * It lives here, beside the other pure rules, rather than in `auth.ts`, for the
+ * same reason the single sign-on state cookie's name lives in `oidc-rules.ts`: a
+ * live test has to look for it on a raw HTTP response, and `auth.ts` touches
+ * `next/headers` and cannot be imported outside the server runtime.
+ */
+export const SESSION_COOKIE = "ontrak_training_session";
+
+/**
  * The single password policy, shared by sign-up and the admin user form so the
  * minimum can never drift between them. Returns a problem message, or `null`
  * when the password is acceptable.
