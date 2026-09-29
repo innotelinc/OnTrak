@@ -81,6 +81,12 @@ COPY --from=builder --chown=sentinel:sentinel /app/scripts ./scripts
 # service, which runs in the builder stage, and the generated client needs
 # neither the schema nor the migration history to serve a request.
 
+# Where a stack keeps its signing key. Creating it here, owned by the service user,
+# is what makes a named volume mounted over it writable by the one-shot `signing-key`
+# service and readable by the provider itself — the same reason the other two images
+# create their blob and evidence directories.
+RUN mkdir -p /run/sentinel && chown sentinel:sentinel /run/sentinel
+
 USER sentinel
 EXPOSE 8787
 

@@ -5,8 +5,8 @@
 #   docker compose up -d          build the image, migrate, serve on :8787
 #
 # Unlike the other two stacks this one needs no `.env` to start: every value it
-# reads has a working default, and an ephemeral signing key is generated for a
-# run that has not been given one. `.env` is read when it exists (copy it from
+# reads has a working default, and the signing key is generated onto a volume on
+# the first `up` and reused after that. `.env` is read when it exists (copy it from
 # `.env.example`) and is the place to set the issuer, the signing key and the
 # seeded administrator.
 #
@@ -59,6 +59,20 @@ services:
       # in a container that address is the container itself.
       DATABASE_URL: postgresql://ontrak:ontrak@db:5432/sentinel
 
+  # Generates the signing key once and keeps it on a volume, so recreating this
+  # container does not stop the provider signing with the key it has already
+  # published. Idempotent: every run after the first reuses what is there.
+  signing-key:
+    build:
+      context: .
+      target: runner
+    command: node --import tsx scripts/signing-key.ts
+    restart: "no"
+    environment:
+      SENTINEL_SIGNING_KEY_FILE: /run/sentinel/signing-key.pem
+    volumes:
+      - ontrak-sentinel-keys:/run/sentinel
+
   app:
     build:
       context: .
@@ -68,6 +82,8 @@ services:
       db:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      signing-key:
         condition: service_completed_successfully
     ports:
       - "${ONTRAK_SENTINEL_HTTP_PORT:-8787}:8787"
@@ -89,7 +105,15 @@ services:
       # proxy serves; the loopback default is only right for a local client.
       SENTINEL_ISSUER: ${SENTINEL_ISSUER:-http://127.0.0.1:8787}
       SENTINEL_ADMIN_EMAIL: ${SENTINEL_ADMIN_EMAIL:-admin@demo.test}
+      # The key the one-shot service just ensured. `SENTINEL_SIGNING_KEY` takes
+      # precedence over this, which is how a deployment that resolves its secrets
+      # before the process starts overrides the volume.
+      SENTINEL_SIGNING_KEY_FILE: /run/sentinel/signing-key.pem
       NODE_ENV: production
+    # Read-only: the provider only ever reads the key, and the one-shot service is
+    # the only thing that should be able to write it.
+    volumes:
+      - ontrak-sentinel-keys:/run/sentinel:ro
     # "Healthy" here means the provider is answering, not that its database is
     # reachable: a database blip should not mark a running provider unhealthy and
     # send an operator after the wrong container. Discovery is served from
@@ -107,3 +131,6 @@ services:
 
 volumes:
   ontrak-sentinel-db:
+  # The signing key. Separate from the database on purpose: losing the database is
+  # a restore, but losing the key silently invalidates every token in the wild.
+  ontrak-sentinel-keys:
