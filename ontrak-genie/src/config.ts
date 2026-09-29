@@ -42,6 +42,24 @@ function sandboxPreference(name: string, fallback: SandboxPreference): SandboxPr
   return raw === "docker" || raw === "host" || raw === "auto" ? raw : fallback;
 }
 
+/**
+ * Values `.env.example` ships that must never be read as a real credential.
+ *
+ * "Empty" counts: a template leaves a secret blank, and an unset secret is the
+ * normal state of a laptop. The prefixes are the ones the stack writes into its
+ * templates ("change-me", "your-…"), because a deployment that copied the file
+ * and never edited it should read as *unconfigured* rather than as configured
+ * with a placeholder — a distinction that decides whether sign-in and tenancy
+ * are on, and one no log line would otherwise explain.
+ */
+const PLACEHOLDER_PREFIXES = ["change-me", "changeme", "your-", "xxx", "todo"];
+
+export function isPlaceholderSecret(value: string): boolean {
+  const lowered = value.trim().toLowerCase();
+  if (lowered === "") return true;
+  return PLACEHOLDER_PREFIXES.some((prefix) => lowered.startsWith(prefix));
+}
+
 export type ApprovalMode = "off" | "risky" | "all";
 
 function approvalMode(name: string, fallback: ApprovalMode): ApprovalMode {
@@ -155,6 +173,18 @@ export const config = {
    * does not assume where the factory's checkout lives.
    */
   factoryDir: str("AGENT_FACTORY_DIR", ""),
+
+  /**
+   * Distro's control plane, for per-identity accounts, quota and accounting.
+   *
+   * Both are required for it to be on, and a placeholder token counts as unset
+   * (`isPlaceholderSecret`), so a fresh checkout is the single-operator tool it
+   * has been rather than a console that refuses every turn. See
+   * `src/tenancy.ts` for what turning it on changes: the shared `OMNIROUTE_API_KEY`
+   * stops being the credential every turn spends.
+   */
+  controlPlaneUrl: str("CONTROL_PLANE_INTERNAL_URL", ""),
+  controlToken: str("CONTROL_INTERNAL_TOKEN", ""),
 } as const;
 
 export function sessionsDir(): string {

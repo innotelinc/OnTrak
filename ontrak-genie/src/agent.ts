@@ -104,6 +104,18 @@ export interface RunAgentOptions {
   useOffline?: boolean;
   /** Overrides the session's saved step budget for this turn only. */
   maxSteps?: number;
+  /**
+   * The key this turn spends on the primary gateway. Set by the tenancy gate:
+   * with a control plane configured it is the caller's own key, and otherwise
+   * nothing is passed and the shared `OMNIROUTE_API_KEY` applies as before.
+   */
+  apiKey?: string;
+  /**
+   * Called with the gateway's own usage report after each successful model step.
+   * The caller decides what a running total means — this loop only knows that a
+   * step happened and what the gateway said it cost.
+   */
+  onUsage?: (usage: unknown, model: string) => void;
   signal?: AbortSignal;
 }
 
@@ -263,7 +275,7 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
   for (const model of [requestedModel ?? config.model, ...fallbackModels]) {
     if (seen.has(model)) continue;
     seen.add(model);
-    chain.push({ model });
+    chain.push({ model, apiKey: options.apiKey });
   }
   // The offline gateway goes last: a local model is slower and weaker, but it
   // keeps working when the network - or the primary gateway - is down. Keyed by
@@ -500,6 +512,9 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
             : {}),
         };
       }
+      // The one place a step's cost is known, and the last point at which the
+      // caller can still attribute it to the account that asked for it.
+      options.onUsage?.(result.usage, usedModel);
     }
 
     if (isAbortError(failure)) {

@@ -7,6 +7,7 @@ import { runAgent } from "./agent.js";
 import { pendingApprovals, resolveApproval } from "./approval.js";
 import { buildFactorySpec, FactorySpecError, writeFactorySpec } from "./builder.js";
 import { config } from "./config.js";
+import { controlPlaneEnabled } from "./controlplane.js";
 import { buildFileDiff } from "./diff.js";
 import { modelHealth, startModelHealthLoop } from "./modelHealth.js";
 import {
@@ -37,6 +38,7 @@ import {
   normalizeModelList,
   saveSession,
 } from "./store.js";
+import { auditExport, beginTurn, countUsage, finishTurn, type TurnUsage } from "./tenancy.js";
 import {
   deleteWorkspaceEntry,
   ensureWorkspace,
@@ -232,6 +234,19 @@ async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): 
 
   if (message.trim() === "") throw new HttpError(400, "message is required");
 
+  /*
+   * Tenancy, before anything is spent: which account this turn belongs to, and
+   * whether it may spend at all. A refusal belongs here rather than inside the
+   * stream — the model pool has not been touched yet, and a 401 or a 429 is a
+   * clearer answer than an SSE frame saying the same thing. Nothing about the
+   * chat is created until the turn is allowed to run.
+   */
+  const started = await beginTurn(sessionFrom(req));
+  if (!started.ok) throw new HttpError(started.status, started.message);
+  const { turn } = started;
+
+  let usage: TurnUsage = { tokensIn: 0, tokensOut: 0, requests: 0 };
+
   let session = sessionId === "" ? null : await getSession(sessionId);
   if (session === null) {
     session = createSession();
@@ -264,6 +279,12 @@ async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): 
       fallbackModels,
       useOffline,
       maxSteps,
+      // The account's own key when a control plane resolved one; otherwise
+      // undefined, and the shared key applies exactly as it did before.
+      apiKey: turn.apiKey,
+      onUsage: (reported, model) => {
+        usage = countUsage(reported, usage, model);
+      },
       signal: controller.signal,
     })) {
       send(event);
@@ -274,6 +295,13 @@ async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): 
     clearInterval(heartbeat);
     res.write("data: [DONE]\n\n");
     res.end();
+    /*
+     * The ledger write, after the answer has been sent and never awaited: the turn
+     * is already paid for, so a control plane that is slow or down must not hold
+     * up a reply the user already has. `finishTurn` swallows its own transport
+     * errors for the same reason.
+     */
+    void finishTurn(turn, usage);
   }
 }
 
@@ -313,6 +341,8 @@ async function handleApi(
           ? null
           : { url: config.offlineUrl, models: config.offlineModels },
       authRequired: config.webToken !== "",
+      /** True when turns are attributed and quota-gated through the control plane. */
+      tenancy: controlPlaneEnabled(),
     });
   }
 
@@ -506,6 +536,16 @@ async function handleApi(
         config.factoryDir !== "" && payload.write !== false
           ? await writeFactorySpec(config.factoryDir, spec, { overwrite: payload.overwrite === true })
           : null;
+
+      // An export is work leaving this system to become another one's input, which
+      // is exactly the kind of action a ledger exists for — recorded only when a
+      // spec actually landed, and best-effort like the rest of the accounting.
+      if (written !== null) {
+        void auditExport(sessionFrom(req), {
+          targetId: spec.filename,
+          meta: { path: written.path, bytes: written.bytes, replaced: written.replaced },
+        });
+      }
 
       return sendJson(res, 200, {
         filename: spec.filename,

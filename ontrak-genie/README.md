@@ -49,6 +49,7 @@
 - **Live visibility** — the file being written, syntax-highlighted, with a live diff against the on-disk baseline; a changed-marker file tree; a diff view for any file with history.
 - **Model resilience** — a fallback chain, a chain-health badge, a catalog sweep, and an optional second gateway (a local model, no key) tried only after the chain is exhausted.
 - **Sign-in (optional)** — Authentik OIDC: authorization code with PKCE, RS256 `id_token` verification against the provider's JWKS, and a signed session cookie. The shared bearer is kept for API clients that drive the endpoint directly.
+- **Tenancy (optional)** — Distro's control plane: a turn is resolved to an account, gated on that account's quota, spent on that account's own gateway key, and recorded afterwards. The key stays server-side, and a refusal is a `401` or a `429` rather than a quiet charge to the operator.
 - **The factory handoff** — `export` writes an Olympus build request (`build-requests/<slug>.md`) assembled from the workspace with no model call, previewable before it is written.
 - **Persistence** — sessions, transcripts and file snapshots under one data directory.
 
@@ -113,6 +114,13 @@ outstanding is stack citizenship, and it is stated rather than implied:
   until configured — set the issuer, the client id and the session secret to
   require it. Turning it on also closes the loopback trust the console otherwise
   starts with, so an empty `WEB_TOKEN` stops meaning "no gate".
+- **Tenancy** is Distro's control plane, wired and off until
+  `CONTROL_PLANE_INTERNAL_URL` and `CONTROL_INTERNAL_TOKEN` are set. With it on, a
+  turn spends the signed-in account's own gateway key and is refused when that
+  account may not spend — which means it needs sign-in as well, because the plane
+  keys accounts on the OIDC subject. The key posture is deliberate: no account, no
+  turn; a quota read that fails does not stop the work; the ledger write never
+  fails an answer. See [docs/operations.md](docs/operations.md).
 - **Secrets** are read from `.env`. The platform path is a Cerulean Vault
   `vault://` reference resolved at deploy time.
 - **The builder half** — plan → container → published name — is Olympus's, and

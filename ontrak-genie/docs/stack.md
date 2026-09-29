@@ -22,6 +22,7 @@ does not.
 - Live visibility — the file being written, highlighted, beside a live diff against the on-disk baseline; a changed-marker tree; a diff view for any file with snapshot history.
 - Persistence — sessions, transcripts and per-file snapshots under one data directory, restored across restarts.
 - Model resilience — the fallback chain, the chain-health probe, the catalog sweep, and an optional second gateway tried only after the chain is exhausted.
+- **Per-turn attribution and quota** — whose account a turn belongs to, whether it may spend, and what it cost (`src/tenancy.ts`). The account's gateway key is resolved and spent server-side; the browser never sees it.
 
 ## Provides
 
@@ -32,7 +33,8 @@ does not.
 
 ## Consumes
 
-- **OmniRoute** — model gateway. Genie holds no provider credentials and speaks only the OpenAI-compatible API; the gateway's address arrives from the deployment environment.
+- **OmniRoute** — model gateway. Genie holds no provider credentials and speaks only the OpenAI-compatible API; the gateway's address arrives from the deployment environment. *Wired:* with Distro's control plane configured, a turn spends the **account's own** gateway key rather than the one in `.env`, which is what makes per-account quota and usage real.
+- **Distro** (BuilderOps) — the control plane, consumed as Studio consumes it: the same `/api/internal/identity`, `/quota-check`, `/usage-report` and `/audit` contract, so one plane serves both surfaces. *Wired, and off until a URL and a service token are set.* The key posture is deliberate — strict (no account, no turn), fail-open on the quota read, and best-effort on the ledger — and the account's key never reaches the browser.
 - **Authentik** (Cerulean) — identity, SSO. Wired: the authorization code flow with PKCE, RS256 `id_token` verification against the provider's JWKS, and a signed session cookie. Off until the issuer, the client id and the session secret are configured; the shared bearer remains for API clients that drive the endpoint directly.
 - **Cerulean Vault** — secrets. *Planned:* a `vault://` reference resolved at deploy time, in place of a `.env` value.
 - **Cerulean** — trust (DNS/TLS) and **NPM Edge** — public routing, for the operator surface where it is exposed. *Planned.*
@@ -56,6 +58,8 @@ does not.
 | `src/server.ts` | Node HTTP | UI + JSON API + SSE stream; static assets served from `public/` |
 | `src/snapshots.ts` | TypeScript | Per-file snapshots, so a change can be shown against what it replaced |
 | `src/builder.ts` | TypeScript | Assembles an Olympus build request from a workspace; the only place this console hands work to another system |
+| `src/controlplane.ts` | TypeScript | Distro's control-plane contract: identity, quota, usage, audit. The same endpoints Studio calls |
+| `src/tenancy.ts` | TypeScript | The per-turn gate: which account pays, whether it may spend, and what gets recorded |
 | `public/` | Vanilla JS + CSS | The console: transcript, tool cards, preview pane, live diff, sweep panel |
 | `web/landing/` | Static HTML + vendored Unity theme | This product's landing page — published at `/ontrak-genie/` under the family's GitHub Pages site, alongside the root landing |
 | `scripts/` | Node ESM | The check commands — UI smoke, draft, offline, model sweep |
