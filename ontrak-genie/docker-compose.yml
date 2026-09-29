@@ -1,0 +1,80 @@
+# Agent UI, talking to a model gateway that lives on the LAN.
+#
+#   cp .env.example .env       (then edit it)
+#   docker compose up -d
+#   open http://127.0.0.1:3400/?token=<WEB_TOKEN>
+#
+# The gateway is an external service (the stack's shared OmniRoute), not a
+# container declared here. A container in this file would only be reachable at
+# a Docker bridge address like 172.17.x.x, which nothing else on the network can
+# resolve or route to — so it is addressed by its real host instead. Which host
+# that is comes from the deployment's environment, never from this file.
+#
+# `network_mode: host` is deliberate and is the other half of that: this
+# container gets no bridge address at all. It talks to the gateway as a plain
+# network peer and publishes the UI on the host's own address, rather than being
+# reached through a NAT hop that Docker inserted.
+
+services:
+  agent:
+    build: .
+    restart: unless-stopped
+    network_mode: host
+    # The whole of .env comes through as-is. A hand-maintained list of variables
+    # here is a list that silently falls out of date: the container then runs with
+    # the code's defaults instead, which is how the approval gate once came up
+    # "off" inside a container while .env said "risky". Optional, so `docker
+    # compose up` still works with no .env at all (the code's defaults apply).
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Only the settings that must differ inside a container: the image's own
+      # filesystem layout, and the fact that this container is already the
+      # boundary, so run_command stays inside it rather than trying to nest
+      # Docker (there is no Docker socket here to nest into).
+      #
+      # `environment` wins over `env_file`, which is what makes these overrides
+      # hold even though .env has AGENT_WORKSPACE=./workspace and
+      # AGENT_SANDBOX=auto for the bare-node case.
+      HOST: "0.0.0.0"
+      PORT: "3400"
+      AGENT_WORKSPACE: "/workspace"
+      AGENT_DATA_DIR: "/data"
+      AGENT_SANDBOX: "host"
+    volumes:
+      # The agent can only touch this directory.
+      - ./workspace:/workspace
+      # Sessions and transcripts. Named rather than bind-mounted so a rebuild or
+      # a `docker compose down` does not throw away the chats.
+      - agent-data:/data
+    # Deliberately the static shell, not /api/health: the shell is public by
+    # design (it has to render the token prompt), so this works whether or not
+    # WEB_TOKEN is set, and it answers "is this container serving?" without
+    # making a restart depend on the LAN gateway being up.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://127.0.0.1:3400/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  agent-data:
+
+# If you would rather run a gateway in Docker than use one on the LAN, add it
+# back here — but publish and address it by a LAN address, not a service name:
+#
+#   omniroute:
+#     image: diegosouzapw/omniroute
+#     restart: unless-stopped
+#     ports:
+#       - "<gateway-host-address>:20128:20128"
+#     environment:
+#       OMNIROUTE_SERVER_HOST: "0.0.0.0"
+#       OMNIROUTE_DATA_DIR: "/data"
+#     volumes:
+#       - omniroute-data:/data
+#
+# volumes:
+#   omniroute-data:

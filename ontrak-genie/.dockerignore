@@ -1,0 +1,36 @@
+# What the image needs is src/, public/, tsconfig.json, package.json and
+# package-lock.json. Everything below is either secret, produced inside the
+# image, or host-only, and none of it belongs in the build context.
+#
+# Note this file only filters the *build context*. `docker compose` still reads
+# .env from this directory for ${VAR} substitution - that is the compose CLI,
+# not the daemon - so .env can stay ignored here and still configure the app.
+
+# Secrets
+.env
+.env.local
+
+# Installed and compiled inside the image
+node_modules
+dist
+
+# Agent runtime state, and the workspace itself: mounted as a volume at run
+# time, so baking a copy in would only shadow the user's files with stale ones.
+.agent
+workspace
+*.log
+
+# Git history and host-only strays. The .estate-probe/ directory in particular
+# must never be copied anywhere.
+.git
+.gitignore
+.estate-probe
+python3.12
+freebuff
+install.sh
+
+# The sandbox is its own image (sandbox/Dockerfile, `npm run sandbox:build`) and
+# the docs and dev scripts are not part of the server.
+sandbox
+scripts
+README.md

@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Coding Agent</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#input">Skip to the message box</a>
+
+    <div class="app">
+      <aside class="sidebar" aria-label="Sessions and status">
+        <div class="sidebar-head">
+          <span class="brand">Coding Agent</span>
+          <button id="new-chat" class="btn-ghost" title="Start a new chat" aria-label="Start a new chat">+</button>
+        </div>
+        <nav id="sessions" class="sessions" aria-label="Chat sessions"></nav>
+        <div class="sidebar-foot">
+          <div class="row">
+            <span class="status-dot" id="gateway-dot" aria-hidden="true"></span>
+            <span id="gateway-label" class="muted">checking gateway...</span>
+          </div>
+          <div class="row">
+            <span class="status-dot" id="sandbox-dot" aria-hidden="true"></span>
+            <span id="sandbox-label" class="muted">checking sandbox...</span>
+          </div>
+          <div class="row">
+            <span class="status-dot" id="models-dot" aria-hidden="true"></span>
+            <span id="models-label" class="muted">checking models...</span>
+            <button
+              id="sweep-open"
+              class="btn-ghost mini"
+              title="Ask the gateway which of its advertised models can actually make a tool call"
+            >
+              sweep
+            </button>
+          </div>
+          <div class="row">
+            <span class="status-dot" id="offline-dot" aria-hidden="true"></span>
+            <span id="offline-label" class="muted">checking offline fallback...</span>
+          </div>
+          <div id="workspace-label" class="muted mono"></div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div class="topbar-left">
+            <span id="chat-title" class="chat-title">New chat</span>
+          </div>
+          <div class="topbar-right">
+            <span id="gateway-badge" class="badge offline hidden" role="status"></span>
+            <span id="approval-badge" class="badge hidden"></span>
+            <label class="field" for="model">
+              <span class="muted">model</span>
+              <select id="model" class="select" aria-label="Model"></select>
+            </label>
+            <label class="field" for="fallbacks">
+              <span class="muted">chain</span>
+              <input
+                id="fallbacks"
+                class="input-text"
+                type="text"
+                aria-label="Fallback models, comma separated"
+                placeholder="none"
+                title="Models to try, in order, when the chosen one throttles or fails. The offline gateway is always tried last."
+              />
+            </label>
+            <label class="field check" for="use-offline">
+              <input id="use-offline" type="checkbox" checked />
+              <span class="muted">local</span>
+            </label>
+            <label class="field" for="steps">
+              <span class="muted">steps</span>
+              <input
+                id="steps"
+                class="input-num"
+                type="number"
+                min="1"
+                max="200"
+                step="1"
+                value="30"
+                inputmode="numeric"
+                aria-label="Maximum agent steps per message"
+                title="Maximum assistant turns the agent may take for one message"
+              />
+            </label>
+            <button
+              id="toggle-files"
+              class="btn-ghost"
+              title="Toggle workspace panel"
+              aria-controls="files-panel"
+              aria-expanded="false"
+            >
+              files
+            </button>
+            <button
+              id="toggle-preview"
+              class="btn-ghost"
+              title="Show the code the agent is generating, as it writes it"
+              aria-controls="preview"
+              aria-expanded="false"
+            >
+              preview
+            </button>
+          </div>
+        </header>
+
+        <div id="messages" class="messages" role="log" aria-label="Conversation"></div>
+
+        <aside id="preview" class="preview" aria-label="Code being generated">
+          <div class="preview-head">
+            <span class="brand">Preview</span>
+            <span id="preview-title" class="mono muted">nothing generated yet</span>
+            <span id="preview-status" class="badge hidden" role="status"></span>
+            <div class="preview-actions">
+              <button
+                id="preview-toggle"
+                class="btn-ghost hidden"
+                aria-pressed="false"
+                title="Switch between the code and the change it made"
+              >
+                show change
+              </button>
+              <button
+                id="preview-open"
+                class="btn-ghost hidden"
+                title="Open this file in the workspace viewer"
+              >
+                open file
+              </button>
+              <button id="preview-close" class="btn-ghost" aria-label="Close the preview pane">
+                close
+              </button>
+            </div>
+          </div>
+          <div class="preview-content">
+            <div id="preview-diff" class="preview-diff hidden"></div>
+            <pre id="preview-body" class="preview-body mono" tabindex="0"></pre>
+          </div>
+        </aside>
+
+        <form id="composer" class="composer" aria-label="Send a message">
+          <textarea
+            id="input"
+            rows="1"
+            aria-label="Message"
+            placeholder="Describe a change, ask a question, or paste an error..."
+          ></textarea>
+          <button type="submit" id="send" class="btn-primary">Send</button>
+          <button type="button" id="stop" class="btn-danger hidden">Stop</button>
+        </form>
+      </main>
+
+      <aside class="files" id="files-panel" aria-label="Workspace files">
+        <div class="files-head">
+          <span class="brand">Workspace</span>
+          <button id="files-root" class="btn-ghost" title="Go to workspace root" aria-label="Go to workspace root">
+            root
+          </button>
+        </div>
+        <div id="files-path" class="files-path mono">.</div>
+        <div id="files-list" class="files-list"></div>
+      </aside>
+    </div>
+
+    <div
+      id="viewer"
+      class="viewer hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="viewer-title"
+    >
+      <div class="viewer-head">
+        <span id="viewer-title" class="mono"></span>
+        <div class="viewer-actions">
+          <button id="viewer-toggle" class="btn-ghost hidden" aria-pressed="false" title="Switch between the change and the file">
+            show file
+          </button>
+          <button
+            id="viewer-delete"
+            class="btn-ghost hidden"
+            title="Delete this file from the workspace"
+          >
+            delete
+          </button>
+          <button id="viewer-close" class="btn-ghost" aria-label="Close file viewer">close</button>
+        </div>
+      </div>
+      <div class="viewer-content">
+        <div id="viewer-diff" class="viewer-diff hidden"></div>
+        <pre id="viewer-body" class="viewer-body" tabindex="0"></pre>
+      </div>
+    </div>
+
+    <div
+      id="sweep"
+      class="viewer hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sweep-title"
+    >
+      <div class="viewer-head">
+        <span id="sweep-title" class="mono">which models actually work</span>
+        <div class="viewer-actions">
+          <button id="sweep-run" class="btn-ghost" title="About two dozen models, spread across every provider">
+            run sample
+          </button>
+          <button id="sweep-run-all" class="btn-ghost" title="Every model that claims tool calling. Slower, and it will rate-limit some of them.">
+            run full sweep
+          </button>
+          <button id="sweep-close" class="btn-ghost" aria-label="Close the model sweep">close</button>
+        </div>
+      </div>
+      <div class="viewer-content">
+        <div id="sweep-status" class="muted"></div>
+        <div id="sweep-report" class="sweep-report"></div>
+      </div>
+    </div>
+
+    <div id="live" class="sr-only" role="status" aria-live="polite"></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

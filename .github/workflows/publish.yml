@@ -9,6 +9,7 @@
 # Images land at:
 #   ghcr.io/<owner>/ontrak-training
 #   ghcr.io/<owner>/ontrak-tix
+#   ghcr.io/<owner>/ontrak-genie
 #
 # A release tags them `latest` plus the version and its major.minor; a manual
 # run tags them by commit, so it can prove the pipeline without minting a
@@ -45,6 +46,8 @@ jobs:
             context: .
           - app: tix
             context: ontrak-tix
+          - app: genie
+            context: ontrak-genie
     steps:
       - uses: actions/checkout@v7
 
