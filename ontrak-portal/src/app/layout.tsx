@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { portalConfig } from "@/lib/config";
+import { readSession } from "@/lib/session";
 
 import "./globals.css";
 
@@ -26,8 +27,13 @@ export const metadata: Metadata = {
   description: "OnTrak Unity — one sign-in and one front door for the OnTrak products",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const config = portalConfig();
+  // Read here rather than in each page so the masthead can always answer the two
+  // questions a person asks when a permission looks wrong: "who does it think I am"
+  // and "can I make it look again". The role shown is the re-derived one — see
+  // `withCurrentRole` in `session.ts`.
+  const session = await readSession();
   return (
     <html lang="en" data-scheme="operations" suppressHydrationWarning>
       <head>
@@ -49,6 +55,25 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <span>{config.baseDomain}</span>
             </a>
             <div className="masthead__tools">
+              {session ? (
+                <span className="masthead__account">
+                  <span className="masthead__who">{session.email}</span>
+                  <span className="ot-pill">{session.role}</span>
+                </span>
+              ) : null}
+              {session ? (
+                // A group membership change is the one thing the portal cannot work
+                // out on its own, and the only place it lives is the provider. So
+                // this re-runs the same handshake — no second mechanism, and no
+                // password, because the provider's own session is still there.
+                <a
+                  className="masthead__link"
+                  href={`/api/sso/start?next=${encodeURIComponent("/")}`}
+                  title="Ask the provider for your groups again. Use this after being added to a group."
+                >
+                  Refresh permissions
+                </a>
+              ) : null}
               <ThemeToggle />
             </div>
           </header>

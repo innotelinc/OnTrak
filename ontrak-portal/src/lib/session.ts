@@ -34,6 +34,7 @@ import {
   type PortalSession,
 } from "./oidc-rules";
 import { portalConfig, sessionCookieSecure } from "./config";
+import { roleChanged, roleForGroups } from "./portal-rules";
 
 const ALGORITHM = "HS256";
 
@@ -85,10 +86,43 @@ export async function readSession(): Promise<PortalSession | null> {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, signingKey(), { algorithms: [ALGORITHM] });
-    return isPortalSession(payload) ? (payload as unknown as PortalSession) : null;
+    const session = isPortalSession(payload) ? (payload as unknown as PortalSession) : null;
+    return session ? withCurrentRole(session) : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * The session, with its role re-derived from the groups the provider sent.
+ *
+ * This exists because of a real bug: the role was decided once, when the sign-in
+ * happened, and written into a cookie with a twelve-hour life. Add somebody to
+ * `ontrak-admins` five minutes later and they were still a STUDENT until the cookie
+ * expired — and nothing on any page explained why, because the session said the role
+ * was settled. The lesson is that a *mapping* is configuration and a *role* is a
+ * derived value, and storing a derived value in a long-lived cookie is a cache with
+ * no invalidation.
+ *
+ * So the groups stay in the cookie (signed, therefore trustworthy) and the role is
+ * computed from them on every read, against the mapping as it is configured *now*. A
+ * mapping change takes effect on the next page load. A change to somebody's *group
+ * membership* still needs a fresh sign-in, because only the provider can tell us
+ * that — which is what the "Refresh permissions" action on the dashboard is for, and
+ * it is a re-run of the same handshake rather than a second mechanism.
+ *
+ * The stored `role` is kept as the fallback rather than discarded: a session minted
+ * by an older build — or by the Sync or break-glass paths, which have no groups to
+ * speak of — still has a usable role if the re-derivation finds nothing.
+ */
+function withCurrentRole(session: PortalSession): PortalSession {
+  const config = portalConfig();
+  const groups = Array.isArray(session.groups) ? session.groups : [];
+  const next = roleForGroups(groups, config.roleMappings, config.defaultRole);
+  // No groups (a Sync or break-glass session), or nothing changed: the same object, so
+  // nothing downstream sees a spurious change on every request.
+  if (!next || !roleChanged(session, next)) return session;
+  return { ...session, role: next.role, matched_group: next.matched };
 }
 
 export async function clearSession(): Promise<void> {

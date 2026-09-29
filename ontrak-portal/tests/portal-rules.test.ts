@@ -16,7 +16,7 @@ import { describe, it } from "node:test";
 
 import {
   asRole, canOpen, emptyStateFor, isRole, landingFor, parseRoleMappings, product,
-  productsFor, roleFromGroups, tilesFor, urlFor, PRODUCTS, ROLES,
+  productsFor, roleChanged, roleForGroups, roleFromGroups, tilesFor, urlFor, PRODUCTS, ROLES,
 } from "../src/lib/portal-rules";
 import {
   checkClaims, safeReturnTo, type IdTokenClaims,
@@ -243,5 +243,61 @@ describe("claim checks", () => {
     const checked = checkClaims(claims({ exp: NOW - 10 }), { ...CHECK, now: NOW + 200 });
     assert.equal(checked.ok, false);
     if (!checked.ok) assert.match(checked.reason, /expired/);
+  });
+});
+
+/**
+ * The role is derived, not stored — the bug that kept an administrator a student.
+ *
+ * The regression these cover is worth naming: the role used to be decided once and
+ * written into a twelve-hour cookie, so somebody added to `ontrak-admins` after they
+ * signed in stayed a STUDENT until the cookie expired, and no page said why. The
+ * re-derivation is what makes a mapping change take effect on the next page load.
+ */
+describe("a role re-derived from the groups already on the session", () => {
+  const mappings = parseRoleMappings(
+    "ontrak-admins=ADMIN,ontrak-sysadmins=SYSADMIN,ontrak-desk=TECHNICIAN,ontrak-students=STUDENT",
+  );
+
+  it("promotes a session that now matches a higher-mapped group", () => {
+    const before = { role: "STUDENT" as const, matched_group: "ontrak-students" };
+    const next = roleForGroups(["ontrak-students", "ontrak-admins"], mappings, "STUDENT");
+    assert.deepEqual(next, { role: "ADMIN", matched: "ontrak-admins" });
+    assert.equal(roleChanged(before, next!), true);
+  });
+
+  it("follows a mapping change with the same groups — no new sign-in needed", () => {
+    // The person's groups did not move; the *mapping* did. This is the case a stored
+    // role could never get right.
+    const before = { role: "STUDENT" as const, matched_group: null };
+    const nowMapped = parseRoleMappings("ontrak-admins=ADMIN,range-instructors=INSTRUCTOR");
+    const next = roleForGroups(["range-instructors"], nowMapped, "STUDENT");
+    assert.deepEqual(next, { role: "INSTRUCTOR", matched: "range-instructors" });
+    assert.equal(roleChanged(before, next!), true);
+  });
+
+  it("is a no-op when nothing moved, so no request sees a spurious change", () => {
+    const before = { role: "ADMIN" as const, matched_group: "ontrak-admins" };
+    const next = roleForGroups(["ontrak-admins"], mappings, "STUDENT");
+    assert.deepEqual(next, { role: "ADMIN", matched: "ontrak-admins" });
+    assert.equal(roleChanged(before, next!), false);
+  });
+
+  it("leaves a session with no groups alone, rather than demoting it to the default", () => {
+    // A Sync or break-glass session carries no groups. Re-deriving those to the
+    // default role would take an ADMIN's own portal away from them.
+    assert.equal(roleForGroups([], mappings, "STUDENT"), null);
+  });
+
+  it("still falls back to the default when no group maps, and says so", () => {
+    const before = { role: "STUDENT" as const, matched_group: null };
+    const next = roleForGroups(["some-other-group"], mappings, "STUDENT");
+    assert.deepEqual(next, { role: "STUDENT", matched: null });
+    assert.equal(roleChanged(before, next!), false);
+  });
+
+  it("matches group names case-insensitively, the way the provider's claim varies", () => {
+    const next = roleForGroups(["OnTrak-Admins"], mappings, "STUDENT");
+    assert.equal(next?.role, "ADMIN");
   });
 });

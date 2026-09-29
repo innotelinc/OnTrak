@@ -270,6 +270,49 @@ export function tilesFor(
   }));
 }
 
+/**
+ * The groups a session carries, and the role they produce *now*.
+ *
+ * The signed cookie holds the groups the provider sent at sign-in, plus the role that
+ * was derived from them at the time. Keeping the role there was the bug: a *role* is a
+ * derived value, so a long-lived cookie holding one is a cache with no invalidation.
+ * Add somebody to `ontrak-admins` after they signed in and they stayed a STUDENT for
+ * the rest of the cookie's twelve hours, with nothing on any page explaining why.
+ *
+ * So the derivation lives here, as a pure function of (groups, mapping, fallback), and
+ * `readSession` calls it on every read. A mapping change takes effect on the next page
+ * load. Only a change to *whose groups somebody is in* needs a fresh handshake, because
+ * only the provider knows that — which is what the masthead's "Refresh permissions" is
+ * for.
+ *
+ * The session's stored role is the fallback when the re-derivation finds nothing: a
+ * session minted before this existed, or by the Sync or break-glass paths (which have
+ * no groups at all) still has to work. `null` means "leave it alone", so a caller does
+ * not accidentally demote somebody to the default on an empty group list.
+ */
+export function roleForGroups(
+  groups: readonly string[],
+  mappings: Record<string, Role>,
+  fallback: Role,
+): { role: Role; matched: string | null } | null {
+  if (groups.length === 0) return null;
+  return roleFromGroups(groups, mappings, fallback);
+}
+
+/**
+ * Whether re-deriving would change anything.
+ *
+ * Separate from the derivation so `readSession` can return the *same object* on the
+ * overwhelmingly common no-op path — a new object per request would make every server
+ * component downstream see a changed dependency for no reason.
+ */
+export function roleChanged(
+  before: { role: Role; matched_group?: string | null },
+  after: { role: Role; matched: string | null },
+): boolean {
+  return after.role !== before.role || after.matched !== (before.matched_group ?? null);
+}
+
 /** What the page says when a person belongs nowhere yet. */
 export function emptyStateFor(role: Role): string {
   return role === "STUDENT"
