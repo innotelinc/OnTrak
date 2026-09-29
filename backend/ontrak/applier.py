@@ -181,9 +181,29 @@ def _compose_argv(project: str, workdir: str, files: list[str], env_file: str) -
     return argv
 
 
+def _env_file_still_there(host: Host, container: str, path: str, settings: Settings) -> bool:
+    """Does the env file the labels name still exist?
+
+    A labelled env file is not necessarily a file any more. The monarch stack has its
+    secrets resolved into `/run/.env.monarch.resolved`, and `/run` is a tmpfs: after a
+    reboot the label points at nothing and replaying it fails the entire invocation —
+    "couldn't find env file" — which the plan then reports as a stack with no services,
+    as if the compose files were broken. It is replayed when it is there and dropped
+    when it is not, and the plan that follows decides whether the stack can be read at
+    all. Dropping it is not silent: the caller notes it, and any interpolation that
+    really did depend on it fails loudly at the next step, with compose's own words.
+    """
+    if not path:
+        return False
+    result = _remote(host, container, ["sh", "-c", f"test -f {shlex.quote(path)}"],
+                     settings, timeout=settings.ssh_timeout)
+    return result.ok
+
+
 def _plan_services(host: Host, container: str, argv: list[str], running: list[str],
-                   settings: Settings) -> tuple[list[str], list[str], list[str]]:
-    """(the invocation to reuse, the services it would manage, the running ones it would not).
+                   settings: Settings) -> tuple[list[str], list[str], list[str], str]:
+    """(the invocation to reuse, the services it would manage, the ones it would not,
+    compose's own complaint if it could not read the stack at all).
 
     WHY THIS WIDENS AT ALL. Some stacks in this estate are started with profiles,
     and `docker compose config --services` leaves profile-gated services out of its
@@ -202,28 +222,36 @@ def _plan_services(host: Host, container: str, argv: list[str], running: list[st
     already been shown to miss a running service, and adopted only if it then covers
     all of them.
     """
-    def plan_for(cmd: list[str]) -> list[str]:
+    def plan_for(cmd: list[str]) -> tuple[list[str], str]:
         result = _docker(host, container, [*cmd, "config", "--services"], settings)
-        return sorted(set(result.lines())) if result.ok else []
+        if result.ok:
+            return sorted(set(result.lines())), ""
+        # Compose refusing the files and compose managing none of them look identical
+        # from the service list, and they are not the same thing to an operator.
+        return [], f"{result.message} (exit {result.returncode})"
 
-    planned = plan_for(argv)
+    planned, why = plan_for(argv)
+    if why:
+        return argv, planned, [], why
     missing = sorted(set(running) - set(planned))
     if not missing:
-        return argv, planned, []
+        return argv, planned, [], ""
 
     declared = _docker(host, container, [*argv, "config", "--profiles"], settings)
     names = sorted({line.strip() for line in declared.lines() if line.strip()}) \
         if declared.ok else []
     if not names:
-        return argv, planned, missing
+        return argv, planned, missing, ""
 
     widened = list(argv)
     for name in names:
         widened += ["--profile", name]
-    wider = plan_for(widened)
+    wider, why = plan_for(widened)
+    if why:
+        return argv, planned, missing, ""
     if set(running) - set(wider):
-        return widened, wider, sorted(set(running) - set(wider))
-    return widened, wider, []
+        return widened, wider, sorted(set(running) - set(wider)), ""
+    return widened, wider, [], ""
 
 
 def _running_project_services(host: Host, container: str, project: str, settings: Settings) -> list[str]:
@@ -288,6 +316,9 @@ def _docker_recreate(host: Host, container: str, ref: str, settings: Settings,
         workdir = str(labels.get("com.docker.compose.project.working_dir") or "")
         files = [f for f in str(labels.get("com.docker.compose.project.config_files") or "").split(",") if f]
         env_file = str(labels.get("com.docker.compose.project.environment_file") or "")
+        if env_file and not _env_file_still_there(host, container, env_file, settings):
+            outcome.note(f"{cname}: {env_file} is gone; recreating without it")
+            env_file = ""
         if not (project and service and files):
             outcome.needs_manual.append(
                 f"{cname}: image {ref} pulled, but the container is not compose-managed — "
@@ -296,8 +327,14 @@ def _docker_recreate(host: Host, container: str, ref: str, settings: Settings,
             continue
 
         running = sorted(set(_running_project_services(host, container, project, settings)))
-        argv, planned, missing = _plan_services(
+        argv, planned, missing, unreadable = _plan_services(
             host, container, _compose_argv(project, workdir, files, env_file), running, settings)
+        if unreadable:
+            outcome.needs_manual.append(
+                f"{cname}: refusing to recreate — compose could not read project {project}: "
+                f"{unreadable}"
+            )
+            continue
         if missing:
             outcome.needs_manual.append(
                 f"{cname}: refusing to recreate — compose sees {len(planned)} service(s) for "
