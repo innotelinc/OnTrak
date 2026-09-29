@@ -16,6 +16,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { test } from "node:test";
 
 import type { AuditEventInput, AuditSink } from "../src/lib/audit-chain";
+// Both are imported here for the ordering they create, which is the ordering a
+// `tsx` script sees: `db.ts` pulls the adapter in while `db.ts` is still
+// initialising. Building the people source at module scope threw `Cannot access
+// 'prisma' before initialization` in exactly that order — invisible to the endpoint,
+// which a bundler wires differently, and to the fakes below, which never touch
+// `db.ts`. The import *is* the assertion.
+import { prisma } from "../src/lib/db";
+import { prismaScimPeople } from "../src/lib/scim-sync-store-prisma";
 import type { IdentityUser } from "../src/lib/identity-service";
 import { HttpScimClient, MemoryScimClient, ScimRequestError, type ScimClient } from "../src/lib/scim-client";
 import {
@@ -34,6 +42,19 @@ import {
 } from "../src/lib/scim-rules";
 import { ScimSyncService, scimPushAudit, type ScimPeopleSource } from "../src/lib/scim-sync-service";
 import { ScimPushCard } from "../src/components/ScimPushCard";
+
+/* -------------------------------------------------------------------------- */
+/*  The wiring a script needs                                                 */
+/* -------------------------------------------------------------------------- */
+
+test("scim push: the Prisma people source is built on demand, not at import", () => {
+  // `npm run sweep:scim` reaches the sweep through this pair. A module-scope
+  // `createPrismaScimPeople(prisma)` read the client before `db.ts` had declared it,
+  // which broke the operator script while the endpoint kept working.
+  assert.ok(prisma, "the shared client is initialised");
+  assert.equal(typeof prismaScimPeople().listUsers, "function");
+  assert.equal(prismaScimPeople(), prismaScimPeople(), "one source for the process");
+});
 
 /* -------------------------------------------------------------------------- */
 /*  Fixtures                                                                  */
@@ -215,6 +236,36 @@ test("scim push: a deployment with nowhere to push says so", async () => {
   const service = new ScimSyncService(people([person()]), null);
   assert.equal(service.configured(), false);
   const refused = await service.push(MANAGER);
+  assert.equal(refused.ok, false);
+  assert.match(refused.ok ? "" : refused.error, /no outbound identity provider/);
+});
+
+test("scim push: the scheduler pushes one tenant without a session of its own", async () => {
+  const { sink, events } = collect();
+  const provider = new MemoryScimClient();
+  const asked: string[] = [];
+  const source: ScimPeopleSource = {
+    async listUsers(tenantId) {
+      asked.push(tenantId);
+      return [person({ tenantId })];
+    },
+  };
+  const service = new ScimSyncService(source, provider, sink);
+
+  // No actor: a cron has no session to authorize, so the deployment's own
+  // configuration is what decides whether it may run at all.
+  const result = await service.pushTenant("tenant-7");
+  assert.ok(result.ok);
+  assert.equal(result.value.created, 1);
+  assert.deepEqual(asked, ["tenant-7"], "only the tenant it was asked about");
+  // The write is still attributable, which is the point of auditing a system run.
+  assert.equal(events[0].tenantId, "tenant-7");
+  assert.equal(events[0].actor, "system:scim-sync");
+});
+
+test("scim push: a sweep with nowhere to push refuses rather than reporting success", async () => {
+  const service = new ScimSyncService(people([person()]), null);
+  const refused = await service.pushTenant("tenant-1");
   assert.equal(refused.ok, false);
   assert.match(refused.ok ? "" : refused.error, /no outbound identity provider/);
 });

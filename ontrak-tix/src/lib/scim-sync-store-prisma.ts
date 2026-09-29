@@ -9,6 +9,13 @@
  *
  * The row mapper is shared with the identity adapter rather than re-written, so a
  * row is interpreted one way whichever direction reads it.
+ *
+ * The source is built **when it is first asked for**, not when this module loads.
+ * A module-level `createPrismaScimPeople(prisma)` would read `db.ts`'s client while
+ * `db.ts` is still importing this file: a bundler happens to tolerate that ordering,
+ * a plain `tsx` run does not, and the failure is `Cannot access 'prisma' before
+ * initialization` from inside a script nobody thought was fragile. Memoised, so it
+ * is still one object for the process.
  */
 
 import { prisma } from "./db";
@@ -36,6 +43,11 @@ export function createPrismaScimPeople(client: ScimPeoplePrismaClient): ScimPeop
   };
 }
 
-export const prismaScimPeople: ScimPeopleSource = createPrismaScimPeople(
-  prisma as unknown as ScimPeoplePrismaClient,
-);
+let prismaPeople: ScimPeopleSource | null = null;
+
+export function prismaScimPeople(): ScimPeopleSource {
+  if (!prismaPeople) {
+    prismaPeople = createPrismaScimPeople(prisma as unknown as ScimPeoplePrismaClient);
+  }
+  return prismaPeople;
+}

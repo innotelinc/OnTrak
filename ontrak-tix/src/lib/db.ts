@@ -376,7 +376,7 @@ export function scimSyncServicesFor(): ScimSyncService {
   if (!scimSync) {
     const { target } = scimTargetFromEnv();
     scimSync = new ScimSyncService(
-      prismaScimPeople,
+      prismaScimPeople(),
       target ? new HttpScimClient(target) : null,
       ticketServices().audit,
     );

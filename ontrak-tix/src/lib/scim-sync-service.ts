@@ -77,22 +77,38 @@ export class ScimSyncService {
   }
 
   /**
-   * Push every account this tenant holds to the provider.
+   * Push every account a tenant holds, on behalf of somebody who asked.
+   *
+   * The permission check is here rather than in the console's action because a
+   * server action is not the only caller — and the check has to be where the
+   * write is, not where the button is.
+   */
+  async push(actor: Actor): Promise<ServiceResult<ScimSyncOutcome>> {
+    if (!hasPermission(actor.role, "tenant:manage")) {
+      return { ok: false, error: "You cannot provision identities for this tenant." };
+    }
+    return this.pushTenant(actor.tenantId);
+  }
+
+  /**
+   * Push one tenant's people, with no caller to check.
+   *
+   * This is what the scheduler calls: a cron has no session to authorize, the
+   * deployment's own configuration is what decides whether it may run at all, and
+   * every change it makes is audited as `system:scim-sync` — so the trail still
+   * names whom the write is attributable to.
    *
    * The lookup is two queries per person and that is deliberate: `externalId`
    * first, because it is the key that survives somebody changing their address,
    * and `userName` second, so a provider that was populated before this
    * deployment ever synced is adopted rather than duplicated.
    */
-  async push(actor: Actor): Promise<ServiceResult<ScimSyncOutcome>> {
-    if (!hasPermission(actor.role, "tenant:manage")) {
-      return { ok: false, error: "You cannot provision identities for this tenant." };
-    }
+  async pushTenant(tenantId: string): Promise<ServiceResult<ScimSyncOutcome>> {
     if (!this.client) {
       return { ok: false, error: "This deployment has no outbound identity provider configured." };
     }
 
-    const users = await this.people.listUsers(actor.tenantId);
+    const users = await this.people.listUsers(tenantId);
     const outcome: ScimSyncOutcome = {
       total: users.length,
       created: 0,
@@ -118,7 +134,7 @@ export class ScimSyncService {
           if (plan.action === "DEACTIVATE") outcome.deactivated += 1;
           outcome.pushed.push({ email: person.email, action: plan.action, reason: plan.reason });
           if (this.audit) {
-            await this.audit.append(scimPushAudit(actor.tenantId, person, plan, outcome.pushed.length, this.ids.now()));
+            await this.audit.append(scimPushAudit(tenantId, person, plan, outcome.pushed.length, this.ids.now()));
           }
         }
       } catch (error) {

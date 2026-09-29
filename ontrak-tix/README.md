@@ -286,6 +286,13 @@ generate without a local install would rewrite the parent project's client.
   `src/app/actions/security.ts` — the security console (M2): the alert stream
   with each alert's promotion outcome, one-click incident promotion,
   false-positive verdicts and suppression rules.
+- `src/app/api/scim/push/route.ts` + `scripts/scim-sweep.ts`
+  (`npm run sweep:scim`) — the **outbound provisioning sweep's** scheduled entry
+  point (Bearer-authenticated with `ONTRAK_TIX_CRON_SECRET`, `?tenant=`) and its
+  operator-script equivalent. A person the provider already matches is a no-op, so
+  a quiet run writes nothing at all and it is safe to schedule aggressively; an
+  unconfigured deployment answers `503` rather than a cheerful zero, because a
+  scheduler has to be able to tell "nothing needed doing" from "the sync stopped".
 - `src/app/api/security/poll/route.ts` — the scheduled poll entry point (M2) for
   vendors that only offer an API; `HttpAlertSource` drains them through the same
   connector, rules and dedupe ledger as the push path.
@@ -717,6 +724,21 @@ ONTRAK_TIX_BASE_URL=http://127.0.0.1:3001 ONTRAK_TIX_CRON_SECRET=… \
 
 Unlike the other two it never omits `?tenant=`: an unscoped run would sweep every
 tenant in the database, including the demo one.
+
+The outbound **provisioning sweep** has one for the same reason, and it is the
+check that the desk's people reach the provider without anybody pressing a button:
+
+```bash
+ONTRAK_TIX_BASE_URL=http://127.0.0.1:3001 ONTRAK_TIX_CRON_SECRET=… \
+  npx tsx --tsconfig tests/tsconfig.json --test ontrak-tix/tests/tix-m2-scim-sweep-live.test.ts
+```
+
+It provisions a throwaway desk, POSTs to `/api/scim/push?tenant=<slug>` as a cron
+would — asserting the credential is actually required, that the run is scoped to
+the desk it named (the JSON names which tenants it touched), that a second run
+changes nothing, that a leaver is switched off at the provider, and that an unknown
+desk is `404` rather than a silent sweep of none. `npm run sweep:scim -- <slug>`
+runs the same sweep from a terminal, with `--dry-run` to report without writing.
 
 See [ROADMAP.md](./ROADMAP.md) for the full milestone sequence.
 
