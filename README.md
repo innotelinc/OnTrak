@@ -100,11 +100,14 @@ Not configurable, because each one is how an update tool becomes an outage:
 - **No installs and no removals.** apt runs with `--only-upgrade`, so an unsatisfiable dependency
   fails the transaction instead of removing something to satisfy it.
 - **No config-file replacement.** `force-confdef`/`force-confold` keeps the operator's configuration.
-- **No blind container recreate.** Docker's "apply" means *recreate*, so before recreating a compose
-  project the number of services compose would manage is compared against the number running. If
-  compose would manage fewer, the recreate is refused with the command the operator should run
-  instead. A container that is not compose-managed is pulled and reported as manual — never
-  recreated from a guess about its volumes, networks and flags.
+- **No blind container recreate.** Docker's "apply" means *recreate*, so a compose project is
+  rebuilt with the invocation the container's own labels describe — its project name, its working
+  directory, its exact `-f` set and the `--env-file` it was started with — and, only when the plain plan cannot
+  see every running service, with the profiles the compose files declare. The number of services
+  compose would manage is then compared against the number running; if any are missing, the
+  recreate is refused with the command the operator should run instead. A container that is not
+  compose-managed is pulled and reported as manual — never recreated from a guess about its
+  volumes, networks and flags.
 
 ## Quick start
 
