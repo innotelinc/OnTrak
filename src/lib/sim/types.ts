@@ -13,6 +13,8 @@
  * grader.
  */
 
+import type { Fidelity } from "./fidelity";
+
 export type Platform = "LINUX" | "WINDOWS" | "OFFICE";
 export type EngineId = "bash" | "powershell" | "office";
 
@@ -412,6 +414,13 @@ export interface ScenarioDefinition {
   engine: EngineId;
   /** Defaults to `console`. Only meaningful on the WINDOWS platform. */
   surface?: ScenarioSurface;
+  /**
+   * Which machine the scenario is authored for (v1.2): the in-process simulated engine,
+   * or a real shell in a sandbox. Defaults to `simulated`, which is what every scenario
+   * written before this existed is; see `sim/fidelity.ts` for the rules and
+   * `sim/drivers/container.ts` for the sandbox driver.
+   */
+  fidelity?: Fidelity;
   /** One-line goal shown in the console header. */
   objective: string;
   /** Markdown briefing presented on the "Start attempt" screen. */
@@ -498,6 +507,15 @@ export interface ShellDriver {
   prompt(state: EngineState): string;
   /** Runs a full command line (pipes, redirection, `&&` all handled here). */
   run(input: string, state: EngineState): CommandResult;
+  /**
+   * The same thing, when the work happens somewhere the caller must await it.
+   *
+   * A sandboxed attempt runs real commands on the server, so its driver cannot answer
+   * synchronously; the console prefers this whenever a driver has it and falls back to
+   * `run` otherwise. Both mutate the state they are given, so the caller does not care
+   * which one it called.
+   */
+  runAsync?(input: string, state: EngineState): Promise<CommandResult>;
   /** Files created when the scenario boots. */
   boot?(state: EngineState): void;
   /** Human readable one-liner describing the environment. */

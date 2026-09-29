@@ -28,6 +28,12 @@
  */
 
 import type { Platform } from "./sim/types";
+import {
+  normalizeFidelity,
+  satisfiesFidelity,
+  type Fidelity,
+  type SandboxAvailability,
+} from "./sim/fidelity";
 
 export type BlockerKind =
   | "platform"
@@ -36,7 +42,8 @@ export type BlockerKind =
   | "software-missing"
   | "software-source"
   | "license-key"
-  | "license-expired";
+  | "license-expired"
+  | "sandbox";
 
 export interface AvailabilityBlocker {
   kind: BlockerKind;
@@ -75,15 +82,30 @@ export interface ScenarioWithSoftware {
     required: boolean;
     softwarePackage: PackageForAvailability;
   }[];
+  /** The fidelity the definition declares (v1.2); absent means simulated. */
+  fidelity?: Fidelity;
 }
 
 export interface AvailabilityContext {
   /** Platforms switched off by an administrator. */
   disabledPlatforms: Set<Platform>;
+  /**
+   * The simulator sandbox this deployment has, if any. A scenario authored for a real shell
+   * cannot be offered where there is no sandbox to run it in, and saying so is friendlier
+   * than handing a student a scenario whose checks can never pass.
+   */
+  sandbox?: SandboxAvailability;
 }
 
 /** An empty context — every platform on — handy for tests and dry runs. */
 export const ALL_PLATFORMS_ENABLED: AvailabilityContext = { disabledPlatforms: new Set() };
+
+/** The default when a deployment names no sandbox at all. */
+export const NO_SANDBOX: SandboxAvailability = {
+  available: false,
+  reason:
+    "No simulator sandbox is configured on this deployment (set ONTRAK_SANDBOX_BACKEND), so a scenario that needs a real shell cannot be offered.",
+};
 
 /** Has this licence's window (if it has one) already closed? */
 export function licenceExpired(pkg: Pick<PackageForAvailability, "licenseType" | "licenseExpiresAt">, now = Date.now()): boolean {
@@ -165,6 +187,18 @@ export function evaluateScenario(
 
   if (!scenario.published) {
     blockers.push({ kind: "unpublished", message: "This scenario has not been published yet." });
+  }
+
+  // Fidelity (v1.2). A scenario authored for a sandbox is *not* silently downgraded here —
+  // the runtime does that, visibly, when an attempt is already open — because offering it
+  // would mean a student spending their time on checks the sandbox was there to make
+  // possible. An author who wants the scenario offered anywhere declares `simulated`.
+  const fidelity = normalizeFidelity(scenario.fidelity);
+  if (!satisfiesFidelity(fidelity, context.sandbox ?? NO_SANDBOX)) {
+    blockers.push({
+      kind: "sandbox",
+      message: `This scenario is authored for a real shell in a sandbox. ${(context.sandbox ?? NO_SANDBOX).reason}`,
+    });
   }
 
   for (const link of scenario.software) {
