@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ontrak Sync — CodeOps Platform</title>
+  <meta name="description" content="Estate-wide package and container update monitoring — and, on approval, updating. One service, one dashboard, every host on the LAN.">
+  <meta property="og:title" content="Ontrak Sync — CodeOps Platform">
+  <meta property="og:description" content="Know what every host is behind on, and install only what a person approved. Self-hosted, SSH-only, no agent.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b0d10'/%3E%3Ctext x='32' y='45' font-size='30' font-family='monospace' font-weight='bold' text-anchor='middle' fill='%23f5b544'%3EOS%3C/text%3E%3C/svg%3E">
+  <style>
+    :root {
+      color-scheme: dark;
+      --p-bg: #0b0d10;
+      --p-bg-elevated: #12151a;
+      --p-surface: #181c22;
+      --p-surface-hover: #1f242c;
+      --p-border: #262c35;
+      --p-text: #f4f7fb;
+      --p-text-secondary: #cdd6e0;
+      --p-text-muted: #a8b2bf;
+      --p-accent: #f5b544;
+      --p-accent-hover: #fbbf24;
+      --p-accent-tint: rgba(245, 181, 68, 0.12);
+      --p-success: #3ddc84;
+      --p-danger: #f87171;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --ease: cubic-bezier(.2, .8, .2, 1);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0; background: var(--p-bg); color: var(--p-text);
+      font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased;
+    }
+    ::selection { background: var(--p-accent-tint); }
+    a { color: var(--p-accent); text-decoration: none; }
+    a:hover { color: var(--p-accent-hover); }
+    code, pre { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+    .topbar { position: sticky; top: 0; z-index: 10; background: rgba(10, 14, 19, 0.72); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border-bottom: 1px solid var(--p-border); }
+    .topbar-inner { display: flex; align-items: center; gap: 20px; height: 60px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: 0.04em; color: var(--p-text); }
+    .brand:hover { color: var(--p-text); }
+    .brand .mark { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: var(--p-bg-elevated); border: 1px solid var(--p-border); font-size: 12px; font-family: "JetBrains Mono", ui-monospace, monospace; color: var(--p-accent); }
+    .topbar nav { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+    .topbar nav a { color: var(--p-text-secondary); padding: 6px 12px; border-radius: var(--radius-sm); font-size: 14px; transition: color .15s var(--ease), background .15s var(--ease); }
+    .topbar nav a:hover { color: var(--p-text); background: var(--p-surface-hover); }
+    .topbar .gh { display: inline-flex; align-items: center; gap: 8px; margin-left: 8px; border: 1px solid var(--p-border); border-radius: var(--radius-md); padding: 7px 14px; color: var(--p-text); font-size: 14px; transition: border-color .15s var(--ease), background .15s var(--ease); }
+    .topbar .gh:hover { border-color: var(--p-accent); background: var(--p-accent-tint); color: var(--p-text); }
+
+    .hero { position: relative; overflow: hidden; padding: 96px 0 72px; }
+    .hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(600px 320px at 70% -10%, rgba(245, 181, 68, 0.14), transparent 70%), radial-gradient(500px 300px at 15% 110%, rgba(61, 220, 132, 0.05), transparent 70%); pointer-events: none; }
+    .hero-inner { position: relative; max-width: 780px; }
+    .kicker { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--p-accent-hover); background: var(--p-accent-tint); border: 1px solid rgba(245, 181, 68, 0.3); border-radius: 999px; padding: 5px 14px; margin: 0 0 24px; }
+    .kicker .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--p-success); box-shadow: 0 0 0 0 rgba(61, 220, 132, 0.5); animation: pulse 2.4s var(--ease) infinite; }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(61, 220, 132, 0.45); } 70% { box-shadow: 0 0 0 9px rgba(61, 220, 132, 0); } 100% { box-shadow: 0 0 0 0 rgba(61, 220, 132, 0); } }
+    h1 { font-size: clamp(2.2rem, 5.5vw, 3.4rem); line-height: 1.08; letter-spacing: -0.02em; margin: 0 0 20px; font-weight: 700; }
+    h1 .accent { color: var(--p-accent); }
+    .lede { font-size: 1.125rem; color: var(--p-text-secondary); max-width: 680px; margin: 0 0 32px; }
+    .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 28px; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; border-radius: var(--radius-md); padding: 11px 20px; font-size: 15px; font-weight: 550; border: 1px solid transparent; cursor: pointer; transition: background .15s var(--ease), border-color .15s var(--ease); }
+    .btn-primary { background: var(--p-accent); color: #0a0e13; font-weight: 600; }
+    .btn-primary:hover { background: var(--p-accent-hover); color: #0a0e13; }
+    .btn-secondary { border-color: var(--p-border); color: var(--p-text); background: transparent; }
+    .btn-secondary:hover { border-color: var(--p-accent); background: var(--p-accent-tint); color: var(--p-text); }
+    .quickstart { display: flex; align-items: center; gap: 14px; background: var(--p-bg-elevated); border: 1px solid var(--p-border); border-radius: var(--radius-md); padding: 12px 16px; max-width: 680px; font-size: 13.5px; }
+    .quickstart code { color: var(--p-text); white-space: nowrap; overflow-x: auto; }
+    .quickstart code .c { color: var(--p-text-muted); }
+    .quickstart .copy { margin-left: auto; flex: 0 0 auto; background: transparent; border: 1px solid var(--p-border); color: var(--p-text-secondary); border-radius: var(--radius-sm); font: inherit; font-size: 12px; padding: 4px 10px; cursor: pointer; transition: border-color .15s var(--ease), color .15s var(--ease); }
+    .quickstart .copy:hover { border-color: var(--p-accent); color: var(--p-text); }
+    .quickstart .copy.copied { color: var(--p-success); border-color: var(--p-success); }
+
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 56px 0 0; }
+    .stat { background: var(--p-bg-elevated); border: 1px solid var(--p-border); border-radius: var(--radius-md); padding: 16px; }
+    .stat .n { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
+    .stat .n em { font-style: normal; color: var(--p-accent); }
+    .stat .l { font-size: 13px; color: var(--p-text-muted); margin-top: 2px; }
+
+    section { padding: 64px 0; }
+    .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 28px; flex-wrap: wrap; }
+    .sec-head h2 { font-size: 1.6rem; letter-spacing: -0.02em; margin: 0; }
+    .sec-head p { color: var(--p-text-muted); margin: 0; font-size: 14.5px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+    .card { border: 1px solid var(--p-border); background: var(--p-bg-elevated); border-radius: var(--radius-md); padding: 18px; }
+    .card h3 { margin: 0 0 6px; font-size: 1.02rem; }
+    .card p { margin: 0; color: var(--p-text-secondary); font-size: 14px; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--p-border); border-radius: var(--radius-md); }
+    table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+    th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--p-border); }
+    th { color: var(--p-text-muted); font-weight: 600; font-size: 13px; letter-spacing: 0.03em; text-transform: uppercase; background: var(--p-bg-elevated); }
+    tr:last-child td { border-bottom: 0; }
+    td code { color: var(--p-accent); font-size: 13px; }
+    .answer-yes { color: var(--p-success); }
+    .answer-no { color: var(--p-danger); }
+
+    footer { border-top: 1px solid var(--p-border); margin-top: 60px; padding: 18px 0 40px; color: var(--p-text-muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <div class="topbar-inner">
+        <a class="brand" href="/">
+          <span class="mark">OS</span>
+          <span>Ontrak Sync</span>
+        </a>
+        <nav>
+          <a href="https://github.com/innotelinc/ontrak-sync#readme">Docs</a>
+          <a class="gh" href="https://github.com/innotelinc/ontrak-sync">GitHub ↗</a>
+        </nav>
+      </div>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <section class="hero">
+      <div class="hero-inner">
+        <div class="kicker"><span class="pulse"></span> CodeOps · self-hosted</div>
+        <h1>Know what every host is behind on — and install only what a person <span class="accent">approved</span>.</h1>
+        <p class="lede">
+          Ontrak Sync walks each host on the estate, then every container on it, and asks
+          <code>apt</code>, <code>snap</code> and the container registries what is behind. Findings land
+          in one dashboard; applying them is a decision an operator makes, not a side effect of a scan.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://github.com/innotelinc/ontrak-sync">View on GitHub</a>
+          <a class="btn btn-secondary" href="https://github.com/innotelinc/ontrak-sync/blob/main/README.md">Quick start</a>
+        </div>
+        <div class="quickstart">
+          <code><span class="c"># token + first boot</span> cp .env.example .env &amp;&amp; make up</code>
+          <button class="copy" type="button" data-copy="cp .env.example .env && make up">Copy</button>
+        </div>
+        <div class="stats">
+          <div class="stat"><div class="n"><em>3</em> managers</div><div class="l">apt · snap · docker</div></div>
+          <div class="stat"><div class="n"><em>0</em> agents</div><div class="l">SSH only, no install</div></div>
+          <div class="stat"><div class="n"><em>never</em> hidden</div><div class="l">Unknown beside Pending</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <h2>Why Ontrak Sync</h2>
+        <p>A fleet that reads “0 pending” while three hosts have been unreachable for a month.</p>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <h3>“No updates” and “I could not look” are not the same answer</h3>
+          <p>A target that could not be read is <strong>Unknown</strong>, shown next to the pending count — never a zero that looks like a clean bill of health.</p>
+        </div>
+        <div class="card">
+          <h3>An update tool must not become an outage</h3>
+          <p>No <code>dist-upgrade</code>, no installs, no removals, no config-file replacement, and no blind container recreate. Each is a setting that is simply not offered.</p>
+        </div>
+        <div class="card">
+          <h3>The registry budget is shared with every pull</h3>
+          <p>A fetched image digest is reused for six hours, so two scans in an afternoon cost one pass of requests instead of turning an update into <code>429</code>.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <h2>What it is</h2>
+        <p>One service, one dashboard, every host on the LAN.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Manager</th><th>How it decides</th><th>What it can do</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>apt</code></td><td><code>apt-get -s upgrade</code>, cross-checked against <code>apt list --upgradable</code> — the only view that names the archive, which is how a security update is told from a feature update</td><td>upgrade only (<code>--only-upgrade</code>)</td></tr>
+            <tr><td><code>snap</code></td><td><code>snap refresh --list</code></td><td>refresh</td></tr>
+            <tr><td><code>docker</code></td><td>local image digest vs the registry’s, per platform</td><td>pull, then recreate — and only when compose would manage as many services as are running</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="cards" style="margin-top:14px;">
+        <div class="card">
+          <h3>Two modes, one of them deliberate</h3>
+          <p><strong>detect</strong> scans and waits. <strong>auto</strong> installs inside a window and scope chosen in the settings form — with <code>security_only</code> as what makes it tolerable.</p>
+        </div>
+        <div class="card">
+          <h3>Unknown is a first-class state</h3>
+          <p>Not installed here → no finding, not an error. Could not look → no finding, an error recorded. Neither ever expires a finding it did not check.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="wrap">
+        <div>© 2026 Ontrak Sync — CodeOps. © 2026</div>
+        <div style="margin-top:6px;">
+          <a href="https://github.com/innotelinc/ontrak-sync">GitHub</a> ·
+          <a href="https://github.com/innotelinc/innotel-platform-stack">Innotel Platform Stack</a>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      document.querySelectorAll(".quickstart .copy").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var text = btn.getAttribute("data-copy") || "";
+          var done = function () {
+            btn.textContent = "Copied";
+            btn.classList.add("copied");
+            setTimeout(function () { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1600);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(done, done);
+          } else {
+            done();
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

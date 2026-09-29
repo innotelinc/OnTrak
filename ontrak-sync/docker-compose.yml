@@ -1,0 +1,103 @@
+# Ontrak Sync — the API and the dashboard.
+#
+# Runs on its own incus container (see docs/placement.md) rather than beside any
+# estate service, because it is the one thing here that reaches every other machine.
+#
+# Two things about the shape of this file:
+#
+#   * **The API is published on the LAN address, not loopback.** The dashboard
+#     authenticates from the browser with a token, so the browser has to reach the
+#     API directly — an API bound to 127.0.0.1 would make the UI work only when the
+#     operator is on the host.
+#   * **The SSH key is mounted read-only.** The service can install packages; it
+#     must not also be able to rewrite the key that lets it do so. If it could, an
+#     attacker inside it could persist beyond the container.
+name: ontrak-sync
+
+services:
+  ontrak-api:
+    build:
+      context: ./backend
+    image: innotel/ontrak-sync-api:1.0.0
+    container_name: ontrak-sync-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ONTRAK_DB: /var/lib/ontrak/ontrak.sqlite3
+      ONTRAK_BIND_HOST: 0.0.0.0
+      ONTRAK_BIND_PORT: "8420"
+    volumes:
+      # The database IS the history; it outlives the container by design.
+      - ontrak-data:/var/lib/ontrak
+      - ${ONTRAK_SSH_KEY:-/root/.ssh/id_ed25519}:/root/.ssh/id_ed25519:ro
+      # Read-WRITE, unlike the key. `StrictHostKeyChecking=accept-new` has to be able
+      # to record a host the first time it is seen, and a read-only known_hosts would
+      # turn every newly added estate host into a connection warning. It is not a
+      # credential: the worst a compromise can do with it is pin a host the service
+      # is already authorised to run commands on.
+      - ${ONTRAK_SSH_KNOWN_HOSTS:-/root/.ssh/known_hosts}:/root/.ssh/known_hosts
+    ports:
+      - "${ONTRAK_API_BIND:-192.168.1.21}:8420:8420"
+    healthcheck:
+      # Unauthenticated on purpose: /api/health is the one route that answers
+      # without a token, so a healthcheck never needs the secret in a config file.
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8420/api/health', timeout=5).status==200 else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  ontrak-web:
+    build:
+      context: ./web
+      args:
+        # Baked in at build time, because Next inlines NEXT_PUBLIC_* — see the
+        # Dockerfile. This is why the address is a build argument and not an
+        # environment variable on the service.
+        #
+        # Set it to an EMPTY value (`ONTRAK_PUBLIC_API=`) for the deployment
+        # behind the Cerulean edge: the browser then calls `/api/*` on this
+        # origin, the Next route handler forwards it over the compose network, and
+        # the session cookie belongs to one hostname. That is what makes single
+        # sign-on work — the registered redirect URI
+        # (`https://sync.ontrak.innotel.us/api/auth/sso/callback`) has to be on the
+        # origin the *browser* is on, and a cookie set by a cross-origin API call
+        # is discarded by the browser.
+        #
+        # `${VAR-default}` with ONE dash, not `:-`. They are not the same thing:
+        # with `:-` an empty value falls back to the default, so `ONTRAK_PUBLIC_API=`
+        # in `.env` would still produce a cross-origin image and the deployment that
+        # asked for same-origin would silently get the other one. With `-`, unset
+        # takes the LAN default and *empty* means empty.
+        NEXT_PUBLIC_ONTRAK_API: ${ONTRAK_PUBLIC_API-http://192.168.1.21:8420}
+    image: innotel/ontrak-sync-web:1.0.0
+    container_name: ontrak-sync-web
+    restart: unless-stopped
+    depends_on:
+      - ontrak-api
+    environment:
+      # Where the same-origin proxy reaches the API. Only used when the image was
+      # built with an empty NEXT_PUBLIC_ONTRAK_API; the service name resolves on
+      # the compose network, which is why it is not the published LAN address.
+      ONTRAK_API_INTERNAL: ${ONTRAK_API_INTERNAL:-http://ontrak-api:8420}
+    ports:
+      - "${ONTRAK_WEB_BIND:-192.168.1.21}:8421:8421"
+    healthcheck:
+      test: ["CMD", "node", "-e",
+             "fetch('http://127.0.0.1:8421/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  ontrak-data:
+    name: ontrak-sync-data
