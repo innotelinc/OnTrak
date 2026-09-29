@@ -370,18 +370,60 @@ jobs:
         working-directory: ontrak-sentinel
         run: docker compose down -v
 
+  # OnTrak Sync is the one product whose service is not a Node app, so its suite is
+  # not run by any of the jobs above: it is `unittest`, run with the interpreter, and
+  # the image build only proves it compiles. Without this job the parsers that decide
+  # what an operator is told to install on every host in the Network would be the only
+  # ones in the family with nothing checking them on a push.
+  sync:
+    name: OnTrak Sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # 3.12 because that is what the API's image is built on. The suite itself is the
+      # standard library plus one library (`cryptography`, for verifying an SSO ID
+      # token), so there is nothing else to install and no test tooling at all.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install the API's dependencies
+        run: pip install -r ontrak-sync/backend/requirements.txt
+
+      # `run-all.py` discovers `test_*.py`, so a new module is covered by being
+      # written. It runs in the same shape the deployed image runs it in.
+      - name: API tests
+        run: python3 ontrak-sync/backend/tests/run-all.py
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ontrak-sync/web/package-lock.json
+
+      # 22 because that is what the dashboard's image is built on; a typecheck on a
+      # different major would pass here and fail in the image.
+      - name: Install the dashboard's dependencies
+        run: npm ci
+        working-directory: ontrak-sync/web
+
+      - name: Dashboard typecheck
+        run: npm run typecheck
+        working-directory: ontrak-sync/web
+
   # The family stack — every product in one project — is the artefact behind
   # `make all-up`, so it is the thing to boot. The unit suites prove each product's
-  # rules; this proves the *wiring between them*: three databases on their own
-  # ports, one network, each app told its own public address, and a provider that
-  # registers a client for each of the other two because their callbacks were set.
+  # rules; this proves the *wiring between them*: a database per product on its own
+  # port, one network, each app told its own public address, and a provider that
+  # registers a client for each of the others because their callbacks were set.
   family:
     name: Family stack
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - name: Boot all three products together
+      - name: Boot every product together
         run: |
           set -euo pipefail
           cp -n .env.example .env
