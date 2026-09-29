@@ -4,6 +4,11 @@
 > [Innotel Labs](../INNOTEL-LABS.md) product, built **after** OnTrak Tix.
 >
 > Status legend: `[x]` shipped · `[~]` in progress · `[ ]` planned · `[-]` out of scope for v1
+>
+> **OnTrak family release 2026.09** ([portfolio](../INNOTEL-LABS.md)): this
+> product's slice of it is **S3 — Guard detection**, started (the normalizer, the
+> detection rules and the alert pipeline; no streaming listener yet); the others are
+> **OnTrak IT Support Training v1.2** and **OnTrak Tix M6**.
 
 ---
 
@@ -307,8 +312,27 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
     administrator (or from a login path that prompts for one — S2's password
     credentials), and removing your last factor ends every session you hold including
     the one you are reading the page on. Covered by `tests/sentinel-console.test.ts`.
-  - `[ ]` Per-role policies: today an organization has one `IdentityPolicy` and
-    everybody reads it.
+  - `[x]` **Per-role policies** (`POLICY_SCOPES` in `identity-rules.ts`, the
+    `IdentityPolicy` scope column in `20261025000000_policy_scope`,
+    `IdentityService.policyForRole`/`setPolicy`, the `policies` console page): an
+    organization keeps one **baseline** policy — the scope every organization
+    already had, so nothing about an existing deployment's behaviour changed — and
+    may add a policy per role that overrides it. `policyForRole(rows, role)` is the
+    only resolver, so "which policy governs this person?" has one answer, and the
+    scope that answered is recorded on the session grant itself: an audit entry says
+    *the AGENT policy let this in*, not merely that *a* policy did. Three decisions
+    are stated out loud. **The baseline is the fallback, never a second opinion** — a
+    missing role row is the baseline, not "no policy", because a deployment that has
+    never written an ADMIN row must not silently drop MFA. **A role policy may
+    legitimately differ in either direction**, and the page shows every scope beside
+    the number it resolves to (`Effective now: …` for a role with no row of its own),
+    so a role that is looser than the baseline is visible rather than accidental; the
+    honest limit is that nothing *forces* a role policy to be at least as strict, so
+    tightening one is an administrative decision the screen makes answerable rather
+    than a rule the code imposes. And **the built-in default still governs an
+    organization with no rows at all**, which is what keeps the console's own login
+    honest on a fresh install. Covered by `tests/sentinel-policy.test.ts` and the
+    policy tests in `tests/sentinel-console.test.ts`.
 - Roles, groups and attribute-based access policies; tenant branding.
 - **Exit:** OnTrak Tix and Training sign in through Sentinel via OIDC and SAML;
   MFA is enforced — **TOTP and WebAuthn are done**, an identity can enroll either
@@ -377,10 +401,29 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
     plainly rather than implied: **a group decides nothing yet** — roles, groups
     and attribute-based policy are the S1 bullet below, and until that lands a
     group is a recorded fact on the evidence chain, which is what a sync is for.
-  - `[ ]` **Directory sync (AD/Entra/Google)** with safe conflict resolution: the
-    server half a connector talks to is built, so this is the driver side — a
-    Graph/LDAP reader that pushes through the SCIM API above, and the conflict
-    policy that says what happens when the same person is edited in both places.
+  - `[x]` **Directory sync (AD/Entra/Google), planned before it is applied**
+    (`directory-rules.ts`, `directory-service.ts`, `directory-store-prisma.ts`,
+    `directory-client.ts`, the `DirectoryConnection`/`DirectorySyncRun` tables in
+    `20261026000000_directory_sync`, and the console wiring): a connection names a
+    source (`ENTRA`, `GOOGLE`, `LDAP`, `GENERIC`), a reader, a schedule and a
+    **conflict policy**, and a run reads a page of the directory, plans every change
+    against what Sentinel holds, and applies it through the same
+    `IdentityService`/`ScimService` methods a console write uses — so a sync cannot
+    become a second, weaker writer. Four decisions carry it. **The plan is computed
+    before anything is written** (`planDirectorySync`), so a run reports exactly what
+    it will do and a dry run is the same code path with the writing switched off. **A
+    conflict is resolved by the policy and reported either way**: with
+    `preferDirectory` the directory wins and the local edit is overwritten *with a
+    note saying so*; with `preferLocal` the local edit wins and the run reports the
+    disagreement rather than leaving it to be discovered later. **A rename is a
+    move, not a second person** — matching is by the directory's own id first and the
+    address second, which is the `externalId` work above doing its job. And **a
+    person who has left the directory is deactivated, never deleted**, which is the
+    same deprovisioning path a SCIM `active:false` takes, sessions and tokens
+    included. Groups sync as memberships with the same pair key the SCIM server
+    uses. Covered by `tests/sentinel-directory.test.ts` (the plan, the conflict
+    policies, the leaver and the reader's narrowing) and the store tests in
+    `tests/sentinel-store-prisma.test.ts`.
 - Joiner/mover/leaver workflows; access reviews; automatic deprovisioning and
   session kill on offboarding.
   - `[x]` **Joiner and leaver**, and the mover's writes: creating a user, renaming
@@ -396,14 +439,51 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
   sessions and revokes their tokens with an entry on the organization's evidence
   chain. The remaining work is the connector that *drives* it.
 
-### S3 — Sentinel Guard v1 (detection) `[ ]`
+### S3 — Sentinel Guard v1 (detection) `[~]`
 **Goal:** see what is happening.
 
-- Telemetry ingest (syslog, NetFlow/IPFIX, host agent, OTel) into the normalizer.
-- Signature + behavioural detection rules; rule versioning and test harness.
-- Alert triage, correlation, dedupe and enrichment; detection-coverage map.
+- `[~]` Telemetry ingest (syslog, NetFlow/IPFIX, host agent, OTel) into the
+  normalizer. The **normalizer** is built (`telemetry-rules.ts`): a source-neutral
+  `ObservedEvent` with kind (`NETWORK`/`HOST`/`HTTP`/`AUTH`), addresses and ports,
+  direction, protocol, bytes and a free-form detail bag; `toObservedEvent` validates
+  and narrows a JSON payload, `toObservedEventFromSyslog` reads the RFC 3164 shape,
+  and `validateTelemetrySource` refuses a source the deployment has not declared. The
+  ingest surface is live (`POST /guard/v1/events`, a bearer token per organization,
+  `guard-http.ts` + `guard-service.ts`) and accepts a **batch**; what is not here yet
+  is a streaming listener per protocol — a collector posts, it does not yet tail. The
+  first four sources (`SYSLOG`, `NETFLOW`, `IPFIX`, `EBPF`, `OTEL`, `PROXY`, `EDR`,
+  `FIREWALL`) are declared vocabulary rather than implemented readers, and the roadmap
+  says so on purpose.
+- `[~]` Signature + behavioural detection rules; rule versioning and test harness.
+  Three rules ship (`SUSPICIOUS_SERVICE_RULE`, `SCAN_RULE`,
+  `CREDENTIAL_STUFFING_RULE`) with a pure `evaluateRules` that is nothing but a fold
+  over events and rules, which is what makes the harness trivial: a case is a list of
+  events and the alerts it must produce. `inCidr` handles the address math so a rule
+  is a sentence about traffic rather than a parser. **Versioning is not started**: a
+  rule carries an id and a version today, and a rulebook endpoint
+  (`GET /guard/v1/rules`) reports what the deployment runs so a sensor platform can
+  be reconciled against it.
+- `[~]` Alert triage, correlation, dedupe and enrichment; detection-coverage map.
+  **Dedupe and correlation are built**: `dedupeKey` buckets an event, so the same
+  scan seen by two sensors is one alert (the store's `created` flag says whether a
+  run was new work), and `correlateIdentity` resolves the addresses the event names
+  against live sessions, so an alert links to the identity that was signed in at the
+  time as well as the device and asset it names. Alerts have a lifecycle
+  (`OPEN`/`ACKNOWLEDGED`/`RESOLVED`) on the organization's evidence chain. **Triage UI
+  and the coverage map are not started.**
+
+  The join is only as good as the address a session carries, and today none do:
+  `issueSession` records the address its caller supplies, and the only caller in this
+  build is the bootstrap in `scripts/serve.ts`, which has no HTTP request behind it. So
+  correlation is exercised end to end in the harness (and by hand, against a store whose
+  sessions do carry addresses) and stays inert in a running deployment until there is an
+  interactive login that grants a session from a request — which is the point at which
+  `ipAddress` becomes populated rather than a column nothing writes.
 - **Exit:** a known-bad pattern is detected from live telemetry, deduped and
-  correlated into one alert linked to an identity, device and asset.
+  correlated into one alert linked to an identity, device and asset. Reached in the
+  service and in `tests/sentinel-guard.test.ts` (events in, one deduped alert out, tied
+  to the session's identity) — *live* telemetry means a collector posting, not yet a
+  protocol listener.
 
 ### S4 — Sentinel Guard v1 (prevention) `[ ]`
 **Goal:** act — safely and accountably.

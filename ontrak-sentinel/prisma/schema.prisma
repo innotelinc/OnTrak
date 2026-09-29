@@ -11,7 +11,10 @@
 // credential state (`MfaFactor.publicKey`, `MfaFactor.signCount`,
 // `WebAuthnChallenge`) in `20261015000000_webauthn`, and provisioning
 // (`Identity.externalId`, `ScimToken`, `Group`, `GroupMember`) in
-// `20261020000000_scim`.
+// `20261020000000_scim`, per-role policies (`IdentityPolicy.scope`) in
+// `20261025000000_policy_scope`, and inbound directory reads (`DirectoryConnection`,
+// `DirectorySyncRun`) in `20261026000000_directory_sync`, and Guard's detection output
+// (`Alert`) in `20261027000000_guard_alert`.
 //
 // Two shapes are worth reading before the rest:
 //
@@ -50,9 +53,14 @@ model Organization {
   audit              AuditEvent[]
 
   // Provisioning (S2): the credentials a directory connector authenticates with,
-  // and the groups it keeps in sync.
-  scimTokens ScimToken[]
-  groups     Group[]
+  // the groups it keeps in sync, and the directories Sentinel reads itself.
+  scimTokens   ScimToken[]
+  groups       Group[]
+  directories  DirectoryConnection[]
+  directoryRuns DirectorySyncRun[]
+
+  // Guard (S3): what detection decided about the telemetry it was sent.
+  alerts Alert[]
 
   // The OIDC surface (S1): who we issue identity to, and the grants in flight.
   oidcClients  OidcClient[]
@@ -245,6 +253,126 @@ model GroupMember {
   @@index([identityId])
 }
 
+/// One detection, as an alert (S3).
+///
+/// Deliberately *not* a copy of the telemetry. The roadmap says why: high-volume
+/// observations belong in a columnar/time-series store, and pretending Postgres is one is
+/// how a detection platform gets slow exactly when it is needed. What is stored here is
+/// the conclusion — which rule fired, at which version, about whom — plus the bounded
+/// evidence that conclusion was drawn from, so an operator reading an alert at 09:00 sees
+/// the same bytes the rule saw at 03:00.
+///
+/// `(organizationId, dedupeKey)` is unique, and that is the load-bearing constraint: the
+/// key is derived from what the observation *is* (the five-tuple and a clock bucket), not
+/// from a vendor's alert id, so two sensors reporting one connection update one row and a
+/// repeat is an updated occurrence count rather than a second incident. The service relies
+/// on this rather than on a read-then-write, because ingestion is concurrent by nature.
+///
+/// `identityId` / `identityLabel` are filled when the event's address matches an address a
+/// session was granted from — the join that makes this an *identity-aware* platform rather
+/// than an IDS. They are nullable and stay nullable: an unattributable event is a fact, and
+/// inventing an owner for it would be worse than saying nobody knows.
+model Alert {
+  id             String    @id @default(cuid())
+  organizationId String
+  ruleId         String
+  /// Which version of the rule fired, so an alert is judged by the code that ran.
+  ruleVersion    Int
+  ruleName       String
+  severity       String
+  /// `NEW` | `ACKNOWLEDGED` | `CLOSED`.
+  state          String    @default("NEW")
+  dedupeKey      String
+  groupKey       String
+  sourceAddress  String?
+  identityId     String?
+  /// The identity's address at the time, so a closed alert still reads.
+  identityLabel  String?
+  device         String?
+  asset          String?
+  firstSeenAt    DateTime
+  lastSeenAt     DateTime
+  occurrences    Int       @default(1)
+  /// The observations the rule fired on, bounded by `ALERT_EVIDENCE_MAX`.
+  evidence       Json
+  /// An operator's reason when they acknowledged or closed it.
+  note           String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, dedupeKey])
+  @@index([organizationId, state, lastSeenAt])
+}
+
+/// A directory Sentinel *reads* (S2): AD, Entra or Google, configured once and
+/// synced on demand.
+///
+/// The other half of S2. A `ScimToken` is how a connector pushes people *to* us; this is
+/// how we pull them, so an organization that runs Microsoft 365 or Google Workspace can
+/// start without standing up a connector.
+///
+/// Two columns carry decisions worth reading. `conflictPolicy` says whose edit wins when
+/// the directory and a change made here disagree - a named policy rather than a boolean,
+/// because "the directory is the source of truth" and "a change here is a decision" are
+/// both defensible. `lastSyncedAt` is what makes a *local* edit detectable at all: it is
+/// only advanced by a run that finished cleanly, so a failed sync cannot quietly stop
+/// protecting changes made in the console.
+///
+/// `secret` is the one value here that has to be readable rather than hashed - a client
+/// secret or bind password is needed to call the directory - so it is documented as the
+/// deployment's to encrypt, exactly as `MfaFactor.secret` is. It never leaves this table
+/// on the record the console renders: readers ask for it by id at the moment they use it.
+model DirectoryConnection {
+  id             String       @id @default(cuid())
+  organizationId String
+  /// What the administrator called it, e.g. “Entra ID — production”.
+  name           String
+  /// `ENTRA` | `GOOGLE` | `LDAP` | `GENERIC`, narrowed on read.
+  source         String
+  /// Non-secret settings: tenant id, host, base DN, group filter.
+  settings       Json
+  secret         String?
+  conflictPolicy String       @default("preferDirectory")
+  defaultRole    IdentityRole @default(AGENT)
+  /// When the last *completed* sync finished. `null` means nothing here is known to be
+  /// the directory's, so `preferLocal` protects every identity in the organization.
+  lastSyncedAt   DateTime?
+  createdBy      String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  runs         DirectorySyncRun[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+/// One sync, recorded (S2).
+///
+/// "What did last night's sync do?" is a question with a wrong answer people repeat, so
+/// the counts and the reason for every skip are stored rather than only logged. A failed
+/// pull writes a row too: the run that *did not* happen is exactly the one somebody will
+/// be asking about.
+model DirectorySyncRun {
+  id             String   @id @default(cuid())
+  organizationId String
+  connectionId   String
+  startedAt      DateTime
+  finishedAt     DateTime
+  /// `COMPLETED` | `FAILED`.
+  status         String
+  counts         Json
+  detail         String?
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   DirectoryConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, connectionId, startedAt])
+}
+
 /// A WebAuthn ceremony in progress (S1).
 ///
 /// Server-side state rather than a signed blob handed to the browser, because the
@@ -277,18 +405,25 @@ model WebAuthnChallenge {
   @@index([expiresAt])
 }
 
-/// The organization's session policy. One row per organization is what the spine
-/// reads today; per-role policies arrive with the rest of S1.
+/// The organization's session policy (S0, per-role since S1).
+///
+/// `scope` is `"ALL"` for the baseline every identity is judged by, or a role name
+/// for an override that beats it. It is a plain string rather than a Prisma enum so
+/// a role added later is a value rather than a migration, and the pair
+/// `(organizationId, scope)` is the row's identity — an administrator *edits* the
+/// AGENT policy, they do not accumulate copies of it.
 model IdentityPolicy {
-  id             String  @id @default(cuid())
+  id             String   @id @default(cuid())
   organizationId String
-  requireMfa     Boolean @default(true)
-  maxSessionSec  Int     @default(43200)
-  idleTimeoutSec Int     @default(1800)
+  scope          String   @default("ALL")
+  requireMfa     Boolean  @default(true)
+  maxSessionSec  Int      @default(43200)
+  idleTimeoutSec Int      @default(1800)
+  updatedAt      DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  @@unique([organizationId])
+  @@unique([organizationId, scope])
 }
 
 model Session {

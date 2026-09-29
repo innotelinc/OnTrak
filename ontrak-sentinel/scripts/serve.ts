@@ -30,10 +30,19 @@ import { readFileSync } from "node:fs";
 
 import { PrismaClient } from "@prisma/client";
 
+import { PrismaAlertStore, type AlertPrismaClient } from "../src/lib/alert-store-prisma";
 import { ConsoleService } from "../src/lib/console-service";
+import { DetectionService, MemoryAlertStore, type AlertStore } from "../src/lib/detection-service";
+import { GUARD_PATHS } from "../src/lib/guard-http";
+import { GuardService } from "../src/lib/guard-service";
+import { createHttpDirectoryReader } from "../src/lib/directory-client";
+import { DirectoryService, MemoryDirectoryStore, type DirectoryReader } from "../src/lib/directory-service";
+import type { DirectorySource } from "../src/lib/directory-rules";
+import type { DirectoryPrismaClient } from "../src/lib/directory-store-prisma";
 import { CONSOLE_PATHS } from "../src/lib/console-rules";
 import { sha256Hex } from "../src/lib/hash";
 import {
+  configureDirectories,
   createIdentityServices,
   createMfaServices,
   createScimServices,
@@ -64,6 +73,30 @@ import type { ScimPrismaClient } from "../src/lib/scim-store-prisma";
 import { MemorySamlStore, SamlService, type SamlStore } from "../src/lib/saml-service";
 import { PrismaSamlStore, type SamlPrismaClient } from "../src/lib/saml-store-prisma";
 import { MemoryWebAuthnChallengeStore, WebAuthnService } from "../src/lib/webauthn-service";
+
+/**
+ * The directory readers this deployment was told it can use.
+ *
+ * `SENTINEL_DIRECTORY_SOURCES` is a comma-separated list — `ENTRA,GOOGLE,GENERIC` by
+ * default — and each one gets the same HTTP reader, because Entra and Google differ in
+ * their URLs and their paging keys rather than in how a roster arrives. LDAP is absent on
+ * purpose: a bind is a different protocol with a different dependency, so a deployment
+ * that needs it supplies another reader rather than being handed a fake one.
+ */
+function directoryReaders(): Partial<Record<DirectorySource, DirectoryReader>> {
+  const configured = (process.env.SENTINEL_DIRECTORY_SOURCES ?? "ENTRA,GOOGLE,GENERIC")
+    .split(",")
+    .map((entry) => entry.trim().toUpperCase())
+    .filter((entry) => entry.length > 0);
+
+  const readers: Partial<Record<DirectorySource, DirectoryReader>> = {};
+  for (const entry of configured) {
+    if (entry === "ENTRA" || entry === "GOOGLE" || entry === "GENERIC") {
+      readers[entry] = createHttpDirectoryReader();
+    }
+  }
+  return readers;
+}
 
 const DEMO_REDIRECT = "http://127.0.0.1:8788/callback";
 const DEMO_ACS = "http://127.0.0.1:8788/saml/acs";
@@ -275,6 +308,9 @@ async function main(): Promise<void> {
   let webauthn: WebAuthnService;
   let oidcStore: OidcStore;
   let scim: ScimService;
+  /** `null` when this deployment was told to read no directories. */
+  let directories: DirectoryService | null = null;
+  let alertStore: AlertStore;
 
   // Where a directory connector points. `meta.location` links are built from it, so
   // they name the deployment's own origin rather than 127.0.0.1.
@@ -309,6 +345,17 @@ async function main(): Promise<void> {
       audit,
       oidcStore,
     ).service;
+    // The directory read is separate from the SCIM token store: one is a credential a
+    // connector pushes with, this is a connection Sentinel pulls through. Both hand their
+    // destructive work to the same SCIM code, so a leaver is one operation either way.
+    directories = configureDirectories(
+      prisma as unknown as DirectoryPrismaClient,
+      spine,
+      scim,
+      directoryReaders(),
+      audit,
+    ).service;
+    alertStore = new PrismaAlertStore(prisma as unknown as AlertPrismaClient);
   } else {
     identities = new MemoryIdentityStore();
     audit = new OrganizationAuditLog(sha256Hex);
@@ -320,9 +367,23 @@ async function main(): Promise<void> {
     oidc = new OidcService(oidcStore, identities, spine, { issuer, keys }, audit);
     saml = new SamlService(new MemorySamlStore(), spine, { entityId: issuer, keys }, audit);
     scim = new ScimService(new MemoryScimStore(), spine, { baseUrl: scimBase }, audit, oidcStore);
+    directories = new DirectoryService(new MemoryDirectoryStore(), spine, scim, directoryReaders(), audit);
+    alertStore = new MemoryAlertStore();
   }
 
-  const console_ = new ConsoleService(spine, mfa, webauthn, oidcStore, scim);
+  const console_ = new ConsoleService(spine, mfa, webauthn, oidcStore, scim, directories);
+
+  // Guard's detection (S3). The store is durable where there is a database and in memory
+  // otherwise; correlation reads sessions and identities directly, because a sensor is not
+  // an actor and has no session to resolve.
+  const detection = new DetectionService(alertStore, identities, audit);
+  const guardService = new GuardService(detection, identities, {
+    token: (process.env.SENTINEL_GUARD_TOKEN ?? "").trim() || null,
+    organizationSlug: (process.env.SENTINEL_GUARD_ORGANIZATION ?? "").trim() || null,
+  });
+  // No token, no surface at all: an ingest endpoint that exists and says "configure me" is
+  // a surface somebody eventually finds a way to write to.
+  const guard = guardService.enabled() ? guardService : null;
 
   const { actor, session, totp } = await bootstrap(spine, identities, mfa);
   const client = await demoClient(oidc, actor);
@@ -348,7 +409,7 @@ async function main(): Promise<void> {
   authorize.searchParams.set("code_challenge", challenge);
   authorize.searchParams.set("code_challenge_method", "S256");
 
-  const { url } = await startOidcServer(oidc, { host, port, saml, console: console_, scim });
+  const { url } = await startOidcServer(oidc, { host, port, saml, console: console_, scim, guard });
 
   console.log(`[sentinel] OIDC provider listening on ${url} (issuer ${issuer})`);
   console.log(
@@ -360,6 +421,11 @@ async function main(): Promise<void> {
   console.log(`[sentinel] SAML SSO:      ${url}${SAML_PATHS.sso}`);
   console.log(`[sentinel] console: ${url}${CONSOLE_PATHS.home} (WebAuthn RP ID ${webAuthnRpId}, origin ${webAuthnOrigin})`);
   console.log(`[sentinel] SCIM:      ${url}${SCIM_PATHS.users} (config: ${url}${SCIM_PATHS.serviceProviderConfig})`);
+  console.log(
+    guard
+      ? `[sentinel] Guard ingest: POST ${url}${GUARD_PATHS.events} (rulebook: GET ${url}${GUARD_PATHS.rules})`
+      : `[sentinel] Guard ingest: off (set SENTINEL_GUARD_TOKEN to accept telemetry)`,
+  );
   // Deliberately no token is minted or printed here: a provisioning credential belongs
   // to a person acting in the console (`${CONSOLE_PATHS.provisioning}`), is shown once,
   // and never reaches a log or a terminal scrollback.
