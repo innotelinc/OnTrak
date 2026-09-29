@@ -21,6 +21,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:reset-demo": "tsx prisma/reset-demo.ts",
     "db:studio": "prisma studio",
+    "theme:verify": "node theme/verify.mjs",
     "setup": "prisma generate && prisma migrate deploy && tsx prisma/reset-demo.ts && tsx prisma/seed.ts",
     "docker:db": "docker compose up -d db"
   },
