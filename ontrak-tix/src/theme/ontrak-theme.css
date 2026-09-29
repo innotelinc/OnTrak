@@ -10,15 +10,18 @@
  *
  * ── What is here, and why it is shaped this way ────────────────────────────
  *
- * TWO SCHEMES, TWO MODES, ONE VOCABULARY.
+ * THREE SCHEMES, TWO MODES, ONE VOCABULARY.
  *
  *   scheme "desk"        the training range and the service desk — the violet
  *                        family that Tix and OnTrak IT Support Training already
  *                        use, so those two apps change least.
  *   scheme "operations"  the operations consoles — the graphite-and-blue family
  *                        that OnTrak Sync and the Unity portal already use.
+ *   scheme "soc"         the security-operations console — the navy-and-cyan
+ *                        family Sentinel wears, in the visual language of the
+ *                        open-source SIEM consoles.
  *
- *   mode "light" / "dark" applies to both, and `system` follows the machine.
+ *   mode "light" / "dark" applies to all three, and `system` follows the machine.
  *
  * A product picks its default scheme; the person can override either axis, and the
  * choice is remembered per browser. That is the whole point of the exercise: the
@@ -280,6 +283,132 @@
     --tone-sync: #56d4dd;
 
     --shadow-card: 0 1px 2px rgb(0 0 0 / 34%), 0 12px 32px -14px rgb(0 0 0 / 62%);
+  }
+}
+
+/* ══ scheme: soc — light (cool neutrals, cyan brand) ══════════════════════
+ * The security-operations console's own scheme: Sentinel. Deep navy in the dark,
+ * a cool near-white in the light, and a cyan brand that means "this is the SOC"
+ * the way violet means the desk and blue means operations. Modelled on the
+ * open-source SIEM consoles (UTMStack and its neighbours), which is the visual
+ * language somebody who works a security queue already reads without being told.
+ */
+:root[data-scheme="soc"] {
+  color-scheme: light;
+
+  --canvas: #f2f5f9;
+  --surface: #ffffff;
+  --surface-muted: #e9eff6;
+  --surface-sunken: #dfe8f2;
+  --line: #d3dfeb;
+  --line-strong: #b3c4d6;
+
+  --ink: #071a2b;
+  --ink-soft: #37506a;
+  --ink-faint: #5d7691;
+
+  --brand: #0f6fd1;
+  --brand-soft: #e0edfb;
+  --brand-ink: #ffffff;
+  --brand-ring: #93c0ea;
+
+  --ok: #0d6b46;
+  --ok-soft: #e2f5eb;
+  --info: #0f6fd1;
+  --info-soft: #e0edfb;
+  --bad: #b3252b;
+  --bad-soft: #fdeaea;
+  --attention: #8a5a00;
+  --attention-soft: #fdf2da;
+  --unknown: #64748b;
+  --unknown-soft: #edf1f6;
+
+  --tone-its: #4d6b00;
+  --tone-tix: #0f6fd1;
+  --tone-sentinel: #0e7f9c;
+  --tone-sync: #0f766e;
+
+  --shadow-card: 0 1px 2px rgb(7 26 43 / 5%), 0 10px 30px -14px rgb(7 26 43 / 18%);
+}
+
+/* ══ scheme: soc — dark (near-black navy, cyan) ═══════════════════════════ */
+:root[data-scheme="soc"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --canvas: #04080f;
+  --surface: #0a1420;
+  --surface-muted: #0f1c2b;
+  --surface-sunken: #060d17;
+  --line: #16273a;
+  --line-strong: #23405c;
+
+  --ink: #e6f2fb;
+  --ink-soft: #a6c1d8;
+  --ink-faint: #7590aa;
+
+  --brand: #22c7e0;
+  --brand-soft: #0a2c36;
+  --brand-ink: #04161d;
+  --brand-ring: #17788c;
+
+  --ok: #3ad77f;
+  --ok-soft: #0d2a1b;
+  --info: #4cc6ff;
+  --info-soft: #0c2437;
+  --bad: #ff5f6d;
+  --bad-soft: #33141a;
+  --attention: #ffbb4d;
+  --attention-soft: #33260f;
+  --unknown: #7b93ad;
+  --unknown-soft: #131f2c;
+
+  --tone-its: #7ee787;
+  --tone-tix: #6cb6ff;
+  --tone-sentinel: #4fd0e8;
+  --tone-sync: #56d4dd;
+
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 14px 34px -14px rgb(0 0 0 / 70%);
+  --shadow-pop: 0 10px 34px -8px rgb(0 0 0 / 70%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-scheme="soc"]:not([data-mode="light"]) {
+    color-scheme: dark;
+
+    --canvas: #04080f;
+    --surface: #0a1420;
+    --surface-muted: #0f1c2b;
+    --surface-sunken: #060d17;
+    --line: #16273a;
+    --line-strong: #23405c;
+
+    --ink: #e6f2fb;
+    --ink-soft: #a6c1d8;
+    --ink-faint: #7590aa;
+
+    --brand: #22c7e0;
+    --brand-soft: #0a2c36;
+    --brand-ink: #04161d;
+    --brand-ring: #17788c;
+
+    --ok: #3ad77f;
+    --ok-soft: #0d2a1b;
+    --info: #4cc6ff;
+    --info-soft: #0c2437;
+    --bad: #ff5f6d;
+    --bad-soft: #33141a;
+    --attention: #ffbb4d;
+    --attention-soft: #33260f;
+    --unknown: #7b93ad;
+    --unknown-soft: #131f2c;
+
+    --tone-its: #7ee787;
+    --tone-tix: #6cb6ff;
+    --tone-sentinel: #4fd0e8;
+    --tone-sync: #56d4dd;
+
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 14px 34px -14px rgb(0 0 0 / 70%);
+    --shadow-pop: 0 10px 34px -8px rgb(0 0 0 / 70%);
   }
 }
 

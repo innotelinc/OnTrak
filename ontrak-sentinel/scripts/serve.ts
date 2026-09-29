@@ -27,12 +27,17 @@
 
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { PrismaClient } from "@prisma/client";
 
 import { ConsoleService } from "../src/lib/console-service";
-import { CONSOLE_PATHS } from "../src/lib/console-rules";
+import { CONSOLE_ASSET_PATHS, CONSOLE_PATHS } from "../src/lib/console-rules";
+import { MemoryCredentialStore, type CredentialStore } from "../src/lib/credential-store";
+import { PrismaCredentialStore, type CredentialPrismaClient } from "../src/lib/credential-store-prisma";
 import { sha256Hex } from "../src/lib/hash";
+import { hashPassword } from "../src/lib/password";
+import { SignInService, systemSignInIds } from "../src/lib/sign-in-service";
 import {
   createIdentityServices,
   createMfaServices,
@@ -252,6 +257,30 @@ async function productClient(
   return registered.value;
 }
 
+/**
+ * The shared theme, read once.
+ *
+ * These are the two files every product in the Network carries a byte-identical copy
+ * of. A missing one is a warning rather than a crash: an unthemed console is a
+ * console, and refusing to start an identity provider because a stylesheet is absent
+ * would be a login outage caused by typography.
+ */
+function themeAssets(): Record<string, { body: string; contentType: string }> {
+  const files: [string, string, string][] = [
+    [CONSOLE_ASSET_PATHS.themeCss, "../src/theme/ontrak-theme.css", "text/css; charset=utf-8"],
+    [CONSOLE_ASSET_PATHS.themeJs, "../public/ontrak-theme.js", "text/javascript; charset=utf-8"],
+  ];
+  const assets: Record<string, { body: string; contentType: string }> = {};
+  for (const [route, relative, contentType] of files) {
+    try {
+      assets[route] = { body: readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8"), contentType };
+    } catch (error) {
+      console.warn(`[sentinel] ${relative} could not be read (${error instanceof Error ? error.message : error}); ${route} will not be served.`);
+    }
+  }
+  return assets;
+}
+
 async function main(): Promise<void> {
   const issuer = process.env.SENTINEL_ISSUER ?? "http://127.0.0.1:8787";
   const host = process.env.SENTINEL_HOST ?? "127.0.0.1";
@@ -275,6 +304,7 @@ async function main(): Promise<void> {
   let webauthn: WebAuthnService;
   let oidcStore: OidcStore;
   let scim: ScimService;
+  let credentials: CredentialStore;
 
   // Where a directory connector points. `meta.location` links are built from it, so
   // they name the deployment's own origin rather than 127.0.0.1.
@@ -296,6 +326,7 @@ async function main(): Promise<void> {
       audit,
     ).service;
     oidcStore = new PrismaOidcStore(prisma as unknown as OidcPrismaClient);
+    credentials = new PrismaCredentialStore(prisma as unknown as CredentialPrismaClient);
     oidc = createOidcServices(oidcStore, identities, spine, { issuer, keys }, audit).service;
     const samlStore: SamlStore = new PrismaSamlStore(prisma as unknown as SamlPrismaClient);
     saml = new SamlService(samlStore, spine, { entityId: issuer, keys }, audit);
@@ -317,14 +348,64 @@ async function main(): Promise<void> {
     mfa = new MfaService(factors, spine, audit);
     webauthn = new WebAuthnService(factors, new MemoryWebAuthnChallengeStore(), spine, webAuthnConfig, audit);
     oidcStore = new MemoryOidcStore();
+    credentials = new MemoryCredentialStore();
     oidc = new OidcService(oidcStore, identities, spine, { issuer, keys }, audit);
     saml = new SamlService(new MemorySamlStore(), spine, { entityId: issuer, keys }, audit);
     scim = new ScimService(new MemoryScimStore(), spine, { baseUrl: scimBase }, audit, oidcStore);
   }
 
-  const console_ = new ConsoleService(spine, mfa, webauthn, oidcStore, scim);
+  /**
+   * The console's login.
+   *
+   * Built before the bootstrap because the bootstrap's session is what the console
+   * *starts* with, and the login is what a person uses afterwards. It lands on
+   * `/console` like any other sign-in.
+   */
+  const signIn = new SignInService(identities, credentials, mfa, spine, audit, systemSignInIds(), {
+    defaultOrganizationSlug: DEMO_SLUG,
+    landingPath: CONSOLE_PATHS.home,
+  });
+
+  const console_ = new ConsoleService(spine, mfa, webauthn, oidcStore, scim, signIn, DEMO_SLUG);
 
   const { actor, session, totp } = await bootstrap(spine, identities, mfa);
+
+  /**
+   * The console password, from the environment.
+   *
+   * Written only when there is none, so an operator who set a password here and then
+   * changed it in the console does not have it silently reverted on the next restart.
+   * `SENTINEL_ADMIN_PASSWORD_FORCE=1` is the deliberate override for the case where
+   * the password is genuinely lost and the console is the only way back in.
+   *
+   * The value itself is never logged — the line below names the account and says which
+   * of the three states this is, and that is all a log may carry.
+   */
+  async function applyConfiguredPassword(): Promise<void> {
+    const wanted = (process.env.SENTINEL_ADMIN_PASSWORD ?? "").trim();
+    const existing = await credentials.findForIdentity(actor.organizationId, actor.id);
+    if (!wanted) {
+      if (!existing) {
+        console.log(
+          `[sentinel] no console password is set for ${DEMO_ADMIN}, so ${issuer}${CONSOLE_PATHS.signIn} has nothing to check. ` +
+            `Set SENTINEL_ADMIN_PASSWORD to enable it.`,
+        );
+      }
+      return;
+    }
+    const force = (process.env.SENTINEL_ADMIN_PASSWORD_FORCE ?? "") === "1";
+    if (existing && !force) {
+      console.log(
+        `[sentinel] ${DEMO_ADMIN} already has a console password, so SENTINEL_ADMIN_PASSWORD was not applied. ` +
+          `Set SENTINEL_ADMIN_PASSWORD_FORCE=1 to overwrite it.`,
+      );
+      return;
+    }
+    await credentials.replace(actor.organizationId, actor.id, await hashPassword(wanted));
+    console.log(`[sentinel] console password ${existing ? "overwritten" : "set"} for ${DEMO_ADMIN}.`);
+  }
+
+  await applyConfiguredPassword();
   const client = await demoClient(oidc, actor);
   const provider = await demoProvider(saml, actor);
   const tixClient = await productClient(oidc, actor, "OnTrak Tix", (process.env.SENTINEL_TIX_CALLBACK ?? "").trim());
@@ -348,7 +429,14 @@ async function main(): Promise<void> {
   authorize.searchParams.set("code_challenge", challenge);
   authorize.searchParams.set("code_challenge_method", "S256");
 
-  const { url } = await startOidcServer(oidc, { host, port, saml, console: console_, scim });
+  const { url } = await startOidcServer(oidc, {
+    host,
+    port,
+    saml,
+    console: console_,
+    scim,
+    assets: themeAssets(),
+  });
 
   console.log(`[sentinel] OIDC provider listening on ${url} (issuer ${issuer})`);
   console.log(
@@ -359,6 +447,8 @@ async function main(): Promise<void> {
   console.log(`[sentinel] SAML metadata: ${url}${SAML_PATHS.metadata}`);
   console.log(`[sentinel] SAML SSO:      ${url}${SAML_PATHS.sso}`);
   console.log(`[sentinel] console: ${url}${CONSOLE_PATHS.home} (WebAuthn RP ID ${webAuthnRpId}, origin ${webAuthnOrigin})`);
+  console.log(`[sentinel] sign in: ${url}${CONSOLE_PATHS.signIn} (or the bare host ${url}/, which redirects here)`);
+  console.log(`[sentinel] theme:   ${url}${CONSOLE_ASSET_PATHS.themeCss} · ${url}${CONSOLE_ASSET_PATHS.themeJs}`);
   console.log(`[sentinel] SCIM:      ${url}${SCIM_PATHS.users} (config: ${url}${SCIM_PATHS.serviceProviderConfig})`);
   // Deliberately no token is minted or printed here: a provisioning credential belongs
   // to a person acting in the console (`${CONSOLE_PATHS.provisioning}`), is shown once,

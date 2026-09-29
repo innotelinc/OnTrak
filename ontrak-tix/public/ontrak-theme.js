@@ -8,7 +8,7 @@
  * a browser:
  *
  *   data-mode    "light" | "dark" | absent   (absent = follow the machine)
- *   data-scheme  "desk" | "operations"       (absent = the product's default)
+ *   data-scheme  "desk" | "operations" | "soc"   (absent = the product's default)
  *
  * WHY IT IS INLINE AND NOT A COMPONENT
  * ------------------------------------
@@ -54,7 +54,7 @@
   }
 
   function normaliseScheme(scheme) {
-    return scheme === "operations" || scheme === "desk" ? scheme : "";
+    return scheme === "operations" || scheme === "desk" || scheme === "soc" ? scheme : "";
   }
 
   /** Paint a mode/scheme pair onto <html>. Anything falsy is removed, not zeroed. */
