@@ -799,7 +799,7 @@ up to an adjuster or auditor.
 - **Exit:** an agent works two clients without data bleed; time entries export to
   an invoice line; per-client SLA attainment is reportable.
 
-### M5 — Automation & knowledge `[~]`
+### M5 — Automation & knowledge `[x]`
 **Goal:** reduce manual work and capture know-how.
 
 - Rules engine: trigger (+conditions) → actions (set field, route, notify, reply,
@@ -827,38 +827,272 @@ up to an adjuster or auditor.
     mean to — a rule with no conditions, which therefore matches everything, and
     an automatic reply, which leaves the desk under its own name without an agent
     reading the thread.
-  - `[ ]` Applying the plan on the intake paths (portal, email, quick-create),
-    and a console at `/rules`.
+  - `[x]` **Applied on intake** (`rule-intake.ts`): the engine is wired into
+    `TicketService`, which every intake path already goes through, so a rule fires
+    wherever a ticket is created, updated or replied to — quick-create, the
+    requester portal, inbound email, alert promotion — without any of those paths
+    knowing rules exist. On creation the rules run *before* the row is written, so
+    a ticket is born with the priority, queue, assignee and tags the desk asked
+    for rather than being written and corrected. A `reply` action appends a public
+    message from the desk and stops the response clock; `notify` and `escalate`
+    reach staff through an injected sink, and an effect that cannot be delivered
+    is recorded rather than allowed to lose the ticket. Every firing appends one
+    `ticket.rules` event naming the rules that matched, what took effect and what
+    an earlier rule outvoted. Covered by
+    `ontrak-tix/tests/tix-m5-rule-intake.test.ts`.
+  - `[x]` **The console** (`/rules`, `actions/rules.ts`, `rule-form-rules.ts`):
+    every rule read back as sentences rather than as the rows it was typed in, its
+    hazards said out loud (a catch-all matches everything; an automatic reply
+    leaves the desk without an agent reading the thread; an escalation pages
+    whoever is on call), and its order changeable — the first rule to set a field
+    owns it, so position *is* the policy, and a console that could write rules but
+    not reorder them would leave a desk retyping everything to fix one. Reading is
+    `ticket:read:any`; writing, moving, switching and removing are `rule:manage`.
+    Documented in `docs/rules.md`.
 - Macros (multi-step agent shortcuts) and public/private knowledge base with
   article suggestions on ticket create.
-- Self-service deflection: suggested articles on the portal before submission.
+  - `[x]` **Macros** (`macro-rules.ts`, `macro-service.ts`,
+    `macro-store-prisma.ts`, the `Macro` model): the deliberate counterpart to a
+    rule — a saved sequence an agent runs on one ticket, using the engine's own
+    eight actions and the same `planTicketChanges` the rules path uses, so "set
+    the priority, then tag it" cannot mean two things. A macro has no trigger and
+    no conditions (if it needs one it is a rule), reports the same hazards, and
+    is run from the ticket's Shortcut picker under `ticket:update`; writing one is
+    `rule:manage`, names are unique case-insensitively, and every write carries
+    the macro's whole body onto the audit chain. A run is attributed to the agent
+    as `ticket.macro`, appends its `reply` under the desk's name (stopping the
+    response clock), delivers `notify`/`escalate` through the same sink rules use,
+    and deliberately does **not** re-run the rules — an explicit instruction must
+    not be outvoted by automation. Covered by
+    `ontrak-tix/tests/tix-m5-macros.test.ts` and documented in
+    [docs/macros.md](./docs/macros.md).
+  - `[x]` **Public/private knowledge base** (`knowledge-rules.ts`,
+    `knowledge-service.ts`, `knowledge-store-prisma.ts`, the `KnowledgeArticle`
+    model, the `/knowledge` console): an article is offered to requesters in the
+    portal or kept to the desk, and the suggestion engine is pure — a query's
+    words are matched against a title, then its tags, then its body, weighted in
+    that order, so the same query yields the same list and a reader can say why
+    an article was offered. **`PRIVATE` is a promise, not a label**: the
+    requester's path is handed public articles only by the rules function
+    itself. Authoring is `ticket:update`; a write is audited, and a private
+    article becoming public is recorded as its own `knowledge.publish` event
+    rather than buried in an edit. Covered by
+    `ontrak-tix/tests/tix-m5-knowledge.test.ts` and documented in
+    [docs/knowledge.md](./docs/knowledge.md).
+- Self-service deflection `[x]`: the portal's new-request page runs the public
+  article search from the words a requester types (*Find help*), shows the
+  matching articles **in full** before the form — each a `<details>` element, so
+  it needs no JavaScript — and keeps what was typed in the subject field, so
+  looking costs nothing if the answers do not help. The staff quick-create page
+  carries the same box with the desk's private articles included.
 - CSAT dashboards and knowledge-gap reporting (repeat tickets with no article).
+  - `[x]` **The satisfaction dashboard** (`csatDistribution`, `csatDashboard`,
+    `csatByGroup` in `csat-rules.ts`, the *Satisfaction* section on `/reports`):
+    an average hides the shape of the answers — one 1 and one 5 also average 3 —
+    so the dashboard shows the whole scale, *including the points nobody picked*,
+    the response rate beside the average (a 5 from four people out of fifty is a
+    different finding from a 5 out of five), the answers split by the agent who
+    earned them, worst first, and the words, because "the wait was fine but
+    nobody explained" is the finding a bar chart cannot carry. A group with no
+    answers yet sorts last rather than to the top on a null average: no data is
+    not "doing badly".
+  - `[x]` **Knowledge-gap reporting** (`findKnowledgeGaps`,
+    `buildKnowledgeGapReport` in `knowledge-rules.ts`, the *Knowledge gaps*
+    section on `/reports`): a ticket whose subject matches no article is one the
+    desk had to answer by hand, and those subjects are clustered by the words
+    they share — transitively, so "vpn drops" and "vpn certificate" are one
+    question rather than two reports. A cluster one requester raised more than
+    once sorts first, because a repeat requester is the loudest signal a desk
+    gets that an article is missing; the report counts how much of the desk ran
+    through gaps at all. A **staff-only article counts as an answer** — the desk
+    could have replied from it — so the finding reads "publish it", not "write
+    it". The same pure suggestion engine the portal uses decides what is
+    unmatched, so the report cannot disagree with what a requester was offered.
+    Covered by `ontrak-tix/tests/tix-m5-csat-knowledge-reporting.test.ts` and
+    documented in [docs/reporting.md](./docs/reporting.md).
 - **Exit:** rules cover the top intake paths; ≥30% of new tickets are auto-routed
-  or deflected; KB suggestions measurably cut handling time.
+  or deflected; KB suggestions measurably cut handling time. The exit numbers are
+  a live-data question rather than a code one — M5 ships the reporting that
+  measures them.
 
-> M5 progress (started): **the rules engine and its dry run have landed**. The
+> M5 progress: **the rules engine, its dry run and its intake are live**. The
 > engine is pure in `rule-rules.ts` — matching, ordering, first-writer-wins and
 > hazards — with `rule-service.ts` storing what it decides and
 > `rule-store-prisma.ts` adapting the `Rule` table (conditions and actions as
-> JSON, because a rule is read and written whole). The preview is the same
-> `evaluateRules` + `planTicketChanges` the live path uses, applied to tickets
-> that already exist, so it cannot drift from what switching a rule on does.
-> What has *not* landed is the part that makes it useful: nothing applies the
-> plan on intake yet, and there is no console, so a rule can only be written
-> through the service until those follow.
+> JSON, because a rule is read and written whole). `rule-intake.ts` wires it into
+> `TicketService`, so every intake path fires rules without knowing they exist,
+> and `/rules` is the one place a rule is written, reordered, switched off or
+> removed. The preview is the same `evaluateRules` + `planTicketChanges` the live
+> path uses, applied to tickets that already exist — and a *switched-off* rule is
+> previewed as if it were on, because that is the moment the question is actually
+> asked. Macros have landed too: an agent-run sequence of the engine's own
+> actions, planned by the same planner, run from the ticket's Shortcut picker,
+> attributed to the agent as `ticket.macro`, and deliberately not re-running the
+> rules. The **knowledge base** and **self-service deflection** have landed
+> alongside them: public/private articles authored at `/knowledge`, matched by a
+> pure suggestion engine, and offered to a requester from the words they type on
+> the portal before they submit. The last piece of M5 — **CSAT dashboards and
+> the knowledge-gap report** — is on `/reports`: satisfaction over the whole
+> scale with the words beside it and the agents split out, and the subjects no
+> article answered, clustered, with repeat requesters first because they are the
+> desk's clearest signal that something is missing. **M5 is feature-complete**;
+> its exit criteria are numbers the desk now has the reporting to read.
 
-### M6 — Platform & integrations `[ ]`
+### M6 — Platform & integrations `[~]`
 **Goal:** fit into the surrounding toolchain.
 
 - Public REST API + webhooks with scoped tokens, rate limits and delivery logs.
+  - `[x]` **Scoped tokens** (`public-api-rules.ts`, `public-api-service.ts`,
+    `public-api-store-prisma.ts`, the `ApiToken` model, `/api/v1/tokens`): a token
+    is a hash in the database and a string on exactly one screen — the plaintext
+    is returned once at creation and never stored, so a support engineer who can
+    read the database still cannot impersonate the integration. What is kept
+    beside the digest is a `tx1_…` prefix, which is what makes a leaked token
+    findable rather than merely long. Three scopes, closed, and refused at
+    creation rather than carried around and ignored: `tickets:read`,
+    `tickets:write`, `webhooks:manage`. A token also carries the *least* role that
+    could serve those scopes, so an integration can never do something an agent
+    could not and the scope only narrows that further. **An API token cannot mint
+    another API token** — a credential that can re-issue itself after revocation
+    removes the one remedy revocation exists to provide, so minting and revoking
+    are a signed-in administrator's `tenant:manage` acts. Expiry and revocation
+    are one question asked in one place, exactly as they are for a session.
+  - `[x]` **Rate limits** (`rateLimitDecision`, `rateLimitHeaders`,
+    `consumeRateLimit`): a sixty-second fixed window per token, aligned to the
+    epoch so two processes agree on which window a request belonged to without
+    sharing anything but the clock. Every authenticated answer carries
+    `RateLimit-Limit/Remaining/Reset`, and only a refusal carries `Retry-After` —
+    on a success it would be a lie about what to do next. The window is spent by
+    *authenticating*, not by being allowed, because an integration hammering an
+    endpoint it has no scope for is still hammering us. The counter is advanced by
+    conditional writes and **stops growing at the limit plus one**, so refusing
+    stays cheap and a flood cannot make a big number.
+  - `[x]` **The versioned REST API** (`/api/v1/tickets`, `/api/v1/tickets/:id`,
+    `public-api-http.ts`): the version is in the path because it is what a caller
+    bookmarks and greps a log for, and every body carries `api_version` beside its
+    `data`. The gate is a pure function — token present, then valid, then under
+    its limit, then holding the scope — so the *order* of the checks is tested
+    without a running framework; a refusal is a stable `error` code beside a human
+    `message`, because a client that string-matches prose breaks when the prose
+    improves. Reads page by **cursor**, not page number: a page number over a list
+    being written to skips and repeats rows, and a cursor that names nothing is a
+    `400` rather than a silent restart. A write goes through `TicketService`, so
+    an API-created ticket fires the desk's rules, lands on the tenant's hash chain
+    with `api-token:<id>` as its actor, and appears in the inbox exactly as one
+    raised by a person would.
+  - `[x]` **Webhooks with a delivery log** (`webhook-rules.ts`,
+    `webhook-service.ts`, `webhook-store-prisma.ts`, the `ApiWebhookEndpoint` and
+    `ApiWebhookDelivery` models, `/api/v1/webhooks*`): a destination is registered
+    once and checked then — `https`, or `http` only on loopback, never a fragment
+    and never a URL carrying credentials — so an outbound request is never sent to
+    an origin nobody agreed to. Events are a closed set, and every delivery is
+    signed `HMAC-SHA256(secret, "{timestamp}.{body}")` with the **timestamp
+    first**, so a receiver checks it over bytes it has already authenticated and a
+    replay of a captured delivery carries the timestamp it then refuses. The
+    signing secret is the one credential stored in the clear, stated out loud
+    because an HMAC cannot be computed from a hash; it is shown once and
+    rotatable. The delivery row is written **before** the attempt, so an event that
+    arrived while the process was dying is still visible as one that was due, and
+    it keeps the exact bytes that were signed — "what did you actually send us?"
+    is answered from the record rather than reconstructed. Retries back off 30s,
+    1m, 2m, 4m and then **stop**: `EXHAUSTED` is a terminal state with a count, not
+    a silent drop, and every attempt is its own event on the tenant's chain.
+    `POST /api/v1/webhooks/sweep` is what reads the clock, and it is safe to run as
+    often as you like. Covered by `ontrak-tix/tests/tix-m6-public-api.test.ts` and
+    `ontrak-tix/tests/tix-m6-webhooks.test.ts`, and documented in
+    [docs/api.md](./docs/api.md).
+  - `[x]` **The integrations console**
+    (`src/app/(desk)/admin/integrations/page.tsx`, `src/app/actions/integrations.ts`):
+    the API-first surfaces were reachable only with `curl`, which is fine for an
+    integrator and useless for everybody else. One screen, gated on `tenant:manage`,
+    now mints and revokes tokens, registers, rotates, disables and removes webhook
+    endpoints, reads the delivery log with each row's attempt count and next try,
+    and runs the delivery sweep on demand — so an administrator can *watch* a retry
+    instead of waiting half a day to find out whether the backoff arithmetic was
+    right. It also names the monitoring webhook and lists the conditions the RMM
+    connector has open, because "what is the desk working on by itself?" is the same
+    question as "what is talking to us?". The two values that are readable exactly
+    once — a minted token and a webhook signing secret — are handed to the page in a
+    short-lived, path-scoped `httpOnly` cookie and put away by a button: a secret in
+    a query string ends up in browser history, in `Referer`, and in every proxy log
+    between here and the browser.
 - Integrations (beyond the M2 IdP and M2 telemetry): RMM/monitoring (alert →
   ticket with auto-resolve), Slack/Teams, and a marketplace pattern for
   third-party connectors.
+  - `[x]` **RMM / monitoring auto-resolve** (`rmm-rules.ts`, `rmm-service.ts`,
+    `rmm-store-prisma.ts`, the `RmmAlertLink` model, `POST /api/rmm`): a failing
+    check opens a ticket and a recovery closes it — the milestone's exit criterion,
+    and the reason this table is keyed on the **condition** (`source:host:check`,
+    case-folded) rather than on the vendor's alert id. Vendors disagree about
+    whether a re-fire reuses an id; keying on the condition is what lets a recovery
+    find the ticket it belongs to when its own id is brand new, and it is what makes
+    "open once, close when it clears" true across a vendor's own bookkeeping. A
+    repeat is an internal note and a raised occurrence count rather than a second
+    ticket, because a check that fails every minute for an hour is one outage. A
+    condition that clears and fails again is a **new** ticket — the last outage is
+    over, so the second gets its own response clock and its own post-incident
+    record — with `reopenCount` making the recurrence visible. A recovery for a check
+    the desk never worked is *ignored*, because opening work in order to close it is
+    not work. Closing walks the lifecycle's own edges (`NEW → OPEN → CLOSED`), since
+    `ticket-rules.ts` forbids the shortcut and an auto-closed ticket should leave the
+    trail a person's would; a ticket a person already closed is left alone, with the
+    clear still recorded on the link. Tickets are raised through the normal
+    `TicketService`, so they fire the desk's rules and land on the tenant's chain,
+    and every outcome is itself a `rmm.alert.*` event keyed by the condition. Field
+    aliases are accepted, and the status code says what the sender should do: `202`
+    acted, `200` already true, `400` never an alert, `503` the desk cannot respond.
+    Covered by `tests/tix-m6-rmm.test.ts`.
+  - `[x]` **Slack and Teams notifications** (`chat-notify-rules.ts`,
+    `chat-notify-service.ts`, `chat-notify-store-prisma.ts`, the `ChatChannel` and
+    `ChatDelivery` models, the console's chat section): the M6 webhook is a
+    *contract* an integrator reconciles, and this is the other audience — the room
+    where the on-call rota already lives. Four decisions make it a connector rather
+    than a `curl`:
+    **the URL is the provider's**, checked at registration against the hosts Slack
+    and Microsoft own (`hooks.slack.com`, `*.webhook.office.com`,
+    `outlook.office.com`, `*.logic.azure.com`) with an exact-or-suffix host match, so
+    a ticket subject can never be the thing that decides where the desk connects
+    next; **a ticket's text is data, not markup** — every value is escaped for its
+    provider's parser, because `<!channel>` is a *live* control token in Slack and a
+    requester writes the subject, so an unescaped one would page four hundred people
+    from a help-desk form; **one message, two renderings**, with Slack Block Kit and
+    Teams' `MessageCard` built from the same `ChatMessage`, so a third provider is a
+    renderer rather than a second pipeline; and **delivery is the webhook's own state
+    machine** (`applyDeliveryAttempt`, shared through a structural type rather than
+    copied), so `DELIVERED`, `RETRYING` with the instant of the next try, or
+    `EXHAUSTED` after five means exactly one thing in this product whatever the
+    destination is. The console adds the control that matters most here: a *send a
+    test message* button, because a chat webhook URL pasted slightly wrong fails
+    silently — nobody notices a message that never arrived. A channel's URL is a
+    credential, so it is never written to the audit trail, which records the name and
+    provider instead. Covered by `tests/tix-m6-chat-notify.test.ts`.
+  - `[ ]` A marketplace pattern for third-party connectors.
 - Custom fields, ticket forms and per-queue layouts.
 - Enterprise controls: granular roles, audit-evidence export, data-retention and
   legal-hold policies.
-- **Exit:** a monitoring alert opens a ticket and closes it when the alert clears;
-  audit evidence exports on demand; the API is versioned and documented.
+> M6 progress: **the public API, its webhooks, the integrations console and the
+> monitoring connector are live.** A scoped bearer token is a hash in the database
+> and a string on one screen; a sixty-second window per token is enforced by
+> conditional writes that stop counting once the window is blown; and `/api/v1`
+> serves tickets read, create and fetch behind a pure gate whose order — present,
+> valid, under budget, scoped — is the security. Webhooks are registered once
+> against an https (or loopback) URL, signed over `{timestamp}.{body}` so a replay
+> is refusable, and every attempt lands in a delivery log that says `DELIVERED`,
+> `RETRYING` with the instant of the next try, or `EXHAUSTED` after five. A
+> monitoring check that fails opens a ticket and a recovery closes it, keyed on the
+> condition rather than on the vendor's alert id, and the console that mints the
+> tokens and reads the delivery log exists so this is configuration rather than
+> `curl`. The desk also tells the rooms people actually sit in: Slack and Teams
+> channels choose from the same closed event set, their URLs are checked against the
+> hosts the provider owns, a ticket's subject is escaped before it is posted because
+> `<!channel>` in a subject would otherwise page the room, and each channel keeps the
+> same delivery log with a button that posts one message now. What remains in M6 is
+> the rest of the milestone: the connector marketplace pattern, custom fields and
+> per-queue layouts, and the enterprise controls — granular roles, audit-evidence
+> export and retention/legal-hold policy. See [docs/api.md](./docs/api.md).
+
+- **Exit:** a monitoring alert opens a ticket and closes it when the alert clears
+  (**done**); audit evidence exports on demand; the API is versioned and documented.
 
 ### M7 — Intelligence & scale `[ ]`
 **Goal:** enterprise hardening and assistance.

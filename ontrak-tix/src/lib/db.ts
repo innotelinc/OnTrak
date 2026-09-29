@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 
 import { configureTickets, ticketServices, type TicketServices } from "./ticket-server";
-import { PrismaAuditReader, type TicketPrismaClient } from "./ticket-store-prisma";
+import { PrismaAuditReader, sha256Hex, type TicketPrismaClient } from "./ticket-store-prisma";
 import { CsatService } from "./csat-service";
 import { PrismaCsatStore, type CsatPrismaClient } from "./csat-store-prisma";
 import { AttachmentService } from "./attachment-service";
@@ -50,6 +50,19 @@ import { PrismaClientStore, type ClientPrismaClient } from "./client-store-prism
 import { SlaPolicyService } from "./sla-policy-service";
 import { TimeService } from "./time-service";
 import { PrismaTimeStore, type TimePrismaClient } from "./time-store-prisma";
+import { RuleService } from "./rule-service";
+import { PrismaRuleStore, type RulePrismaClient } from "./rule-store-prisma";
+import { MacroService } from "./macro-service";
+import { PrismaMacroStore, type MacroPrismaClient } from "./macro-store-prisma";
+import { MacroIntake, type MacroPlannerPort } from "./macro-intake";
+import { KnowledgeService } from "./knowledge-service";
+import { PrismaKnowledgeStore, type KnowledgePrismaClient } from "./knowledge-store-prisma";
+import {
+  RuleIntake,
+  type RequesterDirectory,
+  type RuleEffectSink,
+  type RulePlannerPort,
+} from "./rule-intake";
 import { ClientSurveyService } from "./client-survey-service";
 import { ClientBrandingService } from "./client-branding-service";
 import {
@@ -62,6 +75,14 @@ import {
   PrismaClientSurveyStore,
   type ClientSurveyPrismaClient,
 } from "./client-survey-store-prisma";
+import { ApiTokenService } from "./public-api-service";
+import { PrismaApiTokenStore, type ApiTokenPrismaClient } from "./public-api-store-prisma";
+import { FetchWebhookTransport, WebhookService } from "./webhook-service";
+import { PrismaWebhookStore, type WebhookPrismaClient } from "./webhook-store-prisma";
+import { RmmConnectorService } from "./rmm-service";
+import { PrismaRmmStore, type RmmPrismaClient } from "./rmm-store-prisma";
+import { ChatNotifyService, FetchChatTransport } from "./chat-notify-service";
+import { PrismaChatStore, type ChatPrismaClient } from "./chat-notify-store-prisma";
 
 /**
  * The OnTrak Tix database client and service bootstrap.
@@ -80,8 +101,56 @@ export const prisma = globalForPrisma.tixPrisma ?? new PrismaClient();
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.tixPrisma = prisma;
 
+/*
+ * The M5 rules engine, as the ticket service sees it.
+ *
+ * The planner is a *port* rather than the service itself so this module, which
+ * configures the ticket stack at import time, does not need the rules stack to
+ * exist yet: `ruleServicesFor` is resolved on the first ticket a rule could fire
+ * on. The effects go to the notification service — one staff notice for `notify`
+ * and one on-call page for `escalate` — and the directory answers the one field
+ * a ticket row does not carry, the requester's address.
+ */
+const ticketRulePlanner: RulePlannerPort = {
+  planForTicket: (tenantId, ticket, trigger) => ruleServicesFor().planForTicket(tenantId, ticket, trigger),
+};
+
+const ruleEffects: RuleEffectSink = {
+  notify: async (notice) => {
+    await notification().notifyRule(notice);
+  },
+  escalate: async (notice) => {
+    await notification().notifyRuleEscalation(notice);
+  },
+};
+
+const requesterDirectory: RequesterDirectory = {
+  emailFor: async (tenantId, requesterId) => {
+    const user = await prisma.user.findFirst({ where: { tenantId, id: requesterId }, select: { email: true } });
+    return user?.email ?? null;
+  },
+};
+
+/*
+ * The M5 macros, as the ticket service sees them. A port for the same reason
+ * the rule planner is one: this module wires the ticket stack at import time,
+ * and the macro service is resolved on the first shortcut an agent runs. The
+ * effects are the same sink the rules use — a macro's `notify` and `escalate`
+ * reach staff the one way the desk already reaches them.
+ */
+const macroPlanner: MacroPlannerPort = {
+  findMacro: (tenantId, macroId) => macroServicesFor().find(tenantId, macroId),
+};
+
+const macroIntake = new MacroIntake(macroPlanner, ruleEffects);
+
 // Building the service stacks does no I/O; the connection opens on first query.
-configureTickets(prisma as unknown as TicketPrismaClient);
+configureTickets(
+  prisma as unknown as TicketPrismaClient,
+  undefined,
+  new RuleIntake(ticketRulePlanner, ruleEffects, requesterDirectory),
+  macroIntake,
+);
 
 let satisfaction: CsatService | null = null;
 let attachments: AttachmentService | null = null;
@@ -107,6 +176,13 @@ let clients: ClientService | null = null;
 let branding: ClientBrandingService | null = null;
 let rota: RotaService | null = null;
 let warRoom: WarRoomService | null = null;
+let rules: RuleService | null = null;
+let macros: MacroService | null = null;
+let knowledge: KnowledgeService | null = null;
+let apiTokens: ApiTokenService | null = null;
+let webhooks: WebhookService | null = null;
+let rmm: RmmConnectorService | null = null;
+let chatNotify: ChatNotifyService | null = null;
 
 function csat(): CsatService {
   satisfaction ??= new CsatService(new PrismaCsatStore(prisma as unknown as CsatPrismaClient));
@@ -279,6 +355,134 @@ export function identityServicesFor(): IdentityService {
     ticketServices().audit,
   );
   return identities;
+}
+
+/**
+ * The configured automation-rule service (M5). It shares the ticket stack's
+ * audit sink, so a rule written, changed, switched off or removed joins the same
+ * per-tenant hash chain as the tickets it acts on — which is the whole point of
+ * auditing rules: the outcome and the configuration belong to one history.
+ */
+export function ruleServicesFor(): RuleService {
+  rules ??= new RuleService(new PrismaRuleStore(prisma as unknown as RulePrismaClient), ticketServices().audit);
+  return rules;
+}
+
+/**
+ * The configured macro service (M5). It shares the ticket stack's audit sink, so
+ * a shortcut written, changed, switched off or removed joins the same per-tenant
+ * hash chain as the tickets one click acts on.
+ */
+export function macroServicesFor(): MacroService {
+  macros ??= new MacroService(new PrismaMacroStore(prisma as unknown as MacroPrismaClient), ticketServices().audit);
+  return macros;
+}
+
+/**
+ * The configured knowledge service (M5). It shares the ticket stack's audit sink,
+ * so an article written, edited, published or removed joins the same per-tenant
+ * hash chain as the tickets it deflects.
+ */
+export function knowledgeServicesFor(): KnowledgeService {
+  knowledge ??= new KnowledgeService(
+    new PrismaKnowledgeStore(prisma as unknown as KnowledgePrismaClient),
+    ticketServices().audit,
+  );
+  return knowledge;
+}
+
+/**
+ * The configured public-API token service (M6). It shares the ticket stack's audit
+ * sink, so minting, revoking and refusing a token joins the same per-tenant hash
+ * chain as the tickets that token touches — which is the question an incident
+ * asks after a bad bulk update. The hash is the ticket stack's own SHA-256, so a
+ * token's stored digest is the same digest everything else here uses.
+ */
+export function apiTokenServicesFor(): ApiTokenService {
+  apiTokens ??= new ApiTokenService(
+    new PrismaApiTokenStore(prisma as unknown as ApiTokenPrismaClient),
+    ticketServices().audit,
+    undefined,
+    (input) => sha256Hex(input),
+  );
+  return apiTokens;
+}
+
+/**
+ * The configured webhook service (M6). It shares the ticket stack's audit sink, so
+ * every delivery attempt — success or refusal — joins the same per-tenant hash
+ * chain as the ticket it is telling somebody about. The transport is the real
+ * `fetch`, and it is a port so a test (and, later, a queue) replaces it whole.
+ */
+export function webhookServicesFor(): WebhookService {
+  webhooks ??= new WebhookService(
+    new PrismaWebhookStore(prisma as unknown as WebhookPrismaClient),
+    new FetchWebhookTransport(),
+    ticketServices().audit,
+  );
+  return webhooks;
+}
+
+/**
+ * The requester is the desk's, not the vendor's: a monitoring alert has nobody
+ * behind it, so `ONTRAK_TIX_RMM_REQUESTER_EMAIL` names the mailbox the work is
+ * raised for, and a tenant without one falls back to its first active
+ * administrator. Neither existing is a `503` rather than a ticket filed against a
+ * user that does not exist.
+ */
+/**
+ * The configured chat notification service (M6): the Slack and Teams rooms the desk
+ * posts to. It shares the ticket stack's audit sink, so a message delivered — or a
+ * delivery exhausted — joins the same per-tenant hash chain as the ticket it is
+ * about, and the transport is the real `fetch` behind a port a test replaces whole.
+ *
+ * `ONTRAK_TIX_BASE_URL` is this deployment's own address, read once here. A
+ * deployment that does not set it sends messages without a link, which is honest —
+ * a button pointing at a host we invented is worse than no button.
+ */
+export function chatNotifyServicesFor(): ChatNotifyService {
+  chatNotify ??= new ChatNotifyService(
+    new PrismaChatStore(prisma as unknown as ChatPrismaClient),
+    new FetchChatTransport(),
+    ticketServices().audit,
+    undefined,
+    process.env.ONTRAK_TIX_BASE_URL ?? null,
+  );
+  return chatNotify;
+}
+
+/**
+ * The configured RMM/monitoring connector (M6). It raises and closes work through
+ * the normal `TicketService` — so a monitoring ticket fires the desk's rules and
+ * lands on the same per-tenant hash chain as one a person raised — and it shares
+ * that chain, because the open and the close of a condition have to be readable as
+ * one story.
+ */
+export function rmmServicesFor(): RmmConnectorService {
+  rmm ??= new RmmConnectorService(
+    new PrismaRmmStore(prisma as unknown as RmmPrismaClient),
+    {
+      tickets: {
+        createTicket: (actor, input) => ticketServices().service.createTicket(actor, input),
+        setStatus: (actor, ticketId, to) => ticketServices().service.setStatus(actor, ticketId, to),
+        reply: (actor, ticketId, body, kind) => ticketServices().service.reply(actor, ticketId, body, kind),
+        findTicket: (tenantId, ticketId) => ticketServices().store.findTicket(tenantId, ticketId),
+      },
+      requesterFor: async (tenantId) => {
+        const configured = process.env.ONTRAK_TIX_RMM_REQUESTER_EMAIL;
+        const user = await prisma.user.findFirst({
+          where: configured
+            ? { tenantId, email: configured, active: true }
+            : { tenantId, role: "ADMIN", active: true },
+          orderBy: { createdAt: "asc" },
+          select: { id: true },
+        });
+        return user?.id ?? null;
+      },
+    },
+    ticketServices().audit,
+  );
+  return rmm;
 }
 
 /**

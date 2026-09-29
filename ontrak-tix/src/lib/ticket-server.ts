@@ -10,6 +10,8 @@
 
 import { PrismaAuditSink, PrismaTicketStore, sha256Hex, type TicketPrismaClient } from "./ticket-store-prisma";
 import { TicketService, type IdSource, type TicketStore } from "./ticket-service";
+import type { RuleIntake } from "./rule-intake";
+import type { MacroIntake } from "./macro-intake";
 import type { AuditSink } from "./audit-chain";
 
 export interface TicketServices {
@@ -19,20 +21,32 @@ export interface TicketServices {
 }
 
 /** Build a full service stack over a Prisma client (or any client-shaped fake). */
-export function createTicketServices(db: TicketPrismaClient, ids?: IdSource): TicketServices {
+export function createTicketServices(
+  db: TicketPrismaClient,
+  ids?: IdSource,
+  rules: RuleIntake | null = null,
+  macros: MacroIntake | null = null,
+): TicketServices {
   const store = new PrismaTicketStore(db);
   const audit = new PrismaAuditSink(db, sha256Hex);
-  return { store, audit, service: new TicketService(store, audit, ids) };
+  return { store, audit, service: new TicketService(store, audit, ids, rules, macros) };
 }
 
 let configured: TicketServices | null = null;
 
 /**
  * Bind the process-wide Prisma client. Called once from the tix app bootstrap;
- * tests build their own stack with `createTicketServices` instead.
+ * tests build their own stack with `createTicketServices` instead. The rules
+ * engine is optional here so a deployment (or a test) without one behaves
+already as it did before rules existed.
  */
-export function configureTickets(db: TicketPrismaClient, ids?: IdSource): TicketServices {
-  configured = createTicketServices(db, ids);
+export function configureTickets(
+  db: TicketPrismaClient,
+  ids?: IdSource,
+  rules: RuleIntake | null = null,
+  macros: MacroIntake | null = null,
+): TicketServices {
+  configured = createTicketServices(db, ids, rules, macros);
   return configured;
 }
 

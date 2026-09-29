@@ -21,11 +21,13 @@ import {
   renderNotificationEmail,
   shouldDeliver,
   visibleAudiencesFor,
+  type NotificationDraft,
   type NotificationPreference,
   type NotificationRecord,
 } from "./notification-rules";
 import type { EscalationAudience } from "./escalation-rules";
 import type { SlaEscalationRecord } from "./escalation-service";
+import type { RuleNotice } from "./rule-intake";
 
 export interface NotificationStore {
   listForTenant(tenantId: string): Promise<NotificationRecord[]>;
@@ -83,29 +85,80 @@ export class NotificationService {
       level: record.level,
     });
 
-    const notification: NotificationRecord = {
-      id: this.ids.id(),
-      tenantId: record.tenantId,
-      audience: draft.audience,
-      kind: draft.kind,
-      title: draft.title,
-      body: draft.body,
-      ticketId: draft.ticketId,
-      ticketRef: draft.ticketRef,
-      dedupeKey: draft.dedupeKey,
-      level: draft.level,
-      createdAt: record.raisedAt,
-      readAt: null,
-    };
+    return this.raise(draft, record.tenantId, record.raisedAt);
+  }
+
+  /**
+   * Raise the in-app notice for one rule's `notify` action (M5).
+   *
+   * Addressed to agents rather than to a named person: a rule files work for the
+   * desk, and the desk decides who is watching. The dedupe key is the rule plus
+   * the ticket, so the same intake replayed cannot page twice. A macro (M5)
+   * reaches staff through here too, so the wording names which of the two it was
+   * — a notice that said "Rule" would send the reader to the wrong console.
+   */
+  async notifyRule(notice: RuleNotice): Promise<NotificationRecord> {
+    const label = notice.source === "macro" ? "Macro" : "Rule";
+    const key = notice.source === "macro" ? "macro" : "rule";
+    return this.raise(
+      {
+        audience: "AGENT",
+        kind: "rule.notify",
+        title: `${label} “${notice.ruleName}” on ${notice.ticketRef}`,
+        body: notice.value,
+        ticketId: notice.ticketId,
+        ticketRef: notice.ticketRef,
+        dedupeKey: `${key}.notify:${notice.ruleId}:${notice.ticketId}`,
+        level: null,
+      },
+      notice.tenantId,
+      this.ids.now(),
+    );
+  }
+
+  /**
+   * Raise the on-call page for a rule's `escalate` action (M5).
+   *
+   * It does not lift an SLA rung: the ladder belongs to the clock, and a rule has
+   * no clock reading to claim for it. What it does is what the hazard text
+   * promises — it pages whoever is on call — so it is addressed to managers and
+   * pinned to the first rung, where a per-user level filter cannot swallow it.
+   */
+  async notifyRuleEscalation(notice: RuleNotice): Promise<NotificationRecord> {
+    const label = notice.source === "macro" ? "Macro" : "Rule";
+    const key = notice.source === "macro" ? "macro" : "rule";
+    const raised = notice.source === "macro" ? "A macro" : "A rule";
+    return this.raise(
+      {
+        audience: "MANAGER",
+        kind: "rule.escalate",
+        title: `${label} escalation: ${notice.ticketRef}`,
+        body: `${notice.value || `${raised} escalated this ticket.`} (${label} “${notice.ruleName}”.)`,
+        ticketId: notice.ticketId,
+        ticketRef: notice.ticketRef,
+        dedupeKey: `${key}.escalate:${notice.ruleId}:${notice.ticketId}`,
+        level: 1,
+      },
+      notice.tenantId,
+      this.ids.now(),
+    );
+  }
+
+  /**
+   * Store one notice and mail it, best-effort.
+   *
+   * The store's dedupe key is the guard: a replayed event must not re-mail the
+   * audience, and a mail transport that is down must never undo the notice.
+   */
+  private async raise(draft: NotificationDraft, tenantId: string, at: string): Promise<NotificationRecord> {
+    const notification: NotificationRecord = { id: this.ids.id(), tenantId, ...draft, createdAt: at, readAt: null };
     const created = await this.store.insert(notification);
 
-    // A replayed rung must not re-mail the audience: the store's dedupe key is
-    // the same guard the escalation itself uses.
     if (created && this.email) {
       const message = renderNotificationEmail(notification);
       // The audience label stands in for the real recipient list until a user
       // directory is wired; the send is best-effort and never blocks the sweep.
-      await this.email.send({ to: `${record.audience.toLowerCase()}@desk`, ...message }).catch(() => undefined);
+      await this.email.send({ to: `${draft.audience.toLowerCase()}@desk`, ...message }).catch(() => undefined);
     }
 
     return notification;

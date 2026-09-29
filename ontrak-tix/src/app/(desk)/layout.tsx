@@ -59,6 +59,15 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
               <Link href="/templates" className="hover:text-brand">
                 Templates
               </Link>
+              <Link href="/knowledge" className="hover:text-brand">
+                Knowledge
+              </Link>
+              <Link href="/rules" className="hover:text-brand">
+                Rules
+              </Link>
+              <Link href="/macros" className="hover:text-brand">
+                Macros
+              </Link>
               <Link href="/security" className="hover:text-brand">
                 Security
               </Link>
@@ -72,9 +81,14 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
                 Handoff
               </Link>
               {canManageTenant ? (
-                <Link href="/admin/identity" className="hover:text-brand">
-                  Identity
-                </Link>
+                <>
+                  <Link href="/admin/identity" className="hover:text-brand">
+                    Identity
+                  </Link>
+                  <Link href="/admin/integrations" className="hover:text-brand">
+                    Integrations
+                  </Link>
+                </>
               ) : null}
               <Link href="/notifications" className="hover:text-brand">
                 Notifications

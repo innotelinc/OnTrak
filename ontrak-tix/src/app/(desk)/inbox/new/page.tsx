@@ -3,7 +3,8 @@ import { sessionDisplayName } from "../../../../lib/session-rules";
 import { hasPermission } from "../../../../lib/access-rules";
 import { TICKET_PRIORITIES, TICKET_TYPES } from "../../../../lib/ticket-rules";
 import { canUseTicketTemplates } from "../../../../lib/template-service";
-import { clientServicesFor, templateServicesFor } from "../../../../lib/db";
+import { clientServicesFor, knowledgeServicesFor, templateServicesFor } from "../../../../lib/db";
+import { ArticleSuggestions } from "../../../../components/ArticleSuggestions";
 import { createTicketAction } from "../../../actions/tickets";
 
 export const metadata = { title: "New ticket" };
@@ -19,10 +20,10 @@ export const metadata = { title: "New ticket" };
 export default async function NewTicketPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; template?: string }>;
+  searchParams: Promise<{ error?: string; template?: string; subject?: string }>;
 }) {
   const actor = await requireActor();
-  const { error, template: templateId } = await searchParams;
+  const { error, template: templateId, subject } = await searchParams;
   const mayPickRequester = actor.role !== "REQUESTER" && hasPermission(actor.role, "ticket:create");
   const mayUseTemplates = canUseTicketTemplates(actor);
 
@@ -42,6 +43,12 @@ export default async function NewTicketPage({
         tenant: actor.tenantId,
       })
     : null;
+
+  // Suggestions before the ticket is raised (M5). Staff see private articles too,
+  // so an agent can find the desk's own note as well as a published answer.
+  const query = subject?.trim() ?? "";
+  const suggested = query ? await knowledgeServicesFor().suggestForStaff(actor, query) : null;
+  const suggestions = suggested?.ok ? suggested.value : [];
 
   return (
     <div className="mx-auto max-w-2xl space-y-4">
@@ -76,6 +83,28 @@ export default async function NewTicketPage({
         </nav>
       ) : null}
 
+      <form method="get" className="space-y-3 rounded-xl2 border border-line bg-surface p-5">
+        <label className="block text-sm font-medium text-ink">
+          Check the knowledge base first
+          <input
+            name="subject"
+            defaultValue={query}
+            maxLength={200}
+            placeholder="e.g. printer queue stuck"
+            className="mt-1 w-full rounded-xl2 border border-line bg-surface px-3 py-2 text-sm text-ink"
+          />
+        </label>
+        <button type="submit" className="rounded-full bg-surface-muted px-4 py-2 text-sm font-semibold text-ink-soft">
+          Find articles
+        </button>
+      </form>
+
+      <ArticleSuggestions
+        suggestions={suggestions}
+        title={`Articles for “${query}”`}
+        note="The same search a requester gets in the portal, with the desk's staff-only articles included."
+      />
+
       <form action={createTicketAction} className="space-y-4 rounded-xl2 border border-line bg-surface p-5">
         <label className="block text-sm font-medium text-ink">
           Subject
@@ -83,7 +112,7 @@ export default async function NewTicketPage({
             name="subject"
             required
             maxLength={200}
-            defaultValue={prefill?.subject ?? ""}
+            defaultValue={prefill?.subject ?? query}
             className="mt-1 w-full rounded-xl2 border border-line bg-surface px-3 py-2 text-sm text-ink"
           />
         </label>

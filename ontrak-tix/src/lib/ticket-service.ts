@@ -26,6 +26,9 @@ import {
   type TicketType,
 } from "./ticket-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
+import type { RuleTrigger } from "./rule-rules";
+import type { RuleApplication, RuleIntake } from "./rule-intake";
+import type { MacroIntake } from "./macro-intake";
 import type { SlaPause } from "./sla-rules";
 
 export interface TicketMessage {
@@ -62,6 +65,12 @@ export interface TicketRecord {
   closedAt: string | null;
   /** Windows during which the SLA clock did not run (see `sla-rules`). */
   pauses: SlaPause[];
+  /**
+   * Tags applied by hand or by a rule's `add_tag` action (M5). A scoring axis
+   * rather than a classification, so a ticket may carry several or none;
+   * optional so records written before rules existed stay valid.
+   */
+  tags?: readonly string[];
   messages: TicketMessage[];
 }
 
@@ -304,14 +313,42 @@ export class TicketService {
     private readonly store: TicketStore,
     private readonly audit: AuditSink,
     private readonly ids: IdSource = systemIds(),
+    /**
+     * The M5 rules engine, when the deployment has one. Absent in tests and in
+     * stacks built before rules existed, in which case every path behaves
+     * exactly as it did — the engine is an addition, not a rewrite.
+     */
+    private readonly rules: RuleIntake | null = null,
+    /**
+     * The M5 macro intake, when the deployment has one. Optional for the same
+     * reason the rules engine is: a desk with no shortcuts behaves exactly as it
+     * did before macros existed.
+     */
+    private readonly macros: MacroIntake | null = null,
   ) {}
 
+  /**
+   * Raise a ticket, applying the desk's `ticket.created` rules to it.
+   *
+   * The rules run *before* the row is written, so the ticket is born with the
+   * priority, queue, assignee and tags the desk asked for: one insert, and no
+   * moment in which the inbox shows work the rules have not yet seen. The plan
+   * is recorded on the chain, so "why did this arrive urgent?" has an answer
+   * that outlives the rule that made it so.
+   */
   async createTicket(actor: Actor, input: TicketCreationInput): Promise<ServiceResult<TicketRecord>> {
     const plan = planTicketCreation(actor, input, await this.store.nextTicketSeq(actor.tenantId), this.ids);
     if (!plan.ok) return plan;
-    await this.store.insertTicket(plan.value.ticket);
-    await this.audit.append(plan.value.audit);
-    return { ok: true, value: plan.value.ticket };
+
+    const applied = await this.runRules(plan.value.ticket, "ticket.created");
+    const ticket = applied?.ticket ?? plan.value.ticket;
+
+    await this.store.insertTicket(ticket);
+    // The create event carries the queue the ticket actually landed in, so the
+    // chain never claims it was filed somewhere the rules moved it out of.
+    await this.audit.append({ ...plan.value.audit, detail: { ref: ticket.ref, queueId: ticket.queueId } });
+    await this.settle(applied);
+    return { ok: true, value: ticket };
   }
 
   async reply(actor: Actor, ticketId: string, body: string, kind: MessageKind = "PUBLIC_REPLY"): Promise<ServiceResult<TicketMessage>> {
@@ -319,8 +356,11 @@ export class TicketService {
     if (!ticket) return { ok: false, error: "Ticket not found." };
     const plan = planReply(actor, ticket, body, kind, this.ids);
     if (!plan.ok) return plan;
-    await this.store.updateTicket(plan.value.ticket);
+
+    const applied = await this.runRules(plan.value.ticket, "ticket.replied");
+    await this.store.updateTicket(applied?.ticket ?? plan.value.ticket);
     await this.audit.append(plan.value.audit);
+    await this.settle(applied);
     return { ok: true, value: plan.value.message };
   }
 
@@ -329,9 +369,13 @@ export class TicketService {
     if (!ticket) return { ok: false, error: "Ticket not found." };
     const plan = planStatusChange(actor, ticket, to, this.ids);
     if (!plan.ok) return plan;
-    await this.store.updateTicket(plan.value.ticket);
+
+    const applied = await this.runRules(plan.value.ticket, "ticket.updated");
+    const next = applied?.ticket ?? plan.value.ticket;
+    await this.store.updateTicket(next);
     await this.audit.append(plan.value.audit);
-    return { ok: true, value: plan.value.ticket };
+    await this.settle(applied);
+    return { ok: true, value: next };
   }
 
   async assign(actor: Actor, ticketId: string, assigneeId: string | null): Promise<ServiceResult<TicketRecord>> {
@@ -339,9 +383,49 @@ export class TicketService {
     if (!ticket) return { ok: false, error: "Ticket not found." };
     const plan = planAssignment(actor, ticket, assigneeId, this.ids);
     if (!plan.ok) return plan;
-    await this.store.updateTicket(plan.value.ticket);
+
+    const applied = await this.runRules(plan.value.ticket, "ticket.updated");
+    const next = applied?.ticket ?? plan.value.ticket;
+    await this.store.updateTicket(next);
     await this.audit.append(plan.value.audit);
-    return { ok: true, value: plan.value.ticket };
+    await this.settle(applied);
+    return { ok: true, value: next };
+  }
+
+  /**
+   * Run a macro on a ticket (M5).
+   *
+   * Unlike a rule, this is not triggered: an agent chose the macro and the
+   * ticket, so the check is `ticket:update` and the audit names the person
+   * rather than the desk. The rules engine is deliberately **not** re-run here —
+   * an explicit instruction from the agent should not be silently outvoted by
+   * automation that fires on `ticket.updated`. The ticket's `updatedAt` still
+   * moves, so the work reads as recently touched.
+   */
+  async applyMacro(actor: Actor, ticketId: string, macroId: string): Promise<ServiceResult<TicketRecord>> {
+    if (!this.macros) return { ok: false, error: "The desk has no macros configured." };
+    const ticket = await this.load(actor.tenantId, ticketId);
+    if (!ticket) return { ok: false, error: "Ticket not found." };
+
+    const applied = await this.macros.apply(actor, ticket, macroId, this.ids);
+    if (!applied.ok) return applied;
+
+    await this.store.updateTicket(applied.value.ticket);
+    await this.audit.append(applied.value.audit);
+    await this.macros.settle(applied.value);
+    return { ok: true, value: applied.value.ticket };
+  }
+
+  private async runRules(ticket: TicketRecord, trigger: RuleTrigger): Promise<RuleApplication | null> {
+    if (!this.rules) return null;
+    return this.rules.apply(ticket, trigger, this.ids);
+  }
+
+  /** Record the firing on the chain, then deliver what it asked for. */
+  private async settle(applied: RuleApplication | null): Promise<void> {
+    if (!applied) return;
+    await this.audit.append(applied.audit);
+    await this.rules?.settle(applied);
   }
 
   private async load(tenantId: string, ticketId: string): Promise<TicketRecord | null> {

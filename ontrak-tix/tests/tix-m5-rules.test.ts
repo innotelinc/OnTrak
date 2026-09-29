@@ -27,6 +27,7 @@ import {
 } from "../src/lib/rule-rules";
 import { MemoryRuleStore, RuleService } from "../src/lib/rule-service";
 import { PrismaRuleStore, toRuleRecord, type RulePrismaClient, type RuleRow } from "../src/lib/rule-store-prisma";
+import { parseActions, parseConditions, ruleValueOptions } from "../src/lib/rule-form-rules";
 
 const sha256: HashFn = (input) => createHash("sha256").update(input).digest("hex");
 const ADMIN = { id: "admin-1", tenantId: "tenant-a", role: "ADMIN" as const };
@@ -517,4 +518,130 @@ test("an unknown trigger in the column falls back rather than throwing", () => {
     updatedAt: new Date(NOW),
   };
   assert.equal(toRuleRecord(row).trigger, "ticket.created");
+});
+
+/* -------------------------------------------------------------------------- */
+/*  The console's two questions                                               */
+/* -------------------------------------------------------------------------- */
+
+async function seeded(...rules: RuleRecord[]) {
+  const store = new MemoryRuleStore();
+  const audit = new AuditLog(sha256);
+  let n = 0;
+  const service = new RuleService(store, audit, { id: () => `rule-${++n}`, now: () => NOW });
+  for (const record of rules) await store.insertRule(record);
+  return { service, store, audit };
+}
+
+const TICKETS = [{ ...TICKET, id: "tkt-1" }];
+
+test("a switched-off rule is previewed as if it were on, which the whole-ruleset dry run cannot do", async () => {
+  const { service } = await seeded(rule({ enabled: false }));
+
+  const whole = await service.preview(ADMIN, TICKETS);
+  const single = await service.previewRule(ADMIN, "rule-1", TICKETS);
+
+  assert.ok(whole.ok && single.ok);
+  // The live engine is right to ignore a disabled rule; the console's question
+  // is "what happens if I switch this on?", which needs the rule run anyway.
+  assert.equal(whole.value.touched, 0);
+  assert.equal(single.value.touched, 1);
+  assert.equal(single.value.tickets[0].plan.priority, "HIGH");
+});
+
+test("a rule preview runs only the rule asked about", async () => {
+  const { service } = await seeded(
+    rule({ id: "r-a", name: "A", position: 1, actions: [{ kind: "set_priority", value: "URGENT" }] }),
+    rule({ id: "r-b", name: "B", position: 2, conditions: [], actions: [{ kind: "add_tag", value: "all" }] }),
+  );
+
+  const result = await service.previewRule(ADMIN, "r-a", TICKETS);
+
+  assert.ok(result.ok);
+  assert.deepEqual(result.value.tickets[0].matched.map((entry) => entry.ruleName), ["A"]);
+  assert.deepEqual(result.value.tickets[0].plan.addTags, []);
+});
+
+test("previewing is a manager's act, because it discloses the rules", async () => {
+  const { service } = await seeded(rule());
+  const denied = await service.previewRule(AGENT, "rule-1", TICKETS);
+  assert.equal(denied.ok, false);
+});
+
+test("moving a rule rewrites a clean 1..n order", async () => {
+  const { service, store, audit } = await seeded(
+    rule({ id: "r-1", name: "First", position: 1 }),
+    rule({ id: "r-2", name: "Second", position: 2 }),
+    rule({ id: "r-3", name: "Third", position: 3 }),
+  );
+
+  const moved = await service.move(ADMIN, "r-3", "up");
+
+  assert.ok(moved.ok);
+  const ordered = (await store.listRules("tenant-a")).sort((a, b) => a.position - b.position);
+  assert.deepEqual(ordered.map((entry) => entry.name), ["First", "Third", "Second"]);
+  assert.deepEqual(ordered.map((entry) => entry.position), [1, 2, 3]);
+  assert.ok(audit.snapshot().events.some((event) => event.action === "rule.move"));
+});
+
+test("a rule already at the end of the order cannot move further", async () => {
+  const { service } = await seeded(rule({ id: "r-1", position: 1 }));
+
+  const up = await service.move(ADMIN, "r-1", "up");
+  const down = await service.move(ADMIN, "r-1", "down");
+
+  assert.equal(up.ok, false);
+  assert.equal(down.ok, false);
+});
+
+test("moving is a manager's act", async () => {
+  const { service } = await seeded(rule({ id: "r-1", position: 1 }), rule({ id: "r-2", position: 2 }));
+  assert.equal((await service.move(AGENT, "r-2", "up")).ok, false);
+});
+
+/* -------------------------------------------------------------------------- */
+/*  Reading a rule form back in                                               */
+/* -------------------------------------------------------------------------- */
+
+test("a blank condition row is ignored, and a half-filled one is kept to be refused", () => {
+  const conditions = parseConditions(
+    ["subject", "priority", ""],
+    ["contains", "", ""],
+    ["backup", "URGENT", ""],
+  );
+
+  assert.deepEqual(conditions, [
+    { field: "subject", operator: "contains", value: "backup" },
+    // The priority row was never given a comparison. Dropping it would save a
+    // rule with one condition fewer than its author counted on.
+    { field: "priority", operator: "" as never, value: "URGENT" },
+  ]);
+  assert.ok(validateRule({ name: "R", trigger: "ticket.created", conditions, actions: [{ kind: "add_tag", value: "x" }] }).length > 0);
+});
+
+test("a list comparison reads a comma-separated value as a list", () => {
+  const conditions = parseConditions(["priority"], ["is_one_of"], ["URGENT, HIGH ,"]);
+  assert.deepEqual(conditions, [{ field: "priority", operator: "is_one_of", value: ["URGENT", "HIGH"] }]);
+});
+
+test("a valueless comparison carries no value, whatever was typed beside it", () => {
+  const conditions = parseConditions(["queueId"], ["is_empty"], ["leftover"]);
+  assert.deepEqual(conditions, [{ field: "queueId", operator: "is_empty" }]);
+});
+
+test("a blank action row is ignored and an escalate may carry no reason", () => {
+  const actions = parseActions(["set_priority", "", "escalate"], ["HIGH", "", ""]);
+  assert.deepEqual(actions, [{ kind: "set_priority", value: "HIGH" }, { kind: "escalate" }]);
+});
+
+test("the datalist offers the queues and agents by id, labelled by name", () => {
+  const options = ruleValueOptions({
+    queues: [{ id: "q-1", name: "Infrastructure" }],
+    agents: [{ id: "u-1", displayName: "Ada Lovelace" }],
+  });
+
+  assert.ok(options.some((option) => option.value === "q-1" && option.label === "queue: Infrastructure"));
+  assert.ok(options.some((option) => option.value === "u-1" && option.label === "agent: Ada Lovelace"));
+  // The words a rule compares against are offered as themselves.
+  assert.ok(options.some((option) => option.value === "URGENT"));
 });
