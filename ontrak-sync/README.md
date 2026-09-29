@@ -4,7 +4,7 @@
 
 # 🛠️ Ontrak Sync
 
-**The estate's package and container update view — two managers that must never be confused, and one place that installs what a person approved.**
+**The Network's package and container update view — two managers that must never be confused, and one place that installs what a person approved.**
 
 **CodeOps · self-hosted · single responsibility**
 
@@ -25,9 +25,9 @@
 | The registry budget is shared with every image pull | Digests are cached for `ONTRAK_DIGEST_TTL` (six hours); the comparison is redone every scan, and a failed lookup is never cached |
 | Approval arrives as a shell session nobody can audit | Findings carry a status, the timer is a setting in the database, and applying is an explicit API call — one code path changes a machine |
 
-> **About Ontrak Sync** — estate-wide package and container update *monitoring* and, on
+> **About Ontrak Sync** — Network-wide package and container update *monitoring* and, on
 > approval, *updating*. One service, one dashboard, every host on the LAN: a Python/FastAPI
-> backend that reaches the estate over SSH (and `incus exec` on the incus hosts) with no Docker
+> backend that reaches the Network over SSH (and `incus exec` on the incus hosts) with no Docker
 > socket and nothing installed on the target machines, a Next.js dashboard, and an in-process
 > cron scheduler that lives in the database rather than a system crontab.
 > **Landing page:** [innotelinc.github.io/ontrak-sync](https://innotelinc.github.io/ontrak-sync)
@@ -36,7 +36,7 @@
 
 ## What it is
 
-- **Backend** — Python 3.12, FastAPI, SQLite, a plain `unittest` suite. It reaches the estate
+- **Backend** — Python 3.12, FastAPI, SQLite, a plain `unittest` suite. It reaches the Network
   over SSH and needs no Docker socket, no incus binary on itself and no privileged mount. `backend/`
 - **Frontend** — Next.js 16, React 19, TypeScript, hand-written CSS. `web/`
 - **Timer** — an in-process cron scheduler, editable from the dashboard. Nothing in a system
@@ -121,14 +121,14 @@ Then open `http://<host>:8421`, paste the token, and **run a scan before trustin
 the page** — a fresh install reports everything as unknown, which is correct.
 
 `make setup` installs the attribution-guard hooks and copies `.env`; `scripts/setup.sh` provisions
-the container and authorises the SSH key on the estate hosts. See
+the container and authorises the SSH key on the Network hosts. See
 [docs/placement.md](docs/placement.md) for where it runs and why.
 
 ## Documentation
 
 | Doc | What it covers |
 |---|---|
-| [docs/placement.md](docs/placement.md) | Where it runs (its own incus container), why not on an estate host, the addressing and access boundaries it needs |
+| [docs/placement.md](docs/placement.md) | Where it runs (its own incus container), why not on a Network host, the addressing and access boundaries it needs |
 | [docs/stack.md](docs/stack.md) | Its role in the [Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack): owns / consumes / does not own |
 
 ## Layout
@@ -139,7 +139,7 @@ backend/ontrak/
   db.py         SQLite, and the lifetime of a finding
   remote.py     every command that reaches another machine, in one file
   scanners.py   the pure parsers (the unit-tested core)
-  scan.py       walks the estate, records findings, applies expiry
+  scan.py       walks the Network, records findings, applies expiry
   policy.py     cron arithmetic and the apply decision
   applier.py    the only code that changes a machine
   scheduler.py  the in-process timer
@@ -148,17 +148,17 @@ web/            the dashboard (Next.js app router)
 web/landing/    the GitHub Pages landing
 ```
 
-`remote.py` and `applier.py` are the only modules that touch the estate, and only `applier.py`
+`remote.py` and `applier.py` are the only modules that touch the Network, and only `applier.py`
 writes to it.
 
 ## Tests
 
 ```bash
-make test        # 188 tests, ~1s, no estate required
+make test        # 188 tests, ~1s, no Network required
 ```
 
 The suite covers the parsers, the cron arithmetic, the finding lifecycle, the scan engine (against
-a fake estate) and the apply decision. It is plain `unittest` and ships inside the backend image,
+a fake Network) and the apply decision. It is plain `unittest` and ships inside the backend image,
 so the deployed artefact can be verified directly:
 
 ```bash
@@ -178,15 +178,15 @@ production:
 - **one archive instead of a list.** `apt-get -s` prints two archives for a package in both an
   updates and a security pocket — `noble-updates, noble-security` — and the parser matched a single
   token. It rejected those lines, which is exactly the security case, so the simulation contributed
-  nothing on a real estate and every target read as `partial`. The cross-check against
+  nothing on a real Network and every target read as `partial`. The cross-check against
   `apt list --upgradable` kept the findings visible, which is why the unit tests did not catch it
-  and the first scan against the real estate did.
+  and the first scan against the real Network did.
 
 ## The registry budget
 
 Checking whether an image is behind means asking its registry what the tag points at now. For
 Docker Hub that question is answered anonymously out of roughly a hundred requests per six hours
-per address — the same budget every image **pull** in the estate draws from, so a scan that is
+per address — the same budget every image **pull** in the Network draws from, so a scan that is
 careless about it is what makes an update fail with `429 Too Many Requests`.
 
 Two things keep the scanning side cheap, both of them about the same insight, that the answer is
@@ -198,9 +198,9 @@ being re-requested when it has not changed:
   every time). The digest is cached, not the verdict — the comparison is redone on every scan, so
   an image pulled since the digest was fetched is still recognised as current.
 
-In this estate that took a repeat scan from about 210 s to about 72 s, and the second scan made no
+In this Network that took a repeat scan from about 210 s to about 72 s, and the second scan made no
 registry requests at all. A failed lookup is never cached: a rate limit is not a statement about
-the image, and caching one would report an estate as up to date for as long as the row lived.
+the image, and caching one would report a Network as up to date for as long as the row lived.
 
 ## License
 

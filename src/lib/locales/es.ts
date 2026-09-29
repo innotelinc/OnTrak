@@ -35,6 +35,15 @@ export const es: Messages = {
   "auth.signInIntro": "Inicia sesión para continuar donde lo dejaste.",
   "auth.ssoSignIn": "Iniciar sesión con SSO",
   "auth.ssoIntro": "Tu organización gestiona esta cuenta.",
+  "auth.signInFailed": "Error al iniciar sesión",
+  "auth.ssoMissing": "El inicio de sesión único no está configurado",
+  "auth.ssoMissingBody":
+    "Este despliegue no tiene proveedor de identidad configurado, así que todavía no hay forma de iniciar sesión.",
+  "auth.breakGlassTitle": "Inicio de sesión de emergencia",
+  "auth.breakGlassIntro":
+    "OnTrak es solo inicio de sesión único. Esta pantalla es el recurso local para el día en que no se pueda alcanzar el proveedor de identidad.",
+  "auth.breakGlassWarning":
+    "Iniciar sesión aquí no es el camino normal. Si el proveedor funciona, vuelve y usa el inicio de sesión único: cada uso de esta pantalla queda auditado.",
   "auth.or": "o",
   "auth.newStudent": "¿Eres nuevo estudiante?",
   "auth.createAccount": "Crear una cuenta",

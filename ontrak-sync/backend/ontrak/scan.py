@@ -1,6 +1,6 @@
 """Ontrak Sync — the scan.
 
-This walks the estate and writes *findings*: one row per (target, package) that is
+This walks the Network and writes *findings*: one row per (target, package) that is
 behind. It is the only thing in the system that talks to every machine, so it is
 also the only thing that has to be careful about the difference between the three
 possible answers a target can give:
@@ -40,7 +40,7 @@ import logging
 from dataclasses import dataclass, field
 
 from . import db, scanners
-from .config import Host, Settings
+from .config import WORKLOAD_KINDS, Host, Settings
 from .policy import Policy
 from .remote import Result, docker_in_container, incus, incus_exec, ssh
 
@@ -50,7 +50,7 @@ log = logging.getLogger("ontrak.scan")
 # that names the archive (see scanners.py). `apt-get update` runs first so the
 # answer is about now rather than about whenever this container last refreshed;
 # it writes to /var/lib/apt/lists and installs nothing, so it is safe in a
-# detect-only estate.
+# detect-only Network.
 APT_SIMULATE = [
     "sh", "-c",
     "export DEBIAN_FRONTEND=noninteractive LC_ALL=C; "
@@ -163,7 +163,7 @@ def _record_apt(conn, target_id: int, host: Host, container: str | None,
 
     # Unparsed lines are surfaced, not swallowed: they are the early warning that a
     # distribution changed its output format, which would otherwise silently
-    # under-report the whole estate.
+    # under-report the whole Network.
     for line in (sim_unparsed + list_unparsed)[:10]:
         report.errors.append(f"apt: unparsed output: {line[:200]}")
     report.manager_status["apt"] = "ok" if not (sim_unparsed + list_unparsed) else "partial"
@@ -203,14 +203,14 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
 
     Three-valued comparison all the way down (see `scanners.image_is_behind`): an
     image with no registry digest was built locally, so there is no registry to
-    ask and it is reported as unjudged rather than as current. This estate builds
+    ask and it is reported as unjudged rather than as current. This Network builds
     several images locally, so that path is exercised constantly.
 
     THE REGISTRY IS ASKED AS LITTLE AS POSSIBLE. A locally built image is not asked
     about at all, because the answer cannot matter, and a digest fetched within the
     last `digest_ttl_seconds` is reused instead of re-requested (`db.get_digest`).
     Both matter because the budget for asking Docker Hub anonymously is about a
-    hundred requests per six hours, shared with every image pull in the estate: a
+    hundred requests per six hours, shared with every image pull in the Network: a
     scan that spends it makes the *updates* fail.
     """
     if container is None:
@@ -318,7 +318,7 @@ def scan_target(conn, *, host: Host, name: str, kind: str, container: str | None
             conn, host=host.name, kind=kind, name=name, ref=container or host.address,
             meta={"address": host.address},
         )
-    except Exception as exc:  # a broken row must not abort the estate
+    except Exception as exc:  # a broken row must not abort the Network
         report.errors.append(f"target: {exc}")
         report.manager_status["target"] = "error"
         return report
@@ -328,7 +328,7 @@ def scan_target(conn, *, host: Host, name: str, kind: str, container: str | None
     # documents at the top applies literally — an error on the target and NO
     # findings. Carrying the previous scan's findings forward is what made four
     # stopped instances report 77 updates that no apply could ever install, failing
-    # every run with "Instance is not running" and keeping the estate's failed
+    # every run with "Instance is not running" and keeping the Network's failed
     # count permanently red for machines that are deliberately down. Nothing is
     # hidden while one is out of service: the first scan after it starts again
     # re-detects the same updates and they come back as pending.
@@ -370,9 +370,9 @@ def scan_target(conn, *, host: Host, name: str, kind: str, container: str | None
     return report
 
 
-def scan_estate(conn, settings: Settings, policy: Policy, *, trigger: str = "manual",
+def scan_network(conn, settings: Settings, policy: Policy, *, trigger: str = "manual",
                 host_names: list[str] | None = None) -> dict:
-    """Scan the estate and return the run summary the GUI shows."""
+    """Scan the Network and return the run summary the GUI shows."""
     hosts = [h for h in settings.hosts if not host_names or h.name in host_names]
     run_id = db.start_run(conn, "scan", trigger)
     db.log(conn, f"scan started ({trigger}) for {len(hosts)} host(s)", run_id=run_id)
@@ -394,7 +394,11 @@ def scan_estate(conn, settings: Settings, policy: Policy, *, trigger: str = "man
 
             os_name, _, kernel = (identity.stdout.strip() + "||").partition("|")
             instances: list[tuple[str, str]] = []
-            if host.kind in ("incus", "both"):
+            # A kind is only asked for its guests when this deployment can actually
+            # enumerate them (see `WORKLOAD_KINDS`). A Proxmox node, a VMware host or
+            # a bare-metal box is scanned as a machine in its own right — which is
+            # the correct answer, not a fallback.
+            if host.kind in WORKLOAD_KINDS:
                 # `-c ns` (name, state), not `-c n`: the state is what lets a
                 # stopped instance be reported as out of service instead of being
                 # probed, failing, and leaving stale findings behind.

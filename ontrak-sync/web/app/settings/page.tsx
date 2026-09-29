@@ -128,7 +128,7 @@ export default function SettingsPage() {
         <div>
           <h1>Timer &amp; policy</h1>
           <p>
-            When the estate is checked, and what the check is allowed to do. Changes
+            When the Network is checked, and what the check is allowed to do. Changes
             take effect on the next tick of the running scheduler — no restart.
           </p>
         </div>
@@ -229,7 +229,7 @@ export default function SettingsPage() {
             </select>
             <small>
               {draft.mode === "detect"
-                ? "Findings accumulate for approval. This is the safe default and what the estate runs."
+                ? "Findings accumulate for approval. This is the safe default and what the Network runs."
                 : "Updates are installed when the timer fires. Approvals are no longer required — the security-only switch below still applies."}
             </small>
           </label>

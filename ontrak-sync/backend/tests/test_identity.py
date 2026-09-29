@@ -1,8 +1,8 @@
 """The identity layer: passwords, sessions, throttling, roles, OIDC decisions.
 
-These run with the standard library alone — no FastAPI, no network, no estate —
+These run with the standard library alone — no FastAPI, no network, no Network —
 which is the point: the rules that decide who may install a package on every
-machine in the estate should be provable without a running service.
+machine in the Network should be provable without a running service.
 
 The tests worth reading first are the ones that assert a REFUSAL, because the
 successes were never the risky part:

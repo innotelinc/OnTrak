@@ -10,7 +10,7 @@
  *     thing you can POST to. The role that is checked is the one on the signed
  *     session, which came from a verified assertion — not a form field.
  *   * **An administrator cannot demote or deactivate themselves here.** Sync
- *     already refuses to remove its *last* administrator, which covers the estate;
+ *     already refuses to remove its *last* administrator, which covers the Network;
  *     this covers the smaller, far more likely mistake of an administrator taking
  *     away their own access while reading their own row. Changing your own role is
  *     something to do as somebody else.

@@ -17,7 +17,7 @@ an architecture instead of a deployment is a guide nobody can follow at 3am.
 | **Training** | `its.ontrak.innotel.us` | 3000 | Browser-based, automatically-graded IT support practice |
 | **Tix** | `tix.ontrak.innotel.us` | 3001 | Tickets, SLAs, clients, incident evidence |
 | **Sentinel** | `sentinel.ontrak.innotel.us` | 8787 | Identity provider and intrusion detection console |
-| **Sync** | `sync.ontrak.innotel.us` | 8420 (API) / 8421 (dashboard) | Estate package and container updates, and the family's local account table |
+| **Sync** | `sync.ontrak.innotel.us` | 8420 (API) / 8421 (dashboard) | Network package and container updates, and the family's local account table |
 
 All five run on the **`ontrak` incus container**, `192.168.1.21`, on host **i1**
 (`192.168.1.51`). Each is independently deployable and each has its own stack;
@@ -116,7 +116,7 @@ python3 /path/to/ontrak/scripts/cerulean-ontrak.py              # do it
 
 It ensures, for each name: a Technitium A record at the address the zone apex
 already uses, an NPM proxy host forwarding to the product's port, and the
-certificate that covers the name — including the estate's `*.ontrak.innotel.us`
+certificate that covers the name — including the Network's `*.ontrak.innotel.us`
 wildcard, which is the one that matters for the four subdomains.
 
 ### `already in use`, and why it is not obvious
@@ -175,7 +175,7 @@ empty, so a stale value can never restore a password somebody rotated.
 
 ## 5. Checking it
 
-From anywhere on the estate:
+From anywhere on the Network:
 
 ```bash
 for h in ontrak its.ontrak tix.ontrak sentinel.ontrak sync.ontrak; do
@@ -242,7 +242,7 @@ somebody's afternoon:
   what the product is.
 - **SAML and IdP-initiated sign-on** are not implemented; the flow is
   SP-initiated OIDC only.
-- **No self-service password reset.** There is no mail server in this estate's
+- **No self-service password reset.** There is no mail server in this Network's
   trust path, and a reset flow that cannot deliver a message is a login page that
   lies. An administrator resets through the dashboard.
 - **The portal does not sign you out of the products.** It clears its own session

@@ -3,7 +3,7 @@
 
 Two things are being pinned here, and they fail in opposite directions.
 
-The cron parser fails *silently*: a wrong next-run means the estate is simply not
+The cron parser fails *silently*: a wrong next-run means the Network is simply not
 updated, and nothing reports an error because nothing is wrong from the
 scheduler's point of view. It is also the one field an operator types by hand in a
 web form. So the cases below are as much about the expressions that must be
@@ -12,7 +12,7 @@ six-field expression is worse than one that says no.
 
 The policy function fails *loudly and expensively*: `action_for` is the single
 gate between "proposed a patch" and "installed it on twenty-seven containers". The
-estate runs detect-only, so the load-bearing assertion is that no input to a
+Network runs detect-only, so the load-bearing assertion is that no input to a
 detect-mode policy returns `"apply"`.
 """
 
@@ -46,7 +46,7 @@ class CronParsing(unittest.TestCase):
         self.assertEqual({1, 15}, cron.days)
 
     def test_sunday_is_both_zero_and_seven(self):
-        # cron accepts 7 for Sunday and this estate's docs use 0; both must land on
+        # cron accepts 7 for Sunday and this Network's docs use 0; both must land on
         # Sunday rather than 7 being read as "no match" and silently never firing.
         self.assertEqual({0}, policy.Cron.parse("0 3 * * 7").weekdays)
         self.assertEqual({0}, policy.Cron.parse("0 3 * * 0").weekdays)
@@ -261,7 +261,7 @@ class MaintenanceWindow(unittest.TestCase):
 
 class ApplyDecision(unittest.TestCase):
     def test_detect_mode_can_never_apply(self):
-        # THE load-bearing assertion. The estate runs detect-only, and this is the
+        # THE load-bearing assertion. The Network runs detect-only, and this is the
         # one function that decides whether a package gets installed.
         p = policy.Policy(mode="detect")
         for security, total in ((0, 0), (1, 1), (5, 50), (0, 10)):

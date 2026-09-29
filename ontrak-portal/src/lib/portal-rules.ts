@@ -101,7 +101,7 @@ export const PRODUCTS: readonly Product[] = [
     key: "sync",
     name: "OnTrak Sync",
     tagline:
-      "The estate's package and container update view, and the one place that installs what a person approved.",
+      "The Network's package and container update view, and the one place that installs what a person approved.",
     audience: "sysadmins",
     host: "sync",
     roles: ["SYSADMIN", "ADMIN"],
@@ -145,7 +145,7 @@ export function product(key: string): Product | null {
 /**
  * The address of a product.
  *
- * `baseDomain` is configuration and defaults to the estate's real name, so a
+ * `baseDomain` is configuration and defaults to the Network's real name, so a
  * deployment that has not been told otherwise still produces a link that resolves
  * rather than a relative path that silently 404s on the portal's own origin.
  */
@@ -168,7 +168,7 @@ export function canOpen(role: Role, key: ProductKey): boolean {
  *
  * The *most specific* product for the role rather than the first match: an
  * administrator belongs everywhere, and landing them on the training range when
- * they came to do estate maintenance is landing them in the wrong application.
+ * they came to do Network maintenance is landing them in the wrong application.
  * `workspaces` lists the product keys a person is here for, most-preferred first,
  * and the catalogue order is the tie-break.
  */

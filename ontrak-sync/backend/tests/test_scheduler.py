@@ -8,10 +8,10 @@ show up overnight:
     seconds, so a minute contains two ticks. Without the guard, every scheduled run
     happens twice — two scans racing each other, and in `auto` mode two applies of
     the same package on the same host.
-  * **never apply in detect mode.** This is the estate's default, and the scheduler
-    is the one caller that could apply without a person. `scan_estate` and
+  * **never apply in detect mode.** This is the Network's default, and the scheduler
+    is the one caller that could apply without a person. `scan_network` and
     `apply_findings` are both stubbed here so the assertions are about what the
-    scheduler DECIDED, not about what a fake estate did.
+    scheduler DECIDED, not about what a fake Network did.
 
 The policy is read from the database on every tick rather than held in memory, so
 these tests also pin that a settings change takes effect without a restart.
@@ -54,7 +54,7 @@ class SchedulerCase(unittest.TestCase):
             return {"run_id": 2, "applied": len(finding_ids), "failed": 0, "manual": [],
                     "messages": [], "summary": f"{len(finding_ids)} applied"}
 
-        patcher = mock.patch.multiple(scheduler, scan_estate=fake_scan, apply_findings=fake_apply)
+        patcher = mock.patch.multiple(scheduler, scan_network=fake_scan, apply_findings=fake_apply)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.scheduler = scheduler.Scheduler(self.conn, self.settings)
@@ -118,7 +118,7 @@ class Mode(SchedulerCase):
         self.conn.commit()
 
     def test_detect_mode_scans_and_never_applies(self):
-        # The estate's default. A timer that installed packages here would be the
+        # The Network's default. A timer that installed packages here would be the
         # worst possible bug in this project.
         self.approved_findings(security=2, plain=3)
         self.set_policy(schedule="* * * * *", mode="detect")
@@ -167,7 +167,7 @@ class Mode(SchedulerCase):
         # least not corrupt the last-fired guard, or the next attempt would silently
         # skip its minute.
         self.set_policy(schedule="* * * * *", mode="auto")
-        with mock.patch.object(scheduler, "scan_estate", side_effect=RuntimeError("boom")):
+        with mock.patch.object(scheduler, "scan_network", side_effect=RuntimeError("boom")):
             with self.assertRaises(RuntimeError):
                 self.scheduler.tick(dt(2026, 9, 28, 3, 0))
         self.scheduler.tick(dt(2026, 9, 28, 3, 1))

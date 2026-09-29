@@ -3,17 +3,27 @@
 /**
  * The sign-in panel.
  *
- * Two ways in, and the page has to be honest about which ones are available:
- * the local username-and-password form, and **Cerulean** single sign-on. The SSO
- * button is only drawn when the API says the handshake is configured, because a
- * button that cannot complete is worse than no button — it is the difference
- * between "SSO is not set up here" and "SSO is broken".
+ * SINGLE SIGN-ON, AND ONE DELIBERATE EXCEPTION.
  *
- * A note on what this form does *not* do: it never tells you whether a username
- * exists. The API answers a wrong password and an unknown account with the same
- * message, and repeating that here rather than adding a helpful hint is the whole
- * point. The lockout message is the one piece of extra information, because being
- * told "wait 30 seconds" is what stops somebody hammering it.
+ * `mode = "sso"` (the default, and what every route shows) draws exactly one
+ * control: Cerulean. There is no username-and-password form, because OnTrak is one
+ * identity layer and a second way in is a second place a password can be wrong, a
+ * second place it can be reused, and a second place to audit.
+ *
+ * `mode = "local"` is the break-glass door at `/login/break-glass`: a local account
+ * that works when the provider does not. It is kept unlinked and un-indexed because
+ * a fallback that is easy to reach stops being a fallback and becomes how people
+ * sign in.
+ *
+ * The SSO button is only drawn when the API says the handshake is configured,
+ * because a button that cannot complete is worse than no button — it is the
+ * difference between "SSO is not set up here" and "SSO is broken".
+ *
+ * A note on what the local form does *not* do: it never tells you whether a
+ * username exists. The API answers a wrong password and an unknown account with the
+ * same message, and repeating that here rather than adding a helpful hint is the
+ * whole point. The lockout message is the one piece of extra information, because
+ * being told "wait 30 seconds" is what stops somebody hammering it.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -21,10 +31,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "@/lib/api";
 import type { AppUser, Meta } from "@/lib/types";
 
-export function LoginPanel({ notice, onSignedIn }: {
+import { ThemeToggle } from "./ThemeToggle";
+
+export function LoginPanel({
+  notice,
+  onSignedIn,
+  mode = "sso",
+}: {
   /** A message from outside the form — an SSO refusal, or "the API is down". */
   notice: string | null;
   onSignedIn: (user: AppUser) => void;
+  /** `sso` draws the provider only; `local` is the unlinked break-glass form. */
+  mode?: "sso" | "local";
 }) {
   // Read in an effect rather than during render: the server has no `location`, so
   // computing this inline would render a different `href` on each side and hydrate
@@ -119,25 +137,38 @@ export function LoginPanel({ notice, onSignedIn }: {
   }, [busy, onSignedIn, password, retryAfter, username]);
 
   const ssoEnabled = Boolean(meta?.sso?.enabled);
+  const provider = meta?.sso?.provider ?? "Cerulean";
   const noAccounts = meta !== null && meta.users_exist === false;
+  const local = mode === "local";
 
   return (
     <div className="gate">
-      <h1>Ontrak Sync</h1>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <ThemeToggle />
+      </div>
+
+      <h1>{local ? "Break-glass sign-in" : "OnTrak Sync"}</h1>
       <p>
-        Estate package and container updates. Sign in to review what is pending and
-        decide what gets installed.
+        {local
+          ? "OnTrak Sync is single sign-on only. This screen is the local fallback for the day the identity provider cannot be reached."
+          : "Package and container updates across the Network. Sign in to review what is pending and decide what gets installed."}
       </p>
 
       {notice ? <div className="note note--bad" role="alert">{notice}</div> : null}
       {ssoError ? (
         <div className="note note--bad" role="alert">
-          {meta?.sso.provider ?? "Cerulean"} refused that sign-in: {ssoError}
+          {provider} refused that sign-in: {ssoError}
         </div>
       ) : null}
       {metaError ? (
         <div className="note note--bad" role="alert">
           The API could not be reached, so the sign-in options cannot be read: {metaError}
+        </div>
+      ) : null}
+      {local ? (
+        <div className="note note--warn">
+          Signing in here is not the normal path. If the provider is up, close this tab and use single sign-on — every
+          use of this screen is audited.
         </div>
       ) : null}
       {noAccounts ? (
@@ -148,77 +179,88 @@ export function LoginPanel({ notice, onSignedIn }: {
         </div>
       ) : null}
 
-      <form onSubmit={submit} noValidate>
-        <label className="field">
-          <span>Username</span>
-          <input
-            ref={usernameRef}
-            type="text"
-            name="username"
-            value={username}
-            autoComplete="username"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            required
-            disabled={busy}
-            onChange={(event) => setUsername(event.target.value)}
-          />
-        </label>
-
-        <label className="field">
-          <span>Password</span>
-          <input
-            type={showPassword ? "text" : "password"}
-            name="password"
-            value={password}
-            autoComplete="current-password"
-            required
-            disabled={busy}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-          <small>
-            <label className="checkline" style={{ display: "inline-flex" }}>
-              <input
-                type="checkbox"
-                checked={showPassword}
-                onChange={(event) => setShowPassword(event.target.checked)}
-              />
-              show the password
-            </label>
-          </small>
-        </label>
-
-        {error ? (
-          <div className="note note--bad" role="alert">
-            {error}
-            {retryAfter > 0 ? ` (${retryAfter}s)` : ""}
+      {/* ── the normal path ─────────────────────────────────────────────────── */}
+      {!local ? (
+        ssoEnabled ? (
+          <div className="gate__sso">
+            <a className="gate__sso-button" href={api.ssoStartUrl(next)}>
+              Sign in with {provider}
+            </a>
+            <p className="faint" style={{ marginTop: 8 }}>
+              Your account, groups and second factor are managed in {provider}. The group you belong to decides your
+              role here.
+            </p>
           </div>
-        ) : null}
-
-        <div className="actions">
-          <button className="primary" type="submit"
-                  disabled={busy || retryAfter > 0 || !username.trim() || !password}>
-            {busy ? "Signing in…" : "Sign in"}
-          </button>
-        </div>
-      </form>
-
-      {ssoEnabled ? (
-        <div className="gate__sso">
-          <div className="gate__divider"><span>or</span></div>
-          <a className="gate__sso-button"
-             href={api.ssoStartUrl(next)}>
-            Sign in with {meta?.sso.provider ?? "Cerulean"}
-          </a>
-          <p className="faint" style={{ marginTop: 8 }}>
-            Your account, groups and second factor are managed in Cerulean.
+        ) : meta !== null ? (
+          <p className="faint" style={{ marginTop: 14, marginBottom: 0 }}>
+            Single sign-on is not configured for this deployment, so there is no way to sign in yet.
           </p>
-        </div>
-      ) : meta !== null && !noAccounts ? (
-        <p className="faint" style={{ marginTop: 14, marginBottom: 0 }}>
-          Single sign-on is not configured for this deployment.
-        </p>
+        ) : null
+      ) : null}
+
+      {/* ── the break-glass door ────────────────────────────────────────────── */}
+      {local ? (
+        <>
+          <form onSubmit={submit} noValidate>
+            <label className="field">
+              <span>Username</span>
+              <input
+                ref={usernameRef}
+                type="text"
+                name="username"
+                value={username}
+                autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                required
+                disabled={busy}
+                onChange={(event) => setUsername(event.target.value)}
+              />
+            </label>
+
+            <label className="field">
+              <span>Password</span>
+              <input
+                type={showPassword ? "text" : "password"}
+                name="password"
+                value={password}
+                autoComplete="current-password"
+                required
+                disabled={busy}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <small>
+                <label className="checkline" style={{ display: "inline-flex" }}>
+                  <input
+                    type="checkbox"
+                    checked={showPassword}
+                    onChange={(event) => setShowPassword(event.target.checked)}
+                  />
+                  show the password
+                </label>
+              </small>
+            </label>
+
+            {error ? (
+              <div className="note note--bad" role="alert">
+                {error}
+                {retryAfter > 0 ? ` (${retryAfter}s)` : ""}
+              </div>
+            ) : null}
+
+            <div className="actions">
+              <button className="primary" type="submit"
+                      disabled={busy || retryAfter > 0 || !username.trim() || !password}>
+                {busy ? "Signing in…" : "Sign in locally"}
+              </button>
+            </div>
+          </form>
+
+          <p className="faint" style={{ marginTop: 14, marginBottom: 0 }}>
+            <a href="/login">← Back to single sign-on</a>
+          </p>
+        </>
       ) : null}
     </div>
   );

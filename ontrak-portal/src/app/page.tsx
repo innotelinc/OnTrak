@@ -40,7 +40,7 @@ export default async function DashboardPage() {
   });
 
   // Probe the products this person can see, in parallel, with a short deadline.
-  // The health check is unauthenticated and always has been — asking the estate
+  // The health check is unauthenticated and always has been — asking the Network
   // "are you there" must not require a credential the portal would have to hold.
   const statuses = new Map<string, { reachability: Reachability; detail: string }>();
   await Promise.all(

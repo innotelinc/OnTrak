@@ -1,8 +1,8 @@
 # Ontrak Sync backend.
 #
-# Deliberately short. The estate's other Python services bring a framework and a
+# Deliberately short. The Network's other Python services bring a framework and a
 # dozen libraries; this one needs a web framework, an ASGI server and nothing else,
-# because everything it does to the estate runs over SSH and the os/apt output
+# because everything it does to the Network runs over SSH and the os/apt output
 # parsers are hand-written (and unit-tested) rather than imported. Fewer
 # dependencies is less to patch — which matters for a tool whose job is patching.
 #

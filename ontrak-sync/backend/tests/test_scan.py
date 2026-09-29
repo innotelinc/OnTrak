@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for ontrak/scan.py — what a scan does and, mostly, does not claim.
 
-The remote calls are faked, because the estate is not a test fixture: these cases
+The remote calls are faked, because the Network is not a test fixture: these cases
 are about the decisions the scan makes from what it is told, and the interesting
 ones are all about *absence*.
 
@@ -13,7 +13,7 @@ A target has four possible answers and only the first two are "fine":
   * I could not look                   → no findings, target NOT scanned, an error
 
 The third and fourth must not be confused with the second, and none of the last
-three may erase findings already on record. That is why the fake estate models
+three may erase findings already on record. That is why the fake Network models
 "tool absent" explicitly: it is the case that makes the difference between a host
 being reported clean and being reported unknown, and a fake that returned a
 successful empty result for a missing `apt` could not tell them apart.
@@ -33,7 +33,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ontrak import db, scan  # noqa: E402
+from ontrak import config, db, scan  # noqa: E402
 from ontrak.config import Host, Settings  # noqa: E402
 from ontrak.policy import Policy  # noqa: E402
 from ontrak.remote import Result  # noqa: E402
@@ -65,8 +65,8 @@ NOT_FOUND_DOCKER = "sh: 1: docker: not found"
 NOT_FOUND_SNAP = "sh: 1: snap: not found"
 
 
-class FakeEstate:
-    """A canned estate. Every method mirrors the signature it replaces.
+class FakeNetwork:
+    """A canned Network. Every method mirrors the signature it replaces.
 
     Nothing is installed unless a test says so: an unconfigured tool answers "not
     found", which is what a minimal container actually does. A docker host that is
@@ -77,7 +77,7 @@ class FakeEstate:
         self.host = host
         self.containers = list(containers)
         # name -> incus state. Absent means RUNNING, so every pre-existing test
-        # keeps describing a live estate; a test that wants a stopped instance
+        # keeps describing a live Network; a test that wants a stopped instance
         # registers it here.
         self.states: dict[str, str] = {}
         self.reachable = True
@@ -145,7 +145,7 @@ class ScanCase(unittest.TestCase):
     def setUp(self):
         self.conn = db.connect(":memory:")
         db.init(self.conn)
-        self.fake = FakeEstate()
+        self.fake = FakeNetwork()
         self.settings = Settings(hosts=(Host("i1", "192.168.1.51", "both"),))
         self.policy = Policy(mode="detect", max_concurrent=1)
         patcher = mock.patch.multiple(
@@ -159,7 +159,7 @@ class ScanCase(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def scan(self, **kwargs):
-        return scan.scan_estate(self.conn, self.settings, self.policy, **kwargs)
+        return scan.scan_network(self.conn, self.settings, self.policy, **kwargs)
 
     def findings(self):
         # `SELECT *` rather than a column list: the assertions reach for
@@ -172,10 +172,10 @@ class ScanCase(unittest.TestCase):
         return next(h for h in result["hosts"] if h["target"] == name)
 
     def manifest_calls(self) -> int:
-        """How many times the estate was asked about a remote image tag.
+        """How many times the Network was asked about a remote image tag.
 
         The count is the point of the digest cache: each of these is one request out
-        of Docker Hub's anonymous budget, which the estate's image pulls share.
+        of Docker Hub's anonymous budget, which the Network's image pulls share.
         """
         return sum(1 for call in self.fake.calls
                    if call[0] == "docker" and call[3][:1] == ("manifest",))
@@ -452,8 +452,8 @@ class DockerScan(ScanCase):
     def test_a_second_scan_does_not_ask_the_registry_again(self):
         # The rate limit is the reason. Docker Hub answers anonymous requests out of
         # a budget of roughly a hundred per six hours, shared with every image pull
-        # in the estate, and a tag's digest does not change between two scans an hour
-        # apart — so the second ask buys nothing and costs the estate an update.
+        # in the Network, and a tag's digest does not change between two scans an hour
+        # apart — so the second ask buys nothing and costs the Network an update.
         self.with_images({"Repository": "redis", "Tag": "7.4", "Digest": "sha256:olddigest0000000"})
         self.fake.manifests["redis:7.4"] = (True, json.dumps({"Descriptor": {"digest": "sha256:newdigest0000000"}}))
         self.scan()
@@ -565,7 +565,7 @@ class ScanBookkeeping(ScanCase):
         self.assertEqual(1, result["scanned"])
         self.assertEqual("ok", result["status"])
 
-    def test_an_estate_where_nothing_answers_is_an_error_run(self):
+    def test_a_network_where_nothing_answers_is_an_error_run(self):
         self.fake.containers = []
         self.fake.reachable = False
         result = self.scan()
@@ -604,6 +604,40 @@ class AdminSummary(unittest.TestCase):
         db.touch_target(conn, target, error=None, looked=True)
         self.assertEqual(0, scan.host_admin_summary(conn)["unknown"])
         self.assertEqual(0, db.list_hosts(conn)[0]["unscanned"])
+
+
+class MachineKinds(ScanCase):
+    """A machine is not an incus host unless it says it is.
+
+    The Network is bare metal, VMware guests, Proxmox nodes, QEMU/KVM machines and
+    containers. A kind with no workload enumerator must be scanned as the machine it
+    is, and never probed with a tool it does not have: `incus list` run against a
+    VMware host produces an error the operator has to read, and a monitor that turns
+    "this is not an incus host" into "nothing to do here" is worse than useless — it
+    is reassuring.
+    """
+
+    def test_a_non_workload_machine_is_never_probed_with_incus(self):
+        self.settings = Settings(hosts=(Host("esx1", "192.168.1.90", "vmware"),))
+        self.fake.apt[None] = (SIM_TWO, LIST_TWO)
+        result = self.scan()
+        # Not one incus call: the kind said what the machine is, and it said `vmware`.
+        self.assertEqual([], [c for c in self.fake.calls if c[0] == "incus"])
+        # The machine's own packages are what can be out of date, and they were read.
+        self.assertEqual(2, len(self.findings()))
+        self.assertEqual(2, result["findings"])
+
+    def test_the_vocabulary_covers_the_machines_the_Network_actually_has(self):
+        for kind in ("physical", "virtual", "vmware", "proxmox", "lxc", "qemu", "docker", "incus"):
+            self.assertIn(kind, config.MACHINE_KINDS)
+        # Enumeration is the exception, not the rule: only the kinds the scanner can
+        # actually ask for their guests define themselves as workload hosts.
+        self.assertEqual({"incus", "both", "docker"}, set(config.WORKLOAD_KINDS))
+        self.assertNotIn("vmware", config.WORKLOAD_KINDS)
+
+    def test_an_unrecognised_kind_is_named_rather_than_hidden(self):
+        self.assertEqual("a Proxmox VE node", config.machine_kind_label("proxmox"))
+        self.assertIn("unrecognised", config.machine_kind_label("mystery-box"))
 
 
 if __name__ == "__main__":

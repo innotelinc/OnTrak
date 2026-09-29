@@ -7,7 +7,7 @@
  * layout is the priority order: security updates, then everything else pending,
  * then the two states that are NOT "fine" — unreachable hosts and targets that
  * were never inspected. Those last two sit in the same row of cards as the
- * pending count deliberately: an estate that reads "0 pending" while three hosts
+ * pending count deliberately: a Network that reads "0 pending" while three hosts
  * are unreachable is the failure this tool exists to prevent, and a number in a
  * small grey font under a table is not enough to prevent it.
  *
@@ -59,7 +59,7 @@ export default function DashboardPage() {
     <>
       <div className="page-head">
         <div>
-          <h1>Estate update state</h1>
+          <h1>Network update state</h1>
           <p>
             Every incus host, every container inside it, and their apt, snap and Docker
             updates. Nothing is installed without an approval unless the timer is set to
@@ -163,7 +163,7 @@ export default function DashboardPage() {
             <div className="empty">Loading hosts…</div>
           ) : hostRows.length === 0 ? (
             <Empty>
-              No hosts have been recorded yet. Run a scan to inventory the estate.
+              No hosts have been recorded yet. Run a scan to inventory the Network.
             </Empty>
           ) : (
             <div className="scroll">

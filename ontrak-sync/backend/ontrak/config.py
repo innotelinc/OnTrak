@@ -4,12 +4,12 @@ Everything that differs between deployments is an environment variable, and ever
 one of them has a working default, because the failure this avoids is the boring
 one: a service that will not start because a variable somebody forgot to set is
 not in `.env`. The two that must be set deliberately are the API token (there is
-no default that is not a hole) and the estate's host list.
+no default that is not a hole) and the Network's host list.
 
-WHY THE ESTATE IS CONFIGURED AND NOT DISCOVERED
+WHY THE NETWORK IS CONFIGURED AND NOT DISCOVERED
 -----------------------------------------------
 Ontrak Sync can tell you what is on a host. It cannot tell you which hosts exist:
-the estate's incus hosts are reached over SSH by address, and nothing advertises
+the Network's incus hosts are reached over SSH by address, and nothing advertises
 them. So the host list is configuration, and `ONtrak_HOSTS` is the one place that
 says which machines this deployment is responsible for. A host that is listed and
 unreachable is reported as unreachable — never silently dropped — because "no
@@ -56,15 +56,61 @@ def _env_bool(name: str, default: bool) -> bool:
     return default
 
 
+#
+# WHAT A MACHINE IS, NOT WHAT TOOL HAPPENS TO BE ON IT.
+#
+# The Network is not made of incus containers. It is physical servers, VMware
+# guests, Proxmox nodes, LXC containers, QEMU/KVM machines and a few things nobody
+# wrote down — and a monitor that assumes the first of those will silently report
+# "nothing to do" for all the others. So `kind` names the *machine*, and the scan
+# does the honest thing with each one:
+#
+#   * a kind with a workload enumerator (today: `incus`, `both`) is asked for its
+#     guests, and each guest is scanned as its own target;
+#   * every other kind is scanned as a machine in its own right, over SSH. Its own
+#     packages are what can be out of date, and its guests — a Proxmox node's VMs, a
+#     VMware host's VMs — are separate machines with their own entries in
+#     `ONTRAK_HOSTS`, because that is what they are.
+#
+# Adding a kind is a one-line change here plus, if it should enumerate guests, an
+# enumerator in `scan.py`. That is deliberate: the list is the contract, and an
+# operator should be able to see what this deployment understands without reading
+# the scanner.
+MACHINE_KINDS: dict[str, str] = {
+    "incus": "runs incus containers",
+    "both": "runs incus and Docker workloads",
+    "docker": "runs Docker containers",
+    "lxc": "runs plain LXC containers",
+    "proxmox": "a Proxmox VE node",
+    "vmware": "a VMware ESXi host",
+    "qemu": "a QEMU/KVM hypervisor",
+    "virtual": "a virtual machine on any hypervisor",
+    "physical": "bare metal",
+}
+
+# Kinds whose *guests* this deployment can enumerate and then scan in their own
+# right. Everything else is scanned as a machine; its guests are separate host
+# entries, which keeps "which machine is behind on updates?" answerable for a
+# hypervisor whose API we do not speak.
+WORKLOAD_KINDS = frozenset({"incus", "both", "docker"})
+
+
+def machine_kind_label(kind: str) -> str:
+    """The machine's kind in words, for a human. Unknown kinds are named as such
+    rather than hidden, because an unrecognised kind means nothing will be
+    enumerated on that machine and somebody should be told."""
+    return MACHINE_KINDS.get(kind, f"{kind} (unrecognised)")
+
+
 @dataclass(frozen=True)
 class Host:
     """A machine Ontrak Sync is responsible for.
 
-    `kind` is `incus` for a host that runs incus containers, `docker` for a host
-    that runs Docker directly, or `both`. It only decides *how* the host is
-    inspected — an incus host is asked for its containers, a docker host is asked
-    for its containers — and it is configuration rather than detection because the
-    probes differ and a wrong guess costs a confusing empty result.
+    `kind` is what the machine *is* — see `MACHINE_KINDS` — and it only decides how
+    the machine is inspected. It is configuration rather than detection because the
+    probes differ per platform and a wrong guess costs a confusing empty result; an
+    unrecognised kind is treated as a plain machine and named as unrecognised in
+    the dashboard rather than guessed at.
     """
 
     name: str
@@ -150,7 +196,7 @@ class Settings:
     hosts: tuple[Host, ...] = field(default_factory=lambda: DEFAULT_HOSTS)
     db_path: Path = Path("/var/lib/ontrak/ontrak.sqlite3")
     # THE API TOKEN IS REQUIRED. There is no permissive default: a monitoring tool
-    # that can install packages on every machine in the estate is the last thing
+    # that can install packages on every machine in the Network is the last thing
     # that should answer an unauthenticated request, and "it was only on the LAN"
     # is how the LLM gateway's own door got published. Empty means refuse to start.
     api_token: str = ""
@@ -166,14 +212,14 @@ class Settings:
     # `apt-get update` from a mirror that answers in seconds on a good day and
     # minutes on a bad one, and then the upgrade behind it. A cold cache and empty
     # package lists are the difference between twenty seconds and a quarter of an
-    # hour. Sizing that like a probe is what turned five estate hosts into 306
+    # hour. Sizing that like a probe is what turned five Network hosts into 306
     # findings recorded as failed — on hosts whose upgrade had in some cases already
     # finished. A timeout no longer means failure by itself (see `apply_findings`,
     # where the verdict is re-read from apt), so this number now only decides how
     # long that wait is allowed to be.
     apt_timeout: int = 900
     # An image pull is the third kind of long job, and it shares apt's problem: the
-    # clock that suits a probe does not suit a download. This estate pulls images
+    # clock that suits a probe does not suit a download. This Network pulls images
     # several gigabytes deep over a domestic uplink, so a 300-second ceiling turned
     # the single largest update it knows about — the PBX full-stack image — into a
     # finding that failed every apply for being slow rather than wrong. A pull does
@@ -183,7 +229,7 @@ class Settings:
     # The scheduler is in-process (see policy.py for the cron arithmetic and the
     # apply policy). Disabling it leaves the API and the manual scan/apply paths
     # working, which is what you want while debugging a schedule that fires at the
-    # wrong time — but it does NOT change the mode, so an estate configured as
+    # wrong time — but it does NOT change the mode, so a Network configured as
     # `auto` stays `auto` and can still be applied by hand.
     scheduler_enabled: bool = True
     scheduler_tick_seconds: int = 30
@@ -192,7 +238,7 @@ class Settings:
     # `scheduler.load_policy`, which is where they are applied — a default that is
     # read here but never used is how an operator ends up believing a knob works.
     default_schedule: str = "0 4 * * 0"
-    # `detect` is the default and is what the estate runs. `auto` has to be typed
+    # `detect` is the default and is what the Network runs. `auto` has to be typed
     # deliberately, in an environment variable or the settings form, because it is
     # the difference between proposing a patch and installing it unattended.
     default_mode: str = "detect"

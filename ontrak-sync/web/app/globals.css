@@ -1,35 +1,44 @@
+@import "../theme/ontrak-theme.css";
+
 /*
  * Ontrak Sync — dashboard styles.
  *
- * Hand-written CSS rather than a utility framework, matching the estate's other
- * Next.js apps. The palette is doing semantic work and the class names say which
- * fact they represent (`pill--unknown`, `row--security`) so a page cannot invent a
- * new colour to mean "attention" and drift from what the rest of the operation
- * looks like.
+ * The colours all come from the shared theme imported above (a checked
+ * byte-identical copy of `theme/ontrak-theme.css`). Sync sits in the
+ * **operations** scheme — the graphite-and-blue family it and the Unity portal
+ * already used — and gains light mode, which it never had, from the same tokens
+ * every other product uses.
  *
- * The one deliberate rule: `--unknown` is a distinct colour from `--ok`. A host
- * that could not be inspected must not read as a host with nothing to do.
+ * What is left here is layout: the palette is doing semantic work and the class
+ * names still say which fact they represent (`pill--unknown`, `row--security`), so
+ * a page cannot invent a new colour to mean "attention" and drift from what the
+ * rest of the operations console looks like.
+ *
+ * The one deliberate rule the theme enforces for us: `--unknown` is a distinct
+ * colour from `--ok`. A host that could not be inspected must not read as a host
+ * with nothing to do.
  */
 
 :root {
-  --bg: #0b1015;
-  --bg-raised: #121a22;
-  --bg-input: #0e151c;
-  --line: #1e2a35;
-  --line-strong: #2b3a48;
-  --text: #e6edf3;
-  --text-dim: #93a3b3;
-  --text-faint: #64748b;
-
-  --ok: #3fb950;
-  --info: #58a6ff;
-  --security: #f85149;
-  --attention: #d29922;
-  --unknown: #8b949e;
-  --accent: #2f81f7;
-
-  --radius: 8px;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  /*
+   * The old names are kept as aliases of the semantic tokens they always meant, so
+   * several hundred declarations below did not have to be rewritten to gain light
+   * mode. Read the right-hand side; the left is history.
+   *
+   * Names the theme already defines with the same meaning — `--line`,
+   * `--line-strong`, `--ok`, `--info`, `--attention`, `--unknown`, `--mono` — are
+   * deliberately *not* re-aliased. A custom property that references itself is
+   * invalid at computed-value time, and aliasing `--ok: var(--ok)` would take the
+   * colour down with it.
+   */
+  --bg: var(--canvas);
+  --bg-raised: var(--surface);
+  --bg-input: var(--surface-sunken);
+  --text: var(--ink);
+  --text-dim: var(--ink-soft);
+  --text-faint: var(--ink-faint);
+  --security: var(--bad);
+  --accent: var(--brand);
 }
 
 * { box-sizing: border-box; }
@@ -116,7 +125,7 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .card {
   background: var(--bg-raised);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   padding: 11px 13px;
 }
 .card .label {
@@ -135,7 +144,7 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .panel {
   background: var(--bg-raised);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   overflow: hidden;
   margin-bottom: 18px;
 }
@@ -270,7 +279,7 @@ pre.out {
   margin: 12vh auto;
   background: var(--bg-raised);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   padding: 22px;
 }
 .gate h1 { margin: 0 0 6px; font-size: 19px; }

@@ -22,7 +22,7 @@ out by being refused something at 9am. With it, there is one address:
 | **Students and instructors** | [its.ontrak.innotel.us](https://its.ontrak.innotel.us) — the training range |
 | **Technicians** | [tix.ontrak.innotel.us](https://tix.ontrak.innotel.us) — the service desk |
 | **Analysts** | [sentinel.ontrak.innotel.us](https://sentinel.ontrak.innotel.us) — identity and intrusion detection |
-| **Sysadmins** | [sync.ontrak.innotel.us](https://sync.ontrak.innotel.us) — estate package and container updates |
+| **Sysadmins** | [sync.ontrak.innotel.us](https://sync.ontrak.innotel.us) — Network package and container updates |
 | **Everyone** | [ontrak.innotel.us](https://ontrak.innotel.us) — this portal |
 
 ## The one rule
@@ -65,7 +65,7 @@ they cannot see anything.
 
 Two ways, and the page is honest about which are available:
 
-1. **Cerulean (Authentik)**, the estate's directory. Authorization code flow with
+1. **Cerulean (Authentik)**, the Network's directory. Authorization code flow with
    PKCE; the ID token's signature is verified against the provider's published
    JWKS, and then its issuer, audience, nonce, expiry and email verification are
    checked before anything in it is believed. A group claim decides the role.

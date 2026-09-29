@@ -3,13 +3,13 @@
 This module is deliberately pure: it takes the *text* a package manager printed
 and returns findings. No subprocesses, no SSH, no database. That is what makes the
 hard part testable, and the hard part is not the plumbing — it is that these
-parsers decide what an operator is told to install across a whole estate.
+parsers decide what an operator is told to install across a whole Network.
 
 THE RULE THEY ALL FOLLOW: **unknown is not up-to-date.**
 Every parser here can fail to understand a line. When it does, it says so rather
 than dropping the line, because the two mistakes are not equally bad. Missing an
 update costs a patch window. Reporting a package as current because its output
-format changed means the estate looks patched while it is not, and that is the
+format changed means the Network looks patched while it is not, and that is the
 failure mode a patch-monitoring tool exists to prevent — it is exactly how
 PatchMon's agent tables read `0 pending` while hosts were drifting.
 
@@ -34,7 +34,7 @@ from dataclasses import dataclass
 # both are handled rather than assumed.
 #
 # THE ARCHIVE COLUMN IS A LIST, and capturing it as a single `\S+` is how this
-# parser silently rejected most of the estate. A package published in both an
+# parser silently rejected most of the Network. A package published in both an
 # updates and a security pocket — which is what a security update IS — is printed
 # as `(2.39-0ubuntu8.9 Ubuntu:24.04/noble-updates, Ubuntu:24.04/noble-security
 # [amd64])`, two tokens where the old pattern allowed one, so every such line fell
@@ -215,7 +215,7 @@ def parse_repo_digest(text: str) -> str:
 
     An image built locally has no `RepoDigest` — it was never pushed, so there is
     nothing to compare against and no remote to ask. That is `""`, which every
-    caller must treat as *unknown*, not as current. This estate builds several
+    caller must treat as *unknown*, not as current. This Network builds several
     images locally (`ghcr.io/innotelinc/olympus:local`, `innotel/npm-edge`), so
     this is the common case rather than an edge case.
     """
@@ -266,7 +266,7 @@ def image_is_behind(local_digest: str, remote_digest: str) -> bool | None:
     Three-valued on purpose. `False` ("current") and `None` ("cannot tell") must
     stay distinct: a locally built image, an unreachable registry and a rate-limited
     Docker Hub all produce `None`, and collapsing them into `False` would report an
-    entire estate as up to date the first time a registry refused a token.
+    entire Network as up to date the first time a registry refused a token.
     """
     if not local_digest or not remote_digest:
         return None

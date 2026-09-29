@@ -4,9 +4,9 @@
 
 ## Why its own container and not inside an existing one
 
-It is the only service in the estate that reaches every other machine, and it does
+It is the only service in the Network that reaches every other machine, and it does
 so with a key that can write. Putting it beside an application would mean that
-application's compromise is the estate's compromise, and the reverse. It also has
+application's compromise is the Network's compromise, and the reverse. It also has
 nothing in common with anything else here: no database server to share, no cache, no
 message bus.
 
@@ -18,12 +18,12 @@ twenty-seven containers at once when the fleet is being patched — which is exa
 when the host needs headroom. i1 also holds the edge proxies, so it is the host most
 likely to be up when a scan is due.
 
-## Why not on an estate host itself (e.g. `.46` running it locally)
+## Why not on a Network host itself (e.g. `.46` running it locally)
 
 The workstation container on `.46` is where this was developed, and it was briefly
 the obvious place. It is the wrong one: the service would then be inside a container
 whose lifecycle is somebody's development environment, and a scheduled patch run
-would be interrupted by a `docker compose down` unrelated to patching. The estate
+would be interrupted by a `docker compose down` unrelated to patching. The Network
 already moved the LLM gateway off `.46` for the same reason — a shared host makes
 the scheduler's promises unkeepable.
 
@@ -34,13 +34,13 @@ a **reservation** in the router UI — the router API cannot create one from a s
 (see `1-primary/cerulean/docs/router.md`, §3). Until the reservation exists, the
 address can move after a reboot and the dashboard's bookmarked URL breaks. The
 service itself does not care which address it has: `ONTRAK_API_BIND` and
-`ONTRAK_WEB_BIND` name it, and `ONTRAK_HOSTS` lists the estate, not itself.
+`ONTRAK_WEB_BIND` name it, and `ONTRAK_HOSTS` lists the Network, not itself.
 
 ## What it needs
 
 | Requirement | Why |
 |---|---|
-| SSH to each estate host as root (key only, `BatchMode=yes`) | the only way in; there is no agent to install |
+| SSH to each Network host as root (key only, `BatchMode=yes`) | the only way in; there is no agent to install |
 | `incus` on those hosts | to enumerate containers and to run commands inside them |
 | Outbound HTTPS to registries | docker digest comparison; a registry that refuses is reported as unjudged |
 | Nothing else | no Docker socket, no privileged mode, no incus binary in the container |
@@ -54,5 +54,5 @@ container from outliving the container.
 
 The API is published on the LAN because the dashboard authenticates from the
 browser. Its token is the only credential, so it belongs behind the edge like every
-other admin surface — see `1-primary/npm/docs/stack.md` for how the estate fronts
+other admin surface — see `1-primary/npm/docs/stack.md` for how the Network fronts
 those.

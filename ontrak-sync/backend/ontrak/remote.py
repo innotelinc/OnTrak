@@ -2,7 +2,7 @@
 
 One place where every command Ontrak Sync runs is built, so the answer to "what
 does this thing actually execute?" is one file. Three rules live here, and each
-one is a bug that was already paid for somewhere in this estate:
+one is a bug that was already paid for somewhere in this Network:
 
 1. **`stdin` is always `/dev/null`.**
    `incus exec <c> -- docker …` *consumes* stdin. A caller that pipes a heredoc
@@ -94,7 +94,7 @@ def ssh(host: Host, remote_argv: list[str], timeout: int) -> Result:
 
     `BatchMode=yes` so a missing key fails immediately instead of blocking on a
     password prompt that nobody can answer; `StrictHostKeyChecking=accept-new`
-    because these are LAN addresses the estate re-addresses, and a host key prompt
+    because these are LAN addresses the Network re-addresses, and a host key prompt
     would hang the scheduler at 04:00.
     """
     argv = [

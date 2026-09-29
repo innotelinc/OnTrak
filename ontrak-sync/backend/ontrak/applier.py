@@ -1,6 +1,6 @@
 """Ontrak Sync — the only code in this system that changes a machine.
 
-Everything else reads. This writes, on potentially every host in the estate, and
+Everything else reads. This writes, on potentially every host in the Network, and
 so it is written to a different standard than the rest: every command is fixed
 except for the package names, and those come from a database row rather than from
 the command line.
@@ -151,7 +151,7 @@ def _compose_argv(project: str, workdir: str, files: list[str], env_file: str) -
     *different* project. Three labels carry what the files do not:
 
       * `project` — and it has to be passed explicitly, because a project with no
-        `name:` in its files is named after its *directory*, and in this estate the
+        `name:` in its files is named after its *directory*, and in this Network the
         two often differ: the monitoring stack is labelled `innotel-metrics` and
         lives in `…/monitoring`, the gateway is `innotel-gateway` and lives in
         `…/llm`. Composing those paths without pinning the name is not the same
@@ -164,7 +164,7 @@ def _compose_argv(project: str, workdir: str, files: list[str], env_file: str) -
         exact `-f` set, which is how a stack started with an override file stays
         started with it.
       * `project.environment_file` — set when the stack was started with
-        `--env-file`, which this estate does wherever the secrets live beside the
+        `--env-file`, which this Network does wherever the secrets live beside the
         stack rather than in the working directory (`…/monitoring/.env.host`,
         `…/llm/.env.host`). Those stacks interpolate `${SECRET:?}`, and without the
         file compose refuses them: the images in them failed every apply with
@@ -205,7 +205,7 @@ def _plan_services(host: Host, container: str, argv: list[str], running: list[st
     """(the invocation to reuse, the services it would manage, the ones it would not,
     compose's own complaint if it could not read the stack at all).
 
-    WHY THIS WIDENS AT ALL. Some stacks in this estate are started with profiles,
+    WHY THIS WIDENS AT ALL. Some stacks in this Network are started with profiles,
     and `docker compose config --services` leaves profile-gated services out of its
     answer. The plan then looks smaller than reality and the recreate is refused —
     correctly, because `up` with the wrong profile set *stops* the services that
@@ -269,7 +269,7 @@ def _docker_recreate(host: Host, container: str, ref: str, settings: Settings,
     """Pull `ref` and recreate the containers running it, or explain why not.
 
     THE CHECK THAT MATTERS: a compose project is recreated with the compose files
-    recorded in the *container's own labels*, and this estate does not always start
+    recorded in the *container's own labels*, and this Network does not always start
     a stack the same way it is written down — profiles are used on some projects
     and not others, and `docker compose up` with the wrong profile set *stops the
     services that profile defines*. So before recreating, the number of services

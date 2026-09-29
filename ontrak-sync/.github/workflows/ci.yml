@@ -4,7 +4,7 @@
 # The attribution guard has its own workflow (attribution-guard.yml); this file
 # covers this repo's own concerns:
 #
-#   * the backend suite — plain unittest, no pytest, no network, no estate. The
+#   * the backend suite — plain unittest, no pytest, no network, no Network. The
 #     parsers, the cron arithmetic and the finding lifecycle are the parts that
 #     must not rot, and they are pure functions, so they run anywhere.
 #   * the dashboard typecheck — the API surface the UI calls is typed, so a

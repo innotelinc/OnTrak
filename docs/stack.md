@@ -24,7 +24,7 @@ This document only states OnTrak's place in it.
   notification wording kept as sent, and the signed assurance packet.
 - **Its own audit chain** — append-only, hash-chained records of every
   privileged action, verifiable without trusting the application that wrote it.
-- **The estate's update state** — which host and container is behind on which
+- **The Network's update state** — which host and container is behind on which
   package, and what was applied when (OnTrak Sync).
 - **The family's front door** — routing a signed-in person to the product their
   role belongs in (OnTrak Portal). The portal owns the *routing decision* and
@@ -34,7 +34,7 @@ This document only states OnTrak's place in it.
 
 - **Identity (Cerulean, running Authentik)** — OIDC sign-in for staff, students,
   technicians, analysts and sysadmins, with a local credential fallback so each
-  app deploys standalone. In this estate the directory is already Cerulean's
+  app deploys standalone. In this Network the directory is already Cerulean's
   Authentik; **OnTrak Sync owns the local account table**, which is what the
   portal's password sign-in delegates to and what a LAN with no route to the
   provider signs in against.
@@ -65,7 +65,7 @@ This document only states OnTrak's place in it.
 | `ontrak-tix` | Next.js 15, React 19, TypeScript, Prisma, PostgreSQL | The service desk: tickets, SLAs, clients, time, billing, incidents, assurance |
 | ITS training app | Next.js 15, React 19, TypeScript, Prisma, PostgreSQL, xterm.js | Graded Linux/Windows/Office simulations, attempts, certificates |
 | `ontrak-portal` | Next.js 15, React 19, TypeScript, no database | The family's front door: one sign-in, then the products a role belongs in. Routes by role and authorises nothing — every product re-checks the caller itself |
-| `ontrak-sync` | Python 3.12 + FastAPI + SQLite (API), Next.js 16 dashboard | Estate package/container update monitoring and approved updating; the family's local account table and its capability model |
+| `ontrak-sync` | Python 3.12 + FastAPI + SQLite (API), Next.js 16 dashboard | Network package/container update monitoring and approved updating; the family's local account table and its capability model |
 | `ontrak-sentinel` (planned) | (unbuilt) | IdP + IDS/IPS for the family |
 | Audit chain | Append-only rows, hash-chained per tenant | Tamper-evident history shared by every app |
 | Evidence store | Filesystem or object storage behind an object-lock port | Incident artifacts under a retention window nobody can shorten |

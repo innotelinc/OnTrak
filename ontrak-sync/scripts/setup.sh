@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Ontrak Sync — provision the service container and its access to the estate.
+# Ontrak Sync — provision the service container and its access to the Network.
 #
 # Idempotent: run it again after changing ONTRAK_HOSTS and it will only add what is
 # missing. That matters because the two things it does — create the incus container
-# and authorise an SSH key on every host in the estate — are both things you do
-# again when the estate changes.
+# and authorise an SSH key on every host in the Network — are both things you do
+# again when the Network changes.
 #
 # WHAT IT TOUCHES, AND WHAT IT DELIBERATELY DOES NOT
 # --------------------------------------------------
 # It creates ONE incus container and adds ONE public key to each listed host's
-# `authorized_keys`. It does not install anything on the estate hosts, does not
+# `authorized_keys`. It does not install anything on the Network hosts, does not
 # change their SSH configuration, and does not run as anything but root over an
 # existing password login. The key it authorises is generated locally and is the
 # only credential the service holds.
@@ -25,7 +25,7 @@ set -euo pipefail
 
 # ── configuration ────────────────────────────────────────────────────────────
 INCUS_HOST="${INCUS_HOST:-192.168.1.51}"          # the bare-metal incus host (i1)
-# NOT defaulted here. The estate's rule is that no credential lives in a repo
+# NOT defaulted here. The Network's rule is that no credential lives in a repo
 # file, and `${VAR:-<literal>}` is the shape that hides one: a secret scan reads
 # an interpolation rather than a value, so the password would ship in every clone
 # with nothing to flag it. Provide it in the environment, or as
@@ -38,7 +38,7 @@ KEY_PATH="${ONTRAK_SSH_KEY:-$HOME/.ssh/id_ed25519}"
 # Kept in step with ONTRAK_HOSTS in .env by hand; the script prints the mismatch if
 # they disagree, because a host that is scanned but not reachable reads as
 # "unreachable" rather than as a configuration mistake.
-ESTATE_HOSTS="${ESTATE_HOSTS:-192.168.1.51 192.168.1.52 192.168.1.53}"
+NETWORK_HOSTS="${NETWORK_HOSTS:-192.168.1.51 192.168.1.52 192.168.1.53}"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # The password may live in .env instead of the environment. Read that one key
@@ -94,7 +94,7 @@ else
   echo "    created"
 fi
 
-# Static-ish addressing: the estate hands out DHCP reservations from the router,
+# Static-ish addressing: the Network hands out DHCP reservations from the router,
 # which is UI-only (see 1-primary/cerulean/docs/router.md), so the address is
 # asserted here rather than configured.
 remote "incus config set '$CONTAINER' limits.cpu 2 >/dev/null; \
@@ -103,11 +103,11 @@ remote "incus config set '$CONTAINER' limits.cpu 2 >/dev/null; \
 say "container address (expected $ADDRESS — reserve it in the router UI if different)"
 remote "incus list '$CONTAINER' --format csv -c 4"
 
-# ── 3. authorise the key on every estate host ────────────────────────────────
-say "authorising the key on: $ESTATE_HOSTS"
-for host in $ESTATE_HOSTS; do
+# ── 3. authorise the key on every Network host ────────────────────────────────
+say "authorising the key on: $NETWORK_HOSTS"
+for host in $NETWORK_HOSTS; do
   # Installed from inside the incus host, which already has password access to the
-  # members of its own estate.
+  # members of its own Network.
   remote "sshpass -p '$INCUS_PASSWORD' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 root@$host \
             'mkdir -p /root/.ssh && chmod 700 /root/.ssh && \
              grep -qF \"$PUBKEY\" /root/.ssh/authorized_keys 2>/dev/null || \
@@ -124,7 +124,7 @@ cat <<EOF
     3. cp .env.example .env  and set ONTRAK_API_TOKEN=\$(openssl rand -hex 32)
     4. mkdir -p /root/.ssh && copy ${KEY_PATH} — the PRIVATE half — to
        /root/.ssh/id_ed25519 on the container and chmod 600 it. Compose mounts it
-       read-only on purpose: the service may install packages on the estate, but it
+       read-only on purpose: the service may install packages on the Network, but it
        must not be able to rewrite the key that lets it do so.
     5. docker compose up -d --build
     6. Open http://$ADDRESS:8421 and paste the token.

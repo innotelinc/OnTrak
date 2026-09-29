@@ -12,7 +12,7 @@
  *   * **issuer** — the provider has to be the one we asked. Authentik advertises
  *     its base URL as the issuer while an application's endpoints live under
  *     `/application/o/<slug>/`, so the *application-scoped* issuer is what has to
- *     match, and a mismatch here is the difference between "the estate's directory"
+ *     match, and a mismatch here is the difference between "the Network's directory"
  *     and "any directory at all".
  *   * **audience** — the token must have been minted for this client. Without it,
  *     an assertion issued to the training range would be a valid sign-in here.

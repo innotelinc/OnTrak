@@ -12,7 +12,7 @@ import { NextResponse, type NextRequest } from "next/server";
  *
  * Nothing is trusted until the callback: this route's whole job is to hand the
  * browser to the provider with enough state to recognise it on the way back. The
- * provider's hostname is in the estate's zone, so the link works from a browser
+ * provider's hostname is in the Network's zone, so the link works from a browser
  * on the LAN and from one outside it, and the redirect URI is registered byte for
  * byte against `ONTRAK_PORTAL_PUBLIC_URL`.
  */

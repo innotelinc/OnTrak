@@ -90,7 +90,7 @@ describe("the catalogue", () => {
 
   it("prefers the product a person came for over the catalogue order", () => {
     // An admin belongs everywhere; landing them in the training range when they
-    // came to patch the estate is landing them in the wrong application.
+    // came to patch the Network is landing them in the wrong application.
     assert.equal(landingFor("ADMIN")?.key, "its");
     assert.equal(landingFor("ADMIN", ["sync"])?.key, "sync");
     assert.equal(landingFor("SYSADMIN", ["sync"])?.key, "sync");

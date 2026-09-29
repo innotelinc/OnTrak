@@ -11,7 +11,7 @@ rules that make the workflow work are exactly the two that are easy to get wrong
     installed its row is `applied`; when the next release appears the same package
     is detected again with a different candidate. A status-preserving upsert would
     leave it `applied` forever and the package would be invisible to every future
-    apply — a permanent, silent hole in the estate's patching.
+    apply — a permanent, silent hole in the Network's patching.
 
 The tests below are those two rules, plus expiry, which is what makes a fix
 applied by hand elsewhere stop being reported without anyone clicking anything.
@@ -64,7 +64,7 @@ class FindingLifecycle(unittest.TestCase):
 
     def test_a_newer_candidate_reopens_an_applied_finding(self):
         # THE important one. Without this, a package is patched once and then never
-        # again, and every future scan reports the estate as clean.
+        # again, and every future scan reports the Network as clean.
         db.record_finding(self.conn, target_id=self.target, manager="apt", package="nginx",
                           current="1.0", candidate="1.1")
         db.set_status(self.conn, [self.row()["id"]], "applied")
@@ -183,7 +183,7 @@ class StatusUpdates(unittest.TestCase):
 
     def test_an_empty_batch_is_a_no_op_rather_than_a_blanket_update(self):
         # Guards the SQL: `IN ()` is a syntax error in SQLite, and the naive fix —
-        # dropping the WHERE clause — would set every finding in the estate.
+        # dropping the WHERE clause — would set every finding in the Network.
         self.assertEqual(0, db.set_status(self.conn, [], "approved"))
         count = self.conn.execute(
             "SELECT COUNT(*) c FROM findings WHERE status='approved'").fetchone()["c"]
@@ -282,7 +282,7 @@ class ScanVerdict(unittest.TestCase):
         self.assertEqual(0, self.row()["last_scanned_ok"])
 
     def test_a_database_from_before_the_column_gains_it_keeping_its_history(self):
-        # The schema is applied with CREATE TABLE IF NOT EXISTS, so an estate that
+        # The schema is applied with CREATE TABLE IF NOT EXISTS, so a Network that
         # was already running gets this column from the ALTER in `init` and from
         # nowhere else, and its existing rows are backfilled from `error` — the
         # only durable trace of a failed look that predates the column.
@@ -313,7 +313,7 @@ class DigestCache(unittest.TestCase):
 
     This exists to spend fewer of Docker Hub's anonymous requests. That makes its
     failure mode a correctness question rather than a performance one: a digest that
-    is served for too long reports an estate as current, and one that is served after
+    is served for too long reports a Network as current, and one that is served after
     a failed lookup turns "could not ask" into "up to date".
     """
 

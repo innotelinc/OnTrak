@@ -3,7 +3,7 @@
 
 These are the parsers whose mistakes are silent. A parser that throws is a bad
 five minutes; a parser that quietly drops a line it did not recognise reports an
-estate as patched while it drifts, which is the failure this whole project exists
+Network as patched while it drifts, which is the failure this whole project exists
 to remove. So the cases here are mostly about the *awkward* inputs: output shapes
 that changed, packages with no archive, images with no registry, and the
 three-valued docker comparison where "cannot tell" must never collapse into
@@ -52,7 +52,7 @@ Inst linux-image-generic (6.8.0-45.45 Ubuntu:24.04/noble-security [amd64])
 Inst libssl3t64 [3.0.13-0ubuntu3.1] (3.0.13-0ubuntu3.4 Ubuntu:24.04/noble-updates [amd64])
 """
 
-# Copied verbatim from the estate's first real scan, where every one of these
+# Copied verbatim from the Network's first real scan, where every one of these
 # lines came back as `unparsed`. A package published in both an updates and a
 # security pocket is printed with TWO archives where the original pattern allowed
 # one — and that is the security case, so the parser was rejecting exactly the
@@ -153,7 +153,7 @@ class AptSimulation(unittest.TestCase):
 
     def test_an_unrecognised_inst_line_is_reported_not_dropped(self):
         # This is the canary for a distribution changing its format. Silence here
-        # would mean the whole estate reads as patched.
+        # would mean the whole Network reads as patched.
         text = SIMULATE + "Inst we-irre-parsed this wrongly\n"
         updates, unparsed = scanners.parse_apt_simulate(text)
         self.assertEqual(4, len(updates))
@@ -167,7 +167,7 @@ class AptSimulation(unittest.TestCase):
     def test_a_package_in_two_archives_parses_and_the_security_one_counts(self):
         # The regression this file was missing. `noble-updates, noble-security` is
         # two tokens; matching one made the simulation contribute nothing at all on
-        # a real estate, and the security flag then depended entirely on the
+        # a real Network, and the security flag then depended entirely on the
         # cross-check.
         updates, unparsed = scanners.parse_apt_simulate(SIMULATE_TWO_ARCHIVES)
         self.assertEqual([], unparsed)
@@ -281,7 +281,7 @@ class Snap(unittest.TestCase):
         self.assertEqual([], unparsed)
 
     def test_all_snaps_up_to_date_is_not_an_error(self):
-        # The other way snap says it has nothing to do, and the one the estate
+        # The other way snap says it has nothing to do, and the one the Network
         # actually prints. It was reported as unparsed output, so every host with
         # snap installed carried a `partial` snap manager and an error line for the
         # most ordinary state there is.
@@ -301,7 +301,7 @@ class DockerDigests(unittest.TestCase):
                          scanners.parse_repo_digest('["nginx@sha256:abc123"]'))
 
     def test_a_locally_built_image_has_no_digest(self):
-        # This is the common case in this estate (`:local` images). It must be ""
+        # This is the common case in this Network (`:local` images). It must be ""
         # so the comparison above it can say "unjudged".
         self.assertEqual("", scanners.parse_repo_digest("[]"))
         self.assertEqual("", scanners.parse_repo_digest("<none>"))
@@ -334,7 +334,7 @@ class BehindComparison(unittest.TestCase):
     def test_an_unknown_digest_is_neither_current_nor_behind(self):
         # THREE-VALUED ON PURPOSE. A local-only image, a registry that refused a
         # token and a rate-limited Docker Hub all land here. Collapsing this into
-        # False would report an entire estate as up to date the first time a
+        # False would report an entire Network as up to date the first time a
         # registry said no.
         self.assertIsNone(scanners.image_is_behind("", "sha256:new"))
         self.assertIsNone(scanners.image_is_behind("sha256:old", ""))
