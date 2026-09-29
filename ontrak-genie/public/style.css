@@ -457,6 +457,44 @@ pre.code {
 .viewer-note { padding: 14px 16px; margin: 0; }
 .diff-inline { border-bottom: none; }
 
+/* --- factory export --- */
+/* The form asks only for what cannot be observed. Everything else in the spec is
+   assembled from the workspace, so there is nothing here to duplicate. */
+
+.factory-note { margin: 0; padding: 12px 16px 4px; font-size: 12.5px; line-height: 1.5; }
+
+.factory-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 10px 16px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.factory-form .field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.factory-form .field.wide { flex: 1 1 320px; }
+.factory-form .input-text { width: 200px; }
+.factory-form .field.wide .input-text { width: 100%; }
+.factory-form textarea.input-text { resize: vertical; line-height: 1.5; }
+
+.factory-steps { display: flex; flex-direction: column; gap: 5px; padding: 0 16px 12px; }
+.factory-steps:empty { padding-bottom: 0; }
+.factory-step {
+  font-size: 12px;
+  color: var(--text-dim);
+  border-left: 2px solid var(--border);
+  padding-left: 9px;
+  word-break: break-word;
+}
+
+#factory-status { padding: 12px 16px 8px; }
+#factory-status:empty { padding: 0; }
+#factory-body {
+  border-top: 1px solid var(--border);
+  /* A spec is prose and headings, not code: wrap it rather than scrolling it. */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* --- composer --- */
 
 .composer {

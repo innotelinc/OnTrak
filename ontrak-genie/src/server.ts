@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { runAgent } from "./agent.js";
 import { pendingApprovals, resolveApproval } from "./approval.js";
+import { buildFactorySpec, FactorySpecError, writeFactorySpec } from "./builder.js";
 import { config } from "./config.js";
 import { buildFileDiff } from "./diff.js";
 import { modelHealth, startModelHealthLoop } from "./modelHealth.js";
@@ -466,6 +467,63 @@ async function handleApi(
     // look like a change to a stranger, so it goes with the file.
     await dropSnapshot(rel);
     return sendJson(res, 200, { removed: true, path: rel, bytes });
+  }
+
+  if (pathname === "/api/factory/spec" && method === "GET") {
+    // Whether an export can be written at all, asked before the console offers
+    // it: the button means different things depending on the answer.
+    return sendJson(res, 200, {
+      configured: config.factoryDir !== "",
+      dir: config.factoryDir !== "" ? path.resolve(config.factoryDir) : null,
+    });
+  }
+
+  if (pathname === "/api/factory/spec" && method === "POST") {
+    /*
+     * Assemble an Olympus build request from this workspace. Deterministic — the
+     * same workspace and the same stated intent produce the same bytes — because
+     * a handoff the operator cannot predict is one they cannot review.
+     *
+     * The intent is not inferred. A name, a purpose and a feature list are
+     * decisions, so an unstated one is marked as unstated in the spec rather than
+     * guessed from the file set.
+     */
+    const payload = await readJson(req, 1_000_000);
+    try {
+      const spec = await buildFactorySpec({
+        name: typeof payload.name === "string" ? payload.name : "",
+        purpose: typeof payload.purpose === "string" ? payload.purpose : undefined,
+        features: Array.isArray(payload.features)
+          ? payload.features.filter((line): line is string => typeof line === "string")
+          : undefined,
+        kind: payload.kind === "website" ? "website" : payload.kind === "app" ? "app" : undefined,
+      });
+
+      // Only a deployment that named a factory directory gets a file; every other
+      // one receives the markdown to place. `write: false` asks for the markdown
+      // even when the directory is configured.
+      const written =
+        config.factoryDir !== "" && payload.write !== false
+          ? await writeFactorySpec(config.factoryDir, spec, { overwrite: payload.overwrite === true })
+          : null;
+
+      return sendJson(res, 200, {
+        filename: spec.filename,
+        markdown: spec.markdown,
+        bytes: Buffer.byteLength(spec.markdown, "utf8"),
+        nextSteps: spec.nextSteps,
+        written: written !== null,
+        path: written === null ? null : written.path,
+        replaced: written === null ? false : written.replaced,
+      });
+    } catch (error) {
+      // A refusal is an answer, not a crash: the caller gets the reason it was
+      // refused and the status that goes with it.
+      if (error instanceof FactorySpecError) {
+        return sendJson(res, error.status, { error: error.message });
+      }
+      throw error;
+    }
   }
 
   const approvalMatch = /^\/api\/approvals\/([^/]+)$/.exec(pathname);

@@ -1121,6 +1121,150 @@ function closeSweep() {
   state.lastFocus?.focus?.();
 }
 
+/* ------------------------------------------------------------------ factory */
+
+/**
+ * The Genie → factory handoff, from the browser.
+ *
+ * The spec is assembled by the server from this workspace — a file index, sizes,
+ * the entry point, the test command — with no second model call, so what lands in
+ * `build-requests/` is what the file set actually is and the same workspace always
+ * produces the same bytes. The form therefore asks only for the parts that cannot
+ * be observed: a name, a purpose, a feature list. Those are decisions, and a spec
+ * that guessed at them is how the factory manufactures something nobody described.
+ *
+ * Nothing is built here. Genie writes a request; Olympus manufactures it.
+ */
+let factoryInfo = null;
+
+async function runFactory(write) {
+  const status = $("#factory-status");
+  const name = $("#factory-name").value.trim();
+
+  if (name === "") {
+    status.textContent = "A name is required — it becomes the spec's title and its filename.";
+    $("#factory-name").focus();
+    return;
+  }
+
+  const buttons = [$("#factory-preview"), $("#factory-export")];
+  for (const button of buttons) button.disabled = true;
+
+  try {
+    const payload = await api("/api/factory/spec", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        purpose: $("#factory-purpose").value.trim(),
+        features: $("#factory-features")
+          .value.split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line !== ""),
+        kind: $("#factory-kind").value,
+        overwrite: $("#factory-overwrite").checked,
+        write,
+      }),
+    });
+    renderFactory(payload, write);
+  } catch (error) {
+    // A refusal is an answer. The 409 is the one worth explaining: a spec someone
+    // edited by hand is already there and was not replaced by its own export.
+    status.textContent =
+      error.status === 409
+        ? `${error.message}. Tick "replace an existing spec" to overwrite it.`
+        : error.message;
+    if (error.status === 409) $("#factory-overwrite").focus();
+  } finally {
+    for (const button of buttons) button.disabled = false;
+  }
+}
+
+function renderFactory(payload, write) {
+  const size = `${payload.bytes} bytes`;
+  const status = $("#factory-status");
+
+  if (payload.written) {
+    status.textContent = `${payload.replaced ? "replaced" : "wrote"} ${payload.filename} — ${size} in the factory directory`;
+  } else if (!write) {
+    status.textContent = `previewed ${payload.filename} — ${size}, nothing written`;
+  } else {
+    // Asked to write and did not: the only other reason is that no directory was
+    // named, and the operator can fix that from here.
+    status.textContent = `built ${payload.filename} — ${size}, not written: no factory directory is configured (AGENT_FACTORY_DIR)`;
+  }
+
+  const steps = $("#factory-steps");
+  steps.replaceChildren();
+  for (const step of payload.nextSteps ?? []) {
+    const item = document.createElement("div");
+    item.className = "factory-step mono";
+    item.textContent = step;
+    steps.append(item);
+  }
+
+  // Markdown, plainly: it is a document to review, and colouring it would suggest
+  // the app had a view of what it means.
+  $("#factory-body").textContent = payload.markdown;
+}
+
+async function refreshFactory() {
+  try {
+    return await api("/api/factory/spec");
+  } catch {
+    // A console that cannot read its own configuration still exports; it just
+    // cannot say where the spec will land.
+    return null;
+  }
+}
+
+/**
+ * What the operator is told before they click anything. Written synchronously when
+ * the dialog opens, then again once the configuration is known: a note that only
+ * appears after a round trip is a dialog that looks broken for as long as the
+ * request takes.
+ */
+function writeFactoryNote() {
+  const note = $("#factory-note");
+
+  if (factoryInfo === null) {
+    // Not read yet, or the read failed. Say only what is true either way.
+    note.textContent =
+      "The spec is assembled from this workspace. Genie writes a request; Olympus manufactures it.";
+    return;
+  }
+
+  note.textContent = factoryInfo.configured
+    ? `Assembled from this workspace and written to ${factoryInfo.dir}. Genie writes a request; Olympus manufactures it.`
+    : "No factory directory is configured, so an export shows the spec instead of writing it — set AGENT_FACTORY_DIR to write one. Genie writes a request; Olympus manufactures it.";
+}
+
+async function openFactory() {
+  state.lastFocus = document.activeElement;
+  $("#factory").classList.remove("hidden");
+  $("#factory-close").focus();
+  writeFactoryNote();
+
+  // The chat's title is already a description of what this workspace is for, so it
+  // is a better starting point than an empty box. Nothing else is prefilled: the
+  // purpose and the features are the operator's to state.
+  const title = $("#chat-title").textContent.trim();
+  if ($("#factory-name").value === "" && title !== "" && title !== "New chat") {
+    $("#factory-name").value = title.replace(/[.!?]+$/, "").slice(0, 60);
+  }
+
+  if (factoryInfo === null) {
+    factoryInfo = await refreshFactory();
+    writeFactoryNote();
+  }
+}
+
+function closeFactory() {
+  $("#factory").classList.add("hidden");
+  if (state.lastFocus && typeof state.lastFocus.focus === "function") state.lastFocus.focus();
+  state.lastFocus = null;
+}
+
 /**
  * Report whether the chain's models can still make a tool call, and when that was
  * last checked. The detail lives in the tooltip so the row stays one line.
@@ -1813,6 +1957,11 @@ function wire() {
   $("#viewer-delete").addEventListener("click", () => armDelete());
 
   $("#sweep-open").addEventListener("click", openSweep);
+
+  $("#factory-open").addEventListener("click", () => void openFactory());
+  $("#factory-preview").addEventListener("click", () => void runFactory(false));
+  $("#factory-export").addEventListener("click", () => void runFactory(true));
+  $("#factory-close").addEventListener("click", closeFactory);
   $("#sweep-close").addEventListener("click", closeSweep);
   $("#sweep-run").addEventListener("click", () => void runSweep(false));
   $("#sweep-run-all").addEventListener("click", () => void runSweep(true));
@@ -1874,6 +2023,7 @@ function wire() {
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     if (!$("#sweep").classList.contains("hidden")) closeSweep();
+    else if (!$("#factory").classList.contains("hidden")) closeFactory();
     else closeViewer();
   });
 }
