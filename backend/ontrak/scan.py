@@ -106,6 +106,9 @@ class TargetReport:
         A target with no apt, no snap and no docker is not an error: there was
         nothing on it this tool knows how to inspect. A target whose every probe
         *failed* reports not-scanned, and `unknown` on the dashboard counts it.
+
+        This is the value written to `targets.last_scanned_ok` at the end of the
+        target's scan, which is what makes the dashboard's count outlast the run.
         """
         return any(state == "ok" for state in self.manager_status.values())
 
@@ -333,7 +336,8 @@ def scan_target(conn, *, host: Host, name: str, kind: str, container: str | None
         db.expire_findings(conn, [target_id], set())
         report.manager_status["instance"] = "not-running"
         report.errors.append(f"instance is not running (state: {state})")
-        db.touch_target(conn, target_id, error=f"instance is not running (state: {state})")
+        db.touch_target(conn, target_id, error=f"instance is not running (state: {state})",
+                        looked=False)
         return report
 
     seen: set[tuple[int, str, str]] = set()
@@ -361,7 +365,8 @@ def scan_target(conn, *, host: Host, name: str, kind: str, container: str | None
         protect = {(target_id, m, p) for m, p in report.inconclusive}
         db.expire_findings(conn, [target_id], seen, protect=protect)
 
-    db.touch_target(conn, target_id, error="; ".join(report.errors) or None)
+    db.touch_target(conn, target_id, error="; ".join(report.errors) or None,
+                    looked=report.scanned)
     return report
 
 
@@ -462,14 +467,30 @@ def scan_estate(conn, settings: Settings, policy: Policy, *, trigger: str = "man
 
 
 def host_admin_summary(conn) -> dict:
-    """Counts for the dashboard header. `unknown` is first-class, not folded in."""
+    """Counts for the dashboard header. `unknown` is first-class, not folded in.
+
+    `unknown` answers "we could not look", and it has two sources: a host that did
+    not answer, and a target whose last scan reached no verdict — a stopped
+    instance, a probe that timed out, every manager on it failing or missing.
+
+    The second used to be counted as "never scanned" (`last_scanned_at IS NULL`),
+    which a target stops being the moment the first scan touches it — and a scan that
+    could not read a machine still touches it, because the moment of the attempt is
+    worth recording. A stopped instance therefore counted as inspected for as long as
+    it stayed down, which is how the dashboard showed nothing unknown over precisely
+    the machines nobody could read. The count now reads the flag the scan writes
+    (`targets.last_scanned_ok`), so a failed look stays unknown until a scan really
+    does read the target.
+    """
     row = conn.execute(
         """
         SELECT
           (SELECT COUNT(*) FROM hosts)                                    AS hosts,
           (SELECT COUNT(*) FROM hosts WHERE reachable=1)                  AS reachable,
           (SELECT COUNT(*) FROM targets)                                  AS targets,
-          (SELECT COUNT(*) FROM targets WHERE last_scanned_at IS NULL)     AS unscanned,
+          (SELECT COUNT(*) FROM targets
+            WHERE last_scanned_at IS NULL
+               OR COALESCE(last_scanned_ok,0)=0)                          AS unscanned,
           (SELECT COUNT(*) FROM findings WHERE status='pending')          AS pending,
           (SELECT COUNT(*) FROM findings WHERE status='approved')         AS approved,
           (SELECT COUNT(*) FROM findings WHERE status='failed')           AS failed,
