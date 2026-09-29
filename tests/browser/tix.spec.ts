@@ -63,6 +63,64 @@ const ADMIN = process.env.ONTRAK_TIX_ADMIN_EMAIL ?? "admin@acme.test";
 const REQUESTER = process.env.ONTRAK_TIX_REQUESTER_EMAIL ?? "requester@acme.test";
 const AGENT_NAME = "Sam Agent";
 
+/**
+ * The session cookie, which is this product's entire notion of "signed in".
+ *
+ * This pins a bug no other test here could see. The cookie was marked `Secure`
+ * from `NODE_ENV === "production"`, but every way this repository deploys is
+ * plain HTTP with `NODE_ENV=production`, and a browser **refuses to store a
+ * `Secure` cookie that arrives over an insecure origin** — everywhere except
+ * `localhost`. Sign-in therefore reported success and wrote nothing, and the
+ * next page load bounced back to the form. That reads as a broken session rather
+ * than as a dropped cookie, which is why it survived: on the developer's own
+ * machine, at `localhost`, it worked.
+ *
+ * It lives here rather than in a unit test because the unit test knows the rule
+ * and this knows the browser. Both directions are failures and both are asserted:
+ * too strict signs every real desk out, too loose ships a session over a plain
+ * connection.
+ */
+test.describe("OnTrak Tix session", () => {
+  test.skip(!BASE_URL, "set ONTRAK_TIX_BASE_URL to run the Tix sweep");
+
+  // What the flag should be depends on how this deployment is reached, and a
+  // terminator that strips the scheme is told so with `TIX_COOKIE_SECURE=always`
+  // — see `.env.example`. Both of those routes end in the right answer here.
+  const overTls = (BASE_URL ?? "").startsWith("https://");
+
+  const cases: ReadonlyArray<readonly [string, Record<string, string> | undefined, boolean]> = [
+    ["a plain connection", undefined, overTls],
+    ["a terminator that reports the scheme", { "X-Forwarded-Proto": "https" }, true],
+  ];
+
+  for (const [how, headers, expectSecure] of cases) {
+    test(`session: over ${how}, the cookie is ${expectSecure ? "" : "not "}restricted to TLS and the desk stays signed in`, async ({
+      browser,
+    }) => {
+      const context = await browser.newContext(headers ? { extraHTTPHeaders: headers } : {});
+      try {
+        const page = await context.newPage();
+        await signIn(page);
+
+        const session = (await context.cookies()).find((cookie) => cookie.name === "ontrak_tix_session");
+        expect(session, "sign-in must leave a session cookie in the browser, not just in the response").toBeTruthy();
+        expect(
+          session?.secure,
+          "a Secure cookie from an insecure origin is discarded, so it must follow the request",
+        ).toBe(expectSecure);
+
+        // The symptom rather than the flag: the desk has to still be there on the
+        // next request. "Login doesn't stay signed in" was this line failing.
+        await page.goto(url("/inbox"), { waitUntil: "load" });
+        expect(new URL(page.url()).pathname, "a stored session must not bounce back to sign-in").toBe("/inbox");
+        expect(await page.locator('input[name="password"]').count(), "that is the sign-in form").toBe(0);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+});
+
 test.describe("OnTrak Tix desk", () => {
   test.skip(!BASE_URL, "set ONTRAK_TIX_BASE_URL to run the Tix sweep");
 

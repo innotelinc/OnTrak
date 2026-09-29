@@ -164,9 +164,10 @@ npm run setup             # prisma generate, db push, then seed the demo tenant
 npm run dev
 ```
 
-> Both stacks publish their database on 5432, so run one at a time — or set
-> `ONTRAK_TIX_DB_PORT` here (and `ONTRAK_DB_PORT` in the training app) to run
-> them side by side.
+> The three stacks each publish a database port so they can run side by side:
+> the training app takes 5432, Tix 5433 and Sentinel 5434. `.env.example` already
+> sets `ONTRAK_TIX_DB_PORT="5433"` — leaving it at the 5432 default is what makes
+> a second `docker compose up` fail to bind and the whole stack refuse to start.
 
 The seed creates tenant `acme` with an account per role — `admin@acme.test`,
 `dispatcher@acme.test`, `agent@acme.test` and `requester@acme.test`, all with the
