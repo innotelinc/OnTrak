@@ -215,7 +215,7 @@ export default async function HandoffPage({
               Note
               <input name="note" placeholder="e.g. covering the Thursday release" className={`block ${inputClass}`} />
             </label>
-            <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white">
+            <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-brand-ink">
               Publish on the rota
             </button>
           </form>
@@ -269,7 +269,7 @@ export default async function HandoffPage({
             Still open (references, one per line)
             <textarea name="openTicketRefs" rows={3} placeholder={"TIX-000123\nTIX-000131"} className={`block w-48 font-mono ${inputClass}`} />
           </label>
-          <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white">
+          <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-brand-ink">
             Record the handoff
           </button>
         </form>

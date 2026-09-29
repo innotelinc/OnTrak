@@ -95,7 +95,7 @@ function stateTone(state: string): Tone {
   return "brand";
 }
 
-const btnPrimary = "rounded-full bg-brand px-2.5 py-1.5 text-[11px] font-semibold text-white";
+const btnPrimary = "rounded-full bg-brand px-2.5 py-1.5 text-[11px] font-semibold text-brand-ink";
 const btnQuiet = "rounded-full border border-line px-2.5 py-1.5 text-[11px] font-semibold text-ink-soft";
 
 /* -------------------------------------------------------------------------- */

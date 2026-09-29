@@ -190,7 +190,7 @@ export default async function NewTicketPage({
           </label>
         ) : null}
 
-        <button type="submit" className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-white">
+        <button type="submit" className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-brand-ink">
           Create ticket
         </button>
       </form>

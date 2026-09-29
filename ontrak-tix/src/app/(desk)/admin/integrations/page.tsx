@@ -229,7 +229,7 @@ export default async function IntegrationsPage({
           <p className="text-xs text-ink-faint">
             The secret is shown once. An expiry is optional; a token with none is a choice somebody made on purpose.
           </p>
-          <button type="submit" className="rounded-full bg-brand px-4 py-2 text-xs font-semibold text-white">
+          <button type="submit" className="rounded-full bg-brand px-4 py-2 text-xs font-semibold text-brand-ink">
             Mint token
           </button>
         </form>
@@ -320,7 +320,7 @@ export default async function IntegrationsPage({
           <p className="text-xs text-ink-faint">
             The signing secret is shown once, and a delivered event is never retried by hand — the log below is the record.
           </p>
-          <button type="submit" className="rounded-full bg-brand px-4 py-2 text-xs font-semibold text-white">
+          <button type="submit" className="rounded-full bg-brand px-4 py-2 text-xs font-semibold text-brand-ink">
             Register endpoint
           </button>
         </form>
@@ -491,7 +491,7 @@ export default async function IntegrationsPage({
               </label>
             ))}
           </fieldset>
-          <button type="submit" className="rounded-full bg-brand px-4 py-2 text-xs font-semibold text-white">
+          <button type="submit" className="rounded-full bg-brand px-4 py-2 text-xs font-semibold text-brand-ink">
             Register room
           </button>
         </form>
@@ -615,7 +615,7 @@ function SecretPanel({
       <p className="text-xs text-ink-soft">{note}</p>
       <form action={dismissRevealAction}>
         <input type="hidden" name="which" value={which} />
-        <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white">
+        <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-brand-ink">
           I have stored it — hide it
         </button>
       </form>

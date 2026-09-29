@@ -1,82 +1,57 @@
 @import "tailwindcss";
+@import "../theme/ontrak-theme.css";
 
 /*
- * OnTrak Tix design tokens.
+ * OnTrak Tix — styles.
  *
- * The same palette and radius scale as OnTrak IT Support Training, so the two
- * products share one component language. Font variables are intentionally left
- * to fall back when the tix app does not load the brand webfonts.
+ * Every colour comes from the shared theme above (`src/theme/ontrak-theme.css`, a
+ * checked byte-identical copy of `theme/ontrak-theme.css`). This file does one job:
+ * it maps Tailwind's utility names onto the theme's semantic tokens, and adds no
+ * palette of its own. A component that names a raw colour is a component that will
+ * look wrong the first time somebody switches to light mode.
+ *
+ * Tix sits in the **desk** scheme — the violet family it and the training range
+ * already shared — and gets light and dark from the same tokens everyone else uses.
+ *
+ * The pre-existing utility names (`bg-pink`, `text-amber`, `border-teal`, …) are
+ * kept as *aliases* of the semantic tokens they always meant, so several thousand
+ * existing class names did not have to be rewritten to gain dark mode. `pink` is
+ * danger, `amber` is attention, `teal` is healthy, `sky` is information — read the
+ * right-hand side, never the left.
  */
 
-:root {
-  --canvas: #f7f5ff;
-  --surface: #ffffff;
-  --surface-muted: #f3f1fb;
-  --line: #e6e2f5;
-  --ink: #1c1633;
-  --ink-soft: #4a4266;
-  /* Secondary text: darkened to clear the 4.5:1 AA floor on white and canvas. */
-  --ink-faint: #6a6386;
-
-  /* Accents are used as *text* on light tints at small sizes, so the tokens are
-     the AA-compliant darker shades. Tinted fills keep their low alpha, so the
-     palette still reads as bright — and it matches the training app exactly. */
-  --brand: #5f3fe6;
-  --brand-soft: #ede8ff;
-  --pink: #b0246a;
-  --amber: #8a5a00;
-  --teal: #05685e;
-  --sky: #0a5c9e;
-  --lime: #4d6b00;
-
-  --shadow-card: 0 1px 2px rgb(28 22 51 / 4%), 0 12px 32px -12px rgb(28 22 51 / 16%);
-}
-
-.dark {
-  --canvas: #100c22;
-  --surface: #1a1433;
-  --surface-muted: #221a40;
-  --line: #332a55;
-  --ink: #f5f3ff;
-  --ink-soft: #c3bce0;
-  --ink-faint: #8f87b3;
-
-  --brand: #9b83ff;
-  --brand-soft: #2a2154;
-  --pink: #ff7cb4;
-  --amber: #ffc157;
-  --teal: #3fd3c1;
-  --sky: #6cc0ff;
-  --lime: #b4e85c;
-}
-
-@custom-variant dark (&:where(.dark, .dark *));
-
 @theme inline {
-  --font-display: ui-sans-serif, system-ui, sans-serif;
-  --font-sans: ui-sans-serif, system-ui, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: var(--font-sans);
+  --font-mono: var(--mono);
 
   --color-canvas: var(--canvas);
   --color-surface: var(--surface);
   --color-surface-muted: var(--surface-muted);
+  --color-surface-sunken: var(--surface-sunken);
   --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
   --color-ink: var(--ink);
   --color-ink-soft: var(--ink-soft);
   --color-ink-faint: var(--ink-faint);
 
   --color-brand: var(--brand);
   --color-brand-soft: var(--brand-soft);
-  --color-pink: var(--pink);
-  --color-amber: var(--amber);
-  --color-teal: var(--teal);
-  --color-sky: var(--sky);
-  --color-lime: var(--lime);
+  --color-brand-ring: var(--brand-ring);
+  /* Text that sits *on* a solid brand fill. Never `text-brand-ink`: in the dark desk
+     scheme the brand is a light violet, and white on it measures about 2.4:1. */
+  --color-brand-ink: var(--brand-ink);
 
-  --shadow-card: var(--shadow-card);
+  /* Legacy aliases → semantic tokens. */
+  --color-pink: var(--bad);
+  --color-amber: var(--attention);
+  --color-teal: var(--ok);
+  --color-sky: var(--info);
+  --color-lime: var(--tone-its);
+  --color-unknown: var(--unknown);
 
-  --radius-xl2: 1.25rem;
-  --radius-xl3: 1.75rem;
+  --radius-xl2: var(--radius);
+  --radius-xl3: var(--radius-lg);
 }
 
 @layer base {
@@ -93,6 +68,18 @@
   h4 {
     font-family: var(--font-display);
     letter-spacing: -0.02em;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  /* One focus ring for the whole product, on the theme's brand colour, so a
+     keyboard user can see where they are in light and dark alike. */
+  :focus-visible {
+    outline: 2px solid var(--brand-ring);
+    outline-offset: 2px;
   }
 }
 

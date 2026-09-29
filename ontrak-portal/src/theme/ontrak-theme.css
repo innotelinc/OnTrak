@@ -429,3 +429,43 @@
 .ot-dim { color: var(--ink-soft); }
 .ot-mono { font-family: var(--mono); font-size: 12.5px; }
 .ot-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* ── the theme switch ──────────────────────────────────────────────────────
+ * The control that flips light → dark → system. It lives here rather than in each
+ * product's stylesheet because a switch that looks different in each of five apps
+ * is precisely the drift this file exists to prevent, and because the markup is
+ * the same everywhere: a group of buttons that call `window.OntrakTheme`.
+ *
+ * A product drops its <ThemeToggle> into its masthead and gets these styles; it
+ * does not restyle them.
+ */
+.ot-theme {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  padding: 2px;
+}
+.ot-theme button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink-faint);
+  border-radius: var(--radius-pill);
+  padding: 4px 9px;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.ot-theme button:hover { color: var(--ink); }
+.ot-theme button[aria-pressed="true"] {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--ink);
+  font-weight: 600;
+}
+.ot-theme svg { width: 13px; height: 13px; }

@@ -122,7 +122,7 @@ export default async function ClientSurveyPage({
               className="mt-1 w-full rounded-xl2 border border-line bg-surface px-3 py-2 text-sm text-ink"
             />
           </label>
-          <button type="submit" className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-white">
+          <button type="submit" className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-brand-ink">
             Send my answer
           </button>
           <p className="text-xs text-ink-faint">

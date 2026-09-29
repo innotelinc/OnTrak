@@ -125,7 +125,7 @@ export default async function SecurityPage({
                 className="mt-1 block rounded-xl2 border border-line bg-surface px-3 py-2 text-sm text-ink"
               />
             </label>
-            <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white">
+            <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-brand-ink">
               Add suppression
             </button>
           </form>

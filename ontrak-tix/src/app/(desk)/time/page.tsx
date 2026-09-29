@@ -249,7 +249,7 @@ export default async function TimePage({
             <input type="hidden" name="clientId" value={selection === "all" || selection === "desk" ? "" : selection} />
             <input type="hidden" name="from" value={from} />
             <input type="hidden" name="to" value={to} />
-            <button type="submit" className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-white">
+            <button type="submit" className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-brand-ink">
               Issue invoice for {from} → {to}
             </button>
           </form>

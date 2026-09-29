@@ -71,37 +71,8 @@ main { flex: 1; padding: var(--space-5) 0 var(--space-6); }
   flex-wrap: wrap;
 }
 
-/* ── the theme switch ────────────────────────────────────────────────────── */
-.theme {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  background: var(--surface-muted);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-pill);
-  padding: 2px;
-}
-.theme button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--ink-faint);
-  border-radius: var(--radius-pill);
-  padding: 4px 9px;
-  font: inherit;
-  font-size: 11.5px;
-  cursor: pointer;
-}
-.theme button:hover { color: var(--ink); }
-.theme button[aria-pressed="true"] {
-  background: var(--surface);
-  border-color: var(--line-strong);
-  color: var(--ink);
-  font-weight: 600;
-}
-.theme svg { width: 13px; height: 13px; }
+/* The theme switch is `.ot-theme`, and it lives in the shared theme file above so
+   that all five products render the identical control. */
 
 /* ── headings ────────────────────────────────────────────────────────────── */
 .head {

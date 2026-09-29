@@ -27,7 +27,7 @@ export default async function PortalPage({ searchParams }: { searchParams: Promi
           <h1 className="font-display text-xl font-semibold text-ink">My tickets</h1>
           <p className="text-sm text-ink-soft">Everything you have raised, and every reply on it.</p>
         </div>
-        <a href="/portal/new" className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-white">
+        <a href="/portal/new" className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-brand-ink">
           New request
         </a>
       </div>

@@ -257,7 +257,7 @@ export function IncidentList({
                   <form key={phase} action={actions.advance}>
                     <input type="hidden" name="incidentId" value={incident.id} />
                     <input type="hidden" name="to" value={phase} />
-                    <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white">
+                    <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-brand-ink">
                       Move to {phase.toLowerCase()}
                     </button>
                   </form>
@@ -316,7 +316,7 @@ export function IncidentList({
                                   <span className="sr-only">Note for {step.title}</span>
                                   <input name="note" placeholder="note (optional)" className={inputClass} />
                                 </label>
-                                <button type="submit" className="rounded-full bg-brand px-2.5 py-1.5 text-[11px] font-semibold text-white">
+                                <button type="submit" className="rounded-full bg-brand px-2.5 py-1.5 text-[11px] font-semibold text-brand-ink">
                                   Complete
                                 </button>
                               </form>
@@ -450,7 +450,7 @@ export function IncidentList({
                     SHA-256 (optional)
                     <input name="sha256" className={`block ${inputClass}`} />
                   </label>
-                  <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white">
+                  <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-brand-ink">
                     Record evidence
                   </button>
                 </form>
@@ -547,7 +547,7 @@ export function IncidentList({
                     File
                     <input name="file" type="file" required className={`block ${inputClass}`} />
                   </label>
-                  <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white">
+                  <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-brand-ink">
                     Store artifact
                   </button>
                 </form>

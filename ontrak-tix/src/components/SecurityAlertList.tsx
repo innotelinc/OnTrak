@@ -106,7 +106,7 @@ export function SecurityAlertList({ alerts, promotionsFor, actions, emptyMessage
               <div className="mt-2 flex flex-wrap items-center gap-3">
                 <form action={actions.promote}>
                   <input type="hidden" name="alertId" value={alert.id} />
-                  <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white">
+                  <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-brand-ink">
                     Open incident
                   </button>
                 </form>

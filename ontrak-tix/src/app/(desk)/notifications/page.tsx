@@ -73,7 +73,7 @@ export default async function NotificationsPage({
             <input type="checkbox" name="muted" defaultChecked={preference.muted} className="size-4 accent-brand" />
             Mute in-app notifications
           </label>
-          <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white">
+          <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-brand-ink">
             Save preference
           </button>
         </form>

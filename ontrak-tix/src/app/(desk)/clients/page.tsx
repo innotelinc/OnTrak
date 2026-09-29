@@ -153,7 +153,7 @@ export default async function ClientsPage({
               Why it is ending (optional)
               <input name="endReason" placeholder="done looking" className={`block ${inputClass}`} />
             </label>
-            <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white">
+            <button type="submit" className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-brand-ink">
               Stop acting as the client
             </button>
           </form>
@@ -502,7 +502,7 @@ export default async function ClientsPage({
             New client
             <input name="name" required placeholder="e.g. Northwind Logistics" className={`block ${inputClass}`} />
           </label>
-          <button type="submit" className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-white">
+          <button type="submit" className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-brand-ink">
             Add client
           </button>
           <p className="w-full text-xs text-ink-faint">

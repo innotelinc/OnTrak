@@ -163,7 +163,7 @@ export default async function KnowledgePage({
           </div>
 
           <div className="flex items-center gap-3">
-            <button type="submit" className="rounded-full bg-brand px-4 py-2 text-xs font-semibold text-white">
+            <button type="submit" className="rounded-full bg-brand px-4 py-2 text-xs font-semibold text-brand-ink">
               {editing ? "Save article" : "Add article"}
             </button>
             {editing ? (

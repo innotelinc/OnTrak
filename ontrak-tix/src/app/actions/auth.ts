@@ -1,10 +1,14 @@
 "use server";
 
 /**
- * Local sign-in (M0).
+ * Break-glass sign-in.
  *
- * Credentials are verified here, then a tenant-scoped session is issued. The
- * exchange is deliberately the only place that reads a password hash; every
+ * This is the one place in Tix that reads a password hash, and it is reached only
+ * from `/sign-in/break-glass` — the unlinked fallback for the day the identity
+ * provider is down. The normal path is single sign-on (`/api/sso/start`), which
+ * never sees a password at all.
+ *
+ * Credentials are verified here, then a tenant-scoped session is issued. Every
  * other action trusts the signed session and re-checks the tenant on the row it
  * touches.
  */
@@ -24,9 +28,9 @@ export async function signInAction(formData: FormData): Promise<void> {
   const ok = user !== null && verifyPassword(password, user.passwordHash);
 
   if (!ok || !user) {
-    redirect(`/sign-in?error=${encodeURIComponent("Wrong email or password.")}`);
+    redirect(`/sign-in/break-glass?error=${encodeURIComponent("Wrong email or password.")}`);
   }
 
   await createTixSession(claimsForUser(user));
-  redirect(user.role === "REQUESTER" ? "/portal" : "/inbox");
+  redirect(user.role === "REQUESTER" ? "/portal" : "/dashboard");
 }

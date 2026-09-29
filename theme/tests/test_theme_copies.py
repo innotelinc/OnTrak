@@ -22,6 +22,22 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 CANONICAL = ROOT / "theme"
 NAMES = ("ontrak-theme.css", "ontrak-theme.js")
 
+# The switch itself is shared the same way, but lands under the component name each
+# app imports. One control, five identical copies, so the family cannot grow five
+# different-looking theme switches.
+# (the CSS copy that marks an app as converted, the app's theme-switch component)
+# Gating on the marker means the switch is required exactly once the app has adopted
+# the theme — an app that has not been converted yet is skipped, and one that has
+# cannot ship a switch that does not match.
+TOGGLE_CANONICAL = "ontrak-theme.tsx"
+TOGGLES = (
+    ("ontrak-portal/src/theme/ontrak-theme.css", "ontrak-portal/src/components/ThemeToggle.tsx"),
+    ("ontrak-tix/src/theme/ontrak-theme.css", "ontrak-tix/src/components/ThemeToggle.tsx"),
+    ("ontrak-sentinel/src/theme/ontrak-theme.css", "ontrak-sentinel/src/components/ThemeToggle.tsx"),
+    ("ontrak-sync/web/app/theme/ontrak-theme.css", "ontrak-sync/web/components/ThemeToggle.tsx"),
+    ("src/theme/ontrak-theme.css", "src/components/ThemeToggle.tsx"),   # the training range
+)
+
 # Where a product keeps its copy, relative to the repository root. An app that has
 # not been converted yet is simply absent from this list, which is why the test
 # passes on a partially-rolled-out family and fails the moment a converted app's
@@ -82,11 +98,30 @@ def main() -> int:
                     f"({digest(copy)} != {canonical[name]}) — copy the canonical file over it"
                 )
 
+    # ── the switch ────────────────────────────────────────────────────────────
+    toggle_source = CANONICAL / TOGGLE_CANONICAL
+    if not toggle_source.is_file():
+        failures.append(f"the canonical copy is missing: theme/{TOGGLE_CANONICAL}")
+    else:
+        want = digest(toggle_source)
+        for marker, app in TOGGLES:
+            copy = ROOT / app
+            # Skipped, not failed, while a product has not been converted yet — the
+            # app's theme CSS is the marker that it has been.
+            if not (ROOT / marker).is_file() or not copy.is_file():
+                continue
+            checked += 1
+            if digest(copy) != want:
+                failures.append(
+                    f"{app} has drifted from theme/{TOGGLE_CANONICAL} "
+                    f"({digest(copy)} != {want}) — copy the canonical file over it"
+                )
+
     if failures:
         print("theme copies are not identical:")
         for line in failures:
             print(f"  ✗ {line}")
-        print("\nfix: cp theme/ontrak-theme.css theme/ontrak-theme.js <app>/<folder>/")
+        print("\nfix: cp theme/ontrak-theme.css theme/ontrak-theme.js <app>/<folder>/ (and theme/ontrak-theme.tsx over the app's ThemeToggle.tsx)")
         return 1
 
     print(f"theme: {checked} file(s) verified identical to the canonical copy")
