@@ -97,7 +97,7 @@ its publishing path through Cerulean and NPM Edge, or its TUI.
 | --- | --- | --- |
 | **0** | Genie conformed and landed in OnTrak as `ontrak-genie/` — license, stack doc, guard, port, no internal addresses | — |
 | **1** | Stack citizenship: Authentik OIDC, Vault references, the shared gateway's address from the environment | Phase 0 |
-| **2** | The builder API: Genie's UI over Olympus's plan → build → preview path; control-plane tenancy — **started**: the *handoff* is wired (export writes a `build-requests/` spec, measured against a real checkout — see §5.1) and *tenancy* is wired (Distro's control plane: resolve the caller, gate quota before dispatch, spend the account's own key, record after); plan/build/preview/publish, and partitioning, remain | Phase 1 |
+| **2** | The builder API: Genie's UI over Olympus's plan → build → preview path; control-plane tenancy — **started**: the *handoff* is wired and measured end to end — a real checkout, a real plan, and a manufactured application whose own tests pass (§5.1–§5.3) — and *tenancy* is wired (Distro's control plane: resolve the caller, gate quota before dispatch, spend the account's own key, record after); plan/build/preview/publish, and partitioning, remain | Phase 1 |
 | **3** | Studio's interface retires; the front-door count reaches one | Phase 2 |
 | **4** | Docs converge: the stack doc's §3 updated from *chosen A* to *A′ — A's engine, B's client*, Olympus's README and `docs/stack.md`, and the family table | Phase 3 |
 
@@ -111,10 +111,11 @@ six-file static app in the workspace:
 | `export` from the console | `build-requests/pomodoro-timer.md` written into the checkout — 12,921 bytes, the template's four `##` headings, entry point `index.html`, stack inferred from the file set, and verification criteria (`npm install`, `npm test`) taken from the app's own `package.json` |
 | Olympus's planner reads it (`scripts/project_plan.py --spec`) | `builds/pomodoro-timer/plan.json` — a real plan in the factory's own format: `runtime.language=node`, `run.install=npm install`, `run.start=python3 -m http.server 8080`, `run.port=8080`, six files |
 | `make app SPEC=build-requests/pomodoro-timer.md` (host) | **stops at the vendor gate**: *"no working archon CLI found"*. `core-modules/archon` is populated by `./setup.sh`, which also needs `uv`, and the build's coding step is Codex. `python3 factory/doctor.py` reports the same: *not cloned: omniroute, archon, ai-software-factory* |
-| `make docker-app` (inside Olympus's own image) | **reaches the workflow and runs it**: five gates cleared by hand — see §5.2 — after which `[load] Completed` and `[plan]` stops on the shared gateway's provider pool rather than on anything in this contract |
+| `make docker-app` (inside Olympus's own image) | **manufactures the app**: five gates cleared by hand and one model choice made on the gateway — see §5.2 — after which the DAG runs `[load]` → `[plan]` → `[build]` → `[verify]` → `[record]` and writes an eight-file application whose own tests pass (§5.3) |
 
-So the handoff is verified as far as the factory's own planning step, and, inside
-the container, into the DAG itself. Three notes for whoever closes it:
+So the handoff is verified end to end: Genie's export, the factory's plan, and —
+inside the container — the built application, tests and all. Three notes for
+whoever closes it:
 
 - **`AGENT_FACTORY_DIR` is the `build-requests/` directory *inside* the checkout,
   not the checkout itself.** Pointed at the root, the export writes
@@ -146,21 +147,62 @@ workflow and a run, and four of them are runtime state the image does not carry:
 | `uv` | *"the 'uv' runtime is missing, and every archon-greenfield node needs it"* | `curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh` |
 | A git repository | *"Error: Not in a git repository. The Archon CLI must be run from within a git repository."* `.dockerignore` excludes `.git`, so `/app` is not one | `git init` in `/app` plus one baseline commit |
 | `.archon/config.yaml` | *"Invalid assistants config in '/app/.archon/config.yaml': 'assistants.codex.apiBaseUrl': unknown provider setting"* | **A finding about Olympus, not about the container.** The committed config writes `apiBaseUrl` and `defaultModel` for both assistants, and the engine's codex run-config schema (`packages/providers/src/codex/config.ts` at the pinned SHA) accepts `model`, `modelReasoningEffort`, `webSearchMode`, `additionalDirectories`, `codexBinaryPath` — nothing else. Removing `apiBaseUrl` and renaming `defaultModel` → `model` lets the source capture and the DAG start, and costs the gateway nothing: `build-app.py` writes the run's own `CODEX_HOME` config from `OMNIROUTE_BASE_URL`/`OMNIROUTE_API_KEY`. As committed, a checkout cannot run its own workflow on the engine it pins |
-| The gateway's tool-capable pool | `[plan] Failed` — *"the gateway refused the planning turn"*, `HTTP 429` then `HTTP 502`, over two attempts | **Nothing here.** This is upstream, on the shared gateway. The workflow needs a model that both answers and tool-calls, and probing the catalog at the time of writing found none: `auto/coding` → `503 Maximum combo retry limit reached`; `auto/coding:free` → `400 No target in combo auto/coding:free supports tool calling; request carried 1 tools`; `auto/coding:reliable` → `429 Rate limit exceeded: free-models-per-day`; the pool's own diagnostics name an expired stealth model (`404`) and an exhausted budget pool (`402`). Retry when the pool recovers; `OMNIROUTE_MODEL` pins the choice |
+| The gateway's tool-capable pool | `[plan] Failed` — *"the gateway refused the planning turn"*, `HTTP 429` then `HTTP 502`, over two attempts | **Nothing in either repository**, and cleared on 29 Sep 2026 by choosing a model rather than by waiting. This was upstream, on the shared gateway. The workflow needs a model that both answers and tool-calls, and probing the catalog at the time of writing found none: `auto/coding` → `503 Maximum combo retry limit reached`; `auto/coding:free` → `400 No target in combo auto/coding:free supports tool calling; request carried 1 tools`; `auto/coding:reliable` → `429 Rate limit exceeded: free-models-per-day`; the pool's own diagnostics name an expired stealth model (`404`) and an exhausted budget pool (`402`). `OMNIROUTE_MODEL` pins the choice, and the *choice* is what matters more than *when*: `scripts/build-model-check.py --model <m>` is the repo's own gate for it — it asks the model to call a tool and then to carry the same conversation to a second turn. `gemini/gemini-3.1-flash-lite` passes it (`turn 1 {"command":"echo \"ok\" > probe.txt"}; turn 2 {"command":"ls -la probe.txt"}`) and carries a build; `auto/coding` was still refusing at the time, and the flash-preview pair sat on a 60-second credential cooldown (`429 model_cooldown`) rather than being unusable |
 
 One further line, seen and harmless: Archon's title generator logs *"Claude Code
 SDK does not support bypassPermissions when running as root (UID 0)"*, then falls
 back — the conversation title is cosmetic and the workflow proceeds. `IS_SANDBOX=1`
 silences it.
 
-So the container is proven through `[load]` and into `[plan]`. What stands between
-`make docker-app` and a manufactured app is a tool-capable model with quota on the
-gateway, and that is the one item on this list no change in either repository
-reaches.
+So the container is proven end to end, and the application it produced is real:
+see §5.3. The sixth gate was never something a change in either repository could
+close — but it was not the transient outage it looked like either, and the part of
+it that *is* addressable is the same part as always: which model the gateway will
+serve, checked rather than assumed.
 
 Nothing in the stack doc's §4–§6 (one OmniRoute, one identity, one secrets store)
 changes. The front-door retirement in its §4.3 moves from Studio to the bolt.diy
 forks alone.
+
+### 5.3 What came out (29 Sep 2026)
+
+`OMNIROUTE_MODEL=gemini/gemini-3.1-flash-lite make docker-app
+SPEC=build-requests/pomodoro-timer.md REPLACE=1` — with the spec Genie exported in
+§5.1 as the input, which is what makes this the end of the line rather than a
+second experiment:
+
+| Node | Result |
+| --- | --- |
+| `[load]` | `Completed (100ms)` — the spec resolves to `builds/pomodoro-timer` |
+| `[plan]` | `Completed (1m22s)` |
+| `[build]` | `Completed (3m7s)`, after two retries. Codex exits `1` on the pinned model and on the fallback (`429 Too Many Requests`), then the third attempt exits `0`. Nothing was written on the two that failed — the box the workflow draws around the model step, working |
+| `[verify]` | `Completed (122ms)` — `structural`: no declared command was runnable *there* |
+| `[record]` | `Completed (92ms)` — `8 files, 10143 bytes`, entry `index.html` |
+
+Eight files, no dependencies: `index.html` (accessible markup; the clock carries
+`role="timer"`), `app.js` (DOM wiring, `localStorage`), `timer.js` (the pure logic —
+presets, `advance`, `nextPreset`, `summarise`), `test/timer.test.js`, `package.json`
+(`test: node --test`), a `README.md`, and a `MANIFEST.json` recording the **spec's
+SHA-256** beside the workflow, the model and the agent's exit code — so the
+provenance of a build is a file it carries, not a log.
+
+Its declared criteria — the `npm install` / `npm test` pair Genie's export took from
+the app's own `package.json` — hold where the app actually lives: `node --test`
+inside the container is **5/5 passing**.
+
+**Two facts about the paths, both worth knowing before packaging.**
+
+- **`builds/` is a named volume, not a bind mount** (`olympus-builds:/app/builds`).
+  The manufactured application therefore lives in the container's volume, while the
+  host's `./builds` still holds only the `plan.json` the host-side
+  `scripts/project_plan.py` wrote. Anything that reads `./builds` on the host —
+  `make app-package` among them — sees the plan and not the app. This is also why
+  §5.1's `plan.json` and §5.3's application look like two builds of one spec: they
+  are the same build, in two filesystems.
+- **The model choice is a deployment fact, not a constant.** The spec is portable
+  and the plan is portable; the one input that is not is which model the gateway
+  will serve at build time. `scripts/build-model-check.py` exists for exactly that
+  question — run it before a build rather than reading a code out of a failed one.
 
 ## 6. Risks, stated rather than worked around
 
