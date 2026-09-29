@@ -1,7 +1,8 @@
 import "server-only";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
+import { cookieIsSecure, parseCookieSecurity } from "./auth-rules";
 import { prisma } from "./db";
 import type { Role } from "@prisma/client";
 
@@ -50,10 +51,23 @@ export async function createSession(user: SessionUser): Promise<void> {
   store.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: await sessionCookieSecure(),
     path: "/",
     maxAge: ttl,
   });
+}
+
+/**
+ * Whether the cookie this request is about to receive may be restricted to TLS.
+ *
+ * `X-Forwarded-Proto` is what a TLS terminator sets; a connection that reached this
+ * process directly has nothing to say, which is answered as "not https".
+ */
+async function sessionCookieSecure(): Promise<boolean> {
+  const store = await headers();
+  const forwarded = store.get("x-forwarded-proto");
+  const scheme = forwarded ? forwarded.split(",")[0].trim() : null;
+  return cookieIsSecure(parseCookieSecurity(process.env.AUTH_COOKIE_SECURE), scheme);
 }
 
 export async function destroySession(): Promise<void> {

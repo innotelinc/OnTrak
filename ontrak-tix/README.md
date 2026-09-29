@@ -146,6 +146,13 @@ Give it a fresh volume. Postgres applies `POSTGRES_PASSWORD` only when it create
 the role, so pointing this at an existing development database will not change
 that database's password and the app will fail to authenticate.
 
+Neither stack terminates TLS, and the session cookie is not marked `Secure`
+unless the request says the connection is https — so the desk stays signed in when
+the app is reached over plain HTTP, on the host or on the LAN. That is the
+`TIX_COOKIE_SECURE` default (`auto`); see `.env.example`. A deployment that puts
+a TLS terminator in front and strips `X-Forwarded-Proto` sets
+`TIX_COOKIE_SECURE=always` so the cookie is restricted to TLS.
+
 From source:
 
 ```bash

@@ -9,7 +9,7 @@ import {
   SSO_STATE_TTL_SECONDS,
   type AuthorizationState,
 } from "./oidc-rules";
-import { tixSigningKey } from "./session";
+import { sessionCookieSecure, tixSigningKey } from "./session";
 
 /**
  * The SSO authorization state, in one signed, short-lived cookie.
@@ -36,7 +36,10 @@ export async function setSsoState(state: AuthorizationState): Promise<void> {
   store.set(SSO_STATE_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    // The same answer the session cookie gets: a round trip whose state cookie is
+    // dropped cannot complete, and a handshake that only works on `localhost` is not
+    // one anybody can deploy.
+    secure: await sessionCookieSecure(),
     path: "/",
     maxAge: SSO_STATE_TTL_SECONDS,
   });
