@@ -65,13 +65,13 @@ export const CONSOLE_SESSION_COOKIE = "sentinel_session";
  *
  * Two files, mounted at the site root rather than under `/console`, so that every
  * page in the product can use them and not just the console's. The adapter reads
- * them from `ontrak-sentinel/` on disk at startup — `src/theme/ontrak-theme.css` and
- * `public/ontrak-theme.js`, both byte-identical to the canonical copies in
+ * them from `ontrak-sentinel/` on disk at startup — `src/theme/unity-theme.css` and
+ * `public/unity-theme.js`, both byte-identical to the canonical copies in
  * `theme/` — which is what keeps one palette rather than a sixth hand-written one.
  */
 export const CONSOLE_ASSET_PATHS = {
-  themeCss: "/ontrak-theme.css",
-  themeJs: "/ontrak-theme.js",
+  themeCss: "/unity-theme.css",
+  themeJs: "/unity-theme.js",
 } as const;
 
 /**
@@ -199,7 +199,7 @@ export interface ConsoleOverviewView {
  * The console's own layout, on the shared theme's tokens.
  *
  * No raw colour appears in this block, and that is the point: the palette lives in
- * `ontrak-theme.css` (one canonical copy, served at `/ontrak-theme.css`), and this
+ * `unity-theme.css` (one canonical copy, served at `/unity-theme.css`), and this
  * file only says how the console arranges things. A console that hard-coded its
  * colours would be the sixth opinion about the Network's look, which is exactly what
  * the theme exists to stop.

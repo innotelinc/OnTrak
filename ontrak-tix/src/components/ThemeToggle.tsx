@@ -2,12 +2,12 @@
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * OnTrak — the theme switch.  THE canonical copy.
+ * UNITY — the theme switch.  THE canonical copy.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Every product ships this byte-identical as `src/components/ThemeToggle.tsx`
  * (the copies are checked by `theme/tests/test_theme_copies.py`), together with
- * `ontrak-theme.css` and `ontrak-theme.js`. A switch that looks or behaves
+ * `unity-theme.css` and `unity-theme.js`. A switch that looks or behaves
  * differently in one product than in the next is the kind of drift the family
  * theme exists to prevent, and it is the easiest kind to introduce by hand.
  *
@@ -23,7 +23,7 @@
  *                           prefer one.
  *
  * The state does not live in React. It lives on the document, written by
- * `window.OntrakTheme`, which the head snippet has *already* run before this
+ * `window.UnityTheme`, which the head snippet has *already* run before this
  * component hydrates. Reading from the document is what stops a page from
  * rendering one theme and then changing its mind a frame later — the visible
  * flash that makes a late dark mode worse than none. So this component only ever
@@ -44,8 +44,15 @@ interface ThemeApi {
 
 declare global {
   interface Window {
+    UnityTheme?: ThemeApi;
+    /** The theme's previous name, still published as an alias. */
     OntrakTheme?: ThemeApi;
   }
+}
+
+/** The API, under whatever name the script published it. */
+function themeApi(): ThemeApi | undefined {
+  return window.UnityTheme ?? window.OntrakTheme;
 }
 
 const LABELS: Record<Mode, string> = {
@@ -73,7 +80,7 @@ export function ThemeToggle() {
   const [scheme, setScheme] = useState<string>("");
 
   useEffect(() => {
-    const api = window.OntrakTheme;
+    const api = themeApi();
     if (!api) return;
     setMode(api.mode());
     setScheme(api.scheme());
@@ -83,8 +90,8 @@ export function ThemeToggle() {
     };
     // The script fires this when the preference changes in another tab (or from a
     // second control on the same page), so the switch never shows a stale state.
-    window.addEventListener("ontrak:theme", onChange);
-    return () => window.removeEventListener("ontrak:theme", onChange);
+    window.addEventListener("unity:theme", onChange);
+    return () => window.removeEventListener("unity:theme", onChange);
   }, []);
 
   // Before hydration there is no state to render, and rendering a guess would
@@ -93,7 +100,7 @@ export function ThemeToggle() {
   if (mode === null) return null;
 
   const choose = (next: Mode) => {
-    window.OntrakTheme?.setMode(next);
+    themeApi()?.setMode(next);
     setMode(next);
   };
 
@@ -118,7 +125,7 @@ export function ThemeToggle() {
           // Cycle rather than toggle: with three palettes a two-way switch has no
           // honest way to reach the third one.
           const index = SCHEMES.indexOf(scheme as (typeof SCHEMES)[number]);
-          const next = window.OntrakTheme?.setScheme(SCHEMES[(index + 1) % SCHEMES.length]);
+          const next = themeApi()?.setScheme(SCHEMES[(index + 1) % SCHEMES.length]);
           if (next) setScheme(next);
         }}
       >

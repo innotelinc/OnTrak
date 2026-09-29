@@ -119,7 +119,7 @@ export interface ServerSurfaces {
 /**
  * A static asset, or `null` when this path is not one.
  *
- * Only `GET` and `HEAD` — a `POST` to `/ontrak-theme.css` is not a stylesheet request,
+ * Only `GET` and `HEAD` — a `POST` to `/unity-theme.css` is not a stylesheet request,
  * and answering it with the file would be answering something nobody asked.
  *
  * The lookup is an exact key match rather than a filesystem join: there is no user
@@ -168,7 +168,7 @@ export function createOidcServer(service: OidcEndpoints, surfaces: ServerSurface
         const httpRequest = toHttpRequest(request, body);
         // The theme is answered first because it is not a decision: a path in the map
         // is a file, and asking four routers to agree about that would be four chances
-        // for one of them to claim `/ontrak-theme.css` and answer it with JSON.
+        // for one of them to claim `/unity-theme.css` and answer it with JSON.
         const asset = staticAsset(httpRequest, surfaces.assets);
         if (asset) {
           sendResponse(response, asset);

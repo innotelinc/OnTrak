@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Every product ships the same theme, and this is what proves it.
 
-The family's rule is one palette: `theme/ontrak-theme.{css,js}` is the canonical
+The family's rule is one palette: `theme/unity-theme.{css,js}` is the canonical
 copy and each app carries a byte-identical one, because every app is built from its
 own directory and cannot import a file outside its build context.
 
@@ -20,7 +20,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CANONICAL = ROOT / "theme"
-NAMES = ("ontrak-theme.css", "ontrak-theme.js")
+NAMES = ("unity-theme.css", "unity-theme.js")
 
 # The switch itself is shared the same way, but lands under the component name each
 # app imports. One control, five identical copies, so the family cannot grow five
@@ -29,13 +29,13 @@ NAMES = ("ontrak-theme.css", "ontrak-theme.js")
 # Gating on the marker means the switch is required exactly once the app has adopted
 # the theme — an app that has not been converted yet is skipped, and one that has
 # cannot ship a switch that does not match.
-TOGGLE_CANONICAL = "ontrak-theme.tsx"
+TOGGLE_CANONICAL = "unity-theme.tsx"
 TOGGLES = (
-    ("ontrak-portal/src/theme/ontrak-theme.css", "ontrak-portal/src/components/ThemeToggle.tsx"),
-    ("ontrak-tix/src/theme/ontrak-theme.css", "ontrak-tix/src/components/ThemeToggle.tsx"),
-    ("ontrak-sentinel/src/theme/ontrak-theme.css", "ontrak-sentinel/src/components/ThemeToggle.tsx"),
-    ("ontrak-sync/web/app/theme/ontrak-theme.css", "ontrak-sync/web/components/ThemeToggle.tsx"),
-    ("src/theme/ontrak-theme.css", "src/components/ThemeToggle.tsx"),   # the training range
+    ("ontrak-portal/src/theme/unity-theme.css", "ontrak-portal/src/components/ThemeToggle.tsx"),
+    ("ontrak-tix/src/theme/unity-theme.css", "ontrak-tix/src/components/ThemeToggle.tsx"),
+    ("ontrak-sentinel/src/theme/unity-theme.css", "ontrak-sentinel/src/components/ThemeToggle.tsx"),
+    ("ontrak-sync/web/app/theme/unity-theme.css", "ontrak-sync/web/components/ThemeToggle.tsx"),
+    ("src/theme/unity-theme.css", "src/components/ThemeToggle.tsx"),   # the training range
 )
 
 # Where a product keeps its copy, relative to the repository root. An app that has
@@ -48,16 +48,16 @@ TOGGLES = (
 # image contains no `src/`, so a copy there would be read in development and missing
 # in the container — which is the mistake this list is written to make impossible.
 APPS = (
-    ("ontrak-portal/public", ("ontrak-theme.js",)),
-    ("ontrak-portal/src/theme", ("ontrak-theme.css",)),
-    ("ontrak-tix/public", ("ontrak-theme.js",)),
-    ("ontrak-tix/src/theme", ("ontrak-theme.css",)),
-    ("ontrak-sentinel/public", ("ontrak-theme.js",)),
-    ("ontrak-sentinel/src/theme", ("ontrak-theme.css",)),
-    ("ontrak-sync/web/public", ("ontrak-theme.js",)),
-    ("ontrak-sync/web/app/theme", ("ontrak-theme.css",)),
-    ("public", ("ontrak-theme.js",)),          # the training range at the root
-    ("src/theme", ("ontrak-theme.css",)),
+    ("ontrak-portal/public", ("unity-theme.js",)),
+    ("ontrak-portal/src/theme", ("unity-theme.css",)),
+    ("ontrak-tix/public", ("unity-theme.js",)),
+    ("ontrak-tix/src/theme", ("unity-theme.css",)),
+    ("ontrak-sentinel/public", ("unity-theme.js",)),
+    ("ontrak-sentinel/src/theme", ("unity-theme.css",)),
+    ("ontrak-sync/web/public", ("unity-theme.js",)),
+    ("ontrak-sync/web/app/theme", ("unity-theme.css",)),
+    ("public", ("unity-theme.js",)),          # the training range at the root
+    ("src/theme", ("unity-theme.css",)),
 )
 
 
@@ -121,7 +121,7 @@ def main() -> int:
         print("theme copies are not identical:")
         for line in failures:
             print(f"  ✗ {line}")
-        print("\nfix: cp theme/ontrak-theme.css theme/ontrak-theme.js <app>/<folder>/ (and theme/ontrak-theme.tsx over the app's ThemeToggle.tsx)")
+        print("\nfix: cp theme/unity-theme.css theme/unity-theme.js <app>/<folder>/ (and theme/unity-theme.tsx over the app's ThemeToggle.tsx)")
         return 1
 
     print(f"theme: {checked} file(s) verified identical to the canonical copy")

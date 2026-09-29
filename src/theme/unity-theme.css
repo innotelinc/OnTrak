@@ -1,12 +1,22 @@
 /*
  * ═══════════════════════════════════════════════════════════════════════════
- * OnTrak — the shared theme.  THE canonical copy.
+ * UNITY — the shared theme.  THE canonical copy.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Every product in the family ships a byte-identical copy of this file (each app
- * is built from its own directory, so a file outside the build context cannot be
- * imported). `theme/tests/test_theme_copies.py` fails if any copy drifts, which is
- * what stops "one palette" from becoming five opinions over six months.
+ * One theme for every Innotel project, not just the OnTrak ones. `theme/README.md`
+ * is the adoption guide for a new project; this file is the palette.
+ *
+ * Every product ships a byte-identical copy of this file (each app is built from its
+ * own directory, so a file outside the build context cannot be imported).
+ * `theme/tests/test_theme_copies.py` fails if any copy drifts, which is what stops
+ * "one palette" from becoming five opinions over six months.
+ *
+ * ── Two names worth keeping apart ──────────────────────────────────────────
+ *
+ *   **Unity** (this)   the theme: three schemes, two modes, one vocabulary.
+ *   **OnTrak Unity**  the portal that is one of the things wearing it. The theme
+ *                     came first and the product took its name, which is the
+ *                     direction that causes no trouble.
  *
  * ── What is here, and why it is shaped this way ────────────────────────────
  *
@@ -34,8 +44,8 @@
  * `--unknown` exists as its own token because a check that never ran must never be
  * painted the same as a check that passed.
  *
- * Usage: set `data-scheme` and `data-mode` on <html> (see theme.js), then use the
- * tokens. No component should name a raw colour.
+ * Usage: set `data-scheme` and `data-mode` on <html> (see unity-theme.js), then use
+ * the tokens. No component should name a raw colour.
  */
 
 /* ══ scheme: desk — light ═══════════════════════════════════════════════════ */
