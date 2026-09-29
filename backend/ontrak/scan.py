@@ -17,6 +17,12 @@ monitor shows green — the failure mode this tool exists to remove. So every pr
 here either produces findings or records why it could not, and `scanned` is only
 true when at least one manager actually produced a verdict.
 
+That third case has a *durable* form that used to be mishandled: a container that
+is not running cannot be read at all, so it is recorded as out of service and
+holds no findings (`scan_target`). Carrying a previous scan's findings forward
+for one made a machine that is deliberately down report updates that no apply
+could ever install.
+
 WHY EACH MANAGER REPORTS WHAT IT SAW
 ------------------------------------
 Deleting a finding is how "this got updated by someone else" becomes visible
@@ -283,8 +289,25 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
     return seen
 
 
+def _parse_instances(listing) -> list[tuple[str, str]]:
+    """`incus list -c ns` rows → (name, STATE).
+
+    The state travels with the name because a stopped instance cannot be read at
+    all: `incus exec` fails on it, so every manager reports the same error, and it
+    is the *state* — not the error text — that tells this scan the difference
+    between a machine that is out of service and one that answered badly.
+    """
+    out: list[tuple[str, str]] = []
+    for line in listing.lines():
+        parts = [part.strip() for part in line.split(",")]
+        if not parts or not parts[0]:
+            continue
+        out.append((parts[0], parts[1] if len(parts) > 1 else ""))
+    return out
+
+
 def scan_target(conn, *, host: Host, name: str, kind: str, container: str | None,
-                settings: Settings, policy: Policy) -> TargetReport:
+                settings: Settings, policy: Policy, state: str | None = None) -> TargetReport:
     """Inspect one target and record its findings. Never raises."""
     report = TargetReport(host=host.name, name=name, kind=kind)
     try:
@@ -295,6 +318,22 @@ def scan_target(conn, *, host: Host, name: str, kind: str, container: str | None
     except Exception as exc:  # a broken row must not abort the estate
         report.errors.append(f"target: {exc}")
         report.manager_status["target"] = "error"
+        return report
+
+    # A container that is not running cannot be read at all. That is a *durable*
+    # "could not look", not a transient probe failure, so the contract this module
+    # documents at the top applies literally — an error on the target and NO
+    # findings. Carrying the previous scan's findings forward is what made four
+    # stopped instances report 77 updates that no apply could ever install, failing
+    # every run with "Instance is not running" and keeping the estate's failed
+    # count permanently red for machines that are deliberately down. Nothing is
+    # hidden while one is out of service: the first scan after it starts again
+    # re-detects the same updates and they come back as pending.
+    if kind == "container" and state and state.upper() != "RUNNING":
+        db.expire_findings(conn, [target_id], set())
+        report.manager_status["instance"] = "not-running"
+        report.errors.append(f"instance is not running (state: {state})")
+        db.touch_target(conn, target_id, error=f"instance is not running (state: {state})")
         return report
 
     seen: set[tuple[int, str, str]] = set()
@@ -349,11 +388,15 @@ def scan_estate(conn, settings: Settings, policy: Policy, *, trigger: str = "man
                 return [bad]
 
             os_name, _, kernel = (identity.stdout.strip() + "||").partition("|")
-            names: list[str] = []
+            instances: list[tuple[str, str]] = []
             if host.kind in ("incus", "both"):
-                listing = incus(host, ["list", "--format", "csv", "-c", "n", "--project", "default"],
+                # `-c ns` (name, state), not `-c n`: the state is what lets a
+                # stopped instance be reported as out of service instead of being
+                # probed, failing, and leaving stale findings behind.
+                listing = incus(host, ["list", "--format", "csv", "-c", "ns",
+                                       "--project", "default"],
                                 settings.ssh_timeout)
-                names = [line.strip() for line in listing.lines() if line.strip()]
+                instances = _parse_instances(listing)
                 if listing.timed_out or not listing.ok:
                     # Enumerate containers or do not pretend to: a host whose
                     # container list failed would otherwise contribute one host
@@ -368,14 +411,15 @@ def scan_estate(conn, settings: Settings, policy: Policy, *, trigger: str = "man
 
             db.upsert_host(conn, name=host.name, address=host.address, kind=host.kind,
                            ssh_user=host.ssh_user, reachable=True, os_name=os_name.strip() or None,
-                           kernel=kernel.strip() or None, container_count=len(names))
-            db.log(conn, f"{host.name} up: {os_name.strip()} ({len(names)} container(s))", run_id=run_id)
+                           kernel=kernel.strip() or None, container_count=len(instances))
+            db.log(conn, f"{host.name} up: {os_name.strip()} ({len(instances)} container(s))",
+                   run_id=run_id)
 
             out = [scan_target(conn, host=host, name=host.name, kind="host", container=None,
                                settings=settings, policy=policy)]
-            for name in names:
+            for name, state in instances:
                 out.append(scan_target(conn, host=host, name=name, kind="container", container=name,
-                                       settings=settings, policy=policy))
+                                       settings=settings, policy=policy, state=state))
             return out
         except Exception as exc:  # a host-level crash must not abort the run
             db.upsert_host(conn, name=host.name, address=host.address, kind=host.kind,

@@ -76,6 +76,10 @@ class FakeEstate:
     def __init__(self, host="i1", containers=("monarch",)):
         self.host = host
         self.containers = list(containers)
+        # name -> incus state. Absent means RUNNING, so every pre-existing test
+        # keeps describing a live estate; a test that wants a stopped instance
+        # registers it here.
+        self.states: dict[str, str] = {}
         self.reachable = True
         self.incus_list_ok = True
         self.apt: dict[str | None, tuple[str, str]] = {}
@@ -109,10 +113,13 @@ class FakeEstate:
         self.calls.append(("incus", host.name, tuple(args)))
         if not self.incus_list_ok:
             return Result("incus list", returncode=1, stderr="Error: cannot connect to incus")
-        return Result("incus list", 0, "".join(f"{name}\n" for name in self.containers), "")
+        rows = "".join(f"{name},{self.states.get(name, 'RUNNING')}\n" for name in self.containers)
+        return Result("incus list", 0, rows, "")
 
     def incus_exec(self, host, container, command, timeout):
         self.calls.append(("incus exec", host.name, container, tuple(command)))
+        if self.states.get(container, "RUNNING") != "RUNNING":
+            return Result("incus exec", 1, "", "Error: Instance is not running")
         command = command[-1] if command else ""
         if "docker" in command:
             return self.docker_in_container(host, container, command.split()[1:], timeout)
@@ -288,6 +295,79 @@ class MissingTools(ScanCase):
         self.fake.containers = ["scratch"]
         self.scan()
         self.assertIn(("apt", "nginx"), self.findings())
+
+
+class StoppedInstance(ScanCase):
+    """An instance that is not RUNNING is out of service, not merely unreadable.
+
+    `incus exec` cannot reach it, so every manager would report the same error and
+    a previous scan's findings would look actionable forever — which is what made
+    four stopped instances fail every apply with "Instance is not running".
+    """
+
+    def test_a_stopped_instance_is_not_probed_and_reports_not_scanned(self):
+        self.fake.containers = ["monarch"]
+        self.fake.states["monarch"] = "STOPPED"
+        self.fake.apt["monarch"] = (SIM_TWO, LIST_TWO)
+        result = self.scan()
+        report = self.report(result, "monarch")
+        self.assertFalse(report["scanned"])
+        self.assertEqual("not-running", report["managers"]["instance"])
+        self.assertEqual(0, report["findings"])
+        self.assertEqual({}, self.findings())
+        probed = [c for c in self.fake.calls if c[0] == "incus exec" and c[2] == "monarch"]
+        self.assertEqual([], probed)
+
+    def test_a_stopped_instance_expires_the_findings_it_had(self):
+        self.fake.containers = ["monarch"]
+        self.fake.apt["monarch"] = (SIM_TWO, LIST_TWO)
+        self.scan()
+        self.assertEqual(2, len(self.findings()))
+        self.fake.states["monarch"] = "STOPPED"
+        result = self.scan()
+        self.assertEqual({}, self.findings())
+        self.assertEqual(0, result["findings"])
+
+    def test_a_restarted_instance_reports_its_findings_again(self):
+        # Nothing is hidden while it is down: it comes straight back.
+        self.fake.containers = ["monarch"]
+        self.fake.apt["monarch"] = (SIM_TWO, LIST_TWO)
+        self.fake.states["monarch"] = "STOPPED"
+        self.scan()
+        self.assertEqual({}, self.findings())
+        self.fake.states["monarch"] = "RUNNING"
+        self.scan()
+        self.assertIn(("apt", "nginx"), self.findings())
+        self.assertIn(("apt", "curl"), self.findings())
+
+    def test_the_target_records_why_it_could_not_be_looked_at(self):
+        self.fake.containers = ["monarch"]
+        self.fake.states["monarch"] = "STOPPED"
+        self.scan()
+        row = self.conn.execute(
+            "SELECT error FROM targets WHERE host='i1' AND name='monarch'").fetchone()
+        self.assertIn("not running", row["error"])
+        self.assertIn("STOPPED", row["error"])
+
+    def test_a_stopped_instance_keeps_its_applied_history(self):
+        # Expiry is about what is still actionable. A record of something that
+        # was already installed is not.
+        target = db.ensure_target(self.conn, host="i1", kind="container", name="monarch")
+        db.record_finding(self.conn, target_id=target, manager="apt", package="curl")
+        ids = [r["id"] for r in self.conn.execute("SELECT id FROM findings").fetchall()]
+        db.set_status(self.conn, ids, "applied")
+        self.fake.containers = ["monarch"]
+        self.fake.states["monarch"] = "STOPPED"
+        self.scan()
+        self.assertIn(("apt", "curl"), self.findings())
+
+    def test_a_running_instance_is_still_probed(self):
+        # The guard is the state, not the presence of the field.
+        self.fake.containers = ["monarch"]
+        self.fake.states["monarch"] = "RUNNING"
+        self.fake.apt["monarch"] = (SIM_TWO, LIST_TWO)
+        self.scan()
+        self.assertTrue(self.report(self.scan(), "monarch")["scanned"])
 
 
 class DockerScan(ScanCase):
