@@ -2,8 +2,10 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { sessionsDir } from "./config.js";
 import type { ChatMessage } from "./omniroute.js";
+// The signed-in account's own directory: a chat list is one person's, and
+// another account signing in to the same deployment must not read it.
+import { sessionsDir } from "./scope.js";
 
 export interface SessionSummary {
   id: string;

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { config } from "./config.js";
+import { defaultScope, workspaceRoot } from "./scope.js";
 
 export class WorkspaceError extends Error {}
 
@@ -18,8 +18,11 @@ export function resolveInWorkspace(rel: string): string {
     throw new WorkspaceError(`paths must be relative to the workspace root, got: ${rel}`);
   }
 
-  const abs = path.resolve(config.workspace, rel);
-  const root = config.workspace;
+  // The active scope's root, not the deployment's: with tenancy configured this
+  // is the signed-in account's own directory, so one account cannot name a path
+  // that reaches another's files even if it knows the name.
+  const root = workspaceRoot();
+  const abs = path.resolve(root, rel);
   if (abs !== root && !abs.startsWith(root.endsWith(path.sep) ? root : root + path.sep)) {
     throw new WorkspaceError(`path escapes the workspace: ${rel}`);
   }
@@ -28,13 +31,22 @@ export function resolveInWorkspace(rel: string): string {
 
 /** Workspace-relative, forward-slashed, for display and for the model. */
 export function toRel(abs: string): string {
-  const rel = path.relative(config.workspace, abs);
+  const rel = path.relative(workspaceRoot(), abs);
   return rel === "" ? "." : rel.split(path.sep).join("/");
 }
 
+/**
+ * Create the deployment's own roots at boot.
+ *
+ * An account's directories are made when its first request enters that
+ * account's scope (`runInScope`), because the set of accounts is not knowable
+ * here: the control plane creates one per sign-in, and pre-creating them would
+ * be a listing that grows for nobody's benefit.
+ */
 export async function ensureWorkspace(): Promise<void> {
-  await fs.mkdir(config.workspace, { recursive: true });
-  await fs.mkdir(path.join(config.dataDir, "sessions"), { recursive: true });
+  const shared = defaultScope();
+  await fs.mkdir(shared.root, { recursive: true });
+  await fs.mkdir(shared.sessions, { recursive: true });
 }
 
 export type DirEntry = { name: string; path: string; type: "file" | "dir"; size: number };
@@ -120,7 +132,7 @@ export async function writeTextFile(abs: string, content: string): Promise<numbe
  * something it would not have been allowed to read.
  */
 export async function deleteWorkspaceEntry(abs: string): Promise<number> {
-  if (abs === config.workspace) throw new WorkspaceError("refusing to delete the workspace root");
+  if (abs === workspaceRoot()) throw new WorkspaceError("refusing to delete the workspace root");
 
   const stat = await fs.stat(abs);
   if (stat.isDirectory()) {

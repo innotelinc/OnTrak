@@ -24,6 +24,7 @@ import {
 } from "./oidc.js";
 import { gatewayHealth, listModels } from "./omniroute.js";
 import { sandboxInfo } from "./sandbox.js";
+import { runInScope, workspaceRoot } from "./scope.js";
 import { dropSnapshot, listSnapshots, readSnapshot } from "./snapshots.js";
 import { startSweep, sweepStale, sweepState } from "./sweep.js";
 import {
@@ -38,7 +39,7 @@ import {
   normalizeModelList,
   saveSession,
 } from "./store.js";
-import { auditExport, beginTurn, countUsage, finishTurn, type TurnUsage } from "./tenancy.js";
+import { auditExport, beginTurn, countUsage, finishTurn, scopeFor, type TurnUsage } from "./tenancy.js";
 import {
   deleteWorkspaceEntry,
   ensureWorkspace,
@@ -323,7 +324,8 @@ async function handleApi(
     return sendJson(res, 200, {
       ...health,
       model: config.model,
-      workspace: config.workspace,
+      // The caller's own root, which is the deployment's when tenancy is off.
+      workspace: workspaceRoot(),
       sandbox,
       approval: {
         mode: config.approval,
@@ -598,7 +600,21 @@ export function createServer(): http.Server {
         if (url.pathname.startsWith("/api/")) {
           if (await handleAuthRoutes(req, res, url)) return;
           if (!isAuthorized(req, url)) throw new HttpError(401, "unauthorized");
-          await handleApi(req, res, url);
+          /*
+           * Whose workspace this request is, decided before routing so that every
+           * route agrees: the tree, a file read, a diff, the session list and an
+           * export all resolve paths through the account's own slice rather than
+           * the deployment's shared one. With no control plane configured this is
+           * the shared scope, exactly as before.
+           *
+           * A refusal here is the same posture as the turn gate's: tenancy needs
+           * sign-in, because the control plane keys accounts on the OIDC subject
+           * and a shared bearer carries no subject to key on. Serving the shared
+           * workspace instead would be the leak this exists to close.
+           */
+          const scope = await scopeFor(sessionFrom(req));
+          if (!scope.ok) throw new HttpError(scope.status, scope.message);
+          await runInScope(scope.scope, () => handleApi(req, res, url));
           return;
         }
         if (req.method === "GET" && (await serveStatic(res, url.pathname))) return;
@@ -633,6 +649,9 @@ if (isEntrypoint) {
     console.log(`  ui        http://${config.host}:${config.port}`);
     console.log(`  gateway   ${health}`);
     console.log(`  workspace ${config.workspace}`);
+    if (controlPlaneEnabled()) {
+      console.log("  tenancy   one workspace per account, under accounts/<account>/");
+    }
     if (config.webToken !== "") console.log("  auth      bearer token required");
     if (oidcEnabled()) console.log(`  auth      sign-in via ${config.oidcIssuer} -> ${redirectUri()}`);
     console.log(

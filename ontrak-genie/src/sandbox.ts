@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 
 import { config } from "./config.js";
+import { workspaceRoot } from "./scope.js";
 
 /**
  * `run_command` backend selection.
@@ -131,7 +132,7 @@ export async function sandboxInfo(): Promise<SandboxInfo> {
 
 /** Workspace-relative directory expressed as a path inside the container. */
 export function containerCwd(absCwd: string): string {
-  const rel = path.relative(config.workspace, absCwd);
+  const rel = path.relative(workspaceRoot(), absCwd);
   if (rel === "" || rel.startsWith("..")) return CONTAINER_WORKSPACE;
   return `${CONTAINER_WORKSPACE}/${rel.split(path.sep).join("/")}`;
 }
@@ -188,8 +189,10 @@ export function sandboxInvocation(
     "AGENT_SANDBOX=1",
     "-e",
     "NPM_CONFIG_CACHE=/tmp/.npm",
+    // The *account's* root, not the deployment's: mounting the shared workspace
+    // into a container would hand one account every other account's files.
     "-v",
-    `${config.workspace}:${CONTAINER_WORKSPACE}`,
+    `${workspaceRoot()}:${CONTAINER_WORKSPACE}`,
     "-w",
     containerCwd(absCwd),
   ];

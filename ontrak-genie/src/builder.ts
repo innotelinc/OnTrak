@@ -31,7 +31,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { config } from "./config.js";
+import { workspaceRoot } from "./scope.js";
 import { isIgnoredDir, readTextFile } from "./workspace.js";
 
 /**
@@ -366,7 +366,7 @@ export async function buildFactorySpec(
   if (name === "") throw new FactorySpecError("a name is required", 400);
 
   const kind: ProjectKind = input.kind === "website" ? "website" : "app";
-  const root = options.root ?? config.workspace;
+  const root = options.root ?? workspaceRoot();
   const files = options.files ?? (await walkWorkspace(root));
 
   const purpose = input.purpose?.trim() ?? "";

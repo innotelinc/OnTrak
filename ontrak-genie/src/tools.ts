@@ -5,6 +5,7 @@ import path from "node:path";
 import { config } from "./config.js";
 import { buildFileDiff, type FileDiff } from "./diff.js";
 import { removeContainer, sandboxInfo, sandboxInvocation } from "./sandbox.js";
+import { workspaceRoot } from "./scope.js";
 import { saveSnapshot } from "./snapshots.js";
 import {
   isIgnoredDir,
@@ -322,7 +323,7 @@ async function runRipgrep(pattern: string, rel: string, glob: string, maxResults
     execFile(
       "rg",
       args,
-      { cwd: config.workspace, timeout: 30_000, maxBuffer: 8 * 1024 * 1024 },
+      { cwd: workspaceRoot(), timeout: 30_000, maxBuffer: 8 * 1024 * 1024 },
       (error, stdout) => {
         if (!error) return resolve(stdout);
         // execFile surfaces the exit status as `code`, and spawn failures as an errno string.
@@ -501,8 +502,8 @@ const runCommandTool: ToolDefinition = {
     const result = await new Promise<{ code: number | null; output: string; timedOut: boolean }>(
       (resolve) => {
         const child = spawn(invocation.command, invocation.args, {
-          cwd: sandbox.backend === "docker" ? config.workspace : cwd,
-          env: { ...process.env, AGENT_WORKSPACE: config.workspace },
+          cwd: sandbox.backend === "docker" ? workspaceRoot() : cwd,
+          env: { ...process.env, AGENT_WORKSPACE: workspaceRoot() },
           detached: process.platform !== "win32",
           stdio: ["ignore", "pipe", "pipe"],
         });
