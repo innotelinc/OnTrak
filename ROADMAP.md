@@ -1,6 +1,8 @@
-# OnTrak IT Support Training — Product & Engineering Roadmap
+# OnTrak — TrainingOps Roadmap
 
-> An [Innotel Labs](INNOTEL-LABS.md) product.
+> The **TrainingOps** platform of the
+> [Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack)
+> — an [Innotel Labs](INNOTEL-LABS.md) product.
 >
 > Status legend: `[x]` shipped · `[~]` in progress · `[ ]` planned · `[-]` out of scope for v1
 >
@@ -64,6 +66,16 @@ enterprise readiness.
   table — which is what the portal's password sign-in delegates to rather than
   inventing a second login. See
   [docs/family-operations.md](docs/family-operations.md).
+- **One family theme, [Unity](theme/README.md).** Every surface in the family —
+  this app, Portal, Tix, Sentinel and Sync — loads the same token set rather than
+  a private palette, with `desk` (violet) and `operations` (graphite) schemes and
+  a light/dark switch on top of each. Unity is also the standard for the rest of
+  the Innotel platforms, so a change to it is a change everywhere.
+- **A platform in the Innotel stack.** OnTrak is the **TrainingOps** platform of
+  the [Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack)
+  (registered there as the `ontrak` component), beside AthenIQ (LearningOps) and
+  Signara (DocumentOps), and it consumes the same shared layers they do:
+  Authentik, Cerulean Vault, Cerulean, ONYX and NPM Edge.
 
 ## 4. Milestones
 
@@ -232,6 +244,45 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
 - Optional proctoring/timing integrity controls for higher-stakes assessment.
 - **Exit:** a learner earns a verifiable certificate; an auditor can pull a
   signed proof-of-training packet for a cohort.
+
+### v1.6 — The learning loop `[~]`
+**Goal:** make practice flow in both directions, so the desk and the classroom
+feed each other instead of being two products that happen to share a login.
+
+An incident, a ticket, or a manual entry is the material; a resolution is the
+lesson. Nothing in the loop is a separate thing a person has to go and create.
+
+```mermaid
+flowchart LR
+  A[Incident or ticket] --> B[Sentinel detects · Tix queues]
+  B --> C[A technician works it]
+  C --> D{Resolved?}
+  D -->|yes| E[Article drafted into the knowledgebase]
+  D -->|yes| F[Training scenario drafted in ITS]
+  E --> G[Review, then publish]
+  F --> G
+```
+
+- `[~]` One front door and one identity for the whole family — Portal is the way
+  in, and every product accepts the same session. Sign-in is Cerulean SSO;
+  local passwords are a break-glass path, not a parallel login, and the
+  remaining local sign-in surfaces are being retired product by product.
+- `[ ]` Resolution → knowledgebase article. When a ticket or incident closes, the
+  AI draft is generated from the ticket's own trail (what was asked, what was
+  tried, what actually fixed it) and lands as a **draft** for a human to approve.
+- `[ ]` Resolution → training scenario. The same trail becomes a scenario
+  definition — the checks are the steps that actually resolved it — with the
+  authoring validator run so a generated scenario cannot be one that "passes
+  before any work is done".
+- `[ ]` Every source, one pipeline: incidents forwarded from Sentinel, tickets
+  entered by hand, and automated sources all enter through the same path, so
+  there is one place to look when a draft does not appear.
+- `[ ]` Provenance on both artefacts: which ticket produced this article or
+  scenario, and who approved it. A generated lesson with no origin is a lesson
+  nobody can check.
+- **Exit:** a resolved incident produces a reviewable article and a runnable,
+  validated scenario without anyone opening an authoring tool — and both link
+  back to the ticket that caused them.
 
 ### v2.0 — Enterprise training platform `[ ]`
 **Goal:** multi-organisation, evidence-grade, assistive.
