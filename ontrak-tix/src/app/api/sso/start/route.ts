@@ -20,14 +20,23 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { identityServicesFor, prisma } from "../../../../lib/db";
 import { HttpOidcClient, createPkcePair, randomUrlSafe } from "../../../../lib/oidc-client";
-import { buildAuthorizationUrl, safeReturnTo } from "../../../../lib/oidc-rules";
+import { buildAuthorizationUrl, deploymentOrigin, safeReturnTo, ssoRedirectUri } from "../../../../lib/oidc-rules";
 import { setSsoState } from "../../../../lib/sso-session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/**
+ * Where this deployment is, which is not necessarily where this request arrived.
+ * See `deploymentOrigin` — the redirect URI has to name the address the provider
+ * was given, and the post-sign-in redirect has to name one the browser can reach.
+ */
+function originOf(request: NextRequest): string {
+  return deploymentOrigin(process.env.ONTRAK_TIX_BASE_URL, request.nextUrl.origin);
+}
+
 function fail(request: NextRequest, message: string): NextResponse {
-  const url = new URL("/sign-in", request.nextUrl.origin);
+  const url = new URL("/sign-in", originOf(request));
   url.searchParams.set("error", message);
   return NextResponse.redirect(url);
 }
@@ -56,7 +65,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const pkce = createPkcePair();
   const state = randomUrlSafe(24);
   const nonce = randomUrlSafe(24);
-  const redirectUri = new URL("/api/sso/callback", request.nextUrl.origin).toString();
+  const redirectUri = ssoRedirectUri(originOf(request));
 
   await setSsoState({
     state,

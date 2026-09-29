@@ -19,15 +19,25 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { identityServicesFor } from "../../../../lib/db";
 import { HttpOidcClient, OIDC_CLIENT_SECRET_ENV } from "../../../../lib/oidc-client";
-import { extractOidcClaims, homePathForRole } from "../../../../lib/oidc-rules";
+import { deploymentOrigin, extractOidcClaims, homePathForRole, ssoRedirectUri } from "../../../../lib/oidc-rules";
 import { createTixSession } from "../../../../lib/session";
 import { clearSsoState, readSsoState } from "../../../../lib/sso-session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/**
+ * Where this deployment is, which is not necessarily where this request arrived.
+ * The redirect URI here has to be byte-identical to the one `/api/sso/start` sent,
+ * because the provider binds the code to it — and the final redirect has to name an
+ * address the browser can actually reach.
+ */
+function originOf(request: NextRequest): string {
+  return deploymentOrigin(process.env.ONTRAK_TIX_BASE_URL, request.nextUrl.origin);
+}
+
 function fail(request: NextRequest, message: string): NextResponse {
-  const url = new URL("/sign-in", request.nextUrl.origin);
+  const url = new URL("/sign-in", originOf(request));
   url.searchParams.set("error", message);
   return NextResponse.redirect(url);
 }
@@ -55,7 +65,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!connection) return fail(request, "This workspace no longer has single sign-on configured.");
 
   const client = new HttpOidcClient();
-  const redirectUri = new URL("/api/sso/callback", request.nextUrl.origin).toString();
+  const redirectUri = ssoRedirectUri(originOf(request));
 
   let token;
   try {
@@ -80,5 +90,5 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const { user } = signedIn.value;
   await createTixSession({ userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email, name: user.displayName });
 
-  return NextResponse.redirect(new URL(pending.returnTo || homePathForRole(user.role), request.nextUrl.origin));
+  return NextResponse.redirect(new URL(pending.returnTo || homePathForRole(user.role), originOf(request)));
 }

@@ -91,6 +91,17 @@ services:
       DATABASE_URL: postgresql://ontrak:ontrak@db:5432/ontrak_tix
       ONTRAK_TIX_BLOB_DIR: .ontrak-tix-blobs
       ONTRAK_TIX_EVIDENCE_DIR: .ontrak-tix-evidence
+      # This desk's own address, which single sign-on needs: a redirect URI is
+      # matched *exactly* against the one the provider registered, and without this
+      # the desk builds it from the address its process is bound to — `0.0.0.0:3000`
+      # in here — so the provider refuses the handshake with a mismatch that reads
+      # like a wrong client id. Defaults to the host port this file publishes.
+      #
+      # Set here rather than in `.env` because that variable doubles as the trigger
+      # for the opt-in live tests, and those need the app reachable at this address
+      # with their fixtures beside it — which is `npm run dev` on the host, not a
+      # container. Put it in `.env` and `npm test` starts running them.
+      ONTRAK_TIX_BASE_URL: ${ONTRAK_TIX_BASE_URL:-http://127.0.0.1:3001}
       NODE_ENV: production
     volumes:
       - ontrak-tix-blobs:/app/.ontrak-tix-blobs

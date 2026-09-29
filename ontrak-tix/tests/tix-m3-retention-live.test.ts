@@ -42,8 +42,18 @@ async function connect(): Promise<PrismaClient | null> {
   }
 }
 
-/** POST the scheduler's endpoint the way a cron would. */
-async function sweep(query = "", secret: string | undefined = SECRET): Promise<Response> {
+/**
+ * POST the scheduler's endpoint the way a cron would.
+ *
+ * `secret` is `null` — not `undefined` — for "carry no credential", and it is not a
+ * defaulted parameter on purpose. A default applies when the argument is
+ * `undefined`, so `sweep("", undefined)` meant to send *no* credential would have
+ * quietly sent the real one; the unauthenticated case below was asserting 401
+ * against an authenticated request and passing for the wrong reason. That is the
+ * one assertion in this file whose whole job is to prove an unauthenticated caller
+ * is refused, so it is worth it being explicit about which one it sends.
+ */
+async function sweep(query = "", secret: string | null = SECRET ?? null): Promise<Response> {
   const headers: Record<string, string> = {};
   if (secret) headers.Authorization = `Bearer ${secret}`;
   return fetch(`${BASE_URL}/api/incidents/retention-sweep${query}`, { method: "POST", headers });
@@ -123,9 +133,13 @@ test("a cron run of the sweep endpoint purges a real expired artifact through th
     });
     assert.equal(await exists(path), true, "the bytes are on disk before the sweep");
 
-    // Unauthenticated and unknown-tenant calls are refused before anything runs.
-    assert.equal((await sweep("", undefined)).status, 401);
-    assert.equal((await sweep("?tenant=nope")).status, 404);
+    // Two different refusals, and they have to be told apart: a caller with no
+    // credential is turned away before anything runs (401), while a caller who has
+    // one and names a tenant that does not exist gets 404. Sending no credential to
+    // the second case would make both 401 and prove nothing about tenant
+    // resolution.
+    assert.equal((await sweep("", null)).status, 401, "an unauthenticated sweep must be refused");
+    assert.equal((await sweep("?tenant=nope")).status, 404, "a credentialed sweep of an unknown tenant is not found");
 
     // A dry run reports the purge and changes nothing at all.
     const dry = await sweep(`?tenant=${slug}&dryRun=1`);
