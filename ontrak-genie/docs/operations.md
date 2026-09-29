@@ -747,6 +747,12 @@ Two consequences worth knowing before switching it on:
   server-side in the request handler; a refused turn is a `401` or a `429`
   carrying the plane's own reasons and nothing else.
 
+One boundary to know about: tenancy decides *whose key pays*, and nothing more.
+This console still has **one workspace and one session store**, so two people
+signed in to the same deployment are attributed separately and still see each
+other's files and chats. Per-account isolation is a workspace question — one
+workspace per account — and it is not something this gate can answer.
+
 `GET /api/health` reports `tenancy: true` when a plane is configured, which is the
 quickest way to confirm a deployment picked the settings up.
 
