@@ -155,6 +155,15 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
 
 - SSO via the **OnTrak Sentinel** IdP (OIDC/SAML), with SCIM roster sync; keep a
   local JWT fallback for standalone deployments.
+  - The *provider* half is ready to sign against: Sentinel ships the
+    authorization-code flow with PKCE, SAML 2.0 SSO and enforced MFA (authenticator
+    apps **and** WebAuthn security keys), with enrollment self-service from its own
+    console. The training app's side of this bullet is therefore a client, not a
+    wait — and it can be built against the running provider (`npm run serve` in
+    `ontrak-sentinel/`) today. SCIM is Sentinel's S2 and is not started.
+  - MFA is enforced at the provider, so an organization that requires a second
+    factor gets it here without the training app implementing one; a session is
+    refused until a confirmed factor has been verified.
 - LTI 1.3 so scenarios can be launched and graded from an LMS.
 - Public API + webhooks for attempt/grading events, and bulk CSV import/export of
   rosters and results.
