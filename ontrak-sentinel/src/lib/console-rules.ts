@@ -28,6 +28,10 @@
 
 import { mfaKindLabel, type MfaFactorSummary } from "./mfa-rules";
 import { POLICY_SCOPES, type PolicyScope } from "./identity-rules";
+// Read for the feed page's help text: the kinds it will classify, and the confidence below
+// which a match annotates rather than escalates. Both are named here rather than retyped, so
+// the page cannot promise something the matcher does not do.
+import { CONFIDENCE_FLOOR, INDICATOR_KINDS } from "./threat-intel-rules";
 
 /* -------------------------------------------------------------------------- */
 /*  Paths                                                                     */
@@ -51,6 +55,15 @@ export const CONSOLE_PATHS = {
   directoryConnect: "/console/directory/connection",
   directoryRemove: "/console/directory/connection/remove",
   directorySync: "/console/directory/sync",
+  /**
+   * Threat intelligence (S3): the indicators this organization matches against.
+   *
+   * Under `/console` with everything else, for the same reason the console's sign-in is:
+   * one prefix an operator can put behind a VPN without also catching the OIDC endpoints.
+   */
+  intel: "/console/intel",
+  intelIngest: "/console/intel/feed",
+  intelWithdraw: "/console/intel/indicator/withdraw",
   provisioning: "/console/provisioning",
   mintToken: "/console/provisioning/token",
   revokeToken: "/console/provisioning/token/revoke",
@@ -254,6 +267,56 @@ export interface ConsoleSyncReportView {
   skipped: string[];
 }
 
+/**
+ * The threat-intelligence page (S3): the indicators this organization matches against, and
+ * what the last push into the list did.
+ *
+ * One page rather than two, deliberately. "What does the feed know?" and "what did the feed
+ * just change?" are the same question asked a second later, and a deployment that has to
+ * navigate to see whether its last paste was accepted is a deployment whose paste is
+ * unverified. The report travels on the view for that reason — it is the *answer* to the
+ * response, not a separate screen.
+ */
+export interface ConsoleIndicatorView {
+  id: string;
+  kind: string;
+  /** Canonical, so two feeds naming one address are one row here too. */
+  value: string;
+  source: string;
+  confidence: number;
+  severity: string | null;
+  labels: string[];
+  firstSeenAt: string;
+  /** ISO, or `null` for "does not expire" — which the page says in words. */
+  expiresAt: string | null;
+  /** Whether the matcher would use it right now. Expiry applied where it can be seen. */
+  active: boolean;
+}
+
+/** What one push into the list did, refusals included. */
+export interface ConsoleFeedReportView {
+  accepted: number;
+  updated: number;
+  rejected: { value: string; reason: string }[];
+}
+
+export interface ConsoleIntelView {
+  actor: ConsoleActor;
+  session: ConsoleSessionView;
+  stats: {
+    total: number;
+    active: number;
+    expired: number;
+    /** How many rows carry an expiry at all. Zero is worth saying out loud. */
+    withExpiry: number;
+    byFeed: Record<string, number>;
+    byKind: Record<string, number>;
+  };
+  indicators: ConsoleIndicatorView[];
+  /** Present only on the response to a push, `null` on a plain read. */
+  report: ConsoleFeedReportView | null;
+}
+
 export interface ConsolePoliciesView {
   actor: ConsoleActor;
   session: ConsoleSessionView;
@@ -298,8 +361,9 @@ const STYLES = `
   code, pre { font-family: var(--mono); font-size: .85em; }
   pre { background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: .75rem; overflow-x: auto; }
   form { margin: .75rem 0; }
-  input { font: inherit; width: 100%; box-sizing: border-box; padding: .5rem .6rem; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); }
-  input:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 1px; }
+  input, textarea { font: inherit; width: 100%; box-sizing: border-box; padding: .5rem .6rem; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); }
+  input:focus-visible, textarea:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 1px; }
+  textarea { font-family: var(--mono); font-size: .85em; resize: vertical; }
   button { font: inherit; font-weight: 600; padding: .5rem .9rem; border-radius: var(--radius-sm); border: 1px solid transparent; background: var(--brand); color: var(--brand-ink); cursor: pointer; }
   button:hover { filter: brightness(1.06); }
   .muted { color: var(--ink-faint); }
@@ -357,6 +421,7 @@ export function consolePage(input: ConsolePageInput): string {
       `<a href="${CONSOLE_PATHS.mfa}">Second factor</a>` +
       `<a href="${CONSOLE_PATHS.policies}">Policies</a>` +
       `<a href="${CONSOLE_PATHS.directory}">Directories</a>` +
+      `<a href="${CONSOLE_PATHS.intel}">Threat intel</a>` +
       `<a href="${CONSOLE_PATHS.provisioning}">Provisioning</a>` +
       `</nav>`
     : `<nav class="muted"><a href="${CONSOLE_PATHS.signIn}">Sign in</a></nav>`;
@@ -745,6 +810,96 @@ export function renderDirectory(
     `a person who disappears from the answer is left alone, because a partial answer is how a sync offboards a company.</p>`;
 
   return consolePage({ title: "Directories", actor: view.actor, body, flash, error });
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Threat intelligence                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The feed page.
+ *
+ * What it deliberately does *not* offer is a delete-everything or a "clear the feed" button.
+ * Withdrawing one indicator is a named, audited decision — the row's own button says which
+ * one — and a bulk erase is what a panicking operator reaches for at 03:00 and regrets at
+ * 09:00. A feed that has turned out to be wrong can at least say which rows it withdrew.
+ */
+export function renderIntel(view: ConsoleIntelView, flash?: string | null, error?: string | null): string {
+  const stats = view.stats;
+  const feeds = Object.entries(stats.byFeed).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const kinds = Object.entries(stats.byKind).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+
+  const summary =
+    `<div class="card"><p>${stats.total} indicator(s): <strong>${stats.active}</strong> usable now, ${stats.expired} expired. ` +
+    (stats.withExpiry === 0
+      ? `None carries an expiry date — an address is reassigned and a list nobody pruned reports the innocent for years.</p>`
+      : `${stats.withExpiry} carr${stats.withExpiry === 1 ? "ies" : "y"} an expiry date.</p>`) +
+    (feeds.length
+      ? `<table><thead><tr><th>Feed</th><th>Usable</th></tr></thead><tbody>${feeds
+          .map(([feed, count]) => `<tr><td>${escapeHtml(feed)}</td><td class="muted">${count}</td></tr>`)
+          .join("")}</tbody></table>`
+      : "") +
+    (kinds.length
+      ? `<p class="muted">${kinds.map(([kind, count]) => `${escapeHtml(kind)}: ${count}`).join(" · ")}</p>`
+      : "") +
+    `</div>`;
+
+  const reportCard = view.report
+    ? `<div class="card"><h3>Feed accepted</h3>` +
+      `<p>${view.report.accepted} new indicator(s), ${view.report.updated} refreshed from a feed we already had.</p>` +
+      (view.report.rejected.length
+        ? `<h3>Refused</h3><ul>${view.report.rejected
+            .slice(0, 40)
+            .map((row) => `<li class="muted">${escapeHtml(row.value || "(empty)")} — ${escapeHtml(row.reason)}</li>`)
+            .join("")}</ul>` +
+          `<p class="muted">A row that will never match anything is worse than no row, because it reads as protection, ` +
+          `so these were not stored.</p>`
+        : `<p class="muted">Nothing was refused.</p>`) +
+      `</div>`
+    : "";
+
+  const rows = view.indicators.length
+    ? `<table><thead><tr><th>Kind</th><th>Value</th><th>Feed</th><th>Confidence</th><th>Severity</th><th>Expires</th><th></th></tr></thead><tbody>${view.indicators
+        .map(
+          (indicator) =>
+            `<tr${indicator.active ? "" : ` class="muted"`}>` +
+            `<td class="muted">${escapeHtml(indicator.kind)}</td>` +
+            `<td><code>${escapeHtml(indicator.value)}</code></td>` +
+            `<td class="muted">${escapeHtml(indicator.source)}</td>` +
+            `<td class="muted">${indicator.confidence}</td>` +
+            `<td class="muted">${escapeHtml(indicator.severity ?? "—")}</td>` +
+            `<td class="muted">${indicator.expiresAt ? escapeHtml(indicator.expiresAt) : "never"}</td>` +
+            `<td><form method="post" action="${CONSOLE_PATHS.intelWithdraw}" style="display:inline">` +
+            `<input type="hidden" name="indicatorId" value="${escapeHtml(indicator.id)}">` +
+            `<button type="submit" class="quiet">Withdraw</button></form></td></tr>`,
+        )
+        .join("")}</tbody></table>`
+    : `<p class="muted">No indicator is in the list. A feed that has told us nothing cannot raise anything, ` +
+      `which is the correct behaviour and an empty security posture.</p>`;
+
+  const form =
+    `<h2>Add indicators</h2><div class="card"><form method="post" action="${CONSOLE_PATHS.intelIngest}">` +
+    `<p><label class="muted" for="source">Feed</label> ` +
+    `<input id="source" name="source" placeholder="abuse-ch" required></p>` +
+    `<p><label class="muted" for="rows">One indicator per line</label>` +
+    `<textarea id="rows" name="rows" rows="9" spellcheck="false" placeholder="203.0.113.9&#10;*.bad.example | 80&#10;44d88612fea8a8f36de82e1278abb02f | 90 | CRITICAL&#10;# a comment line is skipped"></textarea></p>` +
+    `<button type="submit">Add to the list</button>` +
+    `<p class="muted">Fields are <code>value | confidence | severity | expires</code> and everything after the value is optional. ` +
+    `Values are classified by shape (${INDICATOR_KINDS.join(", ")}); a <code>*.</code> prefix means the domain and anything ` +
+    `under it, and anything else matches one host exactly. A bare date expires at the end of that day. ` +
+    `Below confidence ${CONFIDENCE_FLOOR} a match annotates an alert instead of raising its severity.</p></form></div>`;
+
+  const body =
+    form +
+    `<h2>What is watched</h2>` +
+    summary +
+    reportCard +
+    `<h2>Indicators</h2><div class="card">${rows}</div>` +
+    `<p class="muted">A match annotates a detection rather than raising one of its own: "this address is on a list" is ` +
+    `not a claim that anything happened. What it does is change how an existing alert is judged, and the alert keeps the ` +
+    `indicator, the feed and the confidence it was judged on — so an escalation can be reviewed after the feed is gone.</p>`;
+
+  return consolePage({ title: "Threat intel", actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */

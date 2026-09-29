@@ -34,12 +34,14 @@ import {
   consoleErrorPage,
   consoleSignedOutPage,
   renderDirectory,
+  renderIntel,
   renderMfa,
   renderOverview,
   renderPolicies,
   renderProvisioning,
   renderSignIn,
   type ConsoleDirectoryView,
+  type ConsoleIntelView,
   type ConsoleMfaView,
   type ConsoleOverviewView,
   type ConsolePoliciesView,
@@ -93,6 +95,22 @@ export interface ConsoleEndpoints {
   removeDirectory(sessionId: string, connectionId: string): Promise<ServiceResult<{ name: string }>>;
   /** `dryRun` writes nothing, so it is safe for the page to render the plan in place. */
   syncDirectory(sessionId: string, connectionId: string, dryRun: boolean): Promise<ServiceResult<ConsoleSyncReportView>>;
+  /** The indicators this organization matches against (S3), and what the last push did. */
+  intel(sessionId: string): Promise<ServiceResult<ConsoleIntelView>>;
+  /**
+   * Read a paste of feed text. `source` names the feed; `text` is the box's contents.
+   *
+   * The *format* is not parsed here: `console-http.ts` moves bytes, and the grammar an
+   * operator types into belongs with the rules that classify what they typed.
+   */
+  ingestIntel(
+    sessionId: string,
+    input: { source: string; text: string },
+  ): Promise<ServiceResult<ConsoleIntelView>>;
+  withdrawIntel(
+    sessionId: string,
+    indicatorId: string,
+  ): Promise<ServiceResult<{ value: string; source: string }>>;
   /** The session policies the organization has, one card per scope. */
   policies(sessionId: string): Promise<ServiceResult<ConsolePoliciesView>>;
   /** Write the baseline or one role's override; the scope is echoed for the flash. */
@@ -348,6 +366,41 @@ async function handleSyncDirectory(request: HttpRequest, sessionId: string, endp
 
   const view = await endpoints.directory(sessionId);
   return respond(view, (page) => html(200, renderDirectory(page, result.value)));
+}
+
+async function handleIntelPage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const result = await endpoints.intel(sessionId);
+  return respond(result, (view) => html(200, renderIntel(view, flashFrom(url), errorFrom(url))));
+}
+
+/**
+ * Take a paste of indicators and render what happened to it.
+ *
+ * Rendered in place rather than redirected, because the *refusals* are the answer: a feed of
+ * four hundred lines usually has a few the classifier will not take, and a `303` would leave
+ * the operator with a count and no way to find the lines. Re-POSTing on a refresh re-reads the
+ * same box, and because an indicator's id is derived from its value that is a refresh rather
+ * than a duplicated feed.
+ */
+async function handleIngestIntel(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const result = await endpoints.ingestIntel(sessionId, {
+    source: params.source ?? "",
+    text: params.rows ?? "",
+  });
+  return respond(result, (view) => html(200, renderIntel(view)));
+}
+
+async function handleWithdrawIntel(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const indicatorId = formParams(request).indicatorId ?? "";
+  if (!indicatorId) return failure("Choose an indicator first.");
+  const result = await endpoints.withdrawIntel(sessionId, indicatorId);
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.intel}?flash=${encodeURIComponent(
+      `Withdrew ${result.value.value} from ${result.value.source}. Alerts already raised keep it on their record: the escalation they were judged on has to stay reviewable.`,
+    )}`,
+  );
 }
 
 async function handlePoliciesPage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
@@ -611,6 +664,12 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
       return post(() => handleRemoveDirectory(request, sessionId, endpoints));
     case CONSOLE_PATHS.directorySync:
       return post(() => handleSyncDirectory(request, sessionId, endpoints));
+    case CONSOLE_PATHS.intel:
+      return get(() => handleIntelPage(url, sessionId, endpoints));
+    case CONSOLE_PATHS.intelIngest:
+      return post(() => handleIngestIntel(request, sessionId, endpoints));
+    case CONSOLE_PATHS.intelWithdraw:
+      return post(() => handleWithdrawIntel(request, sessionId, endpoints));
     case CONSOLE_PATHS.mfa:
       return get(() => handleMfaPage(url, sessionId, endpoints));
     case CONSOLE_PATHS.totpBegin:
