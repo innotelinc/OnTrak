@@ -1,0 +1,201 @@
+diff --git a/Makefile b/Makefile
+index 79790c3..3b9d7ca 100644
+--- a/Makefile
++++ b/Makefile
+@@ -438,6 +438,18 @@ docker-shell: ## Shell into the running Olympus container
+ 
+ docker-app: ## Manufacture inside the container (SPEC= or newest build-request, REPLACE=1 to rebuild)
+ 	docker compose exec olympus bash -c "REPLACE=$(REPLACE) bash scripts/manufacture.sh $(if $(SPEC),$(SPEC),)"
++	@# `builds/` is a named volume (`olympus-builds:/app/builds`), so everything the
++	@# workflow just wrote lives inside the container -- while every consumer of it
++	@# (`app-package`, `site-package`, `app-up`, `apps-list`) resolves `./builds/<slug>`
++	@# on the host. Measured: the run reaches `[record]` with `8 files, 10143 bytes`
++	@# and the next command still answers "no build at builds/<slug> -- package it
++	@# first". The copy is what makes a manufactured app reachable by the tooling that
++	@# packages it, and visible to anyone who is not inside this container.
++	@#
++	@# `mkdir` first: on a fresh clone there is no `builds/` here at all, and the
++	@# container's own copy is created by the entrypoint.
++	@mkdir -p builds
++	docker compose cp olympus:/app/builds/. ./builds/
+ 
+ docker-clean: ## Remove container + builds volume (irreversible)
+ 	docker compose down -v
+diff --git a/compose.nested-userns.yml b/compose.nested-userns.yml
+new file mode 100644
+index 0000000..e3a9554
+--- /dev/null
++++ b/compose.nested-userns.yml
+@@ -0,0 +1,47 @@
++# compose.nested-userns.yml — run the Olympus container on a host whose kernel
++# denies unprivileged user namespaces to containers.
++#
++# WHY THIS FILE EXISTS. The `build` node of `archon-greenfield` runs Codex, and
++# Codex sandboxes every shell call with bubblewrap, which needs its own user and
++# network namespace. Docker's default seccomp profile refuses `clone(CLONE_NEWUSER)`,
++# so inside a stock container the sandbox cannot start and the failure is silent in
++# the worst way: Codex exits **0** having written nothing, three times, and the node
++# reports "all agent attempts produced no project files" — which reads like a model
++# problem and is a container problem.
++#
++#     $ docker compose exec olympus unshare -Urn true
++#     unshare: unshare failed: Operation not permitted
++#
++# Olympus documents this class of host in `scripts/install-build-runner.sh`, and it
++# is right that the answer is not "run the agent unsandboxed". Two ways to get the
++# namespace, and the second is better where it is available:
++#
++#   1. **This file.** Turn the profile off for this one container, so bubblewrap can
++#      create the namespace it wants. It is a real reduction in kernel-level
++#      confinement — seccomp is what stops a container from making syscalls it has
++#      no business making — which is why it is opt-in rather than the default, and
++#      why it is scoped to the service that builds rather than to the stack.
++#
++#   2. **On the host:** allow unprivileged user namespaces instead.
++#
++#          sudo sysctl -w kernel.unprivileged_userns_clone=1        # Debian/Ubuntu
++#          sudo sysctl -w user.max_user_namespaces=15000            # RHEL/Fedora
++#
++#      Persist it in `/etc/sysctl.d/`. This keeps the default seccomp profile and is
++#      the answer to prefer; use this file when the host is not yours to change.
++#
++#     $ unshare -Urn true && echo ok      # on the host, before either
++#
++# Usage, alongside the normal compose file:
++#
++#     docker compose -f docker-compose.yml -f compose.nested-userns.yml up -d
++#
++# There is no `docker-compose.override.yml` here on purpose: an override file is
++# picked up automatically, and a security posture nobody chose explicitly is the
++# one that gets shipped by accident.
++
++services:
++  olympus:
++    security_opt:
++      - seccomp=unconfined
++      - apparmor=unconfined
+diff --git a/docs/nested-container-builds.md b/docs/nested-container-builds.md
+new file mode 100644
+index 0000000..a825bab
+--- /dev/null
++++ b/docs/nested-container-builds.md
+@@ -0,0 +1,119 @@
++# Building inside the container
++
++`make docker-app` is the documented way to manufacture an app without installing the
++factory on the host. On a checkout that has never been bootstrapped it stops five
++times before the workflow starts, and every one of those stops is a bare message
++from a different program. This is the list, in the order they arrive, with what each
++one is actually asking for.
++
++Nothing here changes a build that already works. Four of the five are runtime state
++the image deliberately does not carry, and the fifth is a configuration key the
++engine does not accept.
++
++## 1. User namespaces — the build node cannot sandbox
++
++**Says:** the build node reports *"all agent attempts produced no project files"*,
++and above it, from Codex: `bwrap: No permissions to create a new namespace`.
++
++**Is:** Docker's default seccomp profile refuses `clone(CLONE_NEWUSER)`. Codex then
++exits 0 having written nothing, which is why this reads like a model failure.
++
++**Check it:**
++
++```bash
++docker compose exec olympus unshare -Urn true && echo ok
++```
++
++**Fix:** either enable unprivileged user namespaces on the host (preferred), or run
++this one container with the profile off — see `compose.nested-userns.yml`, which
++explains the trade and does not apply itself unless you name it:
++
++```bash
++docker compose -f docker-compose.yml -f compose.nested-userns.yml up -d
++```
++
++Do not read this as "run the agent unsandboxed". The sandbox is the thing that is
++missing; the fix is to give it the namespace it needs.
++
++## 2. The Archon CLI — `core-modules/` is empty in git
++
++**Says:** *"no working archon CLI found. Tried: /app/core-modules/archon/bin/archon"*.
++
++**Is:** `core-modules/` is populated by `./setup.sh`, which clones the pinned
++mirrors, and the image does not run it. Note that `bin/archon` does not exist
++anywhere in the upstream tree at the pinned SHA either — what the workflow runs is
++the released CLI:
++
++```bash
++curl -fsSL https://archon.diy/install | sh          # archon-linux-x64
++install -m 0755 archon /usr/local/bin/archon        # inside the container
++```
++
++## 3. `uv` — every greenfield node needs it
++
++**Says:** *"the 'uv' runtime is missing, and every archon-greenfield node needs it"*.
++
++The workflow resolves `uv` from `PATH`, and a container's `PATH` is not the
++operator's — so install it where every account can execute it:
++
++```bash
++curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
++```
++
++## 4. A git repository
++
++**Says:** *"Error: Not in a git repository. The Archon CLI must be run from within a
++git repository."*
++
++**Is:** `.dockerignore` excludes `.git`, so `/app` is not one, and the engine
++captures the source tree through git:
++
++```bash
++git -C /app init -q && git -C /app -c user.email=build@localhost \
++  -c user.name=build commit -q --allow-empty -m baseline
++```
++
++## 5. `.archon/config.yaml` — a real configuration defect
++
++**Says:** *"Invalid assistants config in '/app/.archon/config.yaml':
++'assistants.codex.apiBaseUrl': unknown provider setting"*.
++
++**Is:** the committed config writes `apiBaseUrl` and `defaultModel` for both
++assistants. The engine's codex run-config schema takes `model`,
++`modelReasoningEffort`, `webSearchMode`, `additionalDirectories` and
++`codexBinaryPath` — nothing else — and refuses an unknown key outright. So as
++committed, a checkout cannot run its own workflow on the engine it pins. The gateway
++does not need the key: `build-app.py` writes the run's own `CODEX_HOME` config from
++`OMNIROUTE_BASE_URL`/`OMNIROUTE_API_KEY`. Remove `apiBaseUrl` and rename
++`defaultModel` to `model`.
++
++## One line that is noise
++
++Archon's title generator logs *"Claude Code SDK does not support bypassPermissions
++when running as root (UID 0)"* and falls back. The conversation title is cosmetic
++and the workflow proceeds; `IS_SANDBOX=1` in the environment silences it.
++
++## Then, and this is the part worth knowing
++
++Clearing those five gets the DAG running — `[load]`, `[plan]`, `[build]`,
++`[verify]`, `[record]` — and its output does **not** land in this checkout. `builds/`
++is a named volume (`olympus-builds:/app/builds`), so the manufactured app is inside
++the container while `app-package`, `site-package`, `app-up` and `apps-list` all read
++`./builds/<slug>` on the host: the run reports `8 files, 10143 bytes` and the very
++next command answers *"no build at builds/<slug> — package it first"*. `make
++docker-app` copies the tree out of the volume when the run succeeds, which is the
++line that makes the rest of the pipeline reachable.
++
++## The last one is not about the container at all
++
++A plan can name a `run.start` that the image `runtime.language` selects cannot
++execute. The node image has `python3` in the *build* stage (it is installed for
++native modules) and the published stage is a fresh base plus `COPY --from=build`, so
++a project whose own `start` script shells out to `python3` builds, starts, and dies
++on its healthcheck six times with `sh: python3: not found`.
++
++The plan to read for this is the plan's own shape: if there is nothing to install
++and nothing to build, the artifact is files, and `static` is the language that says
++so — nginx serves them and the plan's `start` is deliberately not run. `static` is
++refused together with an `install` or `build` command, so the plan has to be
++consistent, not merely relabelled.

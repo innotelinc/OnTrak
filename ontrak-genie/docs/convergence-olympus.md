@@ -126,12 +126,13 @@ whoever closes it:
   files (`server/schema.sql`, `src/App.tsx`) are written by the builder — Archon +
   Codex today. Nothing in Genie can stand in for that, which is exactly the §6 rule
   about not growing a second builder.
-- **Tenancy attributes and gates; it does not partition.** Genie has one workspace
-  and one session store, and the control-plane work does not key either on the
-  account, so two people signing in to one deployment are attributed separately and
-  still share what is on disk. §4.2's *"key the session library on the control-plane
-  user id"* is open, and it is a workspace-isolation question (one workspace per
-  account) rather than a control-plane one.
+- ~~**Tenancy attributes and gates; it does not partition.**~~ **Closed.** The disk
+  is keyed on the same account now: a request enters its account's scope once
+  (`src/scope.ts`, entered in `server.ts` before routing) and the path jail, the
+  session store, the snapshot store, the ripgrep root, the container mount and the
+  factory export all resolve inside it. §4.2's *"key the session library on the
+  control-plane user id"* is done; the layout and the id sanitizing are in
+  `docs/operations.md` under *Two accounts, two workspaces*.
 
 ### 5.2 The container, `make docker-app` (29 Sep 2026)
 
@@ -203,6 +204,47 @@ inside the container is **5/5 passing**.
   and the plan is portable; the one input that is not is which model the gateway
   will serve at build time. `scripts/build-model-check.py` exists for exactly that
   question — run it before a build rather than reading a code out of a failed one.
+
+### 5.4 The artifact, packaged and running (29 Sep 2026)
+
+The manufactured application then went through Olympus's *other* half — the
+packaging and runtime path — which answers a different question from the builder's:
+not "did the model write an app" but "is it running".
+
+| Step | Result |
+| --- | --- |
+| `builds/<slug>` read from the checkout | **Not there.** The run had just reported `8 files, 10143 bytes`, and `app-package` answered *"no build at builds/pomodoro-timer"*: `builds/` is a named volume (`olympus-builds:/app/builds`) and every packaging target reads `./builds/<slug>` on the host |
+| `docker compose cp` the tree out of the volume | The app, its `MANIFEST.json` and its `plan.json` in the checkout — and `node --test` in it is **5/5 passing**, so the verification travels with the artifact |
+| `package-app.py pomodoro-timer --check` | Refused: *"src/App.tsx is missing or empty"*. That is Studio's React packager; a plan-bearing build does not use it |
+| `make app-up SLUG=pomodoro-timer` | Picked `package-project.py` (the plan-bearing packager), wrote the Dockerfile **from `plan.json`**, built `olympus-app-pomodoro-timer:latest`, wrote `project.manifest.json` and `project.zip`, started the container — and then **died six times on its health check**: `sh: python3: not found` |
+| The same artifact, with the plan corrected to `static` | **Packaged and running**: healthy, loopback-only on `127.0.0.1:21400`, serving the app (`<title>Pomodoro Timer</title>`, `role="timer"`), and listed by `make apps-list` at `https://pomodoro-timer.studio.olympus.innotel.us` |
+
+Four findings, all in Olympus, all reached from this handoff — written up with the
+patch in `docs/olympus-upstream.md`:
+
+1. **A plan can name a `run.start` its own runtime image cannot execute.** The plan
+   said `runtime.language: node` with `install: npm install`, so the packager built
+   `node:24-alpine` — an image where `python3` exists in the *build* stage (installed
+   for native modules) and the published stage is a fresh base plus `COPY
+   --from=build`. The model's own `npm start` shells out to `python3`. Nothing in
+   packaging reads the project (deliberately), and nothing runs the start command
+   until a person asks for the app, so the failure arrives as six health-check
+   attempts and one line that names neither the plan nor the image. With the plan
+   corrected — `static`, which is nginx serving files, `start` deliberately not run —
+   the same artifact packaged and ran. Note that `static` is refused *together with*
+   an install or build command, so the plan has to be consistent, not relabelled.
+2. **`builds/` is a named volume and every reader of it is on the host**, which is
+   the whole of finding 1's setup step: a run that reports success looks like it
+   produced nothing one command later.
+3. **`REPLACE=1` is destructive before the risky step.** A rebuild deletes the
+   previous `builds/<slug>` before the plan node runs, so a plan turn the gateway
+   refuses costs the last artifact — measured, at cost: the working app was gone
+   after one failed re-plan, and it left an empty directory that still *looks* like a
+   build to anything that only checks for the directory.
+4. **A built image cannot stand in for the build directory.** The packager's
+   generated `.dockerignore` excludes `plan.json` and `project.manifest.json`, so
+   recovering the app from its own image gets the files and not the plan — which is
+   what `app-runtime.py` reads to decide how to run it.
 
 ## 6. Risks, stated rather than worked around
 
