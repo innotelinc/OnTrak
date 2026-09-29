@@ -42,12 +42,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `target` is per-entry, and it has to be: the products do not agree on
+          # the name of their serving stage (Training and Tix end at `runner`,
+          # Genie at `runtime`). Naming it is what makes this a publish of the
+          # stage that ships rather than of whichever stage happens to be last in
+          # the Dockerfile.
           - app: training
             context: .
+            target: runner
           - app: tix
             context: ontrak-tix
+            target: runner
           - app: genie
             context: ontrak-genie
+            target: runtime
     steps:
       - uses: actions/checkout@v7
 
@@ -77,7 +85,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
-          target: runner
+          target: ${{ matrix.target }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

@@ -19,7 +19,7 @@ are read together.
 | **OnTrak Sentinel** | Identity (IdP) and intrusion prevention (IDS/IPS) platform. | **2026.09** | S0–S2 shipped (OIDC/SAML, MFA, SCIM, directory sync); S3 (Guard detection) started | [ontrak-sentinel/ROADMAP.md](ontrak-sentinel/ROADMAP.md) |
 | **OnTrak Sync** | Network-wide package and container update monitoring and, on approval, updating. Also owns the family's **local** account table. | **2026.09** | Deployed | [ontrak-sync/README.md](ontrak-sync/README.md) |
 | **OnTrak Portal** | The centralized dashboard: one sign-in, then the product(s) a role belongs in. Holds no database. | **2026.09** | Deployed | [ontrak-portal/README.md](ontrak-portal/README.md) |
-| **OnTrak Genie** | The browser console for a coding agent: it reads, edits and runs code in a workspace it cannot leave, and shows each call — and the file being written — as it happens. | **2026.09** | v0.1.0; conformed, landing in the family | [ontrak-genie/README.md](ontrak-genie/README.md) |
+| **OnTrak Genie** | The browser console for a coding agent: it reads, edits and runs code in a workspace it cannot leave, and shows each call — and the file being written — as it happens. | **2026.09** | v0.1.0; conformed, with its own published landing | [ontrak-genie/README.md](ontrak-genie/README.md) |
 
 > Product names in the OnTrak family are provisional and easy to change; the
 > architecture and scope are the durable parts. OnTrak Sync and OnTrak Portal are

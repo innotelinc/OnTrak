@@ -57,6 +57,7 @@ does not.
 | `src/snapshots.ts` | TypeScript | Per-file snapshots, so a change can be shown against what it replaced |
 | `src/builder.ts` | TypeScript | Assembles an Olympus build request from a workspace; the only place this console hands work to another system |
 | `public/` | Vanilla JS + CSS | The console: transcript, tool cards, preview pane, live diff, sweep panel |
+| `web/landing/` | Static HTML + vendored Unity theme | This product's landing page — published at `/ontrak-genie/` under the family's GitHub Pages site, alongside the root landing |
 | `scripts/` | Node ESM | The check commands — UI smoke, draft, offline, model sweep |
 | `sandbox/` | Dockerfile | The image `run_command` executes in when sandboxing is available |
 

@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en" data-scheme="operations">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OnTrak Genie — CodeOps Platform</title>
+  <meta name="description" content="The browser console for a coding agent: every tool call on screen as it is decided, the file being written rendered live beside a diff, and a click before anything risky runs.">
+  <meta property="og:title" content="OnTrak Genie — CodeOps Platform">
+  <meta property="og:description" content="Watch the agent work — and stop it before it matters. Self-hosted, one workspace it cannot leave, one click between a plan and a changed machine.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b0d10'/%3E%3Ctext x='32' y='45' font-size='30' font-family='monospace' font-weight='bold' text-anchor='middle' fill='%236ea8fe'%3EOG%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="unity-theme.css">
+  <script>window.UNITY_DEFAULT_SCHEME = "operations";</script>
+  <script src="unity-theme.js"></script>
+  <style>:root {
+      --p-bg: var(--canvas);
+      --p-bg-elevated: var(--surface-muted);
+      --p-surface: var(--surface);
+      --p-surface-hover: var(--surface-sunken);
+      --p-border: var(--line);
+      --p-text: var(--ink);
+      --p-text-secondary: var(--ink-soft);
+      --p-text-muted: var(--ink-faint);
+      --p-accent: var(--brand);
+      --p-accent-hover: var(--brand-ring);
+      --p-accent-tint: var(--brand-soft);
+      --p-success: var(--ok);
+      --p-danger: var(--bad);
+      --radius-md: var(--radius);
+      --ease: cubic-bezier(.2, .8, .2, 1);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0; background: var(--p-bg); color: var(--p-text);
+      font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased;
+    }
+    ::selection { background: var(--p-accent-tint); }
+    a { color: var(--p-accent); text-decoration: none; }
+    a:hover { color: var(--p-accent-hover); }
+    code, pre { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+    .topbar { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--canvas) 72%, transparent); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border-bottom: 1px solid var(--p-border); }
+    .topbar-inner { display: flex; align-items: center; gap: 20px; height: 60px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: 0.04em; color: var(--p-text); }
+    .brand:hover { color: var(--p-text); }
+    .brand .mark { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: var(--p-bg-elevated); border: 1px solid var(--p-border); font-size: 12px; font-family: "JetBrains Mono", ui-monospace, monospace; color: var(--p-accent); }
+    .topbar nav { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+    .topbar nav a { color: var(--p-text-secondary); padding: 6px 12px; border-radius: var(--radius-sm); font-size: 14px; transition: color .15s var(--ease), background .15s var(--ease); }
+    .topbar nav a:hover { color: var(--p-text); background: var(--p-surface-hover); }
+    .topbar .gh { display: inline-flex; align-items: center; gap: 8px; margin-left: 8px; border: 1px solid var(--p-border); border-radius: var(--radius-md); padding: 7px 14px; color: var(--p-text); font-size: 14px; transition: border-color .15s var(--ease), background .15s var(--ease); }
+    .topbar .gh:hover { border-color: var(--p-accent); background: var(--p-accent-tint); color: var(--p-text); }
+
+    .hero { position: relative; overflow: hidden; padding: 96px 0 72px; }
+    .hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(600px 320px at 70% -10%, color-mix(in srgb, var(--brand) 14%, transparent), transparent 70%), radial-gradient(500px 300px at 15% 110%, color-mix(in srgb, var(--ok) 5%, transparent), transparent 70%); pointer-events: none; }
+    .hero-inner { position: relative; max-width: 800px; }
+    .kicker { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--p-accent-hover); background: var(--p-accent-tint); border: 1px solid color-mix(in srgb, var(--brand) 30%, transparent); border-radius: 999px; padding: 5px 14px; margin: 0 0 24px; }
+    .kicker .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--p-success); box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 50%, transparent); animation: pulse 2.4s var(--ease) infinite; }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 45%, transparent); } 70% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--ok) 0%, transparent); } 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 0%, transparent); } }
+    h1 { font-size: clamp(2.2rem, 5.5vw, 3.4rem); line-height: 1.08; letter-spacing: -0.02em; margin: 0 0 20px; font-weight: 700; }
+    h1 .accent { color: var(--p-accent); }
+    .lede { font-size: 1.125rem; color: var(--p-text-secondary); max-width: 700px; margin: 0 0 32px; }
+    .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 28px; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; border-radius: var(--radius-md); padding: 11px 20px; font-size: 15px; font-weight: 550; border: 1px solid transparent; cursor: pointer; transition: background .15s var(--ease), border-color .15s var(--ease); }
+    .btn-primary { background: var(--p-accent); color: var(--brand-ink); font-weight: 600; }
+    .btn-primary:hover { background: var(--p-accent-hover); color: var(--brand-ink); }
+    .btn-secondary { border-color: var(--p-border); color: var(--p-text); background: transparent; }
+    .btn-secondary:hover { border-color: var(--p-accent); background: var(--p-accent-tint); color: var(--p-text); }
+    .quickstart { display: flex; align-items: center; gap: 14px; background: var(--p-bg-elevated); border: 1px solid var(--p-border); border-radius: var(--radius-md); padding: 12px 16px; max-width: 700px; font-size: 13.5px; }
+    .quickstart + .quickstart { margin-top: 10px; }
+    .quickstart code { color: var(--p-text); white-space: nowrap; overflow-x: auto; }
+    .quickstart code .c { color: var(--p-text-muted); }
+    .quickstart .copy { margin-left: auto; flex: 0 0 auto; background: transparent; border: 1px solid var(--p-border); color: var(--p-text-secondary); border-radius: var(--radius-sm); font: inherit; font-size: 12px; padding: 4px 10px; cursor: pointer; transition: border-color .15s var(--ease), color .15s var(--ease); }
+    .quickstart .copy:hover { border-color: var(--p-accent); color: var(--p-text); }
+    .quickstart .copy.copied { color: var(--p-success); border-color: var(--p-success); }
+
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 56px 0 0; }
+    .stat { background: var(--p-bg-elevated); border: 1px solid var(--p-border); border-radius: var(--radius-md); padding: 16px; }
+    .stat .n { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
+    .stat .n em { font-style: normal; color: var(--p-accent); }
+    .stat .l { font-size: 13px; color: var(--p-text-muted); margin-top: 2px; }
+
+    section { padding: 64px 0; }
+    .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 28px; flex-wrap: wrap; }
+    .sec-head h2 { font-size: 1.6rem; letter-spacing: -0.02em; margin: 0; }
+    .sec-head p { color: var(--p-text-muted); margin: 0; font-size: 14.5px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+    .card { border: 1px solid var(--p-border); background: var(--p-bg-elevated); border-radius: var(--radius-md); padding: 18px; }
+    .card h3 { margin: 0 0 6px; font-size: 1.02rem; }
+    .card p { margin: 0; color: var(--p-text-secondary); font-size: 14px; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--p-border); border-radius: var(--radius-md); }
+    table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+    th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--p-border); }
+    th { color: var(--p-text-muted); font-weight: 600; font-size: 13px; letter-spacing: 0.03em; text-transform: uppercase; background: var(--p-bg-elevated); }
+    tr:last-child td { border-bottom: 0; }
+    td code { color: var(--p-accent); font-size: 13px; }
+
+    footer { border-top: 1px solid var(--p-border); margin-top: 60px; padding: 18px 0 40px; color: var(--p-text-muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <div class="topbar-inner">
+        <a class="brand" href="./">
+          <span class="mark">OG</span>
+          <span>OnTrak Genie</span>
+        </a>
+        <nav>
+          <a href="https://github.com/innotelinc/OnTrak/tree/main/ontrak-genie#readme">Docs</a>
+          <a href="https://github.com/innotelinc/OnTrak/tree/main/ontrak-genie">Source ↗</a>
+          <a class="gh" href="https://github.com/innotelinc/OnTrak">The family ↗</a>
+        </nav>
+        <div class="ot-theme" role="group" aria-label="Colour theme" data-unity-switch><button type="button" data-theme-mode="system" aria-pressed="false">System</button><button type="button" data-theme-mode="light" aria-pressed="false">Light</button><button type="button" data-theme-mode="dark" aria-pressed="false">Dark</button></div>
+      </div>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <section class="hero">
+      <div class="hero-inner">
+        <div class="kicker"><span class="pulse"></span> CodeOps · agent console</div>
+        <h1>Watch the agent work — and stop it before it <span class="accent">matters</span>.</h1>
+        <p class="lede">
+          OnTrak Genie drives a coding agent over one sandboxed workspace and shows the work
+          as it happens: the tool calls as they are decided, the file being written while it is
+          still being written, and a diff of the change against what is on disk <em>before</em> the
+          write lands. Nothing outside that directory is reachable, and a command or a large
+          overwrite waits for a click.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://github.com/innotelinc/OnTrak/tree/main/ontrak-genie">View on GitHub</a>
+          <a class="btn btn-secondary" href="https://github.com/innotelinc/OnTrak/tree/main/ontrak-genie#quick-start">Quick start</a>
+        </div>
+        <div class="quickstart">
+          <code><span class="c"># from the family repository root</span> cp .env.example .env &amp;&amp; make genie-up</code>
+          <button class="copy" type="button" data-copy="cp .env.example .env && make genie-up">Copy</button>
+        </div>
+        <div class="quickstart">
+          <code><span class="c"># or the console on its own</span> cd ontrak-genie &amp;&amp; npm install &amp;&amp; npm run build &amp;&amp; npm start</code>
+          <button class="copy" type="button" data-copy="cd ontrak-genie && npm install && npm run build && npm start">Copy</button>
+        </div>
+        <div class="stats">
+          <div class="stat"><div class="n"><em>live</em> writes</div><div class="l">The file, rendered as it arrives</div></div>
+          <div class="stat"><div class="n"><em>1</em> click</div><div class="l">Between a plan and a changed machine</div></div>
+          <div class="stat"><div class="n"><em>0</em> keys held</div><div class="l">The gateway holds the providers</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <h2>Why Genie</h2>
+        <p>A tool that edits your files is only trustworthy if you can watch it work.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>The problem</th><th>Genie's answer</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>The usual interface shows a spinner, then a finished diff you have to audit afterwards.</td>
+              <td>Tool calls stream into the transcript as they are decided, and the file being written renders live, character by character, beside a live diff of what is changing. You see the edit before the edit exists.</td>
+            </tr>
+            <tr>
+              <td>“Is this write safe?” is not a judgement to leave to the model, and not one a prompt can enforce.</td>
+              <td>An approval gate: <code>run_command</code> and any write over a line threshold stop and wait for a click. Denying ends the turn cleanly — the gate is the only thing between a plan and a changed machine.</td>
+            </tr>
+            <tr>
+              <td>A model that cannot call a tool fails the whole turn, usually after a long wait and without saying why.</td>
+              <td>A chain-health probe reports <code>models n/m ready</code> before you type, a fallback chain absorbs a throttled provider mid-task, and a dead chain is visible rather than discovered.</td>
+            </tr>
+            <tr>
+              <td>Which model ids actually work is not something a catalog tells you, and a large advertised list is not a usable one.</td>
+              <td>Sweep the catalog from the browser: probe the ids that claim tool support and keep the ones that answer.</td>
+            </tr>
+            <tr>
+              <td>Work that stops at the preview is work someone retypes into the builder.</td>
+              <td><code>export</code> assembles a build request from the workspace — file index, stack, entry point, the test command that actually exists — deterministically, with no second model call.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <h2>What it is</h2>
+        <p>One console, one workspace, one place where every call is on the record.</p>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <h3>The agent loop</h3>
+          <p>Request → tool call → result, streamed to the browser over Server-Sent Events, with the partial tool call rendered while it is still arriving.</p>
+        </div>
+        <div class="card">
+          <h3>A workspace jail</h3>
+          <p>Every read and write resolves inside one directory. Absolute paths and <code>../</code> escapes are refused, and <code>.git</code>, <code>node_modules</code> and build output are skipped.</p>
+        </div>
+        <div class="card">
+          <h3>The tool set</h3>
+          <p><code>read</code>, <code>edit</code>, <code>write</code>, <code>list</code>, <code>search</code>, <code>run</code> — each confined to that workspace, with no privileges outside it.</p>
+        </div>
+        <div class="card">
+          <h3>Live visibility</h3>
+          <p>The file being written, syntax-highlighted, with a live diff against the on-disk baseline; a changed-marker file tree; a diff view for any file with history.</p>
+        </div>
+        <div class="card">
+          <h3>Model resilience</h3>
+          <p>A fallback chain, a chain-health badge and a catalog sweep — plus an optional second gateway (a local model, no key) tried only after the chain is exhausted.</p>
+        </div>
+        <div class="card">
+          <h3>Sign-in, optional</h3>
+          <p>Authentik OIDC: authorization code with PKCE, RS256 <code>id_token</code> verification against the provider's JWKS, and a signed session cookie. Off until it is configured.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <h2>The factory handoff</h2>
+        <p>Genie produces the request; Olympus produces the build.</p>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <h3>A spec, not a prompt</h3>
+          <p><code>export</code> writes <code>build-requests/&lt;slug&gt;.md</code> in the shape the factory's own template defines — core purpose, tech stack, features, verification criteria.</p>
+        </div>
+        <div class="card">
+          <h3>Deterministic, and reviewable</h3>
+          <p>The request is assembled from the file index, sizes, the entry point and the stack implied by what is there. Unstated intent is written as unstated rather than guessed, so it can be read and edited before anything is built.</p>
+        </div>
+        <div class="card">
+          <h3>One direction only</h3>
+          <p>Genie learns whether the spec was written, never how the build is going. A console that polls the factory becomes a second factory.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="wrap">
+        <div>© 2026 OnTrak Genie — CodeOps. An Innotel Labs product.</div>
+        <div style="margin-top:6px;">
+          <a href="https://github.com/innotelinc/OnTrak">OnTrak</a> ·
+          <a href="https://innotelinc.github.io/OnTrak/">The family landing</a> ·
+          <a href="https://github.com/innotelinc/innotel-platform-stack">Innotel Platform Stack</a>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      document.querySelectorAll(".quickstart .copy").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var text = btn.getAttribute("data-copy") || "";
+          var done = function () {
+            btn.textContent = "Copied";
+            btn.classList.add("copied");
+            setTimeout(function () { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1600);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(done, done);
+          } else {
+            done();
+          }
+        });
+      });
+    })();
+  </script>
+  <script>(function(){
+  var api=window.UnityTheme||window.OntrakTheme;if(!api)return;
+  function paint(){var now=api.mode();var all=document.querySelectorAll('[data-theme-mode]');
+    for(var i=0;i<all.length;i++){all[i].setAttribute('aria-pressed',String(all[i].getAttribute('data-theme-mode')===now));}}
+  var buttons=document.querySelectorAll('[data-theme-mode]');
+  for(var i=0;i<buttons.length;i++){buttons[i].addEventListener('click',function(){api.setMode(this.getAttribute('data-theme-mode'));});}
+  window.addEventListener('unity:theme',paint);window.addEventListener('ontrak:theme',paint);paint();
+})();</script>
+</body>
+</html>

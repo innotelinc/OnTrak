@@ -25,7 +25,7 @@
 > It consumes the platform services rather than re-implementing them, and it is
 > deliberately the only surface in the family that shows an agent's work rather
 > than its output.
-> **Landing page:** [https://innotelinc.github.io/OnTrak/](https://innotelinc.github.io/OnTrak/)
+> **Landing page:** [https://innotelinc.github.io/OnTrak/ontrak-genie/](https://innotelinc.github.io/OnTrak/ontrak-genie/)
 
 ---
 
@@ -99,6 +99,7 @@ ontrak-genie/
 ├── public/         # the browser UI: app.js, highlight.js, style.css, index.html
 ├── scripts/        # check commands: ui-smoke, draft-check, offline-check, model-health
 ├── sandbox/        # the image run_command executes in
+├── web/landing/    # this product's landing page, published under the family site
 └── docs/           # operations reference, stack role, convergence
 ```
 

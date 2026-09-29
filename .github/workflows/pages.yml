@@ -1,10 +1,18 @@
-# Publish the project landing page (web/landing/) to GitHub Pages.
+# Publish the family's landing pages to GitHub Pages.
 #
-#   https://innotelinc.github.io/<repo>/  (landing, static)
+#   https://innotelinc.github.io/<repo>/                  (the family landing)
+#   https://innotelinc.github.io/<repo>/<product>/         (a product's own)
+#
+# A repo gets one Pages site, so "a product has its own landing" means a path
+# under the family's, not a second deployment. This stages the site the way the
+# repository is laid out: `web/landing/` is the front door, and every
+# `<product>/web/landing/` is served at `/<product>/` beside it. Before this,
+# a product landing existed in the tree and was never published — Genie's and
+# Sync's included — because only the root directory was uploaded.
 #
 # Requires Pages to be enabled once: repo Settings -> Pages -> Source:
 # "GitHub Actions" (this workflow also attempts to enable it automatically).
-# After that, every push to main that touches web/landing republishes.
+# After that, every push to main that touches any landing republishes.
 # workflow_dispatch works too.
 
 name: GitHub Pages
@@ -15,6 +23,9 @@ on:
     branches: [main, master]
     paths:
       - "web/landing/**"
+      # `*` is one path segment, so this is a product landing and not a nested
+      # directory that happens to end in `landing`.
+      - "*/web/landing/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -43,10 +54,32 @@ jobs:
         with:
           enablement: true
 
+      # The root landing is the site; each product landing is a directory inside
+      # it. Copied rather than referenced, because the artifact has to be
+      # self-contained — Pages serves exactly what is uploaded.
+      #
+      # The loop is driven by the tree, so a product that grows a landing is
+      # published by existing. A reviewable list would be a second place to
+      # forget, which is how Sync's landing went unpublished in the first place.
+      - name: Stage the site
+        run: |
+          set -euo pipefail
+          site="$(mktemp -d)"
+          cp -R web/landing/. "$site/"
+          echo "staged / <- web/landing"
+          for dir in */web/landing; do
+            [ -f "$dir/index.html" ] || continue
+            product="$(basename "$(dirname "$(dirname "$dir")")")"
+            mkdir -p "$site/$product"
+            cp -R "$dir/." "$site/$product/"
+            echo "staged /$product/ <- $dir"
+          done
+          echo "PAGES_SITE=$site" >> "$GITHUB_ENV"
+
       - name: Upload static site
         uses: actions/upload-pages-artifact@v5
         with:
-          path: web/landing
+          path: ${{ env.PAGES_SITE }}
 
       - name: Deploy to GitHub Pages
         id: deployment
