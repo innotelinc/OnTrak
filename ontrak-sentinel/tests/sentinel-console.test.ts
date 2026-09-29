@@ -258,6 +258,24 @@ test("console: a page the console does not serve is a 404, so the other routers 
   assert.match(response.body, /not_found/);
 });
 
+test("console: the bare host sends a person to the console instead of a JSON 404", async () => {
+  const h = harness();
+  const response = await routeConsole(request("GET", "/"), h.service);
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.location, CONSOLE_PATHS.home);
+  assert.equal(response.headers["cache-control"], "no-store");
+  // A redirect, not a page: nothing is rendered, so the root cannot be mistaken for
+  // the console or leak a signed-out shell that a proxy later caches.
+  assert.equal(response.body, "");
+});
+
+test("console: the root redirect answers a POST the way every other GET-only page does", async () => {
+  const h = harness();
+  const response = await routeConsole(request("POST", "/", { body: "" }), h.service);
+  assert.equal(response.status, 405);
+  assert.equal(response.headers.allow, "GET");
+});
+
 test("console: a GET-only page answers a POST with 405 rather than doing something", async () => {
   const h = harness();
   const { sessionId } = await h.organization("acme");

@@ -131,6 +131,18 @@ function redirect(location: string, headers: Record<string, string> = {}): HttpR
   return { status: 303, headers: { location, "cache-control": "no-store", ...headers }, body: "" };
 }
 
+/**
+ * Send a GET somewhere else without implying anything changed.
+ *
+ * `302`, not the `303` the POST handlers use: nothing was written, so there is no
+ * method to convert. This exists because the listener is reached at its bare host by
+ * somebody who knows the domain and not the path, and answering that with
+ * `{"error":"not_found"}` is technically correct and practically a dead end.
+ */
+function sendTo(location: string): HttpResponse {
+  return { status: 302, headers: { location, "cache-control": "no-store" }, body: "" };
+}
+
 function methodNotAllowed(allowed: readonly string[]): HttpResponse {
   return {
     status: 405,
@@ -474,6 +486,13 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
     method === "POST" ? handler() : Promise.resolve(methodNotAllowed(["POST"]));
 
   switch (path) {
+    case "/":
+      // The bare host is a URL people type. It is answered with a redirect rather than
+      // a page because `/` is not a console path: the console's own URLs stay the
+      // console's, and the root stays free for a proxy or the family front door to
+      // claim later. It is also why this case does not disturb the `404` below — that
+      // one is what lets the OIDC, SAML and Guard routers behind this one be asked.
+      return get(() => Promise.resolve(sendTo(CONSOLE_PATHS.home)));
     case CONSOLE_PATHS.home:
       return get(() => handleHome(url, sessionId, endpoints));
     case CONSOLE_PATHS.provisioning:
