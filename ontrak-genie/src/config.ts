@@ -110,6 +110,21 @@ export const config = {
   webToken: str("WEB_TOKEN", ""),
 
   /**
+   * Optional Authentik (OIDC) sign-in, for a deployment that puts this console
+   * behind the family's identity provider. Off until the issuer, the client id
+   * and the session secret are all set — see the header of `src/oidc.ts` for why
+   * the session secret is required rather than defaulted, and why turning this on
+   * also closes the loopback trust the app otherwise starts with.
+   */
+  oidcIssuer: str("ONTRAK_OIDC_ISSUER", ""),
+  oidcClientId: str("ONTRAK_OIDC_CLIENT_ID", ""),
+  oidcClientSecret: str("ONTRAK_OIDC_CLIENT_SECRET", ""),
+  /** Must equal the redirect URI registered with the provider, byte for byte. */
+  oidcRedirectUrl: str("ONTRAK_OIDC_REDIRECT_URL", ""),
+  oidcSessionSecret: str("ONTRAK_OIDC_SESSION_SECRET", ""),
+  oidcSessionHours: int("ONTRAK_OIDC_SESSION_HOURS", 12),
+
+  /**
    * Where `run_command` executes. "docker" refuses to fall back to the host,
    * "auto" prefers a container when one is available, "host" runs unisolated.
    */

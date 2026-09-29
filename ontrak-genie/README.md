@@ -45,6 +45,7 @@
 - **The approval gate** — a browser decision for commands and large writes, with a deny path that ends the turn instead of stalling it.
 - **Live visibility** — the file being written, syntax-highlighted, with a live diff against the on-disk baseline; a changed-marker file tree; a diff view for any file with history.
 - **Model resilience** — a fallback chain, a chain-health badge, a catalog sweep, and an optional second gateway (a local model, no key) tried only after the chain is exhausted.
+- **Sign-in (optional)** — Authentik OIDC: authorization code with PKCE, RS256 `id_token` verification against the provider's JWKS, and a signed session cookie. The shared bearer is kept for API clients that drive the endpoint directly.
 - **Persistence** — sessions, transcripts and file snapshots under one data directory.
 
 ## Quick start
@@ -101,9 +102,11 @@ ontrak-genie/
 Version 0.1.0. The console is complete and the checks pass; what is genuinely
 outstanding is stack citizenship, and it is stated rather than implied:
 
-- **Auth** is a static `WEB_TOKEN` (an optional bearer for the UI and its API). A
-  family deployment puts this behind Cerulean's Authentik like the other
-  products; the OIDC client is not wired yet.
+- **Auth** is either a static `WEB_TOKEN` (the API path, and what a laptop with no
+  provider uses) or sign-in through Cerulean's Authentik, which is wired and off
+  until configured — set the issuer, the client id and the session secret to
+  require it. Turning it on also closes the loopback trust the console otherwise
+  starts with, so an empty `WEB_TOKEN` stops meaning "no gate".
 - **Secrets** are read from `.env`. The platform path is a Cerulean Vault
   `vault://` reference resolved at deploy time.
 - **The builder half** — plan → container → published name — is Olympus's, and
