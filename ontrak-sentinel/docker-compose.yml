@@ -1,0 +1,109 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# OnTrak Sentinel — the identity provider and its database.
+#
+#   cd ontrak-sentinel
+#   docker compose up -d          build the image, migrate, serve on :8787
+#
+# Unlike the other two stacks this one needs no `.env` to start: every value it
+# reads has a working default, and an ephemeral signing key is generated for a
+# run that has not been given one. `.env` is read when it exists (copy it from
+# `.env.example`) and is the place to set the issuer, the signing key and the
+# seeded administrator.
+#
+# Sentinel keeps its own database — it issues identity for the training app and
+# for OnTrak Tix but shares no tables with them, so one product's compromise is
+# not another's evidence. It is published on 5434 rather than the 5432 the other
+# two use, so all three stacks can run at once; override it with
+# ONTRAK_SENTINEL_DB_PORT if that is taken too.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: ontrak-sentinel
+
+services:
+  db:
+    image: postgres:16-alpine
+    # No `container_name`: that fixes the name for every project, which stops
+    # the production overlay running under its own `-p` alongside this one
+    # (compose names containers `<project>-<service>-<n>` by default).
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ontrak
+      POSTGRES_PASSWORD: ontrak
+      POSTGRES_DB: sentinel
+    ports:
+      - "${ONTRAK_SENTINEL_DB_PORT:-5434}:5432"
+    volumes:
+      - ontrak-sentinel-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ontrak -d sentinel"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Applies the tracked migrations, then exits. Runs in the builder stage, which
+  # is the one that carries the Prisma CLI and the `prisma/migrations/` tree.
+  # Sentinel has real migrations rather than a pushed schema, because the
+  # evidence chain is append-only and a deployment must be able to say which
+  # order its schema arrived in.
+  migrate:
+    build:
+      context: .
+      target: builder
+    command: npx prisma migrate deploy
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Inside the network the database is the `db` service. Never 127.0.0.1:
+      # in a container that address is the container itself.
+      DATABASE_URL: postgresql://ontrak:ontrak@db:5432/sentinel
+
+  app:
+    build:
+      context: .
+      target: runner
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${ONTRAK_SENTINEL_HTTP_PORT:-8787}:8787"
+    # Optional, and the only stack here that can say so: Sentinel boots with
+    # nothing configured, so a first `up` works before anyone has copied the
+    # example across. Values set in `.env` still override the defaults below.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Overrides the host-oriented DATABASE_URL in `.env`, which points at
+      # 127.0.0.1 and would name this container itself from in here.
+      DATABASE_URL: postgresql://ontrak:ontrak@db:5432/sentinel
+      SENTINEL_HOST: 0.0.0.0
+      SENTINEL_PORT: "8787"
+      # What every advertised endpoint and every ID token's `iss` is prefixed
+      # with, so it must be the address a *client* reaches, not the container's.
+      # Set it in `.env` to this machine's address or to the name a reverse
+      # proxy serves; the loopback default is only right for a local client.
+      SENTINEL_ISSUER: ${SENTINEL_ISSUER:-http://127.0.0.1:8787}
+      SENTINEL_ADMIN_EMAIL: ${SENTINEL_ADMIN_EMAIL:-admin@demo.test}
+      NODE_ENV: production
+    # "Healthy" here means the provider is answering, not that its database is
+    # reachable: a database blip should not mark a running provider unhealthy and
+    # send an operator after the wrong container. Discovery is served from
+    # configuration alone, which makes it a clean probe for exactly that.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/.well-known/openid-configuration').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  ontrak-sentinel-db:

@@ -1,0 +1,31 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Build context for the OnTrak Sentinel image.
+#
+# Two rules: never copy in what the image installs or generates itself, and
+# never let local state or a secret reach a layer. Nothing excluded here is
+# needed by the build.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Dependencies and build output — reinstalled and regenerated inside the image
+**/node_modules
+**/*.tsbuildinfo
+
+# Secrets. Compose injects these at run time; a layer would freeze them forever.
+# `SENTINEL_SIGNING_KEY` is the one that matters most here: it is the key every
+# ID token is signed with, and baking it into an image publishes it to everyone
+# who can pull the image.
+.env
+.env*.local
+*.pem
+*.key
+
+# Repository tooling and the image definition itself
+.git
+.gitignore
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.prod.yml
+test-results
+npm-debug.log*
+yarn-error.log*

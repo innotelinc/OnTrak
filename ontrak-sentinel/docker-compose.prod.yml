@@ -1,0 +1,69 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# OnTrak Sentinel — the deployment overlay.
+#
+# `docker-compose.yml` describes the development stack. This sits on top of it
+# for an actual deployment, so it is always used as an overlay, never alone:
+#
+#   cp .env.production.example .env.production   # then fill it in
+#   make sentinel-prod-up
+#
+# which is:
+#
+#   docker compose --env-file .env.production \
+#     -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Four things change, and each is the point of the file:
+#
+#   * The database is no longer published. Only the provider needs it, and it
+#     reaches it over the compose network; a host port would hand the whole
+#     identity store — every organization's people, sessions and evidence chain
+#     — to whatever else can reach the machine.
+#   * Secrets are required rather than defaulted. The signing key in particular:
+#     an ephemeral key is right for poking at the endpoints and catastrophic in
+#     a deployment, because every ID token the provider has ever issued stops
+#     verifying the moment the process restarts, and a client that cached a JWKS
+#     is left holding a key that no longer signs anything.
+#   * The issuer is required rather than defaulted. It is the prefix on every
+#     advertised endpoint and the `iss` a client checks, so a deployment that
+#     quietly advertised 127.0.0.1 would hand out tokens nobody outside the host
+#     can accept.
+#   * Containers restart always, because a deployment is expected to come back by
+#     itself rather than wait for someone to notice.
+#
+# Note for evidence: the database volume carries over unchanged, which is what
+# keeps the append-only audit chain intact across a rebuild.
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  db:
+    restart: always
+    environment:
+      # No default on purpose: an unset password must stop the stack, not
+      # silently become the development one.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}
+    # `!override` replaces the base list rather than merging into it, so the
+    # development port mapping is genuinely dropped.
+    ports: !override []
+
+  migrate:
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://ontrak:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}@db:5432/sentinel
+
+  app:
+    restart: always
+    # The whole configuration comes from the production file, exactly as `.env`
+    # supplies it in development — the development file is not read at all.
+    env_file: !override [.env.production]
+    environment:
+      DATABASE_URL: postgresql://ontrak:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}@db:5432/sentinel
+      # Required, with no fallback: without it the provider generates a key that
+      # dies with the process, and every token it has signed stops verifying.
+      SENTINEL_SIGNING_KEY: ${SENTINEL_SIGNING_KEY:?set SENTINEL_SIGNING_KEY in .env.production - see .env.production.example}
+      # Required, with no fallback: this is the origin clients verify against, so
+      # the loopback default would make every token unusable off this host.
+      SENTINEL_ISSUER: ${SENTINEL_ISSUER:?set SENTINEL_ISSUER in .env.production - see .env.production.example}
+      SENTINEL_HOST: 0.0.0.0
+      SENTINEL_PORT: "8787"
+      NODE_ENV: production
+    ports: !override ["${ONTRAK_SENTINEL_HTTP_PORT:-8787}:8787"]
