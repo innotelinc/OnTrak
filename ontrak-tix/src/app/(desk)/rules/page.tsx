@@ -124,7 +124,7 @@ function RuleCard({ entry, canManage, previewed }: { entry: RuleOverview; canMan
         </span>
         <span
           className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-            rule.enabled ? "bg-teal/10 text-teal" : "bg-surface-muted text-ink-faint"
+            rule.enabled ? "bg-ok/10 text-ok" : "bg-surface-muted text-ink-faint"
           }`}
         >
           {rule.enabled ? "on" : "off"}
@@ -155,7 +155,7 @@ function RuleCard({ entry, canManage, previewed }: { entry: RuleOverview; canMan
             </form>
             <form action={removeRuleAction}>
               <input type="hidden" name="ruleId" value={rule.id} />
-              <button type="submit" className="text-pink hover:underline">
+              <button type="submit" className="text-bad hover:underline">
                 Remove
               </button>
             </form>
@@ -178,7 +178,7 @@ function RuleCard({ entry, canManage, previewed }: { entry: RuleOverview; canMan
       ) : null}
 
       {hazards.length > 0 ? (
-        <ul className="mt-2 space-y-0.5 text-xs text-amber">
+        <ul className="mt-2 space-y-0.5 text-xs text-attention">
           {hazards.map((hazard) => (
             <li key={hazard}>⚠ {hazard}</li>
           ))}
@@ -219,7 +219,7 @@ function PreviewPanel({ report, title, note }: { report: DryRunReport; title: st
                   </li>
                 ))}
                 {ticket.plan.skipped.map((skipped, index) => (
-                  <li key={`skip-${skipped.ruleId}-${index}`} className="text-amber">
+                  <li key={`skip-${skipped.ruleId}-${index}`} className="text-attention">
                     Skipped: {describeAction(skipped.action)} — {skipped.because}
                   </li>
                 ))}
@@ -302,14 +302,14 @@ export default async function RulesPage({
         </p>
       </div>
 
-      {flash ? <p className="rounded-xl2 border border-teal/40 bg-teal/10 px-4 py-3 text-sm text-teal">{flash}</p> : null}
+      {flash ? <p className="rounded-xl2 border border-ok/40 bg-ok/10 px-4 py-3 text-sm text-ok">{flash}</p> : null}
       {error ?? listError ? (
-        <p role="alert" className="rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+        <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
           {error ?? listError}
         </p>
       ) : null}
       {previewError ? (
-        <p role="alert" className="rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+        <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
           {previewError}
         </p>
       ) : null}

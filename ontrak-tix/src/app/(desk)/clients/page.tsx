@@ -130,17 +130,17 @@ export default async function ClientsPage({
       </div>
 
       {flash ? (
-        <p className="rounded-xl2 border border-teal/40 bg-teal/10 px-4 py-3 text-sm text-teal">{flash}</p>
+        <p className="rounded-xl2 border border-ok/40 bg-ok/10 px-4 py-3 text-sm text-ok">{flash}</p>
       ) : null}
       {error ? (
-        <p role="alert" className="rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+        <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
           {error}
         </p>
       ) : null}
 
       {active ? (
-        <section className="space-y-2 rounded-xl2 border border-amber/40 bg-amber/10 p-4">
-          <h2 className="text-sm font-semibold text-amber">
+        <section className="space-y-2 rounded-xl2 border border-attention/40 bg-attention/10 p-4">
+          <h2 className="text-sm font-semibold text-attention">
             Acting as {clients.find((entry) => entry.client.id === active.clientId)?.client.name ?? active.clientId}
           </h2>
           <p className="text-xs text-ink-soft">
@@ -346,7 +346,7 @@ export default async function ClientsPage({
                                 </a>
                               </>
                             ) : (
-                              <span className="text-amber">the link expired unanswered</span>
+                              <span className="text-attention">the link expired unanswered</span>
                             )}
                           </li>
                         );
@@ -381,7 +381,7 @@ export default async function ClientsPage({
                         <form action={unassignClientAction}>
                           <input type="hidden" name="clientId" value={client.id} />
                           <input type="hidden" name="userId" value={assignment.userId} />
-                          <button type="submit" className="text-pink hover:underline">
+                          <button type="submit" className="text-bad hover:underline">
                             remove
                           </button>
                         </form>

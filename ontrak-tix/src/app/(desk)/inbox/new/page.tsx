@@ -65,7 +65,7 @@ export default async function NewTicketPage({
       </div>
 
       {error ? (
-        <p role="alert" className="rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+        <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
           {error}
         </p>
       ) : null}

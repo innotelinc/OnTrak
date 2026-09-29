@@ -49,7 +49,7 @@ export default async function NotificationsPage({
       </div>
 
       {flash ? (
-        <p className="rounded-xl2 border border-teal/40 bg-teal/10 px-4 py-3 text-sm text-teal">{flash}</p>
+        <p className="rounded-xl2 border border-ok/40 bg-ok/10 px-4 py-3 text-sm text-ok">{flash}</p>
       ) : null}
 
       {seesNotifications ? (

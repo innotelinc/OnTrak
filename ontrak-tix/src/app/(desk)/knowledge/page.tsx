@@ -35,7 +35,7 @@ function ArticleCard({ entry, canManage }: { entry: ArticleOverview; canManage: 
         <span className="font-semibold text-ink">{article.title}</span>
         <span
           className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-            isPublic ? "bg-teal/10 text-teal" : "bg-surface-muted text-ink-faint"
+            isPublic ? "bg-ok/10 text-ok" : "bg-surface-muted text-ink-faint"
           }`}
         >
           {isPublic ? "public" : "staff-only"}
@@ -54,7 +54,7 @@ function ArticleCard({ entry, canManage }: { entry: ArticleOverview; canManage: 
             </form>
             <form action={removeArticleAction}>
               <input type="hidden" name="articleId" value={article.id} />
-              <button type="submit" className="text-pink hover:underline">
+              <button type="submit" className="text-bad hover:underline">
                 Remove
               </button>
             </form>
@@ -75,7 +75,7 @@ function ArticleCard({ entry, canManage }: { entry: ArticleOverview; canManage: 
       <p className="mt-1.5 text-sm text-ink-soft">{articleExcerpt(article.body)}</p>
 
       {hazards.length > 0 ? (
-        <ul className="mt-2 space-y-0.5 text-xs text-amber">
+        <ul className="mt-2 space-y-0.5 text-xs text-attention">
           {hazards.map((hazard) => (
             <li key={hazard}>⚠ {hazard}</li>
           ))}
@@ -112,9 +112,9 @@ export default async function KnowledgePage({
         </p>
       </div>
 
-      {flash ? <p className="rounded-xl2 border border-teal/40 bg-teal/10 px-4 py-3 text-sm text-teal">{flash}</p> : null}
+      {flash ? <p className="rounded-xl2 border border-ok/40 bg-ok/10 px-4 py-3 text-sm text-ok">{flash}</p> : null}
       {error ?? listError ? (
-        <p role="alert" className="rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+        <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
           {error ?? listError}
         </p>
       ) : null}

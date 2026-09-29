@@ -49,7 +49,7 @@ export function SavedViews({ views, activeFilter, actorId, canShare, basePath = 
                 <button
                   type="submit"
                   aria-label={`Remove view ${view.name}`}
-                  className="px-2 py-1 text-xs text-ink-faint hover:text-pink"
+                  className="px-2 py-1 text-xs text-ink-faint hover:text-bad"
                 >
                   ✕
                 </button>

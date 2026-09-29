@@ -138,7 +138,7 @@ export function TaxRuleForm({
       {rule && removeAction ? (
         <form action={removeAction}>
           <input type="hidden" name="ruleId" value={rule.id} />
-          <button type="submit" className="text-[11px] text-pink hover:underline">
+          <button type="submit" className="text-[11px] text-bad hover:underline">
             Remove this tax rule
           </button>
         </form>

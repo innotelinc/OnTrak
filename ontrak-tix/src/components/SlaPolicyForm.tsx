@@ -117,7 +117,7 @@ export function SlaPolicyForm({
       {policy && deleteAction ? (
         <form action={deleteAction}>
           <input type="hidden" name="policyId" value={policy.id} />
-          <button type="submit" className="text-[11px] text-pink hover:underline">
+          <button type="submit" className="text-[11px] text-bad hover:underline">
             Remove this promise
           </button>
         </form>

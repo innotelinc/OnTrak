@@ -92,7 +92,7 @@ export function RateCardForm({
       {card && removeAction ? (
         <form action={removeAction}>
           <input type="hidden" name="cardId" value={card.id} />
-          <button type="submit" className="text-[11px] text-pink hover:underline">
+          <button type="submit" className="text-[11px] text-bad hover:underline">
             Remove this rate card
           </button>
         </form>

@@ -27,7 +27,7 @@ export function NotificationList({ notifications, readAction, emptyMessage }: No
   return (
     <ul className="divide-y divide-line overflow-hidden rounded-xl2 border border-line bg-surface">
       {notifications.map((notification) => (
-        <li key={notification.id} className={`px-4 py-3 ${notification.readAt === null ? "bg-amber/8" : ""}`}>
+        <li key={notification.id} className={`px-4 py-3 ${notification.readAt === null ? "bg-attention/8" : ""}`}>
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] font-semibold text-ink-faint">
               {notification.audience}
@@ -38,7 +38,7 @@ export function NotificationList({ notifications, readAction, emptyMessage }: No
               </span>
             ) : null}
             {notification.readAt === null ? (
-              <span className="rounded-full bg-amber/10 px-2 py-0.5 text-[11px] font-semibold text-amber">Unread</span>
+              <span className="rounded-full bg-attention/10 px-2 py-0.5 text-[11px] font-semibold text-attention">Unread</span>
             ) : null}
             <time className="ml-auto text-[11px] text-ink-faint" dateTime={notification.createdAt}>
               {notification.createdAt}

@@ -9,12 +9,12 @@
 import { slaRemainingLabel, type TicketSlaStatus } from "../lib/report-rules";
 
 function toneClass(status: TicketSlaStatus): string {
-  if (status.breached) return "border-pink/40 bg-pink/10 text-pink";
-  if (status.atRisk) return "border-amber/40 bg-amber/10 text-amber";
-  if (status.state === "met") return "border-teal/40 bg-teal/10 text-teal";
+  if (status.breached) return "border-bad/40 bg-bad/10 text-bad";
+  if (status.atRisk) return "border-attention/40 bg-attention/10 text-attention";
+  if (status.state === "met") return "border-ok/40 bg-ok/10 text-ok";
   // Paused sits between met and on-track: nothing is wrong, but the clock is not
   // actually moving, and an agent should be able to tell the two apart at a glance.
-  if (status.paused) return "border-sky/40 bg-sky/10 text-sky";
+  if (status.paused) return "border-info/40 bg-info/10 text-info";
   return "border-line bg-surface-muted text-ink-soft";
 }
 

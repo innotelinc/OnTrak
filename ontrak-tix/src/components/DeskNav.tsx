@@ -64,7 +64,7 @@ export function DeskNav({ groups, label = "Desk" }: { groups: NavGroup[]; label?
                   >
                     <span className="truncate">{item.label}</span>
                     {item.badge && item.badge > 0 ? (
-                      <span className="ml-auto rounded-full bg-amber/15 px-1.5 text-[11px] font-semibold text-amber">
+                      <span className="ml-auto rounded-full bg-attention/15 px-1.5 text-[11px] font-semibold text-attention">
                         {item.badge}
                       </span>
                     ) : null}

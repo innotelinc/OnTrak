@@ -90,10 +90,10 @@ export default async function TimePage({
       </div>
 
       {first(params.flash) ? (
-        <p className="rounded-xl2 border border-teal/40 bg-teal/10 px-4 py-3 text-sm text-teal">{first(params.flash)}</p>
+        <p className="rounded-xl2 border border-ok/40 bg-ok/10 px-4 py-3 text-sm text-ok">{first(params.flash)}</p>
       ) : null}
       {first(params.error) ? (
-        <p role="alert" className="rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+        <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
           {first(params.error)}
         </p>
       ) : null}
@@ -254,7 +254,7 @@ export default async function TimePage({
             </button>
           </form>
           {cards.ok && cards.value.length === 0 ? (
-            <p className="text-xs text-amber">
+            <p className="text-xs text-attention">
               No rate card exists yet, so nothing can be priced. Write one on the client&apos;s page (or the desk&apos;s own)
               first.
             </p>
@@ -312,7 +312,7 @@ export default async function TimePage({
                     {entry.billedMinutes !== null && entry.billedMinutes !== entry.minutes ? (
                       <span className="text-xs text-ink-faint">billed {formatLoggedMinutes(entry.billedMinutes)}</span>
                     ) : null}
-                    <span className={entry.billable ? "text-xs text-teal" : "text-xs text-ink-faint"}>
+                    <span className={entry.billable ? "text-xs text-ok" : "text-xs text-ink-faint"}>
                       {entry.billable ? (entry.rateCentsPerHour === null ? "unpriced" : formatMoney(amount ?? 0, entry.currency)) : "non-billable"}
                     </span>
                     {entry.invoiceRef ? (
@@ -348,7 +348,7 @@ export default async function TimePage({
                         <form action={removeTimeAction}>
                           <input type="hidden" name="entryId" value={entry.id} />
                           <input type="hidden" name="home" value={home} />
-                          <button type="submit" className="text-[11px] text-pink hover:underline">
+                          <button type="submit" className="text-[11px] text-bad hover:underline">
                             Remove this entry
                           </button>
                         </form>
@@ -359,7 +359,7 @@ export default async function TimePage({
                   )}
 
                   {cards.ok && entry.billable && entry.rateCentsPerHour === null && cardOf(entry.clientId) ? (
-                    <p className="mt-0.5 text-[11px] text-amber">
+                    <p className="mt-0.5 text-[11px] text-attention">
                       A rate card now covers this client — the entry priced at nothing because none did when it was logged.
                     </p>
                   ) : null}

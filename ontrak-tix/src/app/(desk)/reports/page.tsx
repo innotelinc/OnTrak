@@ -49,7 +49,7 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 
 /** A clock's state, as a small badge. */
 function StateBadge({ row }: { row: TicketSlaStatus }) {
-  const tone = row.breached ? "text-pink" : row.atRisk ? "text-amber" : "text-teal";
+  const tone = row.breached ? "text-bad" : row.atRisk ? "text-attention" : "text-ok";
   const label = row.breached ? "breached" : row.atRisk ? "at risk" : row.state;
   return <span className={`text-xs font-semibold ${tone}`}>{label}</span>;
 }
@@ -60,13 +60,13 @@ function ClientRow({ card }: { card: ClientScorecard }) {
     <tr>
       <th scope="row" className="py-2 text-left font-semibold text-ink">
         {card.name}
-        {card.withoutPolicy > 0 ? <span className="ml-2 text-[11px] text-amber">{card.withoutPolicy} without a policy</span> : null}
+        {card.withoutPolicy > 0 ? <span className="ml-2 text-[11px] text-attention">{card.withoutPolicy} without a policy</span> : null}
       </th>
       <td className="py-2 text-ink-soft">
         {card.open}
         <span className="text-ink-faint"> / {card.total}</span>
       </td>
-      <td className={`py-2 ${card.breached > 0 ? "font-semibold text-pink" : "text-ink-soft"}`}>{card.breached}</td>
+      <td className={`py-2 ${card.breached > 0 ? "font-semibold text-bad" : "text-ink-soft"}`}>{card.breached}</td>
       <td className="py-2 text-ink-soft">{percent(card.response.attainmentPercent)}</td>
       <td className="py-2 text-ink-soft">{percent(card.resolution.attainmentPercent)}</td>
       <td className="py-2 text-ink-soft">
@@ -151,7 +151,7 @@ function KnowledgeGaps({ report }: { report: KnowledgeGapReport }) {
           <div className="flex flex-wrap items-baseline gap-2">
             <span className="font-semibold text-ink">{gap.terms.join(" · ")}</span>
             {gap.repeat ? (
-              <span className="rounded-full bg-amber/10 px-2 py-0.5 text-[11px] font-semibold text-amber">
+              <span className="rounded-full bg-attention/10 px-2 py-0.5 text-[11px] font-semibold text-attention">
                 repeat requester
               </span>
             ) : null}

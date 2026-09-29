@@ -58,7 +58,7 @@ export default async function HandoffPage({
     return (
       <div className="mx-auto max-w-4xl space-y-4">
         <h1 className="font-display text-xl font-semibold text-ink">Handoff</h1>
-        <p role="alert" className="rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+        <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
           {view.error}
         </p>
       </div>
@@ -77,9 +77,9 @@ export default async function HandoffPage({
         </p>
       </div>
 
-      {flash ? <p className="rounded-xl2 border border-teal/40 bg-teal/10 px-4 py-3 text-sm text-teal">{flash}</p> : null}
+      {flash ? <p className="rounded-xl2 border border-ok/40 bg-ok/10 px-4 py-3 text-sm text-ok">{flash}</p> : null}
       {error ? (
-        <p role="alert" className="rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+        <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
           {error}
         </p>
       ) : null}
@@ -111,9 +111,9 @@ export default async function HandoffPage({
 
       <section
         aria-label="Coverage gaps"
-        className={`space-y-1 rounded-xl2 border p-4 ${rota.gaps.length > 0 ? "border-pink/40 bg-pink/10" : "border-line bg-surface"}`}
+        className={`space-y-1 rounded-xl2 border p-4 ${rota.gaps.length > 0 ? "border-bad/40 bg-bad/10" : "border-line bg-surface"}`}
       >
-        <h2 className={`font-display text-sm font-semibold ${rota.gaps.length > 0 ? "text-pink" : "text-ink"}`}>
+        <h2 className={`font-display text-sm font-semibold ${rota.gaps.length > 0 ? "text-bad" : "text-ink"}`}>
           {rota.gaps.length === 0 ? "Every hour in this window has somebody on call" : `${rota.gaps.length} uncovered window${rota.gaps.length === 1 ? "" : "s"}`}
         </h2>
         {rota.gaps.length > 0 ? (
@@ -148,7 +148,7 @@ export default async function HandoffPage({
                 {canManage ? (
                   <form action={removeShiftAction} className="ml-auto">
                     <input type="hidden" name="shiftId" value={shift.id} />
-                    <button type="submit" className="text-[11px] text-pink hover:underline">
+                    <button type="submit" className="text-[11px] text-bad hover:underline">
                       Remove
                     </button>
                   </form>
@@ -164,7 +164,7 @@ export default async function HandoffPage({
           <div className="space-y-0.5 border-t border-line pt-2">
             <p className="text-[11px] font-semibold text-ink-soft">On-call load in this window</p>
             {rota.load.map((load) => (
-              <p key={load.userId} className={`text-xs ${load.overloaded ? "text-amber" : "text-ink-soft"}`}>
+              <p key={load.userId} className={`text-xs ${load.overloaded ? "text-attention" : "text-ink-soft"}`}>
                 {nameOf.get(load.userId) ?? load.userId}: {formatLoggedMinutes(load.onCallMinutes)} on call,{" "}
                 {formatLoggedMinutes(load.shiftMinutes)} on shift
                 {load.overloaded ? " — more than half of the window's on-call hours" : ""}

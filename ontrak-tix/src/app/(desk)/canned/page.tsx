@@ -31,10 +31,10 @@ export default async function CannedPage({
       </div>
 
       {flash ? (
-        <p className="rounded-xl2 border border-teal/40 bg-teal/10 px-4 py-3 text-sm text-teal">{flash}</p>
+        <p className="rounded-xl2 border border-ok/40 bg-ok/10 px-4 py-3 text-sm text-ok">{flash}</p>
       ) : null}
       {error ? (
-        <p role="alert" className="rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+        <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
           {error}
         </p>
       ) : null}
@@ -55,7 +55,7 @@ export default async function CannedPage({
                 {canManage ? (
                   <form action={deleteCannedAction} className="ml-auto">
                     <input type="hidden" name="id" value={response.id} />
-                    <button type="submit" className="text-xs font-semibold text-pink hover:underline">
+                    <button type="submit" className="text-xs font-semibold text-bad hover:underline">
                       Remove
                     </button>
                   </form>

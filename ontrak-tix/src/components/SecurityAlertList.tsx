@@ -30,7 +30,7 @@ function chip(text: string, tone: "muted" | "brand" | "amber" = "muted") {
   const tones = {
     muted: "bg-surface-muted text-ink-soft",
     brand: "bg-brand/10 text-brand",
-    amber: "bg-amber/10 text-amber",
+    amber: "bg-attention/10 text-attention",
   } as const;
   return (
     <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${tones[tone]}`}>{text}</span>

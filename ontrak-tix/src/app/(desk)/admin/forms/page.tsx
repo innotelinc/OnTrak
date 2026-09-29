@@ -63,7 +63,7 @@ export default async function FormsPage({ searchParams }: { searchParams: Search
       </div>
 
       {query.error ? <p className="rounded-xl2 border border-danger/40 bg-danger/5 px-3 py-2 text-sm text-danger">{query.error}</p> : null}
-      {query.flash ? <p className="rounded-xl2 border border-teal/40 bg-teal/5 px-3 py-2 text-sm text-teal">{query.flash}</p> : null}
+      {query.flash ? <p className="rounded-xl2 border border-ok/40 bg-ok/5 px-3 py-2 text-sm text-ok">{query.flash}</p> : null}
 
       {/* Defining a field. The key is only sent when creating: it is the name answers are
           stored under, so the service refuses to change it. */}

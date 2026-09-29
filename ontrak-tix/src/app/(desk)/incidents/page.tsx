@@ -169,7 +169,7 @@ export default async function IncidentsPage({
             : "— write your own draft for a duty instead of using the shipped wording."}
         </p>
         {overdueNotices > 0 || overdueActions > 0 ? (
-          <p className="text-sm text-pink">
+          <p className="text-sm text-bad">
             {overdueNotices > 0 ? `${overdueNotices} regulatory notification${overdueNotices === 1 ? "" : "s"} past its deadline` : ""}
             {overdueNotices > 0 && overdueActions > 0 ? " · " : ""}
             {overdueActions > 0 ? `${overdueActions} review action${overdueActions === 1 ? "" : "s"} overdue` : ""}
@@ -178,11 +178,11 @@ export default async function IncidentsPage({
       </div>
 
       {error ? (
-        <p role="alert" className="rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+        <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
           {error}
         </p>
       ) : null}
-      {flash ? <p className="rounded-xl2 border border-teal/40 bg-teal/10 px-4 py-3 text-sm text-teal">{flash}</p> : null}
+      {flash ? <p className="rounded-xl2 border border-ok/40 bg-ok/10 px-4 py-3 text-sm text-ok">{flash}</p> : null}
 
       {canAct ? (
         <form action={declareIncidentAction} className="space-y-3 rounded-xl2 border border-line bg-surface p-4">

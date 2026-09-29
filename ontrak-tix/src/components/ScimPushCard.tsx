@@ -32,7 +32,7 @@ export function ScimPushCard({ configured, issues, baseUrl, envVars, action }: S
       </p>
 
       {issues.length > 0 ? (
-        <p role="alert" className="mt-3 rounded-xl2 border border-pink/40 bg-pink/10 px-4 py-3 text-sm text-pink">
+        <p role="alert" className="mt-3 rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
           {issues[0]}
         </p>
       ) : null}
@@ -43,7 +43,7 @@ export function ScimPushCard({ configured, issues, baseUrl, envVars, action }: S
           <form action={action}>
             <button
               type="submit"
-              className="rounded-xl2 border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink hover:border-teal/45 hover:text-teal"
+              className="rounded-xl2 border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink hover:border-ok/45 hover:text-ok"
             >
               Push accounts to the provider
             </button>

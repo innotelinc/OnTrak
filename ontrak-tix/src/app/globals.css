@@ -13,11 +13,12 @@
  * Tix sits in the **desk** scheme — the violet family it and the training range
  * already shared — and gets light and dark from the same tokens everyone else uses.
  *
- * The pre-existing utility names (`bg-pink`, `text-amber`, `border-teal`, …) are
- * kept as *aliases* of the semantic tokens they always meant, so several thousand
- * existing class names did not have to be rewritten to gain dark mode. `pink` is
- * danger, `amber` is attention, `teal` is healthy, `sky` is information — read the
- * right-hand side, never the left.
+ * The classes say what a thing *is*: `text-bad`, `bg-attention`, `border-ok`. The
+ * old hue-named spellings (`bg-pink`, `text-amber`, `border-teal`, …) still resolve
+ * to exactly the same values so nothing that used them broke, but the codebase no
+ * longer uses them — a class named after a colour is a class that cannot be
+ * re-themed, and reading `text-teal` where the meaning is "healthy" is how a
+ * light-mode bug gets written by somebody who never saw the alias table.
  */
 
 @theme inline {
@@ -42,13 +43,31 @@
      scheme the brand is a light violet, and white on it measures about 2.4:1. */
   --color-brand-ink: var(--brand-ink);
 
-  /* Legacy aliases → semantic tokens. */
+  /* Status, by role. This is the vocabulary: a class says what a thing *is*, so the
+     same markup reads correctly in any scheme. */
+  --color-ok: var(--ok);
+  --color-info: var(--info);
+  --color-bad: var(--bad);
+  --color-attention: var(--attention);
+  --color-unknown: var(--unknown);
+
+  /* The product tones, for the family marks. */
+  --color-tone-its: var(--tone-its);
+  --color-tone-tix: var(--tone-tix);
+  --color-tone-sentinel: var(--tone-sentinel);
+  --color-tone-sync: var(--tone-sync);
+
+  /* Legacy aliases → semantic tokens.
+
+     These resolve to exactly the same values, so nothing broke when Unity landed.
+     They are kept because a class named after a hue cannot be re-themed: the day the
+     desk scheme is not violet these names are lies, and the fix has to be a rename or
+     a second meaning. New code uses the names above. */
   --color-pink: var(--bad);
   --color-amber: var(--attention);
   --color-teal: var(--ok);
   --color-sky: var(--info);
   --color-lime: var(--tone-its);
-  --color-unknown: var(--unknown);
 
   --radius-xl2: var(--radius);
   --radius-xl3: var(--radius-lg);
