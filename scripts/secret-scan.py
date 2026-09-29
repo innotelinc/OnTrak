@@ -38,8 +38,16 @@ Usage:
     python3 scripts/secret-scan.py --stdin [label]  # scan piped content,
                                   # labelled as `label` (e.g. the file name)
     python3 scripts/secret-scan.py --history       # scan every blob in history
+    python3 scripts/secret-scan.py --selftest      # prove every rule still fires
 
 Exit codes: 0 clean, 1 findings.
+
+The rules are only worth what they catch, and a scanner that has quietly stopped
+matching reads exactly like a clean tree. `--selftest` therefore asserts that
+every shape rule and the literal-assignment rule still *fire*, and that every
+exemption still holds, from fixtures held in this file. CI runs it on every push,
+before the tree scan, so a broken scanner fails the build rather than passing it
+quietly.
 """
 from __future__ import annotations
 
@@ -257,6 +265,136 @@ def scan_text(label: str, text: str) -> list[Finding]:
     return findings
 
 
+# ── Self-test ──────────────────────────────────────────────────────────────
+# The vectors below are the contract: every rule fires (MUST_REJECT), every
+# exemption holds (MUST_ALLOW). A reviewer can add a case here, but deleting one
+# defeats the point — each line encodes a credential that once shipped, or a
+# false positive that once blocked a legitimate commit.
+#
+# Fixtures that carry a credential shape are assembled from fragments at run
+# time rather than written out. This file is scanned by the rules it defines (the
+# pre-commit hook labels it `scripts/secret-scan.py`, and CI's secret-scan job
+# reads it), so a literal key here would be a finding — and exempting this path
+# by name would be an exemption that also hides a real secret committed here
+# later. Two fragments are not key-shaped, so nothing has to be loosened to keep
+# the source clean. The self-test's last case proves it: this file must scan
+# clean.
+
+
+def _fixture(*fragments: str) -> str:
+    """A fixture line, assembled at run time. See the note above."""
+    return "".join(fragments)
+
+
+def selftest_vectors() -> list[tuple[str, str, str | None]]:
+    """(label, text, expected rule) — expected `None` means "must stay clean".
+
+    The label is the file path a finding would be reported against, so it also
+exercises the test-path relaxation.
+    """
+    source = "src/config.ts"
+    test_file = "ontrak-tix/tests/thing.test.ts"
+
+    # One per shape rule, so a rule that stops matching is named in the failure
+    # rather than counted as an ordinary pass.
+    shapes = [
+        ("private-key-block", _fixture("-----BEGIN RSA ", "PRIVATE KEY-----")),
+        ("provider-api-key", _fixture("sk-", "a" * 24)),
+        ("stripe-key", _fixture("sk_", "live", "_", "b" * 24)),
+        ("github-token", _fixture("ghp_", "c" * 24)),
+        ("aws-access-key", _fixture("AKIA", "D" * 16)),
+        ("slack-token", _fixture("xoxb-", "123456789012-abcdefghij")),
+        ("google-api-key", _fixture("AIza", "e" * 32)),
+    ]
+    vectors: list[tuple[str, str, str | None]] = [
+        (source, f"const {rule} = \"{value}\"", rule) for rule, value in shapes
+    ]
+
+    vectors += [
+        # A literal assigned to a sensitive name: the rule the first incident in
+        # this repository's history needed.
+        (source, 'DB_PASSWORD = "correct-horse-battery"', "literal-secret (DB_PASSWORD)"),
+        # A secret merely split across two literals is still a stored secret.
+        (source, 'ADMIN_PASS = "hunter2-" + "hunter2-not-real"', "literal-secret (ADMIN_PASS)"),
+        # …but the same line is fine in a test, which is where fixtures live. The
+        # pair below is the whole point: the relaxation is path-scoped, not
+        # global, so it cannot be reached by renaming a committed config file.
+        (test_file, 'ADMIN_PASS = "hunter2-not-a-real-credential"', None),
+        (source, 'ADMIN_PASS = "hunter2-not-a-real-credential"', "literal-secret (ADMIN_PASS)"),
+        # Exemptions. Each is configuration or a pointer, never a credential.
+        (source, 'DB_PASSWORD = "change-me"', None),
+        (source, 'API_TOKEN = "${VAULT_TOKEN}"', None),
+        (source, 'API_KEY = "<your-key-here>"', None),
+        (source, 'SECRET_KEY = "INITIAL_PASSWORD"', None),
+        (source, 'STORAGE_KEY = "studio.token"', None),
+        (source, 'SECRETS_MOUNT = "/run/ontrak/secrets"', None),
+        (source, 'VAULT_TOKEN = "vault://kv/ontrak#token"', None),
+        # A value the line builds at run time, with a random source on the line.
+        (source, 'ADMIN_PASS = "E2e-Sso-" + os.urandom(6).hex() + "!Aa1"', None),
+        # A sensitive *name* inside a string literal is a marker string, not an
+        # assignment — the false positive the string-span rule exists for.
+        (
+            source,
+            'if line.startswith("VAULT_TOKEN_FILE=") and line.strip():',
+            None,
+        ),
+    ]
+    return vectors
+
+
+def selftest() -> int:
+    """Exit 0 if every rule fires and every exemption holds, 1 otherwise."""
+    fails = 0
+    vectors = selftest_vectors()
+
+    def check(label: str, text: str, expected: str | None) -> None:
+        nonlocal fails
+        findings = scan_text(label, text)
+        if expected is None:
+            if findings:
+                print(
+                    f"selftest: FAIL — {label}: reported {findings[0][2]} on a line that is not a credential",
+                    file=sys.stderr,
+                )
+                fails += 1
+            return
+        if not findings:
+            print(f"selftest: FAIL — {label}: {expected} did not fire", file=sys.stderr)
+            fails += 1
+        elif findings[0][2] != expected:
+            print(
+                f"selftest: FAIL — {label}: expected {expected}, matched {findings[0][2]}",
+                file=sys.stderr,
+            )
+            fails += 1
+
+    for label, text, expected in vectors:
+        check(label, text, expected)
+
+    # Size must not change a verdict. The scan reads whole lines from a decoded
+    # string, so there is no pipeline to die of SIGPIPE — but the sibling
+    # attribution guard once failed OPEN on large inputs, and a rule that only
+    # holds on small ones is not a rule.
+    source = "src/config.ts"
+    filler = "\n".join(f"context line {'x' * 60}" for _ in range(4000))
+    big_clean = filler
+    big_with_secret = f"{filler}\n{_fixture('AKIA', 'D' * 16)}\n"
+    check(source, big_clean, None)
+    check(source, big_with_secret, "aws-access-key")
+
+    # This file must pass the rules it defines, or the fixtures above have
+    # become findings and someone will be tempted to exempt this path.
+    own_source = Path(__file__).read_text(errors="replace")
+    own_label = "scripts/secret-scan.py"
+    check(own_label, own_source, None)
+
+    if fails:
+        print(f"secret-scan: self-test: {fails} case(s) failed", file=sys.stderr)
+        return 1
+    print(f"secret-scan: self-test passed ({len(vectors) + 3} cases)")
+    return 0
+
+
 def tracked_paths() -> list[str]:
     """Tracked files, plus untracked-but-not-ignored ones.
 
@@ -305,7 +443,11 @@ def main() -> int:
     args = sys.argv[1:]
     use_stdin = "--stdin" in args
     use_history = "--history" in args
+    use_selftest = "--selftest" in args
     explicit = [a for a in args if not a.startswith("--")]
+
+    if use_selftest:
+        return selftest()
 
     findings: list[Finding] = []
 

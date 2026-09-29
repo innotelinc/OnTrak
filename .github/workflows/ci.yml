@@ -3,7 +3,7 @@
 #
 # Six concerns, in the order they fail cheapest:
 #   structure   — the conformant file set and the landing page's sanity
-#   secrets     — no credential-shaped content anywhere tracked
+#   secrets     — the scanner passes its own self-test, then the tracked tree
 #   training    — the IT support training app: typecheck, unit tests, build
 #   tix         — OnTrak Tix: typecheck, unit tests, build
 #   sentinel    — OnTrak Sentinel: migrations applied, then typecheck and unit tests
@@ -70,6 +70,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # First, because this is the step that catches the failure nobody sees: a
+      # scanner whose patterns have stopped matching reports a clean tree.
+      - name: The scanner must still fire
+        run: python3 scripts/secret-scan.py --selftest
 
       - name: Scan the tracked tree
         run: python3 scripts/secret-scan.py
