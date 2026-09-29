@@ -42,15 +42,17 @@ import {
 } from "./audit-chain";
 import {
   canManageIdentities,
+  canManagePolicies,
   canReadDirectory,
-  DEFAULT_IDENTITY_POLICY,
   identitySummary,
   isSameOrganization,
+  policyForRole,
   sessionDecision,
   sessionExpiry,
   sessionInfo,
   validateIdentity,
   validateOrganization,
+  validatePolicy,
   wouldStrandAdministration,
   type IdentityIssue,
   type IdentityKind,
@@ -58,6 +60,8 @@ import {
   type IdentityRecord,
   type IdentityRole,
   type OrganizationRecord,
+  type PolicyRecord,
+  type PolicyScope,
   type SessionDecision,
   type SessionRecord,
 } from "./identity-rules";
@@ -96,6 +100,13 @@ export interface IdentityStore {
   findIdentityByExternalId(organizationId: string, externalId: string): Promise<IdentityRecord | null>;
   insertIdentity(record: IdentityRecord): Promise<void>;
   updateIdentity(record: IdentityRecord): Promise<void>;
+
+  /**
+   * The organization's stored policies: its `ALL` baseline and any per-role
+   * overrides. One read, because the pure rule picks between them.
+   */
+  listPolicies(organizationId: string): Promise<PolicyRecord[]>;
+  upsertPolicy(record: PolicyRecord): Promise<void>;
 
   listSessions(organizationId: string, identityId?: string): Promise<SessionRecord[]>;
   findSession(organizationId: string, sessionId: string): Promise<SessionRecord | null>;
@@ -472,15 +483,19 @@ export class IdentityService {
     organizationId: string,
     identityId: string,
     details: { userAgent?: string | null; ipAddress?: string | null } = {},
-    policy: IdentityPolicy = DEFAULT_IDENTITY_POLICY,
+    policy?: IdentityPolicy,
   ): Promise<ServiceResult<SessionRecord>> {
     const identity = await this.store.findIdentity(organizationId, identityId);
     if (!identity) return { ok: false, error: "That identity does not exist." };
 
+    const effective = policy ?? (await this.policyFor(organizationId, identity.role));
     const nowMs = this.ids.nowMs();
-    const decision = sessionDecision(identitySummary(identity), { issuedAt: nowMs, lastSeenAt: nowMs, revokedAt: null }, policy, nowMs);
+    const decision = sessionDecision(identitySummary(identity), { issuedAt: nowMs, lastSeenAt: nowMs, revokedAt: null }, effective, nowMs);
     if (!decision.active) {
-      await this.append(organizationId, identityId, "session.refuse", "Identity", identity.id, { reason: decision.reason });
+      await this.append(organizationId, identityId, "session.refuse", "Identity", identity.id, {
+        reason: decision.reason,
+        policyScope: identity.role,
+      });
       return { ok: false, error: `No session: ${decision.reason}.` };
     }
 
@@ -490,15 +505,72 @@ export class IdentityService {
       identityId: identity.id,
       issuedAt: nowMs,
       lastSeenAt: nowMs,
-      expiresAt: sessionExpiry(nowMs, policy),
+      expiresAt: sessionExpiry(nowMs, effective),
       revokedAt: null,
       userAgent: details.userAgent ?? null,
       ipAddress: details.ipAddress ?? null,
     };
     await this.store.insertSession(record);
+    // The scope is recorded on the grant, so "which policy let this in?" is
+    // answerable from the record rather than by reconstructing the table later.
     await this.append(organizationId, identity.id, "session.grant", "Session", record.id, {
       expiresAt: new Date(record.expiresAt).toISOString(),
+      policyScope: identity.role,
       ipAddress: record.ipAddress,
+    });
+    return { ok: true, value: record };
+  }
+
+  /**
+   * The policy that governs one identity, resolved from what the organization has
+   * stored: its role's row, else the `ALL` row, else the built-in default.
+   *
+   * Public because the console shows an administrator the number a sign-in will
+   * actually be judged by, and because a caller that wants to *ask* the question
+   * explicitly can, rather than passing a policy in and getting a second opinion.
+   */
+  async policyFor(organizationId: string, role: IdentityRole): Promise<IdentityPolicy> {
+    const rows = await this.store.listPolicies(organizationId);
+    return policyForRole(rows, role);
+  }
+
+  /** The stored policy rows, for the console. Reading is wider than writing. */
+  async policies(actor: IdentityActor): Promise<ServiceResult<PolicyRecord[]>> {
+    if (!canReadDirectory(actor.role)) return { ok: false, error: "You do not have access to the organization's policies." };
+    return { ok: true, value: await this.store.listPolicies(actor.organizationId) };
+  }
+
+  /**
+   * Write the baseline or one role's override.
+   *
+   * Upsert rather than insert, because the row that matters is identified by
+   * `(organization, scope)` and "the AGENT policy" is a thing an administrator
+   * edits repeatedly, not a thing they accumulate.
+   */
+  async setPolicy(
+    actor: IdentityActor,
+    scope: string,
+    input: { requireMfa?: boolean; maxSessionSeconds?: number; idleTimeoutSeconds?: number },
+  ): Promise<ServiceResult<PolicyRecord>> {
+    if (!canManagePolicies(actor.role)) return { ok: false, error: "You do not administer policies." };
+
+    const issues = firstIssue(validatePolicy({ scope, ...input }));
+    if (issues) return issues;
+
+    const record: PolicyRecord = {
+      organizationId: actor.organizationId,
+      scope: scope as PolicyScope,
+      requireMfa: input.requireMfa !== false,
+      maxSessionSeconds: input.maxSessionSeconds!,
+      idleTimeoutSeconds: input.idleTimeoutSeconds!,
+      updatedAt: this.ids.now(),
+    };
+    await this.store.upsertPolicy(record);
+    await this.append(actor.organizationId, actor.id, "policy.update", "IdentityPolicy", record.scope, {
+      scope: record.scope,
+      requireMfa: record.requireMfa,
+      maxSessionSeconds: record.maxSessionSeconds,
+      idleTimeoutSeconds: record.idleTimeoutSeconds,
     });
     return { ok: true, value: record };
   }
@@ -507,13 +579,14 @@ export class IdentityService {
   async checkSession(
     organizationId: string,
     sessionId: string,
-    policy: IdentityPolicy = DEFAULT_IDENTITY_POLICY,
+    policy?: IdentityPolicy,
   ): Promise<SessionDecision> {
     const session = await this.store.findSession(organizationId, sessionId);
     if (!session) return { active: false, reason: "session does not exist" };
     const identity = await this.store.findIdentity(organizationId, session.identityId);
     if (!identity) return { active: false, reason: "identity does not exist" };
-    return sessionDecision(identitySummary(identity), sessionInfo(session), policy, this.ids.nowMs());
+    const effective = policy ?? (await this.policyFor(organizationId, identity.role));
+    return sessionDecision(identitySummary(identity), sessionInfo(session), effective, this.ids.nowMs());
   }
 
   /**
@@ -528,14 +601,15 @@ export class IdentityService {
   async resolveSession(
     organizationId: string,
     sessionId: string,
-    policy: IdentityPolicy = DEFAULT_IDENTITY_POLICY,
+    policy?: IdentityPolicy,
   ): Promise<ServiceResult<{ identity: IdentityRecord; session: SessionRecord }>> {
     const session = await this.store.findSession(organizationId, sessionId);
     if (!session) return { ok: false, error: "That session does not exist." };
     const identity = await this.store.findIdentity(organizationId, session.identityId);
     if (!identity) return { ok: false, error: "That identity does not exist." };
 
-    const decision = sessionDecision(identitySummary(identity), sessionInfo(session), policy, this.ids.nowMs());
+    const effective = policy ?? (await this.policyFor(organizationId, identity.role));
+    const decision = sessionDecision(identitySummary(identity), sessionInfo(session), effective, this.ids.nowMs());
     if (!decision.active) return { ok: false, error: `That session is not usable: ${decision.reason}.` };
     return { ok: true, value: { identity, session } };
   }
@@ -552,14 +626,15 @@ export class IdentityService {
    */
   async resolveOwnSession(
     sessionId: string,
-    policy: IdentityPolicy = DEFAULT_IDENTITY_POLICY,
+    policy?: IdentityPolicy,
   ): Promise<ServiceResult<{ organizationId: string; identity: IdentityRecord; session: SessionRecord }>> {
     const session = await this.store.findSessionByKey(sessionId);
     if (!session) return { ok: false, error: "That session does not exist." };
     const identity = await this.store.findIdentity(session.organizationId, session.identityId);
     if (!identity) return { ok: false, error: "That identity does not exist." };
 
-    const decision = sessionDecision(identitySummary(identity), sessionInfo(session), policy, this.ids.nowMs());
+    const effective = policy ?? (await this.policyFor(session.organizationId, identity.role));
+    const decision = sessionDecision(identitySummary(identity), sessionInfo(session), effective, this.ids.nowMs());
     if (!decision.active) return { ok: false, error: `That session is not usable: ${decision.reason}.` };
     return { ok: true, value: { organizationId: session.organizationId, identity, session } };
   }
@@ -731,6 +806,21 @@ export class MemoryIdentityStore implements IdentityStore {
   private readonly organizations = new Map<string, OrganizationRecord>();
   private readonly identities = new Map<string, IdentityRecord>();
   private readonly sessions = new Map<string, SessionRecord>();
+  private readonly policies = new Map<string, PolicyRecord>();
+
+  private policyKey(organizationId: string, scope: PolicyScope): string {
+    return `${organizationId}\u0000${scope}`;
+  }
+
+  async listPolicies(organizationId: string): Promise<PolicyRecord[]> {
+    return [...this.policies.values()]
+      .filter((entry) => entry.organizationId === organizationId)
+      .map((entry) => structuredClone(entry));
+  }
+
+  async upsertPolicy(record: PolicyRecord): Promise<void> {
+    this.policies.set(this.policyKey(record.organizationId, record.scope), structuredClone(record));
+  }
 
   async findOrganization(organizationId: string): Promise<OrganizationRecord | null> {
     const found = this.organizations.get(organizationId);

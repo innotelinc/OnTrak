@@ -36,7 +36,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 
 import type { AuditTrail, IdentityActor, IdentityService, ServiceResult } from "./identity-service";
-import type { IdentityRecord } from "./identity-rules";
+import { canManageIdentities, type IdentityRecord } from "./identity-rules";
 import { sha256Hex } from "./hash";
 import type { HashFn } from "./audit-chain";
 import {
@@ -312,6 +312,93 @@ export class ScimService {
   /** Where a connector points, so the console can show it rather than describe it. */
   baseUrl(): string {
     return this.config.baseUrl;
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /*  The same paths, for a source of truth that is not a SCIM connector       */
+  /* ------------------------------------------------------------------------ */
+
+  /**
+   * The leaver path, reachable by an in-process caller rather than only by a token.
+   *
+   * The directory sync (S2's other half) reads a roster itself and pushes it through
+   * the *same* code SCIM uses — deactivating somebody and killing what they hold is one
+   * operation with one audit sentence, and a second implementation of it would be a
+   * second place for it to be wrong. The actor is a real administrator (the person who
+   * owns the connection), and the permission is checked here rather than assumed,
+   * because minting a caller is not evidence of anything.
+   */
+  async deprovisionForActor(
+    actor: IdentityActor,
+    identityId: string,
+    reason: string,
+  ): Promise<ServiceResult<{ identity: IdentityRecord; sessionsEnded: number }>> {
+    if (!canManageIdentities(actor.role)) return { ok: false, error: "You do not administer identities." };
+    const result = await this.deprovision(this.syntheticCaller(actor, "directory"), identityId, reason);
+    return result.ok ? { ok: true, value: result.value } : { ok: false, error: result.error.detail };
+  }
+
+  /**
+   * Replace a group's membership with exactly this set — what a directory sync means
+   * by "these are the members".
+   *
+   * Deliberately a replacement rather than a merge: a directory that removed somebody
+   * from a group has said something, and an add-only sync would never hear it. The
+   * count of what was added and removed is returned because "a push that looks like it
+   * did nothing" and "a push that removed nine people" are the same zero in a log.
+   */
+  async syncGroup(
+    actor: IdentityActor,
+    displayName: string,
+    identityIds: readonly string[],
+  ): Promise<ServiceResult<{ groupId: string; created: boolean; added: number; removed: number }>> {
+    if (!canManageIdentities(actor.role)) return { ok: false, error: "You do not administer identities." };
+    const name = displayName.trim();
+    if (!name) return { ok: false, error: "A group needs a name." };
+
+    let group = await this.store.findGroupByName(actor.organizationId, name);
+    const created = group === null;
+    if (!group) {
+      group = {
+        id: this.ids.id(),
+        organizationId: actor.organizationId,
+        displayName: name,
+        createdAt: this.ids.now(),
+        updatedAt: this.ids.now(),
+      };
+      await this.store.insertGroup(group);
+    }
+
+    const wanted = [...new Set(identityIds)];
+    const existing = (await this.store.listMembers(actor.organizationId, group.id)).map((member) => member.identityId);
+    const have = new Set(existing);
+    const want = new Set(wanted);
+    const added = wanted.filter((id) => !have.has(id));
+    const removed = existing.filter((id) => !want.has(id));
+
+    if (added.length > 0) await this.store.addMembers(actor.organizationId, group.id, added);
+    if (removed.length > 0) await this.store.removeMembers(actor.organizationId, group.id, removed);
+
+    if (added.length > 0 || removed.length > 0 || created) {
+      await this.append(actor.organizationId, actor.id, created ? "scim.group.create" : "scim.group.members", "Group", group.id, {
+        displayName: group.displayName,
+        added: added.length,
+        removed: removed.length,
+      });
+    }
+    return { ok: true, value: { groupId: group.id, created, added: added.length, removed: removed.length } };
+  }
+
+  /**
+   * A caller for a path that never presented a token.
+   *
+   * Private on purpose. A public way to mint a caller would be a way to skip token
+   * authentication, which is the one thing the caller type exists to represent; here it
+   * is only ever built from an `IdentityActor` the spine has already resolved, and only
+   * the permission-checked methods above use it.
+   */
+  private syntheticCaller(actor: IdentityActor, label: string): ScimCaller {
+    return { organizationId: actor.organizationId, tokenId: `${label}:${actor.id}`, label, actor };
   }
 
   /** The same, without a trailing slash, for building a link onto. */
