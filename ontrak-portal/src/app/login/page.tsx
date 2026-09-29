@@ -1,15 +1,15 @@
 import { redirect } from "next/navigation";
 
-import { SignInForm } from "@/components/SignInForm";
+import { SignInPanel } from "@/components/SignInPanel";
 import { portalConfig, ssoConfigured } from "@/lib/config";
 import { readSession } from "@/lib/session";
 
 /**
- * The sign-in page.
+ * The sign-in page. OnTrak Unity, and nothing else on it.
  *
  * A server component so the session can be read before anything renders: somebody
  * who is already signed in and lands here is sent to the dashboard rather than
- * shown a form that would ask them for a password they have already given.
+ * shown a button for a handshake they have already completed.
  *
  * The refusal reason arrives as `?error=`, which is why the callback redirects to
  * this page rather than returning JSON — the thing that always reaches that URL is
@@ -31,7 +31,7 @@ export default async function LoginPage({ searchParams }: {
 
   const config = portalConfig();
   return (
-    <SignInForm
+    <SignInPanel
       ssoEnabled={ssoConfigured(config)}
       providerName={config.providerName}
       error={params.error ?? null}
