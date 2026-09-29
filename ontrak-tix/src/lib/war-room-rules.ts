@@ -167,6 +167,7 @@ const AUDIT_SUMMARIES: Record<string, string> = {
   "identity.role.change": "Role changed",
   "identity.scim.provision": "Provisioned by directory sync",
   "identity.scim.deprovision": "Deprovisioned by directory sync",
+  "identity.scim.push": "Pushed to the identity provider",
   "identity.connection.configure": "Identity provider configured",
   "security.alert.ingest": "Alert ingested",
   "incident.declare": "Declared the incident",

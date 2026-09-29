@@ -31,6 +31,10 @@ import { AlertPromotionService } from "./alert-promotion-service";
 import { PrismaPromotionStore, type AlertPromotionPrismaClient } from "./alert-promotion-store-prisma";
 import { IdentityService } from "./identity-service";
 import { PrismaIdentityStore, type IdentityPrismaClient } from "./identity-store-prisma";
+import { ScimSyncService } from "./scim-sync-service";
+import { prismaScimPeople } from "./scim-sync-store-prisma";
+import { HttpScimClient } from "./scim-client";
+import { scimTargetFromEnv } from "./scim-rules";
 import { IncidentService } from "./incident-service";
 import { PrismaIncidentStore, type IncidentPrismaClient } from "./incident-store-prisma";
 import { IncidentDocsService } from "./incident-docs-service";
@@ -167,6 +171,7 @@ let templates: TicketTemplateService | null = null;
 let securityAlerts: SecurityAlertService | null = null;
 let alertPromotions: AlertPromotionService | null = null;
 let identities: IdentityService | null = null;
+let scimSync: ScimSyncService | null = null;
 let incidents: IncidentService | null = null;
 let incidentDocs: IncidentDocsService | null = null;
 let assurance: AssuranceService | null = null;
@@ -355,6 +360,28 @@ export function identityServicesFor(): IdentityService {
     ticketServices().audit,
   );
   return identities;
+}
+
+/**
+ * The configured outbound provisioning service: the desk's people, pushed to the
+ * identity provider over SCIM.
+ *
+ * The target comes from the environment rather than the database, for the same
+ * reason the OIDC client secret does: a connector token is a credential, and a
+ * token column would make a database dump a set of working credentials. A
+ * deployment that names no target gets a service that refuses to run and a console
+ * that says so, rather than a button that fails one person at a time.
+ */
+export function scimSyncServicesFor(): ScimSyncService {
+  if (!scimSync) {
+    const { target } = scimTargetFromEnv();
+    scimSync = new ScimSyncService(
+      prismaScimPeople,
+      target ? new HttpScimClient(target) : null,
+      ticketServices().audit,
+    );
+  }
+  return scimSync;
 }
 
 /**
