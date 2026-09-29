@@ -31,9 +31,10 @@ export async function signIn(_prev: AuthState, formData: FormData): Promise<Auth
   }
 
   const user = await prisma.user.findUnique({ where: { email: parsed.data.email } });
-  // Same message for "no such user" and "wrong password" so the form cannot be
-  // used to enumerate accounts.
-  if (!user || !(await verifyPassword(parsed.data.password, user.passwordHash))) {
+  // Same message for "no such user", "wrong password" and "this account signs in
+  // through the identity provider" — the visitor gets told nothing about which of
+  // the three it was, so the form cannot be used to enumerate accounts.
+  if (!user || !user.passwordHash || !(await verifyPassword(parsed.data.password, user.passwordHash))) {
     return { error: "That email and password combination did not match our records." };
   }
   if (!user.active) {
