@@ -8,11 +8,16 @@
  * findings and would otherwise be indistinguishable from a current one. The
  * `coverage` column is the number of targets per host that have been scanned at
  * least once, which is the honest denominator behind "0 pending".
+ *
+ * Each host carries its own coverage of a second kind in the header: whether it is
+ * waiting for a reboot. It belongs here rather than in the target table because it is
+ * a fact about the machine and not about any target on it — the containers share the
+ * host's kernel, so none of them can be the one that needs restarting.
  */
 
 import Link from "next/link";
 
-import { Empty, LoadError, ReachablePill, ScanPill, When } from "@/components/bits";
+import { Empty, LoadError, ReachablePill, RebootPill, ScanPill, When } from "@/components/bits";
 import { api } from "@/lib/api";
 import { machineKindLabel } from "@/lib/machine-kinds";
 import type { Host, Target } from "@/lib/types";
@@ -38,7 +43,9 @@ export default function HostsPage() {
           <p>
             A target is anything that can be out of date: an incus host itself, a
             container inside one, or the Docker images those containers run. Coverage is
-            how many of a host&apos;s targets have answered at least once.
+            how many of a host&apos;s targets have answered at least once — and a host
+            that is waiting for a reboot says so in its header, because every target on
+            it reports as current the moment the new kernel is merely installed.
           </p>
         </div>
         <Link href="/">← dashboard</Link>
@@ -67,6 +74,8 @@ export default function HostsPage() {
               </div>
               <div className="actions">
                 <ReachablePill reachable={host.reachable} />
+                <RebootPill known={host.reboot_known} required={host.reboot_required}
+                            packages={host.reboot_packages} />
                 <span className="faint">
                   coverage {scanned}/{hostTargets.length || "—"}
                 </span>

@@ -51,7 +51,17 @@ CREATE TABLE IF NOT EXISTS hosts (
     kernel      TEXT,
     container_count INTEGER NOT NULL DEFAULT 0,
     last_seen   TEXT,
-    error       TEXT
+    error       TEXT,
+    -- Whether the machine is waiting for a reboot, which packages asked for it,
+    -- and when it was last asked. Kept beside `kernel` rather than inside `error`
+    -- because "up to date but still booting the old kernel" is a real state and not
+    -- a fault — see `scanners.parse_reboot_state`. `reboot_known` is what keeps
+    -- "asked and clear" apart from "could not ask"; `reboot_packages` is the
+    -- package list, one name per line, exactly as the host printed it.
+    reboot_known    INTEGER NOT NULL DEFAULT 0,
+    reboot_required INTEGER NOT NULL DEFAULT 0,
+    reboot_packages TEXT,
+    reboot_checked_at TEXT
 );
 
 -- A target is anything that can be out of date: an incus host itself, an incus
@@ -248,6 +258,14 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # exists because a target that was touched by a scan which could not read it must
     # not age into reading as merely unscanned. See `touch_target`.
     ("targets", "last_scanned_ok", "INTEGER"),
+    # A pending reboot is a fact about a host that no manager reports, because every
+    # manager reports the machine current. These four are additive and idempotent
+    # like the rest of this list; `reboot_known` defaults to 0, so a database
+    # written before them reads as "not asked yet" rather than as "nothing pending".
+    ("hosts", "reboot_known", "INTEGER NOT NULL DEFAULT 0"),
+    ("hosts", "reboot_required", "INTEGER NOT NULL DEFAULT 0"),
+    ("hosts", "reboot_packages", "TEXT"),
+    ("hosts", "reboot_checked_at", "TEXT"),
 )
 
 
@@ -290,6 +308,31 @@ def upsert_host(conn, *, name, address, kind, ssh_user, reachable, os_name=None,
         """,
         (name, address, kind, ssh_user, int(bool(reachable)), os_name, kernel,
          container_count, utcnow(), error),
+    )
+
+
+def record_reboot_state(conn, *, name: str, state) -> None:
+    """Record whether a host is waiting for a reboot.
+
+    Called only when the host actually answered. A probe that timed out or failed
+    leaves the previous row alone, and that is deliberate: "I could not ask" is not
+    evidence that a machine stopped needing the reboot it reported yesterday, which
+    is the same rule `expire_findings(..., protect=...)` applies to a finding. A
+    state that could not be read *is* recorded as not-known, so the dashboard can
+    tell a host that was asked from one that never has been.
+
+    An UPDATE rather than an upsert: the host row is written by `upsert_host` in the
+    same scan, moments earlier, and a function that could conjure a host row from a
+    reboot answer would be a second, weaker writer of the hosts table.
+    """
+    conn.execute(
+        """
+        UPDATE hosts
+           SET reboot_known=?, reboot_required=?, reboot_packages=?, reboot_checked_at=?
+         WHERE name=?
+        """,
+        (int(bool(state.known)), int(bool(state.required)),
+         "\n".join(state.packages) or None, utcnow(), name),
     )
 
 

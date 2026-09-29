@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from . import db, scanners
 from .config import WORKLOAD_KINDS, Host, Settings
 from .policy import Policy
-from .remote import Result, docker_in_container, incus, incus_exec, ssh
+from .remote import Result, docker_in_container, incus, incus_exec, reboot_probe, ssh
 
 log = logging.getLogger("ontrak.scan")
 
@@ -380,6 +380,31 @@ def scan_network(conn, settings: Settings, policy: Policy, *, trigger: str = "ma
     reports: list[TargetReport] = []
 
     def work(host: Host) -> list[TargetReport]:
+        def record_reboot() -> None:
+            """Ask the host whether it is waiting to restart, and record the answer.
+
+            Asked on every scan rather than only after an apply, because a kernel
+            installed by somebody else's `unattended-upgrades` at 04:00 leaves
+            exactly the same fact behind. It is a fact about the *machine* and not
+            about any target on it, so it is recorded against the host row rather
+            than as a finding: a reboot is not a package to approve.
+
+            Nothing is recorded when the probe did not answer — see
+            `db.record_reboot_state`. The alternative is a report that forgets a
+            pending reboot because one SSH connection was slow.
+            """
+            probe = reboot_probe(host, settings.ssh_timeout)
+            if not probe.ok:
+                return
+            state = scanners.parse_reboot_state(probe.stdout)
+            db.record_reboot_state(conn, name=host.name, state=state)
+            if state.required:
+                count = len(state.packages)
+                db.log(conn,
+                       f"{host.name} is waiting for a reboot"
+                       + (f" ({count} package(s) asked for it)" if count else ""),
+                       level="warning", run_id=run_id)
+
         try:
             identity = ssh(host, OS_RELEASE, settings.ssh_timeout)
             if identity.error or identity.timed_out or not identity.ok:
@@ -414,6 +439,9 @@ def scan_network(conn, settings: Settings, policy: Policy, *, trigger: str = "ma
                                    ssh_user=host.ssh_user, reachable=False,
                                    os_name=os_name.strip() or None, kernel=kernel.strip() or None,
                                    error=f"incus list failed: {listing.message}")
+                    # The host answered SSH, so its reboot state can still be read even
+                    # though the list of what runs on it could not.
+                    record_reboot()
                     db.log(conn, f"{host.name}: incus list failed: {listing.message}",
                            level="error", run_id=run_id)
                     return [TargetReport(host.name, host.name, "host")]
@@ -421,6 +449,7 @@ def scan_network(conn, settings: Settings, policy: Policy, *, trigger: str = "ma
             db.upsert_host(conn, name=host.name, address=host.address, kind=host.kind,
                            ssh_user=host.ssh_user, reachable=True, os_name=os_name.strip() or None,
                            kernel=kernel.strip() or None, container_count=len(instances))
+            record_reboot()
             db.log(conn, f"{host.name} up: {os_name.strip()} ({len(instances)} container(s))",
                    run_id=run_id)
 
@@ -485,6 +514,11 @@ def host_admin_summary(conn) -> dict:
     the machines nobody could read. The count now reads the flag the scan writes
     (`targets.last_scanned_ok`), so a failed look stays unknown until a scan really
     does read the target.
+
+    `reboot_required` is the count of hosts that have installed a new kernel and not
+    restarted since. It is a header count rather than a column because it is an
+    all-clear-or-not number: every package on such a host reports current, so
+    nothing else on this page moves when it appears.
     """
     row = conn.execute(
         """
@@ -498,7 +532,8 @@ def host_admin_summary(conn) -> dict:
           (SELECT COUNT(*) FROM findings WHERE status='pending')          AS pending,
           (SELECT COUNT(*) FROM findings WHERE status='approved')         AS approved,
           (SELECT COUNT(*) FROM findings WHERE status='failed')           AS failed,
-          (SELECT COUNT(*) FROM findings WHERE security=1 AND status='pending') AS security
+          (SELECT COUNT(*) FROM findings WHERE security=1 AND status='pending') AS security,
+          (SELECT COUNT(*) FROM hosts WHERE reboot_required=1)            AS reboot_required
         """
     ).fetchone()
     data = dict(row)

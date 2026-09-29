@@ -25,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ontrak import db  # noqa: E402
+from ontrak import db, scanners  # noqa: E402
 
 
 class FindingLifecycle(unittest.TestCase):
@@ -306,6 +306,93 @@ class ScanVerdict(unittest.TestCase):
         self.assertEqual(0, rows["stopped"]["last_scanned_ok"])
         # Never scanned at all: counted unknown by the other half of the predicate.
         self.assertIsNone(rows["new"]["last_scanned_ok"])
+
+
+class RebootState(unittest.TestCase):
+    """`hosts.reboot_*` — the one report no manager makes.
+
+    A host that has installed a new kernel and not restarted since is described as
+    current by apt, snap and docker alike, so if this is not recorded somewhere of
+    its own it is not recorded at all. The column defaults carry half the meaning:
+    a Network that has never been scanned must read as *not asked*, never as
+    "nothing pending".
+    """
+
+    def setUp(self):
+        self.conn = db.connect(":memory:")
+        db.init(self.conn)
+        db.upsert_host(self.conn, name="i1", address="192.168.1.51", kind="both",
+                       ssh_user="root", reachable=True)
+
+    def row(self):
+        return self.conn.execute("SELECT * FROM hosts WHERE name='i1'").fetchone()
+
+    def test_a_host_waiting_to_restart_records_its_packages_one_per_line(self):
+        db.record_reboot_state(self.conn, name="i1", state=scanners.RebootState(
+            known=True, required=True, packages=("libc6", "linux-image-generic")))
+        row = self.row()
+        self.assertEqual(1, row["reboot_required"])
+        self.assertEqual(1, row["reboot_known"])
+        self.assertEqual("libc6\nlinux-image-generic", row["reboot_packages"])
+        self.assertTrue(row["reboot_checked_at"])
+
+    def test_a_host_with_nothing_pending_is_recorded_as_asked_and_clear(self):
+        db.record_reboot_state(self.conn, name="i1",
+                               state=scanners.RebootState(known=True, required=False))
+        row = self.row()
+        self.assertEqual(1, row["reboot_known"])
+        self.assertEqual(0, row["reboot_required"])
+        # No packages is no list, not an empty string: an empty one would render as
+        # a pending reboot with nothing behind it.
+        self.assertIsNone(row["reboot_packages"])
+
+    def test_a_host_that_was_never_asked_does_not_read_as_clear(self):
+        row = self.row()
+        self.assertEqual(0, row["reboot_known"])
+        self.assertEqual(0, row["reboot_required"])
+        self.assertIsNone(row["reboot_checked_at"])
+
+    def test_a_host_this_code_cannot_ask_is_recorded_as_asked_and_unknown(self):
+        # "Checked, and it could not tell" is a third state, and it is the one that
+        # has to be distinguishable from both others. `reboot_checked_at` is the
+        # only column that separates it from never having been asked.
+        db.record_reboot_state(self.conn, name="i1", state=scanners.UNKNOWN_REBOOT)
+        row = self.row()
+        self.assertEqual(0, row["reboot_known"])
+        self.assertEqual(0, row["reboot_required"])
+        self.assertTrue(row["reboot_checked_at"])
+
+    def test_a_second_answer_replaces_the_first(self):
+        db.record_reboot_state(self.conn, name="i1", state=scanners.RebootState(
+            known=True, required=True, packages=("libc6",)))
+        db.record_reboot_state(self.conn, name="i1", state=scanners.RebootState(
+            known=True, required=False))
+        row = self.row()
+        self.assertEqual(0, row["reboot_required"])
+        self.assertIsNone(row["reboot_packages"])
+
+    def test_a_hosts_table_from_before_the_columns_gains_them(self):
+        # The deployed SQLite file IS the Network's history, so these arrive by ALTER
+        # and from nowhere else.
+        old = db.connect(":memory:")
+        old.execute(
+            "CREATE TABLE hosts (name TEXT PRIMARY KEY, address TEXT NOT NULL,"
+            " kind TEXT NOT NULL DEFAULT 'incus', ssh_user TEXT NOT NULL DEFAULT 'root',"
+            " reachable INTEGER NOT NULL DEFAULT 0, os TEXT, kernel TEXT,"
+            " container_count INTEGER NOT NULL DEFAULT 0, last_seen TEXT, error TEXT)"
+        )
+        old.execute("INSERT INTO hosts (name, address, reachable)"
+                    " VALUES ('i1','192.168.1.51',1)")
+
+        db.init(old)
+
+        row = old.execute("SELECT * FROM hosts WHERE name='i1'").fetchone()
+        self.assertEqual(0, row["reboot_known"])
+        self.assertEqual(0, row["reboot_required"])
+        self.assertIsNone(row["reboot_packages"])
+        # The row it already had is untouched.
+        self.assertEqual("192.168.1.51", row["address"])
+        self.assertEqual(1, row["reachable"])
 
 
 class DigestCache(unittest.TestCase):

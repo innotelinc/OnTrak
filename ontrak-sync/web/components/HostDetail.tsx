@@ -14,7 +14,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { Empty, LoadError, ManagerTag, ReachablePill, ScanPill, SecurityPill, StatusPill, When } from "@/components/bits";
+import { Empty, LoadError, ManagerTag, ReachablePill, RebootPill, ScanPill, SecurityPill, StatusPill, When } from "@/components/bits";
 import { api } from "@/lib/api";
 import type { Finding, Host, Target } from "@/lib/types";
 import { useAsync } from "@/lib/useAsync";
@@ -46,6 +46,8 @@ export function HostDetail({ name }: { name: string }) {
 
   const record = host.data.host;
   const targets = host.data.targets;
+  // One name per line, exactly as the host's own file listed them.
+  const rebootPackages = (record.reboot_packages ?? "").split("\n").filter(Boolean);
 
   return (
     <>
@@ -62,6 +64,8 @@ export function HostDetail({ name }: { name: string }) {
         </div>
         <div className="actions">
           <ReachablePill reachable={record.reachable} />
+          <RebootPill known={record.reboot_known} required={record.reboot_required}
+                      packages={record.reboot_packages} />
           <button
             disabled={busy !== null}
             onClick={() =>
@@ -78,6 +82,21 @@ export function HostDetail({ name }: { name: string }) {
 
       {error ? <div className="note note--bad">{error}</div> : null}
       {message ? <div className="note note--ok">{message}</div> : null}
+
+      {/* The one thing on this page that no target can report. Every table below
+          can read zero and still be describing a machine that is running a kernel
+          with the update installed and not in effect. */}
+      {record.reboot_required ? (
+        <div className="note note--warn">
+          <strong>A reboot is pending.</strong> This host has a newer kernel installed and
+          is still running the old one, so everything below reports as current while the
+          fix is not in effect. Sync will not reboot it: that is a maintenance window with
+          a person in it.
+          {rebootPackages.length ? (
+            <> Waiting on <span className="mono">{rebootPackages.join(", ")}</span>.</>
+          ) : null}
+        </div>
+      ) : null}
 
       {targets.length === 0 ? (
         <Empty>No targets recorded for this host yet.</Empty>

@@ -5,11 +5,14 @@
  *
  * This is the page that answers "what needs attention?" without a click, so its
  * layout is the priority order: security updates, then everything else pending,
- * then the two states that are NOT "fine" — unreachable hosts and targets that
- * were never inspected. Those last two sit in the same row of cards as the
- * pending count deliberately: a Network that reads "0 pending" while three hosts
- * are unreachable is the failure this tool exists to prevent, and a number in a
- * small grey font under a table is not enough to prevent it.
+ * then the states that are NOT "fine" — unreachable hosts, targets that were never
+ * inspected, and machines that are waiting for a reboot. Those sit in the same row
+ * of cards as the pending count deliberately: a Network that reads "0 pending"
+ * while three hosts are unreachable is the failure this tool exists to prevent, and
+ * a number in a small grey font under a table is not enough to prevent it. So is a
+ * Network that reads "0 pending" on a host whose kernel update is installed and not
+ * yet running — which is why the reboot card appears only when it is non-zero:
+ * every other number here is wrong at the same moment.
  *
  * The three actions on this page are the whole manual workflow: scan, approve,
  * apply. Everything they do is also available per-item on the Findings page; these
@@ -19,7 +22,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { Empty, LoadError, ReachablePill, When } from "@/components/bits";
+import { Empty, LoadError, ReachablePill, RebootPill, When } from "@/components/bits";
 import { api } from "@/lib/api";
 import type { ApplyResult, Host, Run, ScanResult, Summary } from "@/lib/types";
 import { useAsync } from "@/lib/useAsync";
@@ -140,6 +143,15 @@ export default function DashboardPage() {
           <div className="value">{data ? data.failed : "—"}</div>
           <div className="hint">an apply did not complete</div>
         </div>
+        {/* Only when it is somebody's problem. A permanent card reading 0 next to a
+            permanent card reading 0 teaches an operator to stop reading the row. */}
+        {data && data.reboot_required > 0 ? (
+          <div className="card card--attention">
+            <div className="label">Reboot required</div>
+            <div className="value">{data.reboot_required}</div>
+            <div className="hint">a new kernel is installed, not running</div>
+          </div>
+        ) : null}
         <div className="card">
           <div className="label">Hosts</div>
           <div className="value">
@@ -173,6 +185,7 @@ export default function DashboardPage() {
                     <th>Host</th>
                     <th>State</th>
                     <th>OS</th>
+                    <th>Reboot</th>
                     <th className="num">Containers</th>
                     <th className="num">Pending</th>
                     <th className="num">Security</th>
@@ -189,6 +202,10 @@ export default function DashboardPage() {
                       </td>
                       <td><ReachablePill reachable={host.reachable} /></td>
                       <td className="dim">{host.os ?? <span className="faint">unknown</span>}</td>
+                      <td className="tight">
+                        <RebootPill known={host.reboot_known} required={host.reboot_required}
+                                    packages={host.reboot_packages} />
+                      </td>
                       <td className="num">{host.container_count}</td>
                       <td className="num">{host.pending || <span className="faint">0</span>}</td>
                       <td className="num">
