@@ -64,9 +64,17 @@ class FakeRemote:
         self.image_after: dict[str, str] = {}             # container name -> id
         self.recreated = False
         self.compose_up_rc = 0
+        # Paths that do not exist on the "host", for the env-file check.
+        self.missing_paths: set[str] = set()
+        # project -> stderr, for a `config` that cannot read the stack at all.
+        self.config_fail: dict[str, str] = {}
 
     # ── the two entry points the applier uses ────────────────────────────────
     def _pkg(self, container, command: str, timeout: int = 0) -> Result:
+        if command.startswith("test -f "):
+            path = command[len("test -f "):].strip()
+            self.calls.append(("test-f", container, path))
+            return Result(command, 0 if path not in self.missing_paths else 1, "", "")
         quoted = command
         if "install --only-upgrade" in quoted:
             self.calls.append(("apt-install", container, command))
@@ -135,6 +143,8 @@ class FakeRemote:
                 # The project is read from the directory the caller passed, which is
                 # what the container's own compose labels said.
                 project = args[args.index("--project-directory") + 1]
+                if project in self.config_fail and "--profiles" not in args:
+                    return Result("docker compose config", 1, "", self.config_fail[project])
                 if "--profiles" in args:
                     # `config --profiles` names what the files declare; compose does
                     # not record which of them a running stack was started with.
@@ -449,6 +459,40 @@ class DockerApply(ApplierCase):
         self.assertEqual(1, len(ups))
         self.assertIn("--project-name", ups[0])
         self.assertEqual("/srv/n8n", ups[0][ups[0].index("--project-name") + 1])
+
+    def test_an_env_file_that_is_no_longer_there_is_not_replayed(self):
+        # The monarch stack resolves its secrets into /run, which a reboot empties.
+        # Replaying a path that no longer exists fails the whole invocation, and from
+        # here that reads as a stack with no services at all.
+        labels = dict(self.compose_labels)
+        labels["com.docker.compose.project.environment_file"] = "/run/.env.n8n.resolved"
+        self.fake.labels["cid123"] = labels
+        self.fake.missing_paths.add("/run/.env.n8n.resolved")
+        self.fake.running_services["/srv/n8n"] = ["n8n"]
+        self.fake.planned_services["/srv/n8n"] = ["n8n"]
+        self.finding(manager="docker", package=self.IMAGE)
+        result = self.apply()
+        self.assertEqual(1, result["applied"])
+        ups = [c[1] for c in self.fake.calls if c[0] == "compose-up"]
+        self.assertEqual(1, len(ups))
+        self.assertNotIn("--env-file", ups[0])
+        # Not silently: the run log says what it dropped and why.
+        self.assertTrue(any("is gone" in message for message in result["messages"]))
+
+    def test_a_stack_compose_cannot_read_is_refused_with_its_own_words(self):
+        # "compose sees 0 service(s)" is true and useless when the real cause is that
+        # compose could not open the stack at all.
+        self.fake.labels["cid123"] = dict(self.compose_labels)
+        self.fake.config_fail["/srv/n8n"] = "couldn't find env file: /run/.env.n8n"
+        self.finding(manager="docker", package=self.IMAGE)
+        result = self.apply()
+        self.assertEqual(1, result["failed"])
+        self.assertEqual([], [c for c in self.fake.calls if c[0] == "compose-up"])
+        refused = [m for m in result["manual"] if "could not read" in m]
+        self.assertEqual(1, len(refused))
+        self.assertIn("couldn't find env file", refused[0])
+        detail = self.status_of(manager="docker", package=self.IMAGE)["detail"]
+        self.assertIn("could not read", detail)
 
     def test_a_profile_gated_service_is_recreated_with_the_profiles_enabled(self):
         # The plan without profiles is smaller than what is running, and refusing on
