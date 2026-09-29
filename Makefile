@@ -4,15 +4,17 @@
 # `make help` is the first stop. Every target carries a `##` description, so
 # help stays accurate without being maintained twice.
 #
-# Two apps live here and stay independently deployable, so the targets that
-# only make sense for one of them say so: `TIX` targets run in ontrak-tix/,
-# everything else runs in the training app at the repo root. Nothing above
-# `## ---- Delivery ----` talks to a remote or changes published state.
+# Three products live here and stay independently deployable, so the targets
+# that only make sense for one of them say so: `TIX` targets run in
+# ontrak-tix/, `SENTINEL` targets in ontrak-sentinel/, and everything else in
+# the training app at the repo root. Nothing above `## ---- Delivery ----`
+# talks to a remote or changes published state.
 # ═══════════════════════════════════════════════════════════════════════════
 
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 TIX_DIR := ontrak-tix
+SENTINEL_DIR := ontrak-sentinel
 
 ## ---- Bootstrap ----
 
@@ -31,10 +33,13 @@ hooks: ## Point git at the shared attribution/secret guard hooks
 	@echo "hooks: .githooks installed"
 
 ## ---- Containers ----
-# Each app is its own stack. `up`/`down`/`logs` are the training app's; the
-# `tix-`-prefixed twins are the service desk's. `ps` and `images` cover both.
-# Both stacks publish 5432 by default, so run only one at a time — or set
-# ONTRAK_DB_PORT / ONTRAK_TIX_DB_PORT to separate them.
+# Each product is its own stack. `up`/`down`/`logs` are the training app's; the
+# `tix-`-prefixed twins are the service desk's and the `sentinel-` ones are the
+# identity provider's. `ps` and `images` cover all three.
+#
+# The training app and Tix both publish 5432 by default, so run only one of
+# *those* at a time — or set ONTRAK_DB_PORT / ONTRAK_TIX_DB_PORT to separate
+# them. Sentinel publishes its own database on 5434 and shares it with nobody.
 
 .PHONY: up
 up: ## Build and start the training app + Postgres, serving on :3000
@@ -60,31 +65,49 @@ tix-down: ## Stop the Tix stack (keeps its volumes)
 tix-logs: ## Tail the Tix stack's logs
 	cd $(TIX_DIR) && docker compose logs -f
 
+.PHONY: sentinel-up
+sentinel-up: ## Build and start Sentinel + Postgres, serving on :8787
+	cd $(SENTINEL_DIR) && docker compose up -d --build
+
+.PHONY: sentinel-down
+sentinel-down: ## Stop the Sentinel stack (keeps its database volume)
+	cd $(SENTINEL_DIR) && docker compose down
+
+.PHONY: sentinel-logs
+sentinel-logs: ## Tail the Sentinel stack's logs
+	cd $(SENTINEL_DIR) && docker compose logs -f
+
 .PHONY: ps
-ps: ## List the containers in both stacks
+ps: ## List the containers in all three stacks
 	docker compose ps
 	cd $(TIX_DIR) && docker compose ps
+	cd $(SENTINEL_DIR) && docker compose ps
 
 .PHONY: images
-images: ## Build both production images without starting anything
+images: ## Build all three production images without starting anything
 	docker build --target runner -t ontrak-training:local .
 	cd $(TIX_DIR) && docker build --target runner -t ontrak-tix:local .
+	cd $(SENTINEL_DIR) && docker build --target runner -t ontrak-sentinel:local .
 
 .PHONY: check-compose
-check-compose: ## Validate both development compose files against their .env.example
+check-compose: ## Validate all three development compose files against their .env.example
 	@cp -n .env.example .env 2>/dev/null || true
 	docker compose config --quiet && echo "compose: training ok"
 	@cp -n $(TIX_DIR)/.env.example $(TIX_DIR)/.env 2>/dev/null || true
 	cd $(TIX_DIR) && docker compose config --quiet && echo "compose: tix ok"
+	# Sentinel's stack starts on defaults and needs no `.env`, so there is
+	# nothing to copy in before validating it.
+	cd $(SENTINEL_DIR) && docker compose config --quiet && echo "compose: sentinel ok"
 
 .PHONY: prod-check
-prod-check: ## Validate both deployment overlays (throwaway secrets, cleaned up)
-	@set -e; for d in . $(TIX_DIR); do \
+prod-check: ## Validate all three deployment overlays (throwaway secrets, cleaned up)
+	@set -e; for d in . $(TIX_DIR) $(SENTINEL_DIR); do \
 	  made=; \
 	  if [ ! -f "$$d/.env.production" ]; then \
 	    cp "$$d/.env.production.example" "$$d/.env.production"; made=1; \
 	  fi; \
 	  ( cd "$$d" && AUTH_SECRET=check TIX_AUTH_SECRET=check POSTGRES_PASSWORD=check \
+	      SENTINEL_SIGNING_KEY=check SENTINEL_ISSUER=check \
 	      docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet ); \
 	  echo "compose: $$d prod ok"; \
 	  if [ -n "$$made" ]; then rm -f "$$d/.env.production"; fi; \
@@ -110,6 +133,14 @@ tix-prod-up: ## Start Tix as a deployment (needs .env.production)
 .PHONY: tix-prod-down
 tix-prod-down: ## Stop the Tix deployment (keeps its volumes)
 	cd $(TIX_DIR) && docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml down
+
+.PHONY: sentinel-prod-up
+sentinel-prod-up: ## Start Sentinel as a deployment (needs .env.production)
+	cd $(SENTINEL_DIR) && docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+.PHONY: sentinel-prod-down
+sentinel-prod-down: ## Stop the Sentinel deployment (keeps its volume)
+	cd $(SENTINEL_DIR) && docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml down
 
 ## ---- The training app ----
 
@@ -151,23 +182,44 @@ tix-dev: ## Run the service desk (http://localhost:3000)
 tix-sweep: ## Run the retention sweep without HTTP (a dry run unless FORCE=1)
 	cd $(TIX_DIR) && npm run sweep:retention
 
+## ---- OnTrak Sentinel ----
+
+.PHONY: sentinel-setup
+sentinel-setup: ## Install dependencies for the identity provider
+	cd $(SENTINEL_DIR) && npm install
+
+.PHONY: sentinel-key
+sentinel-key: ## Print a signing key as the escaped one-line PEM .env.production wants
+	@openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null \
+	  | awk 'NF {printf "%s\\n", $$0}'
+
+.PHONY: sentinel-migrate
+sentinel-migrate: ## Generate the Prisma client and apply the provider's migrations
+	cd $(SENTINEL_DIR) && npx prisma generate && npx prisma migrate deploy
+
+.PHONY: sentinel-serve
+sentinel-serve: ## Run the identity provider from source (http://localhost:8787)
+	cd $(SENTINEL_DIR) && npm run serve
+
 ## ---- Checks (what CI runs) ----
 
 .PHONY: check
 check: typecheck test build ## Everything CI runs, in the order CI runs it
 
 .PHONY: typecheck
-typecheck: ## Typecheck both apps
+typecheck: ## Typecheck all three products
 	npm run typecheck
 	cd $(TIX_DIR) && npm run typecheck
+	cd $(SENTINEL_DIR) && npm run typecheck
 
 .PHONY: test
-test: ## Run both unit-test suites
+test: ## Run all three unit-test suites
 	npm test
 	cd $(TIX_DIR) && npm test
+	cd $(SENTINEL_DIR) && npm test
 
 .PHONY: build
-build: ## Production-build both apps
+build: ## Production-build the two Next apps (Sentinel has no build step)
 	npm run build
 	cd $(TIX_DIR) && npm run build
 

@@ -237,9 +237,11 @@ token, userinfo, logout, revocation, SAML metadata, SAML SSO, the SCIM surface a
 security key, provisioning, sign-out). With
 `DATABASE_URL` set, every one of those rows is in Postgres — the spine, the
 evidence chain, the grants and the service providers — and a restart keeps them;
-without it, the same code path runs over in-memory stores. It is **not yet a
-deployment**: per-role policies, key rotation and the compose stack are still to
-come, so there is no `Dockerfile`. Enforced MFA itself is in — a session is refused
+without it, the same code path runs over in-memory stores. It ships a container
+image and compose stack (see [Containers](#containers) below), but it is **not yet
+a deployment** in the sense that matters: per-role policies and key rotation are
+still to come, so the signing key is read from the environment rather than
+provisioned. Enforced MFA itself is in — a session is refused
 until a code from a confirmed factor (or an assertion from a registered key) has
 been verified, and enrollment is now the identity's own act from the console. The
 signing key is ephemeral unless `SENTINEL_SIGNING_KEY` is set, and WebAuthn needs a
@@ -253,14 +255,36 @@ minted for a demo and printed to the terminal on purpose: a provisioning
 credential belongs to a person acting in a browser, is shown once, and never
 reaches a log or a scrollback.
 
+The connector end of that is in
+[docs/scim-provisioning.md](./docs/scim-provisioning.md): what to enter in Entra or
+Okta, exactly which attributes this provider serves and returns, and the parts of
+RFC 7644 it deliberately does not implement — the filter subset above all, because
+that is where a connector's expectations and this provider's refusals meet.
+
 ## Containers
 
-[OnTrak Tix](../ontrak-tix/README.md) and the
-[training app](../README.md) each ship a `Dockerfile` and a `docker-compose.yml`.
-Sentinel deliberately does not yet, even though it now has a runnable provider
-with persisted grants, both protocols, enforced TOTP and WebAuthn, a console that
-makes enrollment self-service and a full token lifecycle: it has no per-role
-policies, and key rotation is still to come, with the signing key generated from
-the environment rather than provisioned. Its image and compose stack arrive with
-those; see
+All three products ship the same shape: a `Dockerfile` and a `docker-compose.yml`,
+with a `docker-compose.prod.yml` overlay for a real deployment.
+
+```bash
+cd ontrak-sentinel
+docker compose up -d --build     # builds, migrates the spine, serves on :8787
+```
+
+Two things differ from the other two stacks, both deliberate. It needs no `.env`
+to start — every value has a working default and the stack reads `.env` when it
+exists rather than requiring one — so a first `up` works on a bare checkout. And it
+publishes its database on **5434**, because Sentinel keeps its own database and all
+three stacks can then run at once: the training app holds 5432, Tix 5433, Sentinel
+5434.
+
+The provider answers to the same make targets as the others: `sentinel-up`,
+`sentinel-down`, `sentinel-logs`, and `sentinel-prod-up` / `sentinel-prod-down` for
+the overlay.
+
+An image is not a deployment, and this one says so on startup: with no
+`SENTINEL_SIGNING_KEY` it generates an ephemeral key and warns that every ID token
+it signs stops verifying when the process does. The production overlay refuses to
+start without a key, and `make sentinel-key` prints one in the single escaped line
+`.env.production` wants. Per-role policies and key rotation are still to come; see
 [ROADMAP.md](./ROADMAP.md).

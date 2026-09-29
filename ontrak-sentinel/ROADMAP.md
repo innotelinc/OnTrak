@@ -133,8 +133,9 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
     its verification result; a second-factor page that enrolls, confirms and removes
     TOTP factors and security keys; and a sign-out that ends the session and revokes
     the tokens it minted. Server-rendered from data through one escaping function, so
-    an identity's own display name cannot become markup on its own page. The
-    registry's image and compose stack is still to come.
+    an identity's own display name cannot become markup on its own page. The image
+    and compose stack this bullet owed have since landed — see
+    [Containers](./README.md#containers) — with a published registry still to come.
 - Admin console shell; APIs; policy skeleton.
 - **Exit:** an admin creates an identity, sees every action in the tamper-evident
   log, and tenant isolation is covered by CI tests.
