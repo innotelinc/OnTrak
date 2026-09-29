@@ -291,3 +291,66 @@ def parse_compose_images(text: str) -> dict[str, str]:
         if isinstance(image, str) and image:
             out[str(name)] = image
     return out
+
+
+# ── the reboot ───────────────────────────────────────────────────────────────
+# Unpacking a new kernel is not running one. The moment `apt` installs the
+# replacement every package manager in this Network reports the host as up to
+# date, while the machine goes on booting the old kernel until somebody restarts
+# it — so a security fix for the kernel reads exactly like a finished patch run.
+# That is the same class of untruth as "0 pending" on a host nobody could reach,
+# and it is why a pending reboot is a verdict of its own rather than a line in
+# some package's detail column.
+#
+# Debian and Ubuntu write the fact down (`/var/run/reboot-required`, plus a file
+# naming the packages that asked for it); a distribution that keeps it some other
+# way is *asked and does not answer*. Those are different answers, and `known` is
+# what keeps them apart: a host whose reboot state this code could not read must
+# not render as one that answered "nothing pending".
+REBOOT_REQUIRED = "__ONTRAK_REBOOT_REQUIRED__"
+REBOOT_CLEAR = "__ONTRAK_REBOOT_CLEAR__"
+REBOOT_UNKNOWN = "__ONTRAK_REBOOT_UNKNOWN__"
+
+
+@dataclass(frozen=True)
+class RebootState:
+    """What one host said when it was asked whether it is waiting to restart."""
+
+    known: bool = False
+    required: bool = False
+    packages: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict:
+        return {"known": self.known, "required": self.required,
+                "packages": list(self.packages)}
+
+
+# The answer a host that could not be asked gives. There is one instance of it
+# because every caller means the same thing by it.
+UNKNOWN_REBOOT = RebootState()
+
+
+def parse_reboot_state(text: str) -> RebootState:
+    """Parse the output of `remote.reboot_probe`.
+
+    Three outcomes, and the third is not the second: required, clear, and *no
+    answer* — an empty string, an unrecognised marker, or a distribution whose
+    pending-reboot file this code does not know about. Only a marker that says the
+    question was understood produces a `known` state, because "we did not ask" and
+    "we asked and there is nothing pending" are the two answers a patch report must
+    never swap.
+    """
+    lines = [line.strip() for line in (text or "").splitlines()]
+    if REBOOT_REQUIRED in lines:
+        # Everything after the marker is a package name, one per line, straight out
+        # of the distribution's own file. De-duplicated and ordered rather than
+        # trusted to be either: it is a list to show a person, not a fixture, and
+        # the same package can be named twice on a host that upgraded it twice.
+        packages = tuple(sorted({
+            line for line in lines[lines.index(REBOOT_REQUIRED) + 1:]
+            if line and not line.startswith("__ONTRAK_")
+        }))
+        return RebootState(known=True, required=True, packages=packages)
+    if REBOOT_CLEAR in lines:
+        return RebootState(known=True, required=False)
+    return UNKNOWN_REBOOT

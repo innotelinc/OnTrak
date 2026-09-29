@@ -79,6 +79,31 @@ Concretely, in the code:
 - output a parser did not recognise sets the target's apt state to `partial` and logs the line, so
   a distribution changing its format shows up as a warning rather than as silence
 
+### The update that is installed and not running
+
+One more answer, and this one is about the *host*: no manager reports it. Unpacking a new
+kernel is not running one, so the moment `apt` installs the replacement every manager
+reports the machine as current while it goes on booting the old kernel until somebody
+restarts it. A kernel CVE fix can therefore be fully installed, read as done, and not be in
+effect — the same shape of untruth as "0 pending" on a host nobody could reach.
+
+A pending reboot is a verdict of its own. It is recorded **per host** rather than as a
+finding, because a reboot is not a package to approve and every container on the machine
+shares its kernel; and it is deliberately **not derived from the findings**, because the
+moment it would be wrong, nothing else on the page has moved.
+
+Three answers again, and only one of them means "no":
+
+| What the host said | What is shown |
+|---|---|
+| `/var/run/reboot-required` exists | **reboot**, with the packages that asked for it, and a warning in the run log |
+| It was asked and there is nothing pending | **no reboot** |
+| It could not be asked in a way this code understands | **reboot?** — never drawn as "no reboot" |
+
+A probe that times out records nothing at all: a machine that answered yesterday is not
+evidence that it needs nothing today. Sync will never do the reboot — that is a maintenance
+window with a person in it.
+
 ### Modes
 
 | | `detect` (default) | `auto` |
@@ -154,7 +179,7 @@ writes to it.
 ## Tests
 
 ```bash
-make test        # 188 tests, ~1s, no Network required
+make test        # 301 tests, no Network required
 ```
 
 The suite covers the parsers, the cron arithmetic, the finding lifecycle, the scan engine (against

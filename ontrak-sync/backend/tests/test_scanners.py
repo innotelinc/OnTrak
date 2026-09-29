@@ -5,9 +5,9 @@ These are the parsers whose mistakes are silent. A parser that throws is a bad
 five minutes; a parser that quietly drops a line it did not recognise reports an
 Network as patched while it drifts, which is the failure this whole project exists
 to remove. So the cases here are mostly about the *awkward* inputs: output shapes
-that changed, packages with no archive, images with no registry, and the
-three-valued docker comparison where "cannot tell" must never collapse into
-"up to date".
+that changed, packages with no archive, images with no registry, and the two
+three-valued verdicts — the docker comparison and the pending reboot — where
+"cannot tell" must never collapse into "up to date".
 
 The apt fixtures are real `apt-get -s upgrade` and `apt list --upgradable` output
 from Ubuntu noble, kept verbatim including the trailing summary block, because the
@@ -350,6 +350,66 @@ class ComposeImages(unittest.TestCase):
     def test_an_unreadable_config_yields_nothing_rather_than_raising(self):
         self.assertEqual({}, scanners.parse_compose_images("not json"))
         self.assertEqual({}, scanners.parse_compose_images(""))
+
+
+class PendingReboot(unittest.TestCase):
+    """The pending-reboot verdict — three answers, and only one of them is "no".
+
+    A host that has unpacked a new kernel and not restarted is reported as current by
+    every manager, which is exactly why this cannot be derived from the findings: the
+    moment it is wrong, nothing else on the page moves.
+    """
+
+    def test_a_host_waiting_to_restart_is_reported_with_its_packages(self):
+        state = scanners.parse_reboot_state(
+            f"{scanners.REBOOT_REQUIRED}\nlinux-image-generic\nlibc6\n")
+        self.assertTrue(state.known)
+        self.assertTrue(state.required)
+        self.assertEqual(("libc6", "linux-image-generic"), state.packages)
+
+    def test_the_package_list_is_deduplicated_and_ordered(self):
+        # It is the distribution's own file, shown to a person: nothing guarantees it
+        # is sorted, and a host that upgraded the same package twice names it twice.
+        state = scanners.parse_reboot_state(
+            f"{scanners.REBOOT_REQUIRED}\nlibc6\nlinux-image-generic\nlibc6\n")
+        self.assertEqual(("libc6", "linux-image-generic"), state.packages)
+
+    def test_a_host_with_nothing_pending_is_known_and_not_required(self):
+        state = scanners.parse_reboot_state(f"{scanners.REBOOT_CLEAR}\n")
+        self.assertTrue(state.known)
+        self.assertFalse(state.required)
+        self.assertEqual((), state.packages)
+
+    def test_the_marker_wins_when_both_appear(self):
+        # Cannot happen with the probe as written. The direction to fail in is chosen
+        # on purpose: a reboot reported that was not needed costs a glance, and the
+        # other way round leaves a machine running a kernel with the CVE in it.
+        state = scanners.parse_reboot_state(
+            f"{scanners.REBOOT_CLEAR}\n{scanners.REBOOT_REQUIRED}\nlibc6\n")
+        self.assertTrue(state.required)
+
+    def test_being_unable_to_ask_is_not_the_same_as_nothing_pending(self):
+        # The whole point of `known`. An empty answer, a marker this code does not
+        # recognise and a probe that never ran all mean "no answer", and folding any
+        # of them into `required=False` is how a monitor goes green over the one
+        # machine it could not ask.
+        for text in ("", "\n", scanners.REBOOT_UNKNOWN, "sh: 1: not found",
+                     "needs-restarting: command not found"):
+            state = scanners.parse_reboot_state(text)
+            self.assertFalse(state.known, msg=repr(text))
+            self.assertFalse(state.required, msg=repr(text))
+
+    def test_the_unknown_marker_parses_to_the_same_answer_as_silence(self):
+        # The probe spells the third answer out; the parser must not read it as a
+        # fourth. Two spellings of one fact that disagree is how a state machine
+        # grows a branch nobody meant to write.
+        self.assertEqual(scanners.UNKNOWN_REBOOT,
+                         scanners.parse_reboot_state(scanners.REBOOT_UNKNOWN))
+
+    def test_the_state_serialises_with_a_list_of_packages(self):
+        state = scanners.parse_reboot_state(f"{scanners.REBOOT_REQUIRED}\nlibc6\n")
+        self.assertEqual({"known": True, "required": True, "packages": ["libc6"]},
+                         state.as_dict())
 
 
 if __name__ == "__main__":

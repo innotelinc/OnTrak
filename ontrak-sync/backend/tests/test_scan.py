@@ -33,7 +33,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ontrak import config, db, scan  # noqa: E402
+from ontrak import config, db, scan, scanners  # noqa: E402
 from ontrak.config import Host, Settings  # noqa: E402
 from ontrak.policy import Policy  # noqa: E402
 from ontrak.remote import Result  # noqa: E402
@@ -82,6 +82,10 @@ class FakeNetwork:
         self.states: dict[str, str] = {}
         self.reachable = True
         self.incus_list_ok = True
+        # The pending-reboot answer. Defaults to a host that answered and needs
+        # nothing, so a test mentions this only when the reboot IS the subject;
+        # `None` is the probe that did not answer at all.
+        self.reboot: str | None = scanners.REBOOT_CLEAR + "\n"
         self.apt: dict[str | None, tuple[str, str]] = {}
         self.snap: dict[str | None, str] = {}
         self.images: dict[str, list[dict]] = {}
@@ -115,6 +119,16 @@ class FakeNetwork:
             return Result("incus list", returncode=1, stderr="Error: cannot connect to incus")
         rows = "".join(f"{name},{self.states.get(name, 'RUNNING')}\n" for name in self.containers)
         return Result("incus list", 0, rows, "")
+
+    def reboot_probe(self, host, timeout):
+        self.calls.append(("reboot", host.name))
+        if not self.reachable:
+            return Result("reboot", returncode=255,
+                          error="ssh: connect to host port 22: Connection timed out")
+        if self.reboot is None:
+            return Result("reboot", returncode=-1, timed_out=True,
+                          error=f"timed out after {timeout}s")
+        return Result("reboot", 0, self.reboot, "")
 
     def incus_exec(self, host, container, command, timeout):
         self.calls.append(("incus exec", host.name, container, tuple(command)))
@@ -154,6 +168,7 @@ class ScanCase(unittest.TestCase):
             incus=self.fake.incus,
             incus_exec=self.fake.incus_exec,
             docker_in_container=self.fake.docker_in_container,
+            reboot_probe=self.fake.reboot_probe,
         )
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -638,6 +653,113 @@ class MachineKinds(ScanCase):
     def test_an_unrecognised_kind_is_named_rather_than_hidden(self):
         self.assertEqual("a Proxmox VE node", config.machine_kind_label("proxmox"))
         self.assertIn("unrecognised", config.machine_kind_label("mystery-box"))
+
+
+class PendingReboot(ScanCase):
+    """A host that has installed a new kernel and not restarted since.
+
+    Every manager reports such a host as up to date — that is what makes this worth
+    asking about separately — so what these cases check is where the fact lands (on
+    the host, not as a finding), that it survives a scan that could not ask, and
+    that the three answers stay three.
+    """
+
+    REQUIRED = f"{scanners.REBOOT_REQUIRED}\nlibc6\nlinux-image-generic\n"
+
+    def host_row(self):
+        return self.conn.execute("SELECT * FROM hosts WHERE name='i1'").fetchone()
+
+    def events(self):
+        return [row["message"] for row in
+                self.conn.execute("SELECT * FROM events").fetchall()]
+
+    def test_a_host_waiting_to_restart_records_it_on_the_host_row(self):
+        self.fake.reboot = self.REQUIRED
+        self.fake.apt[None] = (SIM_TWO, LIST_TWO)
+        self.scan()
+        row = self.host_row()
+        self.assertEqual(1, row["reboot_required"])
+        self.assertEqual(1, row["reboot_known"])
+        self.assertEqual("libc6\nlinux-image-generic", row["reboot_packages"])
+        self.assertIsNotNone(row["reboot_checked_at"])
+
+    def test_a_pending_reboot_is_not_a_finding(self):
+        # It is not a package to approve, and it must not reach the Findings page
+        # where "approve, then apply" would have nothing to install.
+        self.fake.reboot = self.REQUIRED
+        self.fake.apt[None] = (SIM_TWO, LIST_TWO)
+        result = self.scan()
+        self.assertEqual(2, result["findings"])  # the two apt updates, nothing else
+        self.assertNotIn(("apt", "linux-image-generic"), self.findings())
+
+    def test_a_pending_reboot_reaches_the_run_log(self):
+        self.fake.reboot = self.REQUIRED
+        self.scan()
+        self.assertTrue(any("waiting for a reboot" in message for message in self.events()),
+                        self.events())
+        warning = [row for row in self.conn.execute(
+            "SELECT * FROM events WHERE level='warning'").fetchall()
+            if "waiting for a reboot" in row["message"]]
+        self.assertTrue(warning, "the reboot is a warning, not a note")
+
+    def test_a_probe_that_could_not_answer_does_not_erase_a_known_reboot(self):
+        # The rule the whole module is built on: absence of evidence is not evidence
+        # of absence. A slow SSH connection must not turn "this host needs a reboot"
+        # into "this host needs nothing".
+        self.fake.reboot = self.REQUIRED
+        self.scan()
+        self.fake.reboot = None
+        self.scan()
+        self.assertEqual(1, self.host_row()["reboot_required"])
+
+    def test_a_host_that_answered_and_needs_nothing_is_recorded_as_clear(self):
+        self.fake.reboot = scanners.REBOOT_CLEAR + "\n"
+        self.scan()
+        row = self.host_row()
+        self.assertEqual(1, row["reboot_known"])
+        self.assertEqual(0, row["reboot_required"])
+        self.assertIsNone(row["reboot_packages"])
+
+    def test_a_host_this_code_cannot_ask_is_not_reported_as_clear(self):
+        self.fake.reboot = scanners.REBOOT_UNKNOWN + "\n"
+        self.scan()
+        row = self.host_row()
+        self.assertEqual(0, row["reboot_known"])
+        self.assertEqual(0, row["reboot_required"])
+        self.assertIsNotNone(row["reboot_checked_at"])
+
+    def test_an_unreachable_host_is_not_asked_and_keeps_what_it_said(self):
+        self.fake.reboot = self.REQUIRED
+        self.scan()
+        self.fake.reachable = False
+        self.fake.calls.clear()
+        self.scan()
+        self.assertNotIn(("reboot", "i1"), self.fake.calls)
+        self.assertEqual(1, self.host_row()["reboot_required"])
+
+    def test_a_host_whose_container_list_failed_is_still_asked(self):
+        # SSH answered, so the machine can be asked about its kernel even though the
+        # list of what runs on it could not be read.
+        self.fake.reboot = self.REQUIRED
+        self.fake.incus_list_ok = False
+        self.scan()
+        self.assertEqual(1, self.host_row()["reboot_required"])
+
+    def test_the_header_counts_the_hosts_waiting_for_a_reboot(self):
+        self.fake.reboot = self.REQUIRED
+        self.scan()
+        self.assertEqual(1, scan.host_admin_summary(self.conn)["reboot_required"])
+        self.fake.reboot = scanners.REBOOT_CLEAR + "\n"
+        self.scan()
+        self.assertEqual(0, scan.host_admin_summary(self.conn)["reboot_required"])
+
+    def test_the_probe_is_asked_once_per_host_and_not_per_target(self):
+        # It is a fact about the machine. Asking it of every container would be both
+        # wrong (they share the host's kernel) and a round trip per target.
+        self.fake.reboot = self.REQUIRED
+        self.scan()
+        self.assertEqual([("reboot", "i1")],
+                         [call for call in self.fake.calls if call[0] == "reboot"])
 
 
 if __name__ == "__main__":

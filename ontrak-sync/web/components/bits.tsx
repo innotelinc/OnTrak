@@ -48,6 +48,39 @@ export function ReachablePill({ reachable }: { reachable: 0 | 1 }) {
     : <span className="pill pill--bad">unreachable</span>;
 }
 
+/**
+ * Whether a host is waiting for a reboot.
+ *
+ * A kernel or libc upgrade reads as "current" the moment the package is unpacked,
+ * while the machine goes on booting the old one until somebody restarts it — so the
+ * fix is on disk and not in effect, and no manager will say so. That makes this the
+ * same shape of fact as an unreachable host, and it is rendered the same way: the
+ * *unknown* answer gets its own word rather than being drawn as a green "clear",
+ * because a host this code could not ask must never look like one that answered.
+ */
+export function RebootPill({ known, required, packages }: {
+  known: 0 | 1;
+  required: 0 | 1;
+  packages?: string | null;
+}) {
+  if (required) {
+    const count = (packages ?? "").split("\n").filter(Boolean).length;
+    return (
+      <span className="pill pill--pending"
+            title={packages || "This host reported a pending reboot."}>
+        reboot{count ? ` · ${count}` : ""}
+      </span>
+    );
+  }
+  if (known) return <span className="pill pill--ok">no reboot</span>;
+  return (
+    <span className="pill pill--unknown"
+          title="This host was asked and could not tell, or has not been asked yet.">
+      reboot?
+    </span>
+  );
+}
+
 /** ISO timestamp → "2h ago (14:03)", so both the age and the instant are visible. */
 export function When({ value }: { value: string | null | undefined }) {
   if (!value) return <span className="faint">never</span>;

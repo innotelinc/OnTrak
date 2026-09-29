@@ -141,6 +141,8 @@ export interface Summary {
   failed: number;
   security: number;
   unknown: number;
+  /** Hosts that installed a new kernel and have not restarted since. */
+  reboot_required: number;
 }
 
 export interface Host {
@@ -154,6 +156,19 @@ export interface Host {
   container_count: number;
   last_seen: string | null;
   error: string | null;
+  /**
+   * Whether the machine is waiting for a reboot.
+   *
+   * Three states and not two, mirroring `scanners.parse_reboot_state`: required,
+   * asked-and-clear, and *asked and it could not tell* (`known` 0 with
+   * `reboot_checked_at` set). A host that answered "nothing pending" is not the same
+   * as one that was never asked, and the dashboard has to say which it is.
+   */
+  reboot_known: 0 | 1;
+  reboot_required: 0 | 1;
+  /** Package names, one per line, exactly as the host's own file listed them. */
+  reboot_packages: string | null;
+  reboot_checked_at: string | null;
   targets: number;
   unscanned: number;
   pending: number;

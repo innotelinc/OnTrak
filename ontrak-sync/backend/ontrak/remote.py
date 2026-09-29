@@ -31,6 +31,7 @@ import subprocess
 from dataclasses import dataclass, field
 
 from .config import Host
+from .scanners import REBOOT_CLEAR, REBOOT_REQUIRED, REBOOT_UNKNOWN
 
 
 @dataclass
@@ -137,7 +138,7 @@ def docker_in_container(host: Host, container: str, args: list[str], timeout: in
     return incus_exec(host, container, ["docker", *args], timeout)
 
 
-# ── the two probes every scan needs ──────────────────────────────────────────
+# ── the probes every scan needs ──────────────────────────────────────────────
 def host_identity(host: Host, timeout: int) -> Result:
     """Hostname, OS and kernel in one round trip."""
     return ssh(host, ["sh", "-c",
@@ -152,3 +153,35 @@ def incus_names(host: Host, timeout: int) -> Result:
     not stable across versions and is not worth parsing.
     """
     return incus(host, ["list", "--format", "csv", "-c", "n", "--project", "default"], timeout)
+
+
+def reboot_probe(host: Host, timeout: int) -> Result:
+    """Whether this host is waiting for a reboot, in one round trip.
+
+    A shell built for the same reason as the others in this file: it is a question,
+    it changes nothing, and it is asked on every scan. `printf` rather than `echo`
+    because a marker written by an `echo` that a distribution has taught to
+    interpret backslashes would arrive as a different string.
+
+    THREE ANSWERS, NOT TWO. A machine that upgraded its kernel and has not rebooted
+    is the case this exists for, and it is invisible everywhere else: every manager
+    reports it current. But a host whose pending-reboot file this code does not know
+    how to read must answer *unknown* rather than "nothing pending" — reporting the
+    second when the truth is the first is how a monitor goes green over the one
+    machine it could not ask. `/etc/debian_version` is what tells the two apart, and
+    it is checked only after the marker, so the marker itself needs no distro test.
+
+    The markers live in `scanners` because that is where they are parsed; this
+    module only writes them and `parse_reboot_state` only reads them.
+    """
+    script = (
+        "if [ -e /var/run/reboot-required ]; then "
+        f"printf '%s\\n' {REBOOT_REQUIRED}; "
+        "cat /var/run/reboot-required.pkgs 2>/dev/null; "
+        "elif [ -e /etc/debian_version ]; then "
+        f"printf '%s\\n' {REBOOT_CLEAR}; "
+        "else "
+        f"printf '%s\\n' {REBOOT_UNKNOWN}; "
+        "fi"
+    )
+    return ssh(host, ["sh", "-c", script], timeout)
