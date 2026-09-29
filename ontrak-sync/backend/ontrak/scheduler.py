@@ -16,7 +16,7 @@ number itself rather than a "running" flag, because a run that takes ninety seco
 should not make the *next* minute's run get skipped.
 
 The lock is separate and does the opposite job: it stops a manual scan from the
-dashboard and a scheduled scan from walking the estate at the same time, which
+dashboard and a scheduled scan from walking the Network at the same time, which
 would double every finding and put two `apt-get` transactions on one host.
 """
 
@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from . import db
 from .applier import apply_findings
 from .policy import Cron, CronError, Policy
-from .scan import scan_estate
+from .scan import scan_network
 
 log = logging.getLogger("ontrak.scheduler")
 
@@ -116,7 +116,7 @@ class Scheduler(threading.Thread):
             policy = load_policy(self.conn, self.settings)
             db.log(self.conn, f"scheduled scan fired ({policy.schedule}, mode={policy.mode})")
             self.conn.commit()
-            result = scan_estate(self.conn, self.settings, policy, trigger="schedule")
+            result = scan_network(self.conn, self.settings, policy, trigger="schedule")
             self.last_fired_at = db.utcnow()
             self.last_result = result
 

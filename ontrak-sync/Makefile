@@ -3,7 +3,7 @@
 # `make check` is the one to run before committing: it is the backend suite plus the
 # frontend typecheck, which between them cover the parsers, the cron arithmetic, the
 # finding lifecycle and the API's types. There is no linter target because the
-# estate's Python is checked by the tests and the TypeScript by `tsc`.
+# Network's Python is checked by the tests and the TypeScript by `tsc`.
 
 SHELL := /bin/bash
 COMPOSE := docker compose

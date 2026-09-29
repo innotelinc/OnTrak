@@ -7,7 +7,7 @@ This module is the one place that decides three things:
     token whose *digest* is what the database holds. Nothing here can be
     brute-forced from a copy of the SQLite file, which matters because that file is
     the whole history of a service that installs packages on every machine in the
-    estate.
+    Network.
 
   * **What may they do once they are in?** Roles come from one vocabulary shared
     with the rest of the OnTrak family — the training range's students and
@@ -16,7 +16,7 @@ This module is the one place that decides three things:
     which product to send somebody to from the same claim.
 
   * **What did they do?** Every sign-in, refusal, role change and apply decision is
-    written to the same append-only event log the estate already reads. An audit
+    written to the same append-only event log the Network already reads. An audit
     trail that started after the incident is not an audit trail, so this is wired
     into the login path rather than bolted on.
 
@@ -31,7 +31,7 @@ read per request, which against a local file is free.
 WHAT THIS MODULE DELIBERATELY DOES NOT DO
 -----------------------------------------
 It does not send email, store an SMTP password, or implement password reset by
-link. There is no mail server in this estate's trust path, and a reset flow that
+link. There is no mail server in this Network's trust path, and a reset flow that
 cannot deliver a message is a login page that lies. An administrator resets a
 password through the API or the dashboard; that is honest about who can do it.
 """
@@ -77,8 +77,8 @@ ROLE_LABELS: dict[str, str] = {
 # second product's grants can live in the same table later without a rename.
 CAPABILITIES: tuple[str, ...] = (
     "portal:view",       # the central dashboard and its product tiles
-    "sync:view",         # read the estate's update state
-    "sync:scan",         # walk the estate and record findings
+    "sync:view",         # read the Network's update state
+    "sync:scan",         # walk the Network and record findings
     "sync:approve",      # mark a finding approved
     "sync:apply",        # install what has been approved
     "sync:configure",    # the timer, the mode, the schedule
@@ -88,7 +88,7 @@ CAPABILITIES: tuple[str, ...] = (
 # THE ONE TABLE THAT MATTERS. Read it as: what does each role get?
 #
 # `sync:apply` is the interesting one. It is not granted to `TECHNICIAN` or
-# `ANALYST` even though both can see the estate, because applying installs
+# `ANALYST` even though both can see the Network, because applying installs
 # packages on twenty-seven containers at once — the capability belongs to the
 # people who own the maintenance window, not to everyone who can read a report.
 _ROLE_CAPABILITIES: dict[str, tuple[str, ...]] = {
@@ -154,7 +154,7 @@ def normalize_role(value: str | None, *, default: str = "STUDENT") -> str:
 # roughly a quarter of a second on the hardware this runs on. That is invisible on
 # a login and ruinous for an offline attacker, which is the trade being made:
 # this digest is the only thing standing between a stolen SQLite file and every
-# machine in the estate.
+# machine in the Network.
 PBKDF2_ITERATIONS = 600_000
 PBKDF2_ALGORITHM = "pbkdf2_sha256"
 MIN_PASSWORD_LENGTH = 12
@@ -264,7 +264,7 @@ def session_expiry(now: datetime | None = None, ttl: int = SESSION_TTL_SECONDS) 
 
 # ── login throttling ─────────────────────────────────────────────────────────
 # Deliberately small numbers, because the account being attacked is also the
-# account that has to be able to fix the estate at 3am: five failures, then a
+# account that has to be able to fix the Network at 3am: five failures, then a
 # wait that doubles. The lockout is keyed on `username` AND on the address, and
 # the longer of the two applies — keyed on the username alone, anybody who can
 # guess a name can lock a sysadmin out of their own service, which turns a

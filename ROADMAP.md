@@ -59,7 +59,7 @@ enterprise readiness.
 - **One family identity, six roles.** This app's three roles are a slice of one
   vocabulary shared with OnTrak Tix, OnTrak Sentinel, OnTrak Sync and
   [OnTrak Portal](ontrak-portal/README.md): `ADMIN`, `SYSADMIN`, `ANALYST`,
-  `TECHNICIAN`, `INSTRUCTOR`, `STUDENT`. The deployed estate uses Cerulean
+  `TECHNICIAN`, `INSTRUCTOR`, `STUDENT`. The deployed Network uses Cerulean
   (Authentik) as the directory, and OnTrak Sync owns the family's local account
   table — which is what the portal's password sign-in delegates to rather than
   inventing a second login. See

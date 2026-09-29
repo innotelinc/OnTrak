@@ -20,7 +20,7 @@
  *
  * `ApiError` carries the status so callers can distinguish the three failures that
  * matter: 401 means "sign in", 403 means "signed in and not allowed", and anything
- * else is the estate's problem. A dashboard that renders the same page for all
+ * else is the Network's problem. A dashboard that renders the same page for all
  * three is a dashboard whose operator cannot tell a rotated credential from a
  * broken host.
  */
@@ -190,7 +190,7 @@ export const api = {
     "/api/sessions"),
   revokeSession: (id: number) => del<{ revoked: boolean }>(`/api/sessions/${id}`),
 
-  // ── estate ────────────────────────────────────────────────────────────────
+  // ── Network ────────────────────────────────────────────────────────────────
   summary: () => request<Summary>("/api/summary"),
   hosts: () => request<{ hosts: Host[] }>("/api/hosts"),
   host: (name: string) =>

@@ -14,6 +14,7 @@ import Link from "next/link";
 
 import { Empty, LoadError, ReachablePill, ScanPill, When } from "@/components/bits";
 import { api } from "@/lib/api";
+import { machineKindLabel } from "@/lib/machine-kinds";
 import type { Host, Target } from "@/lib/types";
 import { useAsync } from "@/lib/useAsync";
 
@@ -58,7 +59,10 @@ export default function HostsPage() {
                   <span className="faint mono" style={{ marginLeft: 10 }}>{host.address}</span>
                 </h2>
                 <div className="faint" style={{ marginTop: 4 }}>
-                  {host.os ?? "OS unknown"} · kernel {host.kernel ?? "?"} · schema {host.kind}
+                  {/* What the machine *is*, in words: the Network is bare metal, VMware
+                      guests, Proxmox nodes and containers, and a dashboard that calls
+                      them all "incus" is telling the operator something untrue. */}
+                  {host.os ?? "OS unknown"} · kernel {host.kernel ?? "?"} · {machineKindLabel(host.kind)}
                 </div>
               </div>
               <div className="actions">
@@ -78,7 +82,7 @@ export default function HostsPage() {
                     <thead>
                       <tr>
                         <th>Target</th>
-                        <th>Kind</th>
+                        <th>Workload</th>
                         <th>Scanned</th>
                         <th>Pending</th>
                         <th>Security</th>

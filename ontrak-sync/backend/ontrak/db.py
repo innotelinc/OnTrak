@@ -1,6 +1,6 @@
 """Ontrak Sync — storage.
 
-One SQLite file, because the entire estate's update state is a few thousand rows
+One SQLite file, because the entire Network's update state is a few thousand rows
 and a database server would be a second thing to back up, monitor and fail.
 SQLite also makes the whole system movable: the file *is* the history.
 
@@ -19,7 +19,7 @@ applied" unrepresentable.
 `status` is therefore the workflow, and it is deliberately small:
 
   pending   — detected, nothing done
-  approved  — a person said apply this (the estate's default policy is
+  approved  — a person said apply this (the Network's default policy is
               detect-only, so nothing reaches `applied` without this step)
   applied   — it was installed, and `applied_at` says when
   failed    — the applier tried and something went wrong (`detail` says what)
@@ -238,7 +238,7 @@ def init(conn: sqlite3.Connection) -> None:
 
 
 # Columns added after a database was first created. `CREATE TABLE IF NOT EXISTS`
-# will not add them, and the deployed SQLite file IS the estate's history, so a
+# will not add them, and the deployed SQLite file IS the Network's history, so a
 # migration here has to be additive and idempotent rather than a schema reset.
 _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # (table, column, definition)
@@ -501,8 +501,8 @@ def set_setting(conn, key: str, value) -> None:
 # WHY THIS EXISTS. Deciding whether an image is behind means asking its registry what
 # the tag points at, and for Docker Hub that question is answered anonymously out of
 # a budget of about a hundred requests per six hours per address. A scan asks it once
-# per image — fifty to a hundred in this estate — so two scans in an afternoon spend
-# the whole budget on the same answers, and the estate's image *pulls* are the things
+# per image — fifty to a hundred in this Network — so two scans in an afternoon spend
+# the whole budget on the same answers, and the Network's image *pulls* are the things
 # that then fail. A tag's digest does not change between two scans an hour apart, so
 # the second ask buys nothing; this remembers the first.
 #

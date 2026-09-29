@@ -1,7 +1,7 @@
 # Ontrak Sync backend.
 #
 # The image needs an SSH *client* and nothing else beyond Python: every probe and
-# every apply reaches the estate through `ssh`/`incus exec` on the configured hosts,
+# every apply reaches the Network through `ssh`/`incus exec` on the configured hosts,
 # so there is no Docker socket, no incus binary and no privileged mount here. That
 # is a deliberate property — this service can already install packages, and giving
 # it the container runtime's socket as well would make it a way to take over the

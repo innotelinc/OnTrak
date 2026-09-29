@@ -4,7 +4,7 @@
  * The decisions live in `oidc-rules.ts`; this file only fetches. It is written
  * with `fetch` and `jose` and nothing else — `jose` because verifying an RS256
  * signature by hand is exactly the kind of code that looks fine and accepts a
- * forgery, and the estate's other Next.js products already depend on it, so it is
+ * forgery, and the Network's other Next.js products already depend on it, so it is
  * not a new package in the family.
  *
  * Discovery and the JWKS are cached for an hour per process: a sign-in is then
@@ -85,7 +85,7 @@ export async function discovery(): Promise<Discovery> {
     `${config.issuer}/.well-known/openid-configuration`,
   );
   // The document has to name the issuer it was asked about. A document that
-  // renames it elsewhere is how a redirect quietly leaves the estate.
+  // renames it elsewhere is how a redirect quietly leaves the Network.
   const advertised = (document.issuer ?? "").replace(/\/+$/, "");
   if (advertised && advertised !== config.issuer) {
     throw new OidcError(

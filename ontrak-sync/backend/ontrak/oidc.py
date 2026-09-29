@@ -1,6 +1,6 @@
 """Ontrak Sync — Cerulean SSO (OpenID Connect, authorization code + PKCE).
 
-Cerulean runs **Authentik** at `auth.cerulean.innotel.us` as the estate's identity
+Cerulean runs **Authentik** at `auth.cerulean.innotel.us` as the Network's identity
 provider. This module is the relying-party half of that: it discovers the
 provider, starts an authorization-code flow with PKCE, exchanges the code, and
 verifies the ID token against the provider's published JWKS before anything in it
@@ -22,7 +22,7 @@ WHAT IS VERIFIED, AND WHY EACH ONE MATTERS
     fetched from, or a compromised discovery URL could point the whole flow at
     another provider.
   * **audience** — the token has to have been minted for *this* client. Without
-    it, an assertion issued to any other application in the estate would be a
+    it, an assertion issued to any other application in the Network would be a
     valid sign-in here.
   * **nonce** — the value this deployment put in the authorization request. It is
     what makes a replayed assertion useless.
@@ -195,7 +195,7 @@ class OidcClient:
         if not isinstance(document, dict):
             raise OidcError(f"{self.provider_name} did not return a discovery document.")
         # The document must name the issuer it was asked about. A document that
-        # renames it elsewhere is how a redirect quietly leaves the estate.
+        # renames it elsewhere is how a redirect quietly leaves the Network.
         advertised = str(document.get("issuer") or "").rstrip("/")
         if advertised and advertised != self.issuer:
             raise OidcError(

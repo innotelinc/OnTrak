@@ -58,10 +58,16 @@ export const viewport: Viewport = {
 };
 
 /**
- * Applies the stored color scheme before first paint so the page never
- * flashes the wrong theme.
+ * The theme is applied before the first paint by `/ontrak-theme.js`, a plain
+ * `public/` asset loaded by a blocking `<script src>`. Blocking is the point: a
+ * theme decided during hydration is a white flash on a dark screen, which is the
+ * one detail everybody notices about a dark mode that was added later.
+ *
+ * The range used to carry its own inline snippet and its own localStorage key; it
+ * now ships the shared script byte-for-byte (`make theme` proves it), so a person's
+ * light/dark choice follows them across every OnTrak product instead of being
+ * relearned in each one.
  */
-const THEME_BOOTSTRAP = `(function(){try{var t=localStorage.getItem('ontrak-training-theme');var d=window.matchMedia('(prefers-color-scheme: dark)').matches;if(t==='dark'||(t===null&&d)){document.documentElement.classList.add('dark')}}catch(e){}})();`;
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   // The locale lives in a cookie, so the document's language attribute can
@@ -70,9 +76,19 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const locale = resolveLocale(store.get(LOCALE_COOKIE)?.value);
 
   return (
-    <html lang={locale} suppressHydrationWarning className={`${outfit.variable} ${jakarta.variable} ${jetbrains.variable}`}>
+    <html
+      lang={locale}
+      data-scheme="desk"
+      suppressHydrationWarning
+      className={`${outfit.variable} ${jakarta.variable} ${jetbrains.variable}`}
+    >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
+        {/* The default *before* the shared script runs: the range is a learning
+            product, so its house scheme is the violet desk one. */}
+        <script
+          dangerouslySetInnerHTML={{ __html: 'window.ONTRAK_DEFAULT_SCHEME = "desk";' }}
+        />
+        <script src="/ontrak-theme.js" />
       </head>
       <body className="min-h-dvh bg-canvas text-ink antialiased">
         {children}

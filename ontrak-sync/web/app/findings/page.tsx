@@ -177,7 +177,7 @@ export default function FindingsPage() {
             <div className="empty">Loading findings…</div>
           ) : rows.length === 0 ? (
             <Empty>
-              Nothing here. Either the estate is current, or nothing has been scanned
+              Nothing here. Either the Network is current, or nothing has been scanned
               yet — the Dashboard says which.
             </Empty>
           ) : (

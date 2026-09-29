@@ -92,7 +92,7 @@ class Hosts(unittest.TestCase):
         self.assertEqual(("i1", "i2"), tuple(h.name for h in hosts))
         self.assertEqual("both", hosts[0].kind)
         # Kind and user are optional; an absent kind is an incus host, which is what
-        # most of the estate is.
+        # most of the Network is.
         self.assertEqual("incus", hosts[1].kind)
         self.assertEqual("root", hosts[1].ssh_user)
 
@@ -104,9 +104,9 @@ class Hosts(unittest.TestCase):
         hosts = _parse_hosts(" i1=192.168.1.51:both , , i2=192.168.1.52:both ")
         self.assertEqual(("i1", "i2"), tuple(h.name for h in hosts))
 
-    def test_an_unset_list_falls_back_to_the_estate(self):
-        # Unset means "the estate this ships for", not "scan nothing": a service
-        # that scans nothing looks identical to an estate that is fully patched.
+    def test_an_unset_list_falls_back_to_the_network(self):
+        # Unset means "the Network this ships for", not "scan nothing": a service
+        # that scans nothing looks identical to a Network that is fully patched.
         self.assertEqual(3, len(_parse_hosts("")))
 
     def test_a_malformed_entry_is_an_error_not_a_dropped_host(self):
@@ -128,7 +128,7 @@ class Defaults(unittest.TestCase):
                                     schedule=settings.default_schedule).validate())
 
     def test_the_token_has_no_default(self):
-        # A service that can install packages estate-wide must not come up
+        # A service that can install packages Network-wide must not come up
         # answering unauthenticated requests while somebody remembers to set a
         # token, so the empty string is the only fallback — and the API refuses to
         # start on it.

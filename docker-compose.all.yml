@@ -345,7 +345,7 @@ services:
       start_period: 20s
 
   # ── OnTrak Sync (CodeOps) ─────────────────────────────────────────────────
-  # The estate's package and container update view, and the family's *local*
+  # The Network's package and container update view, and the family's *local*
   # account table — the portal's password sign-in is delegated here, so this is
   # the product the other four consume rather than a fifth thing beside them.
   #
@@ -365,7 +365,7 @@ services:
       ONTRAK_BIND_HOST: 0.0.0.0
       ONTRAK_BIND_PORT: "8420"
       # REQUIRED, and deliberately not defaulted. A service that can install
-      # packages on every machine in the estate must not come up answering
+      # packages on every machine in the Network must not come up answering
       # unauthenticated requests while somebody remembers to set it.
       ONTRAK_API_TOKEN: ${ONTRAK_API_TOKEN:-}
       # The browser reaches this deployment through the portal's own origin; the

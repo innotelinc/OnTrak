@@ -1,60 +1,47 @@
 @import "tailwindcss";
+@import "../theme/ontrak-theme.css";
 
 /* --------------------------------------------------------------------------
-   Dark mode is class-driven so the toggle is instant and SSR-safe.
-   -------------------------------------------------------------------------- */
-@custom-variant dark (&:where(.dark, .dark *));
+   The training range in the family's clothes.
 
-/* --------------------------------------------------------------------------
-   Raw palette. Bright, saturated and friendly — this is a learning product,
-   not a network operations center.
+   Every colour comes from the shared theme imported above (a checked
+   byte-identical copy of `theme/ontrak-theme.css`). The range sits in the **desk**
+   scheme — the violet family that it, Tix and the service desk have always shared —
+   and now gets light *and* dark from the same tokens as the rest of the Network.
+
+   What is left in this file is the range's own personality: a warm second canvas,
+   cards that float, the animated accents. All of it is expressed in theme tokens, so
+   none of it can disagree with the theme when somebody switches modes.
    -------------------------------------------------------------------------- */
+
 :root {
-  --canvas: #f7f5ff;
-  --canvas-2: #fff8f3;
-  --surface: #ffffff;
-  --surface-muted: #f3f1fb;
-  --line: #e6e2f5;
-  --ink: #1c1633;
-  --ink-soft: #4a4266;
-  /* Secondary text: darkened to clear the 4.5:1 AA floor on white and canvas. */
-  --ink-faint: #6a6386;
+  /*
+   * The extras the range needs that the family theme does not carry, plus the old
+   * accent names kept as aliases of the semantic tokens they always meant. Read the
+   * right-hand side; the left is history, and it is what several hundred existing
+   * utility classes already say.
+   */
+  --pink: var(--bad);
+  --amber: var(--attention);
+  --teal: var(--ok);
+  --sky: var(--info);
+  --lime: var(--tone-its);
 
-  --brand: #5f3fe6;
-  --brand-soft: #ede8ff;
-  /* Accents are used as *text* on light tints at small sizes, so the tokens are
-     the AA-compliant darker shades. Tinted fills (`bg-pink/14`) stay light
-     because of their low alpha, so the palette still reads as bright. */
-  --pink: #b0246a;
-  --amber: #8a5a00;
-  --teal: #05685e;
-  --sky: #0a5c9e;
-  --lime: #4d6b00;
+  /* The warm second canvas: the near side of a surface, never a second palette. */
+  --canvas-2: var(--surface-muted);
+  /* A lifted card. */
+  --shadow-lift: var(--shadow-pop);
 
-  --shadow-card: 0 1px 2px rgb(28 22 51 / 4%), 0 12px 32px -12px rgb(28 22 51 / 16%);
-  --shadow-lift: 0 2px 4px rgb(28 22 51 / 6%), 0 24px 48px -16px rgb(28 22 51 / 24%);
-}
-
-.dark {
-  --canvas: #100c22;
-  --canvas-2: #17102b;
-  --surface: #1a1433;
-  --surface-muted: #221a40;
-  --line: #332a55;
-  --ink: #f5f3ff;
-  --ink-soft: #c3bce0;
-  --ink-faint: #8f87b3;
-
-  --brand: #9b83ff;
-  --brand-soft: #2a2154;
-  --pink: #ff7cb4;
-  --amber: #ffc157;
-  --teal: #3fd3c1;
-  --sky: #6cc0ff;
-  --lime: #b4e85c;
-
-  --shadow-card: 0 1px 2px rgb(0 0 0 / 30%), 0 16px 40px -16px rgb(0 0 0 / 55%);
-  --shadow-lift: 0 2px 6px rgb(0 0 0 / 35%), 0 28px 56px -20px rgb(0 0 0 / 65%);
+  /*
+   * The range's own typefaces, loaded by `next/font` in the root layout. A theme is
+   * one palette and one component language, not one typeface: keeping Outfit and
+   * Plus Jakarta here is what stops the training product from looking like the
+   * operations console. The shared stack remains the fallback if the webfonts fail
+   * to load.
+   */
+  --font-display: var(--font-outfit), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --mono: var(--font-mono-code), ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 @theme inline {
@@ -73,6 +60,9 @@
 
   --color-brand: var(--brand);
   --color-brand-soft: var(--brand-soft);
+  /* Text that sits *on* a solid brand fill — never `text-white`, because in dark
+     mode the brand is a light violet and white on it is unreadable. */
+  --color-brand-ink: var(--brand-ink);
   --color-pink: var(--pink);
   --color-amber: var(--amber);
   --color-teal: var(--teal);

@@ -16,7 +16,7 @@ import { NextResponse, type NextRequest } from "next/server";
  * `ONTRAK_PORTAL_ADMIN_USER`/`_PASSWORD` is optional and **disabled unless both
  * are set**. It exists because the honest failure mode of a portal whose only
  * sign-in is an SSO provider is that the provider being down takes the portal with
- * it — the estate already keeps a local login on the DNS console for exactly this
+ * it — the Network already keeps a local login on the DNS console for exactly this
  * reason, since DNS is what resolves the IdP. It is a break-glass, not an
  * alternative: it grants ADMIN, it is compared in constant time, and every use is
  * logged by the reverse proxy as a request to this path. Leave it unset for a

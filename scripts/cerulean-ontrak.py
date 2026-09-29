@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""cerulean-ontrak.py — put the OnTrak family on the estate's trust plane.
+"""cerulean-ontrak.py — put the OnTrak family on the Network's trust plane.
 
 Creates what the five public names need and nothing else:
 
@@ -7,13 +7,13 @@ Creates what the five public names need and nothing else:
     its.ontrak.innotel.us          → training range      (:3000)
     tix.ontrak.innotel.us          → the service desk    (:3001)
     sentinel.ontrak.innotel.us     → the identity/IDS   (:8787)
-    sync.ontrak.innotel.us         → estate updates     (:8421)
+    sync.ontrak.innotel.us         → Network updates     (:8421)
 
 For each name it ensures:
 
-  * a **Technitium A record** in the estate zone, pointing at the same address the
+  * a **Technitium A record** in the Network zone, pointing at the same address the
     zone apex already uses — read from the zone rather than passed in, because this
-    estate sits behind one public address and a script that guesses it is a script
+    Network sits behind one public address and a script that guesses it is a script
     that publishes a name nobody can reach;
   * an **NPM proxy host** forwarding to the product's port on the OnTrak host;
   * the **best matching certificate** already on the edge, attached — and, with
@@ -21,12 +21,12 @@ For each name it ensures:
     names nothing covers yet.
 
 It is idempotent: create when missing, update when drifted, and never delete. This
-NPM is shared by every stack in the estate, so a prune scoped to `ontrak.` would be
+NPM is shared by every stack in the Network, so a prune scoped to `ontrak.` would be
 a script that deletes somebody else's host.
 
 WHAT IT DOES NOT DO
 -------------------
-It does not touch Authentik. The OIDC client is registered by the estate's own
+It does not touch Authentik. The OIDC client is registered by the Network's own
 `cerulean/scripts/authentik-setup.py ontrak`, which reads
 `AUTHENTIK_ONTRAK_*` from the Cerulean `.env`. That script is the one place the
 provider is configured, and a second writer would be a second source of truth.
@@ -84,7 +84,7 @@ HOSTS = [
     {
         "name": "sync.ontrak",
         "port": 8421,
-        "purpose": "OnTrak Sync — estate package and container updates",
+        "purpose": "OnTrak Sync — Network package and container updates",
         "websocket": True,
     },
 ]
@@ -114,7 +114,7 @@ def load_env_file(path: str) -> None:
     """Fill unset variables from a `.env`.
 
     Only unset ones, so an explicitly exported value wins — the same rule the
-    estate's other scripts use, and the reason a stale ambient `NPM_BASE_DOMAIN`
+    Network's other scripts use, and the reason a stale ambient `NPM_BASE_DOMAIN`
     cannot silently redirect a run at another zone.
     """
     if not os.path.isfile(path):
@@ -248,7 +248,7 @@ def certificate_for(certificates: list[dict], domain: str) -> int:
       2. an explicit wildcard — `*.ontrak.innotel.us` in the SAN list;
       3. a wildcard whose SAN list NPM has rewritten. NPM's certificate import
          replaces a custom certificate's `domain_names` with just its CN, so the
-         estate's `*.ontrak.innotel.us` certificate is stored as
+         Network's `*.ontrak.innotel.us` certificate is stored as
          `['ontrak.innotel.us']` — indistinguishable, by SAN list alone, from a
          certificate that covers nothing but the apex. Cerulean's own
          `cert-rebuild.py` compensates for exactly this and matches on the stable
@@ -266,7 +266,7 @@ def certificate_for(certificates: list[dict], domain: str) -> int:
         names = [str(name).lower() for name in (certificate.get("domain_names") or [])]
         score = 0
         if host in names:
-            # An exact name always wins. Serving the estate-wide wildcard where a
+            # An exact name always wins. Serving the Network-wide wildcard where a
             # certificate for the host itself exists makes a future revocation of
             # one host into an outage for all of them.
             score = 100 + labels
@@ -278,7 +278,7 @@ def certificate_for(certificates: list[dict], domain: str) -> int:
                 # `*.ontrak.innotel.us` covers `its.ontrak.innotel.us` and not
                 # `ontrak.innotel.us`, so the suffix has to leave at least one
                 # label of its own. Scoring by the wildcard's specificity is what
-                # makes the host's own wildcard beat the estate's.
+                # makes the host's own wildcard beat the Network's.
                 if host.endswith("." + parent):
                     score = max(score, labels)
             if score == 0:
@@ -296,7 +296,7 @@ def payload_for(entry: dict, zone: str, forward_host: str, certificate_id: int,
     domain = f"{entry['name']}.{zone}"
     # An existing attachment always wins over a fresh request: re-requesting a
     # certificate on every run would burn the ACME rate limit for a name that is
-    # already covered, and the estate's Cerulean imports its own certificates onto
+    # already covered, and the Network's Cerulean imports its own certificates onto
     # these hosts as it issues them.
     taken = int(existing.get("certificate_id") or 0) if existing else 0
     attach = taken or certificate_id

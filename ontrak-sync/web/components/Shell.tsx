@@ -30,6 +30,7 @@ import { can, isService, useSession } from "@/lib/session";
 import type { Capability, Summary } from "@/lib/types";
 
 import { LoginPanel } from "./LoginPanel";
+import { ThemeToggle } from "./ThemeToggle";
 
 interface NavLink {
   href: string;
@@ -48,10 +49,10 @@ const LINKS: NavLink[] = [
   { href: "/account", label: "Account" },
 ];
 
-/** Where the portal and the sibling products live. */
+/** Where the front door and the sibling products live. */
 const FAMILY: { href: string; label: string; note: string }[] = [
-  { href: "https://ontrak.innotel.us", label: "OnTrak Portal", note: "all products" },
-  { href: "https://its.ontrak.innotel.us", label: "IT Support Training", note: "students" },
+  { href: "https://ontrak.innotel.us", label: "OnTrak Unity", note: "all products" },
+  { href: "https://its.ontrak.innotel.us", label: "OnTrak ITS", note: "training" },
   { href: "https://tix.ontrak.innotel.us", label: "OnTrak Tix", note: "the desk" },
   { href: "https://sentinel.ontrak.innotel.us", label: "OnTrak Sentinel", note: "identity & IDS" },
 ];
@@ -69,7 +70,7 @@ export function Shell({ children }: { children: ReactNode }) {
       setApiError(null);
     } catch (cause) {
       if (cause instanceof ApiError && (cause.status === 401 || cause.forbidden)) {
-        // A 403 here means the account may not read the estate at all. That is not
+        // A 403 here means the account may not read the Network at all. That is not
         // an error on this page — the nav simply has no counts.
         setSummary(null);
         return;
@@ -82,9 +83,11 @@ export function Shell({ children }: { children: ReactNode }) {
     void load();
   }, [load, pathname]);
 
-  // The sign-in page draws itself, with no shell around it: a navigation sidebar
-  // next to a login form is an invitation to click into pages that will refuse.
-  if (pathname === "/login") {
+  // The sign-in pages draw themselves, with no shell around them: a navigation
+  // sidebar next to a login form is an invitation to click into pages that will
+  // refuse. The break-glass door is one of them, and it must be reachable *while
+  // signed out* — that is the entire point of it.
+  if (pathname === "/login" || pathname === "/login/break-glass") {
     return <>{children}</>;
   }
 
@@ -149,6 +152,9 @@ export function Shell({ children }: { children: ReactNode }) {
           ) : (
             <Link href="/account" className="faint">password &amp; sessions</Link>
           )}
+          <div style={{ marginTop: 10 }}>
+            <ThemeToggle />
+          </div>
           <button
             className="ghost"
             style={{ width: "100%", marginTop: 8 }}

@@ -19,7 +19,7 @@
 > clients, SLAs, billing and insurance-grade incident evidence;
 > [**OnTrak Sentinel**](ontrak-sentinel/README.md) is the directory and the
 > intrusion console; and [**OnTrak Sync**](ontrak-sync/README.md) keeps the
-> estate's packages and containers current and owns the family's local accounts.
+> Network's packages and containers current and owns the family's local accounts.
 > [**OnTrak Portal**](ontrak-portal/README.md) is the front door: one sign-in,
 > then the products a role belongs in. Every product works on its own — it always
 > has — and they consume Cerulean for identity and trust and share one audit
@@ -470,7 +470,7 @@ caught a scrollable region without keyboard access on the landing page.
 | [INNOTEL-LABS.md](INNOTEL-LABS.md) | The Innotel Labs product family and how the five products fit together |
 | [docs/family-operations.md](docs/family-operations.md) | The family as deployed: the five hostnames, the Authentik role groups, and how to repair each sign-in path |
 | [ontrak-portal/README.md](ontrak-portal/README.md) | The centralized dashboard — one sign-in, then the products a role belongs in |
-| [ontrak-sync/README.md](ontrak-sync/README.md) | The estate's package and container update view, and the family's local accounts |
+| [ontrak-sync/README.md](ontrak-sync/README.md) | The Network's package and container update view, and the family's local accounts |
 | [ontrak-tix/docs/](ontrak-tix/docs/) | The service desk: tickets, SLAs, clients, billing, incidents, assurance |
 | [ROADMAP.md](ROADMAP.md) · [ontrak-tix/ROADMAP.md](ontrak-tix/ROADMAP.md) | What is shipped, what is next, and the honest gaps |
 
@@ -486,7 +486,7 @@ language and one identity layer:
   insurance-grade, tamper-evident documentation.
 - [**OnTrak Sentinel**](ontrak-sentinel/ROADMAP.md) — identity (IdP) and
   intrusion prevention (IDS/IPS).
-- [**OnTrak Sync**](ontrak-sync/README.md) — estate package and container update
+- [**OnTrak Sync**](ontrak-sync/README.md) — Network package and container update
   monitoring and, on approval, updating; also the family's local account table.
 - [**OnTrak Portal**](ontrak-portal/README.md) — the centralized dashboard: one
   sign-in, then the products a role belongs in.

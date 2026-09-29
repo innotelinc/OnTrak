@@ -7,7 +7,7 @@ also authorised.** The API used to have exactly one credential — a static bear
 token — so "is this request allowed" and "is this request authenticated" were the
 same question. They are not any more. A person signs in and gets a session; a
 machine presents the deployment token; and on top of both sits a capability
-check (`sync:apply`, `users:manage`) derived from the role. The estate is read by
+check (`sync:apply`, `users:manage`) derived from the role. The Network is read by
 more people than it is patched by, and the gap between those two groups is now
 enforceable rather than documented.
 
@@ -20,7 +20,7 @@ this now regardless of mode". An operator who wants unattended updates sets the
 mode in the settings form, where it is visible and persists; a request that could
 bypass the policy would make the policy decorative.
 
-**Reads never block on the estate.** A scan can take minutes across twenty-seven
+**Reads never block on the Network.** A scan can take minutes across twenty-seven
 containers, so scans and applies are POSTs that run synchronously but are guarded
 by one lock — the reply is the run summary, and the dashboard renders it. A
 background queue was the alternative and it buys progress bars at the cost of
@@ -44,12 +44,12 @@ from . import db, identity, oidc
 from .applier import apply_findings
 from .config import Settings
 from .policy import Cron, CronError, Policy, describe, next_runs
-from .scan import host_admin_summary, scan_estate
+from .scan import host_admin_summary, scan_network
 from .scheduler import Scheduler, load_policy, save_policy
 
 log = logging.getLogger("ontrak.api")
 
-# One lock for scans and applies, process-wide. Two estate walks at once would
+# One lock for scans and applies, process-wide. Two Network walks at once would
 # double every finding and put two apt transactions on the same host.
 RUN_LOCK = threading.Lock()
 
@@ -182,11 +182,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     if not settings.api_token:
         # Refusing to start is the right failure. A monitoring tool that can install
-        # packages on every machine in the estate must not come up answering
+        # packages on every machine in the Network must not come up answering
         # unauthenticated requests "just until the token is set".
         raise RuntimeError(
             "ONTRAK_API_TOKEN is not set. There is no default: this service can "
-            "install packages across the estate, so it will not start without one."
+            "install packages across the Network, so it will not start without one."
         )
 
     # ── first run ────────────────────────────────────────────────────────────
@@ -376,7 +376,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/meta")
     def meta():
-        """What the login page and the estate header need before auth.
+        """What the login page and the Network header need before auth.
 
         `users_exist` is here rather than behind the login so the page can say
         "this deployment has no accounts yet" instead of showing a form that
@@ -680,7 +680,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                        f"revoked a session for {target['username']}", actor=actor.name)
         return {"revoked": True}
 
-    # ── estate ───────────────────────────────────────────────────────────────
+    # ── Network ───────────────────────────────────────────────────────────────
     @app.get("/api/summary", dependencies=[requires("sync:view")])
     def summary():
         return host_admin_summary(conn)
@@ -771,7 +771,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             identity.audit(conn, "scan.manual", f"scan triggered by {actor.name}",
                            actor=actor.name)
             conn.commit()
-            return scan_estate(conn, settings, policy, trigger=f"manual:{actor.name}",
+            return scan_network(conn, settings, policy, trigger=f"manual:{actor.name}",
                                host_names=body.hosts or None)
         finally:
             RUN_LOCK.release()

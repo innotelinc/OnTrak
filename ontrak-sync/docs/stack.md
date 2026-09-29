@@ -2,7 +2,7 @@
 
 **Classification: CodeOps**
 
-**Role: CodeOps** — the estate's package and container update *view*, and the only
+**Role: CodeOps** — the Network's package and container update *view*, and the only
 thing allowed to apply one: it walks every host and every incus container on it,
 records what is behind, and installs only what an operator approved.
 
@@ -16,12 +16,12 @@ and explicitly does not own.
 
 **Owns**
 
-- The estate's **package state**: which apt/snap/docker updates each host and container
+- The Network's **package state**: which apt/snap/docker updates each host and container
   is behind on, and where that reading came from.
 - The **apply decision**: what gets installed, in what window, within what scope.
 - The **finding lifecycle**: what "approved", "skipped", "expired" and "unknown" mean,
   and the rule that none of them may erase a finding that was not re-inspected.
-- The one credential that reaches every estate host (an SSH key, read-only in the
+- The one credential that reaches every Network host (an SSH key, read-only in the
   container).
 
 **Consumes**
@@ -30,7 +30,7 @@ and explicitly does not own.
   the dashboard is fronted off the LAN.
 - **Cerulean Vault** — the secrets posture for this repo: production secrets come from
   Vault (KV v2), referenced as `vault://<mount>/<path>#<key>`. See `.env.example`.
-- **SSH (key only, `BatchMode=yes`)** and `incus exec` on the estate hosts — the only
+- **SSH (key only, `BatchMode=yes`)** and `incus exec` on the Network hosts — the only
   way in; nothing is installed on them to make this work.
 
 **Explicitly does NOT own**
@@ -66,7 +66,7 @@ and explicitly does not own.
   the operator pastes. `docs/placement.md` is explicit that a token is the only
   credential and therefore belongs behind the edge like every other admin surface
   (`1-primary/npm/docs/stack.md`), rather than exposed on the LAN indefinitely.
-- **The estate → this repo → the estate.** It is the one service that reaches every
+- **The Network → this repo → the Network.** It is the one service that reaches every
   other machine, which is why it runs in its own container (`docs/placement.md`) and
   why the SSH key is mounted read-only: it may install packages through the key, it may
   not rewrite the key.

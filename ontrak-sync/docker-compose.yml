@@ -1,7 +1,7 @@
 # Ontrak Sync — the API and the dashboard.
 #
 # Runs on its own incus container (see docs/placement.md) rather than beside any
-# estate service, because it is the one thing here that reaches every other machine.
+# Network service, because it is the one thing here that reaches every other machine.
 #
 # Two things about the shape of this file:
 #
@@ -33,7 +33,7 @@ services:
       - ${ONTRAK_SSH_KEY:-/root/.ssh/id_ed25519}:/root/.ssh/id_ed25519:ro
       # Read-WRITE, unlike the key. `StrictHostKeyChecking=accept-new` has to be able
       # to record a host the first time it is seen, and a read-only known_hosts would
-      # turn every newly added estate host into a connection warning. It is not a
+      # turn every newly added Network host into a connection warning. It is not a
       # credential: the worst a compromise can do with it is pin a host the service
       # is already authorised to run commands on.
       - ${ONTRAK_SSH_KNOWN_HOSTS:-/root/.ssh/known_hosts}:/root/.ssh/known_hosts

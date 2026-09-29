@@ -2,7 +2,7 @@
   "name": "ontrak-sync-web",
   "version": "1.0.0",
   "private": true,
-  "description": "Ontrak Sync dashboard — estate package and container update monitoring",
+  "description": "Ontrak Sync dashboard — Network package and container update monitoring",
   "scripts": {
     "dev": "next dev -p 8421",
     "build": "next build",

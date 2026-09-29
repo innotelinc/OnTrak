@@ -42,6 +42,15 @@ export const en = {
   "auth.signInIntro": "Sign in to pick up where your last scenario left off.",
   "auth.ssoSignIn": "Sign in with single sign-on",
   "auth.ssoIntro": "Your organisation manages this account.",
+  "auth.signInFailed": "Sign-in failed",
+  "auth.ssoMissing": "Single sign-on is not configured",
+  "auth.ssoMissingBody":
+    "This deployment has no identity provider configured, so there is no way to sign in yet.",
+  "auth.breakGlassTitle": "Break-glass sign-in",
+  "auth.breakGlassIntro":
+    "OnTrak is single sign-on only. This screen is the local fallback for the day the identity provider cannot be reached.",
+  "auth.breakGlassWarning":
+    "Signing in here is not the normal path. If the provider is up, go back and use single sign-on — every use of this screen is audited.",
   "auth.or": "or",
   "auth.newStudent": "New student?",
   "auth.createAccount": "Create an account",

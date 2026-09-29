@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for ontrak/applier.py — the code that changes the estate.
+"""Unit tests for ontrak/applier.py — the code that changes the Network.
 
 Everything else in this project reads. This writes, on every host, so the tests
 here are about the rails rather than the happy path: that apt is invoked with
@@ -300,7 +300,7 @@ class AptTimeout(ApplierCase):
 
     The case these tests exist for is the real one: five hosts timed out, every finding
     on them was recorded as failed, and the run summary read "37 applied, 306 failed"
-    — which is not what had happened to the estate.
+    — which is not what had happened to the Network.
     """
 
     def test_apt_runs_on_its_own_longer_clock(self):
@@ -315,7 +315,7 @@ class AptTimeout(ApplierCase):
     def test_a_timed_out_transcript_is_applied_when_apt_says_it_landed(self):
         # The transcript ran past the ceiling but the package is gone from apt's
         # upgradable list: the patch happened, and calling it failed is the record
-        # lying about the estate.
+        # lying about the Network.
         self.finding(package="nginx")
         self.fake.install_timed_out = True
         result = self.apply()
@@ -351,7 +351,7 @@ class AptTimeout(ApplierCase):
         self.assertIn("timed out", self.status_of()["detail"])
 
     def test_a_timed_out_transcript_is_explained_in_the_run_log(self):
-        # Otherwise the next person reads a partial run as an unpatched estate.
+        # Otherwise the next person reads a partial run as an unpatched Network.
         self.finding(package="nginx")
         self.fake.install_timed_out = True
         result = self.apply()
@@ -407,7 +407,7 @@ class DockerApply(ApplierCase):
         self.assertIn("--no-deps", ups[0][1])
 
     def test_a_recreate_that_would_drop_a_service_is_refused(self):
-        # THE safety rail. This estate does not always start a stack the way it is
+        # THE safety rail. This Network does not always start a stack the way it is
         # written down — some projects use profiles and some do not — and recreating
         # with the wrong profile set stops the services that profile defines. So if
         # compose would manage fewer services than are running, refuse and say so.
@@ -446,7 +446,7 @@ class DockerApply(ApplierCase):
 
     def test_the_recreate_pins_the_project_name_the_container_was_started_under(self):
         # Compose names a project after its *directory* when nothing else says so, and
-        # in this estate the two differ (the monitoring stack is labelled
+        # in this Network the two differ (the monitoring stack is labelled
         # `innotel-metrics` and lives in `monitoring`). Composing that path without the
         # name addresses a different project: it builds monitoring-grafana-1, leaves
         # metrics-grafana alone, and then passes its own before/after check.
@@ -609,7 +609,7 @@ class RunBookkeeping(ApplierCase):
 
     def test_an_unconfigured_host_fails_its_findings_rather_than_being_skipped(self):
         # A finding against a host that is no longer in ONTRAK_HOSTS must surface, not
-        # disappear — the row is evidence of something that used to be in the estate.
+        # disappear — the row is evidence of something that used to be in the Network.
         self.finding(package="nginx")
         self.settings = Settings(hosts=())
         result = self.apply()

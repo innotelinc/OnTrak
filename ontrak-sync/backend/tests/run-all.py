@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run every Ontrak Sync backend test in one process.
 
-The estate's other Python tests are run one file at a time; this exists because
+The Network's other Python tests are run one file at a time; this exists because
 there are several of them and they all import the same package, so loading them
 once is both faster and closer to how the API's own startup works. It discovers
 `test_*.py`, so a new module is picked up without being registered anywhere. It is plain
