@@ -121,6 +121,11 @@ REGEX_HINTS = ("|", "\\", "(?:", "[[:", ".*", "+?", "?:")
 SHAPES: list[tuple[str, re.Pattern[str]]] = [
     ("private-key-block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("provider-api-key", re.compile(r"\bsk-[A-Za-z0-9]{16,}\b")),
+    # Stripe's underscore form, which the hyphen shape above misses: a test that
+    # asserts "another provider's key is not ours" once carried one of these as a
+    # literal, and the host's own push protection blocked the push that this
+    # scanner had passed.
+    ("stripe-key", re.compile(r"\b(sk|rk)_(live|test)_[A-Za-z0-9]{16,}\b")),
     ("github-token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b")),
     ("aws-access-key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("slack-token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}")),
