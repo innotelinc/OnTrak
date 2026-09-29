@@ -20,7 +20,7 @@ import { EscalationService, MemoryEscalationStore, type EscalationTicket } from 
 import { MemoryNotificationStore, NotificationService, type EmailSender } from '../src/lib/notification-service';
 import { renderNotificationDigest, visibleAudiencesFor, type NotificationRecord } from '../src/lib/notification-rules';
 import { ALWAYS_OPEN_CALENDAR, type SlaPolicy } from '../src/lib/sla-rules';
-import { buildInboxView, parseInboxFilter } from '../src/lib/inbox-view';
+import { buildInboxView, inboxFilterQuery, parseInboxFilter } from '../src/lib/inbox-view';
 import { inboxCounts, matchesFilter, type InboxSlaFlags } from '../src/lib/inbox-rules';
 import type { TicketRecord } from '../src/lib/ticket-service';
 
@@ -288,6 +288,23 @@ test('inbox: the SLA filter matches on the risk flags, never on a ticket without
   assert.equal(matchesFilter(ticket(), { sla: 'breached' }, flags), false);
   assert.equal(matchesFilter(ticket(), { sla: 'breached' }, { atRisk: true, breached: true }), true);
   assert.equal(matchesFilter(ticket(), { sla: 'at-risk' }, undefined), false, 'no policy means no SLA view');
+  // A breach sets `atRisk` too — the clock roll-up is a superset — but “late” and
+  // “about to be late” are how the desk splits its lateness, so a ticket is in
+  // exactly one of the two views.
+  assert.equal(
+    matchesFilter(ticket(), { sla: 'at-risk' }, { atRisk: true, breached: true }),
+    false,
+    'a breached ticket is not also “at risk”',
+  );
+});
+
+test('inbox: a priority filter selects one priority, and a URL can ask for it', () => {
+  assert.equal(matchesFilter(ticket({ priority: 'URGENT' }), { priority: 'URGENT' }), true);
+  assert.equal(matchesFilter(ticket({ priority: 'NORMAL' }), { priority: 'URGENT' }), false);
+  assert.equal(matchesFilter(ticket({ priority: 'NORMAL' }), {}), true, 'no priority is no filter');
+  assert.deepEqual(parseInboxFilter({ priority: 'URGENT' }), { priority: 'URGENT' });
+  assert.deepEqual(parseInboxFilter({ priority: 'nonsense' }), {}, 'an unknown value degrades to the default view');
+  assert.equal(inboxFilterQuery({ priority: 'URGENT' }), 'priority=URGENT');
 });
 
 test('inbox: the view builds and counts an SLA-scoped worklist from the flag map', () => {
@@ -299,11 +316,14 @@ test('inbox: the view builds and counts an SLA-scoped worklist from the flag map
 
   const view = buildInboxView(all, { status: 'open', sla: 'breached' }, map);
   assert.deepEqual(view.tickets.map((t) => t.id), ['a']);
-  assert.equal(view.counts.slaAtRisk, 2);
+  assert.equal(view.counts.slaAtRisk, 1, 'only the one still in its warning window');
   assert.equal(view.counts.slaBreached, 1);
 
   const counts = inboxCounts(all, map);
-  assert.equal(counts.slaAtRisk, 2);
+  assert.equal(counts.slaAtRisk, 1);
+
+  // The count and the view it opens are the same set of tickets.
+  assert.deepEqual(buildInboxView(all, { sla: 'at-risk' }, map).tickets.map((t) => t.id), ['b']);
 });
 
 test('inbox: the sla URL param is parsed forgivingly', () => {

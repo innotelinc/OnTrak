@@ -38,6 +38,8 @@ test('saved views: a filter is sanitized, dropping anything unknown', () => {
   assert.deepEqual(sanitizeInboxFilter('not an object'), {});
   assert.deepEqual(sanitizeInboxFilter({ search: '  vpn  ' }), { search: 'vpn' });
   assert.equal(sanitizeInboxFilter({ search: 'x'.repeat(500) }).search?.length, 120, 'search is capped');
+  assert.deepEqual(sanitizeInboxFilter({ priority: 'URGENT' }), { priority: 'URGENT' });
+  assert.deepEqual(sanitizeInboxFilter({ priority: 'urgent' }), {}, 'a priority is upper-case, as the enum is');
 });
 
 test('saved views: the filter JSON a form carries is parsed defensively', () => {
@@ -59,12 +61,15 @@ test('saved views: a filter is described in words', () => {
   assert.equal(describeInboxFilter({ assigneeId: 'unassigned', sla: 'breached' }), 'Open · Unassigned · SLA breached');
   assert.equal(describeInboxFilter({ status: 'all', search: 'vpn' }), 'All · “vpn”');
   assert.equal(describeInboxFilter({ status: 'PENDING', queueId: 'q-net' }), 'Pending · Queue: q-net');
+  assert.equal(describeInboxFilter({ priority: 'URGENT' }), 'Open · Priority: Urgent');
 });
 
 test('saved views: filters compare equal only when every field matches', () => {
   assert.equal(sameFilter({ status: 'open' }, { status: 'open' }), true);
   assert.equal(sameFilter({}, { status: 'open' }), false);
   assert.equal(sameFilter({ sla: 'breached' }, { sla: 'at-risk' }), false);
+  assert.equal(sameFilter({ priority: 'URGENT' }, { priority: 'HIGH' }), false);
+  assert.equal(sameFilter({ priority: 'URGENT' }, { priority: 'URGENT' }), true);
 });
 
 test('saved views: the chip link is the same query the inbox builds', () => {

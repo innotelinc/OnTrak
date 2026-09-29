@@ -6,7 +6,7 @@ import { hasPermission } from "../../../lib/access-rules";
 import { clientServicesFor, prisma, slaPolicyStoreFor, ticketServicesFor } from "../../../lib/db";
 import { scopeByClient } from "../../../lib/client-rules";
 import { buildInboxView } from "../../../lib/inbox-view";
-import { sortForInbox } from "../../../lib/inbox-rules";
+import { atRiskOnly, sortForInbox } from "../../../lib/inbox-rules";
 import { slaFlagsByTicket } from "../../../lib/report-rules";
 import { isOpen } from "../../../lib/ticket-rules";
 import { requireActor } from "../../../lib/session";
@@ -179,9 +179,9 @@ export default async function DashboardPage() {
   ).length;
 
   const breached = sortForInbox(all.filter((ticket) => isOpen(ticket.status) && sla.get(ticket.id)?.breached));
-  const atRisk = sortForInbox(
-    all.filter((ticket) => isOpen(ticket.status) && sla.get(ticket.id)?.atRisk && !sla.get(ticket.id)?.breached),
-  );
+  // `atRiskOnly` is the same definition the counters use, so the “SLA at risk”
+  // tile and the panel under it can never disagree about the same ticket.
+  const atRisk = sortForInbox(all.filter((ticket) => isOpen(ticket.status) && atRiskOnly(sla.get(ticket.id))));
   const mine = sortForInbox(all.filter((ticket) => isOpen(ticket.status) && ticket.assigneeId === actor.id));
   const triage = view.triage;
 
@@ -220,6 +220,8 @@ export default async function DashboardPage() {
           href="/inbox?assignee=unassigned"
           tone="attention"
         />
+        {/* The inbox reads `?priority=` the same way it reads `?status=`, so this
+            number opens exactly the urgent work it counts. */}
         <Tile label="Urgent" value={counts.urgent} hint="open and urgent" href="/inbox?priority=URGENT" tone="bad" />
         <Tile
           label="SLA at risk"
