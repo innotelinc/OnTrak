@@ -145,6 +145,16 @@ export const config = {
 
   /** Cap on any single tool result handed back to the model. */
   toolResultLimit: int("AGENT_TOOL_RESULT_LIMIT", 60_000),
+
+  /**
+   * Olympus's `build-requests/` directory, where an exported spec is written.
+   *
+   * Unset by default, and deliberately so: a spec is assembled from a workspace in
+   * either case, but only a deployment that names this directory gets a file —
+   * otherwise the export returns the markdown for the operator to place. Genie
+   * does not assume where the factory's checkout lives.
+   */
+  factoryDir: str("AGENT_FACTORY_DIR", ""),
 } as const;
 
 export function sessionsDir(): string {

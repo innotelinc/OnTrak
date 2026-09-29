@@ -245,6 +245,9 @@ process.env.OMNIROUTE_URL = `http://127.0.0.1:${gatewayPort}/v1`;
 process.env.AGENT_OFFLINE_URL = `http://127.0.0.1:${offlinePort}/v1`;
 process.env.AGENT_OFFLINE_MODELS = "local/fake";
 process.env.WEB_TOKEN = "test-token";
+// A configured factory directory, so the export path that writes is exercised.
+// The unconfigured path is covered by the builder's own unit tests.
+process.env.AGENT_FACTORY_DIR = path.join(workspace, "factory-requests");
 
 const { createServer } = await import("../server.js");
 const { ensureWorkspace } = await import("../workspace.js");
@@ -350,7 +353,13 @@ const first = (events: Array<Record<string, any>>, type: string): Record<string,
 
 test("authentication", async (t) => {
   await t.test("the API is closed without the token", async () => {
-    for (const pathname of ["/api/health", "/api/sessions", "/api/files", "/api/models"]) {
+    for (const pathname of [
+      "/api/health",
+      "/api/sessions",
+      "/api/files",
+      "/api/models",
+      "/api/factory/spec",
+    ]) {
       const response = await fetch(`${base}${pathname}`);
       assert.equal(response.status, 401, `${pathname} should be protected`);
     }
@@ -982,6 +991,101 @@ test("workspace endpoints", async (t) => {
       });
       assert.equal(response.status, 400, `${bad} should be refused`);
     }
+  });
+});
+
+/* ------------------------------------------------------- the factory handoff */
+
+test("factory export", async (t) => {
+  const factoryDir = path.join(workspace, "factory-requests");
+  const specFile = path.join(factoryDir, "todo-tracker.md");
+
+  const exportSpec = (payload: Record<string, unknown>) =>
+    api("/api/factory/spec", { method: "POST", body: JSON.stringify(payload) });
+
+  await t.test("says where an export would be written", async () => {
+    const response = await api("/api/factory/spec");
+    assert.equal(response.status, 200);
+    assert.equal(response.body.configured, true);
+    assert.equal(response.body.dir, factoryDir);
+  });
+
+  await t.test("writes a spec with the headings the factory template parses", async () => {
+    const response = await exportSpec({
+      name: "Todo Tracker",
+      purpose: "Track chores in one list.",
+      features: ["Add a chore", "Tick it off"],
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.filename, "todo-tracker.md");
+    assert.equal(response.body.written, true);
+    assert.equal(response.body.replaced, false);
+    assert.equal(response.body.path, specFile);
+    assert.equal(response.body.bytes, Buffer.byteLength(response.body.markdown, "utf8"));
+
+    for (const heading of [
+      "# Application Specification: Todo Tracker",
+      "## 🎯 Core Purpose",
+      "## 🧰 Tech Stack",
+      "## 🛠️ Key Features & Pages",
+      "## 🚦 Verification Criteria",
+    ]) {
+      assert.ok(response.body.markdown.includes(heading), `missing heading: ${heading}`);
+    }
+
+    // The file on disk is the spec that was returned, byte for byte.
+    assert.equal(await fs.readFile(specFile, "utf8"), response.body.markdown);
+    assert.ok(
+      response.body.nextSteps.some((step: string) =>
+        step.includes("make app SPEC=build-requests/todo-tracker.md"),
+      ),
+    );
+  });
+
+  await t.test("refuses to replace a spec that is already there", async () => {
+    const response = await exportSpec({ name: "Todo Tracker", purpose: "Something else" });
+    assert.equal(response.status, 409, "a hand-edited request must not be clobbered");
+    assert.match(response.body.error, /already exists/);
+    // The refusal left the first export alone.
+    assert.match(await fs.readFile(specFile, "utf8"), /Track chores in one list/);
+  });
+
+  await t.test("replaces it when the caller says to", async () => {
+    const response = await exportSpec({ name: "Todo Tracker", purpose: "Rewritten", overwrite: true });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.replaced, true);
+    assert.match(await fs.readFile(specFile, "utf8"), /Rewritten/);
+  });
+
+  await t.test("returns the spec without writing it when asked", async () => {
+    const first = await exportSpec({ name: "Draft Only", purpose: "Nowhere near ready", write: false });
+    const second = await exportSpec({ name: "Draft Only", purpose: "Nowhere near ready", write: false });
+
+    assert.equal(first.status, 200);
+    assert.equal(first.body.written, false);
+    assert.equal(first.body.path, null);
+    // Deterministic: the same workspace and intent produce the same bytes.
+    assert.equal(first.body.markdown, second.body.markdown);
+    await assert.rejects(fs.access(path.join(factoryDir, "draft-only.md")));
+  });
+
+  await t.test("an unstated purpose is marked, never invented", async () => {
+    const response = await exportSpec({ name: "Nameless Intent", write: false });
+    assert.equal(response.status, 200);
+    assert.match(response.body.markdown, /Not stated/);
+    assert.match(response.body.markdown, /Not listed/);
+  });
+
+  await t.test("states the kind the operator chose", async () => {
+    const response = await exportSpec({ name: "Marketing Site", kind: "website", write: false });
+    assert.equal(response.status, 200);
+    assert.match(response.body.markdown, /Static site — packaged to/);
+  });
+
+  await t.test("a spec with no name is a bad request, not a crash", async () => {
+    assert.equal((await exportSpec({})).status, 400);
+    assert.equal((await exportSpec({ name: "   " })).status, 400);
   });
 });
 

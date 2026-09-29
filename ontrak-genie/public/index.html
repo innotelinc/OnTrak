@@ -105,6 +105,14 @@
             >
               preview
             </button>
+            <button
+              id="factory-open"
+              class="btn-ghost"
+              title="Turn this workspace into a build request Olympus can manufacture"
+              aria-controls="factory"
+            >
+              export
+            </button>
           </div>
         </header>
 
@@ -217,6 +225,66 @@
       <div class="viewer-content">
         <div id="sweep-status" class="muted"></div>
         <div id="sweep-report" class="sweep-report"></div>
+      </div>
+    </div>
+
+    <div
+      id="factory"
+      class="viewer hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="factory-title"
+    >
+      <div class="viewer-head">
+        <span id="factory-title" class="mono">export a build request for Olympus</span>
+        <div class="viewer-actions">
+          <button
+            id="factory-preview"
+            class="btn-ghost"
+            title="Assemble the spec and show it, writing nothing"
+          >
+            preview
+          </button>
+          <button
+            id="factory-export"
+            class="btn-ghost"
+            title="Assemble the spec and write it into the factory directory"
+          >
+            export
+          </button>
+          <button id="factory-close" class="btn-ghost" aria-label="Close the export dialog">close</button>
+        </div>
+      </div>
+      <div class="viewer-content">
+        <p id="factory-note" class="muted factory-note"></p>
+        <div class="factory-form">
+          <label class="field" for="factory-name">
+            <span class="muted">name</span>
+            <input id="factory-name" class="input-text" type="text" placeholder="Todo Tracker" />
+          </label>
+          <label class="field" for="factory-kind">
+            <span class="muted">kind</span>
+            <select id="factory-kind" class="select">
+              <option value="app">application</option>
+              <option value="website">website</option>
+            </select>
+          </label>
+          <label class="field wide" for="factory-purpose">
+            <span class="muted">core purpose - one sentence</span>
+            <input id="factory-purpose" class="input-text" type="text" placeholder="Track chores in one list" />
+          </label>
+          <label class="field wide" for="factory-features">
+            <span class="muted">key features - one per line</span>
+            <textarea id="factory-features" class="input-text" rows="4"></textarea>
+          </label>
+          <label class="field check" for="factory-overwrite">
+            <input id="factory-overwrite" type="checkbox" />
+            <span class="muted">replace an existing spec</span>
+          </label>
+        </div>
+        <div id="factory-status" class="muted" role="status"></div>
+        <div id="factory-steps" class="factory-steps"></div>
+        <pre id="factory-body" class="viewer-body mono" tabindex="0"></pre>
       </div>
     </div>
 

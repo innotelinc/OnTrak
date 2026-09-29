@@ -97,7 +97,7 @@ its publishing path through Cerulean and NPM Edge, or its TUI.
 | --- | --- | --- |
 | **0** | Genie conformed and landed in OnTrak as `ontrak-genie/` — license, stack doc, guard, port, no internal addresses | — |
 | **1** | Stack citizenship: Authentik OIDC, Vault references, the shared gateway's address from the environment | Phase 0 |
-| **2** | The builder API: Genie's UI over Olympus's plan → build → preview path; control-plane tenancy | Phase 1 |
+| **2** | The builder API: Genie's UI over Olympus's plan → build → preview path; control-plane tenancy — **started**: the *handoff* is wired (export writes a `build-requests/` spec); plan/build/preview/publish and tenancy remain | Phase 1 |
 | **3** | Studio's interface retires; the front-door count reaches one | Phase 2 |
 | **4** | Docs converge: the stack doc's §3 updated from *chosen A* to *A′ — A's engine, B's client*, Olympus's README and `docs/stack.md`, and the family table | Phase 3 |
 
@@ -120,13 +120,24 @@ forks alone.
 - **Studio has behaviour worth keeping** — entitlements, the build queue, the
   archive, the admin panel. The plan retires the *interface*, not those behaviours;
   each is either re-exposed through Genie's UI or kept server-side in Olympus.
-- **Who owns the builder API contract.** Genie and Olympus end up coupled by an API
-  that neither currently publishes. That contract needs an owner before Phase 2.
+- **Who owns the builder API contract.** *Settled during Phase 2, and it was
+  already settled in the code.* Olympus publishes the contract and always has: a
+  build request is a Markdown file whose headings mirror
+  `factory/APP_SPEC_TEMPLATE.md`, consumed by `make app SPEC=…` and by
+  `.github/workflows/olympus-app-builder.yml`. Studio's
+  `web/studio/lib/factory-spec.ts` was already the client half of it. So no new
+  API is needed and no owner has to be negotiated — Genie implements the same
+  contract, which is also why the handoff can be deterministic: it is writing a
+  document to a published shape, not calling an unpublished service.
 
 ## 7. Open questions
 
-1. Does the builder API become a documented interface of Olympus, or a service in
-   front of it?
+1. ~~Does the builder API become a documented interface of Olympus, or a service in
+   front of it?~~ **Answered by Olympus's own layout: the interface is the
+   `build-requests/` spec, it is documented, and it needs no service in front of
+   it.** What is still open is the rest of Phase 2 — preview and publish — where an
+   API that does not exist yet would be needed, and which therefore still needs an
+   owner.
 2. Does Genie stay in the OnTrak family (CodeOps) or move beside Olympus once it is
    the family's builder surface? Phase 0 assumes it stays.
 3. Is the TUI's role affected? The doc defines it as *"queues and watches"*; Genie

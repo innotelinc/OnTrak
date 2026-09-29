@@ -20,9 +20,11 @@
 > the browser console for a coding agent. You state a task; the agent reads, edits
 > and runs code inside a workspace it cannot leave; and every call it makes is on
 > screen as it happens — including the file it is writing, rendered and diffed
-> against what is on disk *before* the write lands. It consumes the platform
-> services rather than re-implementing them, and it is deliberately the only
-> surface in the family that shows an agent's work rather than its output.
+> against what is on disk *before* the write lands. When the work is worth
+> shipping, `export` turns the workspace into a build request Olympus manufactures.
+> It consumes the platform services rather than re-implementing them, and it is
+> deliberately the only surface in the family that shows an agent's work rather
+> than its output.
 > **Landing page:** [https://innotelinc.github.io/OnTrak/](https://innotelinc.github.io/OnTrak/)
 
 ---
@@ -36,6 +38,7 @@
 | A model that cannot call a tool fails the whole turn — usually after a long wait, and usually without saying why. | A chain-health probe reports `models n/m ready` in the sidebar before you type, a fallback chain absorbs a throttled provider mid-task, and a dead chain is visible rather than discovered. |
 | Which model ids actually work is not something a catalog tells you, and a large advertised list is not a usable one. | Sweep the catalog from the browser: probe the ids that claim tool support and keep the ones that answer. |
 | A session that cannot be resumed is a session you repeat, and a pane that forgets is a pane you reopen. | Chats, transcripts and per-file snapshots persist across restarts, and the preview pane restores what it was showing across a browser reload. |
+| Work that stops at the preview is work someone retypes into the builder, and a spec nobody can review is a build nobody can predict. | `export` assembles an Olympus build request from the workspace — file index, stack, entry point, the test command that actually exists — deterministically, with no second model call, and refuses to overwrite a spec that is already there. |
 
 ## What it is
 
@@ -46,6 +49,7 @@
 - **Live visibility** — the file being written, syntax-highlighted, with a live diff against the on-disk baseline; a changed-marker file tree; a diff view for any file with history.
 - **Model resilience** — a fallback chain, a chain-health badge, a catalog sweep, and an optional second gateway (a local model, no key) tried only after the chain is exhausted.
 - **Sign-in (optional)** — Authentik OIDC: authorization code with PKCE, RS256 `id_token` verification against the provider's JWKS, and a signed session cookie. The shared bearer is kept for API clients that drive the endpoint directly.
+- **The factory handoff** — `export` writes an Olympus build request (`build-requests/<slug>.md`) assembled from the workspace with no model call, previewable before it is written.
 - **Persistence** — sessions, transcripts and file snapshots under one data directory.
 
 ## Quick start
@@ -89,7 +93,8 @@ gitignored.
 
 ```
 ontrak-genie/
-├── src/            # agent loop, tools, workspace jail, HTTP server, diff, snapshots
+├── src/            # agent loop, tools, workspace jail, HTTP server, diff, snapshots,
+│                   # and the factory handoff (builder.ts)
 │   └── test/       # unit + HTTP tests (node --test)
 ├── public/         # the browser UI: app.js, highlight.js, style.css, index.html
 ├── scripts/        # check commands: ui-smoke, draft-check, offline-check, model-health
@@ -110,7 +115,12 @@ outstanding is stack citizenship, and it is stated rather than implied:
 - **Secrets** are read from `.env`. The platform path is a Cerulean Vault
   `vault://` reference resolved at deploy time.
 - **The builder half** — plan → container → published name — is Olympus's, and
-  [the convergence doc](docs/convergence-olympus.md) is how the two meet.
+  [the convergence doc](docs/convergence-olympus.md) is how the two meet. The
+  handoff half of it is wired: `export` writes a build request in the shape
+  `factory/APP_SPEC_TEMPLATE.md` defines, so a session that produced something
+  worth building becomes factory input instead of stopping at the preview. Set
+  `AGENT_FACTORY_DIR` to Olympus's `build-requests/` to write one; leave it unset
+  and the export shows the spec instead.
 
 ## License
 
