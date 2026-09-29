@@ -23,7 +23,7 @@ import { knowledgeServicesFor, prisma } from "../../../../lib/db";
 import { ticketServices } from "../../../../lib/ticket-server";
 import { extractSecret, secretsMatch } from "../../../../lib/intake-webhook";
 import { ESCALATION_CRON_SECRET_ENV } from "../../../../lib/escalation-service";
-import { authorOutcome } from "../../../../lib/ai-author";
+import { authorConfig, authorOutcome } from "../../../../lib/ai-author";
 import { hasResolution, type OutcomeTranscript } from "../../../../lib/outcome-rules";
 import { outcomeActor, writeOutcomes, type OutcomeReport } from "../../../../lib/outcome-service";
 import { itsConfig } from "../../../../lib/its-client";
@@ -120,7 +120,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   return NextResponse.json({
     dry,
-    configured: { its: its.enabled, model: (process.env.ONTRAK_AI_API_KEY ?? "").trim().length > 0 },
+    // Asked of the author itself rather than inferred from a key: a keyless local
+    // gateway is configured and enabled, and reporting it as "no model" would have an
+    // operator hunting for a key they do not need.
+    configured: { its: its.enabled, model: authorConfig().enabled },
     tenants: perTenant,
     written: perTenant.reduce((sum, entry) => sum + entry.written, 0),
   });

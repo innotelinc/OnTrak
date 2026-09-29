@@ -29,7 +29,7 @@ import {
   transcriptLines,
   type OutcomeTranscript,
 } from "../src/lib/outcome-rules";
-import { authorConfig, authorOutcome } from "../src/lib/ai-author";
+import { authorConfig, authorOutcome, DEFAULT_BASE_URL, DEFAULT_MODEL } from "../src/lib/ai-author";
 import { itsConfig, scenarioHandoffBody } from "../src/lib/its-client";
 import { KnowledgeService, MemoryKnowledgeStore } from "../src/lib/knowledge-service";
 import { availableTitle, outcomeActor, writeOutcomes, type OutcomeDeps } from "../src/lib/outcome-service";
@@ -215,6 +215,62 @@ test("extractJson: the first object wins, and a non-object is not one", () => {
 /* -------------------------------------------------------------------------- */
 /*  The author                                                                */
 /* -------------------------------------------------------------------------- */
+
+test("author config: the default target is the self-hosted gateway, not a vendor", () => {
+  const config = authorConfig({});
+  // OmniRoute on this host: no account, no key, and `auto` so the gateway picks the
+  // provider rather than the desk pinning one.
+  assert.equal(DEFAULT_BASE_URL, "http://127.0.0.1:20128/v1");
+  assert.equal(DEFAULT_MODEL, "auto");
+  assert.equal(config.baseUrl, DEFAULT_BASE_URL);
+  assert.equal(config.model, "auto");
+  assert.equal(config.switchedOff, false);
+});
+
+test("author config: the gateway needs no key, and nothing needs a connection timeout", () => {
+  // A keyless local gateway: the switch is the only thing to set.
+  assert.equal(authorConfig({ ONTRAK_AI_ENABLED: "1" }).enabled, true);
+  assert.equal(authorConfig({ ONTRAK_AI_ENABLED: "1" }).apiKey, "");
+  // Air-gapped, or a laptop: nothing configured stays off rather than trying a default
+  // address on every ticket.
+  assert.equal(authorConfig({}).enabled, false);
+  // Off beats a key and beats 1, because it is the one that is deliberate.
+  assert.equal(authorConfig({ ONTRAK_AI_ENABLED: "0", ONTRAK_AI_API_KEY: "k" }).enabled, false);
+  assert.equal(authorConfig({ ONTRAK_AI_ENABLED: "0", ONTRAK_AI_API_KEY: "k" }).switchedOff, true);
+});
+
+test("author: a keyless gateway is called without an Authorization header", async () => {
+  const seen: (HeadersInit | undefined)[] = [];
+  const spy: typeof fetch = async (_url, init) => {
+    seen.push(init?.headers);
+    // The same well-formed answer the other author tests use, so a failure here is
+    // about the header and not about the payload.
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(GOOD) } }] }), {
+      status: 200,
+    });
+  };
+  const draft = await authorOutcome(ticket(), {
+    config: authorConfig({ ONTRAK_AI_ENABLED: "1" }),
+    fetchImpl: spy,
+  });
+  assert.equal(draft.source, "model");
+  const headers = (seen[0] ?? {}) as Record<string, string>;
+  assert.equal(Object.keys(headers).some((key) => key.toLowerCase() === "authorization"), false);
+});
+
+test("author: a deployment that switched the model off hears about it; one that never had one does not", async () => {
+  const off = await authorOutcome(ticket(), {
+    config: authorConfig({ ONTRAK_AI_API_KEY: "k", ONTRAK_AI_ENABLED: "0" }),
+  });
+  assert.equal(off.source, "template");
+  assert.match(off.note ?? "", /switched off/);
+
+  const never = await authorOutcome(ticket(), { config: authorConfig({}) });
+  assert.equal(never.source, "template");
+  // No banner: an unconfigured deployment is not a broken one, and crying wolf here
+  // would teach the desk to ignore the note that does matter.
+  assert.equal(never.note, undefined);
+});
 
 test("author config: a key turns it on, and 0 turns it off without removing the key", () => {
   assert.equal(authorConfig({}).enabled, false);
