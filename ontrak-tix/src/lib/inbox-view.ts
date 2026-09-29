@@ -17,7 +17,7 @@ import {
   type InboxSlaFlags,
   type InboxSlaFilter,
 } from "./inbox-rules";
-import { TICKET_STATUSES, type TicketStatus } from "./ticket-rules";
+import { TICKET_PRIORITIES, TICKET_STATUSES, type TicketPriority, type TicketStatus } from "./ticket-rules";
 import type { TicketRecord } from "./ticket-service";
 
 export interface InboxView {
@@ -58,6 +58,7 @@ export function parseInboxFilter(params: InboxSearchParams = {}): InboxFilter {
   const status = first(params.status);
   const assignee = first(params.assignee);
   const queue = first(params.queue);
+  const priority = first(params.priority);
   const search = first(params.search)?.trim();
   const sla = first(params.sla);
 
@@ -69,6 +70,7 @@ export function parseInboxFilter(params: InboxSearchParams = {}): InboxFilter {
   else if (assignee) filter.assigneeId = assignee;
 
   if (queue) filter.queueId = queue;
+  if (priority && (TICKET_PRIORITIES as readonly string[]).includes(priority)) filter.priority = priority as TicketPriority;
   if (search) filter.search = search;
   if (sla === "at-risk" || sla === "breached") filter.sla = sla as InboxSlaFilter;
 
@@ -85,6 +87,7 @@ export function inboxFilterQuery(filter: InboxFilter = {}): string {
   if (filter.status && filter.status !== "open") params.set("status", filter.status);
   if (filter.assigneeId) params.set("assignee", filter.assigneeId);
   if (filter.queueId) params.set("queue", filter.queueId);
+  if (filter.priority) params.set("priority", filter.priority);
   if (filter.search) params.set("search", filter.search);
   if (filter.sla) params.set("sla", filter.sla);
   return params.toString();

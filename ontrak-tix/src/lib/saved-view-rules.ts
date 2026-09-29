@@ -8,7 +8,7 @@
  * and tested, like the filter rules it wraps.
  */
 
-import { TICKET_STATUSES, type TicketStatus } from "./ticket-rules";
+import { TICKET_PRIORITIES, TICKET_STATUSES, type TicketPriority, type TicketStatus } from "./ticket-rules";
 import type { InboxFilter, InboxSlaFilter } from "./inbox-rules";
 
 export interface SavedView {
@@ -44,6 +44,9 @@ export function sanitizeInboxFilter(raw: unknown): InboxFilter {
 
   if (typeof value.assigneeId === "string" && value.assigneeId.trim()) filter.assigneeId = value.assigneeId.trim();
   if (typeof value.queueId === "string" && value.queueId.trim()) filter.queueId = value.queueId.trim();
+  if (typeof value.priority === "string" && (TICKET_PRIORITIES as readonly string[]).includes(value.priority)) {
+    filter.priority = value.priority as TicketPriority;
+  }
   if (typeof value.search === "string" && value.search.trim()) filter.search = value.search.trim().slice(0, SEARCH_MAX);
   if (value.sla === "at-risk" || value.sla === "breached") filter.sla = value.sla as InboxSlaFilter;
 
@@ -76,6 +79,13 @@ export function validateSavedView(input: { name?: string }): SavedViewIssue[] {
   return issues;
 }
 
+const PRIORITY_LABELS: Record<string, string> = {
+  LOW: "Low",
+  NORMAL: "Normal",
+  HIGH: "High",
+  URGENT: "Urgent",
+};
+
 const STATUS_LABELS: Record<string, string> = {
   NEW: "New",
   OPEN: "Open",
@@ -97,6 +107,7 @@ export function describeInboxFilter(filter: InboxFilter = {}): string {
   else if (filter.assigneeId) parts.push(`Assigned: ${filter.assigneeId}`);
 
   if (filter.queueId) parts.push(`Queue: ${filter.queueId}`);
+  if (filter.priority) parts.push(`Priority: ${PRIORITY_LABELS[filter.priority] ?? filter.priority}`);
   if (filter.sla === "at-risk") parts.push("SLA at risk");
   if (filter.sla === "breached") parts.push("SLA breached");
   if (filter.search) parts.push(`“${filter.search}”`);
@@ -106,6 +117,6 @@ export function describeInboxFilter(filter: InboxFilter = {}): string {
 
 /** Whether two filters are the same view (used to highlight the active chip). */
 export function sameFilter(a: InboxFilter = {}, b: InboxFilter = {}): boolean {
-  const keys: (keyof InboxFilter)[] = ["status", "assigneeId", "queueId", "search", "sla"];
+  const keys: (keyof InboxFilter)[] = ["status", "assigneeId", "queueId", "priority", "search", "sla"];
   return keys.every((key) => (a[key] ?? undefined) === (b[key] ?? undefined));
 }

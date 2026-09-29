@@ -17,6 +17,8 @@ export interface InboxFilter {
   /** A specific assignee, or `"unassigned"` for the triage pile. */
   assigneeId?: string | "unassigned";
   queueId?: string;
+  /** A single priority — how the overview's “Urgent” count links to the work behind it. */
+  priority?: TicketPriority;
   /** Case-insensitive match against the reference or subject. */
   search?: string;
   /** Restrict the worklist to tickets whose SLA needs attention. */
@@ -47,6 +49,8 @@ export function matchesFilter(ticket: TicketRecord, filter: InboxFilter = {}, sl
 
   if (filter.queueId && ticket.queueId !== filter.queueId) return false;
 
+  if (filter.priority && ticket.priority !== filter.priority) return false;
+
   if (filter.search) {
     const needle = filter.search.trim().toLowerCase();
     if (needle) {
@@ -57,7 +61,13 @@ export function matchesFilter(ticket: TicketRecord, filter: InboxFilter = {}, sl
 
   // A ticket with no policy has no SLA, so it can never appear in an SLA view —
   // silently including it would make the filter look like it had missed work.
-  if (filter.sla === "at-risk" && !(sla?.atRisk ?? false)) return false;
+  //
+  // “At risk” means a clock in its warning window and *not* already lapsed. A
+  // breached ticket is at risk in the loose sense — the clock roll-up sets
+  // `atRisk` for a breach as well — but the two views are how a lead splits the
+  // desk's lateness into “late” and “about to be late”, and a ticket appearing in
+  // both is a ticket counted twice by somebody triaging in a hurry.
+  if (filter.sla === "at-risk" && !atRiskOnly(sla)) return false;
   if (filter.sla === "breached" && !(sla?.breached ?? false)) return false;
 
   return true;
@@ -80,11 +90,21 @@ export function sortForInbox(tickets: readonly TicketRecord[]): TicketRecord[] {
   });
 }
 
+/**
+ * Is this ticket in its warning window and not yet lapsed?
+ *
+ * The one definition of “at risk”, shared by the filter and the counters so a
+ * number and the list it opens can never disagree.
+ */
+export function atRiskOnly(sla?: InboxSlaFlags | null): boolean {
+  return (sla?.atRisk ?? false) && !(sla?.breached ?? false);
+}
+
 export interface InboxCounts {
   open: number;
   unassigned: number;
   urgent: number;
-  /** Open tickets whose SLA is warning or worse. */
+  /** Open tickets whose clock is in its warning window and has not lapsed. */
   slaAtRisk: number;
   /** Open tickets whose SLA has already lapsed. */
   slaBreached: number;
@@ -110,7 +130,7 @@ export function inboxCounts(
       if (ticket.assigneeId === null) unassigned += 1;
       if (isUrgent(ticket.priority)) urgent += 1;
       const flags = sla?.get(ticket.id);
-      if (flags?.atRisk) slaAtRisk += 1;
+      if (atRiskOnly(flags)) slaAtRisk += 1;
       if (flags?.breached) slaBreached += 1;
     }
   }
