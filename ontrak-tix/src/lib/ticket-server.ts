@@ -9,7 +9,7 @@
  */
 
 import { PrismaAuditSink, PrismaTicketStore, sha256Hex, type TicketPrismaClient } from "./ticket-store-prisma";
-import { TicketService, type IdSource, type TicketStore } from "./ticket-service";
+import { TicketService, type IdSource, type TicketFormGate, type TicketStore } from "./ticket-service";
 import type { RuleIntake } from "./rule-intake";
 import type { MacroIntake } from "./macro-intake";
 import type { AuditSink } from "./audit-chain";
@@ -26,10 +26,11 @@ export function createTicketServices(
   ids?: IdSource,
   rules: RuleIntake | null = null,
   macros: MacroIntake | null = null,
+  forms: TicketFormGate | null = null,
 ): TicketServices {
   const store = new PrismaTicketStore(db);
   const audit = new PrismaAuditSink(db, sha256Hex);
-  return { store, audit, service: new TicketService(store, audit, ids, rules, macros) };
+  return { store, audit, service: new TicketService(store, audit, ids, rules, macros, forms) };
 }
 
 let configured: TicketServices | null = null;
@@ -45,8 +46,9 @@ export function configureTickets(
   ids?: IdSource,
   rules: RuleIntake | null = null,
   macros: MacroIntake | null = null,
+  forms: TicketFormGate | null = null,
 ): TicketServices {
-  configured = createTicketServices(db, ids, rules, macros);
+  configured = createTicketServices(db, ids, rules, macros, forms);
   return configured;
 }
 

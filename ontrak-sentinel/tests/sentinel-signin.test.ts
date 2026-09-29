@@ -374,11 +374,20 @@ test("sign-in: a success is recorded as a grant, not as a refusal", async () => 
 /*  The routes                                                                */
 /* -------------------------------------------------------------------------- */
 
-test("console: the bare host redirects to the sign-in page instead of answering not_found", async () => {
+test("console: the bare host redirects to the console instead of answering not_found", async () => {
   const h = harness();
   const response = await routeConsole(request("GET", "/"), h.service);
   assert.equal(response.status, 303);
-  assert.equal(response.headers.location, CONSOLE_PATHS.signIn);
+  // `/console`, not `/console/sign-in`: the console adapts to whether there is a
+  // session, and the sign-in form does not. A signed-in operator typing the hostname
+  // must not be handed a login.
+  assert.equal(response.headers.location, CONSOLE_PATHS.home);
+});
+
+test("console: the bare host does not short-circuit a signed-in visitor into a login form", async () => {
+  const h = harness();
+  const response = await routeConsole(request("GET", "/"), h.service);
+  assert.notEqual(response.headers.location, CONSOLE_PATHS.signIn);
 });
 
 test("console: the sign-in page renders a password field and the shared theme", async () => {

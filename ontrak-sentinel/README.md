@@ -52,8 +52,12 @@ this, what can they reach, and what have they done"* in one place.
 
 ## Status
 
-**S0 complete; S1 nearly complete; S2 started.** The identity spine exists,
-persists, and issues identity:
+**S0, S1 and S2 complete; S3 started.** The identity spine exists, persists, and
+issues identity; a directory can provision into it and it can read one; and the
+first Guard slice turns telemetry into an alert that names a person. What is *not*
+here is still stated: a synced group decides nothing yet (roles and groups as
+policy is S1's last bullet), Guard has no streaming listener and no triage UI, and
+rule rotation and signing-key provisioning are open. The identity spine:
 
 - `src/lib/audit-chain.ts` — the hash-chained, append-only audit log with
   tamper detection (the evidence spine). `src/lib/hash.ts` is the one SHA-256 the
@@ -69,13 +73,17 @@ persists, and issues identity:
   The client is described structurally, so the adapter runs against the generated
   client, a fake, or a repository layer.
 - `prisma/schema.prisma` + `prisma/migrations/` — the data model, **migrated**
-  in six steps: `20260928000000_init` (the spine and the evidence log),
+  in nine steps: `20260928000000_init` (the spine and the evidence log),
   `20260929000000_oidc` (the grant rows), `20260930000000_logout_saml`
   (`AccessToken.revokedAt` and the SAML service providers),
   `20261001000000_mfa_totp` (the TOTP enrollment state on `MfaFactor`),
   `20261015000000_webauthn` (the public key and signature counter on `MfaFactor`,
-  plus the `WebAuthnChallenge` table) and `20261020000000_scim`
-  (`Identity.externalId`, `ScimToken`, `Group`, `GroupMember`). Every table
+  plus the `WebAuthnChallenge` table), `20261020000000_scim`
+  (`Identity.externalId`, `ScimToken`, `Group`, `GroupMember`),
+  `20261025000000_policy_scope` (the `ALL` baseline and the per-role scope on
+  `IdentityPolicy`), `20261026000000_directory_sync` (`DirectoryConnection` and
+  `DirectorySyncRun`) and `20261027000000_guard_alert` (`Alert`, `AlertEvent`).
+  Every table
   carries the organization it belongs to with a cascading foreign key, and
   `AuditEvent` is unique on `(organizationId, seq)` because each organization has
   a chain of its own.
@@ -180,6 +188,41 @@ persists, and issues identity:
   delegation, never the person who minted it. Groups sync, and state plainly that
   they decide nothing until groups become policy (the S1 bullet below). Covered by
   `tests/sentinel-scim.test.ts` and `tests/sentinel-scim-store-prisma.test.ts`.
+- `src/lib/identity-rules.ts` + `identity-service.ts` (S1) — **per-role policies**.
+  An organization keeps one baseline policy (`scope: ALL`) and may add one per role
+  that overrides it; `policyForRole` is the only resolver, so "which policy governs
+  this person?" has one answer, and the scope that answered is recorded on the
+  session grant — an audit entry says *the AGENT policy let this in*, not merely
+  that *a* policy did. The `ALL` row is a value rather than an absent one, because
+  a missing role row must fall back to the organization's baseline (or the built-in
+  default on a fresh install) rather than to no policy at all. The console shows
+  every scope beside the number it resolves to, so a role that is looser than the
+  baseline is visible rather than accidental. Covered by
+  `tests/sentinel-policy.test.ts`.
+- `src/lib/directory-rules.ts` + `directory-service.ts` + `directory-store-prisma.ts`
+  + `directory-client.ts` (S2) — **reading a directory**: a connection names the
+  source, the reader, the schedule and the **conflict policy**, and a run plans
+  every change before writing any of them, so the dry run is the same code path
+  with the writing switched off. `preferDirectory` lets the directory win and says
+  so in the report; `preferLocal` keeps the local edit and reports the
+disagreement. Matching is by the directory's own id first, so a rename is a move
+  rather than a second person; a leaver is deactivated rather than deleted, down
+  the same path a SCIM `active:false` takes. Covered by
+  `tests/sentinel-directory.test.ts`.
+- `src/lib/telemetry-rules.ts` + `detection-rules.ts` + `detection-service.ts` +
+  `guard-service.ts` + `guard-http.ts` (S3) — **the first Guard slice**. A
+  source-neutral `ObservedEvent` (kind, addresses, ports, direction, protocol,
+  bytes), three pure detection rules, and an alert pipeline where the dedupe key is
+  a **bucket** rather than an id — the same scan seen by two sensors is one alert,
+  and the response says which case it was. An alert resolves the addresses it names
+  against live sessions, so it links to the identity that was signed in at the time
+  plus the device and asset, and it records the rule *and its version*, so an alert
+  is read against the code that ran. (The join needs an address on the session, and
+  in this build only the bootstrap grants a session — with no request behind it — so
+  correlation names an identity in the harness and in any deployment whose sessions
+  carry an address, and stays quiet until an interactive login populates one.) `POST /guard/v1/events` is mounted only when a
+  token is configured; `GET /guard/v1/rules` publishes the rulebook. Covered by
+  `tests/sentinel-guard.test.ts`.
 - `src/lib/console-rules.ts` + `console-service.ts` + `console-http.ts` (S0/S1) —
   the **admin console**, as a server-rendered shell with no framework: an overview
   (who you are, whether a second factor is enrolled, and the organization's
@@ -196,7 +239,9 @@ persists, and issues identity:
   a live session and the policy refuses one without a second factor, so an identity's
   first factor still comes from an administrator until there is a password login —
   and every value on it is escaped through one function, so a display name cannot
-  become markup. Covered by `tests/sentinel-console.test.ts`.
+  become markup. It also carries the **policies** page (every scope, what is stored
+  for it, and what it resolves to) and the **directory** page (create a connection,
+  run a sync, read the report). Covered by `tests/sentinel-console.test.ts`.
 - `scripts/serve.ts` (`npm run serve`) — a **runnable provider**: an organization,
   an administrator, a session and a demo client, plus a printed authorization URL
   with a PKCE pair. With `DATABASE_URL` set it runs over Postgres, end to end, and
@@ -206,9 +251,9 @@ persists, and issues identity:
   administrator's TOTP factor through the real enrollment path and prints the
   `otpauth://` URI, because the default policy requires a second factor and a
   flipped boolean would not have proved one. It also serves the console at
-  `/console` and prints the cookie line that gets a browser into it. Deployable key
-  management and rotation and per-role policies are the next slice, so there is no
-  image yet.
+  `/console` and prints the cookie line that gets a browser into it, and mounts the
+  Guard surface at `/guard/v1` when a token is configured. Deployable key
+  management and rotation are the next slice, so there is no image yet.
 
 The full platform is built *after* OnTrak Tix; see [ROADMAP.md](./ROADMAP.md).
 
@@ -218,7 +263,7 @@ Like the other two products, this one is a project in its own right:
 cd ontrak-sentinel
 npm install
 npm run typecheck
-npm test                      # 215 checks; the Postgres one skips without DATABASE_URL
+npm test                      # 260 checks; the Postgres one skips without DATABASE_URL
 
 cp .env.example .env          # set DATABASE_URL
 npm run db:deploy             # apply prisma/migrations
@@ -234,14 +279,14 @@ an authorization URL with a PKCE pair, and answers discovery, JWKS, authorize,
 token, userinfo, logout, revocation, SAML metadata, SAML SSO, the SCIM surface at
 `/scim/v2` and the console at
 `/console` (overview, second-factor enrollment with an authenticator app or a
-security key, provisioning, sign-out). With
+security key, provisioning, policies, directory sync, sign-out). With
 `DATABASE_URL` set, every one of those rows is in Postgres — the spine, the
 evidence chain, the grants and the service providers — and a restart keeps them;
 without it, the same code path runs over in-memory stores. It ships a container
 image and compose stack (see [Containers](#containers) below), but it is **not yet
-a deployment** in the sense that matters: per-role policies and key rotation are
-still to come, so the signing key is read from the environment rather than
-provisioned. Enforced MFA itself is in — a session is refused
+a deployment** in the sense that matters: signing-key provisioning and rotation are
+still to come, so the key is read from the environment rather than provisioned by
+the product itself. Enforced MFA itself is in — a session is refused
 until a code from a confirmed factor (or an assertion from a registered key) has
 been verified, and enrollment is now the identity's own act from the console. The
 signing key is ephemeral unless `SENTINEL_SIGNING_KEY` is set, and WebAuthn needs a
@@ -308,6 +353,69 @@ one, and a person switched off at the desk is switched off here — which ends t
 sessions and revokes the access tokens those sessions minted, exactly as an
 inbound SCIM deprovision does. See
 [ontrak-tix/docs/identity.md](../ontrak-tix/docs/identity.md).
+
+## Reading a directory
+
+The other direction from SCIM: rather than waiting for something to push a roster,
+Sentinel can **read** one. Create a connection at `/console/directory`, naming the
+source (`ENTRA`, `GOOGLE`, `GENERIC`, or `LDAP` if the deployment supplies its own
+reader), the endpoint and credential, how often to read, and — the setting that
+matters — the **conflict policy** for somebody edited in both places.
+
+Nothing is written before the plan is computed. A run reads a page, plans every
+change against what Sentinel holds, and reports exactly what it would do; the dry
+run is the same code path with the writing switched off. Then:
+
+- **`preferDirectory`** lets the directory win, and says so in the run's report — an
+  overwritten local edit is recorded rather than silently lost.
+- **`preferLocal`** keeps the local edit and reports the disagreement, so it is a
+  decision somebody makes instead of a discrepancy nobody sees.
+- **A rename is a move.** Matching is by the directory's own id first and the
+  address second, so somebody who changed their name keeps their sessions, their
+  factors and their history instead of gaining a second account.
+- **A leaver is deactivated, never deleted** — the same path a SCIM
+  `active: false` takes, sessions ended and tokens revoked.
+
+Groups come across as memberships. Being honest about the limit: a group is a
+**recorded fact on the evidence chain** today and decides nothing yet — roles,
+groups and attribute-based policy are the S1 bullet that is still open.
+
+## Seeing what is happening
+
+Sentinel Guard's first slice is the part everything else needs: turning telemetry
+into an alert that names a person.
+
+```bash
+curl -sS -X POST http://127.0.0.1:8787/guard/v1/events \
+  -H "Authorization: Bearer $SENTINEL_GUARD_TOKEN" \
+  -H "X-Sentinel-Organization: demo" \
+  -H 'Content-Type: application/json' \
+  -d '{"source":"FIREWALL","events":[{"kind":"NETWORK","sourceAddress":"203.0.113.9","sourcePort":4444,"destinationPort":3389,"protocol":"tcp","direction":"INBOUND"}]}'
+```
+
+A batch goes in; a report comes out saying how many events were accepted, why any
+were rejected, and which alerts were created or *matched an existing one*. The three
+rules are pure functions over the normalized event, so a rule's test is a list of
+events and the alerts they must produce, and `GET /guard/v1/rules` publishes the
+rulebook (id, version, name, severity) so a sensor platform can be reconciled
+against what is actually running.
+
+Four decisions are worth reading before extending it. **The dedupe key is a bucket,
+not an id** — the same scan seen by two sensors is one alert, and the response says
+which case it was, because "alerted again" and "alerted the same thing" are
+different answers. **An alert links to an identity when it can**: the addresses the
+event names are resolved against live sessions, so the alert carries the person who
+was signed in at the time, the device and the asset — and keeps the label it
+recorded even after sessions end, because a closed alert still has to read. **The
+rule that fired is named with its version**, so an alert is judged by the code that
+ran rather than by whatever the rule says today. And **the ingest surface is not
+mounted at all when no token is configured** — an endpoint that exists only to say
+"configure me" is one somebody eventually finds a way to write to.
+
+Not here yet, and named rather than implied: no streaming listener per protocol (a
+collector posts, it does not yet tail), no triage UI, no detection-coverage map, and
+no rule *editing* — the rulebook is code with a version, and publishing a rule is a
+deploy.
 
 ## Containers
 

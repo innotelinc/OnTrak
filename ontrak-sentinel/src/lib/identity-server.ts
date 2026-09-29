@@ -15,6 +15,9 @@ import { IdentityService, type AuditTrail, type IdentityIds, type IdentityStore 
 import { MfaService, type MfaIds, type MfaStore } from "./mfa-service";
 import { ScimService, type ScimConfig, type ScimIds, type ScimStore, type ScimTokenRevoker } from "./scim-service";
 import { PrismaScimStore, type ScimPrismaClient } from "./scim-store-prisma";
+import { DirectoryService, type DirectoryIds, type DirectoryReader, type DirectoryStore } from "./directory-service";
+import { PrismaDirectoryStore, type DirectoryPrismaClient } from "./directory-store-prisma";
+import type { DirectorySource } from "./directory-rules";
 import {
   PrismaMfaStore,
   PrismaWebAuthnChallengeStore,
@@ -128,6 +131,32 @@ export function createScimServices(
   return { store, service: new ScimService(store, spine, config, audit, tokens, ids) };
 }
 
+/**
+ * The directory stack: reading AD, Entra or Google (S2).
+ *
+ * Handed the *spine* rather than the stores, because every write the sync makes has to go
+ * through the same rules a console write does, and handed SCIM because switching somebody
+ * off is one operation — deactivated, sessions ended, tokens revoked — that should not be
+ * re-implemented here. A source with no reader in `readers` is refused at connection time
+ * rather than at sync time.
+ */
+export interface DirectoryServices {
+  store: DirectoryStore;
+  service: DirectoryService;
+}
+
+export function createDirectoryServices(
+  db: DirectoryPrismaClient,
+  spine: IdentityService,
+  scim: Pick<ScimService, "deprovisionForActor" | "syncGroup"> | null,
+  readers: Partial<Record<DirectorySource, DirectoryReader>>,
+  audit: AuditTrail | null = null,
+  ids?: DirectoryIds,
+): DirectoryServices {
+  const store = new PrismaDirectoryStore(db);
+  return { store, service: new DirectoryService(store, spine, scim, readers, audit, ids) };
+}
+
 let configured: IdentityServices | null = null;
 let configuredMfa: MfaServices | null = null;
 let configuredWebAuthn: WebAuthnServices | null = null;
@@ -206,4 +235,24 @@ export function scimServices(): ScimServices {
     throw new Error("OnTrak Sentinel is not configured: call configureScim(prisma, ...) during startup.");
   }
   return configuredScim;
+}
+
+let configuredDirectories: DirectoryServices | null = null;
+
+/** Bind the process-wide directory stack, once, at server startup. */
+export function configureDirectories(
+  db: DirectoryPrismaClient,
+  spine: IdentityService,
+  scim: Pick<ScimService, "deprovisionForActor" | "syncGroup"> | null,
+  readers: Partial<Record<DirectorySource, DirectoryReader>>,
+  audit: AuditTrail | null = null,
+  ids?: DirectoryIds,
+): DirectoryServices {
+  configuredDirectories = createDirectoryServices(db, spine, scim, readers, audit, ids);
+  return configuredDirectories;
+}
+
+/** The configured directory stack, or `null` when this deployment reads no directories. */
+export function directoryServices(): DirectoryServices | null {
+  return configuredDirectories;
 }

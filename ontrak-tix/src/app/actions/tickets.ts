@@ -14,6 +14,7 @@ import { revalidatePath } from "next/cache";
 
 import { hasPermission, type Actor } from "../../lib/access-rules";
 import { requireActor } from "../../lib/session";
+import { readCustomValues } from "../../lib/form-payload";
 import { ticketServices } from "../../lib/ticket-server";
 import {
   cannedServicesFor,
@@ -105,6 +106,12 @@ export async function createTicketAction(formData: FormData): Promise<void> {
     if (refusal) fail(`${home}/new`, refusal);
   }
 
+  // The desk's own fields (M6), read off the submitted form and validated by the service
+  // against the form the queue actually shows. Passing them always — even an empty set —
+  // is what makes a required field required here as well as at the API: the gate answers
+  // for the portal, the console and the API alike.
+  const customFields = readCustomValues(formData);
+
   const result = await ticketServices().service.createTicket(actor, {
     subject: String(formData.get("subject") ?? ""),
     description: String(formData.get("description") ?? ""),
@@ -113,6 +120,7 @@ export async function createTicketAction(formData: FormData): Promise<void> {
     ...(requesterId ? { requesterId } : {}),
     ...(queueId ? { queueId } : {}),
     ...(clientId ? { clientId } : {}),
+    customFields,
   });
 
   if (!result.ok) fail(`${home}/new`, result.error);

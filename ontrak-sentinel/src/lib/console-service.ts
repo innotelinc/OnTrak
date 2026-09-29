@@ -20,7 +20,14 @@
  */
 
 import type { IdentityActor, IdentityService, ServiceResult } from "./identity-service";
-import { canManageIdentities } from "./identity-rules";
+import {
+  canManageIdentities,
+  DEFAULT_IDENTITY_POLICY,
+  policyForRole,
+  toIdentityPolicy,
+  type IdentityPolicy,
+  type IdentityRole,
+} from "./identity-rules";
 import type { MfaService, MfaStatus } from "./mfa-service";
 import type { OidcStore } from "./oidc-service";
 import type { ScimService } from "./scim-service";
@@ -29,12 +36,19 @@ import type { WebAuthnRegistrationOptions, WebAuthnService } from "./webauthn-se
 import type {
   ConsoleSignInView,
   ConsoleActor,
+  ConsoleConnectionView,
+  ConsoleDirectoryView,
   ConsoleFactorView,
   ConsoleMfaView,
   ConsoleOverviewView,
+  ConsolePoliciesView,
+  ConsolePolicyView,
   ConsoleProvisioningView,
   ConsoleSessionView,
+  ConsoleSyncReportView,
 } from "./console-rules";
+import { policyScopeTitle, policyScopes } from "./console-rules";
+import type { DirectoryService } from "./directory-service";
 import type { ConsoleEndpoints } from "./console-http";
 import type { AuditEvent } from "./audit-chain";
 import type { SignInService } from "./sign-in-service";
@@ -86,6 +100,11 @@ export class ConsoleService implements ConsoleEndpoints {
      * several: an email address is unique within an organization, not across them.
      */
     private readonly signInOrganization: string | null = null,
+    /**
+     * Reading a directory (S2). Absent in a deployment that has no reader configured, in
+     * which case the page says so rather than offering a form that cannot work.
+     */
+    private readonly directories: DirectoryService | null = null,
   ) {}
 
   /* ------------------------------------------------------------ sign in */
@@ -168,6 +187,185 @@ export class ConsoleService implements ConsoleEndpoints {
     const status = await this.mfa.status(context.value.actor, context.value.identityId);
     if (!status.ok) return status;
     return { ok: true, value: await this.view(context.value, status.value, null) };
+  }
+
+  /* ------------------------------------------------------------- directories */
+
+  async directory(sessionId: string): Promise<ServiceResult<ConsoleDirectoryView>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.directories) return { ok: false, error: "This deployment reads no directories." };
+
+    const [connections, runs, session] = await Promise.all([
+      this.directories.connections(context.value.actor),
+      this.directories.runs(context.value.actor),
+      this.spine.resolveOwnSession(context.value.sessionId),
+    ]);
+    if (!connections.ok) return connections;
+    if (!runs.ok) return runs;
+    if (!session.ok) return session;
+
+    const views: ConsoleConnectionView[] = connections.value.map((connection) => ({
+      id: connection.id,
+      name: connection.name,
+      source: connection.source,
+      url: connection.settings["url"] ?? "",
+      conflictPolicy: connection.conflictPolicy,
+      defaultRole: connection.defaultRole,
+      hasSecret: connection.hasSecret,
+      lastSyncedAt: connection.lastSyncedAt,
+    }));
+
+    return {
+      ok: true,
+      value: {
+        actor: consoleActor(await this.organizationName(context.value), session.value.identity),
+        session: sessionView(session.value.session),
+        connections: views,
+        sources: this.directories.sources(),
+        runs: runs.value.slice(0, 10).map((run) => ({
+          connectionId: run.connectionId,
+          startedAt: run.startedAt,
+          status: run.status,
+          detail: run.detail,
+        })),
+      },
+    };
+  }
+
+  async connectDirectory(
+    sessionId: string,
+    input: {
+      name: string;
+      source: string;
+      settings: Record<string, string>;
+      conflictPolicy: string;
+      defaultRole: string;
+      secret: string | null;
+    },
+  ): Promise<ServiceResult<{ name: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.directories) return { ok: false, error: "This deployment reads no directories." };
+
+    const created = await this.directories.createConnection(context.value.actor, input);
+    return created.ok ? { ok: true, value: { name: created.value.name } } : created;
+  }
+
+  async removeDirectory(sessionId: string, connectionId: string): Promise<ServiceResult<{ name: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.directories) return { ok: false, error: "This deployment reads no directories." };
+
+    const listed = await this.directories.connections(context.value.actor);
+    const name = listed.ok ? (listed.value.find((entry) => entry.id === connectionId)?.name ?? "that connection") : "that connection";
+    const removed = await this.directories.removeConnection(context.value.actor, connectionId);
+    return removed.ok ? { ok: true, value: { name } } : removed;
+  }
+
+  async syncDirectory(sessionId: string, connectionId: string, dryRun: boolean): Promise<ServiceResult<ConsoleSyncReportView>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.directories) return { ok: false, error: "This deployment reads no directories." };
+
+    const listed = await this.directories.connections(context.value.actor);
+    const connection = listed.ok ? listed.value.find((entry) => entry.id === connectionId) : null;
+
+    const result = await this.directories.sync(context.value.actor, connectionId, { dryRun });
+    if (!result.ok) return result;
+
+    return {
+      ok: true,
+      value: {
+        connectionName: connection?.name ?? "this connection",
+        dryRun: result.value.dryRun,
+        detail: result.value.detail ?? "",
+        changes: result.value.plan.changes.map((change) => ({ action: change.action, detail: change.detail })),
+        skipped: result.value.plan.skipped,
+      },
+    };
+  }
+
+  /* --------------------------------------------------------------- policies */
+
+  /**
+   * The policy page: every scope, what is stored for it, and what it resolves to.
+   *
+   * The resolved number is computed through the *same* `policyForRole` a sign-in uses,
+   * so the page cannot describe a policy the login path does not apply — the mistake
+   * that would make this screen worse than no screen at all. The identity count is
+   * read from the directory, because "who does this govern?" is the question somebody
+   * has immediately before they change it.
+   */
+  async policies(sessionId: string): Promise<ServiceResult<ConsolePoliciesView>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+
+    const [stored, identities, session] = await Promise.all([
+      this.spine.policies(context.value.actor),
+      this.spine.listIdentities(context.value.actor),
+      this.spine.resolveOwnSession(context.value.sessionId),
+    ]);
+    if (!stored.ok) return stored;
+    if (!identities.ok) return identities;
+    if (!session.ok) return session;
+
+    const baseline = stored.value.find((row) => row.scope === "ALL") ?? null;
+    const byScope = new Map(stored.value.map((row) => [row.scope, row]));
+    const effectiveFor = (scope: string): IdentityPolicy =>
+      scope === "ALL"
+        ? baseline
+          ? toIdentityPolicy(baseline)
+          : DEFAULT_IDENTITY_POLICY
+        : policyForRole(stored.value, scope as IdentityRole);
+
+    const policies: ConsolePolicyView[] = policyScopes().map((scope) => {
+      const row = byScope.get(scope) ?? null;
+      const effective = effectiveFor(scope);
+      return {
+        scope,
+        title: policyScopeTitle(scope),
+        stored: row
+          ? {
+              requireMfa: row.requireMfa,
+              maxSessionSeconds: row.maxSessionSeconds,
+              idleTimeoutSeconds: row.idleTimeoutSeconds,
+              updatedAt: row.updatedAt,
+            }
+          : null,
+        effective,
+        identities:
+          scope === "ALL"
+            ? identities.value.length
+            : identities.value.filter((identity) => identity.role === scope).length,
+      };
+    });
+
+    return {
+      ok: true,
+      value: {
+        actor: consoleActor(await this.organizationName(context.value), session.value.identity),
+        session: sessionView(session.value.session),
+        policies,
+      },
+    };
+  }
+
+  /** Write one scope's policy. The spine owns the permission and the validation. */
+  async setPolicy(
+    sessionId: string,
+    input: { scope: string; requireMfa: boolean; maxSessionSeconds: number; idleTimeoutSeconds: number },
+  ): Promise<ServiceResult<{ scope: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+
+    const written = await this.spine.setPolicy(context.value.actor, input.scope, {
+      requireMfa: input.requireMfa,
+      maxSessionSeconds: input.maxSessionSeconds,
+      idleTimeoutSeconds: input.idleTimeoutSeconds,
+    });
+    if (!written.ok) return written;
+    return { ok: true, value: { scope: written.value.scope } };
   }
 
   /* ----------------------------------------------------------- provisioning */
@@ -388,6 +586,12 @@ export class ConsoleService implements ConsoleEndpoints {
         scimBase: this.scim.baseUrl(),
       },
     };
+  }
+
+  /** The organization's display name, for the header every console page carries. */
+  private async organizationName(context: ConsoleContext): Promise<{ name: string; slug: string }> {
+    const organization = await this.spine.organization(context.actor);
+    return organization.ok ? organization.value : { name: context.actor.organizationId, slug: "" };
   }
 
   /** Assemble the page's data, including the credential ids a key needs to be removed. */

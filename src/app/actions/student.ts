@@ -15,9 +15,11 @@ import {
   toDefinition,
 } from "@/lib/scenarios";
 import { evaluateScenario, loadAvailabilityContext } from "@/lib/availability";
+import { disposeSession, runSandboxCommand } from "@/lib/sim/sandbox";
 import { recordAudit } from "@/lib/audit";
 import { certificatePatchFor, readStoredCertificate } from "@/lib/certificates";
 import type { Prisma } from "@prisma/client";
+import type { SandboxCommandResponse } from "@/lib/sim/drivers/proxy";
 import type { EngineState } from "@/lib/sim/types";
 
 function fail(path: string, message: string): never {
@@ -137,6 +139,42 @@ export async function autosaveAttempt(input: {
 }
 
 /**
+ * Run one console line in a sandboxed attempt's own sandbox (v1.2).
+ *
+ * The authorisation is the same check every other action makes — the attempt must be the
+ * caller's and still running — and the work itself belongs to `sim/sandbox.ts`, which owns
+ * the container. A refusal is not an error the student sees as a failure: the console falls
+ * back to the simulated engine for the rest of the attempt and says so, which is why this
+ * returns a reason rather than throwing.
+ */
+export async function sandboxCommand(input: {
+  attemptId: string;
+  input: string;
+  state: EngineState;
+}): Promise<SandboxCommandResponse> {
+  const user = await requireSession();
+  const attempt = await prisma.attempt.findUnique({
+    where: { id: input.attemptId },
+    include: { scenario: { select: { definition: true } } },
+  });
+
+  if (!attempt || (attempt.userId !== user.id && user.role === "STUDENT")) {
+    return { ok: false, error: "That attempt is not yours." };
+  }
+  if (attempt.status !== "IN_PROGRESS") {
+    return { ok: false, error: "This attempt has already been submitted." };
+  }
+
+  const definition = toDefinition(attempt.scenario);
+  const state = coerceSubmittedState(input.state, definition);
+  const outcome = runSandboxCommand(attempt.id, definition, input.input, state);
+
+  return outcome.ok
+    ? { ok: true, result: outcome.result, state: outcome.state }
+    : { ok: false, error: outcome.error };
+}
+
+/**
  * Grade and close an attempt.
  *
  * Grading always runs server-side against the submitted snapshot, so a student
@@ -219,6 +257,9 @@ export async function submitAttempt(formData: FormData): Promise<void> {
     });
   }
 
+  // The sandbox has done its job; leaving the container running would be a leak per attempt.
+  disposeSession(attemptId);
+
   revalidatePath("/student/results");
   redirect(`/student/results/${attemptId}`);
 }
@@ -232,6 +273,7 @@ export async function abandonAttempt(formData: FormData): Promise<void> {
   if (attempt.status !== "IN_PROGRESS") redirect(`/student/results/${attemptId}`);
 
   await prisma.attempt.update({ where: { id: attemptId }, data: { status: "ABANDONED", submittedAt: new Date() } });
+  disposeSession(attemptId);
   revalidatePath("/student");
   redirect("/student?flash=Attempt+discarded");
 }
@@ -248,6 +290,9 @@ export async function restartAttempt(formData: FormData): Promise<void> {
   if (attempt.status !== "IN_PROGRESS") fail(`/student/results/${attemptId}`, "That attempt is already finished.");
 
   const fresh = createInitialState(toDefinition(attempt.scenario));
+  // Restarting means the sandbox must be rebuilt too, or the student would open a machine
+  // whose filesystem still had their first attempt's work in it.
+  disposeSession(attemptId);
   await prisma.attempt.update({
     where: { id: attemptId },
     data: { snapshot: fresh as unknown as Prisma.InputJsonValue, hintsUsed: [] },

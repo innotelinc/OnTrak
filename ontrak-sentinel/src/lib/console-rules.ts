@@ -27,6 +27,7 @@
  */
 
 import { mfaKindLabel, type MfaFactorSummary } from "./mfa-rules";
+import { POLICY_SCOPES, type PolicyScope } from "./identity-rules";
 
 /* -------------------------------------------------------------------------- */
 /*  Paths                                                                     */
@@ -45,6 +46,11 @@ export const CONSOLE_PATHS = {
    * put behind a VPN without catching the OIDC endpoints too).
    */
   signIn: "/console/sign-in",
+  policies: "/console/policies",
+  directory: "/console/directory",
+  directoryConnect: "/console/directory/connection",
+  directoryRemove: "/console/directory/connection/remove",
+  directorySync: "/console/directory/sync",
   provisioning: "/console/provisioning",
   mintToken: "/console/provisioning/token",
   revokeToken: "/console/provisioning/token/revoke",
@@ -179,6 +185,81 @@ export interface ConsoleGroupView {
   memberCount: number;
 }
 
+/**
+ * The policies page (S1).
+ *
+ * S0 had one policy per organization and no screen for it, which meant the number a
+ * sign-in was actually judged by existed only in the database. This is the view that
+ * shows it — per scope, with the identity count it governs — because "who does this
+ * apply to?" is the question an administrator has before they change it.
+ */
+export interface ConsolePolicyView {
+  scope: PolicyScope;
+  /** What the scope is called to a person: “Baseline” or the role name. */
+  title: string;
+  /** The stored row, or `null` when this scope has never been written. */
+  stored: {
+    requireMfa: boolean;
+    maxSessionSeconds: number;
+    idleTimeoutSeconds: number;
+    updatedAt: string;
+  } | null;
+  /** What an identity here is *actually* judged by: the role row, else the baseline. */
+  effective: { requireMfa: boolean; maxSessionSeconds: number; idleTimeoutSeconds: number };
+  /** How many identities this scope governs today. */
+  identities: number;
+}
+
+/**
+ * The directory page (S2): the sources Sentinel reads, and what the last runs did.
+ *
+ * Separate from the provisioning page on purpose. Provisioning is a *credential* the
+ * customer's connector uses to push at us; this is a connection *we* hold to pull from
+ * them. They are different trust directions, and the page that says "who may write to
+ * us" should not be the page that holds a client secret.
+ */
+export interface ConsoleConnectionView {
+  id: string;
+  name: string;
+  source: string;
+  url: string;
+  conflictPolicy: string;
+  defaultRole: string;
+  hasSecret: boolean;
+  lastSyncedAt: string | null;
+}
+
+export interface ConsoleDirectoryRunView {
+  connectionId: string;
+  startedAt: string;
+  status: string;
+  detail: string | null;
+}
+
+export interface ConsoleDirectoryView {
+  actor: ConsoleActor;
+  session: ConsoleSessionView;
+  connections: ConsoleConnectionView[];
+  /** The sources this deployment can actually read, so the form offers only those. */
+  sources: string[];
+  runs: ConsoleDirectoryRunView[];
+}
+
+/** What a preview or a completed sync is shown as. */
+export interface ConsoleSyncReportView {
+  connectionName: string;
+  dryRun: boolean;
+  detail: string;
+  changes: { action: string; detail: string }[];
+  skipped: string[];
+}
+
+export interface ConsolePoliciesView {
+  actor: ConsoleActor;
+  session: ConsoleSessionView;
+  policies: ConsolePolicyView[];
+}
+
 export interface ConsoleOverviewView {
   actor: ConsoleActor;
   session: ConsoleSessionView;
@@ -274,6 +355,8 @@ export function consolePage(input: ConsolePageInput): string {
   const nav = input.actor
     ? `<nav class="muted"><a href="${CONSOLE_PATHS.home}">Overview</a>` +
       `<a href="${CONSOLE_PATHS.mfa}">Second factor</a>` +
+      `<a href="${CONSOLE_PATHS.policies}">Policies</a>` +
+      `<a href="${CONSOLE_PATHS.directory}">Directories</a>` +
       `<a href="${CONSOLE_PATHS.provisioning}">Provisioning</a>` +
       `</nav>`
     : `<nav class="muted"><a href="${CONSOLE_PATHS.signIn}">Sign in</a></nav>`;
@@ -492,6 +575,176 @@ export function renderOverview(view: ConsoleOverviewView): string {
       : `<p class="muted">Nothing has been recorded yet.</p>`);
 
   return consolePage({ title: "Console", actor: view.actor, body });
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Policies                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/** Seconds as somebody would say them out loud, for the prose beside a form. */
+export function humanSeconds(seconds: number): string {
+  if (seconds % 86400 === 0) return `${seconds / 86400} day${seconds === 86400 ? "" : "s"}`;
+  if (seconds % 3600 === 0) return `${seconds / 3600} hour${seconds === 3600 ? "" : "s"}`;
+  if (seconds % 60 === 0) return `${seconds / 60} minute${seconds === 60 ? "" : "s"}`;
+  return `${seconds} seconds`;
+}
+
+export function policyScopeTitle(scope: PolicyScope): string {
+  return scope === "ALL" ? "Baseline — everybody" : `${scope.charAt(0)}${scope.slice(1).toLowerCase()}s`;
+}
+
+/**
+ * One card per scope: what is stored, what it resolves to, and the form that changes
+ * it. Rendered rather than redirected-to-edit so the whole set of controls is visible
+ * at once — a policy page that hid the others would make it easy to tighten one role
+ * while forgetting the baseline underneath it.
+ */
+export function renderPolicies(view: ConsolePoliciesView, flash?: string | null, error?: string | null): string {
+  const cards = view.policies
+    .map((policy) => {
+      const row = policy.stored;
+      const shown = row ?? policy.effective;
+      const state = row
+        ? `<p class="flash">Stored here.</p>`
+        : `<p class="muted">Not set: this scope inherits the baseline (or the built-in default).</p>`;
+      const effectiveNote =
+        policy.scope !== "ALL" && !row
+          ? `<p class="muted">Effective now: ${policy.effective.requireMfa ? "a second factor is required" : "no second factor"}, ` +
+            `session ${escapeHtml(humanSeconds(policy.effective.maxSessionSeconds))}, idle ${escapeHtml(humanSeconds(policy.effective.idleTimeoutSeconds))}.</p>`
+          : "";
+
+      return (
+        `<div class="card">` +
+        `<h3>${escapeHtml(policy.title)}</h3>` +
+        `<p class="muted">Governs ${escapeHtml(policy.identities)} identit${policy.identities === 1 ? "y" : "ies"} today.</p>` +
+        state +
+        effectiveNote +
+        `<form method="post" action="${CONSOLE_PATHS.policies}">` +
+        `<input type="hidden" name="scope" value="${escapeHtml(policy.scope)}">` +
+        `<p><label class="muted"><input type="checkbox" name="requireMfa" value="on"${shown.requireMfa ? " checked" : ""}> Require a second factor</label></p>` +
+        `<p><label class="muted" for="max-${escapeHtml(policy.scope)}">Session lifetime, seconds</label> ` +
+        `<input id="max-${escapeHtml(policy.scope)}" name="maxSessionSeconds" inputmode="numeric" value="${escapeHtml(shown.maxSessionSeconds)}"></p>` +
+        `<p><label class="muted" for="idle-${escapeHtml(policy.scope)}">Idle timeout, seconds</label> ` +
+        `<input id="idle-${escapeHtml(policy.scope)}" name="idleTimeoutSeconds" inputmode="numeric" value="${escapeHtml(shown.idleTimeoutSeconds)}"></p>` +
+        `<button type="submit">Save ${escapeHtml(policy.title)}</button>` +
+        (row ? `<p class="muted">Last changed ${escapeHtml(row.updatedAt)}.</p>` : "") +
+        `</form></div>`
+      );
+    })
+    .join("");
+
+  const body =
+    `<h2>Session policies</h2>` +
+    `<p class="muted">A policy decides who may hold a session at all (whether a second factor is required) and how long that ` +
+    `session may live. The <strong>baseline</strong> applies to everyone; a role card overrides it for that role only. ` +
+    `A policy is asked when a session is granted <em>and</em> every time one is read, so tightening one takes effect on the ` +
+    `next check — including on sessions that already exist. To cut somebody off right now, end their sessions as well.</p>` +
+    cards +
+    `<p class="muted">Every change is recorded on the organization's evidence chain as <code>policy.update</code>.</p>`;
+
+  return consolePage({ title: "Policies", actor: view.actor, body, flash, error });
+}
+
+/** The scope list the page iterates, so the order is one thing rather than three. */
+export function policyScopes(): readonly PolicyScope[] {
+  return POLICY_SCOPES;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Directories                                                               */
+/* -------------------------------------------------------------------------- */
+
+function optionList(values: readonly string[], selected: string): string {
+  return values
+    .map((value) => `<option value="${escapeHtml(value)}"${value === selected ? " selected" : ""}>${escapeHtml(value)}</option>`)
+    .join("");
+}
+
+export function renderDirectory(
+  view: ConsoleDirectoryView,
+  report: ConsoleSyncReportView | null,
+  flash?: string | null,
+  error?: string | null,
+): string {
+  const rows = view.connections.length
+    ? `<table><thead><tr><th>Name</th><th>Source</th><th>Conflicts</th><th>Last sync</th><th></th></tr></thead><tbody>${view.connections
+        .map(
+          (connection) =>
+            `<tr><td>${escapeHtml(connection.name)}</td><td class="muted">${escapeHtml(connection.source)}</td>` +
+            `<td class="muted">${escapeHtml(connection.conflictPolicy)}</td>` +
+            `<td class="muted">${connection.lastSyncedAt ? escapeHtml(connection.lastSyncedAt) : "never"}</td>` +
+            `<td>` +
+            `<form method="post" action="${CONSOLE_PATHS.directorySync}" style="display:inline">` +
+            `<input type="hidden" name="connectionId" value="${escapeHtml(connection.id)}">` +
+            `<input type="hidden" name="dryRun" value="1">` +
+            `<button type="submit">Preview</button></form> ` +
+            `<form method="post" action="${CONSOLE_PATHS.directorySync}" style="display:inline">` +
+            `<input type="hidden" name="connectionId" value="${escapeHtml(connection.id)}">` +
+            `<button type="submit">Sync now</button></form> ` +
+            `<form method="post" action="${CONSOLE_PATHS.directoryRemove}" style="display:inline">` +
+            `<input type="hidden" name="connectionId" value="${escapeHtml(connection.id)}">` +
+            `<button type="submit">Remove</button></form>` +
+            `</td></tr>`,
+        )
+        .join("")}</tbody></table>`
+    : `<p class="muted">No directory is connected. Sentinel can be pushed to over SCIM, or read one itself below.</p>`;
+
+  const runRows = view.runs.length
+    ? `<table><thead><tr><th>When</th><th>Status</th><th>What happened</th></tr></thead><tbody>${view.runs
+        .map(
+          (run) =>
+            `<tr><td class="muted">${escapeHtml(run.startedAt)}</td>` +
+            `<td class="${run.status === "COMPLETED" ? "muted" : "error"}">${escapeHtml(run.status)}</td>` +
+            `<td class="muted">${escapeHtml(run.detail ?? "")}</td></tr>`,
+        )
+        .join("")}</tbody></table>`
+    : `<p class="muted">Nothing has been synced yet.</p>`;
+
+  const reportCard = report
+    ? `<div class="card"><h3>${report.dryRun ? "Preview — nothing was written" : "Sync finished"}</h3>` +
+      `<p>${escapeHtml(report.connectionName)}: ${escapeHtml(report.detail)}</p>` +
+      (report.changes.length
+        ? `<table><thead><tr><th>Action</th><th>Detail</th></tr></thead><tbody>${report.changes
+            .slice(0, 60)
+            .map((change) => `<tr><td>${escapeHtml(change.action)}</td><td class="muted">${escapeHtml(change.detail)}</td></tr>`)
+            .join("")}</tbody></table>`
+        : `<p class="muted">Nothing to do: the directory and this organization already agree.</p>`) +
+      (report.skipped.length
+        ? `<h3>Skipped</h3><ul>${report.skipped.map((entry) => `<li class="muted">${escapeHtml(entry)}</li>`).join("")}</ul>`
+        : "") +
+      `</div>`
+    : "";
+
+  const form =
+    view.sources.length > 0
+      ? `<h2>Read a directory</h2>` +
+        `<div class="card"><form method="post" action="${CONSOLE_PATHS.directoryConnect}">` +
+        `<p><label class="muted" for="name">Name it</label> <input id="name" name="name" placeholder="Entra ID — production" required></p>` +
+        `<p><label class="muted" for="source">Kind</label> <select id="source" name="source">${optionList(view.sources, view.sources[0])}</select></p>` +
+        `<p><label class="muted" for="url">Users URL</label> <input id="url" name="url" placeholder="https://graph.microsoft.com/v1.0/users" required></p>` +
+        `<p><label class="muted" for="nextKey">Next-page key</label> <input id="nextKey" name="nextKey" placeholder="@odata.nextLink"></p>` +
+        `<p><label class="muted" for="auth">Credential</label> <select id="auth" name="auth">${optionList(["bearer", "clientCredentials", "none"], "bearer")}</select></p>` +
+        `<p><label class="muted" for="clientId">Client id (client-credentials only)</label> <input id="clientId" name="clientId"></p>` +
+        `<p><label class="muted" for="tokenUrl">Token URL (client-credentials only)</label> <input id="tokenUrl" name="tokenUrl"></p>` +
+        `<p><label class="muted" for="scope">Scope (client-credentials only)</label> <input id="scope" name="scope" placeholder="https://graph.microsoft.com/.default"></p>` +
+        `<p><label class="muted" for="secret">Secret</label> <input id="secret" name="secret" type="password" autocomplete="off"></p>` +
+        `<p><label class="muted" for="conflictPolicy">When the two disagree</label> <select id="conflictPolicy" name="conflictPolicy">${optionList(["preferDirectory", "preferLocal"], "preferDirectory")}</select></p>` +
+        `<p><label class="muted" for="defaultRole">Role for a new person</label> <select id="defaultRole" name="defaultRole">${optionList(["AGENT", "AUDITOR", "ADMIN"], "AGENT")}</select></p>` +
+        `<button type="submit">Connect</button>` +
+        `<p class="muted">The secret is stored so the reader can call the directory, and it is never shown again. ` +
+        `A deployment that cares encrypts that column at rest.</p></form></div>`
+      : `<h2>Read a directory</h2><p class="muted">This deployment has no directory reader configured, so there is ` +
+        `nothing to connect to. A connector can still push people in over SCIM.</p>`;
+
+  const body =
+    form +
+    `<h2>Connections</h2><div class="card">${rows}</div>` +
+    reportCard +
+    `<h2>Recent runs</h2><div class="card">${runRows}</div>` +
+    `<p class="muted">A sync only ever switches somebody off when the directory says they are inactive by name; ` +
+    `a person who disappears from the answer is left alone, because a partial answer is how a sync offboards a company.</p>`;
+
+  return consolePage({ title: "Directories", actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */

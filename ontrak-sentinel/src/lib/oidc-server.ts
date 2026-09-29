@@ -26,6 +26,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { HashFn } from "./audit-chain";
 import type { AuditTrail, IdentityService, IdentityStore } from "./identity-service";
 import { routeConsole, type ConsoleEndpoints } from "./console-http";
+import { routeGuard, type GuardEndpoints } from "./guard-http";
 import type { HttpRequest, HttpResponse, OidcEndpoints } from "./oidc-http";
 import { routeOidc } from "./oidc-http";
 import { OidcService, type OidcConfig, type OidcIds, type OidcStore } from "./oidc-service";
@@ -104,6 +105,8 @@ export interface ServerSurfaces {
   saml?: SamlEndpoints | null;
   console?: ConsoleEndpoints | null;
   scim?: ScimEndpoints | null;
+  /** Telemetry ingest (S3). Absent unless the deployment issued an ingest token. */
+  guard?: GuardEndpoints | null;
   /**
    * Bytes served verbatim, keyed by path: the shared theme.
    *
@@ -175,13 +178,15 @@ export function createOidcServer(service: OidcEndpoints, surfaces: ServerSurface
           return;
         }
         let result = await routeOidc(httpRequest, service);
-        // Four routers share one listener, and no router claims a path another serves.
+        // Five routers share one listener, and no router claims a path another serves.
         // A `404` is therefore the signal to ask the next one, rather than a decision
-        // this adapter makes four times. The console is last because it is the only one
-        // whose paths a deployment might want to move.
+        // this adapter makes five times. The console comes before Guard because the
+        // console is the only one whose paths a deployment might want to move, and Guard
+        // is the only one a deployment can switch off entirely (no token, no ingest).
         if (result.status === 404 && surfaces.saml) result = await routeSaml(httpRequest, surfaces.saml);
         if (result.status === 404 && surfaces.scim) result = await routeScim(httpRequest, surfaces.scim);
         if (result.status === 404 && surfaces.console) result = await routeConsole(httpRequest, surfaces.console);
+        if (result.status === 404 && surfaces.guard) result = await routeGuard(httpRequest, surfaces.guard);
         sendResponse(response, result);
       } catch (error) {
         const tooLarge = error instanceof Error && /body too large/.test(error.message);
@@ -267,6 +272,7 @@ export function startOidcServer(
     console: options.console,
     scim: options.scim,
     assets: options.assets,
+    guard: options.guard,
   });
   const port = options.port ?? 8787;
   const host = options.host ?? "127.0.0.1";

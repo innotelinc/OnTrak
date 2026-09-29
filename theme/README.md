@@ -10,11 +10,29 @@ Unity is not a component library. It is a vocabulary of **semantic tokens** plus
 handful of shared primitives, and a switch for the two axes a person actually
 cares about.
 
-- **Three schemes** — the palette family. A product picks one; the person can
-  override it and the choice is remembered per browser.
-- **Two modes** — `light` and `dark`, plus `system` to follow the machine.
-- **One vocabulary** — `--surface`, `--ink-faint`, `--attention`. Never a raw
-  colour, never a token that names a hue.
+## The two axes
+
+Unity deliberately separates *how bright* from *what kind of work this is*, because
+they are different questions asked by different people at different times.
+
+| Axis | Attribute | Values | Absent means |
+| --- | --- | --- | --- |
+| **Mode** | `data-mode` on `<html>` | `light` · `dark` · *(absent)* | follow the machine |
+| **Scheme** | `data-scheme` on `<html>` | `desk` · `operations` · `soc` · *(absent)* | the product's default |
+
+**Mode** is the personal, per-browser preference: light, dark, or no preference at
+all (absent), in which case `prefers-color-scheme` decides. It is stored because a
+person who prefers dark on the machine in front of them prefers dark there — as an
+administrator and as a student at a shared bench alike. It is deliberately not an
+account setting.
+
+**Scheme** is the professional register: `desk` is the service-desk voice (calm,
+warm, human) and `operations` is the network-operations voice (denser, cooler, more
+instrumented). A product declares which one it opens in; a person may switch. Every
+product ships all of them, which is what makes the family look like one family when
+the desk and the provider are on screen side by side.
+
+The two combine freely: six rendered states, from `light + desk` to `dark + soc`.
 
 | scheme | family | who wears it |
 | --- | --- | --- |
@@ -45,8 +63,8 @@ cp theme/unity-theme.js  myapp/public/unity-theme.js
 cp theme/unity-theme.tsx myapp/src/components/ThemeToggle.tsx
 ```
 
-```tsx
-// 2. the app's own stylesheet imports the palette, and imports nothing visual itself
+```css
+/* 2. the app's own stylesheet imports the palette, and imports nothing visual itself */
 @import "../theme/unity-theme.css";
 ```
 
@@ -67,6 +85,7 @@ Then add the app to `APPS` and `TOGGLES` in `tests/test_theme_copies.py`, and ru
 
 ```bash
 make theme          # or: python3 theme/tests/test_theme_copies.py
+npm run theme:verify    # the same check, for a checkout that only has npm to hand
 ```
 
 The guard skips a product that has not been converted yet, and enforces everything
@@ -149,3 +168,13 @@ Adding a **scheme** means three things: the token blocks in `unity-theme.css`
 `normaliseScheme`, and `unity-theme.tsx`'s `SCHEMES` list. `soc` was added for
 Sentinel and is the worked example — a grep for it finds every place a scheme has to
 be declared.
+
+## Where the canonical copy lives
+
+This directory is OnTrak's vendored copy of the estate theme. The standard itself —
+the same stylesheet and switch, the landing-page transformer, and the adoption guide
+— lives in the platform stack at
+[`standards/unity/`](https://github.com/innotelinc/innotel-platform-stack/tree/main/standards/unity),
+which is what the badges on every repository point at. A change here that is worth
+keeping should go there too, so the next project starts from it rather than from a
+copy of a copy.

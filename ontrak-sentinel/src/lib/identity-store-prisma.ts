@@ -37,6 +37,8 @@ import type {
   IdentityRecord,
   IdentityRole,
   OrganizationRecord,
+  PolicyRecord,
+  PolicyScope,
   SessionRecord,
 } from "./identity-rules";
 import { sha256Hex } from "./hash";
@@ -83,6 +85,21 @@ export interface SessionRow {
   revokedAt: Date | null;
   userAgent: string | null;
   ipAddress: string | null;
+}
+
+/**
+ * An `IdentityPolicy` row: the organization's `ALL` baseline, or one role's
+ * override. `scope` is a string column rather than an enum so adding a role later
+ * is a value rather than a migration — the same reasoning the SCIM projection uses
+ * when it names every field it emits.
+ */
+export interface PolicyRow {
+  organizationId: string;
+  scope: string;
+  requireMfa: boolean;
+  maxSessionSec: number;
+  idleTimeoutSec: number;
+  updatedAt: Date;
 }
 
 /** An `AuditEvent` row. `seq` is the position inside one organization's chain. */
@@ -159,6 +176,42 @@ export function toSessionRecord(row: SessionRow): SessionRecord {
     revokedAt: toMsOrNull(row.revokedAt),
     userAgent: row.userAgent,
     ipAddress: row.ipAddress,
+  };
+}
+
+export function toPolicyRecord(row: PolicyRow): PolicyRecord {
+  return {
+    organizationId: row.organizationId,
+    scope: row.scope as PolicyScope,
+    requireMfa: row.requireMfa,
+    maxSessionSeconds: row.maxSessionSec,
+    idleTimeoutSeconds: row.idleTimeoutSec,
+    updatedAt: toIso(row.updatedAt),
+  };
+}
+
+/**
+ * The row an upsert writes. It names the composite key explicitly, because Prisma's
+ * `upsert` cannot infer a unique target from a non-`@id` pair on its own — and the
+ * pair *is* the identity of this row: one policy per organization per scope.
+ */
+export function toPolicyUpsert(record: PolicyRecord) {
+  return {
+    where: { organizationId_scope: { organizationId: record.organizationId, scope: record.scope } },
+    create: {
+      organizationId: record.organizationId,
+      scope: record.scope,
+      requireMfa: record.requireMfa,
+      maxSessionSec: record.maxSessionSeconds,
+      idleTimeoutSec: record.idleTimeoutSeconds,
+      updatedAt: new Date(record.updatedAt),
+    },
+    update: {
+      requireMfa: record.requireMfa,
+      maxSessionSec: record.maxSessionSeconds,
+      idleTimeoutSec: record.idleTimeoutSeconds,
+      updatedAt: new Date(record.updatedAt),
+    },
   };
 }
 
@@ -293,6 +346,10 @@ export interface IdentityPrismaClient {
     create(args: { data: unknown }): Promise<unknown>;
     update(args: { where: unknown; data: unknown }): Promise<unknown>;
   };
+  identityPolicy: {
+    findMany(args: unknown): Promise<PolicyRow[]>;
+    upsert(args: { where: unknown; create: unknown; update: unknown }): Promise<unknown>;
+  };
   auditEvent: {
     findMany(args: unknown): Promise<AuditEventRow[]>;
     create(args: { data: unknown }): Promise<unknown>;
@@ -358,6 +415,18 @@ export class PrismaIdentityStore implements IdentityStore {
 
   async updateIdentity(record: IdentityRecord): Promise<void> {
     await this.db.identity.update({ where: { id: record.id }, data: toIdentityUpdate(record) });
+  }
+
+  async listPolicies(organizationId: string): Promise<PolicyRecord[]> {
+    const rows = await this.db.identityPolicy.findMany({
+      where: { organizationId },
+      orderBy: { scope: "asc" },
+    });
+    return rows.map(toPolicyRecord);
+  }
+
+  async upsertPolicy(record: PolicyRecord): Promise<void> {
+    await this.db.identityPolicy.upsert(toPolicyUpsert(record));
   }
 
   async listSessions(organizationId: string, identityId?: string): Promise<SessionRecord[]> {

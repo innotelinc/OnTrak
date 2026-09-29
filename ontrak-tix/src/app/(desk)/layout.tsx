@@ -85,6 +85,7 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
                 title: "Administration",
                 items: [
                   { href: "/admin/identity", label: "Identity" },
+                  { href: "/admin/forms", label: "Fields" },
                   { href: "/admin/integrations", label: "Integrations" },
                 ],
               },
