@@ -74,15 +74,8 @@ def _remote(host: Host, container: str | None, argv: list[str], settings: Settin
     return incus_exec(host, container, argv, timeout)
 
 
-def _docker(host: Host, container: str, args: list[str], settings: Settings,
-            timeout: int | None = None) -> Result:
-    """A docker command, on the generic clock unless the caller names another.
-
-    Only the pull needs one: a probe answers in seconds or not at all, while an
-    image download is bounded by the uplink (see `Settings.pull_timeout`).
-    """
-    return docker_in_container(host, container, args,
-                               settings.command_timeout if timeout is None else timeout)
+def _docker(host: Host, container: str, args: list[str], settings: Settings) -> Result:
+    return docker_in_container(host, container, args, settings.command_timeout)
 
 
 # ── apt ──────────────────────────────────────────────────────────────────────
@@ -143,117 +136,6 @@ def _compose_labels(host: Host, container: str, container_id: str, settings: Set
         return {}
 
 
-def _compose_argv(project: str, workdir: str, files: list[str], env_file: str) -> list[str]:
-    """The `docker compose` invocation a container's own labels describe.
-
-    EVERYTHING HERE IS READ BACK FROM THE LABELS compose wrote when the stack was
-    started, because an invocation rebuilt from the compose files alone is a
-    *different* project. Three labels carry what the files do not:
-
-      * `project` — and it has to be passed explicitly, because a project with no
-        `name:` in its files is named after its *directory*, and in this estate the
-        two often differ: the monitoring stack is labelled `innotel-metrics` and
-        lives in `…/monitoring`, the gateway is `innotel-gateway` and lives in
-        `…/llm`. Composing those paths without pinning the name is not the same
-        project — it would build `monitoring-grafana-1` while the container that was
-        asked about is `metrics-grafana`, leave the latter untouched, and then pass
-        its own verification (the image id before and after is unchanged) and call
-        the finding applied. The name is pinned for the same reason the working
-        directory is: it is part of what the stack *is*.
-      * `project.working_dir` and `project.config_files` — the directory and the
-        exact `-f` set, which is how a stack started with an override file stays
-        started with it.
-      * `project.environment_file` — set when the stack was started with
-        `--env-file`, which this estate does wherever the secrets live beside the
-        stack rather than in the working directory (`…/monitoring/.env.host`,
-        `…/llm/.env.host`). Those stacks interpolate `${SECRET:?}`, and without the
-        file compose refuses them: the images in them failed every apply with
-        "required variable GRAFANA_PASSWORD is missing a value", which reads like a
-        broken stack and was a missing argument.
-
-    Profiles are the fourth thing, and they are NOT in the labels, so they are
-    rediscovered rather than replayed — see `_plan_services`.
-    """
-    argv = ["compose", "--project-name", project, "--project-directory", workdir,
-            *sum((["-f", f] for f in files), [])]
-    if env_file:
-        argv += ["--env-file", env_file]
-    return argv
-
-
-def _env_file_still_there(host: Host, container: str, path: str, settings: Settings) -> bool:
-    """Does the env file the labels name still exist?
-
-    A labelled env file is not necessarily a file any more. The monarch stack has its
-    secrets resolved into `/run/.env.monarch.resolved`, and `/run` is a tmpfs: after a
-    reboot the label points at nothing and replaying it fails the entire invocation —
-    "couldn't find env file" — which the plan then reports as a stack with no services,
-    as if the compose files were broken. It is replayed when it is there and dropped
-    when it is not, and the plan that follows decides whether the stack can be read at
-    all. Dropping it is not silent: the caller notes it, and any interpolation that
-    really did depend on it fails loudly at the next step, with compose's own words.
-    """
-    if not path:
-        return False
-    result = _remote(host, container, ["sh", "-c", f"test -f {shlex.quote(path)}"],
-                     settings, timeout=settings.ssh_timeout)
-    return result.ok
-
-
-def _plan_services(host: Host, container: str, argv: list[str], running: list[str],
-                   settings: Settings) -> tuple[list[str], list[str], list[str], str]:
-    """(the invocation to reuse, the services it would manage, the ones it would not,
-    compose's own complaint if it could not read the stack at all).
-
-    WHY THIS WIDENS AT ALL. Some stacks in this estate are started with profiles,
-    and `docker compose config --services` leaves profile-gated services out of its
-    answer. The plan then looks smaller than reality and the recreate is refused —
-    correctly, because `up` with the wrong profile set *stops* the services that
-    profile defines — but refusing is not a fix, and it left fourteen images
-    permanently unupdatable with a warning nobody could act on. Compose does not
-    record which profiles a stack was started with, so they are read from the files
-    (`config --profiles`) and all of them are enabled: a service's profile is a
-    property of how its stack runs, not of the image being replaced.
-
-    WIDENING IS CONDITIONAL, and that is the safety rail. A stack that needs no
-    profiles is never handed any — `--profile` changes which services compose would
-    start and stop, so introducing one where none was in use would be the very
-    accident the check exists to prevent. It is tried only after the plain plan has
-    already been shown to miss a running service, and adopted only if it then covers
-    all of them.
-    """
-    def plan_for(cmd: list[str]) -> tuple[list[str], str]:
-        result = _docker(host, container, [*cmd, "config", "--services"], settings)
-        if result.ok:
-            return sorted(set(result.lines())), ""
-        # Compose refusing the files and compose managing none of them look identical
-        # from the service list, and they are not the same thing to an operator.
-        return [], f"{result.message} (exit {result.returncode})"
-
-    planned, why = plan_for(argv)
-    if why:
-        return argv, planned, [], why
-    missing = sorted(set(running) - set(planned))
-    if not missing:
-        return argv, planned, [], ""
-
-    declared = _docker(host, container, [*argv, "config", "--profiles"], settings)
-    names = sorted({line.strip() for line in declared.lines() if line.strip()}) \
-        if declared.ok else []
-    if not names:
-        return argv, planned, missing, ""
-
-    widened = list(argv)
-    for name in names:
-        widened += ["--profile", name]
-    wider, why = plan_for(widened)
-    if why:
-        return argv, planned, missing, ""
-    if set(running) - set(wider):
-        return widened, wider, sorted(set(running) - set(wider)), ""
-    return widened, wider, [], ""
-
-
 def _running_project_services(host: Host, container: str, project: str, settings: Settings) -> list[str]:
     result = _docker(
         host, container,
@@ -282,18 +164,8 @@ def _docker_recreate(host: Host, container: str, ref: str, settings: Settings,
     here either: the correct replacement depends on the volumes, networks and
     entrypoint flags it was created with, and guessing produces a container that
     works until the first restart. It is pulled and reported as manual.
-
-    The invocation itself is rebuilt from the container's labels — its project name,
-    working directory, `-f` set and `--env-file`, plus, when the plain plan cannot see
-    every running service and only then, every profile the compose files declare.
-    See `_compose_argv` and `_plan_services` for why each is load-bearing: the name
-    one in particular, because composing a stack's path without it addresses a
-    different project and then looks successful from here.
     """
-    # A pull is a download, not a probe: it gets `pull_timeout` for the same reason
-    # apt does, because sizing it like a command is what failed the PBX image.
-    pulled = _docker(host, container, ["pull", "--quiet", ref], settings,
-                     timeout=settings.pull_timeout)
+    pulled = _docker(host, container, ["pull", "--quiet", ref], settings)
     if not pulled.ok:
         outcome.failed += 1
         outcome.note(f"docker pull {ref} failed: {pulled.message}")
@@ -315,10 +187,6 @@ def _docker_recreate(host: Host, container: str, ref: str, settings: Settings,
         service = str(labels.get("com.docker.compose.service") or "")
         workdir = str(labels.get("com.docker.compose.project.working_dir") or "")
         files = [f for f in str(labels.get("com.docker.compose.project.config_files") or "").split(",") if f]
-        env_file = str(labels.get("com.docker.compose.project.environment_file") or "")
-        if env_file and not _env_file_still_there(host, container, env_file, settings):
-            outcome.note(f"{cname}: {env_file} is gone; recreating without it")
-            env_file = ""
         if not (project and service and files):
             outcome.needs_manual.append(
                 f"{cname}: image {ref} pulled, but the container is not compose-managed — "
@@ -327,24 +195,23 @@ def _docker_recreate(host: Host, container: str, ref: str, settings: Settings,
             continue
 
         running = sorted(set(_running_project_services(host, container, project, settings)))
-        argv, planned, missing, unreadable = _plan_services(
-            host, container, _compose_argv(project, workdir, files, env_file), running, settings)
-        if unreadable:
-            outcome.needs_manual.append(
-                f"{cname}: refusing to recreate — compose could not read project {project}: "
-                f"{unreadable}"
-            )
-            continue
-        if missing:
-            outcome.needs_manual.append(
-                f"{cname}: refusing to recreate — compose sees {len(planned)} service(s) for "
-                f"project {project} but {len(running)} are running; missing {', '.join(missing)}. "
-                f"Re-run the stack with its original profile flags."
-            )
-            continue
+        plan = _docker(host, container,
+                       ["compose", "--project-directory", workdir, *sum([["-f", f] for f in files], []),
+                        "config", "--services"], settings)
+        if plan.ok:
+            planned = sorted(set(plan.lines()))
+            missing = sorted(set(running) - set(planned))
+            if missing:
+                outcome.needs_manual.append(
+                    f"{cname}: refusing to recreate — compose sees {len(planned)} service(s) for "
+                    f"project {project} but {len(running)} are running; missing {', '.join(missing)}. "
+                    f"Re-run the stack with its original profile flags."
+                )
+                continue
 
         before = _docker(host, container, ["inspect", "--format", "{{.Image}}", cname], settings)
-        args = [*argv, "up", "-d", "--no-deps", service]
+        args = ["compose", "--project-directory", workdir, *sum([["-f", f] for f in files], []),
+                "up", "-d", "--no-deps", service]
         result = _docker(host, container, args, settings)
         if not result.ok:
             outcome.failed += 1
@@ -481,14 +348,7 @@ def apply_findings(conn, settings: Settings, policy: Policy, *, finding_ids: lis
                     db.set_status(conn, [row["id"]], "applied", detail)
                     totals["applied"] += 1
                 else:
-                    # The reason a recreate produced nothing is usually the *refusal*,
-                    # and a refusal is recorded as needing a person rather than as a
-                    # note. Reading only `messages` here is how eleven findings came to
-                    # read "no container recreated" on the dashboard while the run log
-                    # held a paragraph naming the missing services.
-                    detail = (image_outcome.needs_manual[-1] if image_outcome.needs_manual
-                              else image_outcome.messages[-1] if image_outcome.messages
-                              else "no container recreated")
+                    detail = image_outcome.messages[-1] if image_outcome.messages else "no container recreated"
                     db.set_status(conn, [row["id"]], "failed", detail)
                     totals["failed"] += 1
                 messages.extend(image_outcome.messages)

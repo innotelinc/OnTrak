@@ -86,26 +86,6 @@ class FindingLifecycle(unittest.TestCase):
                           current="1.0", candidate="1.1")
         self.assertEqual("applied", self.row()["status"])
 
-    def test_a_scan_does_not_overwrite_why_a_failed_finding_failed(self):
-        # The failure reason is not a detection note. A scan a few hours later must
-        # not replace "unmet dependencies" with the archive the package came from,
-        # or the dashboard is red with no way to find out why.
-        db.record_finding(self.conn, target_id=self.target, manager="apt", package="nginx",
-                          detail="Ubuntu:24.04/noble-updates")
-        db.set_status(self.conn, [self.row()["id"]], "failed", "E: unmet dependencies")
-        db.record_finding(self.conn, target_id=self.target, manager="apt", package="nginx",
-                          detail="Ubuntu:24.04/noble-security")
-        self.assertEqual("E: unmet dependencies", self.row()["detail"])
-
-    def test_a_row_that_is_no_longer_failed_gets_its_detection_note_back(self):
-        db.record_finding(self.conn, target_id=self.target, manager="apt", package="nginx",
-                          detail="Ubuntu:24.04/noble-updates")
-        db.set_status(self.conn, [self.row()["id"]], "failed", "E: unmet dependencies")
-        db.set_status(self.conn, [self.row()["id"]], "pending")
-        db.record_finding(self.conn, target_id=self.target, manager="apt", package="nginx",
-                          detail="Ubuntu:24.04/noble-security")
-        self.assertEqual("Ubuntu:24.04/noble-security", self.row()["detail"])
-
     def test_the_same_package_under_two_managers_is_two_findings(self):
         # `docker` and `apt` both have a `n8n`; they are not the same thing and
         # must not collapse into one row.
@@ -244,68 +224,6 @@ class TargetsAndRuns(unittest.TestCase):
         row = conn.execute("SELECT * FROM events").fetchone()
         self.assertEqual("error", row["level"])
         self.assertEqual(run_id, row["run_id"])
-
-
-class ScanVerdict(unittest.TestCase):
-    """`targets.last_scanned_ok` — the durable half of "we could not look".
-
-    By the next scan the error text has been overwritten, so "I read it and it is
-    clean" and "I could not read it" have to be distinguishable afterwards rather
-    than during the run that produced them.
-    """
-
-    def setUp(self):
-        self.conn = db.connect(":memory:")
-        db.init(self.conn)
-        self.target = db.ensure_target(self.conn, host="i1", kind="container",
-                                       name="monarch")
-
-    def row(self):
-        return self.conn.execute(
-            "SELECT * FROM targets WHERE id=?", (self.target,)).fetchone()
-
-    def test_touch_records_whether_a_verdict_was_reached(self):
-        db.touch_target(self.conn, self.target, error=None, looked=True)
-        self.assertEqual(1, self.row()["last_scanned_ok"])
-        self.assertTrue(self.row()["last_scanned_at"])
-
-    def test_a_later_scan_that_could_not_look_clears_the_verdict(self):
-        # This is the stopped instance: the first scan read it, the second could
-        # not, and the second is the one that has to survive to the dashboard.
-        db.touch_target(self.conn, self.target, error=None, looked=True)
-        db.touch_target(self.conn, self.target, looked=False,
-                        error="instance is not running (state: STOPPED)")
-        self.assertEqual(0, self.row()["last_scanned_ok"])
-
-    def test_a_call_that_does_not_say_it_looked_is_not_a_verdict(self):
-        db.touch_target(self.conn, self.target, error="apt: probe timed out")
-        self.assertEqual(0, self.row()["last_scanned_ok"])
-
-    def test_a_database_from_before_the_column_gains_it_keeping_its_history(self):
-        # The schema is applied with CREATE TABLE IF NOT EXISTS, so an estate that
-        # was already running gets this column from the ALTER in `init` and from
-        # nowhere else, and its existing rows are backfilled from `error` — the
-        # only durable trace of a failed look that predates the column.
-        old = db.connect(":memory:")
-        old.execute(
-            "CREATE TABLE targets (id INTEGER PRIMARY KEY AUTOINCREMENT, host TEXT,"
-            " kind TEXT, name TEXT, ref TEXT, meta TEXT, discovered_at TEXT,"
-            " last_scanned_at TEXT, error TEXT)"
-        )
-        old.execute("INSERT INTO targets (host, kind, name, last_scanned_at, error)"
-                    " VALUES ('i1','container','clean','2026-01-01T00:00:00Z',NULL)")
-        old.execute("INSERT INTO targets (host, kind, name, last_scanned_at, error)"
-                    " VALUES ('i1','container','stopped','2026-01-01T00:00:00Z',"
-                    "'instance is not running')")
-        old.execute("INSERT INTO targets (host, kind, name) VALUES ('i1','container','new')")
-
-        db.init(old)
-
-        rows = {r["name"]: r for r in old.execute("SELECT * FROM targets").fetchall()}
-        self.assertEqual(1, rows["clean"]["last_scanned_ok"])
-        self.assertEqual(0, rows["stopped"]["last_scanned_ok"])
-        # Never scanned at all: counted unknown by the other half of the predicate.
-        self.assertIsNone(rows["new"]["last_scanned_ok"])
 
 
 class DigestCache(unittest.TestCase):

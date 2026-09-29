@@ -67,12 +67,6 @@ CREATE TABLE IF NOT EXISTS targets (
     discovered_at TEXT,
     last_scanned_at TEXT,
     error       TEXT,
-    -- 1 when at least one manager actually produced a verdict about this target on
-    -- the last scan, 0 when every manager failed to look. It is the durable form of
-    -- `TargetReport.scanned`, and the dashboard's `unknown` count reads it: a target
-    -- that was touched by a scan which could not read it must not age into reading
-    -- as merely unscanned, which is how a stopped instance passes for a patched one.
-    last_scanned_ok INTEGER,
     UNIQUE (host, kind, name)
 );
 
@@ -130,6 +124,7 @@ CREATE TABLE IF NOT EXISTS events (
     level       TEXT NOT NULL DEFAULT 'info',
     target_id   INTEGER,
     run_id      INTEGER,
+    actor       TEXT,
     message     TEXT NOT NULL
 );
 
@@ -141,6 +136,59 @@ CREATE TABLE IF NOT EXISTS settings (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
     updated_at TEXT
+);
+
+-- ── identity ─────────────────────────────────────────────────────────────────
+-- WHO IS ALLOWED IN.
+--
+-- The username is `COLLATE NOCASE` unique: a person typing `Sysadmin` at 3am is
+-- the same person, and two rows that differ only in case would be two accounts
+-- with two different roles, which is how somebody ends up with access nobody
+-- remembers granting.
+--
+-- `password_hash` is nullable on purpose. An account with no digest is an
+-- SSO-only account: the local form cannot succeed for it even if the database
+-- leaked, because there is nothing to compare against.
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    email         TEXT NOT NULL DEFAULT '',
+    display_name  TEXT NOT NULL DEFAULT '',
+    role          TEXT NOT NULL DEFAULT 'STUDENT',
+    active        INTEGER NOT NULL DEFAULT 1,
+    external_id   TEXT,
+    password_hash TEXT,
+    created_at    TEXT,
+    updated_at    TEXT,
+    last_login_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_by_external_id
+    ON users (external_id) WHERE external_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS users_by_email ON users (email COLLATE NOCASE);
+
+-- Sessions are rows, not signatures. `token_hash` is the SHA-256 of a 256-bit
+-- random token, so the table is useless to whoever reads it and a sign-out or a
+-- deactivation takes effect on the next request rather than at expiry.
+CREATE TABLE IF NOT EXISTS sessions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash   TEXT NOT NULL UNIQUE,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at   TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    last_seen_at TEXT,
+    user_agent   TEXT,
+    address      TEXT
+);
+CREATE INDEX IF NOT EXISTS sessions_by_user ON sessions (user_id);
+
+-- Failed sign-ins, keyed on the username AND on the source address. Two rows per
+-- failure because they stop different attacks: the first stops a password being
+-- guessed, the second stops one source walking a list of names.
+CREATE TABLE IF NOT EXISTS login_failures (
+    key             TEXT PRIMARY KEY,
+    count           INTEGER NOT NULL DEFAULT 0,
+    last_failure_at TEXT
 );
 
 -- The remote digest of an image reference, as last successfully fetched. Only
@@ -179,26 +227,25 @@ def connect(path: str | Path) -> sqlite3.Connection:
 
 def init(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
-    # `CREATE TABLE IF NOT EXISTS` skips a table that already exists, so a column
-    # added to the schema after the first estate started never reaches an existing
-    # database. `last_scanned_ok` is one of those, and adding it here rather than in
-    # a migration script keeps the fix to a deploy of the image.
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(targets)")}
-    if "last_scanned_ok" not in columns:
-        conn.execute("ALTER TABLE targets ADD COLUMN last_scanned_ok INTEGER")
-        # Backfill the rows that already exist. Before this column the only durable
-        # trace of a look that failed was `error`, so a target that was scanned and
-        # carries one is recorded as not-looked. That is a reconstruction, and the
-        # one case it gets wrong is a target read *partially* — some managers
-        # answered, some could not — which lands on the unknown side: the safe side,
-        # and where the run report already puts it.
-        conn.execute(
-            """
-            UPDATE targets SET last_scanned_ok = CASE WHEN error IS NULL THEN 1 ELSE 0 END
-             WHERE last_scanned_at IS NOT NULL
-            """
-        )
+    _migrate(conn)
     conn.commit()
+
+
+# Columns added after a database was first created. `CREATE TABLE IF NOT EXISTS`
+# will not add them, and the deployed SQLite file IS the estate's history, so a
+# migration here has to be additive and idempotent rather than a schema reset.
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    # (table, column, definition)
+    ("events", "actor", "TEXT"),
+)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, definition in _ADDED_COLUMNS:
+        existing = {row["name"] for row in
+                    conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 # ── hosts ────────────────────────────────────────────────────────────────────
@@ -240,23 +287,10 @@ def ensure_target(conn, *, host, kind, name, ref=None, meta=None) -> int:
     return int(row["id"])
 
 
-def touch_target(conn, target_id: int, *, error: str | None = None,
-                 looked: bool = False) -> None:
-    """Record that a scan finished with one target, and what it managed to say.
-
-    `looked` is `TargetReport.scanned` — true only when a manager produced a real
-    verdict — and it is stored rather than derived, because by the next scan the
-    error text has been overwritten and there is nothing left to derive it from:
-    "I read it and it is clean" and "I could not read it" are both no findings and
-    no error, and the dashboard has to tell them apart for weeks, not for one run.
-
-    It defaults to false on purpose. A caller that forgets it reports a target as
-    unknown, which costs an operator a second look; the other default would report
-    a machine nobody could read as up to date.
-    """
+def touch_target(conn, target_id: int, *, error: str | None = None) -> None:
     conn.execute(
-        "UPDATE targets SET last_scanned_at=?, error=?, last_scanned_ok=? WHERE id=?",
-        (utcnow(), error, int(bool(looked)), target_id),
+        "UPDATE targets SET last_scanned_at=?, error=? WHERE id=?",
+        (utcnow(), error, target_id),
     )
 
 
@@ -276,15 +310,6 @@ def record_finding(conn, *, target_id, manager, package, current=None, candidate
     the package would be invisible to every future apply. So a candidate that
     moved clears `applied` back to `pending`: the thing that was applied is not
     the thing that is now on offer.
-
-    `detail` IS TREATED THE SAME WAY ON A FAILED ROW, for the same reason. On every
-    other row this write is the scan's detection note — the archive a package came
-    from, "newer image in registry" — and it is meant to be refreshed each run. On a
-    failed row it is the *reason the apply failed*, written by `set_status`, and a
-    scan replacing it with "newer image in registry" is the dashboard forgetting
-    why anything is red between one apply and the next. Eighteen findings read that
-    way at the start of the last investigation, with the real messages sitting in
-    one apply run's events and nowhere else.
     """
     conn.execute(
         """
@@ -296,10 +321,7 @@ def record_finding(conn, *, target_id, manager, package, current=None, candidate
             candidate=excluded.candidate,
             security=excluded.security,
             last_seen=excluded.last_seen,
-            detail=CASE
-                WHEN findings.status='failed' THEN findings.detail
-                ELSE COALESCE(excluded.detail, findings.detail)
-            END,
+            detail=COALESCE(excluded.detail, findings.detail),
             status=CASE
                 WHEN findings.status='applied'
                      AND IFNULL(excluded.candidate,'') != IFNULL(findings.candidate,'')
@@ -383,10 +405,17 @@ def finish_run(conn, run_id: int, *, status: str, findings: int = 0, applied: in
 
 
 def log(conn, message: str, *, level: str = "info", target_id: int | None = None,
-        run_id: int | None = None) -> None:
+        run_id: int | None = None, actor: str | None = None) -> None:
+    """Append one line to the event log.
+
+    `actor` is who caused it, when there is a person to name. It is a column and
+    not a prefix in the message because "show me everything alice did" has to be a
+    query, not a LIKE that also matches a host called alice.
+    """
     conn.execute(
-        "INSERT INTO events (ts, level, target_id, run_id, message) VALUES (?,?,?,?,?)",
-        (utcnow(), level, target_id, run_id, message),
+        "INSERT INTO events (ts, level, target_id, run_id, actor, message)"
+        " VALUES (?,?,?,?,?,?)",
+        (utcnow(), level, target_id, run_id, actor, message),
     )
 
 
@@ -463,8 +492,7 @@ def list_hosts(conn) -> list[dict]:
         SELECT h.*,
                (SELECT COUNT(*) FROM targets t WHERE t.host=h.name)                  AS targets,
                (SELECT COUNT(*) FROM targets t WHERE t.host=h.name
-                  AND (t.last_scanned_at IS NULL
-                       OR COALESCE(t.last_scanned_ok,0)=0))                          AS unscanned,
+                  AND t.last_scanned_at IS NULL)                                     AS unscanned,
                (SELECT COUNT(*) FROM findings f JOIN targets t ON t.id=f.target_id
                  WHERE t.host=h.name AND f.status='pending')                          AS pending,
                (SELECT COUNT(*) FROM findings f JOIN targets t ON t.id=f.target_id

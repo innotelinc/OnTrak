@@ -111,6 +111,40 @@ def _parse_hosts(raw: str) -> tuple[Host, ...]:
     return tuple(hosts) or DEFAULT_HOSTS
 
 
+ROLE_NAMES = ("ADMIN", "SYSADMIN", "ANALYST", "TECHNICIAN", "INSTRUCTOR", "STUDENT")
+
+
+def _parse_role_map(raw: str) -> dict[str, str]:
+    """Parse `ONTRAK_OIDC_ROLE_MAPPINGS`.
+
+    One rule per line, `group=ROLE`, because that is exactly how the training
+    app's `.env` already spells it and an operator who has configured one OnTrak
+    product should not have to learn a second syntax for the next one:
+
+        range-instructors=INSTRUCTOR
+        it-ops=SYSADMIN
+
+    An unrecognised role name is dropped rather than guessed at. A typo that
+    silently granted ADMIN would be worse than a typo that grants nothing, and
+    the dropped rule is reported by the login page's refusal text.
+    """
+    mapping: dict[str, str] = {}
+    for line in (raw or "").replace(",", "\n").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        group, _, role = line.partition("=")
+        group = group.strip().strip("\"'").lower()
+        role = role.strip().strip("\"'").upper()
+        if group and role in ROLE_NAMES:
+            mapping[group] = role
+    return mapping
+
+
+def _parse_list(raw: str) -> tuple[str, ...]:
+    return tuple(item.strip().lower() for item in (raw or "").split(",") if item.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     hosts: tuple[Host, ...] = field(default_factory=lambda: DEFAULT_HOSTS)
@@ -138,14 +172,6 @@ class Settings:
     # where the verdict is re-read from apt), so this number now only decides how
     # long that wait is allowed to be.
     apt_timeout: int = 900
-    # An image pull is the third kind of long job, and it shares apt's problem: the
-    # clock that suits a probe does not suit a download. This estate pulls images
-    # several gigabytes deep over a domestic uplink, so a 300-second ceiling turned
-    # the single largest update it knows about — the PBX full-stack image — into a
-    # finding that failed every apply for being slow rather than wrong. A pull does
-    # not need the re-read that apt's verdict does, because `docker pull` either
-    # finished or did not; the number only decides how long the wait may be.
-    pull_timeout: int = 900
     # The scheduler is in-process (see policy.py for the cron arithmetic and the
     # apply policy). Disabling it leaves the API and the manual scan/apply paths
     # working, which is what you want while debugging a schedule that fires at the
@@ -163,6 +189,57 @@ class Settings:
     # the difference between proposing a patch and installing it unattended.
     default_mode: str = "detect"
 
+    # ── identity ────────────────────────────────────────────────────────────
+    # The first administrator. Used ONCE, on an empty database: after that the
+    # account lives in SQLite and this variable changes nothing, which is what
+    # stops a stale `.env` from silently restoring a password somebody rotated.
+    admin_user: str = "admin"
+    admin_password: str = ""
+    admin_email: str = ""
+    # Where a browser is sent after a successful sign-in when the caller named no
+    # narrower destination. Normally the dashboard itself.
+    post_login_redirect: str = "/"
+    # ── Cerulean SSO (Authentik) ────────────────────────────────────────────
+    # The four variables that turn the button on, spelled exactly as the training
+    # app spells them so one `.env` snippet configures both.
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_default_role: str = "STUDENT"
+    oidc_role_map: dict[str, str] = field(default_factory=dict)
+    oidc_allowed_domains: tuple[str, ...] = ()
+    oidc_require_mfa: bool = False
+    oidc_provider_name: str = "Cerulean"
+    oidc_scopes: tuple[str, ...] = ("openid", "profile", "email", "groups")
+    # The PUBLIC base URL of this deployment, as the browser reaches it. The OIDC
+    # redirect URI is built from it, and it has to match what is registered in
+    # Cerulean byte for byte — a URI built from the container's own address can
+    # never match, which is the single most common way SSO "just does not work".
+    public_url: str = ""
+    # The secret that signs the SSO state cookie. Falls back to the API token,
+    # which is already required and already random.
+    session_secret: str = ""
+
+    @property
+    def sso_configured(self) -> bool:
+        return bool(self.oidc_issuer and self.oidc_client_id)
+
+    @property
+    def state_secret(self) -> str:
+        return self.session_secret or self.api_token
+
+    @property
+    def redirect_uri(self) -> str:
+        """The registered callback, or empty when no public URL is set.
+
+        Deliberately NOT defaulted to localhost: a redirect URI that only works on
+        the machine the API runs on is a configuration that appears to work right
+        up until it is deployed, and the provider compares this byte for byte.
+        """
+        if not self.public_url:
+            return ""
+        return f"{self.public_url.rstrip('/')}/api/auth/sso/callback"
+
     @staticmethod
     def from_env() -> "Settings":
         return Settings(
@@ -175,9 +252,24 @@ class Settings:
             digest_ttl_seconds=_env_int("ONTRAK_DIGEST_TTL", 6 * 3600),
             command_timeout=_env_int("ONTRAK_COMMAND_TIMEOUT", 300),
             apt_timeout=_env_int("ONTRAK_APT_TIMEOUT", 900),
-            pull_timeout=_env_int("ONTRAK_PULL_TIMEOUT", 900),
             scheduler_enabled=_env_bool("ONTRAK_SCHEDULER", True),
             scheduler_tick_seconds=_env_int("ONTRAK_SCHEDULER_TICK", 30),
             default_schedule=_env("ONTRAK_DEFAULT_SCHEDULE", "0 4 * * 0"),
             default_mode=_env("ONTRAK_DEFAULT_MODE", "detect"),
+            admin_user=_env("ONTRAK_ADMIN_USER", "admin"),
+            admin_password=_env("ONTRAK_ADMIN_PASSWORD"),
+            admin_email=_env("ONTRAK_ADMIN_EMAIL"),
+            post_login_redirect=_env("ONTRAK_POST_LOGIN_REDIRECT", "/"),
+            oidc_issuer=_env("ONTRAK_OIDC_ISSUER"),
+            oidc_client_id=_env("ONTRAK_OIDC_CLIENT_ID"),
+            oidc_client_secret=_env("ONTRAK_OIDC_CLIENT_SECRET"),
+            oidc_default_role=_env("ONTRAK_OIDC_DEFAULT_ROLE", "STUDENT"),
+            oidc_role_map=_parse_role_map(_env("ONTRAK_OIDC_ROLE_MAPPINGS")),
+            oidc_allowed_domains=_parse_list(_env("ONTRAK_OIDC_ALLOWED_DOMAINS")),
+            oidc_require_mfa=_env_bool("ONTRAK_OIDC_REQUIRE_MFA", False),
+            oidc_provider_name=_env("ONTRAK_OIDC_PROVIDER_NAME", "Cerulean"),
+            oidc_scopes=tuple(_env("ONTRAK_OIDC_SCOPES", "openid,profile,email,groups")
+                              .replace(" ", ",").split(",")) or ("openid",),
+            public_url=_env("ONTRAK_PUBLIC_URL"),
+            session_secret=_env("ONTRAK_SESSION_SECRET"),
         )
