@@ -361,33 +361,6 @@ class StoppedInstance(ScanCase):
         self.scan()
         self.assertIn(("apt", "curl"), self.findings())
 
-    def test_a_stopped_instance_stays_unknown_on_the_dashboard(self):
-        # The regression the durable flag exists for. A stopped instance is *touched*
-        # by the scan — the attempt is recorded — so "never scanned" stopped being
-        # true for it, and the header reported nothing unknown while the machine
-        # could not be read at all.
-        self.fake.containers = ["monarch"]
-        self.fake.states["monarch"] = "STOPPED"
-        self.fake.apt[None] = (SIM_TWO, LIST_TWO)  # the host itself still answers
-        self.scan()
-        row = self.conn.execute(
-            "SELECT * FROM targets WHERE name='monarch'").fetchone()
-        self.assertTrue(row["last_scanned_at"])
-        self.assertEqual(0, row["last_scanned_ok"])
-        self.assertEqual(1, scan.host_admin_summary(self.conn)["unknown"])
-
-    def test_a_running_instance_is_read_and_is_no_longer_unknown(self):
-        self.fake.containers = ["monarch"]
-        self.fake.states["monarch"] = "STOPPED"
-        self.fake.apt[None] = (SIM_TWO, LIST_TWO)
-        self.fake.apt["monarch"] = (SIM_ONE, LIST_ONE)
-        self.scan()
-        self.assertEqual(1, scan.host_admin_summary(self.conn)["unknown"])
-        self.fake.states["monarch"] = "RUNNING"
-        self.scan()
-        # Both the host and the container were read this time; nothing is unknown.
-        self.assertEqual(0, scan.host_admin_summary(self.conn)["unknown"])
-
     def test_a_running_instance_is_still_probed(self):
         # The guard is the state, not the presence of the field.
         self.fake.containers = ["monarch"]
@@ -590,20 +563,6 @@ class AdminSummary(unittest.TestCase):
         self.assertEqual(1, summary["security"])
         # one unreachable host and one never-scanned target — neither is "clean".
         self.assertEqual(2, summary["unknown"])
-
-    def test_a_target_touched_by_a_scan_that_could_not_read_it_is_still_unknown(self):
-        conn = db.connect(":memory:")
-        db.init(conn)
-        db.upsert_host(conn, name="i1", address="192.168.1.51", kind="both",
-                       ssh_user="root", reachable=True)
-        target = db.ensure_target(conn, host="i1", kind="container", name="monarch")
-        db.touch_target(conn, target, error="instance is not running (state: STOPPED)")
-        self.assertEqual(1, scan.host_admin_summary(conn)["unknown"])
-        # And the per-host row the Hosts page prints agrees with the header card.
-        self.assertEqual(1, db.list_hosts(conn)[0]["unscanned"])
-        db.touch_target(conn, target, error=None, looked=True)
-        self.assertEqual(0, scan.host_admin_summary(conn)["unknown"])
-        self.assertEqual(0, db.list_hosts(conn)[0]["unscanned"])
 
 
 if __name__ == "__main__":

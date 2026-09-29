@@ -11,3 +11,12 @@
 
 fastapi==0.121.2
 uvicorn[standard]==0.42.0
+
+# Cerulean SSO. Verifying an RS256 ID token means RSA signature verification, and
+# there is no way to do that correctly with the standard library — hand-rolling
+# bignum modular exponentiation to check a signature is exactly the kind of thing
+# that looks fine and accepts a forgery. Everything else about the OIDC flow
+# (discovery, PKCE, the token exchange, claim checks) is hand-written in
+# `ontrak/oidc.py` and unit-tested, so this is the whole of the SSO dependency
+# surface: one well-audited library used for one operation.
+cryptography>=43.0.0

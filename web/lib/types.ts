@@ -11,6 +11,107 @@ export type Manager = "apt" | "snap" | "docker";
 
 export type FindingStatus = "pending" | "approved" | "applied" | "failed" | "skipped";
 
+/** The family's shared role vocabulary, as `backend/ontrak/identity.py` defines it. */
+export type Role =
+  | "ADMIN"
+  | "SYSADMIN"
+  | "ANALYST"
+  | "TECHNICIAN"
+  | "INSTRUCTOR"
+  | "STUDENT";
+
+/**
+ * Capabilities, not roles, drive the interface.
+ *
+ * A page asking "is this person an ADMIN" has to be revisited every time the role
+ * table changes; a page asking "may this person apply" does not. The server
+ * enforces the same strings, so hiding a button and refusing the call cannot
+ * drift apart.
+ */
+export type Capability =
+  | "portal:view"
+  | "sync:view"
+  | "sync:scan"
+  | "sync:approve"
+  | "sync:apply"
+  | "sync:configure"
+  | "users:manage";
+
+/** A product a role is sent to. Keys match the portal's catalogue. */
+export type ProductKey = "its" | "tix" | "sentinel" | "sync";
+
+export interface AppUser {
+  id: number;
+  username: string;
+  email: string;
+  display_name: string;
+  role: Role;
+  role_label: string;
+  active: boolean;
+  /** True when this account signs in through Cerulean and has no local password. */
+  external: boolean;
+  created_at: string;
+  updated_at: string;
+  last_login_at: string | null;
+  capabilities: Capability[];
+  products: ProductKey[];
+}
+
+/**
+ * What `/api/auth/me` returns: a person, or the deployment token's principal.
+ *
+ * The two branches are one union rather than two shapes with a flag, because a
+ * component that renders a name should not have to decide which one it is holding.
+ * The fields the service principal genuinely does not have are optional here and
+ * checked with `isService` where the difference matters.
+ */
+export type Identity =
+  | (AppUser & { via: "session" | "cookie"; service?: false })
+  | {
+      service: true;
+      id?: number;
+      username: string;
+      display_name?: string;
+      email?: string;
+      role: "SERVICE";
+      capabilities: Capability[];
+      products: ProductKey[];
+      via: "token";
+    };
+
+export interface MetaRole {
+  name: Role;
+  label: string;
+  products: ProductKey[];
+}
+
+export interface Meta {
+  service: string;
+  version: string;
+  hosts: { name: string; address: string; kind: string; ssh_user: string }[];
+  scheduler_enabled: boolean;
+  users_exist: boolean;
+  sso: { enabled: boolean; provider: string; start_url: string };
+  roles: MetaRole[];
+}
+
+export interface SignInResult {
+  user: AppUser;
+  token: string;
+  expires_at: string;
+}
+
+export interface UserSession {
+  id: number;
+  user_id: number;
+  username: string;
+  created_at: string;
+  expires_at: string;
+  last_seen_at: string | null;
+  user_agent: string | null;
+  address: string | null;
+}
+
 export interface Finding {
   id: number;
   manager: Manager;
@@ -90,6 +191,8 @@ export interface Event {
   level: string;
   target_id: number | null;
   run_id: number | null;
+  /** Who caused it, when a person did. `null` for the timer and the probes. */
+  actor: string | null;
   message: string;
 }
 

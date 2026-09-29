@@ -1,82 +1,109 @@
 "use client";
 
 /**
- * The application shell: the token gate, the navigation, and the numbers that sit
- * beside it.
+ * The application shell: the session gate, the navigation, and the numbers that
+ * sit beside it.
  *
- * The gate is the first thing every page needs, so it lives here rather than in
- * each page. It distinguishes "no token yet" from "the token was rejected" — the
- * first shows the form, the second shows the form with an explanation — because an
- * operator whose token has been rotated should not be left wondering whether the
- * API is down.
+ * THE THREE STATES THIS PAGE MUST NOT CONFUSE
+ * -------------------------------------------
+ *  1. **Loading** — the identity has not been read yet. Showing the login form
+ *     here makes it flash for people who are already signed in, and showing the
+ *     dashboard makes it flash for people who are not.
+ *  2. **Signed out** — a 401. Draw the login page.
+ *  3. **Broken** — the API did not answer, or answered 5xx. Draw the page it could
+ *     not load *underneath* an explanation. Never the login form: a login page for
+ *     a server fault trains people to type their password into whatever answers
+ *     next.
  *
- * The nav counts come from the summary endpoint, and the one that is coloured is
- * `pending`: it is the number that means "someone has to decide", as opposed to
- * `unknown`, which means "we could not look" and is shown separately on the
- * dashboard rather than being used as a badge.
+ * The navigation is filtered by capability, from the same table the server
+ * authorises with. Hiding a link is a courtesy, not a control — every route behind
+ * it re-checks — but showing a link that always 403s is how a role silently
+ * becomes "the person who cannot do their job".
  */
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import { ApiError, api, getToken, setToken } from "@/lib/api";
-import type { Summary } from "@/lib/types";
+import { ApiError, api } from "@/lib/api";
+import { can, isService, useSession } from "@/lib/session";
+import type { Capability, Summary } from "@/lib/types";
 
-const LINKS: { href: string; label: string; badge?: "pending" | "failed" }[] = [
+import { LoginPanel } from "./LoginPanel";
+
+interface NavLink {
+  href: string;
+  label: string;
+  badge?: "pending" | "failed";
+  needs?: Capability;
+}
+
+const LINKS: NavLink[] = [
   { href: "/", label: "Dashboard" },
   { href: "/findings", label: "Findings", badge: "pending" },
   { href: "/hosts", label: "Hosts" },
   { href: "/runs", label: "Runs & log" },
-  { href: "/settings", label: "Timer & policy" },
+  { href: "/settings", label: "Timer & policy", needs: "sync:configure" },
+  { href: "/users", label: "People", needs: "users:manage" },
+  { href: "/account", label: "Account" },
+];
+
+/** Where the portal and the sibling products live. */
+const FAMILY: { href: string; label: string; note: string }[] = [
+  { href: "https://ontrak.innotel.us", label: "OnTrak Portal", note: "all products" },
+  { href: "https://its.ontrak.innotel.us", label: "IT Support Training", note: "students" },
+  { href: "https://tix.ontrak.innotel.us", label: "OnTrak Tix", note: "the desk" },
+  { href: "https://sentinel.ontrak.innotel.us", label: "OnTrak Sentinel", note: "identity & IDS" },
 ];
 
 export function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const [token, setTokenState] = useState<string | null>(null);
-  const [rejected, setRejected] = useState(false);
+  const { identity, loading, error, signOut, adopt } = useSession();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setTokenState(getToken());
-  }, []);
-
   const load = useCallback(async () => {
-    if (!getToken()) return;
+    if (!identity) return;
     try {
       setSummary(await api.summary());
       setApiError(null);
-      setRejected(false);
     } catch (cause) {
-      if (cause instanceof ApiError && cause.status === 401) {
-        setRejected(true);
-      } else {
-        setApiError(cause instanceof Error ? cause.message : String(cause));
+      if (cause instanceof ApiError && (cause.status === 401 || cause.forbidden)) {
+        // A 403 here means the account may not read the estate at all. That is not
+        // an error on this page — the nav simply has no counts.
+        setSummary(null);
+        return;
       }
+      setApiError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, []);
+  }, [identity]);
 
   useEffect(() => {
-    if (token) void load();
-  }, [token, load, pathname]);
+    void load();
+  }, [load, pathname]);
 
-  if (token === null) {
+  // The sign-in page draws itself, with no shell around it: a navigation sidebar
+  // next to a login form is an invitation to click into pages that will refuse.
+  if (pathname === "/login") {
+    return <>{children}</>;
+  }
+
+  if (loading) {
     return <div className="empty">Loading…</div>;
   }
 
-  if (!token || rejected) {
+  if (!identity) {
     return (
-      <TokenGate
-        rejected={rejected}
-        onSave={(value) => {
-          setToken(value);
-          setTokenState(value);
-          setRejected(false);
+      <LoginPanel
+        notice={error ?? null}
+        onSignedIn={(user) => {
+          adopt({ ...user, via: "cookie" });
         }}
       />
     );
   }
+
+  const visible = LINKS.filter((link) => !link.needs || can(identity, link.needs));
 
   return (
     <div className="shell">
@@ -85,7 +112,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <strong>Ontrak Sync</strong>
           <span>updates</span>
         </div>
-        {LINKS.map((link) => {
+        {visible.map((link) => {
           const active = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
           const value = link.badge && summary ? summary[link.badge] : 0;
           return (
@@ -99,15 +126,33 @@ export function Shell({ children }: { children: ReactNode }) {
             </Link>
           );
         })}
-        <div style={{ padding: "10px 16px", marginTop: 8, borderTop: "1px solid var(--line)" }}>
+
+        <div className="nav-group">
+          <span className="nav-group__label">Family</span>
+          {FAMILY.map((link) => (
+            <a key={link.href} href={link.href} target="_blank" rel="noreferrer">
+              <span>{link.label}</span>
+              <span className="nav-note">{link.note}</span>
+            </a>
+          ))}
+        </div>
+
+        <div className="nav-user">
+          <div className="nav-user__who">
+            <strong>{identity.display_name || identity.username}</strong>
+            <span className="pill pill--role">{identity.role}</span>
+          </div>
+          {isService(identity) ? (
+            <p className="faint" style={{ margin: "2px 0 0" }}>
+              deployment token
+            </p>
+          ) : (
+            <Link href="/account" className="faint">password &amp; sessions</Link>
+          )}
           <button
             className="ghost"
-            style={{ width: "100%" }}
-            onClick={() => {
-              setToken("");
-              setTokenState("");
-              setSummary(null);
-            }}
+            style={{ width: "100%", marginTop: 8 }}
+            onClick={() => void signOut()}
           >
             Sign out
           </button>
@@ -121,45 +166,6 @@ export function Shell({ children }: { children: ReactNode }) {
         ) : null}
         {children}
       </main>
-    </div>
-  );
-}
-
-function TokenGate({ rejected, onSave }: { rejected: boolean; onSave: (token: string) => void }) {
-  const [value, setValue] = useState("");
-  return (
-    <div className="gate">
-      <h1>Ontrak Sync</h1>
-      <p>
-        Enter the API token for this deployment. It is the value in
-        {" "}
-        <code>ONTRAK_API_TOKEN</code>
-        {" "}
-        on the host running the service, and it is stored in this browser only.
-      </p>
-      {rejected ? (
-        <div className="note note--bad">That token was rejected (401). Check it against the host&apos;s <code>.env</code>.</div>
-      ) : null}
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (value.trim()) onSave(value.trim());
-        }}
-      >
-        <label className="field">
-          <span>API token</span>
-          <input
-            type="password"
-            value={value}
-            autoFocus
-            autoComplete="off"
-            onChange={(event) => setValue(event.target.value)}
-          />
-        </label>
-        <button className="primary" type="submit" disabled={!value.trim()}>
-          Continue
-        </button>
-      </form>
     </div>
   );
 }
