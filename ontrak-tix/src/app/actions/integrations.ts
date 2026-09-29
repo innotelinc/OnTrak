@@ -33,7 +33,7 @@ import {
   revealCookie,
   type RevealKind,
 } from "../../lib/integration-console-rules";
-import { requireActor } from "../../lib/session";
+import { requireActor, sessionCookieSecure } from "../../lib/session";
 
 const HOME = REVEAL_PATH;
 
@@ -63,7 +63,10 @@ async function reveal(kind: RevealKind, id: string, secret: string): Promise<voi
   store.set(revealCookie(kind), JSON.stringify({ id, secret }), {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    // A one-time secret is the worst thing to hand a browser that will not store it:
+    // the operator mints a token, the cookie is dropped, and the console reports a
+    // secret it can no longer show. Same rule as the session, asked in one place.
+    secure: await sessionCookieSecure(),
     path: REVEAL_PATH,
     maxAge: REVEAL_TTL_SECONDS,
   });

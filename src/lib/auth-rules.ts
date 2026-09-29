@@ -39,6 +39,48 @@ export function allowSelfRegistration(): boolean {
   return (process.env.NEXT_PUBLIC_ALLOW_SELF_REGISTRATION ?? "true") !== "false";
 }
 
+/* -------------------------------------------------------------------------- */
+/*  Whether the session cookie may travel only over TLS                       */
+/* -------------------------------------------------------------------------- */
+
+export type CookieSecurity = "auto" | "always" | "never";
+
+/**
+ * Read how a deployment wants the `Secure` flag decided (`AUTH_COOKIE_SECURE`).
+ *
+ * The flag used to be guessed from `NODE_ENV === "production"`, which is wrong for
+ * the way this app is deployed: the compose stack serves plain HTTP with
+ * `NODE_ENV=production`, and a browser **refuses to store a `Secure` cookie from an
+ * insecure origin** — everywhere but `localhost`. The result is a sign-in that works
+ * on the developer's machine and silently signs everybody out from any other
+ * address, which looks like a broken session rather than a dropped cookie.
+ */
+export function parseCookieSecurity(setting: string | null | undefined): CookieSecurity {
+  const wanted = (setting ?? "").trim().toLowerCase();
+  if (["always", "true", "1", "yes", "on"].includes(wanted)) return "always";
+  if (["never", "false", "0", "no", "off"].includes(wanted)) return "never";
+  return "auto";
+}
+
+/**
+ * Whether to mark the cookie `Secure`, given what the request reports.
+ *
+ * `auto` follows the request rather than the build: `https` means the cookie can be
+ * restricted to TLS, and anything else — including no report at all, which is what a
+ * direct connection looks like — means it must not be, because a restricted cookie
+ * over HTTP is simply discarded. A deployment behind a TLS terminator that does not
+ * set `X-Forwarded-Proto` says so with `AUTH_COOKIE_SECURE=always` rather than being
+ * guessed at.
+ */
+export function cookieIsSecure(
+  setting: CookieSecurity,
+  requestScheme: string | null | undefined,
+): boolean {
+  if (setting === "always") return true;
+  if (setting === "never") return false;
+  return (requestScheme ?? "").trim().toLowerCase() === "https";
+}
+
 /**
  * Normalise a class join code the way it is stored: trimmed and upper-cased.
  * A blank or missing code means "do not look one up", so it returns `null`.

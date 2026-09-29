@@ -42,9 +42,11 @@ import {
 import { parseAssignmentForm } from "../src/lib/assignment-rules";
 import {
   allowSelfRegistration,
+  cookieIsSecure,
   joinOutcome,
   MIN_PASSWORD_LENGTH,
   normalizeJoinCode,
+  parseCookieSecurity,
   passwordProblem,
   REGISTRATION,
   safeRelativePath,
@@ -736,6 +738,25 @@ test("password policy: one rule for sign-up and the admin forms", () => {
   assert.equal(passwordProblem(""), "Use a password of at least 8 characters.");
   assert.equal(passwordProblem("a".repeat(MIN_PASSWORD_LENGTH)), null);
   assert.equal(passwordProblem("a".repeat(64)), null);
+});
+
+test("session cookie: the Secure flag follows the request, not the build", () => {
+  // `secure: NODE_ENV === "production"` marked every session cookie Secure on a stack
+  // that serves plain HTTP, and a browser drops such a cookie from an insecure origin
+  // — so a production deployment signed in on `localhost` and nowhere else.
+  assert.equal(cookieIsSecure("auto", "http"), false);
+  assert.equal(cookieIsSecure("auto", "https"), true);
+  assert.equal(cookieIsSecure("auto", " HTTPS "), true, "a proxy may shout");
+  assert.equal(cookieIsSecure("auto", null), false, "no report means the connection was not TLS");
+
+  // An operator who knows better than the request still wins, both ways.
+  assert.equal(cookieIsSecure("always", "http"), true);
+  assert.equal(cookieIsSecure("never", "https"), false);
+
+  assert.equal(parseCookieSecurity(undefined), "auto");
+  assert.equal(parseCookieSecurity("true"), "always");
+  assert.equal(parseCookieSecurity("0"), "never");
+  assert.equal(parseCookieSecurity("nonsense"), "auto", "a typo must not silently change it");
 });
 
 test("register: the password boundary matches the shared policy", () => {

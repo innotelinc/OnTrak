@@ -34,6 +34,8 @@ import { buildInboxView, parseInboxFilter, selectedTicket } from "../src/lib/inb
 import {
   claimsForTenant,
   isTixSessionClaims,
+  cookieIsSecure,
+  parseCookieSecurity,
   sessionActor,
   sessionDisplayName,
   TIX_SESSION_COOKIE,
@@ -312,6 +314,29 @@ test("session: claims become an actor and are scoped to their tenant", () => {
   assert.equal(sessionDisplayName(claims), "Dee");
   assert.equal(sessionDisplayName({ userId: "u1", tenantId: "t", role: "AGENT", email: "a@x" }), "a@x");
   assert.equal(TIX_SESSION_COOKIE, "ontrak_tix_session");
+});
+
+test("session: the Secure flag follows the request, not the build", () => {
+  // The bug this pins: `secure: NODE_ENV === "production"` marked every cookie Secure
+  // on a stack that serves plain HTTP, and a browser drops a Secure cookie from an
+  // insecure origin — so a production desk signed in on `localhost` and nowhere else.
+  assert.equal(cookieIsSecure("auto", "http"), false);
+  assert.equal(cookieIsSecure("auto", "https"), true);
+  assert.equal(cookieIsSecure("auto", " HTTPS "), true, "a proxy may shout");
+  assert.equal(cookieIsSecure("auto", null), false, "no report means the connection was not TLS");
+  assert.equal(cookieIsSecure("auto", undefined), false);
+
+  // An operator who knows better than the request still wins, in both directions.
+  assert.equal(cookieIsSecure("always", "http"), true);
+  assert.equal(cookieIsSecure("never", "https"), false);
+
+  assert.equal(parseCookieSecurity(undefined), "auto");
+  assert.equal(parseCookieSecurity(""), "auto");
+  assert.equal(parseCookieSecurity("true"), "always");
+  assert.equal(parseCookieSecurity("1"), "always");
+  assert.equal(parseCookieSecurity("false"), "never");
+  assert.equal(parseCookieSecurity("0"), "never");
+  assert.equal(parseCookieSecurity("nonsense"), "auto", "a typo must not silently weaken or break it");
 });
 
 /* -------------------------------------------------------------------------- */

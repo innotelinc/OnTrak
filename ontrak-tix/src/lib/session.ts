@@ -1,13 +1,15 @@
 import "server-only";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { SignJWT, jwtVerify } from "jose";
 
 import type { Actor } from "./access-rules";
 import {
   TIX_SESSION_COOKIE,
+  cookieIsSecure,
   isTixSessionClaims,
+  parseCookieSecurity,
   sessionActor,
   sessionDisplayName,
   type TixSessionClaims,
@@ -62,7 +64,7 @@ export async function createTixSession(claims: TixSessionClaims): Promise<void> 
   store.set(TIX_SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: await sessionCookieSecure(),
     path: "/",
     maxAge: ttl,
   });
@@ -71,6 +73,31 @@ export async function createTixSession(claims: TixSessionClaims): Promise<void> 
 export async function destroyTixSession(): Promise<void> {
   const store = await cookies();
   store.delete(TIX_SESSION_COOKIE);
+}
+
+/**
+ * The scheme this request arrived over, as the request reports it.
+ *
+ * `X-Forwarded-Proto` is what a TLS terminator sets; a connection that reached this
+ * process directly usually has nothing to say, which is answered as "not https".
+ */
+async function requestScheme(): Promise<string | null> {
+  const store = await headers();
+  const forwarded = store.get("x-forwarded-proto");
+  if (!forwarded) return null;
+  return forwarded.split(",")[0].trim();
+}
+
+/**
+ * Whether the cookie this request is about to receive may be restricted to TLS.
+ *
+ * Exported because every signed cookie the desk writes shares the answer — the
+ * session, the SSO authorization state and a revealed integration secret. Each of
+ * them was `secure` in production, and on a plain-HTTP deployment that meant none of
+ * them was ever stored.
+ */
+export async function sessionCookieSecure(): Promise<boolean> {
+  return cookieIsSecure(parseCookieSecurity(process.env.TIX_COOKIE_SECURE), await requestScheme());
 }
 
 /** Verifying a raw token is shared with the middleware, which runs on the edge runtime. */
