@@ -1,0 +1,293 @@
+/*
+ * OnTrak portal — styles.
+ *
+ * Hand-written CSS rather than a utility framework, matching the estate's other
+ * Next.js apps. The palette carries meaning and the class names say which fact
+ * they represent (`tile--security`, `status--down`), so a page cannot invent a new
+ * colour to mean "attention" and drift from what the rest of the operation looks
+ * like.
+ *
+ * The one rule the family shares: a product that could not be checked is NOT
+ * green. `--unknown` is its own colour and its own word, because a status light
+ * that was never tested is worse than no light at all.
+ */
+
+:root {
+  --bg: #0b1015;
+  --bg-raised: #121a22;
+  --bg-input: #0e151c;
+  --line: #1e2a35;
+  --line-strong: #2b3a48;
+  --text: #e6edf3;
+  --text-dim: #93a3b3;
+  --text-faint: #64748b;
+
+  --ok: #3fb950;
+  --info: #58a6ff;
+  --bad: #f85149;
+  --attention: #d29922;
+  --unknown: #8b949e;
+  --accent: #2f81f7;
+
+  /* One accent per product family, so a tile is identifiable before it is read. */
+  --training: #7ee787;
+  --desk: #79c0ff;
+  --security: #d2a8ff;
+  --operations: #f0c674;
+
+  --radius: 10px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+a { color: var(--info); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, .mono { font-family: var(--mono); font-size: 12.5px; }
+
+.page { max-width: 1120px; margin: 0 auto; padding: 0 22px; min-height: 100vh; display: flex; flex-direction: column; }
+
+.masthead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+.masthead__brand { display: flex; align-items: baseline; gap: 8px; color: var(--text); }
+.masthead__brand:hover { text-decoration: none; }
+.masthead__brand strong { font-size: 18px; letter-spacing: 0.2px; }
+.masthead__brand span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+}
+
+main { flex: 1; padding: 22px 0 40px; }
+.footer { padding: 18px 0 26px; border-top: 1px solid var(--line); font-size: 12px; max-width: 80ch; }
+
+/* ── headings ──────────────────────────────────────────────────────────── */
+.head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+.head h1 { margin: 0; font-size: 22px; font-weight: 600; }
+.head p { margin: 5px 0 0; color: var(--text-dim); max-width: 74ch; }
+
+/* ── the person ────────────────────────────────────────────────────────── */
+.who { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.chip strong { color: var(--text); font-weight: 600; }
+.chip--role { border-color: #1f4468; color: #79c0ff; }
+
+/* ── tiles ─────────────────────────────────────────────────────────────── */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(272px, 1fr));
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 17px 15px;
+  color: var(--text);
+  min-height: 168px;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.tile:hover { text-decoration: none; border-color: var(--line-strong); transform: translateY(-1px); }
+/* A left rule rather than a filled header: the product's colour has to survive
+   being printed, screenshotted and viewed by somebody who cannot distinguish it. */
+.tile::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  border-radius: var(--radius) 0 0 var(--radius);
+  background: var(--line-strong);
+}
+.tile--training::before { background: var(--training); }
+.tile--desk::before { background: var(--desk); }
+.tile--security::before { background: var(--security); }
+.tile--operations::before { background: var(--operations); }
+
+.tile__top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.tile h2 { margin: 0; font-size: 15.5px; font-weight: 600; }
+.tile p { margin: 5px 0 0; color: var(--text-dim); font-size: 13px; }
+.tile__audience { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.07em; }
+.tile__foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.tile__url { font-family: var(--mono); font-size: 11.5px; color: var(--text-faint); }
+.tile__open { font-size: 12.5px; font-weight: 600; }
+
+.tile--primary { border-color: var(--line-strong); }
+.badge {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: #16202b;
+  border: 1px solid #1f4468;
+  color: #79c0ff;
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+/* ── status lights ─────────────────────────────────────────────────────── */
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; white-space: nowrap; }
+.status__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--unknown); flex: none; }
+.status--up .status__dot { background: var(--ok); }
+.status--down .status__dot { background: var(--bad); }
+.status--unknown .status__dot { background: var(--unknown); }
+.status--up { color: var(--ok); }
+.status--down { color: var(--bad); }
+.status--unknown { color: var(--unknown); }
+
+/* ── panels ────────────────────────────────────────────────────────────── */
+.panel {
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 18px;
+}
+.panel > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.panel > header h2 {
+  margin: 0;
+  font-size: 12.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+}
+.panel .body { padding: 14px; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  font-weight: 600;
+  background: #101820;
+}
+tbody tr:last-child td { border-bottom: none; }
+
+.note {
+  border-left: 3px solid var(--line-strong);
+  background: #101820;
+  padding: 9px 12px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  border-radius: 0 6px 6px 0;
+  margin: 10px 0;
+}
+.note--warn { border-left-color: var(--attention); color: #e8d3a0; }
+.note--bad { border-left-color: var(--bad); color: #ffc9c4; }
+.note--ok { border-left-color: var(--ok); color: #b7ecc0; }
+
+.dim { color: var(--text-dim); }
+.faint { color: var(--text-faint); }
+.empty { padding: 30px 16px; text-align: center; color: var(--text-faint); }
+
+/* ── the sign-in card ──────────────────────────────────────────────────── */
+.gate {
+  max-width: 440px;
+  margin: 8vh auto 0;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+.gate h1 { margin: 0 0 6px; font-size: 19px; }
+.gate p { color: var(--text-dim); margin-top: 0; }
+
+label.field { display: block; margin-bottom: 13px; }
+label.field > span { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+
+input[type="text"], input[type="password"], select {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px 10px;
+  font: inherit;
+}
+input:focus, select:focus { outline: none; border-color: var(--accent); }
+
+button {
+  background: #1c2632;
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 7px 13px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { background: #25313f; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.primary { background: #1f6feb; border-color: #2f81f7; color: #fff; font-weight: 600; }
+button.primary:hover:not(:disabled) { background: #2f81f7; }
+button.ghost { background: transparent; }
+
+.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 18px 0 12px;
+}
+.divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+/* An anchor, not a button: this is a navigation to the provider and has to be a
+   plain browser redirect. Fetching it is what breaks the handshake. */
+.sso-button {
+  display: block;
+  text-align: center;
+  background: #1c2632;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 9px 13px;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+}
+.sso-button:hover { background: #25313f; text-decoration: none; }

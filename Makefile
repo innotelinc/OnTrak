@@ -4,17 +4,20 @@
 # `make help` is the first stop. Every target carries a `##` description, so
 # help stays accurate without being maintained twice.
 #
-# Three products live here and stay independently deployable, so the targets
-# that only make sense for one of them say so: `TIX` targets run in
-# ontrak-tix/, `SENTINEL` targets in ontrak-sentinel/, and everything else in
-# the training app at the repo root. Nothing above `## ---- Delivery ----`
-# talks to a remote or changes published state.
+# Five products live here and stay independently deployable, so the targets that
+# only make sense for one of them say so: `TIX` targets run in ontrak-tix/,
+# `SENTINEL` targets in ontrak-sentinel/, `SYNC` ones in ontrak-sync/ (which has
+# its own Makefile for the backend suite) and `PORTAL` ones in ontrak-portal/.
+# Everything else is the training app at the repo root. Nothing above
+# `## ---- Delivery ----` talks to a remote or changes published state.
 # ═══════════════════════════════════════════════════════════════════════════
 
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 TIX_DIR := ontrak-tix
 SENTINEL_DIR := ontrak-sentinel
+SYNC_DIR := ontrak-sync
+PORTAL_DIR := ontrak-portal
 
 ## ---- Bootstrap ----
 
@@ -34,8 +37,9 @@ hooks: ## Point git at the shared attribution/secret guard hooks
 
 ## ---- Containers ----
 # Each product is its own stack. `up`/`down`/`logs` are the training app's; the
-# `tix-`-prefixed twins are the service desk's and the `sentinel-` ones are the
-# identity provider's. `ps` and `images` cover all three.
+# `tix-`-prefixed twins are the service desk's, the `sentinel-` ones are the
+# identity provider's, and `sync-`/`portal-` are OnTrak Sync's and the family
+# portal's. `ps` covers all five.
 #
 # The training app and Tix both publish 5432 by default, so run only one of
 # *those* at a time — or set ONTRAK_DB_PORT / ONTRAK_TIX_DB_PORT to separate
@@ -77,13 +81,38 @@ sentinel-down: ## Stop the Sentinel stack (keeps its database volume)
 sentinel-logs: ## Tail the Sentinel stack's logs
 	cd $(SENTINEL_DIR) && docker compose logs -f
 
-# The family stack: all three products, one network, one command. `up`/`down`
+.PHONY: sync-up
+sync-up: ## Build and start OnTrak Sync's API + dashboard (:8420/:8421)
+	cd $(SYNC_DIR) && docker compose up -d --build
+
+.PHONY: sync-down
+sync-down: ## Stop the OnTrak Sync stack (keeps its database volume)
+	cd $(SYNC_DIR) && docker compose down
+
+.PHONY: sync-logs
+sync-logs: ## Tail the OnTrak Sync stack's logs
+	cd $(SYNC_DIR) && docker compose logs -f
+
+.PHONY: portal-up
+portal-up: ## Build and start the portal, serving on :3300
+	cd $(PORTAL_DIR) && docker compose up -d --build
+
+.PHONY: portal-down
+portal-down: ## Stop the portal stack
+	cd $(PORTAL_DIR) && docker compose down
+
+.PHONY: portal-logs
+portal-logs: ## Tail the portal stack's logs
+	cd $(PORTAL_DIR) && docker compose logs -f
+
+# The family stack: all five products, one network, one command. `up`/`down`
 # above are the training app's; this brings up everything, with Tix's outbound
-# provisioning already pointed at the provider over the network. See the header
-# of docker-compose.all.yml for what single sign-on additionally needs.
+# provisioning already pointed at the provider over the network and the portal's
+# password sign-in already pointed at OnTrak Sync. See the header of
+# docker-compose.all.yml for what single sign-on additionally needs.
 
 .PHONY: all-up
-all-up: ## Build and start all three products together (:3000, :3001, :8787)
+all-up: ## Build and start all five products together (:3300, :3000, :3001, :8787, :8420/8421)
 	docker compose -f docker-compose.all.yml up -d --build
 
 .PHONY: all-down
@@ -100,23 +129,33 @@ all-demo: ## Load the demo data for both apps in the family stack
 	docker compose -f docker-compose.all.yml --profile demo run --rm tix-seed
 
 .PHONY: ps
-ps: ## List the containers in all three stacks
+ps: ## List the containers in all five stacks
 	docker compose ps
 	cd $(TIX_DIR) && docker compose ps
 	cd $(SENTINEL_DIR) && docker compose ps
+	cd $(SYNC_DIR) && docker compose ps
+	cd $(PORTAL_DIR) && docker compose ps
 
 .PHONY: images
-images: ## Build all three production images without starting anything
+images: ## Build the training, Tix and Sentinel images without starting anything
 	docker build --target runner -t ontrak-training:local .
 	cd $(TIX_DIR) && docker build --target runner -t ontrak-tix:local .
 	cd $(SENTINEL_DIR) && docker build --target runner -t ontrak-sentinel:local .
+
+.PHONY: sync-images
+sync-images: ## Build the OnTrak Sync API + dashboard images without starting anything
+	cd $(SYNC_DIR) && docker compose build
+
+.PHONY: portal-images
+portal-images: ## Build the portal image without starting anything
+	cd $(PORTAL_DIR) && docker compose build
 
 .PHONY: family-image
 family-image: ## Build the family stack's images without starting anything
 	docker compose -f docker-compose.all.yml build
 
 .PHONY: check-compose
-check-compose: ## Validate all four development compose files against their .env.example
+check-compose: ## Validate every development compose file against its .env.example
 	@cp -n .env.example .env 2>/dev/null || true
 	docker compose config --quiet && echo "compose: training ok"
 	@cp -n $(TIX_DIR)/.env.example $(TIX_DIR)/.env 2>/dev/null || true
@@ -124,8 +163,12 @@ check-compose: ## Validate all four development compose files against their .env
 	# Sentinel's stack starts on defaults and needs no `.env`, so there is
 	# nothing to copy in before validating it.
 	cd $(SENTINEL_DIR) && docker compose config --quiet && echo "compose: sentinel ok"
-	# The family stack reads all three `.env` files, which the lines above have
-	# just made sure exist.
+	@cp -n $(SYNC_DIR)/.env.example $(SYNC_DIR)/.env 2>/dev/null || true
+	cd $(SYNC_DIR) && docker compose config --quiet && echo "compose: sync ok"
+	@cp -n $(PORTAL_DIR)/.env.example $(PORTAL_DIR)/.env 2>/dev/null || true
+	cd $(PORTAL_DIR) && docker compose config --quiet && echo "compose: portal ok"
+	# The family stack reads the other four `.env` files, which the lines above
+	# have just made sure exist.
 	docker compose -f docker-compose.all.yml config --quiet && echo "compose: family ok"
 
 .PHONY: prod-check
@@ -236,21 +279,26 @@ sentinel-serve: ## Run the identity provider from source (http://localhost:8787)
 check: typecheck test build ## Everything CI runs, in the order CI runs it
 
 .PHONY: typecheck
-typecheck: ## Typecheck all three products
+typecheck: ## Typecheck all five products
 	npm run typecheck
 	cd $(TIX_DIR) && npm run typecheck
 	cd $(SENTINEL_DIR) && npm run typecheck
+	cd $(SYNC_DIR)/web && npm run typecheck
+	cd $(PORTAL_DIR) && npm run typecheck
 
 .PHONY: test
-test: ## Run all three unit-test suites
+test: ## Run every unit-test suite (OnTrak Sync's is plain unittest)
 	npm test
 	cd $(TIX_DIR) && npm test
 	cd $(SENTINEL_DIR) && npm test
+	cd $(SYNC_DIR)/backend && python3 tests/run-all.py
+	cd $(PORTAL_DIR) && npm test
 
 .PHONY: build
-build: ## Production-build the two Next apps (Sentinel has no build step)
+build: ## Production-build the three Next apps (Sentinel has no build step)
 	npm run build
 	cd $(TIX_DIR) && npm run build
+	cd $(PORTAL_DIR) && npm run build
 
 .PHONY: conform
 conform: ## Audit this repo against the Innotel Platform Stack standard

@@ -1,0 +1,59 @@
+# OnTrak Portal — the family's front door, on its own.
+#
+# Its own project because it is independently deployable: it holds no database and
+# no state, so it can be restarted, moved or rolled back without a migration. The
+# only thing it needs from the rest of the family is OnTrak Sync's account table,
+# and it says so honestly when that is not answering.
+#
+# Two things about the shape of this file:
+#
+#   * **The portal is published on the LAN address by default.** It is reached from
+#     a browser, so loopback would make it work only for somebody sitting on the
+#     host. Behind the Cerulean edge the NPM proxy host points at this port, which
+#     is where `docker-compose.all.yml` wires it too.
+#   * **Nothing is baked in at build time.** Every address — the base domain, the
+#     public URL, the provider, the sibling products — is read at runtime, so the
+#     same image is what runs at `ontrak.innotel.us` and on a lab domain.
+name: ontrak-portal
+
+services:
+  ontrak-portal:
+    build:
+      context: .
+    image: innotel/ontrak-portal:0.1.0
+    container_name: ontrak-portal
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ONTRAK_PORTAL_BASE_DOMAIN: ${ONTRAK_PORTAL_BASE_DOMAIN:-ontrak.innotel.us}
+      ONTRAK_PORTAL_PUBLIC_URL: ${ONTRAK_PORTAL_PUBLIC_URL:-https://ontrak.innotel.us}
+      # The family's local account table. Defaulted to the address OnTrak Sync
+      # PUBLISHES, not to a compose network name: this stack has to work on its own
+      # — that is what "independently deployable" means — and a name that only
+      # resolves inside another project's network is a deployment that works right
+      # up until somebody runs one file instead of the other.
+      # `docker-compose.all.yml` overrides this with `http://sync-api:8420`.
+      ONTRAK_SYNC_API_URL: ${ONTRAK_SYNC_API_URL:-http://192.168.1.21:8420}
+      ONTRAK_ITS_INTERNAL_URL: ${ONTRAK_ITS_INTERNAL_URL:-}
+      ONTRAK_TIX_INTERNAL_URL: ${ONTRAK_TIX_INTERNAL_URL:-}
+      ONTRAK_SENTINEL_INTERNAL_URL: ${ONTRAK_SENTINEL_INTERNAL_URL:-}
+      ONTRAK_SYNC_INTERNAL_URL: ${ONTRAK_SYNC_INTERNAL_URL:-}
+    ports:
+      - "${ONTRAK_PORTAL_BIND:-192.168.1.21}:3300:3300"
+    healthcheck:
+      # `/login` answers without a session, which is the point: a healthcheck
+      # should never need a credential, and a portal that redirects everything to
+      # the provider would report unhealthy every time the provider was slow.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3300/login').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

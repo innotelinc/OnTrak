@@ -16,9 +16,14 @@
 > Training** — is an open source, browser-based training platform where students
 > fix deliberately broken machines and are graded from the resulting state,
 > while [**OnTrak Tix**](ontrak-tix/README.md) runs the real desk beside it, with
-> clients, SLAs, billing and insurance-grade incident evidence. Both consume
-> Cerulean for identity and trust and share one audit chain; no virtual machines
-> and no terminal servers are required for either.
+> clients, SLAs, billing and insurance-grade incident evidence;
+> [**OnTrak Sentinel**](ontrak-sentinel/README.md) is the directory and the
+> intrusion console; and [**OnTrak Sync**](ontrak-sync/README.md) keeps the
+> estate's packages and containers current and owns the family's local accounts.
+> [**OnTrak Portal**](ontrak-portal/README.md) is the front door: one sign-in,
+> then the products a role belongs in. Every product works on its own — it always
+> has — and they consume Cerulean for identity and trust and share one audit
+> chain; no virtual machines and no terminal servers are required for any of them.
 > **Landing page:** [https://innotelinc.github.io/OnTrak/](https://innotelinc.github.io/OnTrak/)
 
 ---
@@ -84,20 +89,23 @@ the image without starting anything with `docker build --target runner .` (or
 ### Run the whole family at once
 
 Each product keeps its own stack because each is independently deployable, and
-there is also `docker-compose.all.yml` — the training app, OnTrak Tix and OnTrak
-Sentinel in one project on one network, with the wiring between them already in
-place (each app's own database and public address, a registered OIDC client per
-product, and the desk's outbound provisioning pointed at the provider):
+there is also `docker-compose.all.yml` — all five in one project on one network,
+with the wiring between them already in place (each app's own database and public
+address, a registered OIDC client per product, the desk's outbound provisioning
+pointed at the provider, and the portal's password sign-in pointed at OnTrak
+Sync's account table):
 
 ```bash
-make all-up          # :3000 training, :3001 desk, :8787 provider
-make all-demo        # optional: the demo data for both apps
+make all-up     # :3300 portal, :3000 training, :3001 desk, :8787 provider, :8420/:8421 Sync
+make all-demo   # optional: the demo data for both demo-able apps
 make all-down
 ```
 
 The one thing it cannot decide for you is the provider's address, because it has
 to be one that **both** the browser and the app containers resolve — see the
-header of that file.
+header of that file. [docs/family-operations.md](docs/family-operations.md) is the
+same stack written down as it is actually deployed: the five names, the role
+groups in Authentik, and which of the two sign-in paths to check when one fails.
 
 ### Deploy it
 
@@ -210,6 +218,15 @@ disabled"* or *"requires a license key for Contoso Asset Suite"*.
 | Observe and re-grade student attempts | ✅ | ✅ | — |
 | Complete timed, graded scenarios | — | — | ✅ |
 
+Every product in the family draws from **one vocabulary of six roles** — `ADMIN`,
+`SYSADMIN`, `ANALYST`, `TECHNICIAN`, `INSTRUCTOR`, `STUDENT` — and one set of
+capability names, so a group in Cerulean means the same thing to the training
+app, the desk, Sentinel, OnTrak Sync and the [portal](ontrak-portal/README.md).
+The table above is this app's slice of it. The portal is what decides *where* to
+send somebody; each product still authorises the caller itself, from its own
+credential, which is why a role change at the directory takes effect everywhere
+at once and nothing has to be copied anywhere.
+
 ---
 
 ## Single sign-on
@@ -280,6 +297,23 @@ ONTRAK_SSO_LIVE=1 DATABASE_URL=postgresql://… \
 It is opt-in twice over — the flag says "start a server for this", and a reachable
 Postgres is required because a sign-in provisions an account — and it cleans up the
 account it provisions, so a local run leaves no trace. `npm test` skips it.
+
+### One front door for the family
+
+Signing in to each product separately is the part
+[**OnTrak Portal**](ontrak-portal/README.md) removes. It is a relying party to the
+same provider and the same group claims, so the role that decides which tiles it
+draws is the role this app already checks — and the portal deliberately
+re-implements none of it, because a second authorisation system would be a second
+thing to be wrong, and the more dangerous of the two would be the one people
+trusted.
+
+The portal keeps **no accounts of its own**. Its password form delegates to
+[OnTrak Sync](ontrak-sync/README.md), which owns the family's local account table:
+the path a LAN with no route to the provider signs in through. That is the split
+worth remembering operationally — **the portal's two sign-in paths fail
+independently.** Cerulean signing in does not depend on Sync answering, and Sync's
+account table does not depend on Cerulean.
 
 ### Upstream, the other direction
 
@@ -433,7 +467,10 @@ caught a scrollable region without keyboard access on the landing page.
 | [docs/stack.md](docs/stack.md) | OnTrak's role in the Innotel Platform Stack (TrainingOps) — what it owns, consumes and does not own |
 | [docs/scenario-authoring.md](docs/scenario-authoring.md) | How a scenario is written and how its objectives are graded |
 | [docs/training-evidence.md](docs/training-evidence.md) | Completion records, certificates and the signed export packet |
-| [INNOTEL-LABS.md](INNOTEL-LABS.md) | The Innotel Labs product family and how the three products fit together |
+| [INNOTEL-LABS.md](INNOTEL-LABS.md) | The Innotel Labs product family and how the five products fit together |
+| [docs/family-operations.md](docs/family-operations.md) | The family as deployed: the five hostnames, the Authentik role groups, and how to repair each sign-in path |
+| [ontrak-portal/README.md](ontrak-portal/README.md) | The centralized dashboard — one sign-in, then the products a role belongs in |
+| [ontrak-sync/README.md](ontrak-sync/README.md) | The estate's package and container update view, and the family's local accounts |
 | [ontrak-tix/docs/](ontrak-tix/docs/) | The service desk: tickets, SLAs, clients, billing, incidents, assurance |
 | [ROADMAP.md](ROADMAP.md) · [ontrak-tix/ROADMAP.md](ontrak-tix/ROADMAP.md) | What is shipped, what is next, and the honest gaps |
 
@@ -441,7 +478,7 @@ caught a scrollable region without keyboard access on the landing page.
 
 ## Sibling project
 
-Three [**Innotel Labs**](INNOTEL-LABS.md) products share a stack, a design
+Five [**Innotel Labs**](INNOTEL-LABS.md) products share a stack, a design
 language and one identity layer:
 
 - [**OnTrak Tix**](ontrak-tix/ROADMAP.md) — enterprise ticketing and
@@ -449,10 +486,16 @@ language and one identity layer:
   insurance-grade, tamper-evident documentation.
 - [**OnTrak Sentinel**](ontrak-sentinel/ROADMAP.md) — identity (IdP) and
   intrusion prevention (IDS/IPS).
+- [**OnTrak Sync**](ontrak-sync/README.md) — estate package and container update
+  monitoring and, on approval, updating; also the family's local account table.
+- [**OnTrak Portal**](ontrak-portal/README.md) — the centralized dashboard: one
+  sign-in, then the products a role belongs in.
 
 OnTrak IT Support Training **trains** the technicians; OnTrak Tix is the tool
-they **work in**; OnTrak Sentinel protects both. They link via a ticket ↔
-scenario bridge and a single identity provider.
+they **work in**; OnTrak Sentinel protects both; OnTrak Sync keeps the machines
+underneath them current; and OnTrak Portal is where a person starts. They link via
+a ticket ↔ scenario bridge, a shared role vocabulary and a single identity
+provider.
 
 ## 🏛️ Platform stack
 

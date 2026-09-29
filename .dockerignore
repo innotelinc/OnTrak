@@ -14,9 +14,15 @@
 **/build
 **/*.tsbuildinfo
 
-# The sibling products are separate images with their own Dockerfiles
+# The sibling products are separate images with their own Dockerfiles and their
+# own build contexts. They are excluded here so the training app's context does not
+# drag four other applications' node_modules and ripgrep-able secrets through the
+# daemon on every build — and so a file that should only live in a sibling cannot
+# be COPY'd into this image by a stray instruction.
 ontrak-tix
 ontrak-sentinel
+ontrak-sync
+ontrak-portal
 web
 
 # Repository tooling, not application code

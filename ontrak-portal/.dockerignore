@@ -1,0 +1,22 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Build context for the portal image.
+#
+# Two rules: never copy in what the image installs or generates itself, and never
+# let local state or a secret reach a layer. Nothing excluded here is needed by
+# `npm run build`.
+# ═══════════════════════════════════════════════════════════════════════════
+
+**/node_modules
+**/.next
+**/out
+**/dist
+**/build
+**/*.tsbuildinfo
+.DS_Store
+npm-debug.log*
+
+# Local configuration — the portal's secrets are its session signing key and its
+# OIDC client secret, and neither belongs in an image layer.
+.env
+.env.*
+!.env.example

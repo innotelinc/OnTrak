@@ -24,11 +24,20 @@ This document only states OnTrak's place in it.
   notification wording kept as sent, and the signed assurance packet.
 - **Its own audit chain** — append-only, hash-chained records of every
   privileged action, verifiable without trusting the application that wrote it.
+- **The estate's update state** — which host and container is behind on which
+  package, and what was applied when (OnTrak Sync).
+- **The family's front door** — routing a signed-in person to the product their
+  role belongs in (OnTrak Portal). The portal owns the *routing decision* and
+  nothing else: no accounts, no data, no second authorisation system.
 
 **Consumes**
 
-- **Identity (Authentik, hosted in Cerulean)** — OIDC sign-in for staff and
-  students, with a local credential fallback so each app deploys standalone.
+- **Identity (Cerulean, running Authentik)** — OIDC sign-in for staff, students,
+  technicians, analysts and sysadmins, with a local credential fallback so each
+  app deploys standalone. In this estate the directory is already Cerulean's
+  Authentik; **OnTrak Sync owns the local account table**, which is what the
+  portal's password sign-in delegates to and what a LAN with no route to the
+  provider signs in against.
 - **Secrets (Cerulean Vault)** — runtime secret resolution
   (`vault://<mount>/<path>#<key>`).
 - **Trust (Cerulean)** — DNS records, the stack wildcard certificate and the NPM
@@ -55,19 +64,32 @@ This document only states OnTrak's place in it.
 |---|---|---|
 | `ontrak-tix` | Next.js 15, React 19, TypeScript, Prisma, PostgreSQL | The service desk: tickets, SLAs, clients, time, billing, incidents, assurance |
 | ITS training app | Next.js 15, React 19, TypeScript, Prisma, PostgreSQL, xterm.js | Graded Linux/Windows/Office simulations, attempts, certificates |
+| `ontrak-portal` | Next.js 15, React 19, TypeScript, no database | The family's front door: one sign-in, then the products a role belongs in. Routes by role and authorises nothing — every product re-checks the caller itself |
+| `ontrak-sync` | Python 3.12 + FastAPI + SQLite (API), Next.js 16 dashboard | Estate package/container update monitoring and approved updating; the family's local account table and its capability model |
 | `ontrak-sentinel` (planned) | (unbuilt) | IdP + IDS/IPS for the family |
-| Audit chain | Append-only rows, hash-chained per tenant | Tamper-evident history shared by both apps |
+| Audit chain | Append-only rows, hash-chained per tenant | Tamper-evident history shared by every app |
 | Evidence store | Filesystem or object storage behind an object-lock port | Incident artifacts under a retention window nobody can shorten |
 
-Shared engineering layers, identical across both apps: pure logic in
+Shared engineering layers, identical across the web apps: pure logic in
 `src/lib/**/*-rules.ts` with unit tests, a store port with a Prisma adapter and
 an in-memory adapter for tests, server-side trust boundaries, and an audit event
-for every privileged write.
+for every privileged write. OnTrak Sync follows the same shape in Python — pure
+parsers and cron arithmetic (`scanners.py`, `policy.py`) behind a `unittest` suite,
+and one module (`applier.py`) that is the only code allowed to change a machine.
+
+One vocabulary of roles and capabilities crosses all five: `ADMIN`, `SYSADMIN`,
+`ANALYST`, `TECHNICIAN`, `INSTRUCTOR`, `STUDENT`. It exists so a claim from the
+directory means the same thing to every product, and so nothing has to be
+translated at a boundary — a translation table is where `instructor` silently
+becomes `student` after a migration.
 
 ## In the ecosystem
 
-- **Identity** — staff sign in through Authentik; Tix re-checks the role on the
-  server for every privileged action rather than trusting a session claim.
+- **Identity** — staff sign in through Authentik; the portal routes them to the
+  product their role belongs in, and every product re-checks the role on the
+  server for each privileged action rather than trusting a session claim. The
+  portal holds no accounts: its password form delegates to OnTrak Sync, which
+  owns the family's local account table.
 - **Secrets & trust** — the apps read a `.env` that either carries a Vault
   reference the deployment resolves or the resolved value where no resolver
   exists. Public hosts and certificates come from Cerulean.
