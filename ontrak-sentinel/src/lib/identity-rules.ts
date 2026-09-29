@@ -92,6 +92,18 @@ export interface IdentityRecord {
   /** Email for a human, a service name for a machine. */
   identifier: string;
   displayName: string;
+  /**
+   * The identifier the *source directory* knows this person by (SCIM's
+   * `externalId`), or `null` for an identity that was never provisioned.
+   *
+   * This is the column that makes a rename safe: an administrator changing a
+   * person's address moves the same person, while a connector that matched on the
+   * name alone would create a second one and orphan the first. Unique within an
+   * organization when it is present, and deliberately *not* unique across the NULLs
+   * — an identity that came from a directory and one typed into the console are both
+   * perfectly ordinary, and Postgres already treats NULLs as distinct.
+   */
+  externalId: string | null;
   kind: IdentityKind;
   role: IdentityRole;
   active: boolean;
@@ -131,6 +143,7 @@ export interface SessionRecord {
 export const ORG_SLUG_MAX = 60;
 export const IDENTIFIER_MAX = 200;
 export const DISPLAY_NAME_MAX = 120;
+export const EXTERNAL_ID_MAX = 200;
 
 export interface IdentityIssue {
   field: string;
@@ -164,8 +177,15 @@ export function validateIdentity(input: {
   displayName?: string;
   kind?: string;
   role?: string;
+  externalId?: string | null;
 }): IdentityIssue[] {
   const issues: IdentityIssue[] = [];
+
+  // A source directory's id is opaque to us and only has to survive a round trip, so
+  // the only thing worth refusing is one too long to store.
+  if (input.externalId != null && input.externalId.length > EXTERNAL_ID_MAX) {
+    issues.push({ field: "externalId", message: `The directory id may be at most ${EXTERNAL_ID_MAX} characters.` });
+  }
 
   const kind = input.kind ?? "HUMAN";
   if (kind !== "HUMAN" && kind !== "SERVICE") {
@@ -212,6 +232,22 @@ export function isSameOrganization(actorOrganizationId: string, organizationId: 
  */
 export function canManageIdentities(role: IdentityRole): boolean {
   return role === "ADMIN";
+}
+
+/**
+ * Whether a role change would leave the organization with no active administrator.
+ *
+ * The same rule `setActive` applies to deactivation, stated once so a *role* change
+ * cannot walk around it: demoting the last admin takes the same administration away
+ * as switching them off, and it does it more quietly.
+ */
+export function wouldStrandAdministration(
+  others: IdentityRecord[],
+  identityId: string,
+  next: { role: IdentityRole; active: boolean },
+): boolean {
+  if (next.role === "ADMIN" && next.active) return false;
+  return !others.some((entry) => entry.id !== identityId && entry.role === "ADMIN" && entry.active);
 }
 
 /** Who may read the directory and the audit trail. */

@@ -7,7 +7,11 @@
 // in `20260929000000_oidc`, and SAML service providers plus access-token
 // revocation (`SamlServiceProvider`, `AccessToken.revokedAt`) in
 // `20260930000000_logout_saml`. TOTP enrollment state (`MfaFactor.confirmedAt`,
-// `lastUsedAt`, `lastUsedCounter`) arrives in `20261001000000_mfa_totp`.
+// `lastUsedAt`, `lastUsedCounter`) arrives in `20261001000000_mfa_totp`, WebAuthn
+// credential state (`MfaFactor.publicKey`, `MfaFactor.signCount`,
+// `WebAuthnChallenge`) in `20261015000000_webauthn`, and provisioning
+// (`Identity.externalId`, `ScimToken`, `Group`, `GroupMember`) in
+// `20261020000000_scim`.
 //
 // Two shapes are worth reading before the rest:
 //
@@ -45,6 +49,11 @@ model Organization {
   sessions           Session[]
   audit              AuditEvent[]
 
+  // Provisioning (S2): the credentials a directory connector authenticates with,
+  // and the groups it keeps in sync.
+  scimTokens ScimToken[]
+  groups     Group[]
+
   // The OIDC surface (S1): who we issue identity to, and the grants in flight.
   oidcClients  OidcClient[]
   authCodes    AuthorizationCode[]
@@ -67,6 +76,12 @@ model Identity {
   /// Whether a second factor is enrolled. Read by every session decision, so it
   /// is stored rather than recomputed from the factors on each read.
   mfaEnrolled    Boolean      @default(false)
+  /// The identifier the *source directory* knows this person by (SCIM's
+  /// `externalId`), or `null` for an identity that was typed into the console.
+  /// This is the column that makes a rename safe: a connector matching on the user
+  /// name alone would create a second identity for somebody who changed their name,
+  /// and orphan the first — with its sessions, its factors and its history.
+  externalId     String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -75,8 +90,13 @@ model Identity {
   mfaFactors         MfaFactor[]
   webauthnChallenges WebAuthnChallenge[]
   sessions           Session[]
+  groupMemberships   GroupMember[]
 
   @@unique([organizationId, identifier])
+  /// Unique when present, and deliberately not across the NULLs: Postgres treats
+  /// NULLs as distinct, so an identity that came from a directory and one typed into
+  /// the console are both ordinary, and neither blocks the other.
+  @@unique([organizationId, externalId])
   @@index([organizationId, role])
 }
 
@@ -163,6 +183,66 @@ model MfaFactor {
 enum MfaKind {
   TOTP
   WEBAUTHN
+}
+
+/// A credential a directory connector authenticates with (S2).
+///
+/// Stored as `SHA-256(token)`, never as the token — the same rule as every other
+/// credential in the product, and the reason a copy of this database is not a set of
+/// working tokens. The plaintext exists in exactly one place: the response to the
+/// console request that minted it. `revokedAt` is a timestamp rather than a boolean so
+/// the record says *when* a connector stopped being trusted.
+model ScimToken {
+  id             String    @id @default(cuid())
+  organizationId String
+  /// What the administrator called it, e.g. “Entra ID — production”.
+  label          String?
+  tokenHash      String    @unique
+  /// Who minted it. The connector acts as this delegation, never as this person:
+  /// every write it makes is audited as `scim:<tokenId>`.
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  /// How somebody answers “is this token still in use?” before revoking it.
+  lastUsedAt     DateTime?
+  revokedAt      DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+/// A directory group (S2): membership, recorded and auditable.
+///
+/// Deliberately **not** an authorization object in v1. Roles, groups and
+/// attribute-based policy are the rest of S1, and until they land a group decides
+/// nothing — which is stated here rather than implied, because a group that looked
+/// like it granted something and did not would be worse than one that plainly does not
+/// yet. What is here is the synced fact: who is in it.
+model Group {
+  id             String   @id @default(cuid())
+  organizationId String
+  displayName    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members      GroupMember[]
+
+  @@unique([organizationId, displayName])
+}
+
+/// One membership. The pair is the key, so a connector re-sending the same membership
+/// cannot create a second row and a retry is a no-op rather than an error.
+model GroupMember {
+  groupId    String
+  identityId String
+  createdAt  DateTime @default(now())
+
+  group    Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, identityId])
+  @@index([identityId])
 }
 
 /// A WebAuthn ceremony in progress (S1).

@@ -160,7 +160,12 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
     apps **and** WebAuthn security keys), with enrollment self-service from its own
     console. The training app's side of this bullet is therefore a client, not a
     wait — and it can be built against the running provider (`npm run serve` in
-    `ontrak-sentinel/`) today. SCIM is Sentinel's S2 and is not started.
+    `ontrak-sentinel/`) today.
+  - SCIM 2.0 provisioning is **under way at the provider** (Sentinel's S2): Users
+    and Groups, a connector token minted in the console, and deprovisioning that
+    ends sessions and revokes their tokens. A roster push has somewhere to land,
+    so this bullet is also a client — but there is no directory *sync* from AD/
+    Entra/Google yet, which is the rest of S2.
   - MFA is enforced at the provider, so an organization that requires a second
     factor gets it here without the training app implementing one; a session is
     refused until a confirmed factor has been verified.

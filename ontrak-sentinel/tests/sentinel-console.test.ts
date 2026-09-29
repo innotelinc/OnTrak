@@ -29,6 +29,7 @@ import { IdentityService, MemoryIdentityStore, OrganizationAuditLog, type Identi
 import { base32Decode, totpCode, totpCounter } from "../src/lib/mfa-rules";
 import { MemoryMfaStore, MfaService, systemTotpSigner, type MfaIds } from "../src/lib/mfa-service";
 import { MemoryOidcStore, type AccessTokenRecord } from "../src/lib/oidc-service";
+import { MemoryScimStore, ScimService, type ScimIds, type ScimTokenRevoker } from "../src/lib/scim-service";
 import type { HttpRequest } from "../src/lib/oidc-http";
 import { base64UrlEncode } from "../src/lib/webauthn-rules";
 import { MemoryWebAuthnChallengeStore, WebAuthnService, type WebAuthnIds } from "../src/lib/webauthn-service";
@@ -78,13 +79,23 @@ function harness() {
     audit,
     webAuthnIds,
   );
-  const console_ = new ConsoleService(spine, mfa, webauthn, tokens);
+  const scimIds: ScimIds = {
+    id: () => `${scope}-scim-${++n}`,
+    now: () => new Date(clock).toISOString(),
+    nowMs: () => clock,
+    // 24 bytes as base64url is 32 characters — the length the real mint produces.
+    token: () => `sc1_${"c".repeat(24)}${`${++n}`.padStart(8, "0")}`,
+  };
+  const scimRevoker: ScimTokenRevoker = { revokeTokensForSession: async () => 1 };
+  const scim = new ScimService(new MemoryScimStore(), spine, { baseUrl: `${ORIGIN}/scim/v2` }, audit, scimRevoker, scimIds);
+  const console_ = new ConsoleService(spine, mfa, webauthn, tokens, scim);
 
   return {
     spine,
     mfa,
     webauthn,
     tokens,
+    scim,
     audit,
     service: console_,
     nowMs: () => clock,
@@ -157,6 +168,73 @@ test("console: a session id that does not exist is refused, not guessed into one
   await h.organization("acme");
   const response = await routeConsole(request("GET", CONSOLE_PATHS.mfa, { sessionId: "not-a-session" }), h.service);
   assert.equal(response.status, 401);
+});
+
+test("console: provisioning is an administrator's page, and a minted token is shown once in a body rather than a URL", async () => {
+  const h = harness();
+  const { sessionId } = await h.organization("acme", { factor: false });
+
+  const page = await routeConsole(request("GET", CONSOLE_PATHS.provisioning, { sessionId }), h.service);
+  assert.equal(page.status, 200);
+  // The nav reaches it, and the page says where a connector points.
+  assert.match(page.body, new RegExp(CONSOLE_PATHS.provisioning));
+  assert.match(page.body, /scim\/v2/);
+  assert.match(page.body, /No token yet/);
+
+  const minted = await routeConsole(
+    request("POST", CONSOLE_PATHS.mintToken, { sessionId, body: "label=Entra+ID" }),
+    h.service,
+  );
+  // Rendered, not redirected: a token in a `Location` header ends up in browser history,
+  // in `Referer` and in a proxy log, which is the last place a credential may be.
+  assert.equal(minted.status, 200);
+  assert.equal(minted.headers.location, undefined);
+  const plaintext = /sc1_[A-Za-z0-9_-]+/.exec(minted.body)?.[0];
+  assert.ok(plaintext, "the token should be shown once");
+  assert.match(minted.body, /Entra ID/);
+
+  // And only once: the listing afterwards names it without carrying its value.
+  const listed = await routeConsole(request("GET", CONSOLE_PATHS.provisioning, { sessionId }), h.service);
+  assert.equal(listed.status, 200);
+  assert.equal(listed.body.includes(plaintext!), false);
+  const value = /name="tokenId" value="([^"]+)"/.exec(listed.body)?.[1];
+  assert.ok(value, "a live token should offer a Revoke form");
+
+  const revoked = await routeConsole(
+    request("POST", CONSOLE_PATHS.revokeToken, { sessionId, body: `tokenId=${encodeURIComponent(value)}` }),
+    h.service,
+  );
+  // A state change that finished redirects, so a refresh re-reads the page.
+  assert.equal(revoked.status, 303);
+  assert.match(revoked.headers.location, /provisioning/);
+
+  const after = await routeConsole(request("GET", CONSOLE_PATHS.provisioning, { sessionId }), h.service);
+  assert.match(after.body, /revoked/);
+  assert.equal(after.body.includes("name=\"tokenId\""), false);
+});
+
+test("console: provisioning is refused to an identity that does not administer identities", async () => {
+  const h = harness();
+  const { actor } = await h.organization("acme", { factor: false });
+  const agent = await h.spine.createIdentity(actor, {
+    identifier: "agent@acme.test",
+    displayName: "Agent",
+    role: "AGENT",
+  });
+  assert.ok(agent.ok);
+  assert.ok((await h.spine.setMfaEnrolled(actor, agent.value.id, true)).ok);
+  const session = await h.spine.issueSession(actor.organizationId, agent.value.id);
+  assert.ok(session.ok);
+
+  const page = await routeConsole(request("GET", CONSOLE_PATHS.provisioning, { sessionId: session.value.id }), h.service);
+  assert.equal(page.status, 403);
+
+  // The mint is refused at the same door, and nothing was minted.
+  const minted = await routeConsole(request("POST", CONSOLE_PATHS.mintToken, { sessionId: session.value.id }), h.service);
+  assert.equal(minted.status, 403);
+  const tokens = await h.scim.listTokens(actor);
+  assert.ok(tokens.ok);
+  assert.equal(tokens.value.length, 0);
 });
 
 test("console: the overview shows who you are, whether a factor is enrolled, and the chain", async () => {

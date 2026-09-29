@@ -51,6 +51,7 @@ import {
   sessionInfo,
   validateIdentity,
   validateOrganization,
+  wouldStrandAdministration,
   type IdentityIssue,
   type IdentityKind,
   type IdentityPolicy,
@@ -91,6 +92,8 @@ export interface IdentityStore {
   listIdentities(organizationId: string): Promise<IdentityRecord[]>;
   findIdentity(organizationId: string, identityId: string): Promise<IdentityRecord | null>;
   findIdentityByIdentifier(organizationId: string, identifier: string): Promise<IdentityRecord | null>;
+  /** By the id the *source directory* uses — how SCIM recognises a rename as a move. */
+  findIdentityByExternalId(organizationId: string, externalId: string): Promise<IdentityRecord | null>;
   insertIdentity(record: IdentityRecord): Promise<void>;
   updateIdentity(record: IdentityRecord): Promise<void>;
 
@@ -191,6 +194,24 @@ export interface CreateIdentityInput {
   displayName?: string;
   kind?: string;
   role?: string;
+  /** The source directory's id for this person, when a connector is creating them. */
+  externalId?: string | null;
+}
+
+/**
+ * The mover's edit: the fields an administrator (or a directory) may change about
+ * somebody who already exists.
+ *
+ * Deliberately not a general record write. `kind` is absent because a service
+ * identity does not become a person, `active` has its own method with its own rule,
+ * and `mfaEnrolled` belongs to the factor services — so this is the *mover* half of
+ * joiner/mover/leaver and nothing more.
+ */
+export interface UpdateIdentityInput {
+  identifier?: string;
+  displayName?: string;
+  role?: string;
+  externalId?: string | null;
 }
 
 export class IdentityService {
@@ -290,12 +311,18 @@ export class IdentityService {
       return { ok: false, error: `“${identifier}” is already an identity here.` };
     }
 
+    const externalId = input.externalId?.trim() || null;
+    if (externalId && (await this.store.findIdentityByExternalId(actor.organizationId, externalId))) {
+      return { ok: false, error: "That directory id is already an identity here." };
+    }
+
     const now = this.ids.now();
     const record: IdentityRecord = {
       id: this.ids.id(),
       organizationId: actor.organizationId,
       identifier,
       displayName: input.displayName!.trim(),
+      externalId,
       kind: (input.kind ?? "HUMAN") as IdentityKind,
       role: (input.role ?? "AGENT") as IdentityRole,
       active: true,
@@ -309,8 +336,70 @@ export class IdentityService {
       identifier: record.identifier,
       role: record.role,
       kind: record.kind,
+      externalId: record.externalId,
     });
     return { ok: true, value: record };
+  }
+
+  /**
+   * Change what an existing identity is called, what it may do, or which directory
+   * record it came from — the *mover* half of joiner/mover/leaver.
+   *
+   * Three rules, and each one is a mistake somebody has made in a real deployment:
+   * a rename may not collide with somebody else's user name, a rename may not
+   * silently become a *different person* (which is what matching a connector on the
+   * name alone does — hence `externalId`, and hence the refusal when it is already
+   * taken), and a demotion may not leave the organization with nobody who can
+   * administer it. The last one is asked through the same pure rule deactivation
+   * uses, so "keep an administrator" has one answer rather than two.
+   */
+  async updateIdentity(
+    actor: IdentityActor,
+    identityId: string,
+    input: UpdateIdentityInput,
+  ): Promise<ServiceResult<IdentityRecord>> {
+    const denied = this.requireManage(actor);
+    if (denied) return denied;
+
+    const found = await this.store.findIdentity(actor.organizationId, identityId);
+    if (!found) return { ok: false, error: "That identity does not exist." };
+
+    const role = (input.role ?? found.role) as IdentityRole;
+    const identifier = (input.identifier ?? found.identifier).trim();
+    const displayName = (input.displayName ?? found.displayName).trim();
+    const externalId =
+      input.externalId === undefined ? found.externalId : input.externalId?.trim() || null;
+
+    const issues = firstIssue(
+      validateIdentity({ identifier, displayName, kind: found.kind, role, externalId }),
+    );
+    if (issues) return issues;
+
+    if (identifier.toLowerCase() !== found.identifier.toLowerCase()) {
+      const clash = await this.store.findIdentityByIdentifier(actor.organizationId, identifier);
+      if (clash && clash.id !== found.id) return { ok: false, error: `“${identifier}” is already an identity here.` };
+    }
+    if (externalId && externalId !== found.externalId) {
+      const clash = await this.store.findIdentityByExternalId(actor.organizationId, externalId);
+      if (clash && clash.id !== found.id) return { ok: false, error: "That directory id is already an identity here." };
+    }
+
+    if (role !== found.role) {
+      const others = await this.store.listIdentities(actor.organizationId);
+      if (wouldStrandAdministration(others, found.id, { role, active: found.active })) {
+        return { ok: false, error: "This is the organization's only active administrator; it must keep one." };
+      }
+    }
+
+    const next: IdentityRecord = { ...found, identifier, displayName, externalId, role, updatedAt: this.ids.now() };
+    await this.store.updateIdentity(next);
+    await this.append(next.organizationId, actor.id, "identity.update", "Identity", next.id, {
+      identifier: next.identifier,
+      displayName: next.displayName,
+      role: next.role,
+      externalId: next.externalId,
+    });
+    return { ok: true, value: next };
   }
 
   /**
@@ -327,10 +416,9 @@ export class IdentityService {
     const found = await this.store.findIdentity(actor.organizationId, identityId);
     if (!found) return { ok: false, error: "That identity does not exist." };
 
-    if (!active && found.role === "ADMIN") {
+    if (!active) {
       const others = await this.store.listIdentities(actor.organizationId);
-      const remaining = others.filter((entry) => entry.role === "ADMIN" && entry.active && entry.id !== found.id);
-      if (remaining.length === 0) {
+      if (wouldStrandAdministration(others, found.id, { role: found.role, active: false })) {
         return { ok: false, error: "This is the organization's only active administrator; it must keep one." };
       }
     }
@@ -674,6 +762,15 @@ export class MemoryIdentityStore implements IdentityStore {
     const wanted = identifier.trim().toLowerCase();
     const found = [...this.identities.values()].find(
       (entry) => entry.organizationId === organizationId && entry.identifier.toLowerCase() === wanted,
+    );
+    return found ? structuredClone(found) : null;
+  }
+
+  async findIdentityByExternalId(organizationId: string, externalId: string): Promise<IdentityRecord | null> {
+    const wanted = externalId.trim();
+    if (!wanted) return null;
+    const found = [...this.identities.values()].find(
+      (entry) => entry.organizationId === organizationId && entry.externalId === wanted,
     );
     return found ? structuredClone(found) : null;
   }

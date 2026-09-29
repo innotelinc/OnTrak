@@ -20,8 +20,10 @@
  */
 
 import type { IdentityActor, IdentityService, ServiceResult } from "./identity-service";
+import { canManageIdentities } from "./identity-rules";
 import type { MfaService, MfaStatus } from "./mfa-service";
 import type { OidcStore } from "./oidc-service";
+import type { ScimService } from "./scim-service";
 import type { WebAuthnRegistrationResponse } from "./webauthn-rules";
 import type { WebAuthnRegistrationOptions, WebAuthnService } from "./webauthn-service";
 import type {
@@ -29,6 +31,7 @@ import type {
   ConsoleFactorView,
   ConsoleMfaView,
   ConsoleOverviewView,
+  ConsoleProvisioningView,
   ConsoleSessionView,
 } from "./console-rules";
 import type { ConsoleEndpoints } from "./console-http";
@@ -54,6 +57,15 @@ export class ConsoleService implements ConsoleEndpoints {
      * a console sign-out that leaves a working token behind is not a sign-out.
      */
     private readonly tokens: Pick<OidcStore, "revokeTokensForSession"> | null = null,
+    /**
+     * The provisioning stack, for minting and revoking connector tokens.
+     *
+     * Note what this file does *not* do with it: it never lets a SCIM token mint
+     * another one. `mintToken` is reached only from here, where the actor came from a
+     * browser session, because a machine-facing API that could widen its own access
+     * would have no ceiling.
+     */
+    private readonly scim: ScimService | null = null,
   ) {}
 
   /* ------------------------------------------------------------ the pages */
@@ -102,6 +114,53 @@ export class ConsoleService implements ConsoleEndpoints {
     const status = await this.mfa.status(context.value.actor, context.value.identityId);
     if (!status.ok) return status;
     return { ok: true, value: await this.view(context.value, status.value, null) };
+  }
+
+  /* ----------------------------------------------------------- provisioning */
+
+  async provisioning(sessionId: string): Promise<ServiceResult<ConsoleProvisioningView>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    return this.provisioningView(context.value);
+  }
+
+  async mintScimToken(
+    sessionId: string,
+    label: string | null,
+  ): Promise<ServiceResult<{ view: ConsoleProvisioningView; plaintext: string; label: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.scim) return { ok: false, error: "This deployment has no provisioning stack configured." };
+
+    const minted = await this.scim.mintToken(context.value.actor, label);
+    if (!minted.ok) return minted;
+
+    const view = await this.provisioningView(context.value);
+    if (!view.ok) return view;
+    return {
+      ok: true,
+      value: {
+        view: view.value,
+        plaintext: minted.value.plaintext,
+        label: minted.value.token.label ?? "this connector",
+      },
+    };
+  }
+
+  async revokeScimToken(
+    sessionId: string,
+    tokenId: string,
+  ): Promise<ServiceResult<{ view: ConsoleProvisioningView; label: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.scim) return { ok: false, error: "This deployment has no provisioning stack configured." };
+
+    const revoked = await this.scim.revokeToken(context.value.actor, tokenId);
+    if (!revoked.ok) return revoked;
+
+    const view = await this.provisioningView(context.value);
+    if (!view.ok) return view;
+    return { ok: true, value: { view: view.value, label: revoked.value.label ?? "that token" } };
   }
 
   /* ------------------------------------------------------- authenticator app */
@@ -232,6 +291,47 @@ export class ConsoleService implements ConsoleEndpoints {
         sessionId: resolved.value.session.id,
         organizationId: resolved.value.organizationId,
         identityId: resolved.value.identity.id,
+      },
+    };
+  }
+
+  /**
+   * Assemble the provisioning page.
+   *
+   * The permission is checked *here* rather than on the page, so the refusal is the
+   * same sentence the SCIM service would give an actor who could not mint a token:
+   * one rule, asked once. A SERVICE identity — which the default policy would not even
+   * let hold a session — has nothing to see here.
+   */
+  private async provisioningView(context: ConsoleContext): Promise<ServiceResult<ConsoleProvisioningView>> {
+    if (!canManageIdentities(context.actor.role)) return { ok: false, error: "You do not administer identities." };
+    if (!this.scim) return { ok: false, error: "This deployment has no provisioning stack configured." };
+
+    const [tokens, groups, organization, session] = await Promise.all([
+      this.scim.listTokens(context.actor),
+      this.scim.listGroupsForActor(context.actor),
+      this.spine.organization(context.actor),
+      this.spine.resolveOwnSession(context.sessionId),
+    ]);
+    if (!tokens.ok) return tokens;
+    if (!groups.ok) return groups;
+    if (!organization.ok) return organization;
+    if (!session.ok) return session;
+
+    return {
+      ok: true,
+      value: {
+        actor: consoleActor(organization.value, session.value.identity),
+        session: sessionView(session.value.session),
+        tokens: tokens.value.map((token) => ({
+          id: token.id,
+          label: token.label ?? token.tokenHash.slice(0, 8) + "…",
+          createdAt: token.createdAt,
+          lastUsedAt: token.lastUsedAt,
+          revokedAt: token.revokedAt,
+        })),
+        groups: groups.value,
+        scimBase: this.scim.baseUrl(),
       },
     };
   }

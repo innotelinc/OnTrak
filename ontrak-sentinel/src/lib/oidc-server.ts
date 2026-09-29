@@ -30,6 +30,7 @@ import type { HttpRequest, HttpResponse, OidcEndpoints } from "./oidc-http";
 import { routeOidc } from "./oidc-http";
 import { OidcService, type OidcConfig, type OidcIds, type OidcStore } from "./oidc-service";
 import { routeSaml, type SamlEndpoints } from "./saml-http";
+import { routeScim, type ScimEndpoints } from "./scim-http";
 
 /** A form post is a few kilobytes; anything larger is not one. */
 export const MAX_BODY_BYTES = 64 * 1024;
@@ -94,28 +95,38 @@ export function sendResponse(response: ServerResponse, result: HttpResponse): vo
 }
 
 /**
- * A server that speaks the OIDC surface for one provider.
+ * The other surfaces that share this listener.
+ *
+ * Each is a pure router over the same plain request/response shapes, so the adapter
+ * below knows nothing about any of them beyond the order they are asked in.
+ */
+export interface ServerSurfaces {
+  saml?: SamlEndpoints | null;
+  console?: ConsoleEndpoints | null;
+  scim?: ScimEndpoints | null;
+}
+
+/**
+ * A server that speaks the OIDC surface for one provider, and whatever else is
+ * mounted on it.
  *
  * An unreadable body is not a reason to crash the process: it is answered as a
  * `413`, the same way an oversized upload would be.
  */
-export function createOidcServer(
-  service: OidcEndpoints,
-  saml?: SamlEndpoints | null,
-  console?: ConsoleEndpoints | null,
-): Server {
+export function createOidcServer(service: OidcEndpoints, surfaces: ServerSurfaces = {}): Server {
   return createServer((request, response) => {
     void (async () => {
       try {
         const body = await readBody(request);
         const httpRequest = toHttpRequest(request, body);
         let result = await routeOidc(httpRequest, service);
-        // OIDC, SAML and the console share one listener, and no router claims a path
-        // another serves. A `404` is therefore the signal to ask the next one, rather
-        // than a decision this adapter makes three times. The console is last because
-        // it is the only one whose paths a deployment might want to move.
-        if (result.status === 404 && saml) result = await routeSaml(httpRequest, saml);
-        if (result.status === 404 && console) result = await routeConsole(httpRequest, console);
+        // Four routers share one listener, and no router claims a path another serves.
+        // A `404` is therefore the signal to ask the next one, rather than a decision
+        // this adapter makes four times. The console is last because it is the only one
+        // whose paths a deployment might want to move.
+        if (result.status === 404 && surfaces.saml) result = await routeSaml(httpRequest, surfaces.saml);
+        if (result.status === 404 && surfaces.scim) result = await routeScim(httpRequest, surfaces.scim);
+        if (result.status === 404 && surfaces.console) result = await routeConsole(httpRequest, surfaces.console);
         sendResponse(response, result);
       } catch (error) {
         const tooLarge = error instanceof Error && /body too large/.test(error.message);
@@ -194,9 +205,13 @@ export function oidcServices(): OidcServices {
 /** Start listening and resolve with the bound address, so a caller knows the port. */
 export function startOidcServer(
   service: OidcEndpoints,
-  options: { port?: number; host?: string; saml?: SamlEndpoints | null; console?: ConsoleEndpoints | null } = {},
+  options: { port?: number; host?: string } & ServerSurfaces = {},
 ): Promise<{ server: Server; url: string }> {
-  const server = createOidcServer(service, options.saml, options.console);
+  const server = createOidcServer(service, {
+    saml: options.saml,
+    console: options.console,
+    scim: options.scim,
+  });
   const port = options.port ?? 8787;
   const host = options.host ?? "127.0.0.1";
   return new Promise((resolve, reject) => {
