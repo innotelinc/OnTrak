@@ -30,6 +30,17 @@ import type { RuleTrigger } from "./rule-rules";
 import type { RuleApplication, RuleIntake } from "./rule-intake";
 import type { MacroIntake } from "./macro-intake";
 import type { SlaPause } from "./sla-rules";
+import type { CustomValues } from "./form-rules";
+
+/**
+ * What the ticket path needs of the M6 forms: the values this queue's form accepts.
+ *
+ * A port rather than the service itself, so the ticket lifecycle depends on the question
+ * and not on how the desk stores fields — and so a test can answer it with one line.
+ */
+export interface TicketFormGate {
+  validateTicketValues(tenantId: string, queueId: string | null, values: unknown): Promise<ServiceResult<CustomValues>>;
+}
 
 export interface TicketMessage {
   id: string;
@@ -71,6 +82,12 @@ export interface TicketRecord {
    * optional so records written before rules existed stay valid.
    */
   tags?: readonly string[];
+  /**
+   * The desk's own fields (M6), keyed by `CustomField.key`. Values are strings whatever
+   * the field's type, so a ticket reads back the same in the console, the API and a CSV
+   * export; optional so records written before a desk defined any stay valid.
+   */
+  customFields?: CustomValues;
   messages: TicketMessage[];
 }
 
@@ -88,6 +105,12 @@ export type TicketCreationInput = Omit<TicketInput, "requesterId"> & {
    * has to check the client is in the actor's scope before passing it.
    */
   clientId?: string | null;
+  /**
+   * The desk's own fields (M6). Validated against the form the queue actually shows before
+   * the ticket is planned, so the same answer holds whether it arrived from the portal, the
+   * console or the API.
+   */
+  customFields?: CustomValues;
 };
 
 /**
@@ -177,11 +200,21 @@ export function planTicketCreation(
     resolvedAt: null,
     closedAt: null,
     pauses: [],
+    // Omitted rather than set to an empty object, so a ticket raised on a desk with no
+    // custom fields is shaped exactly like the records written before it had them.
+    ...(input.customFields && Object.keys(input.customFields).length > 0 ? { customFields: { ...input.customFields } } : {}),
     messages: [],
   };
   return {
     ok: true,
-    value: { ticket, audit: audit(actor, "ticket.create", ticket, at, { ref: ticket.ref, queueId: ticket.queueId }) },
+    value: {
+      ticket,
+      audit: audit(actor, "ticket.create", ticket, at, {
+        ref: ticket.ref,
+        queueId: ticket.queueId,
+        ...(ticket.customFields ? { customFields: Object.keys(ticket.customFields) } : {}),
+      }),
+    },
   };
 }
 
@@ -325,6 +358,12 @@ export class TicketService {
      * did before macros existed.
      */
     private readonly macros: MacroIntake | null = null,
+    /**
+     * The M6 custom fields, when the deployment has any. Optional for the same reason the
+     * rules engine is: a desk with no custom fields behaves exactly as it did before they
+     * existed, and every older stack keeps working untouched.
+     */
+    private readonly forms: TicketFormGate | null = null,
   ) {}
 
   /**
@@ -337,7 +376,18 @@ export class TicketService {
    * that outlives the rule that made it so.
    */
   async createTicket(actor: Actor, input: TicketCreationInput): Promise<ServiceResult<TicketRecord>> {
-    const plan = planTicketCreation(actor, input, await this.store.nextTicketSeq(actor.tenantId), this.ids);
+    // The desk's own fields are checked against the form the queue actually shows, before
+    // anything is planned. A caller that passes none is asked for none *only* if the form
+    // asks for none; a required field left blank is refused here, where every entry point
+    // — portal, console and API — meets.
+    let validated = input;
+    if (this.forms) {
+      const values = await this.forms.validateTicketValues(actor.tenantId, input.queueId ?? null, input.customFields ?? {});
+      if (!values.ok) return values;
+      validated = { ...input, customFields: values.value };
+    }
+
+    const plan = planTicketCreation(actor, validated, await this.store.nextTicketSeq(actor.tenantId), this.ids);
     if (!plan.ok) return plan;
 
     const applied = await this.runRules(plan.value.ticket, "ticket.created");
@@ -345,8 +395,17 @@ export class TicketService {
 
     await this.store.insertTicket(ticket);
     // The create event carries the queue the ticket actually landed in, so the
-    // chain never claims it was filed somewhere the rules moved it out of.
-    await this.audit.append({ ...plan.value.audit, detail: { ref: ticket.ref, queueId: ticket.queueId } });
+    // chain never claims it was filed somewhere the rules moved it out of — and it names
+    // the desk's own fields the ticket answered, so "who filled this in, and when did the
+    // form change?" is answerable from the chain without replaying the values themselves.
+    await this.audit.append({
+      ...plan.value.audit,
+      detail: {
+        ref: ticket.ref,
+        queueId: ticket.queueId,
+        ...(ticket.customFields ? { customFields: Object.keys(ticket.customFields) } : {}),
+      },
+    });
     await this.settle(applied);
     return { ok: true, value: ticket };
   }

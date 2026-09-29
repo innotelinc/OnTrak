@@ -56,6 +56,9 @@ reconstructed from memory.
   exports, and satisfaction surveys.
 - **Knowledge & automation** — a knowledge base with public/private articles,
   canned responses, macros, and a workflow/automation engine.
+- **The desk's own fields** — define custom fields once, then choose which queues
+  ask them; a value is required where the queue's form says so, and the portal, the
+  console and the API all get the same answer. See [docs/rules.md](./docs/rules.md).
 - **Incident response** — severity, incident commander, playbooks, an
   auto-assembled war-room timeline, evidence collection, and post-incident review.
 - **Identity (IdP)** — OIDC/SAML SSO, SCIM provisioning, enforced MFA, with every

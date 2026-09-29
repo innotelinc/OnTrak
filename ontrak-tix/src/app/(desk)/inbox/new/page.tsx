@@ -3,8 +3,9 @@ import { sessionDisplayName } from "../../../../lib/session-rules";
 import { hasPermission } from "../../../../lib/access-rules";
 import { TICKET_PRIORITIES, TICKET_TYPES } from "../../../../lib/ticket-rules";
 import { canUseTicketTemplates } from "../../../../lib/template-service";
-import { clientServicesFor, knowledgeServicesFor, templateServicesFor } from "../../../../lib/db";
+import { clientServicesFor, formServicesFor, knowledgeServicesFor, templateServicesFor } from "../../../../lib/db";
 import { ArticleSuggestions } from "../../../../components/ArticleSuggestions";
+import { CustomFieldInputs } from "../../../../components/CustomFieldInputs";
 import { createTicketAction } from "../../../actions/tickets";
 
 export const metadata = { title: "New ticket" };
@@ -49,6 +50,12 @@ export default async function NewTicketPage({
   const query = subject?.trim() ?? "";
   const suggested = query ? await knowledgeServicesFor().suggestForStaff(actor, query) : null;
   const suggestions = suggested?.ok ? suggested.value : [];
+
+  // The desk's own fields for the queue this ticket is landing in (M6). A template's queue
+  // is the only queue the quick-create form knows before the ticket exists, so a ticket
+  // with no template shows the default form — the same one the desk sees for its own work.
+  const layout = await formServicesFor().layoutFor(actor, prefill?.queueId ?? null);
+  const customFields = layout.ok ? layout.value : null;
 
   return (
     <div className="mx-auto max-w-2xl space-y-4">
@@ -180,6 +187,8 @@ export default async function NewTicketPage({
             </span>
           </label>
         ) : null}
+
+        {customFields ? <CustomFieldInputs layout={customFields} /> : null}
 
         {prefill?.queueId ? <input type="hidden" name="queueId" value={prefill.queueId} /> : null}
 
