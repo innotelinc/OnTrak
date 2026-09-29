@@ -15,10 +15,12 @@
  *
  *   light / dark / system   the switch in the corner — what everyone means by
  *                           "dark mode".
- *   scheme                  `desk` (violet — the desk and the training range) or
- *                           `operations` (graphite — the consoles). Set once by
- *                           the deployment, remembered per browser, and switched
- *                           here too because an operator may genuinely prefer one.
+ *   scheme                  `desk` (violet — the desk and the training range),
+ *                           `operations` (graphite — the consoles) or `soc`
+ *                           (navy — the security-operations console). Set once
+ *                           by the deployment, remembered per browser, and
+ *                           switched here too because an operator may genuinely
+ *                           prefer one.
  *
  * The state does not live in React. It lives on the document, written by
  * `window.OntrakTheme`, which the head snippet has *already* run before this
@@ -50,6 +52,20 @@ const LABELS: Record<Mode, string> = {
   system: "System",
   light: "Light",
   dark: "Dark",
+};
+
+/**
+ * The palettes, in the order the switch walks them.
+ *
+ * One list, so adding a scheme means adding it here rather than hunting for the
+ * places that assumed there were two. `soc` was added for Sentinel the moment the
+ * security console stopped being happy in the operations palette.
+ */
+const SCHEMES = ["desk", "operations", "soc"] as const;
+const SCHEME_LABELS: Record<string, string> = {
+  desk: "Desk",
+  operations: "Operations",
+  soc: "Security ops",
 };
 
 export function ThemeToggle() {
@@ -97,17 +113,16 @@ export function ThemeToggle() {
       ))}
       <button
         type="button"
-        title={
-          scheme === "operations"
-            ? "Switch to the desk palette (violet)"
-            : "Switch to the operations palette (graphite)"
-        }
+        title={`Switch palette — currently ${SCHEME_LABELS[scheme] ?? scheme}`}
         onClick={() => {
-          const next = window.OntrakTheme?.setScheme(scheme === "operations" ? "desk" : "operations");
+          // Cycle rather than toggle: with three palettes a two-way switch has no
+          // honest way to reach the third one.
+          const index = SCHEMES.indexOf(scheme as (typeof SCHEMES)[number]);
+          const next = window.OntrakTheme?.setScheme(SCHEMES[(index + 1) % SCHEMES.length]);
           if (next) setScheme(next);
         }}
       >
-        {scheme === "operations" ? "Operations" : "Desk"}
+        {SCHEME_LABELS[scheme] ?? "Palette"}
       </button>
     </div>
   );

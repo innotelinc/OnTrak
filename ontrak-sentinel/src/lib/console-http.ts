@@ -36,10 +36,13 @@ import {
   renderMfa,
   renderOverview,
   renderProvisioning,
+  renderSignIn,
   type ConsoleMfaView,
   type ConsoleOverviewView,
   type ConsoleProvisioningView,
+  type ConsoleSignInView,
 } from "./console-rules";
+import type { SignInInput } from "./sign-in-rules";
 import type { WebAuthnRegistrationResponse } from "./webauthn-rules";
 import type { WebAuthnRegistrationOptions } from "./webauthn-service";
 
@@ -51,6 +54,22 @@ import type { WebAuthnRegistrationOptions } from "./webauthn-service";
  * counterpart of `OidcEndpoints`.
  */
 export interface ConsoleEndpoints {
+  /**
+   * The sign-in page's view.
+   *
+   * Separate from `signIn` because the page is reachable by anybody and shows
+   * nothing about any account — it only tells the renderer whether this deployment
+   * names a workspace.
+   */
+  signInView(): Promise<ServiceResult<ConsoleSignInView>>;
+  /**
+   * Verify a credential and start a session.
+   *
+   * Returns the session id for the router to put in the cookie, rather than setting
+   * the cookie itself: the HTTP layer owns the transport, and a service that wrote
+   * response headers would be the second place a session could be started.
+   */
+  signIn(input: SignInInput): Promise<ServiceResult<{ sessionId: string; redirectTo: string }>>;
   overview(sessionId: string): Promise<ServiceResult<ConsoleOverviewView>>;
   provisioning(sessionId: string): Promise<ServiceResult<ConsoleProvisioningView>>;
   /**
@@ -317,6 +336,84 @@ function clearCookie(): string {
   return `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`;
 }
 
+/**
+ * The session cookie a successful sign-in sets.
+ *
+ * `Secure` is decided from the request rather than hard-coded, because the two ways
+ * this console is reached disagree: a browser arrives over TLS at the proxy and sends
+ * `x-forwarded-proto: https`, while a deployment on a LAN is plain HTTP. A `Secure`
+ * cookie on the latter is a cookie the browser refuses to store, which presents as a
+ * login that appears to succeed and leaves you still signed out.
+ *
+ * `SameSite=Lax` is the CSRF posture: the sign-in POST is same-site, and a
+ * cross-site form cannot read this cookie.
+ *
+ * No `Max-Age`: the session's own expiry in the database is the authority, and a
+ * cookie that outlived it would just be an id the console keeps refusing.
+ */
+function sessionCookie(sessionId: string, secure: boolean): string {
+  return (
+    `${SESSION_COOKIE}=${sessionId}; Path=/; HttpOnly; SameSite=Lax` + (secure ? "; Secure" : "")
+  );
+}
+
+/** Whether the browser reached us over TLS, however the console is bound locally. */
+function requestIsSecure(request: HttpRequest): boolean {
+  const forwarded = header(request, "x-forwarded-proto").split(",")[0]?.trim().toLowerCase();
+  if (forwarded) return forwarded === "https";
+  return request.url.toLowerCase().startsWith("https://");
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Sign in                                                                   */
+/* -------------------------------------------------------------------------- */
+
+async function handleSignInPage(url: URL, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const result = await endpoints.signInView();
+  return respond(result, (view) =>
+    html(200, renderSignIn({ ...view, error: errorFrom(url), flash: flashFrom(url) })),
+  );
+}
+
+/**
+ * A sign-in attempt.
+ *
+ * A failure re-renders the form with `200` rather than redirecting to a `?error=`. A
+ * redirect would put the identifier in the URL — where it lands in history, in
+ * `Referer` and in the proxy log — and a refresh would re-post the attempt. Rendering
+ * in place keeps the typed address in the field and the attempt out of the address bar.
+ *
+ * The plaintext password is never carried across: it exists in this function's scope
+ * and is gone when it returns, whether the attempt succeeded or not.
+ */
+async function handleSignInSubmit(
+  request: HttpRequest,
+  endpoints: ConsoleEndpoints,
+): Promise<HttpResponse> {
+  const params = formParams(request);
+  const input: SignInInput = {
+    identifier: params.identifier ?? "",
+    password: params.password ?? "",
+    code: params.code ?? "",
+    organization: params.organization ?? "",
+    userAgent: header(request, "user-agent") || null,
+    // Behind a proxy this is the client; `x-forwarded-for` may be a list, and the
+    // first entry is the one that connected.
+    ipAddress: header(request, "x-forwarded-for").split(",")[0]?.trim() || null,
+  };
+
+  const result = await endpoints.signIn(input);
+  if (!result.ok) {
+    const view = await endpoints.signInView();
+    const shown = view.ok ? view.value : { identifier: null, organization: null, error: null, flash: null };
+    return html(200, renderSignIn({ ...shown, identifier: input.identifier, error: result.error, flash: null }));
+  }
+
+  return redirect(result.value.redirectTo, {
+    "set-cookie": sessionCookie(result.value.sessionId, requestIsSecure(request)),
+  });
+}
+
 /* -------------------------------------------------------------------------- */
 /*  The router                                                                */
 /* -------------------------------------------------------------------------- */
@@ -344,6 +441,17 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
     method === "POST" ? handler() : Promise.resolve(methodNotAllowed(["POST"]));
 
   switch (path) {
+    // The bare host used to answer `{"error":"not_found"}`, which is what a person
+    // typing the hostname saw: a console that looked broken from the front door. It
+    // is a redirect now, so the domain is a way in rather than a dead end. Only GET
+    // is claimed here — everything else at `/` still falls through to the other
+    // routers, so nothing about the OIDC or SAML surfaces changes.
+    case "/":
+      return get(() => Promise.resolve(redirect(CONSOLE_PATHS.signIn)));
+    case CONSOLE_PATHS.signIn:
+      return method === "POST"
+        ? handleSignInSubmit(request, endpoints)
+        : get(() => handleSignInPage(url, endpoints));
     case CONSOLE_PATHS.home:
       return get(() => handleHome(url, sessionId, endpoints));
     case CONSOLE_PATHS.provisioning:

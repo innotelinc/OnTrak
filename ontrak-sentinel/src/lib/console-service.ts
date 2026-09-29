@@ -27,6 +27,7 @@ import type { ScimService } from "./scim-service";
 import type { WebAuthnRegistrationResponse } from "./webauthn-rules";
 import type { WebAuthnRegistrationOptions, WebAuthnService } from "./webauthn-service";
 import type {
+  ConsoleSignInView,
   ConsoleActor,
   ConsoleFactorView,
   ConsoleMfaView,
@@ -36,6 +37,8 @@ import type {
 } from "./console-rules";
 import type { ConsoleEndpoints } from "./console-http";
 import type { AuditEvent } from "./audit-chain";
+import type { SignInService } from "./sign-in-service";
+import type { SignInInput } from "./sign-in-rules";
 
 /** What resolving a session gives every handler. */
 interface ConsoleContext {
@@ -66,7 +69,58 @@ export class ConsoleService implements ConsoleEndpoints {
      * would have no ceiling.
      */
     private readonly scim: ScimService | null = null,
+    /**
+     * The login, when this deployment has one.
+     *
+     * Optional, and left that way, so a deployment that has not configured a console
+     * password still starts and still serves the OIDC endpoints — the console then
+     * says plainly that sign-in is not configured rather than 404ing at `/` or, worse,
+     * letting somebody in. Sentinel is an identity provider first and a console
+     * second; the order matters when the two disagree.
+     */
+    private readonly signInService: Pick<SignInService, "signIn"> | null = null,
+    /**
+     * The organization the console signs into, when it serves exactly one.
+     *
+     * `null` means "ask", which is the honest answer for a console that could serve
+     * several: an email address is unique within an organization, not across them.
+     */
+    private readonly signInOrganization: string | null = null,
   ) {}
+
+  /* ------------------------------------------------------------ sign in */
+
+  /**
+   * The sign-in page shows one thing that depends on the deployment: whether it names
+   * a workspace. Nothing here reads an account, so the page is safe to render for an
+   * unknown visitor.
+   */
+  async signInView(): Promise<ServiceResult<ConsoleSignInView>> {
+    return { ok: true, value: { identifier: null, organization: this.signInOrganization, error: null, flash: null } };
+  }
+
+  /**
+   * The login itself, delegated to `SignInService`.
+   *
+   * The console adds one thing: the deployment's default workspace, when the form did
+   * not carry one. Everything else — the single failure sentence, the order of the
+   * password and the factor, the audit entries — belongs to the sign-in service, and
+   * duplicating any of it here is how a second, subtly different login appears.
+   */
+  async signIn(input: SignInInput): Promise<ServiceResult<{ sessionId: string; redirectTo: string }>> {
+    if (!this.signInService) {
+      return {
+        ok: false,
+        error:
+          "Console sign-in is not configured on this deployment (set SENTINEL_ADMIN_PASSWORD and restart). " +
+          "The console is still reached with a session minted by the OIDC flow.",
+      };
+    }
+    const organization = (input.organization ?? "").trim() || this.signInOrganization || undefined;
+    const result = await this.signInService.signIn({ ...input, organization });
+    if (!result.ok) return { ok: false, error: result.error };
+    return { ok: true, value: { sessionId: result.value.sessionId, redirectTo: result.value.redirectTo } };
+  }
 
   /* ------------------------------------------------------------ the pages */
 

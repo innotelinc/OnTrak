@@ -35,6 +35,16 @@ import { mfaKindLabel, type MfaFactorSummary } from "./mfa-rules";
 /** Where the console lives. Named here so the router and the pages agree. */
 export const CONSOLE_PATHS = {
   home: "/console",
+  /**
+   * The console's own sign-in.
+   *
+   * Sentinel is an identity provider, so this page is the one place in the Network
+   * that checks a password itself — everywhere else hands the person to a provider.
+   * It sits under `/console` rather than at `/sign-in` so the console's whole surface
+   * is one path prefix an operator can reason about (and one prefix a deployment can
+   * put behind a VPN without catching the OIDC endpoints too).
+   */
+  signIn: "/console/sign-in",
   provisioning: "/console/provisioning",
   mintToken: "/console/provisioning/token",
   revokeToken: "/console/provisioning/token/revoke",
@@ -49,6 +59,29 @@ export const CONSOLE_PATHS = {
 } as const;
 
 export const CONSOLE_SESSION_COOKIE = "sentinel_session";
+
+/**
+ * The shared theme, as the console's `node:http` adapter serves it.
+ *
+ * Two files, mounted at the site root rather than under `/console`, so that every
+ * page in the product can use them and not just the console's. The adapter reads
+ * them from `ontrak-sentinel/` on disk at startup — `src/theme/ontrak-theme.css` and
+ * `public/ontrak-theme.js`, both byte-identical to the canonical copies in
+ * `theme/` — which is what keeps one palette rather than a sixth hand-written one.
+ */
+export const CONSOLE_ASSET_PATHS = {
+  themeCss: "/ontrak-theme.css",
+  themeJs: "/ontrak-theme.js",
+} as const;
+
+/**
+ * The console's scheme: the security-operations palette.
+ *
+ * Sentinel is the SOC, so it wears the navy-and-cyan family. Named here rather
+ * than written into the markup twice, because the theme script and the `<html>`
+ * attribute have to agree or the first paint is the wrong palette.
+ */
+export const CONSOLE_SCHEME = "soc";
 
 /* -------------------------------------------------------------------------- */
 /*  Escaping                                                                  */
@@ -162,29 +195,64 @@ export interface ConsoleOverviewView {
 /*  The shell                                                                 */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The console's own layout, on the shared theme's tokens.
+ *
+ * No raw colour appears in this block, and that is the point: the palette lives in
+ * `ontrak-theme.css` (one canonical copy, served at `/ontrak-theme.css`), and this
+ * file only says how the console arranges things. A console that hard-coded its
+ * colours would be the sixth opinion about the Network's look, which is exactly what
+ * the theme exists to stop.
+ *
+ * The console picks the `operations` scheme — the graphite-and-blue family the
+ * operations consoles use — because that is what Sentinel is.
+ */
 const STYLES = `
-  :root { color-scheme: light dark; }
-  body { margin: 0; font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; background: #0b1020; color: #e8ecf6; }
-  main { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
-  h1 { font-size: 1.35rem; margin: 0 0 .25rem; }
-  h2 { font-size: 1rem; margin: 2rem 0 .5rem; letter-spacing: .02em; text-transform: uppercase; color: #9fb0d0; }
+  body { margin: 0; font: 15px/1.55 var(--font-sans); background: var(--canvas); color: var(--ink); }
+  main { max-width: 46rem; margin: 0 auto; padding: var(--space-6) var(--space-4) 4rem; }
+  h1 { font-size: 1.4rem; margin: 0 0 var(--space-1); letter-spacing: -.01em; }
+  h2 { font-size: .82rem; margin: var(--space-6) 0 var(--space-2); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); }
   p { margin: .35rem 0; }
-  a { color: #8fc9ff; }
-  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; }
-  pre { background: #141a2e; border: 1px solid #223055; border-radius: .5rem; padding: .75rem; overflow-x: auto; }
-  form { margin: .5rem 0; }
-  input { font: inherit; padding: .4rem .55rem; border-radius: .4rem; border: 1px solid #2c3a60; background: #141a2e; color: inherit; }
-  button { font: inherit; font-weight: 600; padding: .45rem .8rem; border-radius: .4rem; border: 1px solid #2c3a60; background: #1b2440; color: inherit; cursor: pointer; }
-  button:hover { background: #223055; }
-  .muted { color: #9fb0d0; }
-  .flash, .error { border-radius: .5rem; padding: .6rem .75rem; margin: 1rem 0; }
-  .flash { background: #10331f; border: 1px solid #1f7a44; }
-  .error { background: #33131c; border: 1px solid #8c2b45; }
-  .card { border: 1px solid #223055; border-radius: .6rem; padding: .9rem 1rem; margin: .6rem 0; }
+  a { color: var(--brand); }
+  code, pre { font-family: var(--mono); font-size: .85em; }
+  pre { background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: .75rem; overflow-x: auto; }
+  form { margin: .75rem 0; }
+  input { font: inherit; width: 100%; box-sizing: border-box; padding: .5rem .6rem; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); }
+  input:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 1px; }
+  button { font: inherit; font-weight: 600; padding: .5rem .9rem; border-radius: var(--radius-sm); border: 1px solid transparent; background: var(--brand); color: var(--brand-ink); cursor: pointer; }
+  button:hover { filter: brightness(1.06); }
+  .muted { color: var(--ink-faint); }
+  .flash, .error { border-radius: var(--radius-sm); padding: .6rem .75rem; margin: var(--space-4) 0; }
+  .flash { background: var(--ok-soft); border: 1px solid var(--ok); color: var(--ok); }
+  .error { background: var(--bad-soft); border: 1px solid var(--bad); color: var(--bad); }
+  .card { border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); padding: .9rem 1rem; margin: var(--space-2) 0; box-shadow: var(--shadow-card); }
   table { border-collapse: collapse; width: 100%; }
-  th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid #223055; vertical-align: top; }
-  nav a { margin-right: 1rem; }
+  th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  /* One bar across the top, holding the section links and the two controls. It is
+     sticky because the evidence table runs long and the switch should still be to
+     hand at the bottom of it. */
+  .bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: var(--space-4);
+         flex-wrap: wrap; padding: var(--space-3) var(--space-4); background: var(--surface);
+         border-bottom: 1px solid var(--line); }
+  nav { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; margin-right: auto; }
+  nav a { color: var(--ink-soft); text-decoration: none; font-weight: 500; }
+  nav a:hover { color: var(--brand); }
+  .bar-actions { display: flex; align-items: center; gap: var(--space-3); }
+  .bar-actions form { margin: 0; }
+  button.quiet { background: transparent; border-color: var(--line-strong); color: var(--ink-soft); font-weight: 500; }
+  button.quiet:hover { background: var(--surface-muted); color: var(--ink); filter: none; }
+  main { max-width: 52rem; }
   ul { padding-left: 1.1rem; }
+  .field { display: block; margin: var(--space-3) 0; }
+  .field label { display: block; font-weight: 600; font-size: .88rem; margin-bottom: var(--space-1); }
+  .field .hint { font-weight: 400; color: var(--ink-faint); }
+  /* The sign-in page is a single narrow column, centred in the viewport rather than
+     in the 52rem reading column: a login form adrift in a wide empty page looks
+     like a page that failed to load. */
+  .signin { max-width: 24rem; margin: 8vh auto 0; }
+  .signin h1 { font-size: 1.5rem; }
+  .signin .sub { color: var(--ink-faint); margin-bottom: var(--space-5); }
+  .signin button[type="submit"] { width: 100%; padding: .6rem; margin-top: var(--space-2); }
 `;
 
 export interface ConsolePageInput {
@@ -207,8 +275,17 @@ export function consolePage(input: ConsolePageInput): string {
     ? `<nav class="muted"><a href="${CONSOLE_PATHS.home}">Overview</a>` +
       `<a href="${CONSOLE_PATHS.mfa}">Second factor</a>` +
       `<a href="${CONSOLE_PATHS.provisioning}">Provisioning</a>` +
-      `<form method="post" action="${CONSOLE_PATHS.logout}" style="display:inline"><button type="submit">Sign out</button></form></nav>`
-    : `<nav class="muted"><a href="${CONSOLE_PATHS.home}">Console</a></nav>`;
+      `</nav>`
+    : `<nav class="muted"><a href="${CONSOLE_PATHS.signIn}">Sign in</a></nav>`;
+
+  // The switch and the sign-out button share the bar's right-hand side, so the two
+  // things a person reaches for from any page are in the same place on every page.
+  const actions =
+    `<div class="bar-actions">${themeSwitch()}` +
+    (input.actor
+      ? `<form method="post" action="${CONSOLE_PATHS.logout}"><button type="submit" class="quiet">Sign out</button></form>`
+      : "") +
+    `</div>`;
 
   // The display name is somebody else's text and is rendered here on purpose: a page
   // that only ever shows an identifier makes a display name nothing more than
@@ -222,17 +299,66 @@ export function consolePage(input: ConsolePageInput): string {
     : "";
 
   return (
-    `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+    // `data-scheme` is how the shared theme is told which palette to paint; the mode
+    // (light/dark/system) is whichever the person chose, restored by the theme script
+    // below before the first paint. Both are on `<html>` rather than a wrapper so the
+    // `prefers-color-scheme` rules reach the whole document.
+    `<!doctype html><html lang="en" data-scheme="${CONSOLE_SCHEME}"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<meta name="robots" content="noindex">` +
-    `<title>${escapeHtml(input.title)} · OnTrak Sentinel</title><style>${STYLES}</style></head>` +
-    `<body><main>${nav}<h1>${escapeHtml(input.title)}</h1>${who}` +
+    `<title>${escapeHtml(input.title)} · OnTrak Sentinel</title>` +
+    // The stylesheet first, then the switch, then the console's own rules. The switch
+    // is a *blocking* script on purpose: it has to run before the first paint so
+    // `<html>` already carries the remembered mode. Deferred, it would paint the
+    // default palette and then correct itself, which reads as a flicker.
+    `<link rel="stylesheet" href="${CONSOLE_ASSET_PATHS.themeCss}">` +
+    `<script src="${CONSOLE_ASSET_PATHS.themeJs}"></script>` +
+    `<style>${STYLES}</style></head>` +
+    `<body><div class="bar">${nav}${actions}</div><main><h1>${escapeHtml(input.title)}</h1>${who}` +
     (input.error ? `<p class="error" role="alert">${escapeHtml(input.error)}</p>` : "") +
     (input.flash ? `<p class="flash">${escapeHtml(input.flash)}</p>` : "") +
     input.body +
-    `</main></body></html>`
+    `</main>${TOGGLE_SCRIPT}</body></html>`
   );
 }
+
+/**
+ * The colour switch, as the console renders it.
+ *
+ * The same control the React apps use, in plain markup: the console is server-rendered
+ * HTML with no bundler, so it cannot import `ThemeToggle.tsx`. It renders the same
+ * classes (`.ot-theme`) that the shared stylesheet styles, so it cannot drift visually
+ * either — only the wiring differs, and that is six lines of script at the foot of the
+ * page rather than a framework.
+ */
+function themeSwitch(): string {
+  const buttons = (["system", "light", "dark"] as const)
+    .map(
+      (mode) =>
+        `<button type="button" data-theme-mode="${mode}" aria-pressed="false">${mode === "system" ? "System" : mode === "light" ? "Light" : "Dark"}</button>`,
+    )
+    .join("");
+  return `<div class="ot-theme" role="group" aria-label="Colour theme">${buttons}</div>`;
+}
+
+/**
+ * Wire the switch to `window.OntrakTheme`.
+ *
+ * A `data-theme-mode` click asks the shared script to change the preference, and the
+ * `ontrak:theme` event it fires in response is what repaints the pressed state — so
+ * the buttons reflect the document rather than the click that asked for the change.
+ * That is what keeps two switches on one page (a product's and this one) agreeing, and
+ * it is why `apply()` is never called directly here.
+ */
+const TOGGLE_SCRIPT =
+  `<script>(function(){` +
+  `var api=window.OntrakTheme;if(!api)return;` +
+  `function paint(){var now=api.mode();var all=document.querySelectorAll('[data-theme-mode]');` +
+  `for(var i=0;i<all.length;i++){all[i].setAttribute('aria-pressed',String(all[i].getAttribute('data-theme-mode')===now));}}` +
+  `var buttons=document.querySelectorAll('[data-theme-mode]');` +
+  `for(var i=0;i<buttons.length;i++){buttons[i].addEventListener('click',function(){api.setMode(this.getAttribute('data-theme-mode'));});}` +
+  `window.addEventListener('ontrak:theme',paint);paint();` +
+  `})();</script>`;
 
 /** A refusal, as a page rather than a stack trace. */
 export function consoleErrorPage(message: string, status: number): { status: number; html: string } {
@@ -244,8 +370,9 @@ export function consoleErrorPage(message: string, status: number): { status: num
       body:
         `<p class="error" role="alert">${escapeHtml(message)}</p>` +
         `<p class="muted">The console is reached with a browser session (the <code>${CONSOLE_SESSION_COOKIE}</code> cookie). ` +
-        `Sign in again from whichever client started the session, then come back.</p>` +
-        `<p><a href="${CONSOLE_PATHS.home}">Back to the console</a></p>`,
+        `An expired or revoked session is ordinary — signing in again is the fix.</p>` +
+        `<p><a href="${CONSOLE_PATHS.signIn}">Sign in to the console</a> · ` +
+        `<a href="${CONSOLE_PATHS.home}">Back to the console</a></p>`,
       error: null,
     }),
   };
@@ -259,7 +386,70 @@ export function consoleSignedOutPage(): string {
     body:
       `<p>Your session has ended, and every access token it minted has been revoked.</p>` +
       `<p class="muted">This is the same end-session path the OIDC logout endpoint uses, so a client that ` +
-      `kept one of those tokens keeps nothing.</p>`,
+      `kept one of those tokens keeps nothing.</p>` +
+      `<p><a href="${CONSOLE_PATHS.signIn}">Sign in again</a></p>`,
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Sign in                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** What the sign-in form needs to render. */
+export interface ConsoleSignInView {
+  /** Echoed back so a mistyped address does not have to be retyped. */
+  identifier: string | null;
+  /** The organization slug, when the deployment is configured with one. */
+  organization: string | null;
+  error: string | null;
+  flash: string | null;
+}
+
+/**
+ * The console's sign-in page.
+ *
+ * One form, three fields, and no client script: the code field is always present
+ * rather than revealed after the password is accepted, because *revealing* it would
+ * announce which accounts have a second factor enrolled — a small thing on its own
+ * and a useful one to a person choosing who to attack.
+ *
+ * The workspace field is shown only when the deployment names a default. A
+ * single-tenant console should not ask somebody to type a workspace they were never
+ * given; a multi-tenant one has to, because an email address is unique within an
+ * organization rather than across them.
+ */
+export function renderSignIn(view: ConsoleSignInView): string {
+  const workspace = view.organization
+    ? `<span class="field"><label for="organization">Workspace</label>` +
+      `<input id="organization" name="organization" value="${escapeHtml(view.organization)}" autocomplete="organization" readonly>` +
+      `<span class="hint muted">This console signs in to <code>${escapeHtml(view.organization)}</code>.</span></span>`
+    : `<span class="field"><label for="organization">Workspace <span class="hint">(optional)</span></label>` +
+      `<input id="organization" name="organization" autocomplete="organization" placeholder="your-organization"></span>`;
+
+  return consolePage({
+    title: "Sign in",
+    actor: null,
+    body:
+      `<div class="signin">` +
+      `<p class="muted">OnTrak Sentinel is the identity provider for the Network: this console holds the ` +
+      `identities, so this is the one place that checks a password itself.</p>` +
+      `<form method="post" action="${CONSOLE_PATHS.signIn}">` +
+      `<span class="field"><label for="identifier">Email address</label>` +
+      `<input id="identifier" name="identifier" type="text" inputmode="email" autocomplete="username" ` +
+      `autocapitalize="none" spellcheck="false" required value="${escapeHtml(view.identifier ?? "")}"></span>` +
+      `<span class="field"><label for="password">Password</label>` +
+      `<input id="password" name="password" type="password" autocomplete="current-password" required></span>` +
+      workspace +
+      `<span class="field"><label for="code">Authenticator code <span class="hint">(when one is enrolled)</span></label>` +
+      `<input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" ` +
+      `pattern="[0-9]{6,8}" placeholder="123456"></span>` +
+      `<button type="submit">Sign in</button>` +
+      `</form>` +
+      `<p class="muted">Every other product in the Network signs in through Sentinel rather than holding ` +
+      `passwords of its own.</p>` +
+      `</div>`,
+    flash: view.flash,
+    error: view.error,
   });
 }
 

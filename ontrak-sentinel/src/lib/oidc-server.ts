@@ -104,6 +104,53 @@ export interface ServerSurfaces {
   saml?: SamlEndpoints | null;
   console?: ConsoleEndpoints | null;
   scim?: ScimEndpoints | null;
+  /**
+   * Bytes served verbatim, keyed by path: the shared theme.
+   *
+   * The theme is two files that only ever change as a pair with the canonical copies
+   * in `theme/`, so they are read once at startup and held in memory rather than read
+   * per request — a console page that had to hit the disk for its stylesheet would put
+   * a filesystem in the path of every render. This is also why they are not a router:
+   * a router decides, and these are just a file.
+   */
+  assets?: Record<string, { body: string; contentType: string }> | null;
+}
+
+/**
+ * A static asset, or `null` when this path is not one.
+ *
+ * Only `GET` and `HEAD` — a `POST` to `/ontrak-theme.css` is not a stylesheet request,
+ * and answering it with the file would be answering something nobody asked.
+ *
+ * The lookup is an exact key match rather than a filesystem join: there is no user
+ * input reaching a path here, so there is no traversal to defend against. That is a
+ * property worth keeping, and it is why this takes a map rather than a directory.
+ */
+function staticAsset(
+  request: HttpRequest,
+  assets: ServerSurfaces["assets"],
+): HttpResponse | null {
+  if (!assets) return null;
+  const method = request.method.toUpperCase();
+  if (method !== "GET" && method !== "HEAD") return null;
+  let pathname: string;
+  try {
+    pathname = new URL(request.url).pathname;
+  } catch {
+    return null;
+  }
+  const asset = assets[pathname];
+  if (!asset) return null;
+  return {
+    status: 200,
+    headers: {
+      "content-type": asset.contentType,
+      // Long-lived and immutable: the file's identity is its content, and the only
+      // thing that changes it is a deploy, which changes the path's whole app anyway.
+      "cache-control": "public, max-age=3600",
+    },
+    body: method === "HEAD" ? "" : asset.body,
+  };
 }
 
 /**
@@ -119,6 +166,14 @@ export function createOidcServer(service: OidcEndpoints, surfaces: ServerSurface
       try {
         const body = await readBody(request);
         const httpRequest = toHttpRequest(request, body);
+        // The theme is answered first because it is not a decision: a path in the map
+        // is a file, and asking four routers to agree about that would be four chances
+        // for one of them to claim `/ontrak-theme.css` and answer it with JSON.
+        const asset = staticAsset(httpRequest, surfaces.assets);
+        if (asset) {
+          sendResponse(response, asset);
+          return;
+        }
         let result = await routeOidc(httpRequest, service);
         // Four routers share one listener, and no router claims a path another serves.
         // A `404` is therefore the signal to ask the next one, rather than a decision
@@ -211,6 +266,7 @@ export function startOidcServer(
     saml: options.saml,
     console: options.console,
     scim: options.scim,
+    assets: options.assets,
   });
   const port = options.port ?? 8787;
   const host = options.host ?? "127.0.0.1";
