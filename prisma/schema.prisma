@@ -207,6 +207,42 @@ model Scenario {
   @@index([authorId])
 }
 
+/// A practice scenario drafted from solved support work.
+///
+/// Written by OnTrak Tix's outcome sweep when a ticket is resolved: the problem and
+/// the fix become objectives a learner can practise. It is a *draft*, not a
+/// scenario — a graded `Scenario` needs a platform, a machine definition and checks
+/// that score somebody, and a machine cannot honestly produce those from a ticket. So
+/// this holds the objectives and the steps, and an instructor turns it into a
+/// scenario, which is why nothing here is ever published directly.
+///
+/// `sourceRef` is the desk ticket's reference and is unique: a retried hand-off is
+/// one draft, not two, which is what makes the sweep safe to run on a schedule.
+model ScenarioDraft {
+  id          String     @id @default(cuid())
+  sourceRef   String     @unique
+  /// Where it came from. `tix` today; a field rather than an assumption so an
+  /// incident from Sentinel, or a document somebody uploaded, can use the same door.
+  source      String     @default("tix")
+  title       String
+  summary     String
+  description String
+  /// 'bash' | 'powershell' | 'office' — the surface it was written for.
+  engine      String
+  difficulty  Difficulty @default(INTERMEDIATE)
+  objectives  String[]   @default([])
+  /// The ordered steps: [{ objective, actions[], check }].
+  steps       Json
+  tags        String[]   @default([])
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  /// Set once an instructor has turned it into a scenario, or decided not to.
+  reviewedById String?
+  scenarioId   String?
+
+  @@index([createdAt])
+}
+
 /// Join table: a scenario declares the software it needs.
 model ScenarioSoftware {
   id                String  @id @default(cuid())
