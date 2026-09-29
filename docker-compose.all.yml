@@ -450,6 +450,22 @@ services:
       AGENT_SANDBOX: host
       OMNIROUTE_URL: ${OMNIROUTE_URL:-}
       WEB_TOKEN: ${WEB_TOKEN:-}
+      # Tenancy, when the family has a control plane: with both set, each turn
+      # spends the signed-in account's own gateway key. Empty (the default) leaves
+      # Genie single-operator, spending OMNIROUTE_API_KEY above.
+      CONTROL_PLANE_INTERNAL_URL: ${CONTROL_PLANE_INTERNAL_URL:-}
+      CONTROL_INTERNAL_TOKEN: ${CONTROL_INTERNAL_TOKEN:-}
+      # Sign-in, which tenancy needs: the plane keys accounts on the OIDC
+      # subject, so tenancy without it refuses every turn. Off unless the issuer,
+      # the client id and the session secret are all supplied. The redirect URI
+      # has to be the address the *browser* reaches, matched byte for byte against
+      # what is registered with the provider — the image's default is loopback,
+      # which is right on a laptop and wrong for the family.
+      ONTRAK_OIDC_ISSUER: ${ONTRAK_OIDC_ISSUER:-}
+      ONTRAK_OIDC_CLIENT_ID: ${ONTRAK_OIDC_CLIENT_ID:-}
+      ONTRAK_OIDC_CLIENT_SECRET: ${ONTRAK_OIDC_CLIENT_SECRET:-}
+      ONTRAK_OIDC_REDIRECT_URL: ${ONTRAK_OIDC_REDIRECT_URL:-}
+      ONTRAK_OIDC_SESSION_SECRET: ${ONTRAK_OIDC_SESSION_SECRET:-}
     volumes:
       - ontrak-family-genie-workspace:/workspace
       - ontrak-family-genie-data:/data

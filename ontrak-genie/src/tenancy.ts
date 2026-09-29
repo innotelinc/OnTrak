@@ -1,0 +1,261 @@
+import { config } from "./config.js";
+import {
+  ControlPlaneError,
+  checkTurnQuota,
+  controlPlaneEnabled,
+  provisionIdentity,
+  readControlPlaneConfig,
+  recordAudit,
+  reportTurnUsage,
+  type ControlPlaneConfig,
+} from "./controlplane.js";
+import type { Session } from "./oidc.js";
+
+/**
+ * The per-turn tenancy gate: whose key pays, whether they may spend, and what
+ * gets recorded.
+ *
+ * Before this, every turn spent the one `OMNIROUTE_API_KEY` in `.env`: no
+ * attribution, no per-user quota, no way to tell two users apart in the
+ * gateway's ledger. Now a turn resolves the signed-in person to a control-plane
+ * account and spends **that account's** key, which is what makes quota and usage
+ * real. The contract itself is Distro's, and Genie speaks it as Studio does —
+ * `src/controlplane.ts` has the endpoints.
+ *
+ * What is strict and what is not, deliberately:
+ *
+ *   * **The key is strict.** With a control plane configured, a turn without a
+ *     resolved account is refused — no quiet fallback to the shared `.env` key.
+ *     A fallback would move one person's spend onto the operator's key, which is
+ *     the exact problem this replaces. It also means tenancy needs sign-in: the
+ *     control plane keys accounts on the OIDC `sub`, and a shared bearer carries
+ *     no subject to key on.
+ *   * **The quota check is fail-open.** A control plane that cannot answer does
+ *     not stop somebody from working; the gateway key's own hard caps remain the
+ *     backstop (the same posture Studio takes).
+ *   * **Accounting is best-effort.** A turn that has already been paid for must
+ *     not fail because the ledger write did.
+ *
+ * With no control plane configured, none of this applies and Genie is the
+ * single-operator tool it has been — see `readControlPlaneConfig`. That includes
+ * an **empty** `OMNIROUTE_API_KEY`: a gateway on this host may need no key at
+ * all, which is the shipped default, so an empty shared key is a real setting
+ * rather than a missing one.
+ *
+ * The gate returns data (`status` + `message`) rather than a `Response`: this
+ * module knows nothing about HTTP, and the server turns a refusal into the same
+ * JSON error shape it sends for everything else.
+ */
+
+export type Caller = {
+  /** The control-plane user id, as the plane knows this person. */
+  userId: string;
+  sub: string;
+  email: string;
+  /** This user's own gateway key. Server-side only; never sent to the browser. */
+  gatewayKey: string;
+  /** True when this call created the account in the control plane. */
+  created: boolean;
+};
+
+export type Turn = {
+  /** The key this turn spends: the caller's own, or the shared one when unconfigured. */
+  apiKey: string;
+  /** The account paying for it, or null in single-operator mode. */
+  caller: Caller | null;
+};
+
+export type TurnStarted = { ok: true; turn: Turn } | { ok: false; status: number; message: string };
+
+/** What a turn cost, accumulated from the gateway's own usage reports. */
+export type TurnUsage = {
+  tokensIn: number;
+  tokensOut: number;
+  requests: number;
+  model?: string;
+};
+
+/**
+ * In-process cache, so a chat that reconnects does not re-provision on every
+ * request. Short enough that a revoked account stops working promptly: the
+ * identity answer is a routing decision, but the *quota* decision is re-checked
+ * per turn and is never cached.
+ */
+const CACHE_TTL_MS = 5 * 60 * 1000;
+let cache: { at: number; sub: string; caller: Caller } | null = null;
+
+/** Only for tests: a cached caller would leak between cases. */
+export function resetCallerCache(): void {
+  cache = null;
+}
+
+/**
+ * Resolve a signed-in person to an account, or null when this deployment has no
+ * control plane.
+ *
+ * Throws (`ControlPlaneError`) when the plane is configured and cannot answer: a
+ * configured-but-broken tenancy service must be loud, not silently replaced by
+ * an unattributed shared key.
+ */
+export async function resolveCaller(
+  session: Session,
+  plane: ControlPlaneConfig | null = readControlPlaneConfig(),
+): Promise<Caller | null> {
+  const sub = session.sub.trim();
+  if (plane === null || sub === "") return null;
+
+  if (cache !== null && cache.sub === sub && Date.now() - cache.at < CACHE_TTL_MS) return cache.caller;
+
+  const identity = await provisionIdentity(plane, {
+    sub,
+    email: session.email.trim(),
+    name: session.name.trim(),
+  });
+
+  const caller: Caller = {
+    userId: identity.userId,
+    sub,
+    email: identity.email,
+    gatewayKey: identity.gatewayKey,
+    created: identity.created,
+  };
+
+  cache = { at: Date.now(), sub, caller };
+  return caller;
+}
+
+/**
+ * Resolve the caller and the key that pays for this turn.
+ *
+ * Called at the top of the model route, after authorization and before anything
+ * is spent, so identity and money are decided in one place instead of two that
+ * drift.
+ */
+export async function beginTurn(
+  session: Session | null,
+  /** Overridden only by a test; production always reads the configured plane. */
+  plane: ControlPlaneConfig | null = readControlPlaneConfig(),
+): Promise<TurnStarted> {
+  if (plane === null) {
+    // Single-operator: there is no account to attribute to, so the shared key
+    // stays the credential and Genie behaves exactly as it did before. An empty
+    // one is not an error here — a gateway that needs no key is the default this
+    // ships with.
+    return { ok: true, turn: { apiKey: config.gatewayKey, caller: null } };
+  }
+
+  if (session === null || session.sub.trim() === "") {
+    return {
+      ok: false,
+      status: 401,
+      message:
+        "Genie cannot tell which account this turn belongs to. Sign in, so the model pool is spent on your own key.",
+    };
+  }
+
+  let caller: Caller | null;
+  try {
+    caller = await resolveCaller(session, plane);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown error";
+    return {
+      ok: false,
+      status:
+        error instanceof ControlPlaneError && error.status >= 400 && error.status < 500
+          ? error.status
+          : 503,
+      message: `The tenancy service could not identify this account, so the model pool will not be spent: ${detail}`,
+    };
+  }
+
+  if (caller === null) {
+    return {
+      ok: false,
+      status: 401,
+      message:
+        "Genie cannot tell which account this turn belongs to. Sign in, so the model pool is spent on your own key.",
+    };
+  }
+
+  const quota = await checkQuota(plane, caller.gatewayKey);
+  if (!quota.allowed) {
+    const reasons = quota.reasons.length > 0 ? quota.reasons.join(", ") : "quota exhausted";
+    return { ok: false, status: 429, message: `Your account cannot start another turn right now — ${reasons}.` };
+  }
+
+  return { ok: true, turn: { apiKey: caller.gatewayKey, caller } };
+}
+
+/**
+ * The quota decision, fail-open.
+ *
+ * Exported for its own test: the interesting behaviour is the catch, not the call.
+ */
+export async function checkQuota(
+  plane: ControlPlaneConfig,
+  gatewayKey: string,
+): Promise<{ allowed: boolean; reasons: string[] }> {
+  try {
+    return await checkTurnQuota(plane, gatewayKey);
+  } catch {
+    // The gateway key's own cap is the backstop; a read-only hiccup on the
+    // tenancy service must not become an outage for the person using the console.
+    return { allowed: true, reasons: [] };
+  }
+}
+
+/**
+ * Add one gateway response's token counts to a running total.
+ *
+ * The gateway reports usage in the OpenAI shape (`prompt_tokens` /
+ * `completion_tokens`); the aliases are accepted because one gateway in front of
+ * many providers is exactly where a second spelling turns up, and a ledger that
+ * silently counted zero would look like a free month.
+ */
+export function countUsage(raw: unknown, total: TurnUsage, model?: string): TurnUsage {
+  const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+  const num = (value: unknown): number =>
+    typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+
+  return {
+    tokensIn: total.tokensIn + num(record.prompt_tokens ?? record.input_tokens ?? record.tokens_in),
+    tokensOut:
+      total.tokensOut + num(record.completion_tokens ?? record.output_tokens ?? record.tokens_out),
+    requests: total.requests + 1,
+    model: model ?? total.model,
+  };
+}
+
+/**
+ * Record what the turn cost. Best-effort, and never awaited by a user-facing
+ * response path that could fail because of it.
+ */
+export async function finishTurn(turn: Turn, usage: TurnUsage): Promise<void> {
+  if (turn.caller === null) return;
+  const plane = readControlPlaneConfig();
+  if (plane === null) return;
+  await reportTurnUsage(plane, turn.caller.gatewayKey, usage);
+}
+
+/**
+ * An audit row for an export: the workspace left this system and became another
+ * one's input, which is the kind of action a ledger is for.
+ */
+export async function auditExport(
+  session: Session | null,
+  details: { targetId?: string; meta?: Record<string, unknown> } = {},
+): Promise<void> {
+  const plane = readControlPlaneConfig();
+  if (plane === null) return;
+
+  await recordAudit(plane, {
+    action: "build.export",
+    sub: session?.sub,
+    actorEmail: session?.email,
+    targetId: details.targetId,
+    meta: details.meta,
+  });
+}
+
+/** Whether this deployment resolves and gates turns through the control plane. */
+export { controlPlaneEnabled };

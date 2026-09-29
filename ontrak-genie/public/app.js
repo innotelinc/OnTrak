@@ -135,12 +135,17 @@ async function api(path, options = {}) {
 
 /** Turn a bare 401 into something the user can act on. */
 function authHint(response, payload) {
-  if (response.status === 401) {
+  const detail = payload && typeof payload.error === "string" ? payload.error : "";
+  // A bare 401 is the shared token's failure and has one specific fix; anything
+  // more specific than that — a turn refused because the account is out of
+  // quota, or because there is no account to spend on — is the server's to say,
+  // and guessing at it here would send somebody to the wrong setting.
+  if (response.status === 401 && (detail === "" || detail === "unauthorized")) {
     return authToken === ""
       ? "This UI needs an access token. Reopen it as http://<host>:3400/?token=<your WEB_TOKEN>."
       : "That access token was rejected. Check WEB_TOKEN in .env and reopen ?token=<token>.";
   }
-  return payload.error || `${response.status} ${response.statusText}`;
+  return detail || `${response.status} ${response.statusText}`;
 }
 
 /**

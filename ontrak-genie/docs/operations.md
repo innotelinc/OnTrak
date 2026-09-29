@@ -478,6 +478,11 @@ The agent is deliberately constrained, because it runs with your privileges:
   keeps the result in a signed cookie. **Configuring sign-in refuses
   unauthenticated calls even when `WEB_TOKEN` is empty**, so switching it on
   cannot leave a published port open by accident.
+- **Whose key pays.** With `CONTROL_PLANE_INTERNAL_URL` and
+  `CONTROL_INTERNAL_TOKEN` set, a turn is attributed to the signed-in person and
+  spends *their* gateway key — and is refused when that account may not spend.
+  Without them every turn spends the one `OMNIROUTE_API_KEY` in `.env`, which is
+  the single-operator shape this ships as. See *Tenancy* below.
 - **Commands run in a container.** See the next section.
 
 Once you expose this beyond localhost, put it behind a reverse proxy with TLS as
@@ -696,6 +701,55 @@ in history or shared by copy-paste. Without it, `/api/*` returns 401 and the UI
 says so. The safest option remains not binding at all and forwarding a port
 instead: `ssh -N -L 3400:127.0.0.1:3400 user@host`.
 
+## Tenancy
+
+By default this console is single-operator: one `.env`, one `OMNIROUTE_API_KEY`,
+and every turn spends it. Turn on Distro's control plane and each turn is instead
+attributed to the person who asked for it, and gated on that account's quota.
+
+```bash
+# .env — both are required; an empty or placeholder token means "off"
+CONTROL_PLANE_INTERNAL_URL=https://distro.example.com
+CONTROL_INTERNAL_TOKEN=<the plane's service token>
+```
+
+The URL is the plane's **origin**: this console calls `/api/internal/identity`,
+`/api/internal/quota-check`, `/api/internal/usage-report` and
+`/api/internal/audit` under it. The contract is Distro's — the same endpoints and
+payloads Studio speaks — so one control plane serves both surfaces.
+
+What the gate does, in order, before anything is spent:
+
+1. **Resolve** the signed-in subject to an account, and to that account's own
+   gateway key (`POST /api/internal/identity`, with the service token).
+2. **Check the quota** for that key (`GET /api/internal/quota-check`, bearing the
+   key itself — that is how the plane identifies the account).
+3. **Spend it**: the turn's model calls carry the account's key, never the shared one.
+4. **Record** what it cost (`POST /api/internal/usage-report`), after the answer has
+   been sent. An export also writes an audit row (`POST /api/internal/audit`),
+   because it leaves this system and becomes another one's input.
+
+Three deliberate asymmetries, each with a reason:
+
+| | Behaviour | Why |
+| --- | --- | --- |
+| The key | **Strict.** No resolved account, no turn — never a fallback to the shared key. | A fallback moves one person's spend onto the operator's key, which is the problem this replaces. |
+| The quota check | **Fail-open.** A plane that cannot answer does not stop the turn. | The gateway key's own hard caps remain the backstop; a read-only hiccup must not be an outage. |
+| The ledger and the audit | **Best-effort**, and written after the response. | The turn is already paid for, and a record that could not be written must not fail an answer somebody already has. |
+
+Two consequences worth knowing before switching it on:
+
+- **Sign-in becomes required.** The plane keys accounts on the OIDC subject, and a
+  shared bearer carries no subject to key on: with tenancy on and `ONTRAK_OIDC_*`
+  unset, every turn is refused with *"Genie cannot tell which account this turn
+  belongs to"*. Configure `ONTRAK_OIDC_*` in the same change.
+- **No gateway key reaches the browser.** Accounts and quotas are resolved
+  server-side in the request handler; a refused turn is a `401` or a `429`
+  carrying the plane's own reasons and nothing else.
+
+`GET /api/health` reports `tenancy: true` when a plane is configured, which is the
+quickest way to confirm a deployment picked the settings up.
+
 ## Configuration
 
 All optional — see `.env.example`.
@@ -728,6 +782,8 @@ All optional — see `.env.example`.
 | `AGENT_TOOL_RESULT_LIMIT`                   | `60000`                  | Cap on a single tool result              |
 | `AGENT_FACTORY_DIR`                         | *(empty)*                | Olympus's `build-requests/`, where an exported spec is written. Unset means an export shows the spec instead of writing it |
 | `WEB_TOKEN`                                 | *(empty)*                | Require this bearer token on `/api/*`    |
+| `CONTROL_PLANE_INTERNAL_URL`                | *(empty)*                | Distro control-plane origin. With the token below, every turn is attributed and quota-gated — see *Tenancy* |
+| `CONTROL_INTERNAL_TOKEN`                    | *(empty)*                | Control-plane service token (`x-control-internal-token`); empty or a placeholder means tenancy is off |
 | `ONTRAK_OIDC_ISSUER`                        | *(empty)*                | Authentik issuer. With the two below, require sign-in on `/api/*` |
 | `ONTRAK_OIDC_CLIENT_ID`                     | *(empty)*                | OIDC client id registered with the provider |
 | `ONTRAK_OIDC_CLIENT_SECRET`                 | *(empty)*                | Only for a confidential client; omit it with PKCE |
@@ -751,7 +807,7 @@ All optional — see `.env.example`.
 | Method   | Path                  | Purpose                              |
 | -------- | --------------------- | ------------------------------------ |
 | `POST`   | `/api/chat`           | Run a turn; SSE stream of `AgentEvent`. Accepts `model`, `fallbackModels`, `maxSteps` |
-| `GET`    | `/api/health`         | Server + gateway reachability, sandbox, approval, offline fallback |
+| `GET`    | `/api/health`         | Server + gateway reachability, sandbox, approval, offline fallback, `tenancy` |
 | `GET`    | `/api/models`         | Model ids from the gateway           |
 | `GET`    | `/api/models/sweep`   | Last catalog sweep: running, progress, per-model verdicts, `stale` |
 | `POST`   | `/api/models/sweep`   | Start one (`{ all }`); `202`, or `409` if one is already running |
@@ -779,7 +835,7 @@ so far), `text`, `tool_call`, `tool_result` (with an optional `diff`), `notice`,
 ```bash
 npm run dev           # tsx watch (reload on change)
 npm run typecheck     # tsc --noEmit
-npm test              # node:test — 273 tests, no browser needed
+npm test              # node:test — 302 tests, no browser needed
 npm run ui:smoke      # drives the real UI in a headless Chromium
 npm run model:health  # which advertised models really do tool calling
 npm run offline:check # proves the offline fallback, with the gateway dead
