@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-scheme="operations">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,27 +9,28 @@
   <meta property="og:description" content="Know what every host is behind on, and install only what a person approved. Self-hosted, SSH-only, no agent.">
   <meta property="og:type" content="website">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b0d10'/%3E%3Ctext x='32' y='45' font-size='30' font-family='monospace' font-weight='bold' text-anchor='middle' fill='%23f5b544'%3EOS%3C/text%3E%3C/svg%3E">
-  <style>
-    :root {
-      color-scheme: dark;
-      --p-bg: #0b0d10;
-      --p-bg-elevated: #12151a;
-      --p-surface: #181c22;
-      --p-surface-hover: #1f242c;
-      --p-border: #262c35;
-      --p-text: #f4f7fb;
-      --p-text-secondary: #cdd6e0;
-      --p-text-muted: #a8b2bf;
-      --p-accent: #f5b544;
-      --p-accent-hover: #fbbf24;
-      --p-accent-tint: rgba(245, 181, 68, 0.12);
-      --p-success: #3ddc84;
-      --p-danger: #f87171;
-      --radius-sm: 6px;
-      --radius-md: 10px;
-      --radius-lg: 16px;
+  <link rel="stylesheet" href="unity-theme.css">
+  <script>window.UNITY_DEFAULT_SCHEME = "operations";</script>
+  <script src="unity-theme.js"></script>
+  <style>:root {
+      --p-bg: var(--canvas);
+      --p-bg-elevated: var(--surface-muted);
+      --p-surface: var(--surface);
+      --p-surface-hover: var(--surface-sunken);
+      --p-border: var(--line);
+      --p-text: var(--ink);
+      --p-text-secondary: var(--ink-soft);
+      --p-text-muted: var(--ink-faint);
+      --p-accent: var(--brand);
+      --p-accent-hover: var(--brand-ring);
+      --p-accent-tint: var(--brand-soft);
+      --p-success: var(--ok);
+      --p-danger: var(--bad);
+      --radius-md: var(--radius);
       --ease: cubic-bezier(.2, .8, .2, 1);
     }
+
+    
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
     body {
@@ -43,7 +44,7 @@
     code, pre { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
 
-    .topbar { position: sticky; top: 0; z-index: 10; background: rgba(10, 14, 19, 0.72); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border-bottom: 1px solid var(--p-border); }
+    .topbar { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--canvas) 72%, transparent); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border-bottom: 1px solid var(--p-border); }
     .topbar-inner { display: flex; align-items: center; gap: 20px; height: 60px; }
     .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: 0.04em; color: var(--p-text); }
     .brand:hover { color: var(--p-text); }
@@ -55,18 +56,18 @@
     .topbar .gh:hover { border-color: var(--p-accent); background: var(--p-accent-tint); color: var(--p-text); }
 
     .hero { position: relative; overflow: hidden; padding: 96px 0 72px; }
-    .hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(600px 320px at 70% -10%, rgba(245, 181, 68, 0.14), transparent 70%), radial-gradient(500px 300px at 15% 110%, rgba(61, 220, 132, 0.05), transparent 70%); pointer-events: none; }
+    .hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(600px 320px at 70% -10%, color-mix(in srgb, var(--brand) 14%, transparent), transparent 70%), radial-gradient(500px 300px at 15% 110%, color-mix(in srgb, var(--ok) 5%, transparent), transparent 70%); pointer-events: none; }
     .hero-inner { position: relative; max-width: 780px; }
-    .kicker { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--p-accent-hover); background: var(--p-accent-tint); border: 1px solid rgba(245, 181, 68, 0.3); border-radius: 999px; padding: 5px 14px; margin: 0 0 24px; }
-    .kicker .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--p-success); box-shadow: 0 0 0 0 rgba(61, 220, 132, 0.5); animation: pulse 2.4s var(--ease) infinite; }
-    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(61, 220, 132, 0.45); } 70% { box-shadow: 0 0 0 9px rgba(61, 220, 132, 0); } 100% { box-shadow: 0 0 0 0 rgba(61, 220, 132, 0); } }
+    .kicker { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--p-accent-hover); background: var(--p-accent-tint); border: 1px solid color-mix(in srgb, var(--brand) 30%, transparent); border-radius: 999px; padding: 5px 14px; margin: 0 0 24px; }
+    .kicker .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--p-success); box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 50%, transparent); animation: pulse 2.4s var(--ease) infinite; }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 45%, transparent); } 70% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--ok) 0%, transparent); } 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 0%, transparent); } }
     h1 { font-size: clamp(2.2rem, 5.5vw, 3.4rem); line-height: 1.08; letter-spacing: -0.02em; margin: 0 0 20px; font-weight: 700; }
     h1 .accent { color: var(--p-accent); }
     .lede { font-size: 1.125rem; color: var(--p-text-secondary); max-width: 680px; margin: 0 0 32px; }
     .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 28px; }
     .btn { display: inline-flex; align-items: center; gap: 8px; border-radius: var(--radius-md); padding: 11px 20px; font-size: 15px; font-weight: 550; border: 1px solid transparent; cursor: pointer; transition: background .15s var(--ease), border-color .15s var(--ease); }
-    .btn-primary { background: var(--p-accent); color: #0a0e13; font-weight: 600; }
-    .btn-primary:hover { background: var(--p-accent-hover); color: #0a0e13; }
+    .btn-primary { background: var(--p-accent); color: var(--brand-ink); font-weight: 600; }
+    .btn-primary:hover { background: var(--p-accent-hover); color: var(--brand-ink); }
     .btn-secondary { border-color: var(--p-border); color: var(--p-text); background: transparent; }
     .btn-secondary:hover { border-color: var(--p-accent); background: var(--p-accent-tint); color: var(--p-text); }
     .quickstart { display: flex; align-items: center; gap: 14px; background: var(--p-bg-elevated); border: 1px solid var(--p-border); border-radius: var(--radius-md); padding: 12px 16px; max-width: 680px; font-size: 13.5px; }
@@ -114,6 +115,7 @@
           <a href="https://github.com/innotelinc/ontrak-sync#readme">Docs</a>
           <a class="gh" href="https://github.com/innotelinc/ontrak-sync">GitHub ↗</a>
         </nav>
+        <div class="ot-theme" role="group" aria-label="Colour theme" data-unity-switch><button type="button" data-theme-mode="system" aria-pressed="false">System</button><button type="button" data-theme-mode="light" aria-pressed="false">Light</button><button type="button" data-theme-mode="dark" aria-pressed="false">Dark</button></div>
       </div>
     </div>
   </header>
@@ -224,5 +226,13 @@
       });
     })();
   </script>
+  <script>(function(){
+  var api=window.UnityTheme||window.OntrakTheme;if(!api)return;
+  function paint(){var now=api.mode();var all=document.querySelectorAll('[data-theme-mode]');
+    for(var i=0;i<all.length;i++){all[i].setAttribute('aria-pressed',String(all[i].getAttribute('data-theme-mode')===now));}}
+  var buttons=document.querySelectorAll('[data-theme-mode]');
+  for(var i=0;i<buttons.length;i++){buttons[i].addEventListener('click',function(){api.setMode(this.getAttribute('data-theme-mode'));});}
+  window.addEventListener('unity:theme',paint);window.addEventListener('ontrak:theme',paint);paint();
+})();</script>
 </body>
 </html>
