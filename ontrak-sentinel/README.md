@@ -264,22 +264,50 @@ that is where a connector's expectations and this provider's refusals meet.
 ## The family signing in
 
 Sentinel is the provider the desk and the training app point at, and the wiring is
-two settings:
+two settings per product:
 
-1. **On the provider**, set `SENTINEL_TIX_CALLBACK` to the desk's callback — the
-desk's own address plus `/api/sso/callback` — and `npm run serve` (or this compose
-stack) registers a public OIDC client for it and prints the client id. Public,
-because the desk cannot keep a secret: PKCE is what binds an authorization code to
-the caller that asked for it.
-2. **On the desk**, store that issuer and client id at `/admin/identity`, and set
-`ONTRAK_TIX_BASE_URL` to the desk's own address.
+1. **On the provider**, set `SENTINEL_TIX_CALLBACK` to the desk's callback and
+`SENTINEL_TRAINING_CALLBACK` to the training app's — each product's own address
+plus `/api/sso/callback` — and `npm run serve` (or this compose stack) registers a
+public OIDC client for each and prints the two client ids. Public, because neither
+product can keep a secret: PKCE is what binds an authorization code to the caller
+that asked for it. Both are opt-in, because a provider that registers a client for
+a product nobody pointed at it is issuing identity to an audience that never
+asked.
+2. **In the product**, hand it that issuer and client id: on the desk, stored at
+`/admin/identity`; in the training app, `ONTRAK_OIDC_ISSUER` and
+`ONTRAK_OIDC_CLIENT_ID`. Both also need to be told their own address
+(`ONTRAK_TIX_BASE_URL`, `ONTRAK_TRAINING_BASE_URL`).
 
-That second setting is load-bearing rather than cosmetic. Without it the desk
+That second setting is load-bearing rather than cosmetic. Without it a product
 builds its redirect URI from the address its process is bound to — inside a
 container, `0.0.0.0:3000` — and a redirect URI is matched *exactly* against the one
 the provider registered. The handshake is then refused with a mismatch that reads
 like a wrong client id, and the post-sign-in redirect would strand the browser
 somewhere it cannot reach.
+
+One constraint is worth stating before it surprises somebody: the redirect URI is
+validated like any other, which means `https`, or `http` on a **loopback** address.
+A product reached at a bare LAN address over plain HTTP cannot be registered at
+all, and is told so rather than being quietly allowed — so a family served over
+plain HTTP does single sign-on on one machine, and across machines only once
+something terminates TLS in front of it. The issuer has the matching problem from
+the other side: it is one identifier for both parties, so it has to be an address
+the browser *and* the app containers resolve. The compose file that brings the
+three together says so in its header.
+
+## The desk pushing its people back
+
+Sign-in flows *from* Sentinel; the desk's roster flows *to* it. OnTrak Tix adds an
+account at the desk and pushes it here over SCIM 2.0 — mint a connector token at
+`/console/provisioning`, put it in the desk's `ONTRAK_TIX_SCIM_TOKEN` beside
+`ONTRAK_TIX_SCIM_BASE_URL`, and `/admin/identity` gains a button that provisions
+the desk's people at the provider. The push matches by the desk's own account id
+before the address, so a rename moves the identity instead of creating a second
+one, and a person switched off at the desk is switched off here — which ends their
+sessions and revokes the access tokens those sessions minted, exactly as an
+inbound SCIM deprovision does. See
+[ontrak-tix/docs/identity.md](../ontrak-tix/docs/identity.md).
 
 ## Containers
 

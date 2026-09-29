@@ -1,0 +1,337 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# OnTrak — the whole family in one stack.
+#
+#   make all-up        (or: docker compose -f docker-compose.all.yml up -d --build)
+#
+# Three products, one command: the training app on :3000, the service desk on
+# :3001, the identity provider on :8787, each with its own database, all on one
+# network. The three product stacks remain — `make up`, `make tix-up`,
+# `make sentinel-up` — and this file is for running the family together, which is
+# the only arrangement where the wiring between them can be checked in one go.
+#
+# ## Why the services are renamed here
+#
+# Every product stack calls its services `db`, `app` and `migrate`, and compose
+# requires service names to be unique inside a project — so one file cannot simply
+# include three. Here each service is prefixed with its product, and the *values*
+# (images, build stages, commands, healthchecks) are the same as the product files.
+# Ports are the ones the family already reserves: 3000/5432 training,
+# 3001/5433 Tix, 8787/5434 Sentinel.
+#
+# ## What is wired up for you
+#
+#  - Each app talks to its own database over the network, never to 127.0.0.1 —
+#    inside a container that address is the container itself.
+#  - Each app is told its **own public address** (`ONTRAK_TRAINING_BASE_URL`,
+#    `ONTRAK_TIX_BASE_URL`), which single sign-on needs: a redirect URI is matched
+#    byte for byte against the one the provider registered, and a container that
+#    builds it from the address its process is bound to sends `0.0.0.0:3000`.
+#  - Sentinel registers a public OIDC client for each of the other two, because
+#    both callbacks are set here. Each client id is printed in Sentinel's boot log
+#    and is what the product's own configuration needs:
+#      Tix     → `/admin/identity` on the desk.
+#      Training→ `ONTRAK_OIDC_CLIENT_ID` in `.env`.
+#  - **Tix's outbound provisioning is pointed at the provider over the network**
+#    (`ONTRAK_TIX_SCIM_BASE_URL=http://sentinel-app:8787`). This one needs nothing
+#    from the browser, so it works as-is once a connector token is supplied:
+#    mint one at `http://localhost:8787/console/provisioning`, put it in
+#    `ontrak-tix/.env` as `ONTRAK_TIX_SCIM_TOKEN`, and the desk's
+#    `/admin/identity` page will push its people to the provider.
+#
+# ## What still needs a decision
+#
+# The two **browser-mediated** single sign-on hops need an address that *both* the
+# browser and the app containers resolve, and the issuer is one identifier for
+# both sides — the app fetches the discovery document from it and checks that the
+# document names the same issuer, and the browser is redirected to its
+# authorization endpoint. On one machine that means, in `.env`:
+#
+#   SENTINEL_ISSUER       the provider's address as the browser reaches it
+#   ONTRAK_OIDC_ISSUER    the same value, for the training app
+#   ONTRAK_OIDC_CLIENT_ID the client id from Sentinel's boot log
+#
+# `localhost` is right when the products run from source on the host and wrong
+# from inside a container, which is why nothing is defaulted to it here. And
+# Sentinel only registers a redirect URI that is `https`, or `http` on a loopback
+# address — so a family served over plain HTTP at a LAN address can do SSO only
+# once something terminates TLS in front of it. Both are stated rather than worked
+# around, because both are the real deployment constraints.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: ontrak-family
+
+services:
+  # ── OnTrak IT Support Training ────────────────────────────────────────────
+  training-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ontrak
+      POSTGRES_PASSWORD: ontrak
+      POSTGRES_DB: ontrak
+    ports:
+      - "${ONTRAK_DB_PORT:-5432}:5432"
+    volumes:
+      - ontrak-family-training-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ontrak -d ontrak"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  training-migrate:
+    build:
+      context: .
+      target: builder
+    command: npx prisma migrate deploy
+    restart: "no"
+    depends_on:
+      training-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://ontrak:ontrak@training-db:5432/ontrak?schema=public
+
+  training-app:
+    build:
+      context: .
+      target: runner
+      args:
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-OnTrak IT Support Training}
+        NEXT_PUBLIC_ALLOW_SELF_REGISTRATION: ${NEXT_PUBLIC_ALLOW_SELF_REGISTRATION:-true}
+    restart: unless-stopped
+    depends_on:
+      training-db:
+        condition: service_healthy
+      training-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://ontrak:ontrak@training-db:5432/ontrak?schema=public
+      STORAGE_DIR: ./storage/packages
+      NODE_ENV: production
+      # Its own address, for the SSO redirect URI. Defaults to the host port this
+      # file publishes, which is right for a browser on this machine.
+      ONTRAK_TRAINING_BASE_URL: ${ONTRAK_TRAINING_BASE_URL:-http://127.0.0.1:3000}
+      # Single sign-on, off until a client id is supplied (see the header).
+      ONTRAK_OIDC_ISSUER: ${ONTRAK_OIDC_ISSUER:-}
+      ONTRAK_OIDC_CLIENT_ID: ${ONTRAK_OIDC_CLIENT_ID:-}
+      ONTRAK_OIDC_CLIENT_SECRET: ${ONTRAK_OIDC_CLIENT_SECRET:-}
+    volumes:
+      - ontrak-family-training-storage:/app/storage
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/login').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  training-seed:
+    build:
+      context: .
+      target: builder
+    profiles: ["demo"]
+    command: npm run setup
+    restart: "no"
+    depends_on:
+      training-db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://ontrak:ontrak@training-db:5432/ontrak?schema=public
+
+  # ── OnTrak Tix ────────────────────────────────────────────────────────────
+  tix-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ontrak
+      POSTGRES_PASSWORD: ontrak
+      POSTGRES_DB: ontrak_tix
+    ports:
+      - "${ONTRAK_TIX_DB_PORT:-5433}:5432"
+    volumes:
+      - ontrak-family-tix-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ontrak -d ontrak_tix"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Tix is schema-first — no `prisma/migrations/` — so this pushes the schema
+  # rather than deploying migrations.
+  tix-migrate:
+    build:
+      context: ontrak-tix
+      target: builder
+    command: npx prisma db push
+    restart: "no"
+    depends_on:
+      tix-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://ontrak:ontrak@tix-db:5432/ontrak_tix
+
+  tix-app:
+    build:
+      context: ontrak-tix
+      target: runner
+    restart: unless-stopped
+    depends_on:
+      tix-db:
+        condition: service_healthy
+      tix-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "3001:3000"
+    env_file:
+      - ontrak-tix/.env
+    environment:
+      DATABASE_URL: postgresql://ontrak:ontrak@tix-db:5432/ontrak_tix
+      ONTRAK_TIX_BLOB_DIR: .ontrak-tix-blobs
+      ONTRAK_TIX_EVIDENCE_DIR: .ontrak-tix-evidence
+      NODE_ENV: production
+      ONTRAK_TIX_BASE_URL: ${ONTRAK_TIX_BASE_URL:-http://127.0.0.1:3001}
+      # Where the provider is, for an inbound handshake: the desk discovers it from
+      # this issuer and verifies the ID token's `iss` against it. See the header —
+      # the browser has to reach this address too, and a container cannot interpret
+      # `localhost` as the host.
+      ONTRAK_TIX_OIDC_CLIENT_SECRET: ${ONTRAK_TIX_OIDC_CLIENT_SECRET:-}
+      # Outbound provisioning (the desk's people, pushed to the provider). The
+      # endpoint is the network name, because this is server-to-server and needs no
+      # browser; the token is a credential, so it lives in the environment rather
+      # than in a row.
+      ONTRAK_TIX_SCIM_BASE_URL: ${ONTRAK_TIX_SCIM_BASE_URL:-http://sentinel-app:8787}
+      ONTRAK_TIX_SCIM_TOKEN: ${ONTRAK_TIX_SCIM_TOKEN:-}
+    volumes:
+      - ontrak-family-tix-blobs:/app/.ontrak-tix-blobs
+      - ontrak-family-tix-evidence:/app/.ontrak-tix-evidence
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/sign-in').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  tix-seed:
+    build:
+      context: ontrak-tix
+      target: builder
+    profiles: ["demo"]
+    command: npm run setup
+    restart: "no"
+    depends_on:
+      tix-db:
+        condition: service_healthy
+    env_file:
+      - ontrak-tix/.env
+    environment:
+      DATABASE_URL: postgresql://ontrak:ontrak@tix-db:5432/ontrak_tix
+
+  # ── OnTrak Sentinel ───────────────────────────────────────────────────────
+  sentinel-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ontrak
+      POSTGRES_PASSWORD: ontrak
+      POSTGRES_DB: sentinel
+    ports:
+      - "${ONTRAK_SENTINEL_DB_PORT:-5434}:5432"
+    volumes:
+      - ontrak-family-sentinel-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ontrak -d sentinel"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  sentinel-migrate:
+    build:
+      context: ontrak-sentinel
+      target: builder
+    command: npx prisma migrate deploy
+    restart: "no"
+    depends_on:
+      sentinel-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://ontrak:ontrak@sentinel-db:5432/sentinel
+
+  # Generates the signing key once and keeps it on a volume, so recreating the
+  # provider does not stop it signing with the key it has already published.
+  sentinel-signing-key:
+    build:
+      context: ontrak-sentinel
+      target: runner
+    command: node --import tsx scripts/signing-key.ts
+    restart: "no"
+    environment:
+      SENTINEL_SIGNING_KEY_FILE: /run/sentinel/signing-key.pem
+    volumes:
+      - ontrak-family-sentinel-keys:/run/sentinel
+
+  sentinel-app:
+    build:
+      context: ontrak-sentinel
+      target: runner
+    restart: unless-stopped
+    depends_on:
+      sentinel-db:
+        condition: service_healthy
+      sentinel-migrate:
+        condition: service_completed_successfully
+      sentinel-signing-key:
+        condition: service_completed_successfully
+    ports:
+      - "${ONTRAK_SENTINEL_HTTP_PORT:-8787}:8787"
+    env_file:
+      - path: ontrak-sentinel/.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://ontrak:ontrak@sentinel-db:5432/sentinel
+      SENTINEL_HOST: 0.0.0.0
+      SENTINEL_PORT: "8787"
+      SENTINEL_SIGNING_KEY_FILE: /run/sentinel/signing-key.pem
+      NODE_ENV: production
+      # What every advertised endpoint and every ID token's `iss` is prefixed
+      # with, so it must be the address a *client* reaches.
+      SENTINEL_ISSUER: ${SENTINEL_ISSUER:-http://127.0.0.1:8787}
+      SENTINEL_ADMIN_EMAIL: ${SENTINEL_ADMIN_EMAIL:-admin@demo.test}
+      # Register a public OIDC client for each product, so the family stack has two
+      # client ids to hand out instead of one. Both are loopback by default, which
+      # is the only plain-HTTP redirect URI the provider will register.
+      SENTINEL_TIX_CALLBACK: ${SENTINEL_TIX_CALLBACK:-http://127.0.0.1:3001/api/sso/callback}
+      SENTINEL_TRAINING_CALLBACK: ${SENTINEL_TRAINING_CALLBACK:-http://127.0.0.1:3000/api/sso/callback}
+    volumes:
+      - ontrak-family-sentinel-keys:/run/sentinel:ro
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/.well-known/openid-configuration').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  ontrak-family-training-db:
+  ontrak-family-training-storage:
+  ontrak-family-tix-db:
+  ontrak-family-tix-blobs:
+  ontrak-family-tix-evidence:
+  ontrak-family-sentinel-db:
+  ontrak-family-sentinel-keys:

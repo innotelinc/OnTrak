@@ -150,22 +150,28 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
 - **Exit:** a scenario authored for real bash runs in a sandbox and grades
   identically to the simulated driver on the bundled checks.
 
-### v1.3 — Identity & integrations `[ ]`
+### v1.3 — Identity & integrations `[~]`
 **Goal:** fit into an organisation.
 
 - SSO via the **OnTrak Sentinel** IdP (OIDC/SAML), with SCIM roster sync; keep a
   local JWT fallback for standalone deployments.
-  - The *provider* half is ready to sign against: Sentinel ships the
-    authorization-code flow with PKCE, SAML 2.0 SSO and enforced MFA (authenticator
-    apps **and** WebAuthn security keys), with enrollment self-service from its own
-    console. The training app's side of this bullet is therefore a client, not a
-    wait — and it can be built against the running provider (`npm run serve` in
-    `ontrak-sentinel/`) today.
-  - SCIM 2.0 provisioning is **under way at the provider** (Sentinel's S2): Users
-    and Groups, a connector token minted in the console, and deprovisioning that
-    ends sessions and revokes their tokens. A roster push has somewhere to land,
-    so this bullet is also a client — but there is no directory *sync* from AD/
-    Entra/Google yet, which is the rest of S2.
+  - `[x]` **The training app signs in through a provider.** It is a relying party:
+    the pure rules (`src/lib/oidc-rules.ts`), the client that does discovery and
+    the code exchange with `jose` verifying the ID token against the JWKS
+    (`src/lib/oidc-client.ts`), the signed authorization-state cookie, and
+    `/api/sso/start` + `/api/sso/callback`. Claim mapping decides the local role
+    (`ONTRAK_OIDC_ROLE_MAPPINGS`), a first sign-in provisions an account with **no
+    local password**, and `User.externalId` holds the provider's subject so a
+    rename at the directory is a *move* rather than a second account. There is no
+    tenant slug — one deployment, one provider — and nothing changes for a
+    deployment that names none: the sign-in page only offers the button when a
+    handshake can actually complete. Covered by `tests/oidc.test.ts` (32 checks),
+    including a full handshake against a real OpenID provider on a loopback port
+    and the forgeries it must refuse.
+  - SCIM 2.0 provisioning at the provider is **shipped** (Sentinel's S2): Users and
+    Groups, a connector token minted in the console, and deprovisioning that ends
+    sessions and revokes their tokens. On this side there is no directory *sync*
+    from AD/Entra/Google yet — that is the rest of S2.
   - MFA is enforced at the provider, so an organization that requires a second
     factor gets it here without the training app implementing one; a session is
     refused until a confirmed factor has been verified.
@@ -174,6 +180,8 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   rosters and results.
 - **Exit:** an org signs in through its IdP, rosters sync over SCIM, and results
   flow to an LMS and a webhook consumer.
+  - Signing in through an IdP is done; the roster half of the exit criterion is the
+    directory sync above, and the LMS/webhook half is the bullets below.
 
 ### v1.4 — Authoring at scale `[ ]`
 **Goal:** a catalog a team can maintain.

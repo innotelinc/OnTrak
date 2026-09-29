@@ -81,6 +81,24 @@ live on a named volume, so neither a rebuild nor a `down` discards them. Build
 the image without starting anything with `docker build --target runner .` (or
 `make images`, which builds OnTrak Tix's too).
 
+### Run the whole family at once
+
+Each product keeps its own stack because each is independently deployable, and
+there is also `docker-compose.all.yml` — the training app, OnTrak Tix and OnTrak
+Sentinel in one project on one network, with the wiring between them already in
+place (each app's own database and public address, a registered OIDC client per
+product, and the desk's outbound provisioning pointed at the provider):
+
+```bash
+make all-up          # :3000 training, :3001 desk, :8787 provider
+make all-demo        # optional: the demo data for both apps
+make all-down
+```
+
+The one thing it cannot decide for you is the provider's address, because it has
+to be one that **both** the browser and the app containers resolve — see the
+header of that file.
+
 ### Deploy it
 
 `docker-compose.prod.yml` is the deployment overlay, used on top of the file
@@ -194,6 +212,69 @@ disabled"* or *"requires a license key for Contoso Asset Suite"*.
 
 ---
 
+## Single sign-on
+
+The training app is a **relying party**, not a directory: OnTrak Sentinel (or any
+OpenID Connect provider — Authentik, Entra, Okta) is the authority on who somebody
+is, and this app asks. Nothing about the ordinary email-and-password sign-in
+changes for a deployment that names no provider — it simply shows no SSO button,
+because a button that cannot complete a handshake is worse than none.
+
+```bash
+# .env — the four variables that turn it on
+ONTRAK_OIDC_ISSUER="https://idp.example.test"     # the provider's issuer identifier
+ONTRAK_OIDC_CLIENT_ID="ontrak-training"          # registered there
+ONTRAK_OIDC_DEFAULT_ROLE="STUDENT"               # when no mapping matches
+ONTRAK_OIDC_ROLE_MAPPINGS="instructors=INSTRUCTOR
+it-ops=ADMIN"                                    # one rule per line
+```
+
+Register the redirect URI **exactly** as this deployment serves it —
+`<ONTRAK_TRAINING_BASE_URL>/api/sso/callback`. A URI built from the container's
+internal address can never match, because the provider compares it byte for byte;
+that is what `ONTRAK_TRAINING_BASE_URL` is for. A client secret is optional: a
+public client proves itself with PKCE, which is always used.
+
+The handshake is an authorization-code flow with PKCE. `state`, the replay
+`nonce` and the PKCE verifier travel in one short-lived signed cookie; the ID
+token's signature is verified against the provider's published JWKS, and its
+issuer, audience and nonce are checked before anything is trusted. Then the claims
+decide three things:
+
+- **Which account.** By the provider's stable subject first (`User.externalId`),
+  then by email — so an account that predates SSO is adopted rather than
+duplicated, and a rename in the directory *moves* the account instead of creating a
+second one with the first one's attempts and certificates left behind.
+- **Which role**, from the group claims, falling back to the default. Two things
+  are deliberately not allowed: an assertion never **reactivates** an account an
+  administrator switched off here, and a sign-in never strips the role from the
+  last active administrator, because either would leave a deployment somebody has
+to repair by hand.
+- **Whether at all.** An unverified email is refused, `ONTRAK_OIDC_ALLOWED_DOMAINS`
+  narrows who may sign in, and `ONTRAK_OIDC_REQUIRE_MFA` demands second-factor
+  evidence in the assertion rather than assuming it.
+
+A first sign-in **provisions** the account with no local password at all, and the
+email-and-password form refuses it with the same message it gives for a wrong one —
+so the form cannot be used to discover which accounts are SSO-only. Every
+successful sign-in is audited as `auth.sso_sign_in` and every refusal as
+`auth.sso_sign_in_denied` (with the reason, and never the address).
+
+SAML and IdP-initiated sign-on are not here yet; the flow is SP-initiated OIDC
+only. The decisions are covered by `tests/oidc.test.ts`, which drives a real
+OpenID provider on a loopback port — real keys, a published JWKS, single-use codes
+and S256 PKCE — and proves the refusals as well as the success: a forged
+signature, a replayed code, a wrong verifier, a missing client secret, a foreign
+issuer, a stale nonce and an unverified email.
+
+### Upstream, the other direction
+
+OnTrak Sentinel **provisions** into Tix over SCIM 2.0, and Tix **pushes** its own
+people back out to the provider so a person is added once. Both directions are
+documented in [ontrak-tix/docs/identity.md](ontrak-tix/docs/identity.md).
+
+---
+
 ## Commands
 
 | Command | Purpose |
@@ -240,6 +321,9 @@ src/
     validate.ts               authoring validator (errors + warnings)
     scenarios.ts              attempt lifecycle, snapshots, re-grading
     auth.ts  auth-hash.ts     JWT sessions and password hashing
+    oidc-rules.ts             single sign-on decisions (discovery, claims, roles)
+    oidc-client.ts            the two network calls, and PKCE — plus a fixture client
+    oidc-service.ts           what a verified assertion does to a local account
     templates.ts              starter definitions for the scenario editor
 prisma/
   schema.prisma               data model
@@ -248,6 +332,7 @@ prisma/
 tests/
   sim.test.ts                 engine + grading + validator + desktop tests
   desktop-render.test.ts      the desktop surface still server-renders
+  oidc.test.ts                single sign-on, including a real provider on loopback
   tsconfig.json               JSX-enabled config just for the tests
 ```
 
