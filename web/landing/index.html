@@ -123,6 +123,7 @@
           <a href="#family">The family</a>
           <a href="#tix">OnTrak Tix</a>
           <a href="#training">Training</a>
+          <a href="#genie">Genie</a>
           <a class="gh" href="https://github.com/innotelinc/OnTrak">GitHub ↗</a>
         </nav>
         <div class="ot-theme" role="group" aria-label="Colour theme" data-unity-switch><button type="button" data-theme-mode="system" aria-pressed="false">System</button><button type="button" data-theme-mode="light" aria-pressed="false">Light</button><button type="button" data-theme-mode="dark" aria-pressed="false">Dark</button></div>
@@ -162,7 +163,7 @@ npm install &amp;&amp; npm run docker:db &amp;&amp; npm run setup &amp;&amp; npm
       </div>
 
       <div class="stats">
-        <div class="stat"><div class="n"><em>3</em> platforms</div><div class="l">Training · Tix · Sentinel</div></div>
+        <div class="stat"><div class="n"><em>6</em> products</div><div class="l">Training · Tix · Sentinel · Sync · Portal · Genie</div></div>
         <div class="stat"><div class="n">Graded <em>live</em> state</div><div class="l">Linux, Windows and Office simulations</div></div>
         <div class="stat"><div class="n">Hash-chained <em>audit</em></div><div class="l">Every privileged action, append-only</div></div>
         <div class="stat"><div class="n"><em>One</em> identity layer</div><div class="l">OIDC/SAML + SCIM, local fallback</div></div>
@@ -212,7 +213,7 @@ npm install &amp;&amp; npm run docker:db &amp;&amp; npm run setup &amp;&amp; npm
     <section id="family">
       <div class="sec-head">
         <h2>The OnTrak family</h2>
-        <p>Three products, one operation. Each stands alone; together they close the loop.</p>
+        <p>Products added one at a time. Each stands alone, each has its own landing page, and together they close the loop.</p>
       </div>
       <div class="grid">
         <div class="card">
@@ -243,6 +244,16 @@ npm install &amp;&amp; npm run docker:db &amp;&amp; npm run setup &amp;&amp; npm
             <li>One identity layer, adopted back by Tix and Training</li>
             <li>Telemetry, alerts and a detection-coverage map</li>
             <li>Every automated action audited and reversible</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="tag">v0.1.0</span>
+          <h3>OnTrak Genie</h3>
+          <p>The browser console for a coding agent: the tool calls stream in as they are decided, the file being written renders live beside a diff of what is changing, and a command or a large overwrite waits for a click.</p>
+          <ul>
+            <li>One workspace jail — absolute paths and <code>../</code> escapes are refused</li>
+            <li>An approval gate between a plan and a changed machine</li>
+            <li><code>export</code> turns a workspace into a build request the factory manufactures</li>
           </ul>
         </div>
       </div>
@@ -300,6 +311,32 @@ npm install &amp;&amp; npm run docker:db &amp;&amp; npm run setup &amp;&amp; npm
           <p>Passing an attempt issues a completion record with a printed certificate and a verifiable export packet, so the training outlives the session that produced it.</p>
         </div>
       </div>
+    </section>
+
+    <section id="genie">
+      <div class="sec-head">
+        <h2>Inside OnTrak Genie</h2>
+        <p>The one surface in the family that shows an agent's work rather than its output.</p>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <h3>You see the edit before the edit exists</h3>
+          <p>Every tool call is on screen as it is decided, and the file being written is rendered character by character next to a live diff against the on-disk baseline — so the review happens while the change is still being made.</p>
+        </div>
+        <div class="card">
+          <h3>The gate is the only thing between a plan and a machine</h3>
+          <p>Commands and writes over a line threshold stop and wait for a click. Denying ends the turn cleanly rather than leaving it stalled, and the workspace it cannot leave is one directory.</p>
+        </div>
+        <div class="card">
+          <h3>Work that stops at the preview is work retyped</h3>
+          <p><code>export</code> assembles a build request from the workspace — file index, stack, entry point, the test command that actually exists — with no second model call, so a session that produced something worth shipping becomes factory input.</p>
+        </div>
+      </div>
+      <p style="margin-top:18px; color:var(--p-text-muted); font-size:14px;">
+        OnTrak Genie has its own landing page at <a href="./ontrak-genie/">ontrak-genie</a>,
+        and its role in the stack is written down in
+        <a href="https://github.com/innotelinc/OnTrak/blob/main/ontrak-genie/docs/stack.md">docs/stack.md</a>.
+      </p>
     </section>
 
     <section id="stack">
