@@ -158,7 +158,84 @@ export async function probeProduct(entry: {
   }
 }
 
-/** The estate's own health, which the portal can read directly. */
+/*
+ * ── the account table, for administrators ──────────────────────────────────
+ *
+ * Two calls, both server-side, both with the deployment token — which Sync treats
+ * as a service principal with the full capability set. The portal only reaches
+ * them from the people page, and that page is drawn only for an ADMIN session, so
+ * the token is never a browser credential.
+ */
+
+export interface SyncUserRow extends SyncUser {
+  created_at?: string;
+}
+
+export async function listSyncUsers(): Promise<{ users: SyncUserRow[]; reason?: string }> {
+  const config = portalConfig();
+  if (!config.syncApiToken) {
+    return { users: [], reason: "This deployment has no ONTRAK_SYNC_API_TOKEN, so the portal cannot read the account table." };
+  }
+  try {
+    const response = await syncFetch("/api/users", {
+      headers: { "X-API-Token": config.syncApiToken },
+    });
+    if (!response.ok) {
+      return { users: [], reason: `OnTrak Sync refused the request (${response.status}).` };
+    }
+    const payload = (await response.json()) as { users?: SyncUserRow[] };
+    return { users: payload.users ?? [] };
+  } catch (cause) {
+    return {
+      users: [],
+      reason: `OnTrak Sync could not be reached from the portal: ${cause instanceof Error ? cause.message : String(cause)}`,
+    };
+  }
+}
+
+/**
+ * Change somebody's role, or switch their account off.
+ *
+ * Sync refuses to demote or deactivate the last active administrator, and that
+ * refusal is passed through as its own sentence rather than a status code: it is
+ * the one answer on this page an operator has to be able to read.
+ */
+export async function updateSyncUser(
+  id: number,
+  patch: { role?: Role; active?: boolean },
+): Promise<{ ok: boolean; reason?: string }> {
+  const config = portalConfig();
+  if (!config.syncApiToken) {
+    return { ok: false, reason: "This deployment has no ONTRAK_SYNC_API_TOKEN." };
+  }
+  try {
+    const response = await syncFetch(`/api/users/${id}`, {
+      method: "PUT",
+      headers: { "X-API-Token": config.syncApiToken, "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (response.ok) return { ok: true };
+    let detail = `OnTrak Sync refused the change (${response.status}).`;
+    try {
+      const payload = (await response.json()) as { detail?: unknown };
+      if (typeof payload.detail === "string") detail = payload.detail;
+      else if (payload.detail && typeof payload.detail === "object") {
+        const problems = (payload.detail as { problems?: unknown }).problems;
+        if (Array.isArray(problems) && problems.length) detail = problems.join("; ");
+      }
+    } catch {
+      /* keep the status sentence */
+    }
+    return { ok: false, reason: detail };
+  } catch (cause) {
+    return {
+      ok: false,
+      reason: `OnTrak Sync could not be reached: ${cause instanceof Error ? cause.message : String(cause)}`,
+    };
+  }
+}
+
+/** OnTrak Sync's own health, which the portal can read directly. */
 export async function syncHealth(): Promise<{
   status: string;
   scheduler: boolean;

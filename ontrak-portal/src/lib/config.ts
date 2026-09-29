@@ -57,6 +57,13 @@ export interface PortalConfig {
   sessionSecret: string;
   /** OnTrak Sync, which the portal uses as the identity authority for a local sign-in. */
   syncApiUrl: string;
+  /**
+   * The deployment token, used **server-side only** for the one thing the portal
+   * does on somebody's behalf: reading and changing the account table on the
+   * people page, which only an ADMIN can open. It is never sent to a browser, and
+   * the page that uses it is gated by the same role rule as everything else.
+   */
+  syncApiToken: string;
   /** The break-glass portal account, for when the provider and Sync are both down. */
   breakGlassUser: string;
   breakGlassPassword: string;
@@ -82,6 +89,7 @@ export function portalConfig(): PortalConfig {
     secureLinks: publicUrl ? publicUrl.startsWith("https://") : true,
     sessionSecret: env("ONTRAK_PORTAL_SESSION_SECRET"),
     syncApiUrl: env("ONTRAK_SYNC_API_URL", "http://ontrak-sync-api:8420").replace(/\/+$/, ""),
+    syncApiToken: env("ONTRAK_SYNC_API_TOKEN"),
     breakGlassUser: env("ONTRAK_PORTAL_ADMIN_USER"),
     breakGlassPassword: env("ONTRAK_PORTAL_ADMIN_PASSWORD"),
   };

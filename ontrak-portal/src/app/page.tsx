@@ -75,6 +75,11 @@ export default async function DashboardPage() {
           <span className="chip" title={`Signed in via ${describeSource(session.source)}`}>
             {describeSource(session.source)}
           </span>
+          {session.role === "ADMIN" ? (
+            <a className="chip" href="/admin/people" title="Change somebody's role">
+              People &amp; roles
+            </a>
+          ) : null}
           <SignOutButton />
         </div>
       </div>
@@ -170,25 +175,26 @@ export default async function DashboardPage() {
 
       <section className="panel">
         <header>
-          <h2>Estate updates</h2>
+          <h2>The Network</h2>
           <span className="faint">
             {health
-              ? `scheduler ${health.scheduler ? "running" : "stopped"} · ${health.hosts_configured} hosts configured`
+              ? `scheduler ${health.scheduler ? "running" : "stopped"} · ${health.hosts_configured} machines configured`
               : "OnTrak Sync did not answer"}
           </span>
         </header>
         <div className="body">
           {health ? (
             <p className="dim" style={{ margin: 0 }}>
-              OnTrak Sync is answering. The numbers — what is pending, what is
-              unverified — are on its own dashboard, because a count repeated in a
-              second place is a count that will eventually disagree.
+              OnTrak Sync is answering. What is pending and what could not be read are
+              counted on its own dashboard, because a number repeated in a second
+              place is a number that will eventually disagree. A machine there is not
+              "a container" — physical, virtual, VMware, Proxmox, LXC, QEMU and bare
+              metal are all the same kind of entry.
             </p>
           ) : (
             <p className="dim" style={{ margin: 0 }}>
-              OnTrak Sync could not be reached from the portal. Its account table is
-              also what the sign-in form above uses, so a local sign-in will fail
-              until it answers; {config.providerName} sign-in is unaffected.
+              OnTrak Sync could not be reached from the portal, so the Network&apos;s
+              state is unknown from here. {config.providerName} sign-in is unaffected.
             </p>
           )}
         </div>
