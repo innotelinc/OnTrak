@@ -45,6 +45,9 @@ class FakeRemote:
         self.still_pending: dict[str | None, set[str]] = {}
         self.snap_rc = 0
         self.pull_rc = 0
+        # The clock each docker command was given, in call order. A list because the
+        # pull is the only one that should differ from the generic ceiling.
+        self.docker_timeouts: list[int] = []
         self.containers: list[tuple[str, str]] = []      # (id, name) using the image
         # Keyed by CONTAINER ID, because that is what the applier passes to
         # `docker inspect` — a fake keyed by name would silently exercise the
@@ -52,6 +55,10 @@ class FakeRemote:
         self.labels: dict[str, dict] = {}
         self.running_services: dict[str, list[str]] = {}  # project -> services
         self.planned_services: dict[str, list[str]] = {}
+        # project -> profiles the compose files declare, and project -> the services
+        # `config --services` lists once all of them are enabled.
+        self.profiles: dict[str, list[str]] = {}
+        self.planned_with_profiles: dict[str, list[str]] = {}
         self.image_ids: dict[str, str] = {}               # image ref -> id
         self.image_before: dict[str, str] = {}            # container name -> id
         self.image_after: dict[str, str] = {}             # container name -> id
@@ -93,6 +100,7 @@ class FakeRemote:
 
     def docker_in_container(self, host, container, args, timeout):
         self.calls.append(("docker", tuple(args)))
+        self.docker_timeouts.append(timeout)
         if args[0] == "pull":
             return Result("docker pull", self.pull_rc, "", "" if self.pull_rc == 0 else "denied")
         if args[0] == "ps":
@@ -127,8 +135,15 @@ class FakeRemote:
                 # The project is read from the directory the caller passed, which is
                 # what the container's own compose labels said.
                 project = args[args.index("--project-directory") + 1]
+                if "--profiles" in args:
+                    # `config --profiles` names what the files declare; compose does
+                    # not record which of them a running stack was started with.
+                    return Result("docker compose config", 0,
+                                  "".join(f"{p}\n" for p in self.profiles.get(project, [])), "")
+                table = (self.planned_with_profiles if "--profile" in args
+                         else self.planned_services)
                 return Result("docker compose config", 0,
-                              "".join(f"{s}\n" for s in self.planned_services.get(project, [])), "")
+                              "".join(f"{s}\n" for s in table.get(project, [])), "")
             self.calls.append(("compose-up", tuple(args)))
             self.recreated = self.compose_up_rc == 0
             return Result("docker compose up", self.compose_up_rc, "", "")
@@ -396,6 +411,112 @@ class DockerApply(ApplierCase):
         self.assertEqual([], [c for c in self.fake.calls if c[0] == "compose-up"])
         self.assertTrue(any("refusing to recreate" in message for message in result["manual"]))
         self.assertTrue(any("redis" in message for message in result["manual"]))
+
+    def test_the_recreate_replays_the_stacks_own_env_file(self):
+        # Some stacks keep their secrets beside the stack and are started with
+        # `--env-file` (.env.host). Composing without it fails interpolation, which
+        # is how a working stack came to fail every apply with a message about a
+        # missing variable.
+        labels = dict(self.compose_labels)
+        labels["com.docker.compose.project.environment_file"] = "/srv/n8n/.env.host"
+        self.fake.labels["cid123"] = labels
+        self.fake.running_services["/srv/n8n"] = ["n8n"]
+        self.fake.planned_services["/srv/n8n"] = ["n8n"]
+        self.finding(manager="docker", package=self.IMAGE)
+        result = self.apply()
+        self.assertEqual(1, result["applied"])
+        ups = [c[1] for c in self.fake.calls if c[0] == "compose-up"]
+        self.assertEqual(1, len(ups))
+        self.assertIn("--env-file", ups[0])
+        self.assertEqual("/srv/n8n/.env.host", ups[0][ups[0].index("--env-file") + 1])
+        # And the plan was read the same way, so the service count is the stack's.
+        plans = [c[1] for c in self.fake.calls
+                 if c[0] == "docker" and c[1][:1] == ("compose",)]
+        self.assertTrue(all("--env-file" in plan for plan in plans))
+
+    def test_the_recreate_pins_the_project_name_the_container_was_started_under(self):
+        # Compose names a project after its *directory* when nothing else says so, and
+        # in this estate the two differ (the monitoring stack is labelled
+        # `innotel-metrics` and lives in `monitoring`). Composing that path without the
+        # name addresses a different project: it builds monitoring-grafana-1, leaves
+        # metrics-grafana alone, and then passes its own before/after check.
+        self.fake.labels["cid123"] = dict(self.compose_labels)
+        self.fake.running_services["/srv/n8n"] = ["n8n"]
+        self.fake.planned_services["/srv/n8n"] = ["n8n"]
+        self.finding(manager="docker", package=self.IMAGE)
+        self.apply()
+        ups = [c[1] for c in self.fake.calls if c[0] == "compose-up"]
+        self.assertEqual(1, len(ups))
+        self.assertIn("--project-name", ups[0])
+        self.assertEqual("/srv/n8n", ups[0][ups[0].index("--project-name") + 1])
+
+    def test_a_profile_gated_service_is_recreated_with_the_profiles_enabled(self):
+        # The plan without profiles is smaller than what is running, and refusing on
+        # that basis left fourteen images unupdatable. The profiles come from the
+        # compose files, and they are enabled only once the plain plan is known to
+        # miss a running service.
+        self.fake.labels["cid123"] = dict(self.compose_labels)
+        self.fake.running_services["/srv/n8n"] = ["n8n", "postgres", "redis"]
+        self.fake.planned_services["/srv/n8n"] = ["n8n", "postgres"]
+        self.fake.profiles["/srv/n8n"] = ["cache"]
+        self.fake.planned_with_profiles["/srv/n8n"] = ["n8n", "postgres", "redis"]
+        self.finding(manager="docker", package=self.IMAGE)
+        result = self.apply()
+        self.assertEqual(1, result["applied"])
+        self.assertEqual([], result["manual"])
+        ups = [c[1] for c in self.fake.calls if c[0] == "compose-up"]
+        self.assertEqual(1, len(ups))
+        self.assertIn("--profile", ups[0])
+        self.assertIn("cache", ups[0])
+
+    def test_a_stack_that_needs_no_profiles_is_never_handed_any(self):
+        # `--profile` decides which services compose would start and stop, so
+        # introducing one where none was in use is the accident the refusal exists
+        # to prevent. Widening is a fallback, not the default.
+        self.fake.labels["cid123"] = dict(self.compose_labels)
+        self.fake.running_services["/srv/n8n"] = ["n8n", "postgres"]
+        self.fake.planned_services["/srv/n8n"] = ["n8n", "postgres"]
+        self.fake.profiles["/srv/n8n"] = ["cache"]
+        self.fake.planned_with_profiles["/srv/n8n"] = ["n8n", "postgres", "redis"]
+        self.finding(manager="docker", package=self.IMAGE)
+        self.apply()
+        ups = [c[1] for c in self.fake.calls if c[0] == "compose-up"]
+        self.assertEqual(1, len(ups))
+        self.assertNotIn("--profile", ups[0])
+
+    def test_a_profiled_stack_that_still_misses_a_service_is_refused(self):
+        self.fake.labels["cid123"] = dict(self.compose_labels)
+        self.fake.running_services["/srv/n8n"] = ["n8n", "postgres", "mystery"]
+        self.fake.planned_services["/srv/n8n"] = ["n8n"]
+        self.fake.profiles["/srv/n8n"] = ["cache"]
+        self.fake.planned_with_profiles["/srv/n8n"] = ["n8n", "postgres"]
+        self.finding(manager="docker", package=self.IMAGE)
+        result = self.apply()
+        self.assertEqual(0, result["applied"])
+        self.assertEqual([], [c for c in self.fake.calls if c[0] == "compose-up"])
+        self.assertTrue(any("mystery" in message for message in result["manual"]))
+
+    def test_a_refusal_is_what_the_finding_records_as_its_reason(self):
+        # The row used to say "no container recreated" while the run log held a
+        # paragraph naming the missing services, and the next scan overwrote that
+        # anyway — so the dashboard never said why.
+        self.fake.labels["cid123"] = dict(self.compose_labels)
+        self.fake.running_services["/srv/n8n"] = ["n8n", "postgres", "redis"]
+        self.fake.planned_services["/srv/n8n"] = ["n8n", "postgres"]
+        self.finding(manager="docker", package=self.IMAGE)
+        self.apply()
+        detail = self.status_of(manager="docker", package=self.IMAGE)["detail"]
+        self.assertIn("refusing to recreate", detail)
+        self.assertIn("redis", detail)
+
+    def test_a_pull_gets_its_own_longer_clock(self):
+        # A multi-gigabyte image over a domestic uplink is not a probe. Sizing the
+        # pull like one failed it for being slow, at every apply.
+        self.fake.containers = []
+        self.finding(manager="docker", package=self.IMAGE)
+        self.apply()
+        self.assertGreater(self.settings.pull_timeout, self.settings.command_timeout)
+        self.assertIn(self.settings.pull_timeout, self.fake.docker_timeouts)
 
     def test_a_container_that_is_not_compose_managed_is_pulled_and_handed_over(self):
         self.fake.labels["cid123"] = {}
