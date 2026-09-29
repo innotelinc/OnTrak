@@ -5,6 +5,17 @@ import { signInAction } from "../actions/auth";
 export const metadata: Metadata = { title: "Sign in" };
 
 /**
+ * The workspace a deployment signs in against when nobody types one.
+ *
+ * Empty in a multi-tenant install, where the slug is the whole point; set to the
+ * single desk's slug (`ONTRAK_TIX_DEFAULT_TENANT=acme`) where asking a person for
+ * an internal identifier is friction with no security value — the tenant it
+ * resolves to is the same one every time, and `/api/sso/start` still refuses a
+ * workspace that does not exist.
+ */
+const defaultTenant = (process.env.ONTRAK_TIX_DEFAULT_TENANT ?? "").trim();
+
+/**
  * Local sign-in: email and password against the seeded accounts.
  *
  * This is the standalone fallback; at M2 the same session is issued after an
@@ -62,6 +73,9 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
       {/*
         Single sign-on starts with the workspace, because that is what a person
         knows. The slug resolves to a tenant, and only then to that tenant's IdP.
+        A one-desk deployment — which is most of them — names its workspace here
+        instead, so the button works without the person having to be told a slug
+        that only exists to keep a multi-tenant install honest.
       */}
       <form method="get" action="/api/sso/start" className="space-y-3 rounded-xl2 border border-line bg-surface p-5">
         <h2 className="text-sm font-semibold text-ink">Single sign-on</h2>
@@ -71,6 +85,7 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
             name="tenant"
             placeholder="acme"
             autoComplete="organization"
+            defaultValue={defaultTenant}
             className="mt-1 w-full rounded-xl2 border border-line bg-surface px-3 py-2 text-sm text-ink"
           />
         </label>

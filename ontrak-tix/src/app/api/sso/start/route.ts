@@ -42,7 +42,11 @@ function fail(request: NextRequest, message: string): NextResponse {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const slug = (request.nextUrl.searchParams.get("tenant") ?? "").trim().toLowerCase();
+  // The typed workspace wins; a single-desk deployment names its own in
+  // `ONTRAK_TIX_DEFAULT_TENANT` so the sign-in page's button works as it is.
+  const slug = (request.nextUrl.searchParams.get("tenant")
+    ?? process.env.ONTRAK_TIX_DEFAULT_TENANT
+    ?? "").trim().toLowerCase();
   if (!slug) return fail(request, "Enter your workspace to sign in with single sign-on.");
 
   const tenant = await prisma.tenant.findUnique({ where: { slug } });
