@@ -102,6 +102,9 @@ services:
       # with their fixtures beside it — which is `npm run dev` on the host, not a
       # container. Put it in `.env` and `npm test` starts running them.
       ONTRAK_TIX_BASE_URL: ${ONTRAK_TIX_BASE_URL:-http://127.0.0.1:3001}
+      # Empty in a multi-tenant install; the single desk's slug otherwise, so the
+      # sign-in page's SSO button does not ask for an internal identifier.
+      ONTRAK_TIX_DEFAULT_TENANT: ${ONTRAK_TIX_DEFAULT_TENANT:-}
       NODE_ENV: production
     volumes:
       - ontrak-tix-blobs:/app/.ontrak-tix-blobs

@@ -213,6 +213,9 @@ services:
       ONTRAK_TIX_EVIDENCE_DIR: .ontrak-tix-evidence
       NODE_ENV: production
       ONTRAK_TIX_BASE_URL: ${ONTRAK_TIX_BASE_URL:-http://127.0.0.1:3001}
+      # The single desk's workspace, so the sign-in page's SSO button works without
+      # asking a person for an internal slug. Unset it for a multi-tenant install.
+      ONTRAK_TIX_DEFAULT_TENANT: ${ONTRAK_TIX_DEFAULT_TENANT:-}
       # Where the provider is, for an inbound handshake: the desk discovers it from
       # this issuer and verifies the ID token's `iss` against it. See the header —
       # the browser has to reach this address too, and a container cannot interpret
