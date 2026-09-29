@@ -110,11 +110,11 @@ six-file static app in the workspace:
 | --- | --- |
 | `export` from the console | `build-requests/pomodoro-timer.md` written into the checkout — 12,921 bytes, the template's four `##` headings, entry point `index.html`, stack inferred from the file set, and verification criteria (`npm install`, `npm test`) taken from the app's own `package.json` |
 | Olympus's planner reads it (`scripts/project_plan.py --spec`) | `builds/pomodoro-timer/plan.json` — a real plan in the factory's own format: `runtime.language=node`, `run.install=npm install`, `run.start=python3 -m http.server 8080`, `run.port=8080`, six files |
-| `make app SPEC=build-requests/pomodoro-timer.md` | **stops at the vendor gate**: *"no working archon CLI found"*. `core-modules/archon` is populated by `./setup.sh`, which also needs `uv`, and the build's coding step is Codex. `python3 factory/doctor.py` reports the same: *not cloned: omniroute, archon, ai-software-factory* |
+| `make app SPEC=build-requests/pomodoro-timer.md` (host) | **stops at the vendor gate**: *"no working archon CLI found"*. `core-modules/archon` is populated by `./setup.sh`, which also needs `uv`, and the build's coding step is Codex. `python3 factory/doctor.py` reports the same: *not cloned: omniroute, archon, ai-software-factory* |
+| `make docker-app` (inside Olympus's own image) | **reaches the workflow and runs it**: five gates cleared by hand — see §5.2 — after which `[load] Completed` and `[plan]` stops on the shared gateway's provider pool rather than on anything in this contract |
 
-So the handoff is verified as far as the factory's own planning step, and what
-remains is vendor tooling on the host rather than anything in the contract. Three
-notes for whoever closes it:
+So the handoff is verified as far as the factory's own planning step, and, inside
+the container, into the DAG itself. Three notes for whoever closes it:
 
 - **`AGENT_FACTORY_DIR` is the `build-requests/` directory *inside* the checkout,
   not the checkout itself.** Pointed at the root, the export writes
@@ -131,6 +131,32 @@ notes for whoever closes it:
   still share what is on disk. §4.2's *"key the session library on the control-plane
   user id"* is open, and it is a workspace-isolation question (one workspace per
   account) rather than a control-plane one.
+
+### 5.2 The container, `make docker-app` (29 Sep 2026)
+
+`docker compose up -d olympus`, the Archon CLI installed, and then
+`make docker-app SPEC=build-requests/pomodoro-timer.md REPLACE=1`, watching each
+refusal rather than guessing at it. Five gates stand between the documented
+workflow and a run, and four of them are runtime state the image does not carry:
+
+| Gate | What it says | What clears it |
+| --- | --- | --- |
+| Nested-container user namespaces | The build node: `bwrap: No permissions to create a new namespace`; Codex then exits 0 having written nothing, three times, and the node reports *"all agent attempts produced no project files"* | `security_opt: [seccomp=unconfined]` on the service. Docker's default profile refuses `clone(CLONE_NEWUSER)` — `unshare -U true` fails with `Operation not permitted` in a plain container and succeeds with the profile off. Olympus's own `scripts/install-build-runner.sh` describes this class of host, and it is right that the answer is not "run the agent unsandboxed" |
+| The `archon` CLI | *"no working archon CLI found. Tried: /app/core-modules/archon/bin/archon"*. `core-modules/` is deliberately empty in git, and the image does not populate it | Clone the mirror into the build context (or into `/app/core-modules/archon`). Note `bin/archon` does not exist anywhere in the upstream tree at the pinned SHA `0add058` — what the workflow actually runs here is the released binary from `https://archon.diy/install` (`archon-linux-x64`, v0.11.1) |
+| `uv` | *"the 'uv' runtime is missing, and every archon-greenfield node needs it"* | `curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh` |
+| A git repository | *"Error: Not in a git repository. The Archon CLI must be run from within a git repository."* `.dockerignore` excludes `.git`, so `/app` is not one | `git init` in `/app` plus one baseline commit |
+| `.archon/config.yaml` | *"Invalid assistants config in '/app/.archon/config.yaml': 'assistants.codex.apiBaseUrl': unknown provider setting"* | **A finding about Olympus, not about the container.** The committed config writes `apiBaseUrl` and `defaultModel` for both assistants, and the engine's codex run-config schema (`packages/providers/src/codex/config.ts` at the pinned SHA) accepts `model`, `modelReasoningEffort`, `webSearchMode`, `additionalDirectories`, `codexBinaryPath` — nothing else. Removing `apiBaseUrl` and renaming `defaultModel` → `model` lets the source capture and the DAG start, and costs the gateway nothing: `build-app.py` writes the run's own `CODEX_HOME` config from `OMNIROUTE_BASE_URL`/`OMNIROUTE_API_KEY`. As committed, a checkout cannot run its own workflow on the engine it pins |
+| The gateway's tool-capable pool | `[plan] Failed` — *"the gateway refused the planning turn"*, `HTTP 429` then `HTTP 502`, over two attempts | **Nothing here.** This is upstream, on the shared gateway. The workflow needs a model that both answers and tool-calls, and probing the catalog at the time of writing found none: `auto/coding` → `503 Maximum combo retry limit reached`; `auto/coding:free` → `400 No target in combo auto/coding:free supports tool calling; request carried 1 tools`; `auto/coding:reliable` → `429 Rate limit exceeded: free-models-per-day`; the pool's own diagnostics name an expired stealth model (`404`) and an exhausted budget pool (`402`). Retry when the pool recovers; `OMNIROUTE_MODEL` pins the choice |
+
+One further line, seen and harmless: Archon's title generator logs *"Claude Code
+SDK does not support bypassPermissions when running as root (UID 0)"*, then falls
+back — the conversation title is cosmetic and the workflow proceeds. `IS_SANDBOX=1`
+silences it.
+
+So the container is proven through `[load]` and into `[plan]`. What stands between
+`make docker-app` and a manufactured app is a tool-capable model with quota on the
+gateway, and that is the one item on this list no change in either repository
+reaches.
 
 Nothing in the stack doc's §4–§6 (one OmniRoute, one identity, one secrets store)
 changes. The front-door retirement in its §4.3 moves from Studio to the bolt.diy
