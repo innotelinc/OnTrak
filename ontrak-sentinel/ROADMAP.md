@@ -467,13 +467,30 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
   (`GET /guard/v1/rules`) reports what the deployment runs so a sensor platform can
   be reconciled against it.
 - `[~]` Alert triage, correlation, dedupe and enrichment; detection-coverage map.
-  **Dedupe and correlation are built**: `dedupeKey` buckets an event, so the same
-  scan seen by two sensors is one alert (the store's `created` flag says whether a
-  run was new work), and `correlateIdentity` resolves the addresses the event names
+  **Dedupe, correlation and triage are built**: `dedupeKey` buckets an event, so the
+  same scan seen by two sensors is one alert (the store's `created` flag says whether
+  a run was new work), and `correlateIdentity` resolves the addresses the event names
   against live sessions, so an alert links to the identity that was signed in at the
   time as well as the device and asset it names. Alerts have a lifecycle
-  (`OPEN`/`ACKNOWLEDGED`/`RESOLVED`) on the organization's evidence chain. **Triage UI
-  and the coverage map are not started.**
+  (`NEW`/`ACKNOWLEDGED`/`CLOSED`) on the organization's evidence chain. **Triage is
+  now a page**: `alert-triage-rules.ts` decides what is still waiting (open by
+  default, loudest first, then most recent, aged from the *last* sighting so a burst
+  still arriving is not stale), what an alert is part of (`relatedAlerts` names the
+  neighbours and the shared value that relates them, tightest first, and never a
+  closed alert), and why it is as loud as it is (`escalationSummary` reads the
+  indicator that moved the severity out of the alert's own record, so a review still
+  gets its answer after the feed is withdrawn). `/console/alerts` renders the queue,
+  opens one alert with its timeline — first seen, evidence, repeat, indicator
+  matches and the operator's note in one list — and offers acknowledge and close as
+  `POST`s that answer `303`, audited as `guard.alert.acknowledged` /
+  `guard.alert.closed`. A second page, `/console/compliance`, reports the controls
+  in force, the population each policy scope governs and what it resolves to, the
+  alert backlog and the chain's verification result, from the same rows the product
+  enforces; it is read-only and reports an absence as an absence rather than as a
+  tick. Covered by `tests/sentinel-alert-triage.test.ts` and, for the operator's
+  side, `docs/alert-triage.md`. **The coverage map is not started**, and neither are
+  suppression, assignment or notification: one alert is acted on at a time, by
+  whoever gets there first, and nothing is sent anywhere when a CRITICAL is raised.
 
   The join is only as good as the address a session carries, and today none do:
   `issueSession` records the address its caller supplies, and the only caller in this
@@ -521,16 +538,29 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
     `tests/sentinel-postgres-live.test.ts`. **Not here yet: STIX/TAXII transport,
     automatic feed refresh and a scheduled expiry sweep** — a feed is text pasted
     by a person today, and expiry is enforced where the list is read. Triaging an
-    alert from the console is still not started.
+    alert from the console is done (see the triage bullet above).
 - **Exit:** a known-bad pattern is detected from live telemetry, deduped and
   correlated into one alert linked to an identity, device and asset. Reached in the
   service and in `tests/sentinel-guard.test.ts` (events in, one deduped alert out, tied
   to the session's identity) — *live* telemetry means a collector posting, not yet a
   protocol listener.
 
-### S4 — Sentinel Guard v1 (prevention) `[ ]`
+### S4 — Sentinel Guard v1 (prevention) `[~]`
 **Goal:** act — safely and accountably.
 
+- `[~]` **Compliance reporting and posture summary** — the reviewer's half of the
+  work, and the first S4 item to land because it writes nothing. `/console/compliance`
+  reports six controls (a second factor required before any session; every active
+  identity enrolled; an active administrator exists; the session policy *stored*
+  rather than left at the built-in default; nothing at `HIGH` or above waiting in the
+  queue; the evidence chain verifying end to end), the policy coverage per scope with
+  the number each scope actually resolves to, the alert backlog and the chain's
+  result. Every figure is read from the control it describes — `policyForRole` for the
+  effective policy, `triageSummary` for the backlog, `auditTrail` for the chain — so
+  the report cannot describe a control the login path does not apply, and it says
+  `WARN` or `FAIL` where a control is not in force instead of a tick with a footnote.
+  What is **not** here: an export (PDF, CSV or a signed packet), retention windows,
+  control *history* over time, and any S4 enforcement action at all.
 - Policy-gated enforcement actions (block, quarantine, rate-limit) with
   approvals, safe-lists for critical infrastructure, and one-click rollback.
 - Reversible-by-default, rate-limited, blast-radius caps; every action audited.

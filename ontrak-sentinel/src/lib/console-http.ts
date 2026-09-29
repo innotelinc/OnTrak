@@ -29,10 +29,13 @@
 import type { HttpRequest, HttpResponse } from "./oidc-http";
 import { SESSION_COOKIE, SESSION_HEADER } from "./oidc-http";
 import type { ServiceResult } from "./identity-service";
+import { filterFrom, type TriageFilter } from "./alert-triage-rules";
 import {
   CONSOLE_PATHS,
   consoleErrorPage,
   consoleSignedOutPage,
+  renderAlerts,
+  renderCompliance,
   renderDirectory,
   renderIntel,
   renderMfa,
@@ -40,6 +43,8 @@ import {
   renderPolicies,
   renderProvisioning,
   renderSignIn,
+  type ConsoleAlertsView,
+  type ConsoleComplianceView,
   type ConsoleDirectoryView,
   type ConsoleIntelView,
   type ConsoleMfaView,
@@ -111,6 +116,20 @@ export interface ConsoleEndpoints {
     sessionId: string,
     indicatorId: string,
   ): Promise<ServiceResult<{ value: string; source: string }>>;
+  /**
+   * The Guard queue (S4), narrowed by the request's filter and with one alert opened when
+   * `subjectId` names it.
+   *
+   * The filter arrives already read, because which query-string values are meaningful belongs
+   * with the rules that define the queue rather than with the layer that moves bytes.
+   */
+  alerts(sessionId: string, filter: TriageFilter, subjectId: string | null): Promise<ServiceResult<ConsoleAlertsView>>;
+  /** Somebody has seen it. `null` is allowed: seeing something needs no excuse. */
+  acknowledgeAlert(sessionId: string, alertId: string, note: string | null): Promise<ServiceResult<{ ruleName: string }>>;
+  /** Somebody decided it is handled; a reason is required by the service, not by this layer. */
+  closeAlert(sessionId: string, alertId: string, note: string): Promise<ServiceResult<{ ruleName: string }>>;
+  /** The compliance posture summary (S4). Read-only: it writes nothing and grants nothing. */
+  compliance(sessionId: string): Promise<ServiceResult<ConsoleComplianceView>>;
   /** The session policies the organization has, one card per scope. */
   policies(sessionId: string): Promise<ServiceResult<ConsolePoliciesView>>;
   /** Write the baseline or one role's override; the scope is echoed for the flash. */
@@ -403,6 +422,59 @@ async function handleWithdrawIntel(request: HttpRequest, sessionId: string, endp
   );
 }
 
+async function handleAlertsPage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const result = await endpoints.alerts(sessionId, filterFrom(url.searchParams), url.searchParams.get("alert"));
+  return respond(result, (view) => html(200, renderAlerts(view, flashFrom(url), errorFrom(url))));
+}
+
+/**
+ * Acknowledge an alert.
+ *
+ * A redirect rather than a rendered body for the same reason removing a factor is: it is a
+ * state change, and a state change that answered with a body would happen again on a
+ * refresh. The alert is named in the target so the operator comes back to the one they were
+ * reading rather than to the top of the queue.
+ */
+async function handleAcknowledgeAlert(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const alertId = params.alertId ?? "";
+  if (!alertId) return failure("Choose an alert first.");
+  const note = params.note?.trim() ? params.note : null;
+
+  const result = await endpoints.acknowledgeAlert(sessionId, alertId, note);
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.alerts}?alert=${encodeURIComponent(alertId)}&flash=${encodeURIComponent(
+      `Acknowledged ${result.value.ruleName}. It stays open until somebody closes it with a reason, and a repeat keeps refreshing it.`,
+    )}`,
+  );
+}
+
+/**
+ * Close an alert.
+ *
+ * A blank reason reaches the service, which refuses it by name, rather than being caught
+ * here: the minimum length is a rule about an incident record and it lives with the record.
+ */
+async function handleCloseAlert(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const alertId = params.alertId ?? "";
+  if (!alertId) return failure("Choose an alert first.");
+
+  const result = await endpoints.closeAlert(sessionId, alertId, params.note ?? "");
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.alerts}?flash=${encodeURIComponent(
+      `Closed ${result.value.ruleName}. The reason is on the evidence chain against your identity.`,
+    )}`,
+  );
+}
+
+async function handleCompliancePage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const result = await endpoints.compliance(sessionId);
+  return respond(result, (view) => html(200, renderCompliance(view, flashFrom(url), errorFrom(url))));
+}
+
 async function handlePoliciesPage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
   const result = await endpoints.policies(sessionId);
   return respond(result, (view) => html(200, renderPolicies(view, flashFrom(url), errorFrom(url))));
@@ -670,6 +742,14 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
       return post(() => handleIngestIntel(request, sessionId, endpoints));
     case CONSOLE_PATHS.intelWithdraw:
       return post(() => handleWithdrawIntel(request, sessionId, endpoints));
+    case CONSOLE_PATHS.alerts:
+      return get(() => handleAlertsPage(url, sessionId, endpoints));
+    case CONSOLE_PATHS.alertAcknowledge:
+      return post(() => handleAcknowledgeAlert(request, sessionId, endpoints));
+    case CONSOLE_PATHS.alertClose:
+      return post(() => handleCloseAlert(request, sessionId, endpoints));
+    case CONSOLE_PATHS.compliance:
+      return get(() => handleCompliancePage(url, sessionId, endpoints));
     case CONSOLE_PATHS.mfa:
       return get(() => handleMfaPage(url, sessionId, endpoints));
     case CONSOLE_PATHS.totpBegin:

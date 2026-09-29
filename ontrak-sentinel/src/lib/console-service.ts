@@ -23,17 +23,36 @@ import type { IdentityActor, IdentityService, ServiceResult } from "./identity-s
 import {
   canManageIdentities,
   DEFAULT_IDENTITY_POLICY,
+  POLICY_SCOPE_ALL,
   policyForRole,
   toIdentityPolicy,
   type IdentityPolicy,
   type IdentityRole,
 } from "./identity-rules";
+import {
+  alertTimeline,
+  annotationSummary,
+  escalationSummary,
+  filterAlerts,
+  relatedAlerts,
+  triageActions,
+  triageSummary,
+  waitingMinutes,
+  type TriageFilter,
+} from "./alert-triage-rules";
+import type { AlertRecord, DetectionService } from "./detection-service";
 import type { MfaService, MfaStatus } from "./mfa-service";
 import type { OidcStore } from "./oidc-service";
 import type { ScimService } from "./scim-service";
 import type { WebAuthnRegistrationResponse } from "./webauthn-rules";
 import type { WebAuthnRegistrationOptions, WebAuthnService } from "./webauthn-service";
 import type {
+  ComplianceControlView,
+  ComplianceRoleView,
+  ConsoleAlertInvestigationView,
+  ConsoleAlertsView,
+  ConsoleAlertView,
+  ConsoleComplianceView,
   ConsoleSignInView,
   ConsoleActor,
   ConsoleConnectionView,
@@ -115,6 +134,19 @@ export class ConsoleService implements ConsoleEndpoints {
      * would accept a paste and then silently match nothing.
      */
     private readonly threatIntel: ThreatIntelService | null = null,
+    /**
+     * The detection pipeline (S4), for the Guard queue.
+     *
+     * A `Pick` of the three methods the pages use rather than the whole service, which is
+     * the same shape `tokens` above takes for one method: the console may read the queue and
+     * move one alert's state, and it deliberately cannot reach the *ingest* half of detection
+     * at all. Ingestion is a sensor's, authenticated by a deployment token, and a console
+     * session that could post telemetry would be a way to forge evidence from a browser.
+     *
+     * Named `detection` rather than `alerts`, because `alerts` is a page method on this class
+     * and a member of the same name would shadow it.
+     */
+    private readonly detection: Pick<DetectionService, "alerts" | "acknowledge" | "close"> | null = null,
   ) {}
 
   /* ------------------------------------------------------------ sign in */
@@ -374,6 +406,257 @@ export class ConsoleService implements ConsoleEndpoints {
     const withdrawn = await this.threatIntel.withdraw(context.value.actor, indicatorId);
     if (!withdrawn.ok) return withdrawn;
     return { ok: true, value: { value: withdrawn.value.value, source: withdrawn.value.source } };
+  }
+
+  /* ------------------------------------------------------------------ alerts */
+
+  /**
+   * The Guard queue, and one alert's investigation when the request named one.
+   *
+   * Two lists are read and they are not the same list: `summary` describes everything the
+   * organization has, while `alerts` is what the filter selected. That is deliberate — an
+   * operator needs both "what is waiting on me" and "how bad is it overall", and a single
+   * number would have to pick one of them. The page labels which is which.
+   *
+   * The investigated alert is looked up in the *unfiltered* list, so following a link into
+   * an alert opens it even when the queue beside it is narrowed to something that alert is
+   * not part of. Refusing there would make a link in a chat message depend on a query string
+   * the sender had.
+   */
+  async alerts(
+    sessionId: string,
+    filter: TriageFilter,
+    subjectId: string | null,
+  ): Promise<ServiceResult<ConsoleAlertsView>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.detection) return { ok: false, error: "This deployment runs no detection pipeline, so there is no alert queue." };
+
+    const [all, session] = await Promise.all([
+      this.detection.alerts(context.value.actor),
+      this.spine.resolveOwnSession(context.value.sessionId),
+    ]);
+    if (!all.ok) return all;
+    if (!session.ok) return session;
+
+    const at = Date.now();
+    const wanted = (subjectId ?? "").trim();
+    const subject = wanted ? (all.value.find((alert) => alert.id === wanted) ?? null) : null;
+    if (wanted && !subject) return { ok: false, error: "That alert does not exist." };
+
+    const investigation: ConsoleAlertInvestigationView | null = subject
+      ? {
+          subject: alertView(subject, at),
+          escalation: escalationSummary(subject),
+          annotation: annotationSummary(subject),
+          related: relatedAlerts(all.value, subject),
+          timeline: alertTimeline(subject),
+          actions: triageActions(subject),
+        }
+      : null;
+
+    return {
+      ok: true,
+      value: {
+        actor: consoleActor(await this.organizationName(context.value), session.value.identity),
+        session: sessionView(session.value.session),
+        filter,
+        summary: triageSummary(all.value),
+        alerts: filterAlerts(all.value, filter).map((alert) => alertView(alert, at)),
+        investigation,
+      },
+    };
+  }
+
+  /**
+   * Somebody has seen it. The state change, the permission and the audit entry all belong to
+   * `DetectionService`; this only resolves the session and names the rule for the flash.
+   */
+  async acknowledgeAlert(sessionId: string, alertId: string, note: string | null): Promise<ServiceResult<{ ruleName: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.detection) return { ok: false, error: "This deployment runs no detection pipeline, so there is no alert queue." };
+
+    const acknowledged = await this.detection.acknowledge(context.value.actor, alertId, note);
+    return acknowledged.ok ? { ok: true, value: { ruleName: acknowledged.value.ruleName } } : acknowledged;
+  }
+
+  /** Somebody decided it is handled, with a reason. The reason's minimum length is the service's rule. */
+  async closeAlert(sessionId: string, alertId: string, note: string): Promise<ServiceResult<{ ruleName: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.detection) return { ok: false, error: "This deployment runs no detection pipeline, so there is no alert queue." };
+
+    const closed = await this.detection.close(context.value.actor, alertId, note);
+    return closed.ok ? { ok: true, value: { ruleName: closed.value.ruleName } } : closed;
+  }
+
+  /* -------------------------------------------------------------- compliance */
+
+  /**
+   * The posture summary (S4): what is in force, who it covers, what is waiting, and whether
+   * the evidence still verifies.
+   *
+   * Read-only, and that is the design rather than a first cut: a report a reviewer signs has
+   * to be a *reading* of the controls, and a page that could also write one of them would be
+   * a page where the report and the thing reported are the same request. Every control is
+   * evaluated through the same function the login path uses — `policyForRole` for the
+   * effective policy, `triageSummary` for the backlog — so the page cannot describe a control
+   * the product does not apply.
+   */
+  async compliance(sessionId: string): Promise<ServiceResult<ConsoleComplianceView>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+
+    const [stored, identities, session, trail] = await Promise.all([
+      this.spine.policies(context.value.actor),
+      this.spine.listIdentities(context.value.actor),
+      this.spine.resolveOwnSession(context.value.sessionId),
+      this.spine.auditTrail(context.value.actor),
+    ]);
+    if (!stored.ok) return stored;
+    if (!identities.ok) return identities;
+    if (!session.ok) return session;
+
+    const queue = this.detection ? await this.detection.alerts(context.value.actor) : null;
+    if (queue && !queue.ok) return queue;
+    const summary = queue && queue.ok ? triageSummary(queue.value) : null;
+
+    const baseline = stored.value.find((row) => row.scope === POLICY_SCOPE_ALL) ?? null;
+    const overrides = new Set(stored.value.filter((row) => row.scope !== POLICY_SCOPE_ALL).map((row) => row.scope));
+
+    const roles: ComplianceRoleView[] = policyScopes().map((scope) => {
+      const effective =
+        scope === POLICY_SCOPE_ALL
+          ? baseline
+            ? toIdentityPolicy(baseline)
+            : DEFAULT_IDENTITY_POLICY
+          : policyForRole(stored.value, scope as IdentityRole);
+      const population =
+        scope === POLICY_SCOPE_ALL ? identities.value : identities.value.filter((identity) => identity.role === scope);
+
+      return {
+        scope,
+        title: policyScopeTitle(scope),
+        identities: population.length,
+        active: population.filter((identity) => identity.active).length,
+        mfaEnrolled: population.filter((identity) => identity.mfaEnrolled).length,
+        requireMfa: effective.requireMfa,
+        maxSessionSeconds: effective.maxSessionSeconds,
+        idleTimeoutSeconds: effective.idleTimeoutSeconds,
+        stored: scope === POLICY_SCOPE_ALL ? baseline !== null : overrides.has(scope),
+      };
+    });
+
+    const active = identities.value.filter((identity) => identity.active);
+    const missingFactors = active.filter((identity) => !identity.mfaEnrolled);
+    const administrators = active.filter((identity) => identity.role === "ADMIN");
+    const laxScopes = roles.filter((role) => !role.requireMfa && role.active > 0);
+
+    const controls: ComplianceControlView[] = [
+      {
+        control: "A second factor is required before a session is granted",
+        state: laxScopes.length === 0 ? "OK" : "WARN",
+        detail:
+          laxScopes.length === 0
+            ? `All ${roles.length} policy scope(s) require one.`
+            : `Not required for ${laxScopes.map((role) => role.title).join(", ")}, which still holds ` +
+              `${laxScopes.reduce((total, role) => total + role.active, 0)} active identit(ies).`,
+      },
+      {
+        control: "Every active identity has a second factor enrolled",
+        state: missingFactors.length === 0 ? "OK" : "WARN",
+        detail:
+          `${active.length - missingFactors.length} of ${active.length} active identit(ies) have one on record; ` +
+          (missingFactors.length === 0
+            ? "none is without one."
+            : `${missingFactors.length} would be refused a session under a policy that requires one.`),
+      },
+      {
+        control: "An active administrator exists",
+        state: administrators.length > 0 ? "OK" : "FAIL",
+        detail:
+          administrators.length > 0
+            ? `${administrators.length} active administrator(s): ${administrators
+                .slice(0, 3)
+                .map((identity) => identity.identifier)
+                .join(", ")}.`
+            : "Nobody could administer this organization, or restore access after a mistake.",
+      },
+      {
+        control: "The session policy is stored rather than left at the built-in default",
+        state: baseline !== null ? "OK" : "WARN",
+        detail:
+          baseline !== null
+            ? `The baseline is stored, with ${overrides.size} role override(s).`
+            : "No baseline row has ever been written, so every identity is judged by the built-in default " +
+              "rather than by a decision this organization recorded.",
+      },
+      summary
+        ? {
+            control: "Nothing at HIGH or above is waiting in the Guard queue",
+            state: summary.openHighOrCritical === 0 ? "OK" : "WARN",
+            detail: `${summary.openHighOrCritical} open at HIGH or above, ${summary.open} open in total, ` +
+              `${summary.escalated} raised by a feed.`,
+          }
+        : {
+            control: "Detection telemetry is being evaluated",
+            state: "WARN",
+            detail: "No detection pipeline is wired into this console, so nothing can be asserted about the queue.",
+          },
+      {
+        control: "The evidence chain verifies end to end",
+        state: trail.ok ? (trail.value.verification.ok ? "OK" : "FAIL") : "WARN",
+        detail: trail.ok
+          ? trail.value.verification.ok
+            ? `${trail.value.verification.length} event(s) in one unbroken chain.`
+            : `The chain is broken: ${trail.value.verification.reason}`
+          : trail.error,
+      },
+    ];
+
+    return {
+      ok: true,
+      value: {
+        actor: consoleActor(await this.organizationName(context.value), session.value.identity),
+        session: sessionView(session.value.session),
+        generatedAt: new Date().toISOString(),
+        controls,
+        roles,
+        identities: {
+          total: identities.value.length,
+          humans: identities.value.filter((identity) => identity.kind === "HUMAN").length,
+          services: identities.value.filter((identity) => identity.kind === "SERVICE").length,
+          active: active.length,
+          inactive: identities.value.length - active.length,
+          mfaEnrolled: identities.value.filter((identity) => identity.mfaEnrolled).length,
+        },
+        alerts: summary
+          ? {
+              total: summary.total,
+              open: summary.open,
+              new: summary.new,
+              openHighOrCritical: summary.openHighOrCritical,
+              escalated: summary.escalated,
+              oldestOpenAt: summary.oldestOpenAt,
+            }
+          : null,
+        chain: trail.ok
+          ? {
+              ok: trail.value.verification.ok,
+              length: trail.value.verification.ok ? trail.value.verification.length : 0,
+              detail: trail.value.verification.ok
+                ? "The organization's evidence chain verifies end to end."
+                : `The evidence chain is broken: ${trail.value.verification.reason}`,
+            }
+          : null,
+        policies: {
+          stored: stored.value.length,
+          baselineStored: baseline !== null,
+          scopes: roles.length,
+        },
+      },
+    };
   }
 
   /* --------------------------------------------------------------- policies */
@@ -786,6 +1069,36 @@ function sessionView(session: { id: string; issuedAt: number; lastSeenAt: number
     issuedAt: new Date(session.issuedAt).toISOString(),
     lastSeenAt: new Date(session.lastSeenAt).toISOString(),
     expiresAt: new Date(session.expiresAt).toISOString(),
+  };
+}
+
+/**
+ * One alert, projected for the page.
+ *
+ * The mapping is where the rules are applied rather than re-implemented: `waitingMinutes`
+ * decides from the record whether there is an age to show, and `escalated` is read off the
+ * matches the alert was judged on rather than inferred by comparing a severity with a
+ * number this file does not have.
+ */
+function alertView(alert: AlertRecord, at: number): ConsoleAlertView {
+  return {
+    id: alert.id,
+    ruleId: alert.ruleId,
+    ruleName: alert.ruleName,
+    severity: alert.severity,
+    state: alert.state,
+    sourceAddress: alert.sourceAddress,
+    identityId: alert.identityId,
+    identityLabel: alert.identityLabel,
+    device: alert.device,
+    asset: alert.asset,
+    firstSeenAt: alert.firstSeenAt,
+    lastSeenAt: alert.lastSeenAt,
+    occurrences: alert.occurrences,
+    note: alert.note,
+    indicators: alert.threatIntel.length,
+    escalated: alert.threatIntel.some((match) => match.escalates),
+    waitingMinutes: waitingMinutes(alert, at),
   };
 }
 

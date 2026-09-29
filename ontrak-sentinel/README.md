@@ -54,10 +54,11 @@ this, what can they reach, and what have they done"* in one place.
 
 **S0, S1 and S2 complete; S3 started.** The identity spine exists, persists, and
 issues identity; a directory can provision into it and it can read one; the first
-Guard slice turns telemetry into an alert that names a person; and a feed of
-indicators now raises how that alert is judged. What is *not* here is still
+Guard slice turns telemetry into an alert that names a person; a feed of
+indicators now raises how that alert is judged; and the console works the queue
+that produces, with a posture summary beside it. What is *not* here is still
 stated: a synced group decides nothing yet (roles and groups as policy is S1's
-last bullet), Guard has no streaming listener, no triage UI for an alert and no
+last bullet), Guard has no streaming listener, no detection-coverage map and no
 STIX/TAXII feed transport, and rule rotation and signing-key provisioning are
 open. The identity spine:
 
@@ -247,6 +248,37 @@ disagreement. Matching is by the directory's own id first, so a rename is a move
   refreshes the row instead of duplicating it, and every ingest and withdrawal is
   on the organization's evidence chain. Covered by
   `tests/sentinel-threat-intel.test.ts`.
+- `src/lib/alert-triage-rules.ts` + the console's alerts and compliance pages
+  (S3) — **the operator's side of detection**: the queue, one alert opened, and the
+  posture summary. `detection-service.ts` answers *is this an incident* and *who is
+  it about*; this module answers the three questions an operator asks next, and
+  answers them as pure functions so they are tested without a database, a browser
+  or a session. **What is still waiting on me?** The queue is filtered and ordered
+  here rather than by the store — loudest first, then most recent, then by rule —
+  because a list that reshuffled between two page loads would make an operator
+  re-read rows they had already dismissed, and because a store query that sorted
+  differently from the summary beside it would put the page's own header in doubt.
+  Age is measured from the **last** sighting, not the first: a burst still arriving
+  is not an ignored alert. **What is this part of?** An alert is never alone — the
+  same identity, address, asset, device or dedupe group raised the alerts around
+  it — so `relatedAlerts` names the neighbours *and why they are neighbours*, which
+  is the difference between an investigation and a filtered list. A **closed alert
+  is never a neighbour**: a resolved printer ticket beside a live intrusion is
+  noise, not context. **Why is it this loud?** The severity on the row is not
+  always the severity the rule fires at, so `escalationSummary` names the indicator
+  that moved it, read from the record — the feed may have been withdrawn a month
+  ago, and the review still has to get the answer the alert was judged on. The page
+  renders the queue, opens one alert with its timeline (evidence, indicator matches,
+  note and all, oldest first) and offers acknowledge and close; nothing here
+  mutates, because a second place that could change a state is a second place that
+  could change it *without* an audit entry. Beside it, the **compliance** page is a
+  read-only posture summary — the controls in force, who and what they govern, the
+  policy each scope resolves to, the alert backlog and the chain's verification
+  result — computed from the same rows the product enforces, so the page cannot
+  describe a control the login path does not apply, and a control that is not in
+  force is reported as `WARN` or `FAIL` rather than as a tick with a footnote.
+  Covered by `tests/sentinel-alert-triage.test.ts`, and the operator's side of it is
+  in [docs/alert-triage.md](./docs/alert-triage.md).
 - `src/lib/console-rules.ts` + `console-service.ts` + `console-http.ts` (S0/S1) —
   the **admin console**, as a server-rendered shell with no framework: an overview
   (who you are, whether a second factor is enrolled, and the organization's
@@ -265,9 +297,10 @@ disagreement. Matching is by the directory's own id first, so a rename is a move
   and every value on it is escaped through one function, so a display name cannot
   become markup. It also carries the **policies** page (every scope, what is stored
   for it, and what it resolves to)  and the **directory** page (create a connection,
-  run a sync, read the report), and the **threat intel** page (what is watched, a
-  paste-in feed box, and a withdrawal per row). Covered by
-  `tests/sentinel-console.test.ts`.
+  run a sync, read the report), and the **threat intel**  page (what is watched, a
+  paste-in feed box, and a withdrawal per row), the **alerts** page (the queue, and
+  one alert's investigation) and the **compliance** page (the posture summary).
+  Covered by `tests/sentinel-console.test.ts`.
 - `scripts/serve.ts` (`npm run serve`) — a **runnable provider**: an organization,
   an administrator, a session and a demo client, plus a printed authorization URL
   with a PKCE pair. With `DATABASE_URL` set it runs over Postgres, end to end, and
@@ -439,9 +472,9 @@ mounted at all when no token is configured** — an endpoint that exists only to
 "configure me" is one somebody eventually finds a way to write to.
 
 Not here yet, and named rather than implied: no streaming listener per protocol (a
-collector posts, it does not yet tail), no triage UI, no detection-coverage map, and
-no rule *editing* — the rulebook is code with a version, and publishing a rule is a
-deploy.
+collector posts, it does not yet tail), no detection-coverage map, and no rule
+*editing* — the rulebook is code with a version, and publishing a rule is a deploy.
+The queue is worked at `/console/alerts` (see [Working the queue](#working-the-queue)).
 
 ## Judging an alert against a feed
 
@@ -498,8 +531,66 @@ action needs to be permitted, and how to drive it from a script — is in
 [docs/threat-intelligence.md](./docs/threat-intelligence.md).
 
 Not here yet, and named rather than implied: no STIX/TAXII transport and no automatic
-refresh — a feed is pasted by a person today — no scheduled expiry sweep (the matcher
-enforces expiry itself), and no triage UI for the alert the match lands on.
+refresh — a feed is pasted by a person today — and no scheduled expiry sweep (the
+matcher enforces expiry itself).
+
+## Working the queue
+
+An alert raised by detection lands at `/console/alerts`, and the first thing that page
+does is take a position: **open work is the default view**. `CLOSED` is deliberately not
+one of the states a filter offers by default, because a queue that shows a resolved
+printer ticket beside a live intrusion is a queue nobody reads to the bottom.
+
+The filter is a plain `GET` — which is the one place in the console that is not a `POST`.
+Narrowing a list changes nothing, so it belongs in the address bar where it can be
+bookmarked, shared and reached with the back button; acknowledge and close stay `POST`s,
+and they are exactly why the queue may safely be a `GET`.
+
+The page reports two numbers rather than one, and says which is which. The header
+describes *everything* the organization has — how much of it is open, how much of that is
+`HIGH` or above, how much of it a feed raised — while the table below it is what the
+filter selected. A single number would have to pick one of the two questions, and the
+number an operator reports upward is usually the header's.
+
+Opening an alert is a link, not a second page: `?alert=<id>`, with the queue's own filter
+carried in the URL beside it, and the alert looked up in the **unfiltered** list, so a link
+pasted into a chat opens the incident it names whatever the recipient's queue is narrowed
+to. What it shows is the three answers the rules computed:
+
+- **What else is this.** The neighbours, tightest relation first — the same identity,
+then the same address, then the same asset, then the same device, then merely the same
+dedupe group — each saying *which* shared value relates it. An alert that relates on
+several axes is reported once, on its tightest one, so the list does not pad itself, and
+a closed alert is never in it.
+- **Why it is this loud.** When a feed raised the severity above what the rule fires at,
+the page says which indicator did it, in the operator's own words, with the feed and the
+confidence — read from the alert's own record rather than looked up in the feed, because
+the feed may since have been withdrawn and the escalation still has to be reviewable.
+Indicators that matched *below* the confidence floor are reported separately, as
+annotations that did not change the judgement.
+- **What happened.** One timeline, oldest first: first seen, every observation kept as
+evidence (with ports and direction, so it can be drawn on a whiteboard), a repeat, the
+indicator matches, and the operator's note. Evidence and indicators share one list on
+purpose — two tables side by side make a person line the timestamps up by hand.
+
+**Acknowledge** says somebody has seen it; it is a `POST` that redirects, so a refresh
+re-fetches a page rather than re-acknowledging an incident, and a repeat keeps refreshing
+the alert underneath it. **Close** requires a reason, because an incident review asks
+*why was this closed?* and a blank answer is not one. Both land on the organization's
+evidence chain as `guard.alert.acknowledged` / `guard.alert.closed`, against the person
+who did it.
+
+Beside the queue, `/console/compliance` is the summary a reviewer is handed: the controls
+in force, the population each policy scope governs and the number it resolves to, the
+alert backlog, and whether the evidence chain still verifies. Two things are deliberate.
+It is **read-only** — a report that could also change a control would be a report and the
+thing reported in the same request — and it **reports an absence as an absence**: a
+deployment with no second factor enrolled anywhere, no stored baseline, an open alert at
+`HIGH` or above, or no detection pipeline at all gets a `WARN` or a `FAIL` naming what is
+missing, because a green tick with a footnote is what a review is for catching.
+
+The operator's side of it — the paths, the two POST bodies, and what each action needs to
+be permitted — is in [docs/alert-triage.md](./docs/alert-triage.md).
 
 ## Containers
 

@@ -433,6 +433,27 @@ async function main(): Promise<void> {
   // disagree about what is active.
   const threatIntel = new ThreatIntelService(intelStore, audit);
 
+  // Guard's detection (S3). The store is durable where there is a database and in memory
+  // otherwise; correlation reads sessions and identities directly, because a sensor is not
+  // an actor and has no session to resolve.
+  // Written out rather than defaulted, because the optional collaborator is last in the
+  // constructor on purpose — and a wiring that relied on positional `undefined` paddings to
+  // reach it would be the thing that breaks the day the list changes.
+  //
+  // Built *before* the console, because the console renders the queue that this service
+  // holds: the console gets only the three triage methods, so a browser session cannot
+  // reach ingest, and the last argument below is deliberately the service rather than a
+  // second store.
+  const detection = new DetectionService(
+    alertStore,
+    identities,
+    audit,
+    DETECTION_RULES,
+    systemDetectionIds(),
+    sha256Hex,
+    threatIntel,
+  );
+
   // The sign-in service and the directory reader are both optional, and independent:
   // a deployment can serve a login with no directories, or read directories with no
   // console login configured. Passing both is what lets the console show either.
@@ -446,22 +467,7 @@ async function main(): Promise<void> {
     DEMO_SLUG,
     directories,
     threatIntel,
-  );
-
-  // Guard's detection (S3). The store is durable where there is a database and in memory
-  // otherwise; correlation reads sessions and identities directly, because a sensor is not
-  // an actor and has no session to resolve.
-  // Written out rather than defaulted, because the optional collaborator is last in the
-  // constructor on purpose — and a wiring that relied on positional `undefined` paddings to
-  // reach it would be the thing that breaks the day the list changes.
-  const detection = new DetectionService(
-    alertStore,
-    identities,
-    audit,
-    DETECTION_RULES,
-    systemDetectionIds(),
-    sha256Hex,
-    threatIntel,
+    detection,
   );
   const guardService = new GuardService(detection, identities, {
     token: (process.env.SENTINEL_GUARD_TOKEN ?? "").trim() || null,

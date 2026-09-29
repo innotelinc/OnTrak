@@ -28,6 +28,18 @@
 
 import { mfaKindLabel, type MfaFactorSummary } from "./mfa-rules";
 import { POLICY_SCOPES, type PolicyScope } from "./identity-rules";
+// The queue's shape, read from the rules module rather than restated here: what the page
+// offers to narrow by has to be what the filter actually understands.
+import {
+  ALERT_SEVERITIES,
+  filterQuery,
+  type AlertTimelineEntry,
+  type RelatedAlert,
+  type TriageFilter,
+  type TriageSummary,
+} from "./alert-triage-rules";
+import type { AlertState } from "./detection-service";
+import type { Severity } from "./detection-rules";
 // Read for the feed page's help text: the kinds it will classify, and the confidence below
 // which a match annotates rather than escalates. Both are named here rather than retyped, so
 // the page cannot promise something the matcher does not do.
@@ -64,6 +76,26 @@ export const CONSOLE_PATHS = {
   intel: "/console/intel",
   intelIngest: "/console/intel/feed",
   intelWithdraw: "/console/intel/indicator/withdraw",
+  /**
+   * The Guard queue (S4): what detection raised, narrowed to what is still open.
+   *
+   * One path, three verbs' worth of surface: the queue itself, one alert's investigation
+   * (`?alert=<id>`), and the two state changes as their own POST paths below — because a
+   * state change has to be a POST and a GET that reads a queue must not be able to close
+   * anything if a crawler follows it.
+   */
+  alerts: "/console/alerts",
+  alertAcknowledge: "/console/alerts/acknowledge",
+  alertClose: "/console/alerts/close",
+  /**
+   * The compliance posture summary (S4).
+   *
+   * A read-only page on purpose. It reports what the deployment *is* — the controls in
+   * force, who they cover, what is waiting in the queue, and whether the evidence chain
+   * still verifies — so that the number a reviewer is handed is derived from the same
+   * rows the product enforces, rather than typed into a report.
+   */
+  compliance: "/console/compliance",
   provisioning: "/console/provisioning",
   mintToken: "/console/provisioning/token",
   revokeToken: "/console/provisioning/token/revoke",
@@ -373,6 +405,16 @@ const STYLES = `
   .card { border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); padding: .9rem 1rem; margin: var(--space-2) 0; box-shadow: var(--shadow-card); }
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  select { font: inherit; padding: .35rem .5rem; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); }
+  /* Severity and control states. Colour comes from the theme's own tokens and nowhere
+     else, so the SOC palette and a light/dark switch both reach these two columns. */
+  .sev { font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+  .sev-critical, .sev-high { color: var(--bad); }
+  .sev-medium { color: var(--ink-soft); }
+  .sev-low { color: var(--ink-faint); }
+  .control-ok { color: var(--ok); font-weight: 600; }
+  .control-warn { color: var(--ink-soft); font-weight: 600; }
+  .control-fail { color: var(--bad); font-weight: 600; }
   /* One bar across the top, holding the section links and the two controls. It is
      sticky because the evidence table runs long and the switch should still be to
      hand at the bottom of it. */
@@ -416,13 +458,17 @@ export interface ConsolePageInput {
  * forget it, and so the set of screens is one list somebody can read.
  */
 export function consolePage(input: ConsolePageInput): string {
+  // The queue sits second because it is the one page an operator opens first, and the
+  // posture summary sits last because it is the page that summarizes all the others.
   const nav = input.actor
     ? `<nav class="muted"><a href="${CONSOLE_PATHS.home}">Overview</a>` +
+      `<a href="${CONSOLE_PATHS.alerts}">Alerts</a>` +
       `<a href="${CONSOLE_PATHS.mfa}">Second factor</a>` +
       `<a href="${CONSOLE_PATHS.policies}">Policies</a>` +
       `<a href="${CONSOLE_PATHS.directory}">Directories</a>` +
       `<a href="${CONSOLE_PATHS.intel}">Threat intel</a>` +
       `<a href="${CONSOLE_PATHS.provisioning}">Provisioning</a>` +
+      `<a href="${CONSOLE_PATHS.compliance}">Compliance</a>` +
       `</nav>`
     : `<nav class="muted"><a href="${CONSOLE_PATHS.signIn}">Sign in</a></nav>`;
 
@@ -900,6 +946,408 @@ export function renderIntel(view: ConsoleIntelView, flash?: string | null, error
     `indicator, the feed and the confidence it was judged on — so an escalation can be reviewed after the feed is gone.</p>`;
 
   return consolePage({ title: "Threat intel", actor: view.actor, body, flash, error });
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Alerts: the Guard queue, and one alert's investigation                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One alert, as the queue renders it.
+ *
+ * `severity` and `state` are the record's own values, and `escalated` is carried
+ * separately from the severity so the page can say *why* something is CRITICAL without
+ * re-deriving it: an alert that a feed raised and one whose rule fires at CRITICAL look the
+ * same in a severity column and are not the same thing to review.
+ */
+export interface ConsoleAlertView {
+  id: string;
+  ruleId: string;
+  ruleName: string;
+  severity: Severity;
+  state: AlertState;
+  sourceAddress: string | null;
+  identityId: string | null;
+  identityLabel: string | null;
+  device: string | null;
+  asset: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  occurrences: number;
+  note: string | null;
+  /** How many indicators the alert's evidence matched, escalations and annotations. */
+  indicators: number;
+  /** Whether a feed raised the severity its rule fired at. */
+  escalated: boolean;
+  /** Whole minutes since it was last seen, or `null` when it is closed. */
+  waitingMinutes: number | null;
+}
+
+/**
+ * One alert, opened.
+ *
+ * The three questions an operator asks next, each already answered by
+ * `alert-triage-rules.ts`: what else is this (`related`), why is it this loud
+ * (`escalation`), and what actually happened (`timeline`). The page's job is to lay them
+ * out; none of the judgement lives here.
+ */
+export interface ConsoleAlertInvestigationView {
+  subject: ConsoleAlertView;
+  escalation: string | null;
+  annotation: string | null;
+  related: RelatedAlert[];
+  timeline: AlertTimelineEntry[];
+  actions: { canAcknowledge: boolean; canClose: boolean };
+}
+
+/**
+ * The queue page.
+ *
+ * `alerts` is what the *filter* selected and `summary` describes *everything* the
+ * organization has, deliberately: a header that counted only the rows below it would say
+ * "3 open" on a deployment with ninety, which is the number an operator would then report
+ * upward. One question each — "what is waiting?" and "how bad is it overall?" — so the two
+ * numbers are allowed to disagree and the page says which is which.
+ */
+export interface ConsoleAlertsView {
+  actor: ConsoleActor;
+  session: ConsoleSessionView;
+  filter: TriageFilter;
+  summary: TriageSummary;
+  alerts: ConsoleAlertView[];
+  /** The alert `?alert=` named, or `null` on a plain read of the queue. */
+  investigation: ConsoleAlertInvestigationView | null;
+}
+
+/** A severity, as a badge whose colour comes from the theme rather than from here. */
+function severityBadge(severity: Severity): string {
+  return `<span class="sev sev-${severity.toLowerCase()}">${escapeHtml(severity)}</span>`;
+}
+
+/**
+ * The queue and, when one is open, the alert underneath it.
+ *
+ * The filter form is a `GET`, and that is the one difference from every other form in the
+ * console: narrowing a list changes nothing, so it belongs in the address bar where it can
+ * be bookmarked, shared and reflected in a browser's back button. Acknowledge and close stay
+ * `POST`s, and they are why this page can safely be a `GET` at all.
+ *
+ * Closing asks for a reason and acknowledging does not, matching the service: one is "I have
+ * seen this" and the other is "this is finished", and only the second is a claim somebody
+ * will be asked to justify.
+ */
+export function renderAlerts(view: ConsoleAlertsView, flash?: string | null, error?: string | null): string {
+  const filter = view.filter;
+  const query = filterQuery(filter);
+  const severityOptions = optionList(["ALL", ...ALERT_SEVERITIES], filter.severity);
+  const stateOptions = optionList(["OPEN", "ALL", "NEW", "ACKNOWLEDGED", "CLOSED"], filter.state);
+
+  const form =
+    `<form method="get" action="${CONSOLE_PATHS.alerts}">` +
+    `<p><label class="muted" for="state">Show</label> <select id="state" name="state">${stateOptions}</select> ` +
+    // "exactly", because that is what the filter does: a select whose label promised "at
+    // least" over an exact match would have an operator believing a CRITICAL was hidden
+    // from a HIGH view.
+    `<label class="muted" for="severity">severity</label> <select id="severity" name="severity">${severityOptions}</select></p>` +
+    `<p><label class="muted" for="search">Search</label> <input id="search" name="search" value="${escapeHtml(filter.search)}" placeholder="rule, address, asset, indicator"> ` +
+    `<button type="submit">Apply</button> <a class="muted" href="${CONSOLE_PATHS.alerts}">Clear</a></p>` +
+    (filter.identityId
+      ? `<p class="muted">Narrowed to one identity: <code>${escapeHtml(filter.identityId)}</code></p>`
+      : "") +
+    (filter.address
+      ? `<p class="muted">Narrowed to one address: <code>${escapeHtml(filter.address)}</code></p>`
+      : "") +
+    `</form>`;
+
+  const summary = view.summary;
+  const bySeverity = ALERT_SEVERITIES.map(
+    (severity) => `${severityBadge(severity)} ${summary.bySeverity[severity]}`,
+  ).join(" · ");
+
+  const summaryCard =
+    `<div class="card">` +
+    `<p><strong>${summary.open}</strong> open of ${summary.total}: ${summary.new} new, ` +
+    `${summary.acknowledged} acknowledged, ${summary.closed} closed.</p>` +
+    `<p class="muted">${bySeverity}</p>` +
+    `<p class="${summary.openHighOrCritical > 0 ? "error" : "flash"}"${summary.openHighOrCritical > 0 ? ` role="alert"` : ""}>` +
+    `${summary.openHighOrCritical === 0
+      ? "Nothing at HIGH or above is waiting."
+      : `${summary.openHighOrCritical} open alert(s) are HIGH or CRITICAL — the number that should be zero at the end of a shift.`}</p>` +
+    `<p class="muted">${summary.escalated} were raised by a feed rather than by the rule that fired` +
+    (summary.oldestOpenAt ? ` · oldest open last seen ${escapeHtml(summary.oldestOpenAt)}` : "") +
+    (summary.lastSeenAt ? ` · newest activity ${escapeHtml(summary.lastSeenAt)}` : "") +
+    `</p></div>`;
+
+  const rows = view.alerts.length
+    ? `<table><thead><tr><th>Severity</th><th>Rule</th><th>About</th><th>Last seen</th><th>Seen</th><th></th></tr></thead><tbody>${view.alerts
+        .map((alert) => {
+          const about = alert.identityLabel
+            ? `${escapeHtml(alert.identityLabel)}${alert.sourceAddress ? ` <span class="muted">from ${escapeHtml(alert.sourceAddress)}</span>` : ""}`
+            : alert.sourceAddress
+              ? escapeHtml(alert.sourceAddress)
+              : `<span class="muted">${alert.asset ? escapeHtml(alert.asset) : "unattributed"}</span>`;
+          const waiting = alert.waitingMinutes === null ? "" : ` <span class="muted">(${alert.waitingMinutes}m)</span>`;
+          return (
+            `<tr>` +
+            `<td>${severityBadge(alert.severity)}</td>` +
+            `<td><a href="${CONSOLE_PATHS.alerts}?${escapeHtml(query)}&amp;alert=${escapeHtml(alert.id)}">${escapeHtml(alert.ruleName)}</a>` +
+            (alert.escalated ? ` <span class="muted">· from a feed</span>` : "") +
+            `<br><span class="muted">${escapeHtml(alert.state.toLowerCase())}${alert.note ? ` · ${escapeHtml(alert.note)}` : ""}</span></td>` +
+            `<td class="muted">${about}${alert.asset ? `<br>${escapeHtml(alert.asset)}` : ""}</td>` +
+            `<td class="muted">${escapeHtml(alert.lastSeenAt)}${waiting}</td>` +
+            `<td class="muted">${escapeHtml(alert.occurrences)}${alert.indicators ? `<br>${alert.indicators} indicator(s)` : ""}</td>` +
+            `<td>` +
+            (alert.state === "NEW"
+              ? `<form method="post" action="${CONSOLE_PATHS.alertAcknowledge}" style="display:inline">` +
+                `<input type="hidden" name="alertId" value="${escapeHtml(alert.id)}">` +
+                `<button type="submit" class="quiet">Acknowledge</button></form>`
+              : "") +
+            `</td></tr>`
+          );
+        })
+        .join("")}</tbody></table>`
+    : `<p class="muted">Nothing matches. A queue that is empty of open work is the state this page exists to reach.</p>`;
+
+  const investigation = view.investigation ? renderInvestigation(view.investigation, query) : "";
+
+  const body =
+    form +
+    `<h2>Where this organization stands</h2>` +
+    summaryCard +
+    investigation +
+    `<h2>Waiting (${view.alerts.length})</h2><div class="card">${rows}</div>` +
+    `<p class="muted">An alert is raised by a sensor's telemetry against a rule in the rulebook, and it is ` +
+    `correlated to an identity when the address it came from held a session. A repeat refreshes the alert it ` +
+    `belongs to rather than raising a second one, so a burst that is still arriving is one row.</p>`;
+
+  return consolePage({ title: "Alerts", actor: view.actor, body, flash, error });
+}
+
+/** One alert, opened: what else it is part of, why it is this loud, and what happened. */
+function renderInvestigation(view: ConsoleAlertInvestigationView, query: string): string {
+  const subject = view.subject;
+  const link = (id: string): string =>
+    `<a href="${CONSOLE_PATHS.alerts}?${escapeHtml(query)}&amp;alert=${escapeHtml(id)}">open</a>`;
+
+  const related = view.related.length
+    ? `<table><thead><tr><th>Why</th><th>Rule</th><th>Severity</th><th>State</th><th>Last seen</th><th></th></tr></thead><tbody>${view.related
+        .map(
+          (alert) =>
+            `<tr><td class="muted">same ${escapeHtml(alert.kind)} <code>${escapeHtml(alert.shared)}</code></td>` +
+            `<td>${escapeHtml(alert.ruleName)}${alert.closer ? ` <span class="muted">· at least this loud</span>` : ""}</td>` +
+            `<td>${severityBadge(alert.severity)}</td>` +
+            `<td class="muted">${escapeHtml(alert.state.toLowerCase())}</td>` +
+            `<td class="muted">${escapeHtml(alert.lastSeenAt)}</td>` +
+            `<td>${link(alert.id)}</td></tr>`,
+        )
+        .join("")}</tbody></table></div>`
+    : `<p class="muted">Nothing open shares an identity, address, asset or device with this one. A lone alert is ` +
+      `an alert; a cluster is an incident, and this one is not in a cluster.</p></div>`;
+
+  const timeline = view.timeline.length
+    ? `<table><thead><tr><th>When</th><th>What</th><th>Detail</th></tr></thead><tbody>${view.timeline
+        .map(
+          (entry) =>
+            `<tr><td class="muted">${escapeHtml(entry.at)}</td><td>${escapeHtml(entry.title)}</td>` +
+            `<td class="muted">${escapeHtml(entry.detail)}</td></tr>`,
+        )
+        .join("")}</tbody></table>`
+    : `<p class="muted">No evidence was kept on this alert.</p>`;
+
+  const acknowledge = view.actions.canAcknowledge
+    ? `<form method="post" action="${CONSOLE_PATHS.alertAcknowledge}">` +
+      `<input type="hidden" name="alertId" value="${escapeHtml(subject.id)}">` +
+      `<p><label class="muted" for="ack-note">Note <span class="hint">(optional)</span></label> ` +
+      `<input id="ack-note" name="note" placeholder="Looking at this now"></p>` +
+      `<button type="submit">Acknowledge</button>` +
+      `<p class="muted">Acknowledging says somebody has seen it. It does not say it is finished, and it does not ` +
+      `stop the alert being refreshed by a repeat.</p></form>`
+    : `<p class="muted">Already acknowledged: it stays in the queue until somebody closes it with a reason.</p>`;
+
+  const close = view.actions.canClose
+    ? `<form method="post" action="${CONSOLE_PATHS.alertClose}">` +
+      `<input type="hidden" name="alertId" value="${escapeHtml(subject.id)}">` +
+      `<p><label class="muted" for="close-note">Why it is finished</label> ` +
+      `<input id="close-note" name="note" required placeholder="Blocked at the edge; the host is rebuilt"></p>` +
+      `<button type="submit">Close</button>` +
+      `<p class="muted">A reason is required because an incident review asks this question, and a blank answer is not one.</p></form>`
+    : `<p class="muted">This alert is closed, so there is nothing left to do to it.</p>`;
+
+  return (
+    `<h2>Investigating</h2>` +
+    `<div class="card">` +
+    `<h3>${severityBadge(subject.severity)} ${escapeHtml(subject.ruleName)}</h3>` +
+    `<p class="muted">${escapeHtml(subject.ruleId)} · ${escapeHtml(subject.state.toLowerCase())} · ` +
+    `${escapeHtml(subject.occurrences)} occurrence(s) · first seen ${escapeHtml(subject.firstSeenAt)} · ` +
+    `last seen ${escapeHtml(subject.lastSeenAt)}` +
+    (subject.waitingMinutes === null ? "" : ` · waiting ${subject.waitingMinutes}m`) +
+    `</p>` +
+    `<p class="muted">About ${
+      subject.identityLabel
+        ? `<strong>${escapeHtml(subject.identityLabel)}</strong>${subject.identityId ? ` <code>${escapeHtml(subject.identityId)}</code>` : ""}`
+        : "no correlated identity"
+    }${subject.sourceAddress ? ` · from <code>${escapeHtml(subject.sourceAddress)}</code>` : ""}` +
+    `${subject.device ? ` · device ${escapeHtml(subject.device)}` : ""}` +
+    `${subject.asset ? ` · asset ${escapeHtml(subject.asset)}` : ""}</p>` +
+    (subject.identityId
+      ? `<p class="muted"><a href="${CONSOLE_PATHS.alerts}?${escapeHtml(
+          filterQuery({ state: "OPEN", severity: "ALL", identityId: subject.identityId, address: null, search: "" }),
+        )}">Everything open about this identity</a></p>`
+      : "") +
+    (subject.sourceAddress
+      ? `<p class="muted"><a href="${CONSOLE_PATHS.alerts}?${escapeHtml(
+          filterQuery({ state: "OPEN", severity: "ALL", identityId: null, address: subject.sourceAddress, search: "" }),
+        )}">Everything open from this address</a></p>`
+      : "") +
+    (view.escalation ? `<p class="error" role="alert">Raised above its rule's own severity. ${escapeHtml(view.escalation)}</p>` : "") +
+    (view.annotation ? `<p class="muted">${escapeHtml(view.annotation)}</p>` : "") +
+    `<h3>What else is this</h3>` +
+    related +
+    `<h3>What happened</h3>` +
+    `<div class="card">${timeline}</div>` +
+    `<h3>What to do</h3>` +
+    `<div class="card">${acknowledge}${close}` +
+    `<p class="muted">Both actions are recorded on the organization's evidence chain, against your identity.</p></div>` +
+    `</div>`
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Compliance posture                                                        */
+/* -------------------------------------------------------------------------- */
+
+/** How one control reads: satisfied, worth a look, or not in force. */
+export type ControlState = "OK" | "WARN" | "FAIL";
+
+export interface ComplianceControlView {
+  /** What is being asserted, in the words of whoever has to sign it off. */
+  control: string;
+  state: ControlState;
+  /** The number or the fact behind the state, so it can be checked rather than believed. */
+  detail: string;
+}
+
+/** One policy scope, with the population it governs. */
+export interface ComplianceRoleView {
+  scope: string;
+  title: string;
+  identities: number;
+  active: number;
+  mfaEnrolled: number;
+  requireMfa: boolean;
+  maxSessionSeconds: number;
+  idleTimeoutSeconds: number;
+  /** False when the scope resolves through the baseline rather than a row of its own. */
+  stored: boolean;
+}
+
+/**
+ * The posture summary.
+ *
+ * Every number here is *read from the control it describes* — the policy table, the
+ * directory, the alert queue, the audit chain — rather than computed from a second model of
+ * the same thing. That is the point of the page: a reviewer asking "is MFA enforced?" should
+ * be answered by the same rows the login path reads, and if the review and the enforcement
+ * ever disagree, the page is being generated by the wrong code.
+ *
+ * The other thing it deliberately does is report an absence as an absence. A deployment with
+ * no second factor enrolled anywhere gets a FAIL rather than a green tick with a footnote.
+ */
+export interface ConsoleComplianceView {
+  actor: ConsoleActor;
+  session: ConsoleSessionView;
+  generatedAt: string;
+  controls: ComplianceControlView[];
+  roles: ComplianceRoleView[];
+  identities: {
+    total: number;
+    humans: number;
+    services: number;
+    active: number;
+    inactive: number;
+    /** Identities with a factor on record, which is what a session policy reads. */
+    mfaEnrolled: number;
+  };
+  /** `null` when this deployment runs no detection pipeline. */
+  alerts: {
+    total: number;
+    open: number;
+    new: number;
+    openHighOrCritical: number;
+    escalated: number;
+    oldestOpenAt: string | null;
+  } | null;
+  /** `null` when the actor may not read the trail, rather than a false "verified". */
+  chain: { ok: boolean; length: number; detail: string } | null;
+  /** The policy table's state, and the number of rows an administrator has written. */
+  policies: { stored: number; baselineStored: boolean; scopes: number };
+}
+
+/**
+ * The posture page.
+ *
+ * Rendered as a table of assertions rather than a dashboard of charts, because the output
+ * is meant to be printed, pasted into a ticket and signed. `generatedAt` is on it for the
+ * same reason: a compliance page without a timestamp is a claim about no particular moment.
+ */
+export function renderCompliance(view: ConsoleComplianceView, flash?: string | null, error?: string | null): string {
+  const controls = view.controls
+    .map(
+      (control) =>
+        `<tr><td>${escapeHtml(control.control)}</td>` +
+        `<td class="control-${control.state.toLowerCase()}">${escapeHtml(control.state)}</td>` +
+        `<td class="muted">${escapeHtml(control.detail)}</td></tr>`,
+    )
+    .join("");
+
+  const roles = view.roles
+    .map(
+      (role) =>
+        `<tr><td>${escapeHtml(role.title)}${role.stored ? "" : ` <span class="muted">(inherited)</span>`}</td>` +
+        `<td class="muted">${escapeHtml(role.identities)}</td>` +
+        `<td class="muted">${escapeHtml(role.mfaEnrolled)} of ${escapeHtml(role.active)}</td>` +
+        `<td class="muted">${role.requireMfa ? "required" : "not required"}</td>` +
+        `<td class="muted">${escapeHtml(humanSeconds(role.maxSessionSeconds))} / idle ${escapeHtml(humanSeconds(role.idleTimeoutSeconds))}</td></tr>`,
+    )
+    .join("");
+
+  const population =
+    `<div class="card"><p>${view.identities.total} identities: ${view.identities.humans} people, ` +
+    `${view.identities.services} services. ${view.identities.active} active, ${view.identities.inactive} switched off.</p>` +
+    `<p class="muted">${view.identities.mfaEnrolled} have a second factor on record. ` +
+    `${view.policies.stored} scope(s) have a stored policy; the baseline ${
+      view.policies.baselineStored ? "has one" : "resolves to the built-in default"
+    }.</p></div>`;
+
+  const alertSummary = view.alerts
+    ? `<div class="card"><p>${view.alerts.open} open of ${view.alerts.total} alert(s): ${view.alerts.new} new, ` +
+      `${view.alerts.openHighOrCritical} at HIGH or above, ${view.alerts.escalated} raised by a feed.</p>` +
+      `<p class="muted">${view.alerts.oldestOpenAt ? `Oldest open last seen ${escapeHtml(view.alerts.oldestOpenAt)}.` : "No open alert is waiting."}</p></div>`
+    : `<p class="muted">This deployment runs no detection pipeline, so there is no alert backlog to report — ` +
+      `which is an absence, not a clean queue.</p>`;
+
+  const chain = view.chain
+    ? `<p class="${view.chain.ok ? "flash" : "error"}"${view.chain.ok ? "" : ` role="alert"`}>${escapeHtml(view.chain.detail)} ` +
+      `<span class="muted">(${escapeHtml(view.chain.length)} events)</span></p>`
+    : `<p class="muted">Your role may not read the evidence trail, so this report cannot assert anything about it.</p>`;
+
+  const body =
+    `<h2>Controls in force</h2>` +
+    `<div class="card"><table><thead><tr><th>Control</th><th></th><th>Evidence</th></tr></thead><tbody>${controls}</tbody></table></div>` +
+    `<h2>Who and what is governed</h2>` +
+    population +
+    `<h2>Policy coverage</h2>` +
+    `<div class="card"><table><thead><tr><th>Scope</th><th>Identities</th><th>Second factor</th><th>Required</th><th>Session</th></tr></thead><tbody>${roles}</tbody></table>` +
+    `<p class="muted">A scope with no row of its own inherits the baseline, so the number shown is the one a ` +
+    `sign-in would actually be judged by. Changing any of it is on <a href="${CONSOLE_PATHS.policies}">Policies</a>.</p></div>` +
+    `<h2>Alert backlog</h2>` +
+    alertSummary +
+    `<h2>Evidence integrity</h2>` +
+    chain +
+    `<p class="muted">Generated ${escapeHtml(view.generatedAt)}. Every figure above is read from the same rows the ` +
+    `product enforces: no control is reported as satisfied because a setting exists somewhere else.</p>`;
+
+  return consolePage({ title: "Compliance", actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */
