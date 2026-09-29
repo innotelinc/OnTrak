@@ -35,6 +35,9 @@ import { mfaKindLabel, type MfaFactorSummary } from "./mfa-rules";
 /** Where the console lives. Named here so the router and the pages agree. */
 export const CONSOLE_PATHS = {
   home: "/console",
+  provisioning: "/console/provisioning",
+  mintToken: "/console/provisioning/token",
+  revokeToken: "/console/provisioning/token/revoke",
   mfa: "/console/mfa",
   totpBegin: "/console/mfa/totp",
   totpConfirm: "/console/mfa/totp/confirm",
@@ -110,6 +113,39 @@ export interface ConsoleMfaView {
   identityId: string;
 }
 
+/**
+ * The provisioning page (S2).
+ *
+ * A connector's token is minted here rather than through the SCIM API, on purpose:
+ * the act of delegation is a person's, done while looking at a session, and a
+ * machine-facing API that could mint its own credentials would have no ceiling. The
+ * page also lists what a sync has brought in — groups and their membership — because
+ * "did the directory push what I think it pushed?" is the question an administrator
+ * actually has.
+ */
+export interface ConsoleProvisioningView {
+  actor: ConsoleActor;
+  session: ConsoleSessionView;
+  tokens: ConsoleTokenView[];
+  groups: ConsoleGroupView[];
+  /** Where a connector points, so the page can show it rather than describe it. */
+  scimBase: string;
+}
+
+export interface ConsoleTokenView {
+  id: string;
+  label: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+}
+
+export interface ConsoleGroupView {
+  id: string;
+  displayName: string;
+  memberCount: number;
+}
+
 export interface ConsoleOverviewView {
   actor: ConsoleActor;
   session: ConsoleSessionView;
@@ -170,6 +206,7 @@ export function consolePage(input: ConsolePageInput): string {
   const nav = input.actor
     ? `<nav class="muted"><a href="${CONSOLE_PATHS.home}">Overview</a>` +
       `<a href="${CONSOLE_PATHS.mfa}">Second factor</a>` +
+      `<a href="${CONSOLE_PATHS.provisioning}">Provisioning</a>` +
       `<form method="post" action="${CONSOLE_PATHS.logout}" style="display:inline"><button type="submit">Sign out</button></form></nav>`
     : `<nav class="muted"><a href="${CONSOLE_PATHS.home}">Console</a></nav>`;
 
@@ -265,6 +302,83 @@ export function renderOverview(view: ConsoleOverviewView): string {
       : `<p class="muted">Nothing has been recorded yet.</p>`);
 
   return consolePage({ title: "Console", actor: view.actor, body });
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Provisioning                                                              */
+/* -------------------------------------------------------------------------- */
+
+export function renderProvisioning(
+  view: ConsoleProvisioningView,
+  minted: { plaintext: string; label: string } | null,
+  flash?: string | null,
+  error?: string | null,
+): string {
+  const tokenRows = view.tokens.length
+    ? `<table><thead><tr><th>Name</th><th>Created</th><th>Last used</th><th></th></tr></thead><tbody>${view.tokens
+        .map((token) => {
+          const state = token.revokedAt
+            ? `<span class="muted">revoked ${escapeHtml(token.revokedAt)}</span>`
+            : token.lastUsedAt
+              ? escapeHtml(token.lastUsedAt)
+              : `<span class="muted">never</span>`;
+          const action = token.revokedAt
+            ? ""
+            : `<form method="post" action="${CONSOLE_PATHS.revokeToken}" style="display:inline">` +
+              `<input type="hidden" name="tokenId" value="${escapeHtml(token.id)}">` +
+              `<button type="submit">Revoke</button></form>`;
+          return (
+            `<tr><td>${escapeHtml(token.label)}</td><td class="muted">${escapeHtml(token.createdAt)}</td>` +
+            `<td class="muted">${state}</td><td>${action}</td></tr>`
+          );
+        })
+        .join("")}</tbody></table>`
+    : `<p class="muted">No token yet: nothing can provision for this organization.</p>`;
+
+  const tokenState = view.tokens.some((token) => !token.revokedAt)
+    ? `<p class="flash">At least one token is live, so this organization can be provisioned into.</p>`
+    : `<p class="error" role="alert">Every token is revoked. A connector holding one is refused; mint a new one to resume.</p>`;
+
+  const groupRows = view.groups.length
+    ? `<table><thead><tr><th>Group</th><th>Members</th></tr></thead><tbody>${view.groups
+        .map(
+          (group) =>
+            `<tr><td>${escapeHtml(group.displayName)}</td><td class="muted">${escapeHtml(group.memberCount)}</td></tr>`,
+        )
+        .join("")}</tbody></table>`
+    : `<p class="muted">No group has been synced yet.</p>`;
+
+  const mintedCard = minted
+    ? `<div class="card">` +
+      `<h2>Copy this token now</h2>` +
+      `<p>Give it to the directory connector as the bearer token. It is stored as a hash, so this is the only time it can be shown.</p>` +
+      `<pre>${escapeHtml(minted.plaintext)}</pre>` +
+      `<p class="muted">For ${escapeHtml(minted.label)}. Endpoints: <code>${escapeHtml(view.scimBase)}/Users</code> and ` +
+      `<code>${escapeHtml(view.scimBase)}/Groups</code>.</p>` +
+      `<p class="error">If it is lost, revoke it and mint another — nothing can read this one back.</p>` +
+      `</div>`
+    : "";
+
+  const body =
+    `<h2>Directory connector</h2>` +
+    `<p class="muted">Point a SCIM 2.0 client at <code>${escapeHtml(view.scimBase)}</code>. Discovery is public; ` +
+    `everything else needs a token below.</p>` +
+    tokenState +
+    mintedCard +
+    `<div class="card"><form method="post" action="${CONSOLE_PATHS.mintToken}">` +
+    `<label class="muted" for="label">Name it after the directory</label> ` +
+    `<input id="label" name="label" placeholder="Entra ID — production"> ` +
+    `<button type="submit">Mint a token</button></form>` +
+    `<p class="muted">The connector acts as you while it holds this token, inside this organization only — ` +
+    `every write it makes is recorded against the token, not against you.</p></div>` +
+    `<h2>Tokens</h2>` +
+    `<div class="card">${tokenRows}</div>` +
+    `<h2>Synced groups</h2>` +
+    `<div class="card">${groupRows}` +
+    `<p class="muted">Groups are recorded, not enforced: roles, groups and attribute-based policy are the rest of S1. ` +
+    `What a sync gives you today is the fact of who is in what, on the evidence chain.</p></div>`;
+
+  return consolePage({ title: "Provisioning", actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */

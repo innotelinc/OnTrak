@@ -62,6 +62,8 @@ export interface IdentityRow {
   organizationId: string;
   identifier: string;
   displayName: string;
+  /** The source directory's id for this person (SCIM's `externalId`), or `null`. */
+  externalId: string | null;
   kind: IdentityKind;
   role: IdentityRole;
   active: boolean;
@@ -136,6 +138,7 @@ export function toIdentityRecord(row: IdentityRow): IdentityRecord {
     organizationId: row.organizationId,
     identifier: row.identifier,
     displayName: row.displayName,
+    externalId: row.externalId ?? null,
     kind: row.kind,
     role: row.role,
     active: row.active,
@@ -186,6 +189,7 @@ export function toIdentityCreate(record: IdentityRecord) {
     organizationId: record.organizationId,
     identifier: record.identifier,
     displayName: record.displayName,
+    externalId: record.externalId,
     kind: record.kind,
     role: record.role,
     active: record.active,
@@ -200,6 +204,7 @@ export function toIdentityUpdate(record: IdentityRecord) {
   return {
     identifier: record.identifier,
     displayName: record.displayName,
+    externalId: record.externalId,
     role: record.role,
     active: record.active,
     mfaEnrolled: record.mfaEnrolled,
@@ -331,6 +336,19 @@ export class PrismaIdentityStore implements IdentityStore {
     const row = await this.db.identity.findFirst({
       where: { organizationId, identifier: { equals: identifier.trim(), mode: "insensitive" } },
     });
+    return row ? toIdentityRecord(row) : null;
+  }
+
+  /**
+   * The source directory's id for this person. This is what makes a rename a *move*:
+   * a connector that matched on the user name would create a second identity for
+   * somebody who changed their name, and orphan the first one — with its sessions,
+   * its factors and its history.
+   */
+  async findIdentityByExternalId(organizationId: string, externalId: string): Promise<IdentityRecord | null> {
+    const wanted = externalId.trim();
+    if (!wanted) return null;
+    const row = await this.db.identity.findFirst({ where: { organizationId, externalId: wanted } });
     return row ? toIdentityRecord(row) : null;
   }
 

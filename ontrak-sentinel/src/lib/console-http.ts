@@ -35,8 +35,10 @@ import {
   consoleSignedOutPage,
   renderMfa,
   renderOverview,
+  renderProvisioning,
   type ConsoleMfaView,
   type ConsoleOverviewView,
+  type ConsoleProvisioningView,
 } from "./console-rules";
 import type { WebAuthnRegistrationResponse } from "./webauthn-rules";
 import type { WebAuthnRegistrationOptions } from "./webauthn-service";
@@ -50,6 +52,20 @@ import type { WebAuthnRegistrationOptions } from "./webauthn-service";
  */
 export interface ConsoleEndpoints {
   overview(sessionId: string): Promise<ServiceResult<ConsoleOverviewView>>;
+  provisioning(sessionId: string): Promise<ServiceResult<ConsoleProvisioningView>>;
+  /**
+   * Mint a connector token. The plaintext is in the *result*, never in a redirect:
+   * a token in a `Location` header ends up in browser history, in `Referer` and in a
+   * proxy log, which is where a credential must never be.
+   */
+  mintScimToken(
+    sessionId: string,
+    label: string | null,
+  ): Promise<ServiceResult<{ view: ConsoleProvisioningView; plaintext: string; label: string }>>;
+  revokeScimToken(
+    sessionId: string,
+    tokenId: string,
+  ): Promise<ServiceResult<{ view: ConsoleProvisioningView; label: string }>>;
   mfaView(sessionId: string): Promise<ServiceResult<ConsoleMfaView>>;
   beginTotp(sessionId: string, label: string | null): Promise<ServiceResult<ConsoleMfaView>>;
   confirmTotp(sessionId: string, code: string): Promise<ServiceResult<ConsoleMfaView>>;
@@ -183,6 +199,36 @@ async function handleHome(url: URL, sessionId: string, endpoints: ConsoleEndpoin
   return respond(result, (view) => html(200, renderOverview(view)));
 }
 
+async function handleProvisioningPage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const result = await endpoints.provisioning(sessionId);
+  return respond(result, (view) => html(200, renderProvisioning(view, null, flashFrom(url), errorFrom(url))));
+}
+
+/**
+ * Mint a token and show it in this response.
+ *
+ * Rendered rather than redirected, exactly like the TOTP secret: the value is shown
+ * once, in a body, and a refresh re-POSTs (minting a second token, which is a
+ * deliberate act rather than an accident).
+ */
+async function handleMintToken(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const label = formParams(request).label?.trim() || null;
+  const result = await endpoints.mintScimToken(sessionId, label);
+  return respond(result, (value) =>
+    html(200, renderProvisioning(value.view, { plaintext: value.plaintext, label: value.label })),
+  );
+}
+
+async function handleRevokeToken(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const tokenId = formParams(request).tokenId ?? "";
+  if (!tokenId) return failure("Choose a token first.");
+  const result = await endpoints.revokeScimToken(sessionId, tokenId);
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.provisioning}?flash=${encodeURIComponent(`Revoked ${result.value.label}. A connector holding it is refused from now on.`)}`,
+  );
+}
+
 async function handleMfaPage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
   const result = await endpoints.mfaView(sessionId);
   return respond(result, (view) => html(200, renderMfa(view, flashFrom(url), errorFrom(url))));
@@ -300,6 +346,12 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
   switch (path) {
     case CONSOLE_PATHS.home:
       return get(() => handleHome(url, sessionId, endpoints));
+    case CONSOLE_PATHS.provisioning:
+      return get(() => handleProvisioningPage(url, sessionId, endpoints));
+    case CONSOLE_PATHS.mintToken:
+      return post(() => handleMintToken(request, sessionId, endpoints));
+    case CONSOLE_PATHS.revokeToken:
+      return post(() => handleRevokeToken(request, sessionId, endpoints));
     case CONSOLE_PATHS.mfa:
       return get(() => handleMfaPage(url, sessionId, endpoints));
     case CONSOLE_PATHS.totpBegin:

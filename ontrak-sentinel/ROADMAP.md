@@ -315,15 +315,85 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
   assertion) from a confirmed factor has been seen; auth and privilege events are
   fully audited.
 
-### S2 — Provisioning & lifecycle `[ ]`
+### S2 — Provisioning & lifecycle `[~]`
 **Goal:** identities stay in sync without manual work.
 
 - SCIM 2.0 server (Users/Groups); directory sync (AD/Entra/Google) with safe
   conflict resolution.
+  - `[x]` **The SCIM 2.0 server** (`scim-rules.ts`, `scim-service.ts`,
+    `scim-store-prisma.ts`, `scim-http.ts`, `scim-*.ts` in the console, and the
+    sixth migration `20261020000000_scim`): Users, Groups, PATCH and PUT, ETag-free
+    and honest about it, with discovery (`ServiceProviderConfig`, `ResourceTypes`,
+    `Schemas`) public and everything else behind a bearer token. Three decisions
+    carry it. **The filter parser accepts a declared subset and refuses the rest by
+    name** — a directory sends `userName eq "…"` and sometimes `externalId eq "…"`,
+    and a parser that half-implements RFC 7644's grammar would ignore the clause it
+    did not understand and return a page that looks like a complete answer, so
+    `co`, `sw`, `and` and bracket expressions are `invalidFilter` rather than
+    guesses. **The projection is an allowlist** — `toScimUser` names every field it
+    emits, because the identity has no password column *today* and a spread is how
+    the one added tomorrow leaks to every connected directory. And **only human
+    identities are SCIM users**: a `SERVICE` identity is a machine account, absent
+    from the collection rather than forbidden in it, so a provisioning push cannot
+    switch off the account something runs as.
+  - `[x]` **`Identity.externalId`, and therefore a rename is a move** (the
+    `(organizationId, externalId)` unique index, `IdentityService.updateIdentity`):
+    a connector matching on the user name alone creates a second identity for
+    somebody who changed their name and orphans the first — with its sessions, its
+    factors and its history attached to a row nobody signs in as. The directory's
+    own id is what makes the same person recognisable across a rename, unique when
+    present and deliberately not unique across the NULLs, since an identity typed
+    into the console and one provisioned from a directory are both ordinary. The
+    mover half of the lifecycle rides with it: a rename, a role change and a
+    directory id all go through one method that re-uses the spine's own validation
+    and the last-administrator refusal, so a demotion cannot walk around the rule a
+    deactivation obeys.
+  - `[x]` **Deprovisioning that actually deprovisions**
+    (`ScimService.deprovision`, called by `PATCH active:false` and by `DELETE`):
+    switching somebody off, ending every session they hold, **and revoking the
+    access tokens those sessions minted** — the third step is the one that is easy
+    to leave out, and without it an offboarded person keeps calling the API until a
+    token expires on its own. `DELETE` deactivates rather than deletes, because the
+    sessions, factors and audit events naming an identity are evidence and evidence
+    is the one thing this product cannot delete; the row stays, switched off, and a
+    re-hire gets their history back.
+  - `[x]` **Connector tokens, minted by a person** (`ScimToken` in the sixth
+    migration, the console's provisioning page): stored as `SHA-256(token)`, with
+    the plaintext existing once — in the response to the console request that asked
+    for it, rendered into a body rather than a redirect, for the same reason the
+    TOTP secret is. The connector acts as the administrator who minted it
+    (`scim:<tokenId>`, ADMIN, one organization), which is the delegation stated
+    out loud: the audit trail names the connector, never the person who was asleep
+    when the directory pushed. **Token management is not on the SCIM surface at
+    all**, so a compromised connector cannot mint itself a longer-lived credential.
+    Revocation is a timestamp, so the record says *when* a connector stopped being
+    trusted. Covered by `tests/sentinel-scim.test.ts`,
+    `tests/sentinel-scim-store-prisma.test.ts`, and the provisioning tests in
+    `tests/sentinel-console.test.ts`.
+  - `[x]` **Groups** (`Group` / `GroupMember` in the sixth migration): synced
+    membership with the `(groupId, identityId)` pair as the primary key, so a
+    connector re-sending a membership is a no-op rather than a duplicate. Stated
+    plainly rather than implied: **a group decides nothing yet** — roles, groups
+    and attribute-based policy are the S1 bullet below, and until that lands a
+    group is a recorded fact on the evidence chain, which is what a sync is for.
+  - `[ ]` **Directory sync (AD/Entra/Google)** with safe conflict resolution: the
+    server half a connector talks to is built, so this is the driver side — a
+    Graph/LDAP reader that pushes through the SCIM API above, and the conflict
+    policy that says what happens when the same person is edited in both places.
 - Joiner/mover/leaver workflows; access reviews; automatic deprovisioning and
   session kill on offboarding.
+  - `[x]` **Joiner and leaver**, and the mover's writes: creating a user, renaming
+    one, changing their role and switching them off all arrive over SCIM and land on
+    the same code paths a console write does, so the rules cannot disagree about
+    them. Access **reviews** — an attestation that the people who have access should
+    — are not started.
+  - `[ ]` Access reviews and scheduled attestation.
 - **Exit:** creating/removing a user in a source directory provisions and
   deprovisions in Sentinel and downstream apps automatically, with an audit trail.
+  The provider half is done: a directory connector pointed at
+  `POST /scim/v2/Users` provisions, and switching a user off there ends their
+  sessions and revokes their tokens with an entry on the organization's evidence
+  chain. The remaining work is the connector that *drives* it.
 
 ### S3 — Sentinel Guard v1 (detection) `[ ]`
 **Goal:** see what is happening.
@@ -421,6 +491,10 @@ logins with no notion of behaviour. Together they produce signals neither can:
    **Engine, HTTP surface and persistence done** (the second migration landed);
    deployable key management, logout/token revocation and SAML are the next
    slice.
-3. Build the telemetry normalizer and one detection rule end to end (S3 spike).
-4. Define the shared assurance-packet format with OnTrak Tix before either ships
+3. ~~Implement the SCIM 2.0 server so a directory can provision identities.~~
+   **Server done** (Users, Groups, tokens, deprovisioning with session and token
+   kill; the sixth migration). What remains of S2 is the connector side — a
+   Graph/LDAP reader that pushes through the SCIM API — and access reviews.
+4. Build the telemetry normalizer and one detection rule end to end (S3 spike).
+5. Define the shared assurance-packet format with OnTrak Tix before either ships
    exports, so both are compatible from the start.

@@ -32,7 +32,12 @@ import { PrismaClient } from "@prisma/client";
 import { ConsoleService } from "../src/lib/console-service";
 import { CONSOLE_PATHS } from "../src/lib/console-rules";
 import { sha256Hex } from "../src/lib/hash";
-import { createIdentityServices, createMfaServices, createWebAuthnServices } from "../src/lib/identity-server";
+import {
+  createIdentityServices,
+  createMfaServices,
+  createScimServices,
+  createWebAuthnServices,
+} from "../src/lib/identity-server";
 import type { SessionRecord } from "../src/lib/identity-rules";
 import {
   IdentityService,
@@ -52,6 +57,9 @@ import { createOidcServices, startOidcServer } from "../src/lib/oidc-server";
 import { MemoryOidcStore, OidcService, type OidcStore } from "../src/lib/oidc-service";
 import { PrismaOidcStore, type OidcPrismaClient } from "../src/lib/oidc-store-prisma";
 import { SAML_PATHS, type SamlServiceProviderRecord } from "../src/lib/saml-rules";
+import { SCIM_PATHS } from "../src/lib/scim-rules";
+import { MemoryScimStore, ScimService } from "../src/lib/scim-service";
+import type { ScimPrismaClient } from "../src/lib/scim-store-prisma";
 import { MemorySamlStore, SamlService, type SamlStore } from "../src/lib/saml-service";
 import { PrismaSamlStore, type SamlPrismaClient } from "../src/lib/saml-store-prisma";
 import { MemoryWebAuthnChallengeStore, WebAuthnService } from "../src/lib/webauthn-service";
@@ -190,6 +198,11 @@ async function main(): Promise<void> {
   let mfa: MfaService;
   let webauthn: WebAuthnService;
   let oidcStore: OidcStore;
+  let scim: ScimService;
+
+  // Where a directory connector points. `meta.location` links are built from it, so
+  // they name the deployment's own origin rather than 127.0.0.1.
+  const scimBase = `${issuer.replace(/\/+$/, "")}/scim/v2`;
 
   if (durable) {
     const prisma = new PrismaClient();
@@ -210,6 +223,16 @@ async function main(): Promise<void> {
     oidc = createOidcServices(oidcStore, identities, spine, { issuer, keys }, audit).service;
     const samlStore: SamlStore = new PrismaSamlStore(prisma as unknown as SamlPrismaClient);
     saml = new SamlService(samlStore, spine, { entityId: issuer, keys }, audit);
+    // Provisioning is handed the spine (writes go through its rules), the audit trail,
+    // and the OIDC store for one thing only: deprovisioning has to revoke the access
+    // tokens the leaver's sessions minted, not just the sessions.
+    scim = createScimServices(
+      prisma as unknown as ScimPrismaClient,
+      spine,
+      { baseUrl: scimBase },
+      audit,
+      oidcStore,
+    ).service;
   } else {
     identities = new MemoryIdentityStore();
     audit = new OrganizationAuditLog(sha256Hex);
@@ -220,9 +243,10 @@ async function main(): Promise<void> {
     oidcStore = new MemoryOidcStore();
     oidc = new OidcService(oidcStore, identities, spine, { issuer, keys }, audit);
     saml = new SamlService(new MemorySamlStore(), spine, { entityId: issuer, keys }, audit);
+    scim = new ScimService(new MemoryScimStore(), spine, { baseUrl: scimBase }, audit, oidcStore);
   }
 
-  const console_ = new ConsoleService(spine, mfa, webauthn, oidcStore);
+  const console_ = new ConsoleService(spine, mfa, webauthn, oidcStore, scim);
 
   const { actor, session, totp } = await bootstrap(spine, identities, mfa);
   const client = await demoClient(oidc, actor);
@@ -241,7 +265,7 @@ async function main(): Promise<void> {
   authorize.searchParams.set("code_challenge", challenge);
   authorize.searchParams.set("code_challenge_method", "S256");
 
-  const { url } = await startOidcServer(oidc, { host, port, saml, console: console_ });
+  const { url } = await startOidcServer(oidc, { host, port, saml, console: console_, scim });
 
   console.log(`[sentinel] OIDC provider listening on ${url} (issuer ${issuer})`);
   console.log(
@@ -252,6 +276,11 @@ async function main(): Promise<void> {
   console.log(`[sentinel] SAML metadata: ${url}${SAML_PATHS.metadata}`);
   console.log(`[sentinel] SAML SSO:      ${url}${SAML_PATHS.sso}`);
   console.log(`[sentinel] console: ${url}${CONSOLE_PATHS.home} (WebAuthn RP ID ${webAuthnRpId}, origin ${webAuthnOrigin})`);
+  console.log(`[sentinel] SCIM:      ${url}${SCIM_PATHS.users} (config: ${url}${SCIM_PATHS.serviceProviderConfig})`);
+  // Deliberately no token is minted or printed here: a provisioning credential belongs
+  // to a person acting in the console (`${CONSOLE_PATHS.provisioning}`), is shown once,
+  // and never reaches a log or a terminal scrollback.
+  console.log(`[sentinel] provision: mint a connector token in the console at ${url}${CONSOLE_PATHS.provisioning}`);
   console.log(`[sentinel] demo client: ${client.clientId}`);
   console.log(`[sentinel] demo service provider: ${provider.entityId} → ${provider.acsUrls.join(", ")}`);
   if (totp) {

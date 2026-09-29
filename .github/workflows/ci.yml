@@ -184,10 +184,11 @@ jobs:
   # by CI tests. Every migration is applied here, because a migration that does
   # not apply is not a migration: the OIDC tables arrive in the second, SAML
   # service providers and token revocation in the third, TOTP enrollment state in
-  # the fourth, WebAuthn credentials and challenges in the fifth, and the live
-  # Postgres test runs against the result. The
-  # migrations are also diffed against the models, so a hand-edited SQL file
-  # cannot quietly drift from the schema it is supposed to create.
+  # the fourth, WebAuthn credentials and challenges in the fifth, provisioning
+  # (SCIM tokens, groups and `Identity.externalId`) in the sixth, and the live
+  # Postgres test runs against the result. The migrations are also diffed against
+  # the models, so a hand-edited SQL file cannot quietly drift from the schema it
+  # is supposed to create.
   sentinel:
     name: OnTrak Sentinel
     runs-on: ubuntu-latest

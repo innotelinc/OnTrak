@@ -52,8 +52,8 @@ this, what can they reach, and what have they done"* in one place.
 
 ## Status
 
-**S0 complete; S1 started.** The identity spine exists, persists, and now issues
-identity:
+**S0 complete; S1 nearly complete; S2 started.** The identity spine exists,
+persists, and issues identity:
 
 - `src/lib/audit-chain.ts` — the hash-chained, append-only audit log with
   tamper detection (the evidence spine). `src/lib/hash.ts` is the one SHA-256 the
@@ -69,12 +69,13 @@ identity:
   The client is described structurally, so the adapter runs against the generated
   client, a fake, or a repository layer.
 - `prisma/schema.prisma` + `prisma/migrations/` — the data model, **migrated**
-  in five steps: `20260928000000_init` (the spine and the evidence log),
+  in six steps: `20260928000000_init` (the spine and the evidence log),
   `20260929000000_oidc` (the grant rows), `20260930000000_logout_saml`
   (`AccessToken.revokedAt` and the SAML service providers),
-  `20261001000000_mfa_totp` (the TOTP enrollment state on `MfaFactor`) and
+  `20261001000000_mfa_totp` (the TOTP enrollment state on `MfaFactor`),
   `20261015000000_webauthn` (the public key and signature counter on `MfaFactor`,
-  plus the `WebAuthnChallenge` table). Every table
+  plus the `WebAuthnChallenge` table) and `20261020000000_scim`
+  (`Identity.externalId`, `ScimToken`, `Group`, `GroupMember`). Every table
   carries the organization it belongs to with a cascading foreign key, and
   `AuditEvent` is unique on `(organizationId, seq)` because each organization has
   a chain of its own.
@@ -155,11 +156,38 @@ identity:
   against real signatures — an EC key pair is generated and the authenticator data
   assembled byte by byte and signed with `node:crypto` — in
   `tests/sentinel-webauthn.test.ts`.
+- `src/lib/scim-rules.ts` + `scim-service.ts` + `scim-store-prisma.ts` +
+  `scim-http.ts` (S2) — **SCIM 2.0 provisioning**, so a directory can create the
+  identities rather than an administrator typing them in. Users and Groups,
+  PATCH and PUT, discovery public and everything else behind a bearer token.
+  The filter parser implements `eq` on four attributes and **refuses the rest of
+  RFC 7644's grammar by name** (`co`, `sw`, `and`, brackets), because a parser that
+  silently ignored a clause would answer a narrower question than was asked while
+  looking like a successful page. The projection is an **allowlist** — every field
+  `toScimUser` emits is named, so a column added later cannot leak to a connected
+  directory by being spread. Only `HUMAN` identities are SCIM users: a `SERVICE`
+  account is absent from the collection rather than forbidden in it, so a push
+  cannot switch off the machine account something runs as. `Identity.externalId`
+  makes a rename a *move* — a connector matching on the user name alone would
+  create a second person and orphan the first one's sessions, factors and history.
+  `DELETE` **deactivates**: the row, its sessions, its factors and the audit events
+  naming it are evidence, and evidence is the one thing this product cannot delete.
+  Switching a user off ends every session they hold *and* revokes the access tokens
+  those sessions minted — ending a session alone leaves a held token working. A
+  connector token is stored as `SHA-256(token)`, is shown once, and **cannot be
+  minted from the SCIM API at all**: minting happens in the console, where a person
+  with a session is present, and the connector acts as `scim:<tokenId>` — the
+  delegation, never the person who minted it. Groups sync, and state plainly that
+  they decide nothing until groups become policy (the S1 bullet below). Covered by
+  `tests/sentinel-scim.test.ts` and `tests/sentinel-scim-store-prisma.test.ts`.
 - `src/lib/console-rules.ts` + `console-service.ts` + `console-http.ts` (S0/S1) —
   the **admin console**, as a server-rendered shell with no framework: an overview
   (who you are, whether a second factor is enrolled, and the organization's
   evidence chain with its verification result), a second-factor page, and a
-  sign-out that ends the session *and* revokes the tokens it minted. It is the third
+  sign-out that ends the session *and* revokes the tokens it minted, plus a
+  **provisioning** page that mints and revokes connector tokens (shown once, in a
+  body — never in a redirect or a query string, which is where a credential ends up
+  in history and proxy logs) and lists the groups a sync has brought in. It is the third
   pure router on the same listener as OIDC and SAML, and it is what makes MFA
   enrollment **self-service**: an actor may enroll, confirm and remove their own
   factors with no administrator involved, through the same services, the same
@@ -190,7 +218,7 @@ Like the other two products, this one is a project in its own right:
 cd ontrak-sentinel
 npm install
 npm run typecheck
-npm test                      # 186 checks; the Postgres one skips without DATABASE_URL
+npm test                      # 215 checks; the Postgres one skips without DATABASE_URL
 
 cp .env.example .env          # set DATABASE_URL
 npm run db:deploy             # apply prisma/migrations
@@ -203,9 +231,10 @@ npm run serve                 # the provider on :8787 (issuer from .env)
 The provider is runnable: `npm run serve` bootstraps an organization, an
 administrator, a session, a demo client and a demo SAML service provider, prints
 an authorization URL with a PKCE pair, and answers discovery, JWKS, authorize,
-token, userinfo, logout, revocation, SAML metadata, SAML SSO and the console at
+token, userinfo, logout, revocation, SAML metadata, SAML SSO, the SCIM surface at
+`/scim/v2` and the console at
 `/console` (overview, second-factor enrollment with an authenticator app or a
-security key, sign-out). With
+security key, provisioning, sign-out). With
 `DATABASE_URL` set, every one of those rows is in Postgres — the spine, the
 evidence chain, the grants and the service providers — and a restart keeps them;
 without it, the same code path runs over in-memory stores. It is **not yet a
@@ -216,6 +245,13 @@ been verified, and enrollment is now the identity's own act from the console. Th
 signing key is ephemeral unless `SENTINEL_SIGNING_KEY` is set, and WebAuthn needs a
 real console origin (`SENTINEL_WEBAUTHN_ORIGIN`) to be useful from a browser,
 because a ceremony is bound to the page it runs on.
+
+Point a SCIM 2.0 connector at `http://127.0.0.1:8787/scim/v2` (the issuer plus
+`/scim/v2`), read `ServiceProviderConfig` without a token, then mint a connector
+token at `/console/provisioning` and use it as the bearer token. Nothing is
+minted for a demo and printed to the terminal on purpose: a provisioning
+credential belongs to a person acting in a browser, is shown once, and never
+reaches a log or a scrollback.
 
 ## Containers
 

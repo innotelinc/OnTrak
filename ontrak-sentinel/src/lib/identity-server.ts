@@ -13,6 +13,8 @@ import type { AuditSink, HashFn } from "./audit-chain";
 import { PrismaIdentityStore, PrismaOrganizationAuditTrail, sha256Hex, type IdentityPrismaClient } from "./identity-store-prisma";
 import { IdentityService, type AuditTrail, type IdentityIds, type IdentityStore } from "./identity-service";
 import { MfaService, type MfaIds, type MfaStore } from "./mfa-service";
+import { ScimService, type ScimConfig, type ScimIds, type ScimStore, type ScimTokenRevoker } from "./scim-service";
+import { PrismaScimStore, type ScimPrismaClient } from "./scim-store-prisma";
 import {
   PrismaMfaStore,
   PrismaWebAuthnChallengeStore,
@@ -100,9 +102,36 @@ export function createWebAuthnServices(
   return { challenges, service: new WebAuthnService(factors, challenges, identities, config, audit, ids) };
 }
 
+/**
+ * The provisioning stack: SCIM, over the spine.
+ *
+ * It is handed the *spine* rather than the stores, because every write a directory
+ * makes has to go through the same rules a console write does — creating an identity,
+ * deactivating one, keeping an administrator. It is handed the token store rather than
+ * the OIDC store for the same reason the factor stack is: this is one client, and a
+ * fake for it stays small.
+ */
+export interface ScimServices {
+  store: ScimStore;
+  service: ScimService;
+}
+
+export function createScimServices(
+  db: ScimPrismaClient,
+  spine: IdentityService,
+  config: ScimConfig,
+  audit: AuditTrail | null = null,
+  tokens: ScimTokenRevoker | null = null,
+  ids?: ScimIds,
+): ScimServices {
+  const store = new PrismaScimStore(db);
+  return { store, service: new ScimService(store, spine, config, audit, tokens, ids) };
+}
+
 let configured: IdentityServices | null = null;
 let configuredMfa: MfaServices | null = null;
 let configuredWebAuthn: WebAuthnServices | null = null;
+let configuredScim: ScimServices | null = null;
 
 /** Bind the process-wide Prisma client, once, at server startup. */
 export function configureIdentities(db: IdentityPrismaClient, ids?: IdentityIds, hash?: HashFn): IdentityServices {
@@ -156,4 +185,25 @@ export function webAuthnServices(): WebAuthnServices {
     throw new Error("OnTrak Sentinel is not configured: call configureWebAuthn(prisma, ...) during startup.");
   }
   return configuredWebAuthn;
+}
+
+/** Bind the process-wide provisioning stack, once, at server startup. */
+export function configureScim(
+  db: ScimPrismaClient,
+  spine: IdentityService,
+  config: ScimConfig,
+  audit: AuditTrail | null = null,
+  tokens: ScimTokenRevoker | null = null,
+  ids?: ScimIds,
+): ScimServices {
+  configuredScim = createScimServices(db, spine, config, audit, tokens, ids);
+  return configuredScim;
+}
+
+/** The configured provisioning stack. Throws when the server forgot to call `configureScim`. */
+export function scimServices(): ScimServices {
+  if (!configuredScim) {
+    throw new Error("OnTrak Sentinel is not configured: call configureScim(prisma, ...) during startup.");
+  }
+  return configuredScim;
 }
