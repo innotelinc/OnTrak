@@ -186,7 +186,3 @@ export const config = {
   controlPlaneUrl: str("CONTROL_PLANE_INTERNAL_URL", ""),
   controlToken: str("CONTROL_INTERNAL_TOKEN", ""),
 } as const;
-
-export function sessionsDir(): string {
-  return path.join(config.dataDir, "sessions");
-}

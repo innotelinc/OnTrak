@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { config } from "./config.js";
+import { snapshotsDir } from "./scope.js";
 
 /**
  * The previous contents of every file the agent has written.
@@ -14,16 +14,16 @@ import { config } from "./config.js";
  *
  * Paths are hashed for the filename, so no workspace path is ever used as a
  * filesystem path here and traversal is not possible.
+ *
+ * The directory is the account's own (`scope.ts`), because the hash is of the
+ * *relative* path: two accounts holding `index.html` would otherwise share one
+ * baseline, and the second one's diff would render against a stranger's file.
  */
 
 export interface Snapshot {
   path: string;
   savedAt: string;
   content: string;
-}
-
-function snapshotsDir(): string {
-  return path.join(config.dataDir, "snapshots");
 }
 
 function snapshotFile(rel: string): string {

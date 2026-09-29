@@ -22,7 +22,7 @@ does not.
 - Live visibility — the file being written, highlighted, beside a live diff against the on-disk baseline; a changed-marker tree; a diff view for any file with snapshot history.
 - Persistence — sessions, transcripts and per-file snapshots under one data directory, restored across restarts.
 - Model resilience — the fallback chain, the chain-health probe, the catalog sweep, and an optional second gateway tried only after the chain is exhausted.
-- **Per-turn attribution and quota** — whose account a turn belongs to, whether it may spend, and what it cost (`src/tenancy.ts`). The account's gateway key is resolved and spent server-side; the browser never sees it.
+- **Per-turn attribution and quota** — whose account a turn belongs to, whether it may spend, and what it cost (`src/tenancy.ts`). The account's gateway key is resolved and spent server-side; the browser never sees it. The **disk follows the same account**: its workspace, chats and file history live under `accounts/<account>/` (`src/scope.ts`), so two people on one deployment are not just billed separately, they cannot read each other's files.
 
 ## Provides
 
@@ -60,6 +60,7 @@ does not.
 | `src/builder.ts` | TypeScript | Assembles an Olympus build request from a workspace; the only place this console hands work to another system |
 | `src/controlplane.ts` | TypeScript | Distro's control-plane contract: identity, quota, usage, audit. The same endpoints Studio calls |
 | `src/tenancy.ts` | TypeScript | The per-turn gate: which account pays, whether it may spend, and what gets recorded |
+| `src/scope.ts` | TypeScript | The account's slice of disk: the one answer to "where is the workspace", read by the path jail, the stores, the sandbox mount and the export |
 | `public/` | Vanilla JS + CSS | The console: transcript, tool cards, preview pane, live diff, sweep panel |
 | `web/landing/` | Static HTML + vendored Unity theme | This product's landing page — published at `/ontrak-genie/` under the family's GitHub Pages site, alongside the root landing |
 | `scripts/` | Node ESM | The check commands — UI smoke, draft, offline, model sweep |

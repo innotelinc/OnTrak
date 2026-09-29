@@ -747,11 +747,44 @@ Two consequences worth knowing before switching it on:
   server-side in the request handler; a refused turn is a `401` or a `429`
   carrying the plane's own reasons and nothing else.
 
-One boundary to know about: tenancy decides *whose key pays*, and nothing more.
-This console still has **one workspace and one session store**, so two people
-signed in to the same deployment are attributed separately and still see each
-other's files and chats. Per-account isolation is a workspace question — one
-workspace per account — and it is not something this gate can answer.
+### Two accounts, two workspaces
+
+Tenancy decides *whose key pays*, and the disk follows it. With a plane
+configured, an account's files, chats and file history are its own:
+
+```
+<AGENT_WORKSPACE>/accounts/<account>/             what that account may read and write
+<AGENT_DATA_DIR>/accounts/<account>/sessions/     its chats
+<AGENT_DATA_DIR>/accounts/<account>/snapshots/    its file history
+```
+
+`<account>` is the control-plane user id, sanitized to a single path segment and
+suffixed with eight hex digits of that id's own digest. That pair is the point: an
+id that looks like a path (`../..`, `/etc/passwd`) cannot become one, and two ids
+that sanitize alike (`a/b` and `a-b`) still get different directories rather than
+silently sharing one.
+
+Everything that touches disk resolves through `src/scope.ts`, which is the single
+answer to "where is the workspace": the path jail (`resolveInWorkspace`), the
+session store, the snapshot store, the ripgrep root, the container mount for
+`run_command`, and the factory export. A request enters its account's scope once,
+in the server, before routing — so the tree, a file read, a diff, a delete, the
+chat list and an export all agree, and none of them can be talked back into the
+shared root.
+
+Two details that are deliberate:
+
+- **A file read is not quota-gated.** Someone at their daily cap can still read
+  what they already wrote; refusing that turns a spend limit into a lockout from
+  one's own work, and the thing that costs money stays gated a route later.
+- **The refusal is a `401`.** With a plane configured and no session, the API
+  answers *"Genie cannot tell which account this belongs to"* rather than serving
+  the shared workspace — the same posture as the turn gate, and the reason
+  three sign-in variables are not optional once tenancy is on.
+
+With no plane configured there is no account to key on, and every path resolves to
+the single configured workspace exactly as it did before: `AGENT_WORKSPACE` and
+`AGENT_DATA_DIR` are the whole layout, as in `## Layout` below.
 
 `GET /api/health` reports `tenancy: true` when a plane is configured, which is the
 quickest way to confirm a deployment picked the settings up.
@@ -956,6 +989,7 @@ default is `0.0.0.0` with no API key, which it warns about on startup.
 
 ```
 src/config.ts      env + .env loading
+src/scope.ts       whose slice of disk a request runs in (per-account, or shared)
 src/workspace.ts   path jail and filesystem helpers
 src/diff.ts        line diff / hunks for the UI
 src/omniroute.ts   OpenAI-compatible client (streaming, retry classification)

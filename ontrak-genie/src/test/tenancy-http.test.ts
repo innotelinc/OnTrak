@@ -121,6 +121,9 @@ process.env.ONTRAK_OIDC_SESSION_SECRET = "test-session-secret-value";
 const { createServer } = await import("../server.js");
 const { ensureWorkspace } = await import("../workspace.js");
 const { SESSION_COOKIE, mintSession } = await import("../oidc.js");
+// Where the account's own slice actually lands on disk, so a test can put a file
+// where the agent would have and then ask the API for it.
+const { accountScope } = await import("../scope.js");
 // The caller is cached per subject, deliberately. A test that scripts the identity
 // answer has to forget the previous one, or its reply is served from the cache and
 // the next queued answer is consumed by the wrong call.
@@ -131,9 +134,11 @@ const server = createServer();
 await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-const cookie = `${SESSION_COOKIE}=${encodeURIComponent(
-  mintSession({ sub: "sub-1", email: "dev@innotel.us", name: "Dev" }),
-)}`;
+function cookieFor(sub: string, email: string): string {
+  return `${SESSION_COOKIE}=${encodeURIComponent(mintSession({ sub, email, name: email }))}`;
+}
+
+const cookie = cookieFor("sub-1", "dev@innotel.us");
 
 after(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -143,16 +148,24 @@ after(async () => {
 
 /* ------------------------------------------------------------------ helpers */
 
-function identityReply(gatewayKey: string): { status?: number; body?: unknown } {
+function identityReply(
+  gatewayKey: string,
+  userId = "u-1",
+  sub = "sub-1",
+): { status?: number; body?: unknown } {
   return {
     status: 200,
     body: {
-      user: { id: "u-1", email: "dev@innotel.us" },
-      oidcSub: "sub-1",
+      user: { id: userId, email: "dev@innotel.us" },
+      oidcSub: sub,
       gatewayKey,
       created: false,
     },
   };
+}
+
+async function get(pathname: string, headers: Record<string, string> = {}): Promise<Response> {
+  return fetch(`${base}${pathname}`, { headers });
 }
 
 async function post(pathname: string, body: unknown, headers: Record<string, string>): Promise<Response> {
@@ -273,14 +286,82 @@ test("an exhausted account is refused before the gateway is reached", async () =
   assert.equal(gatewayKeys.length, before, "an exhausted account must not reach the model pool");
 });
 
+test("two signed-in accounts are two workspaces and two chat lists", async () => {
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeCalls.length = 0;
+
+  const firstRoot = accountScope("u-1").root;
+  const secondRoot = accountScope("u-2").root;
+  await fs.mkdir(firstRoot, { recursive: true });
+  await fs.mkdir(secondRoot, { recursive: true });
+  await fs.writeFile(path.join(firstRoot, "private.txt"), "first account only\n", "utf8");
+  // A file at the deployment's shared root, which is what every account used to
+  // be served from. Nobody's scope is that directory now.
+  await fs.writeFile(path.join(workspace, "shared-decoy.txt"), "nobody's file\n", "utf8");
+  const second = cookieFor("sub-2", "other@innotel.us");
+  planeQueue.push(identityReply("sk-tenant-2", "u-2", "sub-2"));
+
+  const tree = await get("/api/files?path=.", { cookie: second });
+  assert.equal(tree.status, 200);
+  const names = ((await tree.json()) as { entries: Array<{ name: string }> }).entries.map((e) => e.name);
+  assert.deepEqual(names, [], "the second account's workspace starts empty");
+
+  const read = await get("/api/file?path=private.txt", { cookie: second });
+  assert.notEqual(read.status, 200, "another account's file must not be readable");
+
+  // Chats are the same story: the second account cannot see the first's. The
+  // first account's library is not asserted empty anywhere — earlier tests in this
+  // file have already chatted as `sub-1` — so what is asserted is that this chat
+  // is in one list and not the other.
+  planeQueue.push(identityReply("sk-tenant-1", "u-1", "sub-1"));
+  const created = await post("/api/sessions", {}, { cookie });
+  assert.equal(created.status, 201);
+  const mine = ((await created.json()) as { session: { id: string } }).session.id;
+
+  planeQueue.push(identityReply("sk-tenant-2", "u-2", "sub-2"));
+  const theirs = await get("/api/sessions", { cookie: second });
+  const theirIds = ((await theirs.json()) as { sessions: Array<{ id: string }> }).sessions.map(
+    (session) => session.id,
+  );
+  assert.deepEqual(theirIds, [] as string[], "a stranger's chat list is empty");
+  assert.ok(!theirIds.includes(mine));
+
+  // And the first account still sees its own, so the refusals above are the scope
+  // rather than a route that stopped working.
+  planeQueue.push(identityReply("sk-tenant-1", "u-1", "sub-1"));
+  const own = await get("/api/files?path=.", { cookie });
+  assert.equal(own.status, 200);
+  const ownNames = ((await own.json()) as { entries: Array<{ name: string }> }).entries.map((e) => e.name);
+  assert.ok(ownNames.includes("private.txt"));
+  assert.ok(
+    !ownNames.includes("shared-decoy.txt"),
+    "the deployment's shared root is nobody's workspace once tenancy is on",
+  );
+
+  const ownChats = await get("/api/sessions", { cookie });
+  const ownIds = ((await ownChats.json()) as { sessions: Array<{ id: string }> }).sessions.map(
+    (session) => session.id,
+  );
+  assert.ok(ownIds.includes(mine), "the chat is in the account that made it");
+});
+
 test("an export is attributed and audited", async () => {
   planeCalls.length = 0;
-  await fs.writeFile(path.join(workspace, "index.html"), "<h1>hello</h1>\n", "utf8");
+  // Into the *account's* workspace, and beside it a decoy at the deployment's
+  // shared root. The spec must be built from the first and never the second —
+  // with tenancy on, no signed-in request is served from the shared root at all.
+  const root = accountScope("u-1").root;
+  await fs.mkdir(root, { recursive: true });
+  await fs.writeFile(path.join(root, "index.html"), "<h1>hello</h1>\n", "utf8");
+  await fs.writeFile(path.join(workspace, "shared-decoy.txt"), "nobody's file\n", "utf8");
 
   const response = await post("/api/factory/spec", { name: "Todo List", kind: "app" }, { cookie });
   assert.equal(response.status, 200);
-  const body = (await response.json()) as { written?: boolean; filename?: string };
+  const body = (await response.json()) as { written?: boolean; filename?: string; markdown?: string };
   assert.equal(body.written, true);
+  assert.match(String(body.markdown), /index\.html/, "the spec describes the account's own files");
+  assert.doesNotMatch(String(body.markdown), /shared-decoy/, "and nothing from the shared root");
 
   await waitFor(() => planeCalls.some((call) => call.path === "/api/internal/audit"), "the audit row");
   const audit = planeCalls.find((call) => call.path === "/api/internal/audit");
