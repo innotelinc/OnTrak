@@ -53,11 +53,13 @@ this, what can they reach, and what have they done"* in one place.
 ## Status
 
 **S0, S1 and S2 complete; S3 started.** The identity spine exists, persists, and
-issues identity; a directory can provision into it and it can read one; and the
-first Guard slice turns telemetry into an alert that names a person. What is *not*
-here is still stated: a synced group decides nothing yet (roles and groups as
-policy is S1's last bullet), Guard has no streaming listener and no triage UI, and
-rule rotation and signing-key provisioning are open. The identity spine:
+issues identity; a directory can provision into it and it can read one; the first
+Guard slice turns telemetry into an alert that names a person; and a feed of
+indicators now raises how that alert is judged. What is *not* here is still
+stated: a synced group decides nothing yet (roles and groups as policy is S1's
+last bullet), Guard has no streaming listener, no triage UI for an alert and no
+STIX/TAXII feed transport, and rule rotation and signing-key provisioning are
+open. The identity spine:
 
 - `src/lib/audit-chain.ts` — the hash-chained, append-only audit log with
   tamper detection (the evidence spine). `src/lib/hash.ts` is the one SHA-256 the
@@ -72,8 +74,8 @@ rule rotation and signing-key provisioning are open. The identity spine:
   verifies a chain before extending it and refuses to build on a tampered one.
   The client is described structurally, so the adapter runs against the generated
   client, a fake, or a repository layer.
-- `prisma/schema.prisma` + `prisma/migrations/` — the data model, **migrated**
-  in nine steps: `20260928000000_init` (the spine and the evidence log),
+-  `prisma/schema.prisma` + `prisma/migrations/` — the data model, **migrated**
+  in ten steps: `20260928000000_init` (the spine and the evidence log),
   `20260929000000_oidc` (the grant rows), `20260930000000_logout_saml`
   (`AccessToken.revokedAt` and the SAML service providers),
   `20261001000000_mfa_totp` (the TOTP enrollment state on `MfaFactor`),
@@ -81,8 +83,10 @@ rule rotation and signing-key provisioning are open. The identity spine:
   plus the `WebAuthnChallenge` table), `20261020000000_scim`
   (`Identity.externalId`, `ScimToken`, `Group`, `GroupMember`),
   `20261025000000_policy_scope` (the `ALL` baseline and the per-role scope on
-  `IdentityPolicy`), `20261026000000_directory_sync` (`DirectoryConnection` and
-  `DirectorySyncRun`) and `20261027000000_guard_alert` (`Alert`, `AlertEvent`).
+  `IdentityPolicy`),  `20261026000000_directory_sync` (`DirectoryConnection` and
+  `DirectorySyncRun`), `20261027000000_guard_alert` (`Alert`, `AlertEvent`) and
+  `20261028000000_threat_intel` (the `Indicator` table and the matches kept on
+  `Alert.threatIntel`).
   Every table
   carries the organization it belongs to with a cascading foreign key, and
   `AuditEvent` is unique on `(organizationId, seq)` because each organization has
@@ -223,6 +227,26 @@ disagreement. Matching is by the directory's own id first, so a rename is a move
   carry an address, and stays quiet until an interactive login populates one.) `POST /guard/v1/events` is mounted only when a
   token is configured; `GET /guard/v1/rules` publishes the rulebook. Covered by
   `tests/sentinel-guard.test.ts`.
+- `src/lib/threat-intel-rules.ts` + `threat-intel-service.ts` +
+  `threat-intel-store-prisma.ts` + the console's intel page (S3) — **threat
+  intelligence**, so an alert is judged against what somebody else has already met
+  rather than only against what this deployment's own rules saw. A feed of
+  indicators — addresses, CIDR blocks, domains, URLs and file digests — is matched
+  against every observation, and a match **annotates and escalates an existing
+  detection** rather than raising one of its own, because "this address is on a
+  list" is not a claim that anything happened. Matching is by kind and never by
+  substring; a `*.` prefix is the domain and everything under it while anything
+  else matches one host exactly; and an **expired indicator never matches**,
+  enforced in the matcher rather than by a sweep, so no sweep can lag behind a
+  reassigned address. Below `CONFIDENCE_FLOOR` a match only annotates, and a feed's
+  severity is a floor that can raise a rule's verdict but never lower it — the rule
+  saw the behaviour, the feed has only read about the address. The alert keeps what
+  it was judged on (indicator, feed, confidence, the field it hit, whether it
+  escalated), so an escalation can be reviewed after the feed is gone. A feed is
+  data with a required provenance: every indicator names its feed, a re-send
+  refreshes the row instead of duplicating it, and every ingest and withdrawal is
+  on the organization's evidence chain. Covered by
+  `tests/sentinel-threat-intel.test.ts`.
 - `src/lib/console-rules.ts` + `console-service.ts` + `console-http.ts` (S0/S1) —
   the **admin console**, as a server-rendered shell with no framework: an overview
   (who you are, whether a second factor is enrolled, and the organization's
@@ -240,8 +264,10 @@ disagreement. Matching is by the directory's own id first, so a rename is a move
   first factor still comes from an administrator until there is a password login —
   and every value on it is escaped through one function, so a display name cannot
   become markup. It also carries the **policies** page (every scope, what is stored
-  for it, and what it resolves to) and the **directory** page (create a connection,
-  run a sync, read the report). Covered by `tests/sentinel-console.test.ts`.
+  for it, and what it resolves to)  and the **directory** page (create a connection,
+  run a sync, read the report), and the **threat intel** page (what is watched, a
+  paste-in feed box, and a withdrawal per row). Covered by
+  `tests/sentinel-console.test.ts`.
 - `scripts/serve.ts` (`npm run serve`) — a **runnable provider**: an organization,
   an administrator, a session and a demo client, plus a printed authorization URL
   with a PKCE pair. With `DATABASE_URL` set it runs over Postgres, end to end, and
@@ -263,7 +289,7 @@ Like the other two products, this one is a project in its own right:
 cd ontrak-sentinel
 npm install
 npm run typecheck
-npm test                      # 260 checks; the Postgres one skips without DATABASE_URL
+npm test                      # 307 checks; the live Postgres file skips without DATABASE_URL
 
 cp .env.example .env          # set DATABASE_URL
 npm run db:deploy             # apply prisma/migrations
@@ -279,7 +305,7 @@ an authorization URL with a PKCE pair, and answers discovery, JWKS, authorize,
 token, userinfo, logout, revocation, SAML metadata, SAML SSO, the SCIM surface at
 `/scim/v2` and the console at
 `/console` (overview, second-factor enrollment with an authenticator app or a
-security key, provisioning, policies, directory sync, sign-out). With
+security key, provisioning, policies, directory sync, threat intel, sign-out). With
 `DATABASE_URL` set, every one of those rows is in Postgres — the spine, the
 evidence chain, the grants and the service providers — and a restart keeps them;
 without it, the same code path runs over in-memory stores. It ships a container
@@ -416,6 +442,64 @@ Not here yet, and named rather than implied: no streaming listener per protocol 
 collector posts, it does not yet tail), no triage UI, no detection-coverage map, and
 no rule *editing* — the rulebook is code with a version, and publishing a rule is a
 deploy.
+
+## Judging an alert against a feed
+
+Detection answers *what happened*. Threat intelligence answers the other half of the
+question — *have we seen this before, and does anybody else think it is bad?* — by
+joining an observation to a feed of indicators: IPv4 and IPv6 addresses, CIDR blocks,
+domains, URLs and MD5/SHA-1/SHA-256 digests.
+
+Paste a feed at `/console/intel`, one indicator per line, fields separated by a pipe:
+
+```
+# a header line is skipped
+203.0.113.9
+*.bad.example | 80
+44d88612fea8a8f36de82e1278abb02f | 90 | CRITICAL | 2027-01-01
+```
+
+Everything after the value is optional. A pipe separates because a URL can contain a
+comma and a CIDR cannot contain a pipe; a blank line and a `#` comment are skipped rather
+than reported as bad rows; and a bare date expires at the **end** of that day, because
+"expires 2027-01-01" is how a person writes "stop using it after the 1st". A row that
+will never match anything is refused by name and not stored — a row that reads as
+protection and matches nothing is worse than no row at all.
+
+A match does **not** raise an alert. "This address is on a list" is not a claim that
+anything happened, and an alert that says only that is one nobody can action. What a
+match does is change how an *existing* detection is judged:
+
+- **An expired indicator never matches.** Curation is a gift with a date on it: an
+  address is reassigned, a domain is re-registered, and a list nobody pruned reports the
+  innocent for years. Expiry is enforced in the matcher rather than by a sweep, so there
+  is no window in which the sweep has not run yet.
+- **Matching is by kind, never by substring.** A domain indicator compared as a substring
+  matches `not-evil-vendor.example` for `vendor.example`, and a feed with a hundred
+  thousand rows would alert on the word. A `*.` prefix means the domain *and* anything
+  under it; anything else matches one host exactly.
+- **Confidence has a floor** (`CONFIDENCE_FLOOR`, 60). Below it a match is recorded as
+  context and the severity is left alone, and a feed's own severity is only ever a
+  *floor* — a feed that says `LOW` about an address the deployment's own rule called
+  `CRITICAL` is not evidence for a downgrade, because the rule saw the behaviour and the
+  feed has only read about the address.
+- **The alert keeps what it was judged on** — the indicator, the feed, the confidence,
+  the field it hit (source address, destination address, or the named attribute) and
+  whether it escalated — so an escalation stays reviewable after the feed is gone, and an
+  alert already raised keeps its matches even once the indicator is withdrawn.
+
+Withdrawal is one row at a time and audited (`guard.intel.withdrawn`), and there is
+deliberately no "clear the feed" button: a named withdrawal is a decision somebody can be
+asked about, and a bulk erase is what a panicking operator reaches for at 03:00 and regrets
+at 09:00.
+
+The operator's side of it — the exact paste format, how a value is classified, what each
+action needs to be permitted, and how to drive it from a script — is in
+[docs/threat-intelligence.md](./docs/threat-intelligence.md).
+
+Not here yet, and named rather than implied: no STIX/TAXII transport and no automatic
+refresh — a feed is pasted by a person today — no scheduled expiry sweep (the matcher
+enforces expiry itself), and no triage UI for the alert the match lands on.
 
 ## Containers
 

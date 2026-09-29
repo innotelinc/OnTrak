@@ -72,7 +72,10 @@ warehouse; guaranteeing zero false positives.
 - `ObservedEvent` — a normalized network/host observation.
 - `Alert` → `Incident` (shared shape with OnTrak Tix), `Correlation`.
 - `EnforcementAction` — desired state, approvals, applied state, rollback.
-- `ThreatIntelIndicator`, `IntelFeed`.
+- `Indicator` — the IoC rows an alert is judged against: kind, canonical value,
+  the feed it came from, a confidence, an optional severity and an optional
+  expiry. `Alert.threatIntel` keeps the matches an alert was judged on. A
+  STIX/TAXII feed is a *transport* on top of this, not a second table.
 - `AuditEvent` — the cross-cutting, hash-chained evidence log.
 
 ## 5. Cross-cutting — evidence & assurance
@@ -479,6 +482,46 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
   sessions do carry addresses) and stays inert in a running deployment until there is an
   interactive login that grants a session from a request — which is the point at which
   `ipAddress` becomes populated rather than a column nothing writes.
+  - `[~]` **Threat-intelligence enrichment** (`threat-intel-rules.ts`,
+    `threat-intel-service.ts`, `threat-intel-store-prisma.ts`, the `Indicator`
+    table in `20261028000000_threat_intel`, `Alert.threatIntel`, and the console's
+    `/console/intel` page): a feed of indicators — IPv4/IPv6 addresses, CIDR
+    blocks, domains, URLs and MD5/SHA-1/SHA-256 digests — is matched against every
+    observation, and a match **annotates and escalates an existing alert** rather
+    than raising one of its own, because "this address is on a list" is not a
+    claim that anything happened and an alert that says only that is one nobody
+    can action. Six decisions carry it. **Matching is by kind, never by
+    substring**, and a `*.` prefix means the domain *and* anything under it while
+    every other value matches one host exactly — so a shared-hosting neighbour is
+    not an incident. **An expired indicator never matches**, enforced in the
+    matcher rather than by a sweep, because a list nobody pruned reports the
+    innocent for years and there must be no window in which the sweep has not run
+    yet. **Confidence has a floor** (`CONFIDENCE_FLOOR`, 60): below it a match is
+    recorded as context and the severity is left alone, and a feed's own severity
+    is only ever a *floor* — a feed that says `LOW` about an address this
+    deployment's own rule called `CRITICAL` is not evidence for a downgrade,
+    because the rule saw the behaviour and the feed has only read about the
+    address. **The alert keeps what it was judged on** — indicator, feed,
+    confidence, the field it hit (`sourceAddress`, `destinationAddress` or the
+    named attribute) and whether it escalated — so an escalation stays reviewable
+    after the feed is gone, and an alert already raised keeps its matches even
+    once the indicator is withdrawn. **A feed is data with a required
+    provenance**: every indicator names the feed it came from, the id is derived
+    from the kind and the canonical value so re-ingesting a feed refreshes rows
+    instead of duplicating them, and ingesting needs a policy administrator
+    (`canManagePolicies`) while reading needs only `canReadDirectory`, because a
+    sensor-side read is not an administrative act. The console takes a paste in a
+    `value | confidence | severity | expires` line format (a `|` cannot appear in
+    a value, so it is the safe separator; a `#` comment and a blank line are
+    skipped rather than reported as bad rows; a bare date expires at the *end* of
+    that day), reports what was accepted, refreshed and refused, and withdraws one
+    named indicator at a time — both writes land on the organization's evidence
+    chain (`guard.intel.ingested`, `guard.intel.withdrawn`). Covered by
+    `tests/sentinel-threat-intel.test.ts` and the second live-Postgres test in
+    `tests/sentinel-postgres-live.test.ts`. **Not here yet: STIX/TAXII transport,
+    automatic feed refresh and a scheduled expiry sweep** — a feed is text pasted
+    by a person today, and expiry is enforced where the list is read. Triaging an
+    alert from the console is still not started.
 - **Exit:** a known-bad pattern is detected from live telemetry, deduped and
   correlated into one alert linked to an identity, device and asset. Reached in the
   service and in `tests/sentinel-guard.test.ts` (events in, one deduped alert out, tied
@@ -511,7 +554,10 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
 - Multi-tenant isolation, HA/failover, backup/DR, scale-out data plane.
 - SOC 2-ready controls; audit/evidence exports for cyber-insurance; retention
   and data-subject handling.
-- Threat-intel feeds (STIX/TAXII), partner/EDR/firewall integrations.
+- Threat-intel **transport**: STIX/TAXII and vendor feed subscriptions, automatic
+  refresh and expiry sweeps, and partner/EDR/firewall integrations. The indicator
+  model and its matcher shipped in S3 (`Indicator`, `threat-intel-rules.ts`); what
+  is missing is the wire, not the meaning.
 - **Exit:** documented scale targets met under load; an assurance packet exports
   for an auditor; HA failover tested.
 

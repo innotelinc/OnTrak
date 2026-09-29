@@ -39,6 +39,8 @@ import type {
   ConsoleConnectionView,
   ConsoleDirectoryView,
   ConsoleFactorView,
+  ConsoleFeedReportView,
+  ConsoleIntelView,
   ConsoleMfaView,
   ConsoleOverviewView,
   ConsolePoliciesView,
@@ -49,6 +51,8 @@ import type {
 } from "./console-rules";
 import { policyScopeTitle, policyScopes } from "./console-rules";
 import type { DirectoryService } from "./directory-service";
+import type { ThreatIntelService } from "./threat-intel-service";
+import { isActive, parseFeedLines } from "./threat-intel-rules";
 import type { ConsoleEndpoints } from "./console-http";
 import type { AuditEvent } from "./audit-chain";
 import type { SignInService } from "./sign-in-service";
@@ -105,6 +109,12 @@ export class ConsoleService implements ConsoleEndpoints {
      * which case the page says so rather than offering a form that cannot work.
      */
     private readonly directories: DirectoryService | null = null,
+    /**
+     * The indicators this organization matches against (S3). Absent in a deployment that
+     * has configured no feed, in which case the page says so rather than offering a box that
+     * would accept a paste and then silently match nothing.
+     */
+    private readonly threatIntel: ThreatIntelService | null = null,
   ) {}
 
   /* ------------------------------------------------------------ sign in */
@@ -284,6 +294,86 @@ export class ConsoleService implements ConsoleEndpoints {
         skipped: result.value.plan.skipped,
       },
     };
+  }
+
+  /* ------------------------------------------------------- threat intelligence */
+
+  async intel(sessionId: string): Promise<ServiceResult<ConsoleIntelView>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    return this.intelView(context.value, null);
+  }
+
+  /**
+   * Take a paste of feed text.
+   *
+   * The line format is read here rather than in the HTTP layer for the usual reason —
+   * `console-http.ts` moves bytes — and for one specific one: a line the *format* refused and
+   * a row the *classifier* refused belong in the same list on the page, in the order they
+   * appear in the box, or an operator reconciling a 400-line feed has to diff two tables.
+   * The format’s own refusals are therefore folded into the ingest report before the page
+   * sees it.
+   *
+   * The feed's name is required *here*, before anything is parsed, so a blank name is one
+   * sentence rather than one refusal per row. It is then stamped onto every row, because the
+   * box asked for it once and a source that had to be repeated per line is a source somebody
+   * would forget on line 300.
+   */
+  async ingestIntel(
+    sessionId: string,
+    input: { source: string; text: string },
+  ): Promise<ServiceResult<ConsoleIntelView>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.threatIntel) return { ok: false, error: "This deployment has no threat intelligence feeds configured." };
+
+    const source = input.source.trim();
+    if (!source) {
+      return {
+        ok: false,
+        error: "Name the feed these indicators came from. Provenance is what makes one withdrawable when the feed is wrong.",
+      };
+    }
+
+    const parsed = parseFeedLines(input.text);
+    if (parsed.rows.length === 0 && parsed.issues.length === 0) {
+      return { ok: false, error: "Nothing to add: the box held no indicator." };
+    }
+
+    const ingested = await this.threatIntel.ingest(
+      context.value.actor,
+      parsed.rows.map((row) => ({ ...row, source })),
+    );
+    if (!ingested.ok) return ingested;
+
+    return this.intelView(context.value, {
+      accepted: ingested.value.accepted,
+      updated: ingested.value.updated,
+      rejected: [
+        ...parsed.issues.map((issue) => ({ value: issue.raw, reason: `line ${issue.line}: ${issue.reason}` })),
+        ...ingested.value.rejected,
+      ],
+    });
+  }
+
+  /**
+   * Withdraw one indicator.
+   *
+   * Returns what was withdrawn rather than the refreshed page, because the caller redirects:
+   * a withdrawal is a state change, and a state change that answers with a body re-runs on a
+   * refresh. The flash names the value, so the audit entry and the sentence agree.
+   */
+  async withdrawIntel(
+    sessionId: string,
+    indicatorId: string,
+  ): Promise<ServiceResult<{ value: string; source: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.threatIntel) return { ok: false, error: "This deployment has no threat intelligence feeds configured." };
+
+    const withdrawn = await this.threatIntel.withdraw(context.value.actor, indicatorId);
+    if (!withdrawn.ok) return withdrawn;
+    return { ok: true, value: { value: withdrawn.value.value, source: withdrawn.value.source } };
   }
 
   /* --------------------------------------------------------------- policies */
@@ -584,6 +674,57 @@ export class ConsoleService implements ConsoleEndpoints {
         })),
         groups: groups.value,
         scimBase: this.scim.baseUrl(),
+      },
+    };
+  }
+
+  /**
+   * Assemble the feed page.
+   *
+   * Two reads rather than one: the list is what the page renders, and the counts are what a
+   * deployment checks. They come from the same service so they cannot disagree about what an
+   * active indicator is — a page whose footer says "12 usable" above a table with nine live
+   * rows is a page nobody trusts again.
+   *
+   * Expiry is applied to the *rendered* rows with the same `isActive` the matcher uses, at
+   * this request's instant, so an expired row is visibly expired rather than quietly absent.
+   * A list that hid them would leave an operator unable to find what to withdraw.
+   */
+  private async intelView(
+    context: ConsoleContext,
+    report: ConsoleFeedReportView | null,
+  ): Promise<ServiceResult<ConsoleIntelView>> {
+    if (!this.threatIntel) return { ok: false, error: "This deployment has no threat intelligence feeds configured." };
+
+    const [stats, rows, session] = await Promise.all([
+      this.threatIntel.stats(context.actor),
+      this.threatIntel.list(context.actor),
+      this.spine.resolveOwnSession(context.sessionId),
+    ]);
+    if (!stats.ok) return stats;
+    if (!rows.ok) return rows;
+    if (!session.ok) return session;
+
+    const at = Date.now();
+    return {
+      ok: true,
+      value: {
+        actor: consoleActor(await this.organizationName(context), session.value.identity),
+        session: sessionView(session.value.session),
+        stats: stats.value,
+        indicators: rows.value.map((row) => ({
+          id: row.id,
+          kind: row.kind,
+          value: row.value,
+          source: row.source,
+          confidence: row.confidence,
+          severity: row.severity,
+          labels: [...row.labels],
+          firstSeenAt: new Date(row.firstSeenAt).toISOString(),
+          expiresAt: row.expiresAt === null ? null : new Date(row.expiresAt).toISOString(),
+          active: isActive(row, at),
+        })),
+        report,
       },
     };
   }

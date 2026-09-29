@@ -36,7 +36,13 @@ import { ConsoleService } from "../src/lib/console-service";
 import { CONSOLE_ASSET_PATHS, CONSOLE_PATHS } from "../src/lib/console-rules";
 import { MemoryCredentialStore, type CredentialStore } from "../src/lib/credential-store";
 import { PrismaCredentialStore, type CredentialPrismaClient } from "../src/lib/credential-store-prisma";
-import { DetectionService, MemoryAlertStore, type AlertStore } from "../src/lib/detection-service";
+import { DETECTION_RULES } from "../src/lib/detection-rules";
+import {
+  DetectionService,
+  MemoryAlertStore,
+  systemDetectionIds,
+  type AlertStore,
+} from "../src/lib/detection-service";
 import { GUARD_PATHS } from "../src/lib/guard-http";
 import { GuardService } from "../src/lib/guard-service";
 import { createHttpDirectoryReader } from "../src/lib/directory-client";
@@ -46,6 +52,8 @@ import type { DirectoryPrismaClient } from "../src/lib/directory-store-prisma";
 import { sha256Hex } from "../src/lib/hash";
 import { hashPassword } from "../src/lib/password";
 import { SignInService, systemSignInIds } from "../src/lib/sign-in-service";
+import { MemoryIndicatorStore, ThreatIntelService, type IndicatorStore } from "../src/lib/threat-intel-service";
+import { PrismaIndicatorStore, type IndicatorPrismaClient } from "../src/lib/threat-intel-store-prisma";
 import {
   configureDirectories,
   createIdentityServices,
@@ -341,6 +349,8 @@ async function main(): Promise<void> {
   /** `null` when this deployment was told to read no directories. */
   let directories: DirectoryService | null = null;
   let alertStore: AlertStore;
+  /** The indicators detection matches against (S3); empty until a feed is ingested. */
+  let intelStore: IndicatorStore;
 
   // Where a directory connector points. `meta.location` links are built from it, so
   // they name the deployment's own origin rather than 127.0.0.1.
@@ -387,6 +397,7 @@ async function main(): Promise<void> {
       audit,
     ).service;
     alertStore = new PrismaAlertStore(prisma as unknown as AlertPrismaClient);
+    intelStore = new PrismaIndicatorStore(prisma as unknown as IndicatorPrismaClient);
   } else {
     identities = new MemoryIdentityStore();
     audit = new OrganizationAuditLog(sha256Hex);
@@ -401,6 +412,7 @@ async function main(): Promise<void> {
     scim = new ScimService(new MemoryScimStore(), spine, { baseUrl: scimBase }, audit, oidcStore);
     directories = new DirectoryService(new MemoryDirectoryStore(), spine, scim, directoryReaders(), audit);
     alertStore = new MemoryAlertStore();
+    intelStore = new MemoryIndicatorStore();
   }
 
   /**
@@ -415,6 +427,12 @@ async function main(): Promise<void> {
     landingPath: CONSOLE_PATHS.home,
   });
 
+  // Threat intelligence (S3), built before detection because detection *reads* it: the
+  // pipeline is handed the service as its `IndicatorSource` port, so enriching an alert and
+  // listing a feed are the same rows in the same table rather than two caches that can
+  // disagree about what is active.
+  const threatIntel = new ThreatIntelService(intelStore, audit);
+
   // The sign-in service and the directory reader are both optional, and independent:
   // a deployment can serve a login with no directories, or read directories with no
   // console login configured. Passing both is what lets the console show either.
@@ -427,12 +445,24 @@ async function main(): Promise<void> {
     signIn,
     DEMO_SLUG,
     directories,
+    threatIntel,
   );
 
   // Guard's detection (S3). The store is durable where there is a database and in memory
   // otherwise; correlation reads sessions and identities directly, because a sensor is not
   // an actor and has no session to resolve.
-  const detection = new DetectionService(alertStore, identities, audit);
+  // Written out rather than defaulted, because the optional collaborator is last in the
+  // constructor on purpose — and a wiring that relied on positional `undefined` paddings to
+  // reach it would be the thing that breaks the day the list changes.
+  const detection = new DetectionService(
+    alertStore,
+    identities,
+    audit,
+    DETECTION_RULES,
+    systemDetectionIds(),
+    sha256Hex,
+    threatIntel,
+  );
   const guardService = new GuardService(detection, identities, {
     token: (process.env.SENTINEL_GUARD_TOKEN ?? "").trim() || null,
     organizationSlug: (process.env.SENTINEL_GUARD_ORGANIZATION ?? "").trim() || null,

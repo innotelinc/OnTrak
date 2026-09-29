@@ -59,8 +59,10 @@ model Organization {
   directories  DirectoryConnection[]
   directoryRuns DirectorySyncRun[]
 
-  // Guard (S3): what detection decided about the telemetry it was sent.
-  alerts Alert[]
+  // Guard (S3): what detection decided about the telemetry it was sent, and what
+  // somebody has published as worth watching.
+  alerts     Alert[]
+  indicators Indicator[]
 
   // The OIDC surface (S1): who we issue identity to, and the grants in flight.
   oidcClients  OidcClient[]
@@ -295,6 +297,16 @@ model Alert {
   occurrences    Int       @default(1)
   /// The observations the rule fired on, bounded by `ALERT_EVIDENCE_MAX`.
   evidence       Json
+  /// The indicators of compromise the evidence matched, each with the field it was seen
+  /// on, the feed it came from and the feed's confidence.
+  ///
+  /// `[]` rather than null, and defaulted rather than required, because "nothing matched"
+  /// is a real answer and because it makes the column safe to add to rows that already
+  /// exist: a deployment upgrading in place gets an empty list, not a null every reader has
+  /// to special-case. Carried on the row rather than looked up when the alert is read, for
+  /// the same reason the evidence is — a feed is edited and a list is pruned, and an alert
+  /// read next month has to say what was known when it was raised.
+  threatIntel    Json      @default("[]")
   /// An operator's reason when they acknowledged or closed it.
   note           String?
   createdAt      DateTime  @default(now())
@@ -304,6 +316,58 @@ model Alert {
 
   @@unique([organizationId, dedupeKey])
   @@index([organizationId, state, lastSeenAt])
+}
+
+/// One indicator of compromise (S3): an address, block, domain, URL or digest that a feed
+/// has published as worth watching.
+///
+/// Four columns carry decisions worth reading:
+///
+///  - **The primary key is `(organizationId, id)`, and the id is *derived* from the kind and
+///    the canonical value** rather than generated. Derived is what makes polling a feed an
+///    update instead of a table that grows by the feed's size every hour — the same property
+///    `Alert.dedupeKey` gives a burst, applied to data rather than to a detection. Scoping the
+///    key to the organization is what keeps that safe across tenants: two organizations
+///    watching the same address is one row each, and one of them withdrawing it cannot reach
+///    the other's. A single global key on the derived id would make the second tenant's first
+///    ingest a constraint violation — a cross-tenant denial of service.
+///  - **`source` is required and is never defaulted.** An indicator whose provenance is
+///    unknown cannot be withdrawn when the feed turns out to be wrong, and "which feed told us
+///    this?" is the first question asked about a false positive.
+///  - **`confidence` is stored, not assumed.** A match below the floor the matcher applies
+///    annotates an alert instead of escalating it, so the number has to survive the round trip
+///    or the judgement changes when the process restarts.
+///  - **`expiresAt` is nullable, and null means "does not expire".** A list nobody pruned
+///    reports the innocent for years after an address is reassigned, so the expiry is stored
+///    where a deployment can see how much of its feed has one.
+model Indicator {
+  /// `kind-canonicalvalue`, hashed — see `indicatorId` in `threat-intel-rules.ts`.
+  id             String
+  organizationId String
+  /// `IPV4` | `IPV6` | `CIDR` | `DOMAIN` | `URL` | `MD5` | `SHA1` | `SHA256`.
+  kind           String
+  /// The canonical spelling, so two feeds naming one address are one row.
+  value          String
+  /// Whether the value was given as `*.` — the domain and anything under it.
+  wildcard       Boolean  @default(false)
+  /// The feed this came from, named.
+  source         String
+  /// 0–100. Below the matcher's floor a hit annotates rather than escalates.
+  confidence     Int      @default(60)
+  /// The feed's own severity for a hit, when it has an opinion. Never lowers a rule's.
+  severity       String?
+  /// The feed's own tags, kept because they are what makes a hit explainable.
+  labels         String[]
+  firstSeenAt    DateTime
+  /// `null` means it does not expire, which a deployment should be able to count.
+  expiresAt      DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@id([organizationId, id])
+  @@index([organizationId, source])
 }
 
 /// A directory Sentinel *reads* (S2): AD, Entra or Google, configured once and

@@ -53,6 +53,12 @@ import {
   type ObservedEvent,
   type TelemetrySource,
 } from "./telemetry-rules";
+import {
+  escalateSeverity,
+  matchIndicators,
+  type Indicator,
+  type IndicatorMatch,
+} from "./threat-intel-rules";
 
 /* -------------------------------------------------------------------------- */
 /*  Records                                                                   */
@@ -83,6 +89,16 @@ export interface AlertRecord {
   lastSeenAt: string;
   occurrences: number;
   evidence: ObservedEvent[];
+  /**
+   * The indicators of compromise this alert's evidence matched, with the feed and the
+   * confidence each one came with.
+   *
+   * Carried on the row rather than looked up later for the same reason the evidence is: a
+   * feed is edited, a list is pruned, and an alert read next month has to say what was
+   * known when it was raised. This is also how a severity escalation stays reviewable —
+   * the alert names what moved it.
+   */
+  threatIntel: IndicatorMatch[];
   /** An operator's note when they acknowledged or closed it. */
   note: string | null;
   createdAt: string;
@@ -112,6 +128,17 @@ export interface DetectionIds {
   nowMs(): number;
 }
 
+/**
+ * What detection needs of threat intelligence, and nothing more.
+ *
+ * A port rather than a concrete service, so the pipeline can be tested with a fixed list
+ * of indicators and so a deployment that has no feed configured gets no enrichment at all
+ * rather than an empty lookup on every batch.
+ */
+export interface IndicatorSource {
+  activeIndicators(organizationId: string, at: number): Promise<readonly Indicator[]>;
+}
+
 export function systemDetectionIds(): DetectionIds {
   return { id: () => randomUUID(), now: () => new Date().toISOString(), nowMs: () => Date.now() };
 }
@@ -135,6 +162,14 @@ export class DetectionService {
     private readonly rules: readonly DetectionRule[] = DETECTION_RULES,
     private readonly ids: DetectionIds = systemDetectionIds(),
     private readonly hash: HashFn = sha256Hex,
+    /**
+     * Threat intelligence, if this deployment has a feed configured.
+     *
+     * Last in the list on purpose: an optional collaborator appended to a constructor is
+     * how every existing wiring and every test that builds this service keeps working
+     * unchanged, with enrichment switched off until somebody names a feed.
+     */
+    private readonly intel: IndicatorSource | null = null,
   ) {}
 
   /** The rules, so a deployment can see what it is running and at which version. */
@@ -190,12 +225,21 @@ export class DetectionService {
   ): Promise<{ alerts: IngestReport["alerts"]; rejected: IngestReport["rejected"] }> {
     const drafts = evaluateRules(events, this.rules);
     const sessions = await this.identities.listSessions(organizationId);
+    // Asked once per batch, not once per draft or per event: the same list answers every
+    // rule that fired, and a feed read per observation would turn one burst into a hundred
+    // lookups against a table that did not change in between.
+    const at = this.ids.nowMs();
+    const indicators = this.intel ? await this.intel.activeIndicators(organizationId, at) : [];
     const alerts: IngestReport["alerts"] = [];
 
     for (const draft of drafts) {
       const identityId = correlateIdentity(draft.evidence[0], sessions);
       const identity = identityId ? await this.identities.findIdentity(organizationId, identityId) : null;
       const { device, asset } = locationOf(draft);
+
+      // What the feeds know about this evidence, and what it does to how bad it is.
+      const threatIntel = indicators.length === 0 ? [] : this.matches(draft.evidence, indicators, at);
+      const severity = escalateSeverity(draft.severity, threatIntel);
 
       const now = this.ids.now();
       const record: AlertRecord = {
@@ -204,7 +248,7 @@ export class DetectionService {
         ruleId: draft.ruleId,
         ruleVersion: draft.ruleVersion,
         ruleName: draft.ruleName,
-        severity: draft.severity,
+        severity,
         state: "NEW",
         dedupeKey: draft.dedupeKey,
         groupKey: draft.groupKey,
@@ -217,6 +261,7 @@ export class DetectionService {
         lastSeenAt: new Date(draft.lastSeenAt).toISOString(),
         occurrences: draft.occurrences,
         evidence: draft.evidence.slice(0, ALERT_EVIDENCE_MAX),
+        threatIntel,
         note: null,
         createdAt: now,
         updatedAt: now,
@@ -234,6 +279,18 @@ export class DetectionService {
         ruleId: stored.alert.ruleId,
         ruleVersion: stored.alert.ruleVersion,
         severity: stored.alert.severity,
+        // The escalation is on the record with its cause, so "why is this CRITICAL?" is
+        // answered by the chain rather than by an operator's memory of a feed.
+        ruleSeverity: draft.severity,
+        escalated: stored.alert.severity !== draft.severity,
+        threatIntel: stored.alert.threatIntel.map((match) => ({
+          indicatorId: match.indicator.id,
+          kind: match.indicator.kind,
+          value: match.indicator.value,
+          source: match.indicator.source,
+          confidence: match.indicator.confidence,
+          field: match.field,
+        })),
         identityId: stored.alert.identityId,
         device: stored.alert.device,
         asset: stored.alert.asset,
@@ -291,6 +348,30 @@ export class DetectionService {
 
   /* ----------------------------------------------------------- internals */
 
+  /**
+   * Every indicator a draft's evidence matched, most confident first.
+   *
+   * Across all of the evidence rather than only the first observation: a sequence rule's
+   * alert is built from five events and the interesting address is often not the one that
+   * opened it.
+   */
+  private matches(
+    evidence: readonly ObservedEvent[],
+    indicators: readonly Indicator[],
+    at: number,
+  ): IndicatorMatch[] {
+    const seen = new Set<string>();
+    const out: IndicatorMatch[] = [];
+    for (const event of evidence) {
+      for (const match of matchIndicators(event, indicators, at)) {
+        if (seen.has(match.indicator.id)) continue;
+        seen.add(match.indicator.id);
+        out.push(match);
+      }
+    }
+    return out.sort((a, b) => b.indicator.confidence - a.indicator.confidence);
+  }
+
   /** Merge a repeat into the row that already exists, rather than raising a second one. */
   private async upsert(record: AlertRecord): Promise<{ alert: AlertRecord; created: boolean }> {
     const existing = (await this.store.listAlerts(record.organizationId)).find((entry) => entry.dedupeKey === record.dedupeKey);
@@ -299,10 +380,16 @@ export class DetectionService {
       return stored;
     }
 
+    // Severity rises and does not fall on a repeat: the first burst is still part of the
+    // incident even after the feed that escalated it was withdrawn, and an alert that
+    // quietly walked back from CRITICAL to LOW is one nobody can review.
+    const severity = escalateSeverity(existing.severity, record.threatIntel);
+    const known = new Set(existing.threatIntel.map((match) => match.indicator.id));
     const merged: AlertRecord = {
       ...existing,
       lastSeenAt: record.lastSeenAt,
       occurrences: existing.occurrences + record.occurrences,
+      severity,
       // The identity is filled in if the first pass could not correlate (the session may
       // have been granted after the first packet arrived) and never blanked out.
       identityId: existing.identityId ?? record.identityId,
@@ -310,6 +397,11 @@ export class DetectionService {
       device: existing.device ?? record.device,
       asset: existing.asset ?? record.asset,
       evidence: [...existing.evidence, ...record.evidence].slice(0, ALERT_EVIDENCE_MAX),
+      // Union, so a repeat that matches a *new* indicator keeps the old ones on the record.
+      threatIntel: [
+        ...existing.threatIntel,
+        ...record.threatIntel.filter((match) => !known.has(match.indicator.id)),
+      ],
       updatedAt: record.updatedAt,
     };
     await this.store.updateAlert(merged);
