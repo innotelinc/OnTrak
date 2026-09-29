@@ -281,6 +281,59 @@ It is opt-in twice over — the flag says "start a server for this", and a reach
 Postgres is required because a sign-in provisions an account — and it cleans up the
 account it provisions, so a local run leaves no trace. `npm test` skips it.
 
+---
+
+## Real shells in a sandbox
+
+A scenario is authored for one of two machines, and says which:
+
+| `fidelity` | What runs your commands | Where |
+| --- | --- | --- |
+| `simulated` (default) | The built-in simulated engine | In the browser, instantly, everywhere |
+| `container` | A real `bash` in a disposable container | On the server, one container per attempt |
+
+A container-fidelity scenario gets real exit codes, real error messages and a real
+filesystem. After every command the sandbox's tree is harvested back into the
+attempt's machine state — type, permissions, owner, group, mtime, size and content —
+so grading is unchanged: `file_mode`, `file_contains`, `dir_exists` and
+`command_matched` check a real filesystem with no grader changes at all.
+
+```bash
+# .env — a sandbox for real bash. Without this, nothing changes: every
+# scenario runs simulated, and a container-fidelity scenario is not offered.
+ONTRAK_SANDBOX_BACKEND="docker"              # docker | process
+ONTRAK_SANDBOX_IMAGE="debian:bookworm-slim"  # bake the tools a scenario needs into this
+```
+
+The **docker** backend is the real one: no network, no capabilities,
+`no-new-privileges`, and memory, CPU and process ceilings. Tools are baked into the
+image rather than installed by the student, which is what makes it a sandbox, and
+the image must have `bash` — a sandbox image without one is named as the problem at
+container start rather than discovered as a strange `exec` failure later. The
+**process** backend runs real bash in a scratch directory on the app server with no
+isolation at all — useful in development and in CI, and refused unless both
+`ONTRAK_SANDBOX_BACKEND=process` and `ONTRAK_SANDBOX_ALLOW_PROCESS=1` are set.
+
+Two things are deliberately honest about the limits. `cd`, `pwd` and `cd -` are the
+driver's own, so they are exact; a command that prints an absolute path *itself* (a
+`readlink -f`, say) prints the sandbox's own root, because quietly rewriting what a
+real shell really said is the one thing a fidelity backend must never do. And
+machine state that is not the filesystem — services, packages, the registry — comes
+from the scenario's boot state, exactly as it does for a simulated attempt.
+
+Nothing is a hard dependency on a sandbox. Fidelity is resolved when the attempt
+page renders: a container-fidelity scenario on a deployment with no sandbox runs
+simulated and says so on screen, a sandbox that stops answering mid-attempt falls
+back once and says so, and the availability rule keeps a sandbox-only scenario out
+of the catalogue where there is no sandbox to run it in. The exit criterion is
+covered by `tests/sim-container.test.ts`, which grades one scenario twice — once
+simulated, once under real bash — and asserts the two reports agree check for check.
+
+PowerShell in a sandbox is not here yet. The honest version of it is a Windows base
+image, and shipping a `pwsh` process on Linux under a scenario that promises Windows
+would be fidelity theatre — so the validator refuses container fidelity for any
+engine but `bash` rather than quietly substituting something else.
+
 ### Upstream, the other direction
 
 OnTrak Sentinel **provisions** into Tix over SCIM 2.0, and Tix **pushes** its own
