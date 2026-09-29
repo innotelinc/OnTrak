@@ -29,12 +29,21 @@ import { NextRequest, NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/** Where the API lives *from this container*. */
+/**
+ * Where the API lives *from this container*.
+ *
+ * The fallback is the API **container's** name, not a compose service name:
+ * `docker-compose.yml` calls the service `ontrak-api` and `docker-compose.all.yml`
+ * calls it `sync-api`, and a deployment that has been started by something other
+ * than the file in front of you answers to neither. The container name is the one
+ * that does not change with the file, and a wrong guess here is expensive — the
+ * dashboard reports a 504 and looks like the API is down, when the API is fine.
+ */
 function upstreamBase(): string {
   return (
     process.env.ONTRAK_API_INTERNAL ||
     process.env.NEXT_PUBLIC_ONTRAK_API ||
-    "http://ontrak-api:8420"
+    "http://ontrak-sync-api:8420"
   ).replace(/\/$/, "");
 }
 

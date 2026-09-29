@@ -1,0 +1,3 @@
+
+# A node_modules symlink is not a directory, so `node_modules/` does not match it.
+node_modules

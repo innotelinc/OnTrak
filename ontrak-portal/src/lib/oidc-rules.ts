@@ -97,6 +97,31 @@ export type ClaimCheck =
  * in — "the token expired" tells an operator nothing, and "the provider's clock
  * and this server's disagree" tells them what to fix.
  */
+/**
+ * The issuer to hand a verifier that compares it **byte for byte**.
+ *
+ * Authentik advertises its application-scoped issuer with a trailing slash
+ * (`https://auth.example/application/o/ontrak/`) and puts exactly that string in
+ * the ID token's `iss`. This portal stores the issuer normalized — and should,
+ * because `.env` has three readers that do not agree about a trailing slash — but
+ * `jose`'s `issuer` option is a literal comparison, so handing it the normalized
+ * form rejects a token that is entirely valid with `unexpected "iss" claim value`,
+ * *after* the password has been typed.
+ *
+ * So: the string the provider advertised, as it advertised it, whenever it names
+ * the same issuer the configuration does. `checkClaims` still compares the two
+ * with the slash ignored, so a discovery document that renames the issuer is
+ * refused there rather than quietly accepted here.
+ */
+export function verificationIssuer(advertised: string | undefined,
+                                  configured: string): string {
+  const named = (advertised ?? "").trim();
+  if (!named) return configured;
+  return named.replace(/\/+$/, "") === configured.replace(/\/+$/, "")
+    ? named
+    : configured;
+}
+
 export function checkClaims(
   claims: IdTokenClaims,
   options: {
