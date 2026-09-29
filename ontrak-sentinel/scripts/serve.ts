@@ -216,23 +216,25 @@ async function demoClient(oidc: OidcService, actor: IdentityActor): Promise<Oidc
 }
 
 /**
- * A client for OnTrak Tix, when this run has been told where Tix's SSO callback
- * is (`SENTINEL_TIX_CALLBACK`).
+ * A client for one of the family's products, when this run has been told where
+ * its SSO callback is — `SENTINEL_TIX_CALLBACK` for the desk,
+ * `SENTINEL_TRAINING_CALLBACK` for the training app.
  *
  * Opt-in rather than always-on: registering a client is a statement that a
  * product is being pointed at this provider, and a provider that registers one for
  * something nobody configured is issuing identity to an audience that never asked.
  *
- * Tix is a **public** client — it cannot keep a secret, so PKCE is the only thing
+ * Both are **public** clients — neither can keep a secret, so PKCE is the only thing
  * binding an authorization code to the caller that requested it, and both kinds are
  * held to it here. The redirect URI is validated like any other, which means
- * `https`, or `http` on a loopback address: a desk reached at a bare LAN address
+ * `https`, or `http` on a loopback address: a product reached at a bare LAN address
  * over plain HTTP cannot be registered at all, and is told so rather than being
  * quietly allowed.
  */
-async function demoTixClient(
+async function productClient(
   oidc: OidcService,
   actor: IdentityActor,
+  name: string,
   redirect: string,
 ): Promise<OidcClientRecord | null> {
   if (!redirect) return null;
@@ -242,7 +244,7 @@ async function demoTixClient(
   if (existing) return existing;
 
   const registered = await oidc.registerClient(actor, {
-    name: "OnTrak Tix",
+    name,
     redirectUris: [redirect],
     scopes: ["openid", "profile", "email", "roles"],
   });
@@ -325,7 +327,13 @@ async function main(): Promise<void> {
   const { actor, session, totp } = await bootstrap(spine, identities, mfa);
   const client = await demoClient(oidc, actor);
   const provider = await demoProvider(saml, actor);
-  const tixClient = await demoTixClient(oidc, actor, (process.env.SENTINEL_TIX_CALLBACK ?? "").trim());
+  const tixClient = await productClient(oidc, actor, "OnTrak Tix", (process.env.SENTINEL_TIX_CALLBACK ?? "").trim());
+  const trainingClient = await productClient(
+    oidc,
+    actor,
+    "OnTrak IT Support Training",
+    (process.env.SENTINEL_TRAINING_CALLBACK ?? "").trim(),
+  );
 
   // A PKCE pair the developer can paste straight into the printed URL.
   const verifier = randomBytes(48).toString("base64url");
@@ -359,6 +367,11 @@ async function main(): Promise<void> {
   console.log(`[sentinel] demo client: ${client.clientId}`);
   if (tixClient) {
     console.log(`[sentinel] OnTrak Tix client: ${tixClient.clientId} → ${process.env.SENTINEL_TIX_CALLBACK}`);
+  }
+  if (trainingClient) {
+    console.log(
+      `[sentinel] training client: ${trainingClient.clientId} → ${process.env.SENTINEL_TRAINING_CALLBACK}`,
+    );
   }
   console.log(`[sentinel] demo service provider: ${provider.entityId} → ${provider.acsUrls.join(", ")}`);
   if (totp) {

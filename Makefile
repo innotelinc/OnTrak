@@ -77,6 +77,28 @@ sentinel-down: ## Stop the Sentinel stack (keeps its database volume)
 sentinel-logs: ## Tail the Sentinel stack's logs
 	cd $(SENTINEL_DIR) && docker compose logs -f
 
+# The family stack: all three products, one network, one command. `up`/`down`
+# above are the training app's; this brings up everything, with Tix's outbound
+# provisioning already pointed at the provider over the network. See the header
+# of docker-compose.all.yml for what single sign-on additionally needs.
+
+.PHONY: all-up
+all-up: ## Build and start all three products together (:3000, :3001, :8787)
+	docker compose -f docker-compose.all.yml up -d --build
+
+.PHONY: all-down
+all-down: ## Stop the family stack (keeps every volume)
+	docker compose -f docker-compose.all.yml down
+
+.PHONY: all-logs
+all-logs: ## Tail the family stack's logs
+	docker compose -f docker-compose.all.yml logs -f
+
+.PHONY: all-demo
+all-demo: ## Load the demo data for both apps in the family stack
+	docker compose -f docker-compose.all.yml --profile demo run --rm training-seed
+	docker compose -f docker-compose.all.yml --profile demo run --rm tix-seed
+
 .PHONY: ps
 ps: ## List the containers in all three stacks
 	docker compose ps
@@ -89,8 +111,12 @@ images: ## Build all three production images without starting anything
 	cd $(TIX_DIR) && docker build --target runner -t ontrak-tix:local .
 	cd $(SENTINEL_DIR) && docker build --target runner -t ontrak-sentinel:local .
 
+.PHONY: family-image
+family-image: ## Build the family stack's images without starting anything
+	docker compose -f docker-compose.all.yml build
+
 .PHONY: check-compose
-check-compose: ## Validate all three development compose files against their .env.example
+check-compose: ## Validate all four development compose files against their .env.example
 	@cp -n .env.example .env 2>/dev/null || true
 	docker compose config --quiet && echo "compose: training ok"
 	@cp -n $(TIX_DIR)/.env.example $(TIX_DIR)/.env 2>/dev/null || true
@@ -98,6 +124,9 @@ check-compose: ## Validate all three development compose files against their .en
 	# Sentinel's stack starts on defaults and needs no `.env`, so there is
 	# nothing to copy in before validating it.
 	cd $(SENTINEL_DIR) && docker compose config --quiet && echo "compose: sentinel ok"
+	# The family stack reads all three `.env` files, which the lines above have
+	# just made sure exist.
+	docker compose -f docker-compose.all.yml config --quiet && echo "compose: family ok"
 
 .PHONY: prod-check
 prod-check: ## Validate all three deployment overlays (throwaway secrets, cleaned up)
