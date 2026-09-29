@@ -111,6 +111,31 @@ export class RuleService {
   }
 
   /**
+   * What *one* rule would do — including a rule that is switched off.
+   *
+   * This is the question the console is actually asked ("what happens if I turn
+   * this on?"), and `preview` cannot answer it: a disabled rule is not a
+   * candidate for the live engine, so a whole-ruleset dry run reports nothing
+   * for it and makes every switched-off rule look safe. So the rule is run as if
+   * it were enabled, through the same `dryRun` the live path uses, and only the
+   * rule asked about is run — a blast radius that is one rule's, not the
+   * ruleset's.
+   */
+  async previewRule(
+    actor: Actor,
+    ruleId: string,
+    tickets: readonly (RuleTicketView & { id: string })[] = [],
+  ): Promise<ServiceResult<DryRunReport>> {
+    const denied = this.requireManage(actor);
+    if (denied) return denied;
+
+    const rule = await this.store.findRule(actor.tenantId, ruleId);
+    if (!rule) return { ok: false, error: "That rule does not exist." };
+
+    return { ok: true, value: dryRun([{ ...rule, enabled: true }], tickets, rule.trigger) };
+  }
+
+  /**
    * The plan for one ticket, as the intake path applies it.
    *
    * Takes no actor because it runs on the ticket's behalf — from an inbound
@@ -225,6 +250,50 @@ export class RuleService {
     await this.store.updateRule(next);
     await this.append(actor, enabled ? "rule.enable" : "rule.disable", rule.id, { name: rule.name });
     return { ok: true, value: next };
+  }
+
+  /**
+   * Move a rule one place in the order it runs.
+   *
+   * Order is not decoration here: the first rule to set a field owns it, so the
+   * position *is* the policy. A console that could write rules but not reorder
+   * them would leave a desk to delete and retype everything to fix one, so the
+   * order it can see is an order it can change. Positions are rewritten as a
+   * clean 1..n run, which also repairs any duplicate left by earlier data.
+   */
+  async move(actor: Actor, ruleId: string, direction: "up" | "down"): Promise<ServiceResult<{ moved: string; swappedWith: string }>> {
+    const denied = this.requireManage(actor);
+    if (denied) return denied;
+
+    const rule = await this.store.findRule(actor.tenantId, ruleId);
+    if (!rule) return { ok: false, error: "That rule does not exist." };
+
+    const ordered = (await this.store.listRules(actor.tenantId)).sort((a, b) => a.position - b.position);
+    const index = ordered.findIndex((entry) => entry.id === rule.id);
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    const target = ordered[targetIndex];
+    if (!target) return { ok: false, error: direction === "up" ? "That rule already runs first." : "That rule already runs last." };
+
+    const reordered = [...ordered];
+    reordered[index] = target;
+    reordered[targetIndex] = rule;
+
+    const now = this.ids.now();
+    for (const [at, entry] of reordered.entries()) {
+      const position = at + 1;
+      if (entry.position !== position) await this.store.updateRule({ ...entry, position, updatedAt: now });
+    }
+
+    // Position is what decides which rule wins, so the move is a policy change
+    // and belongs on the chain beside the rules themselves.
+    await this.append(actor, "rule.move", rule.id, {
+      name: rule.name,
+      direction,
+      from: index + 1,
+      to: targetIndex + 1,
+      swappedWith: target.name,
+    });
+    return { ok: true, value: { moved: rule.id, swappedWith: target.id } };
   }
 
   async remove(actor: Actor, ruleId: string): Promise<ServiceResult<{ id: string }>> {

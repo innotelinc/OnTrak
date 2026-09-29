@@ -60,6 +60,7 @@ async function switchUser(page: Page, email: string): Promise<void> {
 }
 
 const ADMIN = process.env.ONTRAK_TIX_ADMIN_EMAIL ?? "admin@acme.test";
+const REQUESTER = process.env.ONTRAK_TIX_REQUESTER_EMAIL ?? "requester@acme.test";
 const AGENT_NAME = "Sam Agent";
 
 test.describe("OnTrak Tix desk", () => {
@@ -75,6 +76,9 @@ test.describe("OnTrak Tix desk", () => {
     "/notifications",
     "/canned",
     "/templates",
+    "/rules",
+    "/macros",
+    "/knowledge",
     "/inbox/new",
     "/security",
     "/incidents",
@@ -111,6 +115,122 @@ test.describe("OnTrak Tix desk", () => {
     expect(await subject.inputValue()).not.toBe("");
     expect(await subject.inputValue()).not.toContain("{{");
     expect(await page.getByLabel("Description").inputValue()).not.toContain("{{");
+  });
+
+  test("rules: writing one, previewing it as if it were on, and switching it off", async ({ page }) => {
+    // Writing a rule is a manager's act, so the sweep hands the browser over.
+    await switchUser(page, ADMIN);
+    await page.goto(url("/rules"), { waitUntil: "load" });
+    expect(await page.getByRole("heading", { name: "Rules" }).count()).toBe(1);
+
+    // "printer" appears nowhere else in the sweep, so a rule that matches on it
+    // cannot quietly change another test's ticket.
+    const name = `Sweep rule ${Date.now()}`;
+    await page.getByLabel("Name").fill(name);
+    await page.getByLabel("Runs").selectOption("ticket.created");
+    await page.getByLabel("Condition 1 field").selectOption("subject");
+    await page.getByLabel("Condition 1 comparison").selectOption("contains");
+    await page.getByLabel("Condition 1 value").fill("printer");
+    await page.getByLabel("Action 1", { exact: true }).selectOption("set_priority");
+    await page.getByLabel("Action 1 value").fill("HIGH");
+    await page.getByRole("button", { name: "Save rule" }).click();
+
+    await expect(page.locator("body")).toContainText(`Rule \u201c${name}\u201d saved`, { timeout: 20_000 });
+
+    // The rule reads back as sentences, not as the rows it was typed in.
+    const card = page.locator("li", { hasText: name });
+    await expect(card).toContainText("Matches subject contains \u201cprinter\u201d");
+    await expect(card).toContainText("Set the priority to HIGH");
+
+    // A preview runs the *live* engine over real tickets and writes nothing.
+    await card.getByRole("link", { name: "Preview" }).click();
+    await page.waitForURL(/\/rules\?rule=/, { timeout: 20_000 });
+    await expect(page.locator("section[aria-label='Dry run']")).toContainText("recent tickets matched");
+
+    // And it can be switched off without being deleted.
+    await page.goto(url("/rules"), { waitUntil: "load" });
+    await page
+      .locator("li", { hasText: name })
+      .getByRole("button", { name: "Switch off" })
+      .click();
+    await expect(page.locator("body")).toContainText("Rule switched off", { timeout: 20_000 });
+    // The button now offers the opposite, which is how the card says "off".
+    await expect(page.locator("li", { hasText: name })).toContainText("Switch on");
+  });
+
+  test("macros: a shortcut is written, then run on a ticket it changes", async ({ page }) => {
+    // Writing a macro is a manager's act; running one is ordinary agent work.
+    await switchUser(page, ADMIN);
+    const stamp = Date.now();
+    const name = `Sweep macro ${stamp}`;
+    await page.goto(url("/macros"), { waitUntil: "load" });
+    expect(await page.getByRole("heading", { name: "Macros" }).count()).toBe(1);
+
+    await page.getByLabel("Name").fill(name);
+    await page.getByLabel("What it is for").fill("Written by the browser sweep.");
+    await page.getByLabel("Action 1", { exact: true }).selectOption("set_priority");
+    await page.getByLabel("Action 1 value").fill("URGENT");
+    await page.getByRole("button", { name: "Add macro" }).click();
+    await expect(page.locator("body")).toContainText(`Macro \u201c${name}\u201d saved`, { timeout: 20_000 });
+
+    // The macro reads back as the sentence it will perform.
+    await expect(page.locator("li", { hasText: name })).toContainText("Set the priority to URGENT");
+
+    // File a ticket, then run the shortcut on it from the ticket itself.
+    const subject = `Macro sweep ${stamp}`;
+    await page.goto(url("/inbox/new"), { waitUntil: "load" });
+    await page.getByLabel("Subject").fill(subject);
+    await page.getByLabel("Description").fill("Filed by the browser sweep to exercise a macro.");
+    await page.getByRole("button", { name: "Create ticket" }).click();
+    await page.waitForURL(/\/inbox\/[^/?]+\?flash=/, { timeout: 20_000 });
+
+    await page.getByLabel("Shortcut").selectOption({ label: name });
+    await page.getByRole("button", { name: "Run macro" }).click();
+    await page.waitForURL(/\/inbox\/[^/?]+\?flash=Macro/, { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText("Macro run");
+    // The priority pill, not the flash, is the proof the ticket changed.
+    await expect(page.locator("section[aria-label^='Ticket ']")).toContainText("Urgent");
+  });
+
+  test("knowledge: a public article deflects a request in the portal", async ({ page }) => {
+    // Writing an article is a staff act.
+    await switchUser(page, ADMIN);
+    const stamp = Date.now();
+    const title = `Sweep article ${stamp}`;
+    const keyword = `sweepkit${stamp}`;
+    await page.goto(url("/knowledge"), { waitUntil: "load" });
+    expect(await page.getByRole("heading", { name: "Knowledge" }).count()).toBe(1);
+
+    await page.getByLabel("Title").fill(title);
+    await page.getByLabel("Body").fill("The sweep wrote this article to exercise deflection.");
+    await page.getByLabel("Who can read it").selectOption("PUBLIC");
+    await page.getByLabel("Tags (comma-separated)").fill(keyword);
+    await page.getByRole("button", { name: "Add article" }).click();
+    await expect(page.locator("body")).toContainText(`Article \u201c${title}\u201d saved`, { timeout: 20_000 });
+    await expect(page.locator("li", { hasText: title })).toContainText("public");
+
+    // A requester types the tag and is offered the article before raising anything.
+    await switchUser(page, REQUESTER);
+    await page.goto(`${url("/portal/new")}?subject=${keyword}`, { waitUntil: "load" });
+    const panel = page.locator("section[aria-label='Suggested articles']");
+    await expect(panel).toContainText(title);
+    await panel.locator("summary", { hasText: title }).click();
+    await expect(panel).toContainText("exercise deflection");
+    // Looking cost nothing: the words stay in the form below.
+    await expect(page.getByLabel("What is it about?")).toHaveValue(keyword);
+  });
+
+  test("reports: the satisfaction dashboard and the knowledge gaps are on the screen", async ({ page }) => {
+    await page.goto(url("/reports"), { waitUntil: "load" });
+    // M5's reporting: the whole satisfaction scale rather than one average, and
+    // the subjects no article answered. Both sections render whatever the data
+    // is — an empty satisfaction wall is a finding, not a missing section.
+    const satisfaction = page.locator("section[aria-label='Satisfaction']");
+    await expect(satisfaction.getByRole("heading", { name: "Satisfaction" })).toBeVisible();
+
+    const gaps = page.locator("section[aria-label='Knowledge gaps']");
+    await expect(gaps.getByRole("heading", { name: "Knowledge gaps" })).toBeVisible();
+    await expect(gaps).toContainText("A repeat requester is the loudest");
   });
 
   test("security: a high alert opens an incident from the console", async ({ page }) => {
@@ -848,9 +968,11 @@ test.describe("OnTrak Tix rota, branding and billing depth", () => {
     const deskTax = page.locator("section", { hasText: "The desk's default tax" }).first();
     await deskTax.getByLabel("Label").fill("Browser sweep tax");
     await deskTax.getByLabel("Rate (%)").fill("8.25");
-    // Exact, because a desk that already has a rule also renders "Remove this
-    // tax rule" — and this sweep runs against a database it did not create.
-    await deskTax.getByRole("button", { name: "Save tax rule", exact: true }).click();
+    // The button says "Save" when the desk already has a rule and "Set" when it
+    // would be the first one — and this sweep runs against a database it did not
+    // create, so either is correct. Anchored, so neither matches "Remove this tax
+    // rule" beside it.
+    await deskTax.getByRole("button", { name: /^(Save|Set) tax rule$/ }).click();
     await page.waitForURL(/flash=/, { timeout: 20_000 });
     await expect(page.locator("body")).toContainText("Browser sweep tax is in force at 8.25%");
 
@@ -882,5 +1004,167 @@ test.describe("OnTrak Tix identity administration", () => {
     await signIn(page); // the seeded agent, which lacks `tenant:manage`
     await page.goto(url("/admin/identity"), { waitUntil: "load" });
     expect(new URL(page.url()).pathname).toBe("/inbox");
+  });
+});
+
+test.describe("OnTrak Tix integrations administration", () => {
+  test.skip(!BASE_URL, "set ONTRAK_TIX_BASE_URL to run the Tix sweep");
+
+  const ADMIN = process.env.ONTRAK_TIX_ADMIN_EMAIL ?? "admin@acme.test";
+
+  test("integrations: a token is minted once, an endpoint registered, and both read back", async ({ page }) => {
+    await signIn(page, ADMIN);
+    await auditPath(page, "/admin/integrations");
+
+    // The whole console is on one screen, and every section renders whatever the
+    // data is — an empty log is a finding, not a missing section.
+    expect(await page.getByRole("heading", { name: "Integrations" }).count()).toBe(1);
+    await expect(page.getByRole("heading", { name: "API tokens" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Webhook endpoints" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Delivery log" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Chat notifications" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Monitoring conditions" })).toBeVisible();
+    // The monitoring webhook and its secret are named, so the RMM seam is
+    // discoverable from the console rather than only from the docs.
+    await expect(page.locator("body")).toContainText("ONTRAK_TIX_RMM_SECRET");
+    await expect(page.locator("body")).toContainText("/api/rmm");
+
+    // Mint a token: the secret is readable once, and the console says so.
+    const stamp = Date.now();
+    const tokenName = `Sweep token ${stamp}`;
+    await page.getByLabel("Name", { exact: true }).first().fill(tokenName);
+    await page.getByRole("checkbox", { name: "tickets:read" }).check();
+    await page.getByRole("button", { name: "Mint token" }).click();
+    await page.waitForURL(/minted=/, { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText("Copy this token now");
+    await expect(page.locator("body")).toContainText("tx1_");
+    await expect(page.locator("body")).toContainText("what the database holds is a hash");
+
+    // Putting it away is a deliberate click, and it says the value cannot come back.
+    await page.getByRole("button", { name: /I have stored it/ }).click();
+    await page.waitForURL(/flash=/, { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText("cannot be shown again");
+    await expect(page.locator("body")).not.toContainText("Copy this token now");
+
+    // The token is listed with its scope and its prefix — and no secret at all.
+    const tokenRow = page.locator("li", { hasText: tokenName });
+    await expect(tokenRow).toContainText("tickets:read");
+    await expect(tokenRow).toContainText("tx1_");
+    await expect(tokenRow).toContainText("active");
+    await expect(tokenRow).not.toContainText("secret");
+
+    // Register a destination. The URL is checked at registration, so an https
+    // address is accepted without anything being sent.
+    const endpointName = `Sweep endpoint ${stamp}`;
+    await page.getByLabel("Name", { exact: true }).last().fill(endpointName);
+    await page.getByLabel("URL").fill("https://example.test/hooks/tickets");
+    await page.getByRole("checkbox", { name: "ticket.created" }).check();
+    await page.getByRole("button", { name: "Register endpoint" }).click();
+    await page.waitForURL(/registered=/, { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText("Copy this signing secret now");
+    await expect(page.locator("body")).toContainText("whsec_");
+    await page.getByRole("button", { name: /I have stored it/ }).click();
+    await page.waitForURL(/flash=/, { timeout: 20_000 });
+
+    const endpointRow = page.locator("li", { hasText: endpointName });
+    await expect(endpointRow).toContainText("https://example.test/hooks/tickets");
+    await expect(endpointRow).toContainText("ticket.created");
+    await expect(endpointRow).toContainText("on");
+
+    // A plain-http address is refused before it is stored, with the rule named.
+    await page.getByLabel("Name", { exact: true }).last().fill(`Sweep insecure ${stamp}`);
+    await page.getByLabel("URL").fill("http://example.test/hooks/tickets");
+    await page.getByRole("checkbox", { name: "ticket.created" }).check();
+    await page.getByRole("button", { name: "Register endpoint" }).click();
+    await page.waitForURL(/error=/, { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText("https, or http on a loopback address");
+
+    // The sweep is a button as well as a schedule; with nothing due it says 0.
+    await page.getByRole("button", { name: "Deliver what is due now" }).click();
+    await page.waitForURL(/flash=/, { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText(/Swept \d+: \d+ delivered, \d+ retrying, \d+ exhausted/);
+  });
+
+  test("integrations: revoking a token and removing an endpoint both leave a record", async ({ page }) => {
+    await signIn(page, ADMIN);
+    const stamp = Date.now();
+    const tokenName = `Revoke sweep ${stamp}`;
+    const endpointName = `Remove sweep ${stamp}`;
+
+    // Mint one to revoke; the secret is irrelevant to this test, so hide it.
+    await page.goto(url("/admin/integrations"), { waitUntil: "load" });
+    await page.getByLabel("Name", { exact: true }).first().fill(tokenName);
+    await page.getByRole("checkbox", { name: "tickets:write" }).check();
+    await page.getByRole("button", { name: "Mint token" }).click();
+    await page.waitForURL(/minted=/, { timeout: 20_000 });
+    await page.getByRole("button", { name: /I have stored it/ }).click();
+    await page.waitForURL(/flash=/, { timeout: 20_000 });
+
+    const tokenRow = page.locator("li", { hasText: tokenName });
+    await tokenRow.getByRole("button", { name: "Revoke" }).click();
+    await page.waitForURL(/flash=/, { timeout: 20_000 });
+    // The row stays, so "who had that?" has an answer — and it now says revoked.
+    const revoked = page.locator("li", { hasText: tokenName });
+    await expect(revoked).toContainText("revoked");
+    await expect(revoked).toContainText("The row stays");
+
+    // And an endpoint can be removed without losing its delivery history.
+    await page.getByLabel("Name", { exact: true }).last().fill(endpointName);
+    await page.getByLabel("URL").fill("https://example.test/hooks/removed");
+    await page.getByRole("checkbox", { name: "ticket.updated" }).check();
+    await page.getByRole("button", { name: "Register endpoint" }).click();
+    await page.waitForURL(/registered=/, { timeout: 20_000 });
+    await page.getByRole("button", { name: /I have stored it/ }).click();
+    await page.waitForURL(/flash=/, { timeout: 20_000 });
+
+    await page.locator("li", { hasText: endpointName }).getByRole("button", { name: "Remove" }).click();
+    await page.waitForURL(/flash=/, { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText("Endpoint removed");
+    await expect(page.locator("li", { hasText: endpointName })).toHaveCount(0);
+  });
+
+  test("integrations: a Slack room is registered, and a URL that is not Slack's is refused", async ({ page }) => {
+    await signIn(page, ADMIN);
+    const stamp = Date.now();
+    const roomName = `Sweep room ${stamp}`;
+
+    await page.goto(url("/admin/integrations"), { waitUntil: "load" });
+
+    // The URL is checked against the hosts the provider owns. That check is the
+    // whole SSRF story here, so a Slack room is registered with a Slack URL — and
+    // nothing is sent, because registering is not the same as posting.
+    await page.getByLabel("Room name").fill(roomName);
+    await page.getByLabel("Webhook address").fill("https://hooks.slack.com/services/T000/B000/SWEEP");
+    await page.getByRole("checkbox", { name: "ticket.replied" }).check();
+    await page.getByRole("button", { name: "Register room" }).click();
+    await page.waitForURL(/flash=/, { timeout: 20_000 });
+
+    const roomRow = page.locator("li", { hasText: roomName });
+    await expect(roomRow).toContainText("Slack");
+    await expect(roomRow).toContainText("ticket.replied");
+    // The webhook URL is a credential, so the console never prints it back.
+    await expect(roomRow).not.toContainText("hooks.slack.com");
+
+    // A URL that merely *contains* the provider's name is not the provider's.
+    await page.getByLabel("Room name").fill(`Sweep impostor ${stamp}`);
+    await page.getByLabel("Webhook address").fill("https://hooks.slack.com.evil.test/services/T/B/X");
+    await page.getByRole("checkbox", { name: "ticket.created" }).check();
+    await page.getByRole("button", { name: "Register room" }).click();
+    await page.waitForURL(/error=/, { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText("hooks.slack.com");
+    await expect(page.locator("li", { hasText: `Sweep impostor ${stamp}` })).toHaveCount(0);
+
+    // And a channel can be removed without losing its delivery history.
+    await page.locator("li", { hasText: roomName }).getByRole("button", { name: "Remove" }).click();
+    await page.waitForURL(/flash=/, { timeout: 20_000 });
+    await expect(page.locator("body")).toContainText("Channel removed");
+    await expect(page.locator("li", { hasText: roomName })).toHaveCount(0);
+  });
+
+  test("integrations: a desk agent is turned away from tenant configuration", async ({ page }) => {
+    await signIn(page); // the seeded agent, which lacks `tenant:manage`
+    await page.goto(url("/admin/integrations"), { waitUntil: "load" });
+    expect(new URL(page.url()).pathname).toBe("/inbox");
+    expect(await page.getByRole("button", { name: "Mint token" }).count()).toBe(0);
   });
 });

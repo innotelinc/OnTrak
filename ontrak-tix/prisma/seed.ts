@@ -15,6 +15,7 @@ import { hashPassword } from "../src/lib/password";
 import { weekdayCalendar } from "../src/lib/sla-rules";
 import { DEFAULT_CANNED_RESPONSES } from "../src/lib/canned-rules";
 import { DEFAULT_TICKET_TEMPLATES } from "../src/lib/template-rules";
+import { DEFAULT_KNOWLEDGE_ARTICLES } from "../src/lib/knowledge-rules";
 import { createTicketServices } from "../src/lib/ticket-server";
 import type { TicketPrismaClient } from "../src/lib/ticket-store-prisma";
 import { SecurityAlertService } from "../src/lib/security-alert-service";
@@ -37,6 +38,7 @@ interface SeedDb {
   slaPolicy: { upsert(args: unknown): Promise<{ id: string }> };
   cannedResponse: { upsert(args: unknown): Promise<{ id: string }> };
   ticketTemplate: { upsert(args: unknown): Promise<{ id: string }> };
+  knowledgeArticle: { upsert(args: unknown): Promise<{ id: string }> };
   ticket: { count(args: unknown): Promise<number> };
   securityAlert: { count(args: unknown): Promise<number> };
 }
@@ -125,6 +127,24 @@ async function main(): Promise<void> {
         description: template.description,
         type: template.type,
         priority: template.priority,
+      },
+    });
+  }
+
+  // Starter knowledge articles, so the portal's deflection prompt has something
+  // to answer with on a fresh database — an empty knowledge base is never
+  // filled in.
+  for (const article of DEFAULT_KNOWLEDGE_ARTICLES) {
+    await db.knowledgeArticle.upsert({
+      where: { tenantId_title: { tenantId: tenant.id, title: article.title } },
+      update: { body: article.body, visibility: article.visibility, tags: [...article.tags] },
+      create: {
+        tenantId: tenant.id,
+        title: article.title,
+        body: article.body,
+        visibility: article.visibility,
+        tags: [...article.tags],
+        createdBy: users.ADMIN.id,
       },
     });
   }
@@ -224,7 +244,8 @@ async function main(): Promise<void> {
   console.log(
     `Seeded tenant "${tenant.slug}" with ${ACCOUNTS.length} accounts (password: ${DEMO_PASSWORD}), ` +
       `a queue, ${policies.length} SLA policies, ${DEFAULT_CANNED_RESPONSES.length} canned responses, ` +
-      `${DEFAULT_TICKET_TEMPLATES.length} ticket templates, sample tickets and demo security alerts.`,
+      `${DEFAULT_TICKET_TEMPLATES.length} ticket templates, ${DEFAULT_KNOWLEDGE_ARTICLES.length} knowledge articles, ` +
+      `sample tickets and demo security alerts.`,
   );
 }
 

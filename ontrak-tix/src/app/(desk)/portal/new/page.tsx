@@ -1,13 +1,32 @@
 import { requireActor } from "../../../../lib/session";
 import { TICKET_PRIORITIES, TICKET_TYPES } from "../../../../lib/ticket-rules";
+import { knowledgeServicesFor } from "../../../../lib/db";
+import { ArticleSuggestions } from "../../../../components/ArticleSuggestions";
 import { createTicketAction } from "../../../actions/tickets";
 
 export const metadata = { title: "New request" };
 
-/** Raise a ticket. A requester is always the requester; no one can file on their behalf here. */
-export default async function NewRequestPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
-  await requireActor();
-  const { error } = await searchParams;
+/**
+ * Raise a ticket. A requester is always the requester; no one can file on their
+ * behalf here.
+ *
+ * **Self-service deflection (M5).** Typing a few words and pressing *Find help*
+ * runs the same public-article search the desk's suggestions use, and anything
+ * that matches is shown in full before the form. It is a plain `GET` form, so it
+ * works with no JavaScript, and whatever was typed stays in the subject field —
+ * if the articles do not help, nothing has been lost by looking.
+ */
+export default async function NewRequestPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string; subject?: string }>;
+}) {
+  const actor = await requireActor();
+  const { error, subject } = await searchParams;
+
+  const query = subject?.trim() ?? "";
+  // Public articles only: the search itself refuses to hand back a private one.
+  const suggestions = query ? await knowledgeServicesFor().suggestPublic(actor.tenantId, query) : [];
 
   return (
     <div className="mx-auto max-w-2xl space-y-4">
@@ -22,6 +41,28 @@ export default async function NewRequestPage({ searchParams }: { searchParams: P
         </p>
       ) : null}
 
+      <form method="get" className="space-y-3 rounded-xl2 border border-line bg-surface p-5">
+        <label className="block text-sm font-medium text-ink">
+          Check our answers first
+          <input
+            name="subject"
+            defaultValue={query}
+            maxLength={200}
+            placeholder="e.g. vpn keeps disconnecting"
+            className="mt-1 w-full rounded-xl2 border border-line bg-surface px-3 py-2 text-sm text-ink"
+          />
+        </label>
+        <button type="submit" className="rounded-full bg-surface-muted px-4 py-2 text-sm font-semibold text-ink-soft">
+          Find help
+        </button>
+      </form>
+
+      <ArticleSuggestions
+        suggestions={suggestions}
+        title={`Answers for “${query}”`}
+        note="Open one to read it. If none of these help, the form below is still the right place to ask."
+      />
+
       <form action={createTicketAction} className="space-y-4 rounded-xl2 border border-line bg-surface p-5">
         <label className="block text-sm font-medium text-ink">
           What is it about?
@@ -29,6 +70,7 @@ export default async function NewRequestPage({ searchParams }: { searchParams: P
             name="subject"
             required
             maxLength={200}
+            defaultValue={query}
             className="mt-1 w-full rounded-xl2 border border-line bg-surface px-3 py-2 text-sm text-ink"
           />
         </label>

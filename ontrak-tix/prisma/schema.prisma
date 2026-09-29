@@ -48,6 +48,8 @@ model Tenant {
   alertPromotions       AlertPromotion[]
   identityConnection    IdentityConnection?
   rules                 Rule[]
+  macros                Macro[]
+  knowledge             KnowledgeArticle[]
   incidents             Incident[]
   incidentEvents        IncidentEvent[]
   playbookSteps         PlaybookStep[]
@@ -68,6 +70,17 @@ model Tenant {
   retainers             Retainer[]
   rotaShifts            RotaShift[]
   handoffs              Handoff[]
+  // The M6 integration surface: what an outside system may do (a token), where it
+  // is told about it (an endpoint), what happened when we told it (deliveries) and
+  // which monitored conditions are open as tickets (the RMM connector).
+  apiTokens             ApiToken[]
+  webhookEndpoints      ApiWebhookEndpoint[]
+  webhookDeliveries     ApiWebhookDelivery[]
+  rmmAlertLinks         RmmAlertLink[]
+  // Where the desk tells people, rather than an integration: the rooms on call
+  // already watches, and what it managed to say to each of them.
+  chatChannels          ChatChannel[]
+  chatDeliveries        ChatDelivery[]
 
   @@index([slug])
 }
@@ -1371,10 +1384,283 @@ model Rule {
   @@index([tenantId, enabled, position])
 }
 
+/// A multi-step shortcut an agent runs on one ticket (M5). It shares the rule
+/// engine's action vocabulary — `RuleAction[]`, stored as JSON for the same
+/// reason a rule's are — but has no trigger and no conditions: a macro is the
+/// case where a person has already looked at the ticket and decided. Managing
+/// one is `rule:manage`; running it is `ticket:update`.
+model Macro {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  description String   @default("")
+  /// `RuleAction[]` — see `src/lib/rule-rules.ts`.
+  actions     Json     @default("[]")
+  enabled     Boolean  @default(true)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@index([tenantId, enabled])
+}
+
 /// When a rule runs. Kept to the moments a desk actually automates, rather than
 /// to every write the application makes.
 enum RuleTrigger {
   TICKET_CREATED
   TICKET_UPDATED
   TICKET_REPLIED
+}
+
+/// A knowledge-base article (M5). A `PUBLIC` article is offered to requesters in
+/// the portal before they raise a ticket; a `PRIVATE` one is staff-only. Tags are
+/// a plain string list because they are search words, not a classification, and
+/// the suggestion engine (pure, in `knowledge-rules.ts`) reads them directly.
+model KnowledgeArticle {
+  id         String              @id @default(cuid())
+  tenantId   String
+  title      String
+  body       String
+  visibility KnowledgeVisibility @default(PRIVATE)
+  tags       String[]            @default([])
+  createdBy  String
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, title])
+  @@index([tenantId, visibility])
+}
+
+/// Who may read an article. Public articles are shown to requesters in the
+/// portal; private ones are the desk's own notes.
+enum KnowledgeVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+/* -------------------------------------------------------------------------- */
+/*  M6 — the public API and webhooks                                          */
+/* -------------------------------------------------------------------------- */
+
+/// A bearer token an outside system uses to reach the public API (M6).
+///
+/// `tokenHash` is the primary lookup key and the only thing that identifies the
+/// token: the plaintext is returned once at creation and never stored, exactly as
+/// a credential is. `tokenPrefix` keeps the first few characters so a person can
+/// tell two tokens apart when deciding which one to revoke — which is the whole
+/// reason a leaked token is findable rather than merely invalid.
+///
+/// The rate limit lives on this row on purpose. A token is the unit that is
+/// limited, so its window travels with it rather than in a separate table that a
+/// second process could disagree with.
+model ApiToken {
+  id                 String    @id @default(cuid())
+  tenantId           String
+  name               String
+  /// SHA-256 of the token. Never the token.
+  tokenHash          String    @unique
+  /// `tx1_…` — enough to recognise one, not enough to use one.
+  tokenPrefix        String
+  scopes             String[]
+  createdBy          String
+  createdAt          DateTime  @default(now())
+  /// Null means no expiry, which is a choice somebody made on purpose.
+  expiresAt          DateTime?
+  revokedAt          DateTime?
+  lastUsedAt         DateTime?
+  rateLimitPerMinute Int       @default(60)
+  /// The current fixed window, as a `DateTime`; null before the token's first use.
+  rateWindowStart    DateTime?
+  /// Requests counted inside that window. Stops growing at the limit plus one.
+  rateCount          Int       @default(0)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, revokedAt])
+}
+
+/// A registered destination for webhook deliveries (M6).
+///
+/// `secret` is the one credential in this schema stored in the clear, and the
+/// reason is stated rather than hidden: a delivery is signed with an HMAC, and an
+/// HMAC cannot be computed from a hash. It is shown once when it is created or
+/// rotated, and the deployment's job is to encrypt it at rest — see the note in
+/// `src/lib/webhook-rules.ts`.
+///
+/// `events` is a `String[]` rather than a join table because a subscription is
+/// read and written whole: "what does this endpoint want?" should be one row, not
+/// a query. Which strings are valid is the rules module's business.
+model ApiWebhookEndpoint {
+  id         String    @id @default(cuid())
+  tenantId   String
+  name       String
+  url        String
+  /// `WebhookEvent[]` — see `src/lib/webhook-rules.ts`.
+  events     String[]
+  secret     String
+  enabled    Boolean   @default(true)
+  createdBy  String
+  createdAt  DateTime  @default(now())
+  disabledAt DateTime?
+
+  tenant     Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deliveries ApiWebhookDelivery[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, enabled])
+}
+
+/// One event's journey to one endpoint (M6): the delivery log.
+///
+/// The row is written **before** the attempt, so an event that arrived while the
+/// process was dying is still visible as one that was due, and `payload` is the
+/// exact bytes that were signed and sent — so "what did you send us?" is answered
+/// from the record rather than reconstructed from a ticket that has since
+/// changed. `EXHAUSTED` is a terminal state with a retry count, not a silent
+/// drop: five attempts over about half a day is the schedule, and the log says so.
+model ApiWebhookDelivery {
+  id             String                @id @default(cuid())
+  tenantId       String
+  endpointId     String
+  event          String
+  payload        String
+  status         WebhookDeliveryStatus @default(PENDING)
+  attemptCount   Int                   @default(0)
+  firstAttemptAt DateTime?
+  lastAttemptAt  DateTime?
+  /// Null when nothing answered — a timeout is not a status code.
+  lastStatusCode Int?
+  lastError      String?
+  nextAttemptAt  DateTime?
+  deliveredAt    DateTime?
+  createdAt      DateTime              @default(now())
+
+  tenant   Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  endpoint ApiWebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  /// For the sweep that finds what is owed an attempt.
+  @@index([status, nextAttemptAt])
+}
+
+/// Where a delivery stands. Named for what a support engineer would ask: did it
+/// arrive, is it still trying, or did we give up?
+enum WebhookDeliveryStatus {
+  PENDING
+  DELIVERED
+  RETRYING
+  EXHAUSTED
+}
+
+/// A monitored condition, and the ticket it is (or was last) open against (M6).
+///
+/// The table is keyed on the **condition**, not on the vendor's alert: the same
+/// check failing twice is one condition, and only `dedupeKey` can say so, because
+/// vendors disagree about whether a re-fire reuses an id. `state` is the
+/// condition's own state — `OPEN` or `RESOLVED` — which is what lets the next
+/// failure be recognized as a recurrence rather than a first sighting.
+///
+/// One condition can become several tickets over its life (`reopenCount` counts
+/// the recurrences), so the link carries `ticketId` **and** `ticketRef`: the id is
+/// what the connector acts on, the ref is what a person reads in a log.
+model RmmAlertLink {
+  id          String    @id @default(cuid())
+  tenantId    String
+  /// `source:host:check`, case-folded. The condition's identity.
+  dedupeKey   String
+  source      String
+  host        String
+  check       String
+  /// `OPEN` | `RESOLVED`, narrowed on read.
+  state       String    @default("OPEN")
+  /// `INFO` | `WARNING` | `CRITICAL`, narrowed on read. The worst seen while open.
+  severity    String    @default("WARNING")
+  /// The vendor's own id for the firing that opened (or last touched) this link.
+  externalId  String
+  ticketId    String
+  ticketRef   String
+  /// The vendor's latest message for this condition, verbatim.
+  lastSummary String
+  openedAt    DateTime
+  lastSeenAt  DateTime
+  resolvedAt  DateTime?
+  /// How many reports have folded into the current opening.
+  occurrences Int       @default(1)
+  /// How many times the condition cleared and failed again.
+  reopenCount Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, dedupeKey])
+  @@index([tenantId, ticketId])
+  @@index([tenantId, state])
+}
+
+/// A chat room the desk posts to (M6): a Slack incoming webhook or a Teams
+/// connector, and the events it asked for.
+///
+/// `url` is a credential — anybody holding it can post into that room — so it is
+/// never written to the audit trail, and it is a column a deployment may want to
+/// encrypt at rest. The provider is decided at registration and not changeable: the
+/// hosts a provider owns are the whole of this connector's SSRF story, and
+/// re-pointing a channel at another provider is a new channel, not an edit.
+model ChatChannel {
+  id         String   @id @default(cuid())
+  tenantId   String
+  /// `SLACK` | `TEAMS`, narrowed on read.
+  provider   String
+  name       String
+  url        String
+  /// `WebhookEvent[]` — the same closed set the versioned API emits.
+  events     String[]
+  enabled    Boolean  @default(true)
+  createdBy  String
+  createdAt  DateTime @default(now())
+  disabledAt DateTime?
+
+  tenant     Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deliveries ChatDelivery[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, enabled])
+}
+
+/// One attempt at telling a room something (M6).
+///
+/// `status` reuses `WebhookDeliveryStatus` rather than defining a second enum with
+/// the same four members: the state machine is shared (`applyDeliveryAttempt`), and
+/// two enums is how two retry policies begin.
+model ChatDelivery {
+  id             String                @id @default(cuid())
+  tenantId       String
+  channelId      String
+  /// A subscribable event, or `test` for the console's on-demand message.
+  event          String
+  /// The exact bytes posted, kept so "what did the room actually see?" has an answer.
+  payload        String
+  status         WebhookDeliveryStatus @default(PENDING)
+  attemptCount   Int                   @default(0)
+  firstAttemptAt DateTime?
+  lastAttemptAt  DateTime?
+  /// Null when nothing answered — a timeout is not a status code.
+  lastStatusCode Int?
+  lastError      String?
+  nextAttemptAt  DateTime?
+  deliveredAt    DateTime?
+  createdAt      DateTime              @default(now())
+
+  tenant  Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  channel ChatChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  /// For the sweep that finds what is owed an attempt.
+  @@index([status, nextAttemptAt])
 }

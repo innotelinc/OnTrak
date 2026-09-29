@@ -8,13 +8,26 @@ import {
   cannedServicesFor,
   clientServicesFor,
   linkServicesFor,
+  macroServicesFor,
   timeServicesFor,
 } from "../../../../lib/db";
 import { scopeByClient, scopeRefusal } from "../../../../lib/client-rules";
 import { slaStatusFor } from "../../../../lib/report-rules";
-import { TicketDetail, type TicketActions, type TicketOption } from "../../../../components/TicketDetail";
+import {
+  TicketDetail,
+  type MacroChoice,
+  type TicketActions,
+  type TicketOption,
+} from "../../../../components/TicketDetail";
 import { TicketTime } from "../../../../components/TicketTime";
-import { assignAction, linkAction, mergeAction, replyAction, setStatusAction } from "../../../actions/tickets";
+import {
+  assignAction,
+  linkAction,
+  mergeAction,
+  replyAction,
+  runMacroAction,
+  setStatusAction,
+} from "../../../actions/tickets";
 import { logTimeAction, removeTimeAction } from "../../../actions/time";
 
 export const metadata = { title: "Ticket" };
@@ -69,12 +82,22 @@ export default async function TicketPage({
     .sort((a, b) => a.ref.localeCompare(b.ref));
 
   const actions: TicketActions = {};
+  // The shortcuts this agent may run on this ticket (M5). Only the enabled ones
+  // are offered, and the action re-checks `ticket:update` server-side regardless.
+  let macros: MacroChoice[] = [];
   if (canReplyToTicket(actor, ticket)) actions.reply = replyAction;
   if (canUpdateTicket(actor, ticket)) actions.setStatus = setStatusAction;
   if (canAssignTicket(actor, ticket)) actions.assign = assignAction;
   if (canUpdateTicket(actor, ticket)) {
     actions.link = linkAction;
     actions.merge = mergeAction;
+    const listed = await macroServicesFor().list(actor);
+    macros = listed.ok
+      ? listed.value
+          .filter((entry) => entry.macro.enabled)
+          .map((entry) => ({ id: entry.macro.id, name: entry.macro.name }))
+      : [];
+    if (macros.length > 0) actions.applyMacro = runMacroAction;
   }
 
   return (
@@ -87,7 +110,15 @@ export default async function TicketPage({
           {error}
         </p>
       ) : null}
-      <TicketDetail ticket={ticket} actions={actions} sla={sla} canned={canned} links={links} linkOptions={linkOptions} />
+      <TicketDetail
+        ticket={ticket}
+        actions={actions}
+        sla={sla}
+        canned={canned}
+        links={links}
+        linkOptions={linkOptions}
+        macros={macros}
+      />
       <TicketTime
         ticketId={ticket.id}
         entries={time.ok ? time.value : []}

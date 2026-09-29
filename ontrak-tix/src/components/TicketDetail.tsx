@@ -22,6 +22,14 @@ export interface TicketActions {
   assign?: (formData: FormData) => Promise<void>;
   link?: (formData: FormData) => Promise<void>;
   merge?: (formData: FormData) => Promise<void>;
+  /** Run a saved shortcut (M5) on this ticket. */
+  applyMacro?: (formData: FormData) => Promise<void>;
+}
+
+/** A saved macro, as the picker shows it. */
+export interface MacroChoice {
+  id: string;
+  name: string;
 }
 
 /** A candidate ticket for the link/merge pickers. */
@@ -56,6 +64,7 @@ export function TicketDetail({
   canned = [],
   links = [],
   linkOptions = [],
+  macros = [],
 }: {
   ticket: TicketRecord;
   actions?: TicketActions;
@@ -67,6 +76,8 @@ export function TicketDetail({
   links?: LinkedTicket[];
   /** Other tickets the caller may link or merge into this one. */
   linkOptions?: TicketOption[];
+  /** The shortcuts the caller may run on this ticket (M5). */
+  macros?: MacroChoice[];
 }) {
   return (
     <section aria-label={`Ticket ${ticket.ref}`} className="rounded-xl2 border border-line bg-surface">
@@ -167,6 +178,34 @@ export function TicketDetail({
               </form>
             ) : null}
           </div>
+
+          {actions.applyMacro && macros.length > 0 ? (
+            <form action={actions.applyMacro} className="flex flex-wrap items-center gap-2">
+              <input type="hidden" name="ticketId" value={ticket.id} />
+              <label className="text-xs font-semibold text-ink-soft" htmlFor="macro-select">
+                Shortcut
+              </label>
+              <select
+                id="macro-select"
+                name="macroId"
+                required
+                defaultValue=""
+                className="rounded-xl2 border border-line bg-surface px-3 py-1.5 text-xs text-ink"
+              >
+                <option value="" disabled>
+                  Run a macro…
+                </option>
+                {macros.map((macro) => (
+                  <option key={macro.id} value={macro.id}>
+                    {macro.name}
+                  </option>
+                ))}
+              </select>
+              <button type="submit" className="rounded-full bg-brand/12 px-3 py-1.5 text-xs font-semibold text-brand">
+                Run macro
+              </button>
+            </form>
+          ) : null}
 
           {linkOptions.length > 0 && (actions.link || actions.merge) ? (
             <div className="grid gap-3 sm:grid-cols-2">

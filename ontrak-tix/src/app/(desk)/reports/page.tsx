@@ -6,11 +6,21 @@ import {
   clientSurveyServicesFor,
   csatServicesFor,
   escalationServicesFor,
+  knowledgeServicesFor,
+  prisma,
   slaPolicyStoreFor,
   ticketServicesFor,
 } from "../../../lib/db";
 import { hasPermission } from "../../../lib/access-rules";
 import { buildSlaReport, clientScorecards, type ClientScorecard, type ReportSurvey, type TicketSlaStatus } from "../../../lib/report-rules";
+import {
+  csatByGroup,
+  csatDashboard,
+  type AttributedSurvey,
+  type CsatBucket,
+  type CsatGroupScore,
+} from "../../../lib/csat-rules";
+import { buildKnowledgeGapReport, type KnowledgeGapReport } from "../../../lib/knowledge-rules";
 
 export const metadata = { title: "Reports" };
 
@@ -70,6 +80,105 @@ function ClientRow({ card }: { card: ClientScorecard }) {
   );
 }
 
+/** A satisfaction distribution: each point on the scale, against the busiest. */
+function Distribution({ buckets }: { buckets: CsatBucket[] }) {
+  const max = Math.max(1, ...buckets.map((bucket) => bucket.count));
+  return (
+    <ul className="mt-3 space-y-1.5">
+      {buckets.map((bucket) => (
+        <li key={bucket.score} className="flex items-center gap-2">
+          <span className="w-36 shrink-0 text-xs text-ink-soft">
+            {bucket.score} · {bucket.label}
+          </span>
+          <span className="h-2 flex-1 overflow-hidden rounded-full bg-surface-muted" aria-hidden="true">
+            <span className="block h-2 rounded-full bg-brand" style={{ width: `${(bucket.count / max) * 100}%` }} />
+          </span>
+          <span className="w-20 shrink-0 text-right text-xs text-ink-faint">
+            {bucket.count}
+            {bucket.percent === null ? "" : ` · ${bucket.percent}%`}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Satisfaction split by whoever earned it, worst first. */
+function SatisfactionTable({ rows }: { rows: CsatGroupScore[] }) {
+  return (
+    <div className="mt-3 overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead className="text-[11px] tracking-wide text-ink-faint uppercase">
+          <tr>
+            <th scope="col" className="py-1">Agent</th>
+            <th scope="col" className="py-1">Answers</th>
+            <th scope="col" className="py-1">Average</th>
+            <th scope="col" className="py-1">Positive</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line">
+          {rows.map((row) => (
+            <tr key={row.groupId ?? "unassigned"}>
+              <th scope="row" className="py-2 text-left font-semibold text-ink">
+                {row.label}
+              </th>
+              <td className="py-2 text-ink-soft">{row.summary.responses}</td>
+              <td className="py-2 text-ink-soft">{row.summary.average === null ? "\u2014" : `${row.summary.average}/5`}</td>
+              <td className="py-2 text-ink-soft">
+                {row.summary.positivePercent === null ? "\u2014" : `${row.summary.positivePercent}%`}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** The questions no article answered, repeats first. */
+function KnowledgeGaps({ report }: { report: KnowledgeGapReport }) {
+  if (report.gaps.length === 0) {
+    return (
+      <p className="mt-2 text-sm text-ink-faint">
+        Every subject raised on the desk found something in the knowledge base.
+      </p>
+    );
+  }
+  return (
+    <ul className="mt-3 divide-y divide-line">
+      {report.gaps.map((gap) => (
+        <li key={gap.terms.join(" ")} className="py-3">
+          <div className="flex flex-wrap items-baseline gap-2">
+            <span className="font-semibold text-ink">{gap.terms.join(" · ")}</span>
+            {gap.repeat ? (
+              <span className="rounded-full bg-amber/10 px-2 py-0.5 text-[11px] font-semibold text-amber">
+                repeat requester
+              </span>
+            ) : null}
+            <span className="ml-auto text-[11px] text-ink-faint">
+              {gap.tickets.length} ticket{gap.tickets.length === 1 ? "" : "s"} · {gap.requesters.length} requester
+              {gap.requesters.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          <ul className="mt-1 space-y-0.5">
+            {gap.tickets.slice(0, 4).map((ticket) => (
+              <li key={ticket.id} className="flex items-center gap-2 text-xs text-ink-soft">
+                <span className="font-mono text-[11px] font-semibold text-ink-faint">{ticket.ref}</span>
+                <a href={`/inbox/${ticket.id}`} className="truncate hover:text-brand">
+                  {ticket.subject}
+                </a>
+              </li>
+            ))}
+            {gap.tickets.length > 4 ? (
+              <li className="text-xs text-ink-faint">and {gap.tickets.length - 4} more</li>
+            ) : null}
+          </ul>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function StatusTable({ rows, empty }: { rows: TicketSlaStatus[]; empty: string }) {
   if (rows.length === 0) return <p className="mt-2 text-sm text-ink-faint">{empty}</p>;
   return (
@@ -96,7 +205,7 @@ export default async function ReportsPage() {
   if (!hasPermission(actor.role, "ticket:read:any")) redirect("/portal");
 
   const now = new Date().toISOString();
-  const [tickets, policies, escalations, csat, ticketSurveys, clients, clientSurveys] = await Promise.all([
+  const [tickets, policies, escalations, csat, ticketSurveys, clients, clientSurveys, knowledge] = await Promise.all([
     ticketServicesFor().store.listTickets(actor.tenantId),
     slaPolicyStoreFor().listForTenant(actor.tenantId),
     escalationServicesFor().list(actor.tenantId),
@@ -104,10 +213,57 @@ export default async function ReportsPage() {
     csatServicesFor().list(actor.tenantId),
     clientServicesFor().list(actor),
     clientSurveyServicesFor().all(actor),
+    knowledgeServicesFor().list(actor),
   ]);
 
   const report = buildSlaReport(tickets, policies, now);
   const openEscalations = escalations.filter((escalation) => escalation.acknowledgedAt === null).slice(0, 10);
+
+  // The satisfaction dashboard (M5). A survey row names only the ticket it came
+  // from, so the ticket answers who did the work — which is what makes "which
+  // agent is behind the unhappy ratings?" a question the report can answer at all.
+  const assigneeOfTicket = new Map(tickets.map((ticket) => [ticket.id, ticket.assigneeId ?? null]));
+  const attributed: AttributedSurvey[] = ticketSurveys.map((survey) => ({
+    survey: {
+      token: survey.token,
+      requestedAt: survey.requestedAt,
+      respondedAt: survey.respondedAt,
+      score: survey.score,
+      comment: survey.comment,
+    },
+    groupId: assigneeOfTicket.get(survey.ticketId) ?? null,
+  }));
+  const satisfaction = csatDashboard(
+    attributed.map((entry) => entry.survey),
+    ticketSurveys.length,
+    { commentLimit: 6 },
+  );
+  const assigneeIds = [...new Set(tickets.map((ticket) => ticket.assigneeId).filter((id): id is string => !!id))];
+  const staff = assigneeIds.length
+    ? await prisma.user.findMany({
+        where: { tenantId: actor.tenantId, id: { in: assigneeIds } },
+        select: { id: true, displayName: true },
+      })
+    : [];
+  const agentName = new Map(staff.map((user) => [user.id, user.displayName]));
+  const byAgent = csatByGroup(attributed, (groupId) =>
+    groupId === null ? "Unassigned" : (agentName.get(groupId) ?? groupId),
+  );
+
+  // The knowledge gaps (M5): subjects the knowledge base could not answer, which
+  // is the article backlog written by the desk's own tickets.
+  const gapReport = buildKnowledgeGapReport(
+    knowledge.ok ? knowledge.value.map((entry) => entry.article) : [],
+    tickets.map((ticket) => ({
+      id: ticket.id,
+      ref: ticket.ref,
+      subject: ticket.subject,
+      requesterId: ticket.requesterId,
+      clientId: ticket.clientId ?? null,
+      status: ticket.status,
+      createdAt: ticket.createdAt,
+    })),
+  );
 
   // Per-client attainment (M4). The survey answers come from both questions the
   // desk asks — the one on a resolved ticket and the one a client answers from a
@@ -163,6 +319,73 @@ export default async function ReportsPage() {
         <Stat label="Resolution (p90)" value={formatMinutes(report.resolution.timing.p90Minutes)} hint={`${report.resolution.timing.measured} measured`} />
         <Stat label="CSAT" value={csat.average === null ? "—" : `${csat.average}/5`} hint={csat.responses === 0 ? "no responses yet" : `${csat.positivePercent}% positive · ${csat.responseRatePercent}% response rate`} />
       </div>
+
+      <section aria-label="Satisfaction" className="rounded-xl2 border border-line bg-surface p-5">
+        <h2 className="font-display text-sm font-semibold text-ink">Satisfaction</h2>
+        <p className="text-xs text-ink-faint">
+          The ratings people left on their own resolved tickets. An average hides the shape of the answers, so the whole
+          scale is shown — including the points nobody picked.
+        </p>
+        <div className="mt-3 grid gap-4 sm:grid-cols-3">
+          <Stat
+            label="Average"
+            value={satisfaction.summary.average === null ? "\u2014" : `${satisfaction.summary.average}/5`}
+            hint={`${satisfaction.summary.responses} answer${satisfaction.summary.responses === 1 ? "" : "s"}`}
+          />
+          <Stat
+            label="Positive"
+            value={satisfaction.summary.positivePercent === null ? "\u2014" : `${satisfaction.summary.positivePercent}%`}
+            hint="4 or 5 out of 5"
+          />
+          <Stat
+            label="Response rate"
+            value={satisfaction.summary.responseRatePercent === null ? "\u2014" : `${satisfaction.summary.responseRatePercent}%`}
+            hint="of the surveys offered"
+          />
+        </div>
+        {satisfaction.summary.responses === 0 ? null : <Distribution buckets={satisfaction.distribution} />}
+
+        {byAgent.length > 0 ? (
+          <div className="mt-5">
+            <h3 className="font-display text-xs font-semibold tracking-wide text-ink-soft uppercase">By agent</h3>
+            <SatisfactionTable rows={byAgent} />
+          </div>
+        ) : null}
+
+        {satisfaction.comments.length > 0 ? (
+          <div className="mt-5">
+            <h3 className="font-display text-xs font-semibold tracking-wide text-ink-soft uppercase">In their words</h3>
+            <ul className="mt-2 space-y-2">
+              {satisfaction.comments.map((comment, index) => (
+                <li
+                  key={`${comment.answeredAt}-${comment.score}-${index}`}
+                  className="rounded-xl2 border border-line bg-surface-muted p-3 text-sm text-ink-soft"
+                >
+                  <span className="font-semibold text-ink">{comment.score}/5</span>
+                  <span className="text-ink-faint"> · {comment.answeredAt.slice(0, 10)}</span>
+                  <p className="mt-1 whitespace-pre-line">{comment.comment}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </section>
+
+      <section aria-label="Knowledge gaps" className="rounded-xl2 border border-line bg-surface p-5">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <h2 className="font-display text-sm font-semibold text-ink">Knowledge gaps</h2>
+          <span className="ml-auto text-[11px] text-ink-faint">
+            {gapReport.unansweredPercent === null
+              ? "no tickets to weigh"
+              : `${gapReport.unansweredPercent}% of ${gapReport.considered} tickets found nothing`}
+          </span>
+        </div>
+        <p className="text-xs text-ink-faint">
+          Subjects whose words matched no article — the desk answered them by hand. A repeat requester is the loudest
+          possible signal that an article is missing, so those clusters sort first.
+        </p>
+        <KnowledgeGaps report={gapReport} />
+      </section>
 
       <section aria-label="Breaches" className="rounded-xl2 border border-line bg-surface p-5">
         <h2 className="font-display text-sm font-semibold text-ink">Breached</h2>

@@ -76,6 +76,8 @@ export interface TicketRow {
   closedAt: Date | null;
   /** Paused windows as stored JSON; validated on the way back in. */
   slaPauses?: unknown;
+  /** Tags applied by hand or by a rule (M5). A `String[]` column, so absent on old rows. */
+  tags?: string[] | null;
   messages?: MessageRow[];
 }
 
@@ -131,6 +133,7 @@ export function toTicketRecord(row: TicketRow): TicketRecord {
     resolvedAt: toIsoOrNull(row.resolvedAt),
     closedAt: toIsoOrNull(row.closedAt),
     pauses: coercePauses(row.slaPauses),
+    tags: row.tags ?? [],
     messages: (row.messages ?? []).map(toMessageRecord),
   };
 }
@@ -167,6 +170,7 @@ export function toTicketCreate(ticket: TicketRecord) {
     resolvedAt: ticket.resolvedAt === null ? null : fromIso(ticket.resolvedAt),
     closedAt: ticket.closedAt === null ? null : fromIso(ticket.closedAt),
     slaPauses: pausesToJson(ticket.pauses),
+    tags: [...(ticket.tags ?? [])],
   };
 }
 
@@ -189,6 +193,9 @@ export function toTicketUpdate(ticket: TicketRecord) {
     resolvedAt: ticket.resolvedAt === null ? null : fromIso(ticket.resolvedAt),
     closedAt: ticket.closedAt === null ? null : fromIso(ticket.closedAt),
     slaPauses: pausesToJson(ticket.pauses),
+    // Tags are mutable: a rule may tag a ticket after the fact, and an agent may
+    // take a wrong tag off. They are not part of what the ticket *is*.
+    tags: [...(ticket.tags ?? [])],
   };
 }
 

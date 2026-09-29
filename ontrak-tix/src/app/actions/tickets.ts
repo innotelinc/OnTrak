@@ -406,3 +406,31 @@ export async function assignAction(formData: FormData): Promise<void> {
   revalidatePath(home);
   redirect(`${home}/${ticketId}?flash=Assignment+updated`);
 }
+
+/**
+ * Run a macro on a ticket (M5).
+ *
+ * The same client-scope check the other ticket actions run, because a macro can
+ * reassign, reroute and reply: a hidden ticket id must not let an agent act on a
+ * client they do not serve. The ticket service then checks `ticket:update` and
+ * the macro is looked up tenant-scoped, so hiding the picker is a courtesy, not
+ * the control.
+ */
+export async function runMacroAction(formData: FormData): Promise<void> {
+  const actor = await requireActor();
+  const home = homePath(actor);
+  const ticketId = text(formData, "ticketId");
+  const macroId = text(formData, "macroId");
+  if (!ticketId) fail(home, "Choose a ticket first.");
+  if (!macroId) fail(`${home}/${ticketId}`, "Choose a macro first.");
+
+  const blocked = await blockedByClientScope(actor, [ticketId]);
+  if (blocked.has(ticketId)) fail(`${home}/${ticketId}`, blocked.get(ticketId) as string);
+
+  const result = await ticketServices().service.applyMacro(actor, ticketId, macroId);
+  if (!result.ok) fail(`${home}/${ticketId}`, result.error);
+
+  revalidatePath(`${home}/${ticketId}`);
+  revalidatePath(home);
+  redirect(`${home}/${ticketId}?flash=Macro+run`);
+}

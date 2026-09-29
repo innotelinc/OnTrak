@@ -91,10 +91,10 @@ export const CONDITION_OPERATORS: readonly ConditionOperator[] = [
 ];
 
 /** The operators that need no value: the field's emptiness *is* the test. */
-const VALUELESS: readonly ConditionOperator[] = ["is_empty", "is_not_empty"];
+export const VALUELESS: readonly ConditionOperator[] = ["is_empty", "is_not_empty"];
 
 /** The operators whose value is a list. */
-const LIST_OPERATORS: readonly ConditionOperator[] = ["is_one_of", "is_not_one_of"];
+export const LIST_OPERATORS: readonly ConditionOperator[] = ["is_one_of", "is_not_one_of"];
 
 export interface RuleCondition {
   field: ConditionField;
@@ -243,10 +243,26 @@ export function validateRule(input: {
   if (actions.length > MAX_ACTIONS) {
     issues.push({ field: "actions", message: `A rule may carry at most ${MAX_ACTIONS} actions.` });
   }
+  issues.push(...validateActions(actions));
+
+  return issues;
+}
+
+/**
+ * Everything wrong with a list of actions, before it is stored.
+ *
+ * Shared with macros (M5), because a macro is the same actions applied on
+ * demand rather than when a trigger fires. Two validators would eventually
+ * disagree about what "set the priority to URGENT" accepts, and the one nobody
+ * tested would be the one that shipped. `noun` changes only the wording of the
+ * refusal; `base` is the field path prefix, so an error points at the row.
+ */
+export function validateActions(actions: readonly RuleAction[], base = "actions", noun = "rule"): RuleIssue[] {
+  const issues: RuleIssue[] = [];
   actions.forEach((action, index) => {
-    const at = `actions.${index}`;
+    const at = `${base}.${index}`;
     if (!ACTION_KINDS.includes(action?.kind)) {
-      issues.push({ field: at, message: `“${String(action?.kind)}” is not something a rule can do.` });
+      issues.push({ field: at, message: `“${String(action?.kind)}” is not something a ${noun} can do.` });
       return;
     }
     const value = action.value?.trim() ?? "";
@@ -280,7 +296,6 @@ export function validateRule(input: {
         break;
     }
   });
-
   return issues;
 }
 
@@ -537,11 +552,27 @@ export function dryRun(
 export function ruleHazards(rule: { conditions?: readonly RuleCondition[]; actions?: readonly RuleAction[]; enabled?: boolean }): string[] {
   const hazards: string[] = [];
   const conditions = rule.conditions ?? [];
-  const actions = rule.actions ?? [];
 
   if (conditions.length === 0) {
     hazards.push("No conditions, so this rule matches every ticket the trigger sees.");
   }
+  hazards.push(...actionHazards(rule.actions ?? []));
+  if (rule.enabled === false) {
+    hazards.push("It is switched off, so none of this is happening yet.");
+  }
+  return hazards;
+}
+
+/**
+ * The hazards that belong to the actions themselves, whatever ran them.
+ *
+ * Shared with macros (M5): running a macro is a deliberate act, but a macro that
+ * replies to the customer or pages the on-call is still the same two ways a desk
+ * does something it did not mean to, so the console says so either way. The
+ * "no conditions" hazard is a rule's alone — a macro has no conditions by design.
+ */
+export function actionHazards(actions: readonly RuleAction[]): string[] {
+  const hazards: string[] = [];
   if (actions.some((action) => action.kind === "reply")) {
     hazards.push("It replies to the customer by itself, under the desk's name, without an agent reading the thread.");
   }
@@ -550,9 +581,6 @@ export function ruleHazards(rule: { conditions?: readonly RuleCondition[]; actio
   }
   if (actions.some((action) => action.kind === "assign_agent")) {
     hazards.push("It assigns work to a named person rather than a queue.");
-  }
-  if (rule.enabled === false) {
-    hazards.push("It is switched off, so none of this is happening yet.");
   }
   return hazards;
 }
