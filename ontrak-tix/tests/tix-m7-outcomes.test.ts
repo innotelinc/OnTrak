@@ -32,7 +32,7 @@ import {
 import { authorConfig, authorOutcome, DEFAULT_BASE_URL, DEFAULT_MODEL } from "../src/lib/ai-author";
 import { itsConfig, scenarioHandoffBody } from "../src/lib/its-client";
 import { KnowledgeService, MemoryKnowledgeStore } from "../src/lib/knowledge-service";
-import { availableTitle, outcomeActor, writeOutcomes, type OutcomeDeps } from "../src/lib/outcome-service";
+import { availableTitle, outcomeActor, previewOutcomes, writeOutcomes, type OutcomeDeps } from "../src/lib/outcome-service";
 import type { Actor } from "../src/lib/access-rules";
 import type { TicketMessage } from "../src/lib/ticket-service";
 
@@ -412,6 +412,31 @@ test("service: resolved with no reply is skipped with a reason, never invented",
   assert.equal(report.status, "skipped");
   assert.match(report.reason ?? "", /no public reply/);
   assert.equal((await articles(d)).length, 0);
+});
+
+test("preview: a dry run carries the prose and writes nothing", async () => {
+  const d = deps();
+  const before = await articles(d);
+  const reports = await previewOutcomes([ticket()], d.author);
+
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].status, "written");
+  assert.equal(reports[0].source, "template");
+  // A preview that reports a title and nothing else cannot answer the question it
+  // exists for, so the draft travels with the report.
+  assert.ok((reports[0].draft?.article.body.length ?? 0) > 0, "the article body is in the preview");
+  assert.ok((reports[0].draft?.scenario.steps.length ?? 0) > 0, "the scenario's steps are in the preview");
+  assert.match(reports[0].reason ?? "", /would write/);
+  // Nothing was written: the knowledge base is exactly as it was.
+  assert.deepEqual(await articles(d), before);
+  assert.equal(reports[0].articleId, undefined);
+});
+
+test("preview: the same refusals as the real pass, so a preview is a preview", async () => {
+  const reports = await previewOutcomes([ticket({ messages: [] })], async (t) => deterministicOutcome(t));
+  assert.equal(reports[0].status, "skipped");
+  assert.match(reports[0].reason ?? "", /no public reply/);
+  assert.equal(reports[0].draft, undefined);
 });
 
 test("service: running twice writes once", async () => {
