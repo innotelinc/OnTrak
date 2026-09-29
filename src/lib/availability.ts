@@ -3,6 +3,7 @@ import "server-only";
 import type { Platform } from "@prisma/client";
 import { prisma } from "./db";
 import { evaluatePackage } from "./availability-rules";
+import { sandboxAvailability, sandboxConfigFromEnv } from "./sim/fidelity";
 
 /**
  * Availability — the queries that feed the rule.
@@ -28,7 +29,10 @@ export async function loadAvailabilityContext() {
       disabled.add(platform);
     }
   }
-  return { disabledPlatforms: disabled };
+  // The sandbox is configuration, not data: it comes from the environment on every read so
+  // starting a container (or taking one away) changes the catalogue immediately, exactly
+  // like a platform toggle.
+  return { disabledPlatforms: disabled, sandbox: sandboxAvailability(sandboxConfigFromEnv(process.env)) };
 }
 
 /** Reason list rendered on the admin dashboard. */

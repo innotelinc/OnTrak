@@ -17,6 +17,15 @@ import { z } from "zod";
 import { createDriver } from "./sim/drivers";
 import { gradeAttempt } from "./sim/grade";
 import { createInitialState } from "./sim/state";
+import {
+  fidelityLabel,
+  normalizeFidelity,
+  sandboxAvailability,
+  sandboxConfigFromEnv,
+  satisfiesFidelity,
+  type Fidelity,
+  type SandboxAvailability,
+} from "./sim/fidelity";
 import type { EngineId, EngineState, Platform, ScenarioCheck, ScenarioDefinition } from "./sim/types";
 
 export interface ValidationIssue {
@@ -32,6 +41,10 @@ export interface ValidationResult {
   issues: ValidationIssue[];
   /** Points available, surfaced in the editor so weighting mistakes stand out. */
   totalPoints: number;
+  /** The machine the scenario declares it is authored for (v1.2). */
+  fidelity: Fidelity;
+  /** Whether this deployment could actually run it at that fidelity, and why not. */
+  sandbox: SandboxAvailability;
 }
 
 const SEED_NODE = z.object({
@@ -55,6 +68,7 @@ const DEFINITION_ENVELOPE = z.object({
   platform: z.enum(["LINUX", "WINDOWS", "OFFICE"]),
   engine: z.enum(["bash", "powershell", "office"]),
   surface: z.enum(["console", "desktop"]).optional(),
+  fidelity: z.enum(["simulated", "container"]).optional(),
   objective: z.string().min(3, "Give the scenario a one-line objective."),
   brief: z.string().min(10, "The briefing needs at least a sentence or two."),
   tasks: z.array(z.string().min(1)).min(1, "List at least one task the student must complete."),
@@ -162,9 +176,10 @@ function isBlank(value: unknown): boolean {
   );
 }
 
-export function validateDefinition(raw: unknown): ValidationResult {
+export function validateDefinition(raw: unknown, env: Record<string, string | undefined> = process.env): ValidationResult {
   const issues: ValidationIssue[] = [];
   const parsed = DEFINITION_ENVELOPE.safeParse(raw);
+  const sandbox = sandboxAvailability(sandboxConfigFromEnv(env));
 
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {
@@ -174,7 +189,7 @@ export function validateDefinition(raw: unknown): ValidationResult {
         message: issue.message,
       });
     }
-    return { ok: false, issues, totalPoints: 0 };
+    return { ok: false, issues, totalPoints: 0, fidelity: "simulated", sandbox };
   }
 
   const definition = parsed.data as unknown as ScenarioDefinition;
@@ -213,6 +228,27 @@ export function validateDefinition(raw: unknown): ValidationResult {
       field: "surface",
       message: `The ${definition.platform} platform has no desktop surface — remove \`surface\` or set it to "console".`,
     });
+  }
+
+  // Fidelity (v1.2). Only bash has an honest sandbox in this release, and a deployment with
+  // no sandbox at all cannot offer a container-fidelity scenario — which is a warning here
+  // rather than an error, because the definition itself is perfectly valid: it is this
+  // deployment, not the scenario, that cannot run it yet.
+  const fidelity = normalizeFidelity(definition.fidelity);
+  if (fidelity === "container") {
+    if (definition.engine !== "bash") {
+      issues.push({
+        level: "error",
+        field: "fidelity",
+        message: `Container fidelity is only available for the "bash" engine in this release, and this scenario uses "${definition.engine}". Set fidelity to "simulated" or author it as a Linux scenario.`,
+      });
+    } else if (!satisfiesFidelity(fidelity, sandbox)) {
+      issues.push({
+        level: "warning",
+        field: "fidelity",
+        message: `${sandbox.reason} The scenario saves fine, but it will not be offered to students here.`,
+      });
+    }
   }
 
   rawChecks.forEach((check, index) => {
@@ -322,6 +358,10 @@ export function validateDefinition(raw: unknown): ValidationResult {
   if (booted && !issues.some((issue) => issue.level === "error")) {
     try {
       const state = booted;
+      // The dry run always uses the simulated driver. It is a shape check on the checks
+      // themselves, not a rehearsal of the student's session: a warning that says "this check
+      // already passes" means the same thing in either engine, and running it here would make
+      // saving a scenario depend on a container being available.
       const driver = createDriver(definition.engine as EngineId, { user: definition.machine.user });
       driver.boot?.(state);
       const report = gradeAttempt(definition, state, 0);
@@ -345,11 +385,21 @@ export function validateDefinition(raw: unknown): ValidationResult {
     }
   }
 
+  if (fidelity === "container" && definition.engine === "bash") {
+    issues.push({
+      level: "warning",
+      field: "fidelity",
+      message: `This scenario is authored for ${fidelityLabel(fidelity)} fidelity; the validation dry run above ran in the simulated engine.`,
+    });
+  }
+
   return {
     ok: !issues.some((issue) => issue.level === "error"),
     definition,
     issues,
     totalPoints,
+    fidelity,
+    sandbox,
   };
 }
 
