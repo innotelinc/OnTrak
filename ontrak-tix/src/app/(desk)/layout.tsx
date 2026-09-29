@@ -85,6 +85,9 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
                   <Link href="/admin/identity" className="hover:text-brand">
                     Identity
                   </Link>
+                  <Link href="/admin/forms" className="hover:text-brand">
+                    Fields
+                  </Link>
                   <Link href="/admin/integrations" className="hover:text-brand">
                     Integrations
                   </Link>

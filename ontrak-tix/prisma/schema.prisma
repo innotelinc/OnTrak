@@ -81,6 +81,10 @@ model Tenant {
   // already watches, and what it managed to say to each of them.
   chatChannels          ChatChannel[]
   chatDeliveries        ChatDelivery[]
+  // The desk's own shape: the fields it defines for its tickets, and the form each
+  // queue shows them on.
+  customFields          CustomField[]
+  queueForms            QueueForm[]
 
   @@index([slug])
 }
@@ -219,8 +223,73 @@ model Queue {
   slaPolicies SlaPolicy[]
   rotaShifts  RotaShift[]
   handoffs    Handoff[]
+  forms       QueueForm[]
 
   @@unique([tenantId, slug])
+}
+
+/// A field the desk defines for its own tickets (M6).
+///
+/// `key` is what a value is stored under and `label` is what a person reads. They are
+/// separate columns because a label gets renamed — “Room” becomes “Location” — and a rename
+/// must not orphan the answers already recorded under it. The key is therefore immutable
+/// once the field exists, and the service refuses to change it.
+///
+/// There is no delete: `archived` takes a field off new forms and leaves every ticket that
+/// answered it readable, which is the only behaviour consistent with an audit trail. A
+/// `(tenantId, key)` unique index is per tenant, because two desks may both have a
+/// `location` and neither is wrong.
+model CustomField {
+  id                String   @id @default(cuid())
+  tenantId          String
+  /// The stable key a value is stored under, e.g. `change_window`.
+  key               String
+  label             String
+  /// `TEXT` | `TEXTAREA` | `NUMBER` | `SELECT` | `CHECKBOX` | `DATE`.
+  type              String
+  /// The choices, for a `SELECT`; empty for every other type.
+  options           String[] @default([])
+  /// Whether new forms require it. A layout may require it regardless — that is what
+  /// “per-queue” has to mean — and may not un-require it.
+  requiredByDefault Boolean  @default(false)
+  placeholder       String   @default("")
+  helpText          String   @default("")
+  archived          Boolean  @default(false)
+  createdBy         String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@index([tenantId, archived])
+}
+
+/// The form a queue shows (M6).
+///
+/// One row per layout, with `sections` as JSON: the fields, their order and which of them
+/// this form requires. JSON rather than a join table because a layout is read and written
+/// whole — nobody edits “the third element of section two” — and a join table would make the
+/// common read three queries to reconstruct something that is one value.
+///
+/// `queueId` is NULL for the tenant's *default* form, which is what every queue without a
+/// layout of its own shows. The default row's id is derived from the tenant by the service,
+/// because `(tenantId, queueId)` cannot be unique while one half is NULL: Postgres treats
+/// NULLs as distinct, so a derived primary key is what makes two racing writes of the
+/// default collapse instead of both landing.
+model QueueForm {
+  id        String   @id @default(cuid())
+  tenantId  String
+  queueId   String?
+  sections  Json
+  updatedBy String
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  queue  Queue? @relation(fields: [queueId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, queueId])
+  @@index([tenantId])
 }
 
 model Ticket {
@@ -254,6 +323,12 @@ model Ticket {
   /// Tags applied by hand or by an M5 rule (`add_tag`). A scoring axis, not a
   /// classification: a ticket may carry several or none.
   tags            String[]  @default([])
+  /// The desk's own fields (M6), keyed by `CustomField.key`. JSON, because the keys are
+  /// the tenant's to choose and a column per field would be a migration per field; every
+  /// value is stored as a string whatever the field's type, so nothing that can read JSON
+  /// has to know about types. Nullable: a ticket raised before the desk defined any field
+  /// has none, and so does one raised on a desk that still has none.
+  customFields    Json?
 
   tenant       Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   queue        Queue?                @relation(fields: [queueId], references: [id], onDelete: SetNull)
