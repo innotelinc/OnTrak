@@ -1,12 +1,13 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # ci.yml — the checks that must be green on main.
 #
-# Six concerns, in the order they fail cheapest:
+# Seven concerns, in the order they fail cheapest:
 #   structure   — the conformant file set and the landing page's sanity
 #   secrets     — the scanner passes its own self-test, then the tracked tree
 #   training    — the IT support training app: typecheck, unit tests, build
 #   tix         — OnTrak Tix: typecheck, unit tests, build
 #   sentinel    — OnTrak Sentinel: migrations applied, then typecheck and unit tests
+#   roundtrip   — the Sentinel image boots and signs somebody in over the wire
 #   images      — all three container images actually build
 #
 # Both apps talk to PostgreSQL (through Prisma) and are exercised against a
@@ -245,6 +246,96 @@ jobs:
 
       - name: Unit tests
         run: npm test
+
+  # The unit suite tests the rules and the live store test tests the SQL, and
+  # neither of them answers the question a deployment actually has: does the thing
+  # in the image sign somebody in, over the wire, with the key it is holding right
+  # now? So this boots the stack a deployment would use — the compose file itself,
+  # which is the artefact under test — and drives a full authorization-code flow
+  # through it, verifying the ID token against the JWKS the container serves.
+  #
+  # It is deliberately here rather than folded into the `sentinel` job: that one
+  # runs the source against a Postgres service, this one runs the image. A broken
+  # Dockerfile, a missing `openssl`, a volume that never gets created — all three
+  # pass the first and fail this one.
+  sentinel-roundtrip:
+    name: Sentinel round trip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ontrak-sentinel/package-lock.json
+
+      - name: Install
+        working-directory: ontrak-sentinel
+        run: npm ci
+
+      # The issuer is set here rather than in a `.env`, which is gitignored: this
+      # is the address the provider will advertise, so it has to be one the smoke
+      # check can also reach.
+      - name: Boot the stack
+        working-directory: ontrak-sentinel
+        env:
+          SENTINEL_ISSUER: http://127.0.0.1:8787
+        run: |
+          set -euo pipefail
+          docker compose up -d --build
+          # Polled rather than `--wait`: the stack has two one-shot services by
+          # design (`migrate` and `signing-key`), and waiting on them to be
+          # "running" would be waiting for something that is supposed to finish.
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8787/.well-known/openid-configuration >/dev/null 2>&1; then
+              echo "provider is up"
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8787/.well-known/openid-configuration >/dev/null || {
+            echo "::error::the provider never answered discovery"
+            exit 1
+          }
+          docker compose logs app > /tmp/sentinel.log
+          cat /tmp/sentinel.log
+
+      - name: Full authorization-code round trip
+        working-directory: ontrak-sentinel
+        run: |
+          set -euo pipefail
+          session=$(grep -o 'demo session: [0-9a-f-]*' /tmp/sentinel.log | head -1 | cut -d' ' -f3)
+          client=$(grep -o 'demo client: [0-9a-f-]*' /tmp/sentinel.log | head -1 | cut -d' ' -f3)
+          test -n "$session" || { echo "::error::no bootstrap session in the boot log"; exit 1; }
+          test -n "$client" || { echo "::error::no demo client in the boot log"; exit 1; }
+          SENTINEL_SMOKE_BASE=http://127.0.0.1:8787 \
+          SENTINEL_SMOKE_CLIENT="$client" \
+          SENTINEL_SMOKE_SESSION="$session" \
+            npx tsx scripts/smoke.ts
+
+      # The image warns on an ephemeral key rather than failing, because that is
+      # right for a scratch run. In a stack it means the key volume did not work,
+      # and the provider would silently stop verifying its own tokens on the next
+      # restart — so here it is a failure.
+      - name: The signing key came from the volume, not from a generator
+        run: |
+          set -euo pipefail
+          if grep -q 'ephemeral key' /tmp/sentinel.log; then
+            echo "::error::the provider generated an ephemeral key: the signing-key service did not do its job"
+            exit 1
+          fi
+          echo "signing key: supplied"
+
+      - name: The stack's logs
+        if: failure()
+        working-directory: ontrak-sentinel
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        working-directory: ontrak-sentinel
+        run: docker compose down -v
 
   # The container image is what a deployment actually runs, so it is built on
   # every push rather than discovered broken at release time. This builds the

@@ -26,6 +26,7 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import { PrismaClient } from "@prisma/client";
 
@@ -70,12 +71,50 @@ const DEMO_ENTITY_ID = "http://127.0.0.1:8788/saml";
 const DEMO_SLUG = "demo";
 const DEMO_ADMIN = process.env.SENTINEL_ADMIN_EMAIL ?? "admin@demo.test";
 
+/**
+ * The signing key, from wherever this run was told to get it.
+ *
+ * Three sources, in order of how deliberate they are:
+ *
+ *  - `SENTINEL_SIGNING_KEY` — the PEM itself, which is what a deployment that
+ *    resolves its secrets before the process starts hands over.
+ *  - `SENTINEL_SIGNING_KEY_FILE` — the path to that PEM. What a container stack
+ *    wants, because the key is then a file on a volume that survives a rebuild
+ *    rather than a value baked into a compose file or an image layer.
+ *  - neither — an ephemeral key, correct for poking at the endpoints and
+ *    catastrophic in a deployment: every ID token this process has signed stops
+ *    verifying the moment it stops, including ones a client has already cached a
+ *    JWKS for.
+ *
+ * A file that is named but unreadable **throws** rather than falling through to
+ * the ephemeral key. Falling back would turn a mount that did not happen into a
+ * provider that is silently signing with a key nobody agreed on, and the failure
+ * would surface as clients rejecting tokens rather than as a deployment error.
+ */
 function signingKey(): SigningKey {
+  const kid = process.env.SENTINEL_SIGNING_KID;
   const pem = process.env.SENTINEL_SIGNING_KEY;
-  if (pem) return signingKeyFromPem(pem, process.env.SENTINEL_SIGNING_KID);
+  if (pem) return signingKeyFromPem(pem, kid);
+
+  const file = process.env.SENTINEL_SIGNING_KEY_FILE;
+  if (file) {
+    let text: string;
+    try {
+      text = readFileSync(file, "utf8");
+    } catch (error) {
+      throw new Error(
+        `SENTINEL_SIGNING_KEY_FILE is set to “${file}” but could not be read: ` +
+          `${error instanceof Error ? error.message : String(error)}. ` +
+          "Refusing to start on an ephemeral key instead, which would invalidate " +
+          "every token this provider has already signed.",
+      );
+    }
+    return signingKeyFromPem(text, kid);
+  }
+
   console.warn(
-    "[sentinel] SENTINEL_SIGNING_KEY is unset: generating an ephemeral key. " +
-      "Every ID token this process signs stops verifying when it stops.",
+    "[sentinel] no SENTINEL_SIGNING_KEY or SENTINEL_SIGNING_KEY_FILE: generating an " +
+      "ephemeral key. Every ID token this process signs stops verifying when it stops.",
   );
   return generateSigningKey();
 }
@@ -176,6 +215,41 @@ async function demoClient(oidc: OidcService, actor: IdentityActor): Promise<Oidc
   return registered.value;
 }
 
+/**
+ * A client for OnTrak Tix, when this run has been told where Tix's SSO callback
+ * is (`SENTINEL_TIX_CALLBACK`).
+ *
+ * Opt-in rather than always-on: registering a client is a statement that a
+ * product is being pointed at this provider, and a provider that registers one for
+ * something nobody configured is issuing identity to an audience that never asked.
+ *
+ * Tix is a **public** client — it cannot keep a secret, so PKCE is the only thing
+ * binding an authorization code to the caller that requested it, and both kinds are
+ * held to it here. The redirect URI is validated like any other, which means
+ * `https`, or `http` on a loopback address: a desk reached at a bare LAN address
+ * over plain HTTP cannot be registered at all, and is told so rather than being
+ * quietly allowed.
+ */
+async function demoTixClient(
+  oidc: OidcService,
+  actor: IdentityActor,
+  redirect: string,
+): Promise<OidcClientRecord | null> {
+  if (!redirect) return null;
+
+  const listed = await oidc.listClients(actor);
+  const existing = (listed.ok ? listed.value : []).find((client) => client.redirectUris.includes(redirect));
+  if (existing) return existing;
+
+  const registered = await oidc.registerClient(actor, {
+    name: "OnTrak Tix",
+    redirectUris: [redirect],
+    scopes: ["openid", "profile", "email", "roles"],
+  });
+  if (!registered.ok) throw new Error(registered.error);
+  return registered.value;
+}
+
 async function main(): Promise<void> {
   const issuer = process.env.SENTINEL_ISSUER ?? "http://127.0.0.1:8787";
   const host = process.env.SENTINEL_HOST ?? "127.0.0.1";
@@ -251,6 +325,7 @@ async function main(): Promise<void> {
   const { actor, session, totp } = await bootstrap(spine, identities, mfa);
   const client = await demoClient(oidc, actor);
   const provider = await demoProvider(saml, actor);
+  const tixClient = await demoTixClient(oidc, actor, (process.env.SENTINEL_TIX_CALLBACK ?? "").trim());
 
   // A PKCE pair the developer can paste straight into the printed URL.
   const verifier = randomBytes(48).toString("base64url");
@@ -282,6 +357,9 @@ async function main(): Promise<void> {
   // and never reaches a log or a terminal scrollback.
   console.log(`[sentinel] provision: mint a connector token in the console at ${url}${CONSOLE_PATHS.provisioning}`);
   console.log(`[sentinel] demo client: ${client.clientId}`);
+  if (tixClient) {
+    console.log(`[sentinel] OnTrak Tix client: ${tixClient.clientId} → ${process.env.SENTINEL_TIX_CALLBACK}`);
+  }
   console.log(`[sentinel] demo service provider: ${provider.entityId} → ${provider.acsUrls.join(", ")}`);
   if (totp) {
     console.log(`[sentinel] enrolled a TOTP factor for ${DEMO_ADMIN} — the default policy requires one:`);
@@ -290,6 +368,11 @@ async function main(): Promise<void> {
   } else {
     console.log(`[sentinel] ${DEMO_ADMIN} already has a confirmed TOTP factor; the session policy is satisfied.`);
   }
+  console.log("");
+  // Its own line, with a stable prefix, because this is the one fact a script
+  // driving the provider has to get hold of and scraping a curl example to find it
+  // would break the first time the example is reworded.
+  console.log(`[sentinel] demo session: ${session.id}`);
   console.log("");
   console.log("Open the authorization URL with the demo session attached (header, or a cookie):");
   console.log(`  curl -sS -i -H "X-Sentinel-Session: ${session.id}" "${authorize.toString()}"`);

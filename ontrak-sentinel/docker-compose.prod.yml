@@ -12,7 +12,7 @@
 #   docker compose --env-file .env.production \
 #     -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #
-# Four things change, and each is the point of the file:
+# Five things change, and each is the point of the file:
 #
 #   * The database is no longer published. Only the provider needs it, and it
 #     reaches it over the compose network; a host port would hand the whole
@@ -23,6 +23,11 @@
 #     a deployment, because every ID token the provider has ever issued stops
 #     verifying the moment the process restarts, and a client that cached a JWKS
 #     is left holding a key that no longer signs anything.
+#   * The key is supplied, not generated. The development stack keeps one on a
+#     volume, which is fine for one host and wrong the moment there is more than
+#     one: a replica that generated its own key would advertise a JWKS with a key
+#     its sibling's tokens were not signed with. Key material for a deployment
+#     comes from the deployment.
 #   * The issuer is required rather than defaulted. It is the prefix on every
 #     advertised endpoint and the `iss` a client checks, so a deployment that
 #     quietly advertised 127.0.0.1 would hand out tokens nobody outside the host
@@ -50,6 +55,14 @@ services:
     environment:
       DATABASE_URL: postgresql://ontrak:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}@db:5432/sentinel
 
+  # Deliberately disabled rather than left to run. With SENTINEL_SIGNING_KEY set it
+  # would have nothing to contribute, and a key left on the volume would be adopted
+  # by any later run that started without the explicit one — which is exactly the
+  # silent key change this mechanism exists to prevent.
+  signing-key:
+    command: ["/bin/sh", "-c", "exit 0"]
+    volumes: !override []
+
   app:
     restart: always
     # The whole configuration comes from the production file, exactly as `.env`
@@ -67,3 +80,7 @@ services:
       SENTINEL_PORT: "8787"
       NODE_ENV: production
     ports: !override ["${ONTRAK_SENTINEL_HTTP_PORT:-8787}:8787"]
+    # No key volume: the key is the `SENTINEL_SIGNING_KEY` above, which takes
+    # precedence anyway, so mounting an empty volume beside it would only invite
+    # the mistake of wondering which one is in use.
+    volumes: !override []

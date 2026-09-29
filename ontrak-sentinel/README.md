@@ -261,6 +261,26 @@ Okta, exactly which attributes this provider serves and returns, and the parts o
 RFC 7644 it deliberately does not implement — the filter subset above all, because
 that is where a connector's expectations and this provider's refusals meet.
 
+## The family signing in
+
+Sentinel is the provider the desk and the training app point at, and the wiring is
+two settings:
+
+1. **On the provider**, set `SENTINEL_TIX_CALLBACK` to the desk's callback — the
+desk's own address plus `/api/sso/callback` — and `npm run serve` (or this compose
+stack) registers a public OIDC client for it and prints the client id. Public,
+because the desk cannot keep a secret: PKCE is what binds an authorization code to
+the caller that asked for it.
+2. **On the desk**, store that issuer and client id at `/admin/identity`, and set
+`ONTRAK_TIX_BASE_URL` to the desk's own address.
+
+That second setting is load-bearing rather than cosmetic. Without it the desk
+builds its redirect URI from the address its process is bound to — inside a
+container, `0.0.0.0:3000` — and a redirect URI is matched *exactly* against the one
+the provider registered. The handshake is then refused with a mismatch that reads
+like a wrong client id, and the post-sign-in redirect would strand the browser
+somewhere it cannot reach.
+
 ## Containers
 
 All three products ship the same shape: a `Dockerfile` and a `docker-compose.yml`,
@@ -282,9 +302,23 @@ The provider answers to the same make targets as the others: `sentinel-up`,
 `sentinel-down`, `sentinel-logs`, and `sentinel-prod-up` / `sentinel-prod-down` for
 the overlay.
 
-An image is not a deployment, and this one says so on startup: with no
-`SENTINEL_SIGNING_KEY` it generates an ephemeral key and warns that every ID token
-it signs stops verifying when the process does. The production overlay refuses to
-start without a key, and `make sentinel-key` prints one in the single escaped line
-`.env.production` wants. Per-role policies and key rotation are still to come; see
+The stack keeps its **signing key on a volume**. A one-shot `signing-key` service
+generates one on the first `up` and every later run reuses it, so restarting or
+rebuilding does not stop the provider signing with the key it has already
+published — which is the failure that matters, because a client that cached the
+JWKS would otherwise be left holding a key that no longer signs anything, and the
+symptom is a wave of token rejections everywhere the provider federates into. The
+production overlay requires `SENTINEL_SIGNING_KEY` instead: a key on one host's
+volume is right for a single node and wrong the moment there is a second replica,
+which would generate its own. `make sentinel-key` prints a key in the single
+escaped line `.env.production` wants.
+
+`scripts/smoke.ts` asks the question no unit test can — does the thing in the
+image actually sign somebody in, over the wire, with the key it is holding now? It
+runs a full authorization-code flow with PKCE and verifies the ID token's signature
+against the JWKS the provider itself serves. CI runs it against this compose stack
+on every push, so a Dockerfile that quietly stops working fails the build instead
+of a release.
+
+Per-role policies and key rotation are still to come; see
 [ROADMAP.md](./ROADMAP.md).
