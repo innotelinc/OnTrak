@@ -1,6 +1,6 @@
 # Running the OnTrak family
 
-**Five products, one identity layer, five names.** This is the operations guide:
+**Six products, one identity layer, six names.** This is the operations guide:
 what runs where, how a person gets in, and what to do when something does not.
 
 It is written for the deployment that exists, and it is deliberately specific —
@@ -18,8 +18,9 @@ an architecture instead of a deployment is a guide nobody can follow at 3am.
 | **Tix** | `tix.ontrak.innotel.us` | 3001 | Tickets, SLAs, clients, incident evidence |
 | **Sentinel** | `sentinel.ontrak.innotel.us` | 8787 | Identity provider and intrusion detection console |
 | **Sync** | `sync.ontrak.innotel.us` | 8420 (API) / 8421 (dashboard) | Network package and container updates, and the family's local account table |
+| **Genie** | `genie.ontrak.innotel.us` | 3400 | The browser console for a coding agent: it reads, edits and runs code in a workspace it cannot leave, and shows each call as it happens |
 
-All five run on the **`ontrak` incus container**, `192.168.1.21`, on host **i1**
+All six run on the **`ontrak` incus container**, `192.168.1.21`, on host **i1**
 (`192.168.1.51`). Each is independently deployable and each has its own stack;
 `docker-compose.all.yml` in the repository root runs them together.
 
@@ -28,11 +29,12 @@ All five run on the **`ontrak` incus container**, `192.168.1.21`, on host **i1**
    browser ────────▶│  Cerulean edge (192.168.1.71)            │
                     │   NPM :80/:443   +  *.ontrak wildcard     │
                     └────────────────┬─────────────────────────┘
-                                     │  five proxy hosts
+                                     │  six proxy hosts
                     ┌────────────────▼─────────────────────────┐
                     │  ontrak container · 192.168.1.21          │
                     │   :3300 portal   :8421 sync dashboard     │
                     │   :3000 training :3001 tix   :8787 sentinel│
+                    │   :3400 genie                             │
                     └──────────────────────────────────────────┘
                                      │
                     Cerulean/Authentik ─ auth.cerulean.innotel.us
@@ -145,7 +147,7 @@ one checkout:
 ```bash
 cd /usr/src/ontrak && git pull
 cd ontrak-tix       && docker compose up -d --build     # one product
-cd ..               && docker compose -f docker-compose.all.yml up -d --build   # or all five
+cd ..               && docker compose -f docker-compose.all.yml up -d --build   # or all six
 ```
 
 Each product is still its own stack with its own project name, so a rebuild of one
@@ -178,7 +180,7 @@ empty, so a stale value can never restore a password somebody rotated.
 From anywhere on the Network:
 
 ```bash
-for h in ontrak its.ontrak tix.ontrak sentinel.ontrak sync.ontrak; do
+for h in ontrak its.ontrak tix.ontrak sentinel.ontrak sync.ontrak genie.ontrak; do
   printf '%-26s ' "$h.innotel.us"
   curl -s -o /dev/null -w '%{http_code} %{ssl_verify_result}\n' "https://$h.innotel.us/"
 done
@@ -221,6 +223,7 @@ account table is not affected by Cerulean being down.
 | Tix `tix.ontrak.innotel.us` | `admin@acme.test`, `dispatcher@acme.test`, `agent@acme.test`, `requester@acme.test` — password `ChangeMe123`. The SSO button uses the workspace in `ONTRAK_TIX_DEFAULT_TENANT` (`acme` here); anything else is refused, which is the point of the slug. |
 | Sentinel `sentinel.ontrak.innotel.us` | Its console is at `/console` and holds its own accounts and MFA — the root path is deliberately a 404, because the provider has no landing page to show. |
 | Sync `sync.ontrak.innotel.us` | `ONTRAK_ADMIN_USER` and the password printed once on an empty database (`docker logs ontrak-sync-api | grep 'generated password'`), or Cerulean. |
+| Genie `genie.ontrak.innotel.us` | **Sign in with Cerulean**, through the same `ontrak` client as the portal; with no issuer configured the console falls back to its own `WEB_TOKEN`. |
 
 A person's *role* decides which tiles the portal draws: `ontrak-students` and
 `ontrak-instructors` reach training, `ontrak-desk` reaches Tix, `ontrak-analysts`

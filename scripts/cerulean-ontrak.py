@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """cerulean-ontrak.py — put the OnTrak family on the Network's trust plane.
 
-Creates what the five public names need and nothing else:
+Creates what the six public names need and nothing else:
 
     ontrak.innotel.us              → the portal          (:3300)
     its.ontrak.innotel.us          → training range      (:3000)
     tix.ontrak.innotel.us          → the service desk    (:3001)
     sentinel.ontrak.innotel.us     → the identity/IDS   (:8787)
     sync.ontrak.innotel.us         → Network updates     (:8421)
+    genie.ontrak.innotel.us        → the agent console   (:3400)
 
 For each name it ensures:
 
@@ -87,6 +88,15 @@ HOSTS = [
         "purpose": "OnTrak Sync — Network package and container updates",
         "websocket": True,
     },
+    {
+        "name": "genie.ontrak",
+        "port": 3400,
+        "purpose": "OnTrak Genie — the browser console for a coding agent",
+        # The one product here with no websocket upgrade: the console streams its
+        # turn over server-sent events, which is an ordinary HTTP response, and it
+        # asks the edge not to buffer that response itself (`X-Accel-Buffering`).
+        "websocket": False,
+    },
 ]
 
 # The redirect URIs the `ontrak` OIDC client has to be registered with. Kept
@@ -98,6 +108,7 @@ REDIRECT_URIS = [
     "https://its.ontrak.innotel.us/api/sso/callback",      # the training range
     "https://tix.ontrak.innotel.us/api/sso/callback",      # the desk
     "https://sync.ontrak.innotel.us/api/auth/sso/callback",  # OnTrak Sync behind the edge
+    "https://genie.ontrak.innotel.us/api/auth/callback",   # Genie, which signs in itself
 ]
 
 
