@@ -97,9 +97,40 @@ its publishing path through Cerulean and NPM Edge, or its TUI.
 | --- | --- | --- |
 | **0** | Genie conformed and landed in OnTrak as `ontrak-genie/` — license, stack doc, guard, port, no internal addresses | — |
 | **1** | Stack citizenship: Authentik OIDC, Vault references, the shared gateway's address from the environment | Phase 0 |
-| **2** | The builder API: Genie's UI over Olympus's plan → build → preview path; control-plane tenancy — **started**: the *handoff* is wired (export writes a `build-requests/` spec); plan/build/preview/publish and tenancy remain | Phase 1 |
+| **2** | The builder API: Genie's UI over Olympus's plan → build → preview path; control-plane tenancy — **started**: the *handoff* is wired (export writes a `build-requests/` spec, measured against a real checkout — see §5.1) and *tenancy* is wired (Distro's control plane: resolve the caller, gate quota before dispatch, spend the account's own key, record after); plan/build/preview/publish, and partitioning, remain | Phase 1 |
 | **3** | Studio's interface retires; the front-door count reaches one | Phase 2 |
 | **4** | Docs converge: the stack doc's §3 updated from *chosen A* to *A′ — A's engine, B's client*, Olympus's README and `docs/stack.md`, and the family table | Phase 3 |
+
+### 5.1 What the handoff was measured to do (29 Sep 2026)
+
+Run against a real Olympus checkout, from a Genie in this repository, with a
+six-file static app in the workspace:
+
+| Step | Result |
+| --- | --- |
+| `export` from the console | `build-requests/pomodoro-timer.md` written into the checkout — 12,921 bytes, the template's four `##` headings, entry point `index.html`, stack inferred from the file set, and verification criteria (`npm install`, `npm test`) taken from the app's own `package.json` |
+| Olympus's planner reads it (`scripts/project_plan.py --spec`) | `builds/pomodoro-timer/plan.json` — a real plan in the factory's own format: `runtime.language=node`, `run.install=npm install`, `run.start=python3 -m http.server 8080`, `run.port=8080`, six files |
+| `make app SPEC=build-requests/pomodoro-timer.md` | **stops at the vendor gate**: *"no working archon CLI found"*. `core-modules/archon` is populated by `./setup.sh`, which also needs `uv`, and the build's coding step is Codex. `python3 factory/doctor.py` reports the same: *not cloned: omniroute, archon, ai-software-factory* |
+
+So the handoff is verified as far as the factory's own planning step, and what
+remains is vendor tooling on the host rather than anything in the contract. Three
+notes for whoever closes it:
+
+- **`AGENT_FACTORY_DIR` is the `build-requests/` directory *inside* the checkout,
+  not the checkout itself.** Pointed at the root, the export writes
+  `<checkout>/<slug>.md` — and the spec's own next steps then tell the operator it
+  belongs in `build-requests/`, which is the right hint but not the right outcome.
+- **An application spec needs the model step.** `package-app.py` and
+  `package-website.py` own the scaffold and the packaging, but the app-specific
+  files (`server/schema.sql`, `src/App.tsx`) are written by the builder — Archon +
+  Codex today. Nothing in Genie can stand in for that, which is exactly the §6 rule
+  about not growing a second builder.
+- **Tenancy attributes and gates; it does not partition.** Genie has one workspace
+  and one session store, and the control-plane work does not key either on the
+  account, so two people signing in to one deployment are attributed separately and
+  still share what is on disk. §4.2's *"key the session library on the control-plane
+  user id"* is open, and it is a workspace-isolation question (one workspace per
+  account) rather than a control-plane one.
 
 Nothing in the stack doc's §4–§6 (one OmniRoute, one identity, one secrets store)
 changes. The front-door retirement in its §4.3 moves from Studio to the bolt.diy
