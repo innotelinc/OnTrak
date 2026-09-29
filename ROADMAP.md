@@ -278,12 +278,15 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
 - **Exit:** a learner earns a verifiable certificate; an auditor can pull a
   signed proof-of-training packet for a cohort.
 
-### v1.6 — The learning loop `[~]`
+### v1.6 — The learning loop `[x]`
 **Goal:** make practice flow in both directions, so the desk and the classroom
 feed each other instead of being two products that happen to share a login.
 
 An incident, a ticket, or a manual entry is the material; a resolution is the
 lesson. Nothing in the loop is a separate thing a person has to go and create.
+
+The loop is built and running; what remains below is stated as shipped with
+where it lives, so the next person reads the code rather than rebuilding it.
 
 ```mermaid
 flowchart LR
@@ -296,26 +299,32 @@ flowchart LR
   F --> G
 ```
 
-- `[~]` One front door and one identity for the whole family — Portal is the way
-  in, and every product accepts the same session. Sign-in is Cerulean SSO;
-  local passwords are a break-glass path, not a parallel login, and the
-  remaining local sign-in surfaces are being retired product by product.
-- `[ ]` Resolution → knowledgebase article. When a ticket or incident closes, the
-  AI draft is generated from the ticket's own trail (what was asked, what was
-  tried, what actually fixed it) and lands as a **draft** for a human to approve.
-- `[ ]` Resolution → training scenario. The same trail becomes a scenario
-  definition — the checks are the steps that actually resolved it — with the
-  authoring validator run so a generated scenario cannot be one that "passes
-  before any work is done".
-- `[ ]` Every source, one pipeline: incidents forwarded from Sentinel, tickets
-  entered by hand, and automated sources all enter through the same path, so
-  there is one place to look when a draft does not appear.
-- `[ ]` Provenance on both artefacts: which ticket produced this article or
-  scenario, and who approved it. A generated lesson with no origin is a lesson
-  nobody can check.
-- **Exit:** a resolved incident produces a reviewable article and a runnable,
-  validated scenario without anyone opening an authoring tool — and both link
-  back to the ticket that caused them.
+- `[x]` Provenance on both artefacts. The article carries a `from-ticket-<ref>`
+  tag, and the service adds it rather than trusting the author — which is also the
+  idempotency guard: the sweep checks that tag first, so running it every night, or
+  twice by accident, never writes a second article.
+- **Exit:** met. A resolved ticket produces a reviewable article and a draft
+  scenario with nobody opening an authoring tool, and both name the ticket that
+  caused them.
+
+- `[x]` One front door and one identity for the whole family — Portal is the way
+  in, and every product accepts the same session. Sign-in is Cerulean SSO with
+  **zero password fields** on any product's primary screen; the local account is a
+  break-glass route at an unlinked path (`/sign-in/break-glass`, `/login/break-glass`)
+  because using it is a decision rather than a convenience.
+- `[x]` Resolution → knowledgebase article. `POST /api/outcomes/sweep` in Tix walks
+  the tickets that were resolved and have not been written down, authors the draft
+  from the ticket's own trail, and stores it. `?dry=1` authors and reports without
+  writing, which is how somebody decides whether the prose is good enough.
+- `[x]` Resolution → training scenario **draft**. The same trail leaves as a draft
+  posted to ITS at `/api/v1/scenario-drafts` — deliberately a draft and not a
+  scenario, because a resolved ticket is evidence that a fix worked, which is not
+  the same thing as a graded definition, and auto-publishing machine work would put
+  unverified exercises in front of learners and call it a grade.
+- `[x]` Every source, one pipeline: Tix's `intake`, `incidents`, `rmm` and
+  `security` routes (`/api/security/ingest`, `/api/security/poll`) all enter the
+  same way as a hand-written ticket, so there is one place to look when a draft
+  does not appear.
 
 ### v2.0 — Enterprise training platform `[ ]`
 **Goal:** multi-organisation, evidence-grade, assistive.
