@@ -17,7 +17,7 @@ import { createHash } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
 import { portalConfig, redirectUri } from "./config";
-import type { AuthorizationState } from "./oidc-rules";
+import { verificationIssuer, type AuthorizationState } from "./oidc-rules";
 
 /**
  * RFC 7636 S256: the challenge that goes to the provider, from the verifier that
@@ -185,7 +185,7 @@ export async function verifyIdToken(idToken: string): Promise<Record<string, unk
       // after the password has already been typed, which is the worst place for it.
       // `checkClaims` still compares the two with the trailing slash ignored, so a
       // discovery document naming some other issuer is refused either way.
-      issuer: document.issuer || config.issuer,
+      issuer: verificationIssuer(document.issuer, config.issuer),
       audience: config.clientId,
       algorithms: ["RS256", "ES256"],
       // The clock skew is applied again in `checkClaims` for the readings `jose`
