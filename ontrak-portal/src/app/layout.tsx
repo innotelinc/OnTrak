@@ -13,10 +13,10 @@ import "./globals.css";
  * applied during hydration is a white flash on a dark screen, which is the one
  * detail everybody notices about a dark mode that was added later.
  *
- * The script is `/ontrak-theme.js`, a plain `public/` asset loaded by a blocking
+ * The script is `/unity-theme.js`, a plain `public/` asset loaded by a blocking
  * `<script src>` — blocking on purpose, because that is what makes it run before
  * the first paint. It is a byte-identical copy of the canonical
- * `theme/ontrak-theme.js` (checked by `make theme`), served from `public/` because
+ * `theme/unity-theme.js` (checked by `make theme`), served from `public/` because
  * the runtime image is Next's standalone output, which contains no `src/`: a
  * `readFileSync` against the source tree works in development and throws ENOENT in
  * the container, which is exactly the bug this comment exists to prevent.
@@ -43,9 +43,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           violet sets `desk` here and changes nothing else.
         */}
         <script
-          dangerouslySetInnerHTML={{ __html: 'window.ONTRAK_DEFAULT_SCHEME = "operations";' }}
+          dangerouslySetInnerHTML={{ __html: 'window.UNITY_DEFAULT_SCHEME = "operations";' }}
         />
-        <script src="/ontrak-theme.js" />
+        <script src="/unity-theme.js" />
       </head>
       <body>
         <div className="page">

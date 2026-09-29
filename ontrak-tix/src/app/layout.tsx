@@ -15,9 +15,9 @@ export const metadata: Metadata = {
  * applied during hydration is a white flash on a dark screen, which is the one
  * detail everybody notices about a dark mode that was added later.
  *
- * `/ontrak-theme.js` is a plain `public/` asset loaded by a blocking `<script src>`
+ * `/unity-theme.js` is a plain `public/` asset loaded by a blocking `<script src>`
  * — blocking on purpose, because that is what makes it run before the first paint.
- * It is a byte-identical copy of the canonical `theme/ontrak-theme.js` (checked by
+ * It is a byte-identical copy of the canonical `theme/unity-theme.js` (checked by
  * `make theme`), served from `public/` because the runtime image is Next's
  * standalone output, which contains no `src/`.
  */
@@ -29,9 +29,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             the violet one, so a fresh browser lands on the palette Tix has always
             used and a person can still switch to the operations palette. */}
         <script
-          dangerouslySetInnerHTML={{ __html: 'window.ONTRAK_DEFAULT_SCHEME = "desk";' }}
+          dangerouslySetInnerHTML={{ __html: 'window.UNITY_DEFAULT_SCHEME = "desk";' }}
         />
-        <script src="/ontrak-theme.js" />
+        <script src="/unity-theme.js" />
       </head>
       <body className="min-h-screen bg-canvas text-ink antialiased">{children}</body>
     </html>

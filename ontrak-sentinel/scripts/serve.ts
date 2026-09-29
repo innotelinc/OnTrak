@@ -267,8 +267,8 @@ async function productClient(
  */
 function themeAssets(): Record<string, { body: string; contentType: string }> {
   const files: [string, string, string][] = [
-    [CONSOLE_ASSET_PATHS.themeCss, "../src/theme/ontrak-theme.css", "text/css; charset=utf-8"],
-    [CONSOLE_ASSET_PATHS.themeJs, "../public/ontrak-theme.js", "text/javascript; charset=utf-8"],
+    [CONSOLE_ASSET_PATHS.themeCss, "../src/theme/unity-theme.css", "text/css; charset=utf-8"],
+    [CONSOLE_ASSET_PATHS.themeJs, "../public/unity-theme.js", "text/javascript; charset=utf-8"],
   ];
   const assets: Record<string, { body: string; contentType: string }> = {};
   for (const [route, relative, contentType] of files) {

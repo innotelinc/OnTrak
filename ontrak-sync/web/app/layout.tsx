@@ -15,10 +15,10 @@ export const metadata: Metadata = {
  *
  * The theme's *decision* is made before the first paint and not by React: a theme
  * applied during hydration is a white flash on a dark screen, which is the one
- * detail everybody notices about a dark mode that was added later. `/ontrak-theme.js`
+ * detail everybody notices about a dark mode that was added later. `/unity-theme.js`
  * is a plain `public/` asset loaded by a blocking `<script src>` — blocking on
  * purpose, because that is what makes it run before the first paint — and it is a
- * byte-identical copy of the canonical `theme/ontrak-theme.js` (checked by
+ * byte-identical copy of the canonical `theme/unity-theme.js` (checked by
  * `make theme`).
  */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -28,9 +28,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* This app is a console, so its house scheme is the graphite one; a person
             can still switch, and the choice is remembered per browser. */}
         <script
-          dangerouslySetInnerHTML={{ __html: 'window.ONTRAK_DEFAULT_SCHEME = "operations";' }}
+          dangerouslySetInnerHTML={{ __html: 'window.UNITY_DEFAULT_SCHEME = "operations";' }}
         />
-        <script src="/ontrak-theme.js" />
+        <script src="/unity-theme.js" />
       </head>
       <body>
         {/* The provider is inside `<body>` and outside the shell on purpose: the

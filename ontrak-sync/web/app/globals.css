@@ -1,10 +1,10 @@
-@import "../theme/ontrak-theme.css";
+@import "../theme/unity-theme.css";
 
 /*
  * Ontrak Sync — dashboard styles.
  *
  * The colours all come from the shared theme imported above (a checked
- * byte-identical copy of `theme/ontrak-theme.css`). Sync sits in the
+ * byte-identical copy of `theme/unity-theme.css`). Sync sits in the
  * **operations** scheme — the graphite-and-blue family it and the Unity portal
  * already used — and gains light mode, which it never had, from the same tokens
  * every other product uses.

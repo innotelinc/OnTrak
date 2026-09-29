@@ -1,11 +1,11 @@
 @import "tailwindcss";
-@import "../theme/ontrak-theme.css";
+@import "../theme/unity-theme.css";
 
 /* --------------------------------------------------------------------------
    The training range in the family's clothes.
 
    Every colour comes from the shared theme imported above (a checked
-   byte-identical copy of `theme/ontrak-theme.css`). The range sits in the **desk**
+   byte-identical copy of `theme/unity-theme.css`). The range sits in the **desk**
    scheme — the violet family that it, Tix and the service desk have always shared —
    and now gets light *and* dark from the same tokens as the rest of the Network.
 

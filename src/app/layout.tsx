@@ -58,7 +58,7 @@ export const viewport: Viewport = {
 };
 
 /**
- * The theme is applied before the first paint by `/ontrak-theme.js`, a plain
+ * The theme is applied before the first paint by `/unity-theme.js`, a plain
  * `public/` asset loaded by a blocking `<script src>`. Blocking is the point: a
  * theme decided during hydration is a white flash on a dark screen, which is the
  * one detail everybody notices about a dark mode that was added later.
@@ -86,9 +86,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         {/* The default *before* the shared script runs: the range is a learning
             product, so its house scheme is the violet desk one. */}
         <script
-          dangerouslySetInnerHTML={{ __html: 'window.ONTRAK_DEFAULT_SCHEME = "desk";' }}
+          dangerouslySetInnerHTML={{ __html: 'window.UNITY_DEFAULT_SCHEME = "desk";' }}
         />
-        <script src="/ontrak-theme.js" />
+        <script src="/unity-theme.js" />
       </head>
       <body className="min-h-dvh bg-canvas text-ink antialiased">
         {children}

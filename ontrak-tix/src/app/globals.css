@@ -1,11 +1,11 @@
 @import "tailwindcss";
-@import "../theme/ontrak-theme.css";
+@import "../theme/unity-theme.css";
 
 /*
  * OnTrak Tix — styles.
  *
- * Every colour comes from the shared theme above (`src/theme/ontrak-theme.css`, a
- * checked byte-identical copy of `theme/ontrak-theme.css`). This file does one job:
+ * Every colour comes from the shared theme above (`src/theme/unity-theme.css`, a
+ * checked byte-identical copy of `theme/unity-theme.css`). This file does one job:
  * it maps Tailwind's utility names onto the theme's semantic tokens, and adds no
  * palette of its own. A component that names a raw colour is a component that will
  * look wrong the first time somebody switches to light mode.

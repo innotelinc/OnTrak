@@ -1,8 +1,8 @@
 /*
  * OnTrak Unity — styles.
  *
- * Everything visual comes from the shared theme (`src/theme/ontrak-theme.css`,
- * which is a checked copy of `theme/ontrak-theme.css`). This file adds layout and
+ * Everything visual comes from the shared theme (`src/theme/unity-theme.css`,
+ * which is a checked copy of `theme/unity-theme.css`). This file adds layout and
  * nothing else: no raw colours, no second palette, no "just this one accent" —
  * because a page that picks its own colour is a page that will look wrong the
  * first time somebody switches to light mode.
@@ -12,7 +12,7 @@
  * tokens now.
  */
 
-@import "../theme/ontrak-theme.css";
+@import "../theme/unity-theme.css";
 
 * { box-sizing: border-box; }
 

@@ -391,8 +391,8 @@ test("console: the sign-in page renders a password field and the shared theme", 
   // The scheme and the two shared assets, which is what makes the console look like the
   // rest of the Network rather than like its own product.
   assert.match(response.body, /data-scheme="soc"/);
-  assert.match(response.body, /href="\/ontrak-theme\.css"/);
-  assert.match(response.body, /src="\/ontrak-theme\.js"/);
+  assert.match(response.body, /href="\/unity-theme\.css"/);
+  assert.match(response.body, /src="\/unity-theme\.js"/);
 });
 
 test("console: a good sign-in answers 303 with the session cookie", async () => {

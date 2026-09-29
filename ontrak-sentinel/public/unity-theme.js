@@ -1,9 +1,9 @@
 /*
  * ═══════════════════════════════════════════════════════════════════════════
- * OnTrak — the shared theme switch.  THE canonical copy.
+ * UNITY — the theme switch.  THE canonical copy.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Ships byte-identical with `ontrak-theme.css` in every product (the copies are
+ * Ships byte-identical with `unity-theme.css` in every product (the copies are
  * checked by `theme/tests/test_theme_copies.py`). It owns exactly two facts about
  * a browser:
  *
@@ -28,7 +28,7 @@
 
   var MODE_KEY = "ontrak.mode";
   var SCHEME_KEY = "ontrak.scheme";
-  var DEFAULT_SCHEME = global.ONTRAK_DEFAULT_SCHEME || "desk";
+  var DEFAULT_SCHEME = global.UNITY_DEFAULT_SCHEME || global.ONTRAK_DEFAULT_SCHEME || "desk";
 
   function read(key) {
     try {
@@ -134,12 +134,17 @@
 
   function notify() {
     try {
+      global.dispatchEvent(new CustomEvent("unity:theme", { detail: { mode: mode(), scheme: scheme() } }));
+      // The old event name, so a listener written against the theme's previous name
+      // keeps working. There is exactly one of these shims, and it is one line.
       global.dispatchEvent(new CustomEvent("ontrak:theme", { detail: { mode: mode(), scheme: scheme() } }));
     } catch (error) {
       /* CustomEvent is not the point of this file */
     }
   }
 
+  global.UnityTheme = api;
+  /** Kept so the products already calling it keep working; new code uses UnityTheme. */
   global.OntrakTheme = api;
   // The head snippet has already applied the stored values; this keeps the
   // <html> attributes consistent for a product whose layout renders them itself.
