@@ -96,6 +96,14 @@ export interface IdentityStore {
 
   listSessions(organizationId: string, identityId?: string): Promise<SessionRecord[]>;
   findSession(organizationId: string, sessionId: string): Promise<SessionRecord | null>;
+  /**
+   * A session by its id alone, for the console.
+   *
+   * A browser holds one opaque cookie and cannot name the organization it belongs
+   * to, so the organization is read back *from the row* rather than supplied. The
+   * session id is the credential; everything else is looked up inside it.
+   */
+  findSessionByKey(sessionId: string): Promise<SessionRecord | null>;
   insertSession(record: SessionRecord): Promise<void>;
   updateSession(record: SessionRecord): Promise<void>;
 }
@@ -116,10 +124,18 @@ export function systemIdentityIds(): IdentityIds {
 /*  One evidence log per organization                                         */
 /* -------------------------------------------------------------------------- */
 
-/** What the service needs of an evidence log: append, read back, and verify. */
+/**
+ * What the service needs of an evidence log: append, read back, and verify.
+ *
+ * Reading and verifying are allowed to be asynchronous, and the service `await`s
+ * them either way: the in-memory log answers immediately, while a durable one has
+ * to read its rows first — and for a durable log that is the *point*, since the
+ * question "is this history intact?" must be asked of what is stored rather than
+ * of what this process happens to remember.
+ */
 export interface AuditTrail extends AuditSink {
-  trail(organizationId: string): readonly AuditEvent[];
-  verify(organizationId: string): ChainVerification;
+  trail(organizationId: string): readonly AuditEvent[] | Promise<readonly AuditEvent[]>;
+  verify(organizationId: string): ChainVerification | Promise<ChainVerification>;
 }
 
 /**
@@ -327,10 +343,21 @@ export class IdentityService {
     return { ok: true, value: next };
   }
 
-  /** Record that a second factor is enrolled. MFA is required by default policy. */
+  /**
+   * Record that a second factor is enrolled. MFA is required by default policy.
+   *
+   * **Self is allowed, and that is deliberate.** Enrollment is a user's own act now
+   * — the console in S1 is self-service — so an actor may set this on their own
+   * identity, while somebody else's still needs `canManageIdentities`. The *writer*
+   * stays single: `MfaService` and `WebAuthnService` both go through here, so there
+   * is one place a reviewer has to check that the flag only ever follows a proven
+   * factor.
+   */
   async setMfaEnrolled(actor: IdentityActor, identityId: string, enrolled: boolean): Promise<ServiceResult<IdentityRecord>> {
-    const denied = this.requireManage(actor);
-    if (denied) return denied;
+    if (actor.id !== identityId) {
+      const denied = this.requireManage(actor);
+      if (denied) return denied;
+    }
 
     const found = await this.store.findIdentity(actor.organizationId, identityId);
     if (!found) return { ok: false, error: "That identity does not exist." };
@@ -401,6 +428,54 @@ export class IdentityService {
     return sessionDecision(identitySummary(identity), sessionInfo(session), policy, this.ids.nowMs());
   }
 
+  /**
+   * Resolve a live session to the identity it belongs to — what an OIDC
+   * authorization needs before it may issue a code (S1).
+   *
+   * The policy is asked the same way it is asked everywhere else, so a session
+   * cannot be alive at one entry point and dead at another. The organization is
+   * part of the lookup rather than a check afterwards: another tenant's session
+   * is not found at all.
+   */
+  async resolveSession(
+    organizationId: string,
+    sessionId: string,
+    policy: IdentityPolicy = DEFAULT_IDENTITY_POLICY,
+  ): Promise<ServiceResult<{ identity: IdentityRecord; session: SessionRecord }>> {
+    const session = await this.store.findSession(organizationId, sessionId);
+    if (!session) return { ok: false, error: "That session does not exist." };
+    const identity = await this.store.findIdentity(organizationId, session.identityId);
+    if (!identity) return { ok: false, error: "That identity does not exist." };
+
+    const decision = sessionDecision(identitySummary(identity), sessionInfo(session), policy, this.ids.nowMs());
+    if (!decision.active) return { ok: false, error: `That session is not usable: ${decision.reason}.` };
+    return { ok: true, value: { identity, session } };
+  }
+
+  /**
+   * Resolve a live session from the opaque id a browser holds, without being told
+   * the organization — what the console needs.
+   *
+   * The policy is asked exactly the way `resolveSession` asks it, through the same
+   * pure `sessionDecision`, so a session cannot be alive on the console page and
+   * dead at authorize. The organization is *read from the session row* rather than
+   * taken from the caller, so the only thing a browser can name is a session it was
+   * already given.
+   */
+  async resolveOwnSession(
+    sessionId: string,
+    policy: IdentityPolicy = DEFAULT_IDENTITY_POLICY,
+  ): Promise<ServiceResult<{ organizationId: string; identity: IdentityRecord; session: SessionRecord }>> {
+    const session = await this.store.findSessionByKey(sessionId);
+    if (!session) return { ok: false, error: "That session does not exist." };
+    const identity = await this.store.findIdentity(session.organizationId, session.identityId);
+    if (!identity) return { ok: false, error: "That identity does not exist." };
+
+    const decision = sessionDecision(identitySummary(identity), sessionInfo(session), policy, this.ids.nowMs());
+    if (!decision.active) return { ok: false, error: `That session is not usable: ${decision.reason}.` };
+    return { ok: true, value: { organizationId: session.organizationId, identity, session } };
+  }
+
   /** Move a session's idle clock. Returns whether it was still usable first. */
   async touchSession(organizationId: string, sessionId: string): Promise<ServiceResult<SessionRecord>> {
     const session = await this.store.findSession(organizationId, sessionId);
@@ -429,6 +504,41 @@ export class IdentityService {
     const next: SessionRecord = { ...found, revokedAt: this.ids.nowMs() };
     await this.store.updateSession(next);
     await this.append(next.organizationId, actor.id, "session.revoke", "Session", next.id, {
+      identityId: next.identityId,
+      reason: reason.trim(),
+    });
+    return { ok: true, value: next };
+  }
+
+  /**
+   * End a session at its holder's own request — sign-out.
+   *
+   * Deliberately *not* `revokeSession`: that one is an administrator cutting
+   * somebody else's session off, so it checks `canManageIdentities` and names the
+   * actor on the record. Sign-out is the opposite case — a person ending their
+   * own session — and holding the session id *is* the proof, exactly as it is at
+   * authorize time. Requiring an administrator for it would mean nobody could
+   * ever sign themselves out, which is how a session outlives its user.
+   *
+   * The reason is still required, and still lands on the chain: "why did this
+   * session end?" is asked about sign-outs too.
+   */
+  async endOwnSession(
+    organizationId: string,
+    sessionId: string,
+    reason: string,
+  ): Promise<ServiceResult<SessionRecord>> {
+    const found = await this.store.findSession(organizationId, sessionId);
+    if (!found) return { ok: false, error: "That session does not exist." };
+    if (reason.trim().length < 3) return { ok: false, error: "Ending a session needs a reason on the record." };
+
+    // Already ended is a success: signing out twice is what a person does when
+    // the first click looked like it did nothing.
+    if (found.revokedAt !== null) return { ok: true, value: found };
+
+    const next: SessionRecord = { ...found, revokedAt: this.ids.nowMs() };
+    await this.store.updateSession(next);
+    await this.append(organizationId, found.identityId, "session.signout", "Session", next.id, {
       identityId: next.identityId,
       reason: reason.trim(),
     });
@@ -488,10 +598,11 @@ export class IdentityService {
   async auditTrail(actor: IdentityActor): Promise<ServiceResult<{ events: readonly AuditEvent[]; verification: ChainVerification }>> {
     if (!canReadDirectory(actor.role)) return { ok: false, error: "You do not have access to the audit trail." };
     if (!this.audit) return { ok: false, error: "This deployment has no audit trail configured." };
-    return {
-      ok: true,
-      value: { events: this.audit.trail(actor.organizationId), verification: this.audit.verify(actor.organizationId) },
-    };
+    const [events, verification] = await Promise.all([
+      this.audit.trail(actor.organizationId),
+      this.audit.verify(actor.organizationId),
+    ]);
+    return { ok: true, value: { events, verification } };
   }
 
   /* ----------------------------------------------------------- internals */
@@ -585,6 +696,11 @@ export class MemoryIdentityStore implements IdentityStore {
   async findSession(organizationId: string, sessionId: string): Promise<SessionRecord | null> {
     const found = this.sessions.get(sessionId);
     return found && found.organizationId === organizationId ? structuredClone(found) : null;
+  }
+
+  async findSessionByKey(sessionId: string): Promise<SessionRecord | null> {
+    const found = this.sessions.get(sessionId);
+    return found ? structuredClone(found) : null;
   }
 
   async insertSession(record: SessionRecord): Promise<void> {
