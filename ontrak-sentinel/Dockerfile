@@ -76,6 +76,12 @@ COPY --from=builder --chown=sentinel:sentinel /app/package.json ./package.json
 COPY --from=builder --chown=sentinel:sentinel /app/tsconfig.json ./tsconfig.json
 COPY --from=builder --chown=sentinel:sentinel /app/src ./src
 COPY --from=builder --chown=sentinel:sentinel /app/scripts ./scripts
+# `public/` is where the shared theme's script lives (`unity-theme.js`), served at
+# the product root by the adapter. Without this the console's five pages render with
+# no stylesheet and no colour switch, and the only sign of it is one warning line in
+# the startup log — the CSS copy under `src/theme/` is in the image either way, which
+# is exactly what makes the omission easy to miss.
+COPY --from=builder --chown=sentinel:sentinel /app/public ./public
 
 # `prisma/` is deliberately not copied: migrations are applied by the `migrate`
 # service, which runs in the builder stage, and the generated client needs
