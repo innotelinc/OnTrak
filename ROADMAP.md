@@ -167,7 +167,11 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
     deployment that names none: the sign-in page only offers the button when a
     handshake can actually complete. Covered by `tests/oidc.test.ts` (32 checks),
     including a full handshake against a real OpenID provider on a loopback port
-    and the forgeries it must refuse.
+    and the forgeries it must refuse — and by the opt-in `tests/sso-live.test.ts`,
+    which starts the app itself and walks `/api/sso/start` → the provider →
+    `/api/sso/callback` with a cookie jar, then fetches a protected page with the
+    session it issued, so the claim being proved is about the routes and not only
+    about the rules.
   - SCIM 2.0 provisioning at the provider is **shipped** (Sentinel's S2): Users and
     Groups, a connector token minted in the console, and deprovisioning that ends
     sessions and revokes their tokens. On this side there is no directory *sync*

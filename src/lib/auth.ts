@@ -2,13 +2,14 @@ import "server-only";
 
 import { cookies, headers } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
-import { cookieIsSecure, parseCookieSecurity } from "./auth-rules";
+import { SESSION_COOKIE, cookieIsSecure, parseCookieSecurity } from "./auth-rules";
 import { prisma } from "./db";
 import type { Role } from "@prisma/client";
 
 export { ACCENT_COLORS, hashPassword, pickAccent, verifyPassword } from "./auth-hash";
+// Re-exported so callers keep importing the session cookie from where it is used.
+export { SESSION_COOKIE };
 
-export const SESSION_COOKIE = "ontrak_training_session";
 const ALGORITHM = "HS256";
 
 /**

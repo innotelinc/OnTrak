@@ -267,6 +267,20 @@ and S256 PKCE — and proves the refusals as well as the success: a forged
 signature, a replayed code, a wrong verifier, a missing client secret, a foreign
 issuer, a stale nonce and an unverified email.
 
+The app's **own routes** have a live test, which is the honest answer to "does
+single sign-on work?" — it starts the app with a provider it starts itself, walks
+`/api/sso/start` → the provider → `/api/sso/callback` with a cookie jar exactly as
+a browser would, and fetches a protected page with the session the callback issued:
+
+```bash
+ONTRAK_SSO_LIVE=1 DATABASE_URL=postgresql://… \
+  npx tsx --tsconfig tests/tsconfig.json --test tests/sso-live.test.ts
+```
+
+It is opt-in twice over — the flag says "start a server for this", and a reachable
+Postgres is required because a sign-in provisions an account — and it cleans up the
+account it provisions, so a local run leaves no trace. `npm test` skips it.
+
 ### Upstream, the other direction
 
 OnTrak Sentinel **provisions** into Tix over SCIM 2.0, and Tix **pushes** its own
@@ -333,6 +347,8 @@ tests/
   sim.test.ts                 engine + grading + validator + desktop tests
   desktop-render.test.ts      the desktop surface still server-renders
   oidc.test.ts                single sign-on, including a real provider on loopback
+  sso-live.test.ts            opt-in: the app's own SSO routes against a running app
+  support/local-idp.ts        a real, minimal OpenID provider for the tests above
   tsconfig.json               JSX-enabled config just for the tests
 ```
 
