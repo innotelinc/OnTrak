@@ -74,6 +74,22 @@ A group that matches nothing falls through to `ONTRAK_OIDC_DEFAULT_ROLE`
 (`STUDENT` — the *least* privileged role). The portal says so on the dashboard
 rather than leaving it to be discovered.
 
+### The one detail that breaks sign-in quietly
+
+**Authentik's application-scoped issuer ends in a slash** —
+`https://auth.cerulean.innotel.us/application/o/ontrak/` — and that is the exact
+string it puts in an ID token's `iss`. Products store the issuer with the slash
+trimmed, because a `.env` value is read by three programs that disagree about
+trailing whitespace and quotes. A verifier that compares its configured issuer
+*byte for byte* therefore rejects a token that is entirely valid, and it does it
+**after** the password has been typed: the portal showed `the ID token was not
+accepted: unexpected "iss" claim value` and the browser landed on `0.0.0.0:3300`,
+because a refusal redirect was built from the address the proxy used instead of the
+one the browser typed. Both are fixed and both have regression tests
+(`ontrak-portal/tests/oidc-issuer.test.ts`): the verifier is handed the *advertised*
+issuer, and every browser-facing redirect is built from `ONTRAK_PORTAL_PUBLIC_URL`.
+When a new product is added, copy that shape rather than the literal comparison.
+
 ### The redirect URIs registered on the `ontrak` client
 
 ```
@@ -123,18 +139,25 @@ diagnostic when it hits this.
 
 ## 4. Deploying a change
 
-On the **`ontrak` container** (`incus exec ontrak -- bash`):
+On the **`ontrak` container** (`incus exec ontrak -- bash`), everything comes from
+one checkout:
 
 ```bash
-cd /opt/ontrak-sync    && docker compose up -d --build     # API + dashboard
-cd /opt/ontrak-portal  && docker compose up -d --build     # the portal
+cd /usr/src/ontrak && git pull
+cd ontrak-tix       && docker compose up -d --build     # one product
+cd ..               && docker compose -f docker-compose.all.yml up -d --build   # or all five
 ```
 
-Both images are built on the host, so a deploy is a rebuild rather than a pull.
-The `.env` files are **not** in the repository: `/opt/ontrak-sync/.env` holds the
-live `ONTRAK_API_TOKEN`, and `/opt/ontrak-portal/.env` holds the session signing
-secret. Back them up before a redeploy — a deployment that regenerates the API
-token silently breaks anything already using it.
+Each product is still its own stack with its own project name, so a rebuild of one
+recreates that product's containers and keeps every volume — the family file is for
+running them together, not a requirement for running one.
+
+The images are built on the host, so a deploy is a rebuild rather than a pull. The
+`.env` files are **not** in the repository and each one is load-bearing:
+`/usr/src/ontrak/.env` (the training app and the shared stack), `ontrak-tix/.env`,
+`ontrak-sentinel/.env`, `ontrak-sync/.env` (the live `ONTRAK_API_TOKEN`) and
+`ontrak-portal/.env` (the session signing secret). Back them up before a redeploy —
+a deployment that regenerates the API token silently breaks anything already using it.
 
 ### After the first start of OnTrak Sync
 
@@ -189,16 +212,34 @@ The last row is the split worth remembering: **the portal's two sign-in paths fa
 independently.** Cerulean signing in is not affected by Sync being down, and Sync's
 account table is not affected by Cerulean being down.
 
+## 6a. Signing in for the first time
+
+| Product | How |
+| --- | --- |
+| Portal `ontrak.innotel.us` | **Sign in with Cerulean**, or the local username/password form |
+| Training `its.ontrak.innotel.us` | `admin@ontrak.local`, `instructor@ontrak.local`, `student@ontrak.local` — password `change-me-ontrak` (set `SEED_PASSWORD` before seeding to choose it). Student join code `NET101`. |
+| Tix `tix.ontrak.innotel.us` | `admin@acme.test`, `dispatcher@acme.test`, `agent@acme.test`, `requester@acme.test` — password `ChangeMe123`. The SSO button uses the workspace in `ONTRAK_TIX_DEFAULT_TENANT` (`acme` here); anything else is refused, which is the point of the slug. |
+| Sentinel `sentinel.ontrak.innotel.us` | Its console is at `/console` and holds its own accounts and MFA — the root path is deliberately a 404, because the provider has no landing page to show. |
+| Sync `sync.ontrak.innotel.us` | `ONTRAK_ADMIN_USER` and the password printed once on an empty database (`docker logs ontrak-sync-api | grep 'generated password'`), or Cerulean. |
+
+A person's *role* decides which tiles the portal draws: `ontrak-students` and
+`ontrak-instructors` reach training, `ontrak-desk` reaches Tix, `ontrak-analysts`
+reaches Sentinel, `ontrak-sysadmins` and `ontrak-admins` reach everything. Change
+the group in Authentik and the tiles follow at the next sign-in — nothing is copied
+into a product, so there is no second place to update.
+
 ## 7. What is not here yet
 
 Stated plainly, because a guide that only lists what works is a guide that wastes
 somebody's afternoon:
 
-- **The training, Tix and Sentinel stacks are not running on this container yet.**
-  Their names, certificates and proxy hosts all exist and point at the right ports;
-  bring the products up with `make all-up` from the repository root, or each
-  product's own `docker compose up -d --build`. Until then those three names
-  answer 502, which is honest about the state rather than pretending.
+- **Two training scenarios are blocked on purpose** until their prerequisite is
+  present: "Close an open mail relay" needs the postfix package enabled, and
+  "Asset reconciliation visit" needs the Contoso Asset Suite key stored. The
+  seeding output says so as well.
+- **Sentinel's root path answers 404.** The console lives at `/console`; there is no
+  marketing page to redirect to, and inventing one would be a page that lies about
+  what the product is.
 - **SAML and IdP-initiated sign-on** are not implemented; the flow is
   SP-initiated OIDC only.
 - **No self-service password reset.** There is no mail server in this estate's
