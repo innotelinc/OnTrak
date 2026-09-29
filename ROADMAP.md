@@ -7,6 +7,10 @@
 > This is the single source of truth for **what** the training platform does and
 > **what comes next**. v1 is feature-complete; this roadmap finishes v1 and lays
 > out the path beyond it.
+>
+> **OnTrak family release 2026.09** ([portfolio](../INNOTEL-LABS.md)): this
+> product's slice of it is **v1.2 — real drivers**, shipped; the others are
+> **OnTrak Tix M6** and **OnTrak Sentinel S3**.
 
 ---
 
@@ -138,17 +142,46 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   the automated axe/keyboard audit (`npm test`) and the browser paint-rule sweep
   (`npm run test:a11y`) have all landed and pass (`[x]`).
 
-### v1.2 — Real drivers `[ ]`
+### v1.2 — Real drivers `[x]`
 **Goal:** higher-fidelity practice behind the existing seam.
 
-- A container-backed `ShellDriver` for genuine bash and PowerShell, sandboxed and
-  resource-capped, with the same prompt/run/banner contract.
-- Graceful fallback to the in-browser driver when no sandbox is available, so the
-  product never becomes unavailable.
-- Scenario metadata declaring `simulated | container` fidelity, surfaced in the
-  UI and honoured by the availability rule.
-- **Exit:** a scenario authored for real bash runs in a sandbox and grades
-  identically to the simulated driver on the bundled checks.
+- `[x]` **A sandbox-backed `ShellDriver` for genuine bash.** `src/lib/sim/drivers/container.ts`
+  runs each command line in a disposable container (`docker create` with no network, no
+  capabilities, `no-new-privileges`, and memory/CPU/PID ceilings — see `dockerCreateArgs`)
+  and, after every command, **harvests the sandbox filesystem back into `EngineState.vfs`**:
+  type, permissions, owner, group, mtime, size and content for every entry, NUL-delimited so
+  a filename with a space, a quote or a newline survives. Because grading reads only
+  `EngineState`, `file_exists`, `file_contains`, `file_mode`, `dir_exists` and `file_absent`
+  grade a real filesystem, and command history is recorded in the same shape, so
+  `command_matched` and `command_sequence` are unchanged. `cd`, `pwd`, `cd ~` and `cd -` are
+  the driver's own (every command is a fresh process), a failed `cd` changes nothing, and a
+  harvest that fails leaves the previous tree in place rather than grading a half-read one.
+  The same port also has a **process** backend (real bash in a scratch directory) which is
+  what makes the automated test exercise genuine bash with no Docker daemon; it is refused
+  unless both `ONTRAK_SANDBOX_BACKEND=process` and `ONTRAK_SANDBOX_ALLOW_PROCESS=1` are set,
+  because it runs commands on the app server with no isolation.
+- `[x]` **Graceful fallback, so the product never becomes unavailable.** Fidelity is resolved
+  on the server when the attempt page renders (`resolveFidelity`), and a scenario that asks
+  for a sandbox on a deployment without one runs in the simulated engine with the reason shown
+  on screen. If the sandbox stops answering *mid-attempt*, the browser-side proxy
+  (`src/lib/sim/drivers/proxy.ts`) falls back once, tells the student, and the rest of the
+  attempt is simulated — every check still grades.
+- `[x]` **Scenario metadata: `simulated | container`.** Declared in the definition
+  (`fidelity`), validated (container fidelity is an error for PowerShell and Office, since a
+  `pwsh` process on Linux under a scenario that promises Windows would be fidelity theatre),
+  surfaced as a badge on the attempt console and as a warning in the editor, and honoured by
+  the availability rule: a sandbox-only scenario is not offered where there is no sandbox
+  (`kind: "sandbox"` blocker). Attempts in a sandbox go through a server action per command
+  (`sandboxCommand`) against one sandbox per attempt, disposed of on submit, abandon and
+  restart, and reaped after 30 minutes idle.
+- **Exit:** `[x]` a scenario authored for real bash runs in a sandbox and grades identically
+  to the simulated driver on the bundled checks — `tests/sim-container.test.ts` grades the same
+  five-check scenario twice, once simulated and once under real bash in a process sandbox, and
+  asserts the two reports agree check for check at 100% (26 checks in the suite, including the
+  harvest round trip, the container flags and argv, the fallback paths and the session registry).
+  The container backend itself was verified against a real Docker daemon: create → start →
+  seed → `chmod` → harvest → grade, with the mode change read back and no container left
+  behind.
 
 ### v1.3 — Identity & integrations `[~]`
 **Goal:** fit into an organisation.
