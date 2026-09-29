@@ -8,8 +8,9 @@
 #   tix         — OnTrak Tix: typecheck, unit tests, build
 #   sentinel    — OnTrak Sentinel: migrations applied, then typecheck and unit tests
 #   roundtrip   — the Sentinel image boots and signs somebody in over the wire
-#   family      — all three products boot together and the wiring between them holds
-#   images      — all three container images actually build
+#   family      — the whole family stack boots together and the wiring between the
+#                 products holds
+#   images      — every container image actually builds, one matrix entry per product
 #
 # Both apps talk to PostgreSQL (through Prisma) and are exercised against a
 # real database here, because a suite that only passes against fakes proves
@@ -20,9 +21,11 @@
 
 name: CI
 
+# `family` is where the family is assembled, so a push there runs CI too: the branch
+# that reaches a deploy is the branch whose images have to be proven to build.
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, family]
   pull_request:
   workflow_dispatch:
 
@@ -84,7 +87,7 @@ jobs:
       # family is drifting apart is somebody fixing one copy. A diff is the check that
       # cannot be argued with; `--update` is how a real theme change is rolled out.
       - name: Unity theme copies are byte-identical
-        run: node theme/verify.mjs
+        run: python3 theme/tests/test_theme_copies.py
 
   secrets:
     name: Secret scan
@@ -367,7 +370,7 @@ jobs:
         working-directory: ontrak-sentinel
         run: docker compose down -v
 
-  # The family stack — all three products in one project — is the artefact behind
+  # The family stack — every product in one project — is the artefact behind
   # `make all-up`, so it is the thing to boot. The unit suites prove each product's
   # rules; this proves the *wiring between them*: three databases on their own
   # ports, one network, each app told its own public address, and a provider that
@@ -442,6 +445,12 @@ jobs:
   # every push rather than discovered broken at release time. This builds the
   # serving stage of each product and pushes nothing: publishing an image is a
   # deployment's decision, not CI's.
+  #
+  # Every product the family stack runs has an entry, and that is the point: a
+  # build error in any one of them — an import path that resolves in the repo but
+  # not inside the image's build context, say — is caught here, per product, with
+  # the failing name on the check rather than surfacing as a deploy that half
+  # worked.
   images:
     name: Image (${{ matrix.app }})
     runs-on: ubuntu-latest
@@ -449,12 +458,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `target` is per-entry because the products do not agree on the name of
+          # their serving stage: the three Next apps end at `runner`, Portal and Sync
+          # at `runtime`. Naming it is what makes this a build of the stage that ships
+          # rather than of whichever stage happens to be last in the file.
           - app: training
             context: .
+            target: runner
           - app: tix
             context: ontrak-tix
+            target: runner
           - app: sentinel
             context: ontrak-sentinel
+            target: runner
+          - app: portal
+            context: ontrak-portal
+            target: runtime
+          - app: sync
+            context: ontrak-sync/web
+            target: runtime
     steps:
       - uses: actions/checkout@v7
 
@@ -468,7 +490,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
-          target: runner
+          target: ${{ matrix.target }}
           push: false
           load: true
           tags: ontrak-${{ matrix.app }}:ci
