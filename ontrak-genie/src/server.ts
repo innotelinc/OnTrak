@@ -8,6 +8,18 @@ import { pendingApprovals, resolveApproval } from "./approval.js";
 import { config } from "./config.js";
 import { buildFileDiff } from "./diff.js";
 import { modelHealth, startModelHealthLoop } from "./modelHealth.js";
+import {
+  abandonLogin,
+  beginLogin,
+  clearedCookie,
+  completeLogin,
+  LoginError,
+  mintSession,
+  oidcEnabled,
+  redirectUri,
+  sessionCookie,
+  sessionFrom,
+} from "./oidc.js";
 import { gatewayHealth, listModels } from "./omniroute.js";
 import { sandboxInfo } from "./sandbox.js";
 import { dropSnapshot, listSnapshots, readSnapshot } from "./snapshots.js";
@@ -111,11 +123,99 @@ async function serveStatic(res: http.ServerResponse, pathname: string): Promise<
 
 // --- auth -------------------------------------------------------------------
 
+/**
+ * Who may call the API.
+ *
+ * In order: a valid session cookie when sign-in is configured, then the shared
+ * bearer (the API path, and what a deployment with no identity provider uses),
+ * and — only when neither is configured — the loopback trust this app started
+ * with. That last case is intended rather than leftover: a laptop with no token
+ * and a loopback bind is the default this ships with.
+ *
+ * The consequence worth stating: configuring sign-in refuses an unauthenticated
+ * request even when `WEB_TOKEN` is empty. Turning OIDC on and leaving the bearer
+ * unset must not leave the console open, which is exactly what the old `return
+ * true` would have done.
+ */
 function isAuthorized(req: http.IncomingMessage, url: URL): boolean {
-  if (config.webToken === "") return true;
-  const header = req.headers.authorization;
-  if (header === `Bearer ${config.webToken}`) return true;
-  return url.searchParams.get("token") === config.webToken;
+  if (config.webToken !== "") {
+    if (req.headers.authorization === `Bearer ${config.webToken}`) return true;
+    if (url.searchParams.get("token") === config.webToken) return true;
+  }
+  if (sessionFrom(req) !== null) return true;
+  return config.webToken === "" && !oidcEnabled();
+}
+
+// --- auth routes ------------------------------------------------------------
+
+/**
+ * The sign-in endpoints. They are routed before the authorization check because
+ * they are how authorization is obtained.
+ *
+ * `/api/auth/status` is deliberately unauthenticated and deliberately thin: the
+ * console has to know whether to send somebody to the provider or to ask for a
+ * token, and it cannot answer that question while unauthorized. It exposes a
+ * boolean and, at most, the identity already carried by the caller's own cookie.
+ */
+async function handleAuthRoutes(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  url: URL,
+): Promise<boolean> {
+  const { pathname } = url;
+
+  if (pathname === "/api/auth/status" && req.method === "GET") {
+    const session = sessionFrom(req);
+    sendJson(res, 200, {
+      oidc: oidcEnabled(),
+      // Without sign-in configured this mirrors the server: a token or a
+      // loopback caller is as authorized as it gets.
+      authenticated: session !== null || (config.webToken === "" && !oidcEnabled()),
+      identity:
+        session === null ? null : { sub: session.sub, email: session.email, name: session.name },
+    });
+    return true;
+  }
+
+  if (pathname === "/api/auth/login" && req.method === "GET") {
+    if (!oidcEnabled()) throw new HttpError(404, "sign-in is not configured");
+    res.writeHead(302, { Location: await beginLogin() });
+    res.end();
+    return true;
+  }
+
+  if (pathname === "/api/auth/callback" && req.method === "GET") {
+    if (!oidcEnabled()) throw new HttpError(404, "sign-in is not configured");
+    const state = url.searchParams.get("state") ?? "";
+    const refusal = url.searchParams.get("error");
+    if (refusal !== null) {
+      abandonLogin(state);
+      throw new HttpError(401, `the provider refused the sign-in: ${refusal}`);
+    }
+
+    let identity;
+    try {
+      identity = await completeLogin(url.searchParams.get("code") ?? "", state);
+    } catch (failure) {
+      // A sign-in that did not work is a 401, not a 500 — but a provider that
+      // could not be reached is a 502, and conflating the two sends the operator
+      // to the wrong thing. The state is already spent either way.
+      const status = failure instanceof LoginError ? 401 : 502;
+      throw new HttpError(status, (failure as Error).message);
+    }
+
+    res.writeHead(302, { Location: "/", "Set-Cookie": sessionCookie(mintSession(identity)) });
+    res.end();
+    return true;
+  }
+
+  if (pathname === "/api/auth/logout" && req.method === "POST") {
+    res.writeHead(200, { "Content-Type": "application/json", "Set-Cookie": clearedCookie() });
+    res.end(JSON.stringify({ ok: true }));
+    return true;
+  }
+
+  return false;
 }
 
 // --- chat (SSE) -------------------------------------------------------------
@@ -398,6 +498,7 @@ export function createServer(): http.Server {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       try {
         if (url.pathname.startsWith("/api/")) {
+          if (await handleAuthRoutes(req, res, url)) return;
           if (!isAuthorized(req, url)) throw new HttpError(401, "unauthorized");
           await handleApi(req, res, url);
           return;
@@ -435,6 +536,7 @@ if (isEntrypoint) {
     console.log(`  gateway   ${health}`);
     console.log(`  workspace ${config.workspace}`);
     if (config.webToken !== "") console.log("  auth      bearer token required");
+    if (oidcEnabled()) console.log(`  auth      sign-in via ${config.oidcIssuer} -> ${redirectUri()}`);
     console.log(
       config.healthIntervalMs > 0
         ? `  health    checking the chain every ${Math.round(config.healthIntervalMs / 60_000)} min`
@@ -445,7 +547,7 @@ if (isEntrypoint) {
     // non-loopback bind without a token is worth shouting about.
     const loopback =
       config.host === "127.0.0.1" || config.host === "localhost" || config.host === "::1";
-    if (!loopback && config.webToken === "") {
+    if (!loopback && config.webToken === "" && !oidcEnabled()) {
       console.warn(
         `  warning   HOST=${config.host} exposes this agent beyond localhost with no WEB_TOKEN. ` +
           "Anyone who can reach the port can read, edit and run code. Set WEB_TOKEN to require a token.",

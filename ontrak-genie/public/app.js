@@ -143,6 +143,26 @@ function authHint(response, payload) {
   return payload.error || `${response.status} ${response.statusText}`;
 }
 
+/**
+ * Send the browser to the identity provider when the server says it uses one.
+ *
+ * A 401 looks the same whether a deployment wants a shared token or a sign-in,
+ * so the console cannot tell them apart from the failure. `/api/auth/status` is
+ * the one route that answers without a session, and asking it once at startup is
+ * what keeps a signed-out visitor from being shown a console that cannot load.
+ */
+async function signInIfRequired() {
+  try {
+    const response = await fetch("/api/auth/status");
+    if (!response.ok) return;
+    const status = await response.json();
+    if (status.oidc && !status.authenticated) location.replace("/api/auth/login");
+  } catch {
+    // Unreachable is not this function's problem — the loads below report that
+    // the way they always have.
+  }
+}
+
 function scrollToBottom(force = false) {
   const box = $("#messages");
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 160;
@@ -1864,6 +1884,8 @@ autoGrow();
 // and quiet if it was closed on purpose.
 if (storedPreviewOpen() === "1") togglePreview(true);
 else if (storedPreviewOpen() === "0") state.preview.dismissed = true;
+// Before anything is fetched: if this deployment signs people in, go there.
+void signInIfRequired();
 void loadModels();
 // Which models the last sweep found usable, for the picker and the panel.
 void refreshSweep();

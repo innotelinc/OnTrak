@@ -469,14 +469,20 @@ The agent is deliberately constrained, because it runs with your privileges:
 - **Prompt-injection aware.** The system prompt tells the agent not to go hunting
   for credentials or keys outside the workspace, and to say so rather than work
   around a missing permission. That is a mitigation, not a guarantee.
-- **UI auth.** Set `WEB_TOKEN` and every `/api/*` call needs
-  `Authorization: Bearer <token>`; a non-loopback bind without one logs a loud
-  warning on startup.
+- **UI auth.** Two ways in, and either can be the only one. Set `WEB_TOKEN` and
+  every `/api/*` call needs `Authorization: Bearer <token>` (or `?token=`); a
+  non-loopback bind without one logs a loud warning on startup. Or configure
+  sign-in — `ONTRAK_OIDC_ISSUER`, `ONTRAK_OIDC_CLIENT_ID` and
+  `ONTRAK_OIDC_SESSION_SECRET` — and the console sends the browser to Authentik,
+  verifies the returned `id_token` against the provider's published keys, and
+  keeps the result in a signed cookie. **Configuring sign-in refuses
+  unauthenticated calls even when `WEB_TOKEN` is empty**, so switching it on
+  cannot leave a published port open by accident.
 - **Commands run in a container.** See the next section.
 
 Once you expose this beyond localhost, put it behind a reverse proxy with TLS as
-well as `WEB_TOKEN`. The agent is an autonomous process with shell access; treat
-the port accordingly.
+well as one of the two gates above. The agent is an autonomous process with shell
+access; treat the port accordingly.
 
 ## Command sandbox
 
@@ -699,6 +705,12 @@ All optional — see `.env.example`.
 | `AGENT_STREAM`                              | `true`                   | Set `false` if a provider mishandles SSE |
 | `AGENT_TOOL_RESULT_LIMIT`                   | `60000`                  | Cap on a single tool result              |
 | `WEB_TOKEN`                                 | *(empty)*                | Require this bearer token on `/api/*`    |
+| `ONTRAK_OIDC_ISSUER`                        | *(empty)*                | Authentik issuer. With the two below, require sign-in on `/api/*` |
+| `ONTRAK_OIDC_CLIENT_ID`                     | *(empty)*                | OIDC client id registered with the provider |
+| `ONTRAK_OIDC_CLIENT_SECRET`                 | *(empty)*                | Only for a confidential client; omit it with PKCE |
+| `ONTRAK_OIDC_REDIRECT_URL`                  | `http://127.0.0.1:<PORT>/api/auth/callback` | Must match the registered URI byte for byte, as the browser reaches it |
+| `ONTRAK_OIDC_SESSION_SECRET`                | *(empty)*                | Signs the session cookie. Required for sign-in |
+| `ONTRAK_OIDC_SESSION_HOURS`                 | `12`                     | How long a sign-in lasts before the person is sent back to the provider |
 
 ## Agent tools
 

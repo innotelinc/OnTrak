@@ -32,7 +32,7 @@ does not.
 ## Consumes
 
 - **OmniRoute** — model gateway. Genie holds no provider credentials and speaks only the OpenAI-compatible API; the gateway's address arrives from the deployment environment.
-- **Authentik** (Cerulean) — identity, SSO. *Planned:* today the UI takes a static bearer; a family deployment puts it behind the same identity provider as the other products.
+- **Authentik** (Cerulean) — identity, SSO. Wired: the authorization code flow with PKCE, RS256 `id_token` verification against the provider's JWKS, and a signed session cookie. Off until the issuer, the client id and the session secret are configured; the shared bearer remains for API clients that drive the endpoint directly.
 - **Cerulean Vault** — secrets. *Planned:* a `vault://` reference resolved at deploy time, in place of a `.env` value.
 - **Cerulean** — trust (DNS/TLS) and **NPM Edge** — public routing, for the operator surface where it is exposed. *Planned.*
 - **Olympus** (FactoryOps) — the builder engine. See [convergence-olympus.md](convergence-olympus.md): the target is Genie's interface over Olympus's plan → runner → package → runtime path.
