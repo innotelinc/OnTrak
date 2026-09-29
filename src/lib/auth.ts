@@ -11,7 +11,12 @@ export { ACCENT_COLORS, hashPassword, pickAccent, verifyPassword } from "./auth-
 export const SESSION_COOKIE = "ontrak_training_session";
 const ALGORITHM = "HS256";
 
-function secret(): Uint8Array {
+/**
+ * The deployment's signing key. Exported so the single sign-on round trip is
+ * signed with the same secret as the session it eventually issues — one secret to
+ * rotate, not two.
+ */
+export function sessionSigningKey(): Uint8Array {
   const value = process.env.AUTH_SECRET;
   if (!value || value.length < 16) {
     throw new Error(
@@ -45,7 +50,7 @@ export async function createSession(user: SessionUser): Promise<void> {
     .setSubject(user.id)
     .setIssuedAt()
     .setExpirationTime(`${ttl}s`)
-    .sign(secret());
+    .sign(sessionSigningKey());
 
   const store = await cookies();
   store.set(SESSION_COOKIE, token, {
@@ -78,7 +83,7 @@ export async function destroySession(): Promise<void> {
 /** Verify a raw JWT — shared with middleware, which runs on the edge runtime. */
 export async function verifySessionToken(token: string): Promise<{ userId: string } | null> {
   try {
-    const { payload } = await jwtVerify(token, secret(), { algorithms: [ALGORITHM] });
+    const { payload } = await jwtVerify(token, sessionSigningKey(), { algorithms: [ALGORITHM] });
     if (!payload.sub) return null;
     return { userId: payload.sub };
   } catch {

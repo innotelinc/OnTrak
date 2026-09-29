@@ -64,10 +64,17 @@ enum AttemptStatus {
 // ---------------------------------------------------------------------------
 
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  name         String
-  passwordHash String
+  id     String @id @default(cuid())
+  email  String @unique
+  name   String
+  /// Local password, or `null` for an account that signs in only through the
+  /// deployment's identity provider. Null is not "any password": `verifyPassword`
+  /// refuses it, so such an account cannot be signed into with a guessed one.
+  passwordHash String?
+  /// The identity provider's stable subject (`sub`). Matching a later sign-in on
+  /// this is what makes a rename in the directory a *move* rather than a second
+  /// account with the first one's attempts and certificates orphaned.
+  externalId   String?   @unique
   role         Role      @default(STUDENT)
   active       Boolean   @default(true)
   /// Stable color used for avatars so the UI stays colorful and friendly.
