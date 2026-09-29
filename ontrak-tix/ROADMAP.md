@@ -291,7 +291,15 @@ to stand on its own.
 > privilege at the provider is not a side effect of a desk edit. Covered by
 > `tix-m2-scim-push.test.ts`, and by the opt-in `tix-m2-scim-live.test.ts`, which
 > pushes real people at a real provider and asserts the leaver stops being able to
-> sign in.
+> sign in. The push also runs **without** anybody pressing the button: `POST
+> /api/scim/push` (Bearer-authenticated with `ONTRAK_TIX_CRON_SECRET`, `?tenant=`
+> to scope it) and `npm run sweep:scim [-- <slug>] [--dry-run]` are the scheduled
+> entry points, covered by the opt-in `tix-m2-scim-sweep-live.test.ts`. Because a
+> matched person is a `NOOP`, a quiet sweep writes nothing and can be scheduled as
+> often as a cron likes; because an unconfigured deployment answers `503` rather
+> than a cheerful zero, a scheduler can tell a run that stopped syncing from one
+> with nothing to do; and because the run has no session, its changes are audited
+> as `system:scim-sync` so the trail still names who the write belongs to.
 >
 > M3 progress: the incident lifecycle has landed as pure rules plus a service
 > and a Prisma adapter — the impact×urgency severity matrix, the phase ladder

@@ -96,7 +96,8 @@ identity at the IdP.
 | The service: whose people, in what order, what is recorded | `src/lib/scim-sync-service.ts` |
 | Prisma adapter (the listing) | `src/lib/scim-sync-store-prisma.ts` |
 | The console card and its action | `src/components/ScimPushCard.tsx`, `/admin/identity` |
-| Tests | `tests/tix-m2-scim-push.test.ts`, and the opt-in `tests/tix-m2-scim-live.test.ts` |
+| The scheduled run | `src/app/api/scim/push/route.ts`, `scripts/scim-sweep.ts` |
+| Tests | `tests/tix-m2-scim-push.test.ts`, and the opt-in `tests/tix-m2-scim-live.test.ts` and `tests/tix-m2-scim-sweep-live.test.ts` |
 
 `ontrak-tix/.env` names the target: `ONTRAK_TIX_SCIM_BASE_URL` (the provider's
 origin) and `ONTRAK_TIX_SCIM_TOKEN` (a connector token minted in the provider's
@@ -130,6 +131,49 @@ reported for that person and the rest continue. Each applied change is audited a
 `identity.scim.push` — a name distinct from `identity.scim.provision`, because
 reading the trail, the two are the two halves of one conversation and an
 investigation wants to know which side spoke.
+
+### Keeping it in step: the scheduled push
+
+A button only provisions the people who were added since somebody last pressed it,
+and the person it misses is a new colleague who cannot sign in until an
+administrator notices. So the same run is reachable without a session:
+
+```bash
+# a cron, or anything that can make one HTTP request
+curl -fsS -X POST -H "Authorization: Bearer $ONTRAK_TIX_CRON_SECRET" \
+  http://127.0.0.1:3001/api/scim/push            # every desk
+curl -fsS -X POST -H "Authorization: Bearer $ONTRAK_TIX_CRON_SECRET" \
+  "http://127.0.0.1:3001/api/scim/push?tenant=acme"   # one desk
+
+npm run sweep:scim              # the same sweep from a terminal, using the
+npm run sweep:scim -- acme      # deployment's own database and configuration
+npm run sweep:scim -- --dry-run # report what would change, write nothing
+npm run sweep:scim -- acme      # exit 0 = a completed sweep, 1 = it could not run
+```
+
+Four things about it are deliberate:
+
+- **It is safe to schedule aggressively, and that is a property of the sync rather
+  than of the endpoint.** A person the provider already matches is planned as a
+  `NOOP`, so a quiet run performs no provider writes, records no audit entries and
+  leaves nothing for anybody to clean up. A sweep every few minutes costs a couple
+  of reads per person and no trail noise.
+- **An unconfigured deployment is `503`, not `200` with zeroes.** A scheduler's job
+  is to notice that a sync stopped happening; a run that reports success while
+  pushing nowhere is exactly the failure it cannot see. The body names the two
+  variables to set. The script separates the same states with its exit code.
+- **The sweep is not an authorization bypass.** It is what the *cron* calls, so it
+  carries the deployment's own credential rather than a session, and the changes it
+  makes are audited as **`system:scim-sync`** — a system run is still attributable,
+  and a reader of the trail can tell an automatic sweep from an administrator's.
+  The permission check stays in the service's `push()`, which is the path the
+  console takes, because the check belongs where the write is and not where the
+  button is.
+- **One desk's broken connector does not stop the others.** An unscoped run walks
+  every tenant, and a tenant whose push refused is reported per-tenant with the
+  provider's own words (the response is `partial`) rather than aborting the sweep.
+  The scoping parameter exists for the same reason the SLA and retention sweeps
+  have one: an unscoped run is a real change to every desk in the database.
 
 ## Single sign-on (OIDC)
 

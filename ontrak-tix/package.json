@@ -19,6 +19,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "verify:packet": "tsx scripts/verify-packet.ts",
     "sweep:retention": "tsx scripts/retention-sweep.ts",
+    "sweep:scim": "tsx scripts/scim-sweep.ts",
     "setup": "prisma generate && prisma db push && tsx prisma/seed.ts",
     "docker:db": "docker compose up -d db"
   },
