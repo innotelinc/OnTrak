@@ -1,7 +1,8 @@
 import { requireActor } from "../../../../lib/session";
 import { TICKET_PRIORITIES, TICKET_TYPES } from "../../../../lib/ticket-rules";
-import { knowledgeServicesFor } from "../../../../lib/db";
+import { formServicesFor, knowledgeServicesFor } from "../../../../lib/db";
 import { ArticleSuggestions } from "../../../../components/ArticleSuggestions";
+import { CustomFieldInputs } from "../../../../components/CustomFieldInputs";
 import { createTicketAction } from "../../../actions/tickets";
 
 export const metadata = { title: "New request" };
@@ -27,6 +28,11 @@ export default async function NewRequestPage({
   const query = subject?.trim() ?? "";
   // Public articles only: the search itself refuses to hand back a private one.
   const suggestions = query ? await knowledgeServicesFor().suggestPublic(actor.tenantId, query) : [];
+
+  // The desk's own fields (M6). A requester's ticket has no queue chosen before it exists,
+  // so this is the default form — the same fields the desk asks the portal and itself.
+  const layout = await formServicesFor().layoutFor(actor, null);
+  const customFields = layout.ok ? layout.value : null;
 
   return (
     <div className="mx-auto max-w-2xl space-y-4">
@@ -109,6 +115,10 @@ export default async function NewRequestPage({
           </label>
         </div>
 
+        {customFields ? <CustomFieldInputs layout={customFields} /> : null}
+
+        {/* `text-brand-ink`, not `text-white`: in a light scheme the brand is dark
+            enough that white is the wrong ink, and the token is what flips with it. */}
         <button type="submit" className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-brand-ink">
           Submit request
         </button>

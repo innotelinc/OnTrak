@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { requireSession } from "@/lib/auth";
 import { readSnapshot, SCENARIO_INCLUDE, secondsRemaining, toDefinition } from "@/lib/scenarios";
 import { LOCALE_COOKIE, resolveLocale } from "@/lib/i18n";
+import { normalizeFidelity, resolveFidelity, sandboxAvailability, sandboxConfigFromEnv } from "@/lib/sim/fidelity";
 import { AttemptRunner } from "@/components/console/AttemptRunner";
 import { LocaleProvider } from "@/lib/i18n-client";
 
@@ -33,6 +34,13 @@ export default async function AttemptPage({ params }: { params: Promise<{ id: st
   const store = await cookies();
   const locale = resolveLocale(store.get(LOCALE_COOKIE)?.value);
 
+  // Which machine this attempt runs in (v1.2). Resolved here rather than in the browser,
+  // because only the server knows whether a sandbox exists — and a student who is going to
+  // get the simulated console anyway should be told before they type, not after.
+  const requested = normalizeFidelity(definition.fidelity);
+  const sandbox = sandboxAvailability(sandboxConfigFromEnv(process.env));
+  const resolution = resolveFidelity(requested, sandbox);
+
   return (
     <LocaleProvider locale={locale}>
     <AttemptRunner
@@ -56,6 +64,13 @@ export default async function AttemptPage({ params }: { params: Promise<{ id: st
       }}
       definition={definition}
       initialState={initialState}
+      fidelity={{
+        requested,
+        effective: resolution.fidelity,
+        fellBack: resolution.fellBack,
+        reason: resolution.reason,
+        sandbox,
+      }}
       locale={locale}
       assignment={
         attempt.assignment

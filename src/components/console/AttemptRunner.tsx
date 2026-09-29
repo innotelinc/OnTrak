@@ -4,8 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { OfficePanel } from "@/components/console/OfficePanel";
 import { DesktopPane } from "@/components/console/DesktopPane";
-import { abandonAttempt, autosaveAttempt, submitAttempt } from "@/app/actions/student";
-import { createDriver } from "@/lib/sim/drivers";
+import { abandonAttempt, autosaveAttempt, sandboxCommand, submitAttempt } from "@/app/actions/student";
+import { createScenarioDriver, fidelityBadge } from "@/lib/sim/drivers";
+import type { Fidelity, SandboxAvailability } from "@/lib/sim/fidelity";
 import { isDesktopScenario } from "@/lib/sim/desktop";
 import { toKey } from "@/lib/sim/paths";
 import { writeEditedFile } from "@/lib/sim/vfs";
@@ -37,6 +38,18 @@ export interface AttemptRunnerProps {
   };
   definition: ScenarioDefinition;
   initialState: EngineState;
+  /**
+   * Which machine this attempt runs in (v1.2), resolved on the server: the fidelity the
+   * scenario asked for, the one this deployment can deliver, and — when they differ — the
+   * sentence explaining the fallback.
+   */
+  fidelity: {
+    requested: Fidelity;
+    effective: Fidelity;
+    fellBack: boolean;
+    reason: string;
+    sandbox: SandboxAvailability;
+  };
   /** Assign the student has been given, if any. */
   assignment?: { instructions?: string | null; dueAt?: string | null } | null;
   /** The UI language, read from the locale cookie by the page. */
@@ -134,7 +147,7 @@ function Countdown({
   );
 }
 
-export function AttemptRunner({ attempt, scenario, definition, initialState, assignment, locale = "en" }: AttemptRunnerProps) {
+export function AttemptRunner({ attempt, scenario, definition, initialState, fidelity, assignment, locale = "en" }: AttemptRunnerProps) {
   const t = (key: string, vars?: Record<string, string | number>) => translate(messagesFor(locale), key, vars);
   // The engine state is intentionally mutated in place by the driver; React
   // re-renders are driven by an explicit revision counter.
@@ -153,6 +166,9 @@ export function AttemptRunner({ attempt, scenario, definition, initialState, ass
   const [noteDraft, setNoteDraft] = useState("");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [submitting, setSubmitting] = useState(false);
+  // Set when the sandbox stops answering part-way through and the attempt continues in the
+  // simulated engine: the student is told, once, rather than finding out at the end.
+  const [sandboxNote, setSandboxNote] = useState<string | null>(fidelity.reason || null);
   const submittedRef = useRef(false);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const editorRef = useRef<HTMLDivElement | null>(null);
@@ -185,9 +201,20 @@ export function AttemptRunner({ attempt, scenario, definition, initialState, ass
     [tabs, focusTab],
   );
 
+  // A sandboxed attempt talks to the server for every line; everything else runs entirely in
+  // the browser. `fidelity.effective` is the server's answer, so a deployment with no
+  // sandbox never even opens the bridge — the student gets the simulated console and the
+  // sentence explaining why.
   const driver = useMemo(
-    () => createDriver(definition.engine, { user: definition.machine.user }),
-    [definition.engine, definition.machine.user],
+    () =>
+      createScenarioDriver(definition, {
+        bridge:
+          fidelity.effective === "container"
+            ? { command: (input, state) => sandboxCommand({ attemptId: attempt.id, input, state }) }
+            : undefined,
+        onFallback: (_reason, message) => setSandboxNote(message),
+      }),
+    [definition, fidelity.effective, attempt.id],
   );
 
   const commandNames = useMemo(() => driver.completions?.() ?? [], [driver]);
@@ -198,9 +225,31 @@ export function AttemptRunner({ attempt, scenario, definition, initialState, ass
     setRevision((value) => value + 1);
   }, []);
 
-  const runCommand = useCallback(
-    (input: string): CommandResult => {
+  /**
+   * One line from the terminal.
+   *
+   * Awaitable on purpose: a sandboxed driver answers with a promise, and the terminal holds
+   * the prompt until it settles. `driver.runAsync` mutates the state in place exactly as
+   * `run` does, so the caller does not have to know which engine answered.
+   */
+  const runLine = useCallback(
+    async (input: string): Promise<CommandResult> => {
       // Notices describe the command that just ran, so start each one clean.
+      stateRef.current.machine.notices = [];
+      return driver.runAsync ? driver.runAsync(input, stateRef.current) : driver.run(input, stateRef.current);
+    },
+    [driver],
+  );
+
+  /**
+   * The same thing for the desktop surface, which drives the machine itself and can only
+   * exist on a Windows scenario — and a Windows scenario is never sandboxed.
+   */
+  const runCommandSync = useCallback(
+    (input: string): CommandResult => {
+      if (driver.runAsync) {
+        return { stdout: "", stderr: "This attempt runs in a sandbox; use the console.", exitCode: 1 };
+      }
       stateRef.current.machine.notices = [];
       return driver.run(input, stateRef.current);
     },
@@ -583,6 +632,7 @@ export function AttemptRunner({ attempt, scenario, definition, initialState, ass
                 )}
               </Badge>
               <Badge tone="neutral">{scenario.difficulty.toLowerCase()}</Badge>
+              <Badge tone={fidelityBadge(fidelity.effective).tone}>{fidelityBadge(fidelity.effective).label}</Badge>
               <Badge tone={finished ? "neutral" : "teal"}>
                 <span aria-hidden className={cn("size-1.5 rounded-full", finished ? "bg-ink-faint" : "animate-pulse bg-teal")} />
                 {finished ? attempt.status.toLowerCase().replace("_", " ") : t("console.attemptRunning")}
@@ -731,13 +781,19 @@ export function AttemptRunner({ attempt, scenario, definition, initialState, ass
         >
           <TerminalPane
             getPrompt={() => driver.prompt(stateRef.current)}
-            onCommand={runCommand}
+            onCommand={runLine}
             banner={driver.banner(stateRef.current)}
             onOpenEditor={openEditor}
             completions={commandNames}
             onActivity={bump}
             className="h-[26rem] lg:h-[34rem]"
           />
+
+          {sandboxNote ? (
+            <p role="status" className="rounded-xl2 border border-sky/40 bg-sky/5 px-3 py-2 text-sm text-ink-soft">
+              {sandboxNote}
+            </p>
+          ) : null}
 
           {isOffice ? (
             <div className={cn(tab === "console" || tab === "docs" ? "block" : "hidden lg:block")}>
@@ -760,7 +816,7 @@ export function AttemptRunner({ attempt, scenario, definition, initialState, ass
             <DesktopPane
               state={stateRef.current}
               revision={revision}
-              onCommand={runCommand}
+              onCommand={runCommandSync}
               onOpenEditor={openEditor}
               onOpenConsole={() => setTab("console")}
               signedInAs={definition.machine.user}

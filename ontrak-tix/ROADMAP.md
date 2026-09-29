@@ -5,6 +5,10 @@
 > This file is the single source of truth for **what** we are building and in
 > **what order**. It is deliberately opinionated; each milestone lists explicit
 > exit criteria so "done" is not a matter of taste.
+>
+> **OnTrak family release 2026.09** ([portfolio](../INNOTEL-LABS.md)): this
+> product's slice of it is **M6 — platform & integrations**, largely shipped; the
+> others are **OnTrak IT Support Training v1.2** and **OnTrak Sentinel S3**.
 
 ---
 
@@ -1088,9 +1092,47 @@ up to an adjuster or auditor.
     credential, so it is never written to the audit trail, which records the name and
     provider instead. Covered by `tests/tix-m6-chat-notify.test.ts`.
   - `[ ]` A marketplace pattern for third-party connectors.
-- Custom fields, ticket forms and per-queue layouts.
+- `[x]` **Custom fields, ticket forms and per-queue layouts** (`form-rules.ts`,
+  `form-service.ts`, `form-store-prisma.ts`, `form-payload.ts`, the `CustomField`
+  and `QueueForm` models, `/admin/forms`, and the fields rendered into both
+  create-ticket forms): the two halves of one question — *what does this desk want
+  to know about a ticket*, and *which queue asks it*. Six decisions carry it.
+  **A value is stored as a string whatever the field's type**, so a number is a
+  number when it is *validated* rather than when it is stored and a change of type
+  is a validation change rather than a migration; the value is canonicalised on the
+  way in (`"007"` becomes `"7"`, a checkbox becomes `"true"`/`"false"`, a date is
+  `YYYY-MM-DD` or refused). **Unknown keys are refused, not ignored** — a form that
+  silently dropped a field somebody filled in is a form that loses work, and a value
+  posted for a field this queue's form does not show is refused rather than quietly
+  kept. **A key cannot change once it holds a value**: renaming a *label* is ordinary
+  editing, changing a *key* would orphan every answer stored under it, and the
+  service says which one it is refusing. **A field is shown on new forms until it is
+  archived, and archived rather than deleted** — a field that has ever held a value
+  is part of a ticket's history. **A required field is required by the layout**, so
+  the same field is optional on one queue's form and required on another's, and the
+  answer is the same wherever a ticket is raised from: the check is a single
+  `TicketFormGate.validateTicketValues` on the creation path, so the portal, the
+  console and `/api/v1` cannot disagree about a required field. And **a form a queue
+  has not written is the desk's default form, not an empty one**, with `inherited`
+  on the resolved layout so "why is this queue's form different?" has an answer.
+  The admin screen is deliberately honest about the first of those: the field list
+  says how many forms use each field, so a field nobody has put on a form reads as
+  "on no form yet" instead of existing invisibly. Covered by
+  `tests/tix-m6-forms.test.ts` (the rules, the service, the round trip through the
+  ticket path, the payload encoding and the Prisma mappers' narrowing).
 - Enterprise controls: granular roles, audit-evidence export, data-retention and
   legal-hold policies.
+  - `[x]` **Retention and legal hold** landed with M3 rather than here (the
+    `RetentionPolicy`/`LegalHold` pair, object-locked evidence, the retention sweep
+    and `GOVERNANCE`-vs-`COMPLIANCE` retention in **M3 — Incident response &
+    defensible documentation** above), so what is left of this bullet is only the
+    first two words of it.
+  - `[ ]` Granular roles: the permission matrix is fixed today (`access-rules.ts`),
+    and a desk that wants "an agent who may close but not delete" has to change
+    code.
+  - `[ ]` Audit-evidence export: the chain is readable in the console and the
+    assurance packet is signed per incident; a tenant-wide export for an auditor
+    is not built.
 > M6 progress: **the public API, its webhooks, the integrations console and the
 > monitoring connector are live.** A scoped bearer token is a hash in the database
 > and a string on one screen; a sixty-second window per token is enforced by
@@ -1107,10 +1149,14 @@ up to an adjuster or auditor.
 > channels choose from the same closed event set, their URLs are checked against the
 > hosts the provider owns, a ticket's subject is escaped before it is posted because
 > `<!channel>` in a subject would otherwise page the room, and each channel keeps the
-> same delivery log with a button that posts one message now. What remains in M6 is
-> the rest of the milestone: the connector marketplace pattern, custom fields and
-> per-queue layouts, and the enterprise controls — granular roles, audit-evidence
-> export and retention/legal-hold policy. See [docs/api.md](./docs/api.md).
+> same delivery log with a button that posts one message now. A desk can also now
+> ask its own questions: custom fields are defined once, placed on a form per queue
+> (the default form is what every queue without one shows), and checked on the
+> ticket path — the portal, the console and the API get the same answer about a
+> required field because there is one place that answers it. What remains in M6 is
+> the connector marketplace pattern and the enterprise controls — granular roles,
+> audit-evidence export and retention/legal-hold policy. See
+> [docs/api.md](./docs/api.md) and [docs/rules.md](./docs/rules.md).
 
 - **Exit:** a monitoring alert opens a ticket and closes it when the alert clears
   (**done**); audit evidence exports on demand; the API is versioned and documented.

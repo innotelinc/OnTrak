@@ -29,6 +29,7 @@ import {
   type HashFn,
 } from "./audit-chain";
 import { coercePauses, pausesToJson, type SlaPause } from "./sla-rules";
+import { FIELD_KEY_PATTERN } from "./form-rules";
 import type { MessageKind, TicketPriority, TicketStatus, TicketType } from "./ticket-rules";
 import type { TicketMessage, TicketRecord, TicketStore } from "./ticket-service";
 
@@ -78,6 +79,13 @@ export interface TicketRow {
   slaPauses?: unknown;
   /** Tags applied by hand or by a rule (M5). A `String[]` column, so absent on old rows. */
   tags?: string[] | null;
+  /**
+   * The desk's own fields (M6). JSON, because the keys are the tenant's to choose and a
+   * column per field would be a migration per field. Validated on the way back in: a row
+   * written by hand, or by a version that stored something else, yields no values rather
+   * than a ticket that renders wrong.
+   */
+  customFields?: unknown;
   messages?: MessageRow[];
 }
 
@@ -134,8 +142,19 @@ export function toTicketRecord(row: TicketRow): TicketRecord {
     closedAt: toIsoOrNull(row.closedAt),
     pauses: coercePauses(row.slaPauses),
     tags: row.tags ?? [],
+    ...(customValuesOf(row.customFields) ? { customFields: customValuesOf(row.customFields)! } : {}),
     messages: (row.messages ?? []).map(toMessageRecord),
   };
+}
+
+/** Stored values, if they are values: strings keyed by field key, and nothing else. */
+function customValuesOf(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const out: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === "string" && FIELD_KEY_PATTERN.test(key)) out[key] = entry;
+  }
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 export function toMessageRecord(row: MessageRow): TicketMessage {
@@ -171,6 +190,7 @@ export function toTicketCreate(ticket: TicketRecord) {
     closedAt: ticket.closedAt === null ? null : fromIso(ticket.closedAt),
     slaPauses: pausesToJson(ticket.pauses),
     tags: [...(ticket.tags ?? [])],
+    customFields: { ...(ticket.customFields ?? {}) },
   };
 }
 
@@ -196,6 +216,9 @@ export function toTicketUpdate(ticket: TicketRecord) {
     // Tags are mutable: a rule may tag a ticket after the fact, and an agent may
     // take a wrong tag off. They are not part of what the ticket *is*.
     tags: [...(ticket.tags ?? [])],
+    // Custom fields are mutable for the same reason tags are — an agent correcting a
+    // location is ordinary work — and they are not part of the ticket's identity.
+    customFields: { ...(ticket.customFields ?? {}) },
   };
 }
 

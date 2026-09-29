@@ -33,14 +33,19 @@ import {
   CONSOLE_PATHS,
   consoleErrorPage,
   consoleSignedOutPage,
+  renderDirectory,
   renderMfa,
   renderOverview,
+  renderPolicies,
   renderProvisioning,
   renderSignIn,
+  type ConsoleDirectoryView,
   type ConsoleMfaView,
   type ConsoleOverviewView,
+  type ConsolePoliciesView,
   type ConsoleProvisioningView,
   type ConsoleSignInView,
+  type ConsoleSyncReportView,
 } from "./console-rules";
 import type { SignInInput } from "./sign-in-rules";
 import type { WebAuthnRegistrationResponse } from "./webauthn-rules";
@@ -72,6 +77,29 @@ export interface ConsoleEndpoints {
   signIn(input: SignInInput): Promise<ServiceResult<{ sessionId: string; redirectTo: string }>>;
   overview(sessionId: string): Promise<ServiceResult<ConsoleOverviewView>>;
   provisioning(sessionId: string): Promise<ServiceResult<ConsoleProvisioningView>>;
+  /** The directories this organization reads, and what their last runs did. */
+  directory(sessionId: string): Promise<ServiceResult<ConsoleDirectoryView>>;
+  connectDirectory(
+    sessionId: string,
+    input: {
+      name: string;
+      source: string;
+      settings: Record<string, string>;
+      conflictPolicy: string;
+      defaultRole: string;
+      secret: string | null;
+    },
+  ): Promise<ServiceResult<{ name: string }>>;
+  removeDirectory(sessionId: string, connectionId: string): Promise<ServiceResult<{ name: string }>>;
+  /** `dryRun` writes nothing, so it is safe for the page to render the plan in place. */
+  syncDirectory(sessionId: string, connectionId: string, dryRun: boolean): Promise<ServiceResult<ConsoleSyncReportView>>;
+  /** The session policies the organization has, one card per scope. */
+  policies(sessionId: string): Promise<ServiceResult<ConsolePoliciesView>>;
+  /** Write the baseline or one role's override; the scope is echoed for the flash. */
+  setPolicy(
+    sessionId: string,
+    input: { scope: string; requireMfa: boolean; maxSessionSeconds: number; idleTimeoutSeconds: number },
+  ): Promise<ServiceResult<{ scope: string }>>;
   /**
    * Mint a connector token. The plaintext is in the *result*, never in a redirect:
    * a token in a `Location` header ends up in browser history, in `Referer` and in a
@@ -151,7 +179,11 @@ function sessionOf(request: HttpRequest): string {
  * sentence either way, because the sentence is what a person acts on.
  */
 export function consoleErrorStatus(message: string): number {
-  if (/session|sign in/i.test(message)) return 401;
+  // Deliberately narrow. "The session is not usable" is about *this* request's
+  // credential; a policy complaint that merely contains the word "session" is a bad
+  // request, and answering it with `401` would tell a signed-in administrator to sign
+  // in again instead of reading the field it named.
+  if (/sign in|no session|session does not exist|session is not usable/i.test(message)) return 401;
   if (/administer|allowed/i.test(message)) return 403;
   return 400;
 }
@@ -245,6 +277,104 @@ async function handleRevokeToken(request: HttpRequest, sessionId: string, endpoi
   if (!result.ok) return failure(result.error);
   return redirect(
     `${CONSOLE_PATHS.provisioning}?flash=${encodeURIComponent(`Revoked ${result.value.label}. A connector holding it is refused from now on.`)}`,
+  );
+}
+
+async function handleDirectoryPage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const result = await endpoints.directory(sessionId);
+  return respond(result, (view) => html(200, renderDirectory(view, null, flashFrom(url), errorFrom(url))));
+}
+
+/**
+ * Connect a directory.
+ *
+ * The settings are read as a flat form and kept as a flat map, because that is what they
+ * are: a URL, a tenant id, a host. An empty field is *absent* rather than an empty string,
+ * so the reader's `setting()` refuses by name instead of calling `https://`.
+ */
+async function handleConnectDirectory(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const settings: Record<string, string> = {};
+  for (const key of ["url", "nextKey", "auth", "clientId", "tokenUrl", "scope"]) {
+    const value = params[key]?.trim();
+    if (value) settings[key] = value;
+  }
+
+  const result = await endpoints.connectDirectory(sessionId, {
+    name: params.name ?? "",
+    source: params.source ?? "",
+    settings,
+    conflictPolicy: params.conflictPolicy ?? "preferDirectory",
+    defaultRole: params.defaultRole ?? "AGENT",
+    secret: params.secret?.trim() ? params.secret : null,
+  });
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.directory}?flash=${encodeURIComponent(`Connected ${result.value.name}. Preview a sync before you run one.`)}`,
+  );
+}
+
+async function handleRemoveDirectory(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const connectionId = formParams(request).connectionId ?? "";
+  if (!connectionId) return failure("Choose a connection first.");
+  const result = await endpoints.removeDirectory(sessionId, connectionId);
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.directory}?flash=${encodeURIComponent(
+      `Removed ${result.value.name}. The identities it provisioned stay, switched on: a sync is not what deletes a person.`,
+    )}`,
+  );
+}
+
+/**
+ * Run a sync, or preview one.
+ *
+ * A preview is rendered into this response and a real sync redirects, and the difference
+ * is deliberate: a preview is safe to repeat (a refresh re-runs it and shows the same
+ * plan), while a real sync that answered with a body would sync again on every refresh.
+ * The result of a real run is in the flash and in the run table below it.
+ */
+async function handleSyncDirectory(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const connectionId = params.connectionId ?? "";
+  if (!connectionId) return failure("Choose a connection first.");
+  const dryRun = params.dryRun === "1" || params.dryRun === "true";
+
+  const result = await endpoints.syncDirectory(sessionId, connectionId, dryRun);
+  if (!result.ok) return failure(result.error);
+  if (!dryRun) {
+    return redirect(`${CONSOLE_PATHS.directory}?flash=${encodeURIComponent(result.value.detail)}`);
+  }
+
+  const view = await endpoints.directory(sessionId);
+  return respond(view, (page) => html(200, renderDirectory(page, result.value)));
+}
+
+async function handlePoliciesPage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const result = await endpoints.policies(sessionId);
+  return respond(result, (view) => html(200, renderPolicies(view, flashFrom(url), errorFrom(url))));
+}
+
+/**
+ * Save one scope's policy.
+ *
+ * An unchecked checkbox is absent from the body rather than `false`, so
+ * "no second factor" has to be read as *not `on`* rather than as a value that
+ * arrived. The numbers are parsed here and judged by the rules: a blank field
+ * becomes `0`, which the policy validator refuses by name rather than silently
+ * clamping — a control somebody meant to tighten should never be quietly rounded.
+ */
+async function handleSetPolicy(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const result = await endpoints.setPolicy(sessionId, {
+    scope: params.scope ?? "",
+    requireMfa: params.requireMfa === "on" || params.requireMfa === "true",
+    maxSessionSeconds: Number(params.maxSessionSeconds),
+    idleTimeoutSeconds: Number(params.idleTimeoutSeconds),
+  });
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.policies}?flash=${encodeURIComponent(`Saved the ${result.value.scope} policy; every new session is judged by it.`)}`,
   );
 }
 
@@ -446,8 +576,13 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
     // is a redirect now, so the domain is a way in rather than a dead end. Only GET
     // is claimed here — everything else at `/` still falls through to the other
     // routers, so nothing about the OIDC or SAML surfaces changes.
+    //
+    // It redirects to `/console` rather than straight to the sign-in form, because the
+    // person who typed the hostname has a session or does not and this target answers
+    // both: the console renders, or the signed-out page renders with the sign-in link
+    // on it. Pointing at the form would show a login to somebody already inside.
     case "/":
-      return get(() => Promise.resolve(redirect(CONSOLE_PATHS.signIn)));
+      return get(() => Promise.resolve(redirect(CONSOLE_PATHS.home)));
     case CONSOLE_PATHS.signIn:
       return method === "POST"
         ? handleSignInSubmit(request, endpoints)
@@ -460,6 +595,22 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
       return post(() => handleMintToken(request, sessionId, endpoints));
     case CONSOLE_PATHS.revokeToken:
       return post(() => handleRevokeToken(request, sessionId, endpoints));
+    case CONSOLE_PATHS.policies:
+      // One path, two verbs: the page and the form that changes it. Splitting them
+      // would mean a second URL to keep in the nav and in a bookmark.
+      return method === "GET"
+        ? handlePoliciesPage(url, sessionId, endpoints)
+        : method === "POST"
+          ? handleSetPolicy(request, sessionId, endpoints)
+          : Promise.resolve(methodNotAllowed(["GET", "POST"]));
+    case CONSOLE_PATHS.directory:
+      return get(() => handleDirectoryPage(url, sessionId, endpoints));
+    case CONSOLE_PATHS.directoryConnect:
+      return post(() => handleConnectDirectory(request, sessionId, endpoints));
+    case CONSOLE_PATHS.directoryRemove:
+      return post(() => handleRemoveDirectory(request, sessionId, endpoints));
+    case CONSOLE_PATHS.directorySync:
+      return post(() => handleSyncDirectory(request, sessionId, endpoints));
     case CONSOLE_PATHS.mfa:
       return get(() => handleMfaPage(url, sessionId, endpoints));
     case CONSOLE_PATHS.totpBegin:

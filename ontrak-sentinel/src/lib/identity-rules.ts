@@ -20,6 +20,116 @@ export const DEFAULT_IDENTITY_POLICY: IdentityPolicy = {
   idleTimeoutSeconds: 60 * 30,
 };
 
+/**
+ * Which identities a stored policy applies to.
+ *
+ * `ALL` is the organization's baseline and the scope every organization has, so it
+ * is a *value* rather than an absent row: a policy table that expressed "everybody"
+ * as a NULL would have to special-case the read, and Postgres would let two of them
+ * exist at once because NULLs are distinct. A role scope is an override that beats
+ * `ALL` for exactly the identities that role names.
+ */
+export type PolicyScope = IdentityRole | typeof POLICY_SCOPE_ALL;
+export const POLICY_SCOPE_ALL = "ALL";
+export const POLICY_SCOPES: readonly PolicyScope[] = [
+  POLICY_SCOPE_ALL,
+  "ADMIN",
+  "AGENT",
+  "SERVICE",
+  "AUDITOR",
+];
+
+/** Limits that keep a policy a policy rather than a way to switch a control off.
+ *  A floor of one minute stops "no timeout" from being spelled `0`, and the ceiling
+ *  stops a typo from granting a year-long session. */
+export const POLICY_MIN_SESSION_SECONDS = 60;
+export const POLICY_MAX_SESSION_SECONDS = 60 * 60 * 24 * 30;
+export const POLICY_MIN_IDLE_SECONDS = 60;
+
+export interface PolicyRecord {
+  organizationId: string;
+  scope: PolicyScope;
+  requireMfa: boolean;
+  maxSessionSeconds: number;
+  idleTimeoutSeconds: number;
+  updatedAt: string;
+}
+
+/** The stored shape, without the tenant fields a pure rule does not need. */
+export function toIdentityPolicy(record: {
+  requireMfa: boolean;
+  maxSessionSeconds: number;
+  idleTimeoutSeconds: number;
+}): IdentityPolicy {
+  return {
+    requireMfa: record.requireMfa,
+    maxSessionSeconds: record.maxSessionSeconds,
+    idleTimeoutSeconds: record.idleTimeoutSeconds,
+  };
+}
+
+/**
+ * The policy that applies to one identity: its role's row when there is one, the
+ * organization's `ALL` row when there is not, and the built-in default when the
+ * organization has never written a policy at all.
+ *
+ * The order is the whole feature. "Everybody" is a policy too, and it is the one a
+ * new organization has by definition — so a lookup that fell back to the *code's*
+ * default the moment a role row was missing would ignore an organization that had
+ * deliberately loosened its baseline.
+ */
+export function policyForRole(
+  rows: readonly Pick<PolicyRecord, "scope" | "requireMfa" | "maxSessionSeconds" | "idleTimeoutSeconds">[],
+  role: IdentityRole,
+): IdentityPolicy {
+  const exact = rows.find((row) => row.scope === role);
+  if (exact) return toIdentityPolicy(exact);
+  const baseline = rows.find((row) => row.scope === POLICY_SCOPE_ALL);
+  return baseline ? toIdentityPolicy(baseline) : DEFAULT_IDENTITY_POLICY;
+}
+
+/**
+ * Refuse a policy that would not mean what it says. An idle timeout longer than the
+ * session's own lifetime is the case worth catching out loud: the idle clock could
+ * never fire, so a deployment that set one would believe two controls were on while
+ * only one was.
+ */
+export function validatePolicy(input: {
+  scope?: string;
+  maxSessionSeconds?: number;
+  idleTimeoutSeconds?: number;
+}): IdentityIssue[] {
+  const issues: IdentityIssue[] = [];
+
+  if (!POLICY_SCOPES.includes((input.scope ?? "") as PolicyScope)) {
+    issues.push({ field: "scope", message: "Choose whether this policy is the baseline or applies to one role." });
+  }
+
+  const max = input.maxSessionSeconds;
+  if (max === undefined || !Number.isInteger(max)) {
+    issues.push({ field: "maxSessionSeconds", message: "A session lifetime is required." });
+  } else if (max < POLICY_MIN_SESSION_SECONDS || max > POLICY_MAX_SESSION_SECONDS) {
+    issues.push({
+      field: "maxSessionSeconds",
+      message: `A session lasts between ${POLICY_MIN_SESSION_SECONDS} seconds and ${POLICY_MAX_SESSION_SECONDS} seconds (30 days).`,
+    });
+  }
+
+  const idle = input.idleTimeoutSeconds;
+  if (idle === undefined || !Number.isInteger(idle)) {
+    issues.push({ field: "idleTimeoutSeconds", message: "An idle timeout is required." });
+  } else if (idle < POLICY_MIN_IDLE_SECONDS) {
+    issues.push({ field: "idleTimeoutSeconds", message: `An idle timeout is at least ${POLICY_MIN_IDLE_SECONDS} seconds.` });
+  } else if (max !== undefined && Number.isInteger(max) && idle > max) {
+    issues.push({
+      field: "idleTimeoutSeconds",
+      message: "An idle timeout longer than the session's lifetime could never fire; make it the same or shorter.",
+    });
+  }
+
+  return issues;
+}
+
 export interface IdentitySummary {
   id: string;
   role: IdentityRole;
@@ -253,6 +363,15 @@ export function wouldStrandAdministration(
 /** Who may read the directory and the audit trail. */
 export function canReadDirectory(role: IdentityRole): boolean {
   return role === "ADMIN" || role === "AUDITOR" || role === "AGENT";
+}
+
+/**
+ * Who may change the organization's policies. Reading them is wider — an auditor
+ * reviews the controls, which is the whole point of an auditor — and writing is an
+ * administrator's, because a policy is a control and not a preference.
+ */
+export function canManagePolicies(role: IdentityRole): boolean {
+  return role === "ADMIN";
 }
 
 /** When a session issued at `issuedAt` stops being usable on age alone. */

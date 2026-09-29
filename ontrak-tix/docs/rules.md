@@ -72,6 +72,28 @@ answered. `notify` raises an in-app staff notice; `escalate` pages the on-call
 audience. An effect that cannot be delivered is recorded as attempted and never
 loses the ticket: the write and the chain entry come first.
 
+## The desk's own fields
+
+M6 adds the other half of "what happens when a ticket is raised": the questions the
+desk asks about it. Two models carry it — `CustomField` (a key, a label, a type,
+options, and whether it is archived) and `QueueForm` (the sections one queue shows,
+with `queueId: null` meaning *the desk's default form*) — and the rules are pure in
+[`src/lib/form-rules.ts`](../src/lib/form-rules.ts).
+
+The check itself is one gate, not a copy per entry point:
+`TicketFormGate.validateTicketValues` is called on [`TicketService.createTicket`](../src/lib/ticket-service.ts),
+so quick-create, the requester portal, inbound email and `/api/v1` all get the same
+answer about a required field. The resolved layout for a queue it has not written is
+the default form, and an archived field is skipped rather than rendered from a stale
+row.
+
+A ticket stores its answers as `Ticket.customFields` — a JSON object of key to
+**string**, because a number is a number when it is validated and not when it is
+stored, which keeps a change of type a validation change rather than a migration.
+The form posts them as `custom:<key>` (`src/lib/form-payload.ts`), which is what lets
+a desk name a field `subject` without colliding with the ticket's own columns. The
+create event on the chain names the fields the ticket answered, not the values.
+
 ## The console
 
 [`/rules`](../src/app/(desk)/rules/page.tsx) is the one place a rule can be
@@ -124,3 +146,16 @@ questions (a switched-off rule previewed as if on, and a reorder) and reading a
 rule form back in; `tix-m5-rule-intake.test.ts` covers what a rule does to a
 stored ticket — the priority it was born with, the firing on the chain, the reply
 that stopped the clock and the effect that failed without losing the ticket.
+
+The desk's own fields have their own suite:
+
+```bash
+npx tsx --tsconfig tests/tsconfig.json --test tests/tix-m6-forms.test.ts
+```
+
+It covers the rules (a bad key, a choice field with no choices, a layout naming a
+field that is not there or twice), the service (a key that cannot change, a
+required key that is required on one queue and not another, archiving rather than
+deleting), the ticket path (a required value refused and nothing stored, a value
+smuggled in for a field this queue does not show), the payload encoding, and the
+Prisma mappers' refusal to let a hand-edited row break a page.

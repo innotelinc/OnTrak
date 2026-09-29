@@ -87,6 +87,9 @@ import { RmmConnectorService } from "./rmm-service";
 import { PrismaRmmStore, type RmmPrismaClient } from "./rmm-store-prisma";
 import { ChatNotifyService, FetchChatTransport } from "./chat-notify-service";
 import { PrismaChatStore, type ChatPrismaClient } from "./chat-notify-store-prisma";
+import { FormService } from "./form-service";
+import type { TicketFormGate } from "./ticket-service";
+import { PrismaFormStore, type FormPrismaClient } from "./form-store-prisma";
 
 /**
  * The OnTrak Tix database client and service bootstrap.
@@ -148,12 +151,26 @@ const macroPlanner: MacroPlannerPort = {
 
 const macroIntake = new MacroIntake(macroPlanner, ruleEffects);
 
+/*
+ * The M6 custom fields, as the ticket service sees them.
+ *
+ * A port for the same reason the rule planner is one: `formServicesFor()` resolves the
+ * forms stack on the first ticket somebody raises, rather than at import time. What the
+ * ticket path needs of it is one question — “are these the values this queue's form
+ * accepts?” — answered in one place, so the portal, the console and the API cannot
+ * disagree about a required field.
+ */
+const ticketFormGate: TicketFormGate = {
+  validateTicketValues: (tenantId, queueId, values) => formServicesFor().validateTicketValues(tenantId, queueId, values),
+};
+
 // Building the service stacks does no I/O; the connection opens on first query.
 configureTickets(
   prisma as unknown as TicketPrismaClient,
   undefined,
   new RuleIntake(ticketRulePlanner, ruleEffects, requesterDirectory),
   macroIntake,
+  ticketFormGate,
 );
 
 let satisfaction: CsatService | null = null;
@@ -188,6 +205,7 @@ let apiTokens: ApiTokenService | null = null;
 let webhooks: WebhookService | null = null;
 let rmm: RmmConnectorService | null = null;
 let chatNotify: ChatNotifyService | null = null;
+let forms: FormService | null = null;
 
 function csat(): CsatService {
   satisfaction ??= new CsatService(new PrismaCsatStore(prisma as unknown as CsatPrismaClient));
@@ -653,6 +671,17 @@ export function warRoomServicesFor(): WarRoomService {
     decisions: alertPromotionServicesFor(),
   });
   return warRoom;
+}
+
+/**
+ * The configured custom-field and form service (M6).
+ *
+ * It shares the ticket stack's audit sink, so a field defined, a field archived and a
+ * queue's form changed all join the same per-tenant hash chain as the tickets they shape.
+ */
+export function formServicesFor(): FormService {
+  forms ??= new FormService(new PrismaFormStore(prisma as unknown as FormPrismaClient), ticketServices().audit);
+  return forms;
 }
 
 /**

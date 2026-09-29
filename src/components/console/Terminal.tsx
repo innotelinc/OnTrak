@@ -11,8 +11,13 @@ import type { CommandResult } from "@/lib/sim/types";
 export interface TerminalPaneProps {
   /** Current prompt string, e.g. `student@server01:~$ `. */
   getPrompt: () => string;
-  /** Execute one command line and return its result. */
-  onCommand: (input: string) => CommandResult;
+  /**
+   * Execute one command line and return its result.
+   *
+   * A sandboxed attempt answers with a promise — the command runs on the server — so the
+   * prompt is held until it settles. Everything else answers immediately.
+   */
+  onCommand: (input: string) => CommandResult | Promise<CommandResult>;
   /** Text printed once when the session opens. */
   banner: string;
   /** Called when a command asks to open a file in the editor. */
@@ -133,7 +138,7 @@ export function TerminalPane({
     term.write(initialBannerRef.current.replace(/\n/g, "\r\n"));
     term.write(`\r\n${apiRef.current.getPrompt()}`);
 
-    const runLine = (line: string) => {
+    const runLine = async (line: string) => {
       const input = line.trim();
       if (input === "") {
         term.write("\r\n");
@@ -147,7 +152,9 @@ export function TerminalPane({
       busyRef.current = true;
       let result: CommandResult;
       try {
-        result = apiRef.current.onCommand(input);
+        // A sandboxed driver resolves this after the server has run the line; the keystroke
+        // handler ignores input while `busyRef` is set, so the prompt waits for it.
+        result = await apiRef.current.onCommand(input);
       } catch (error) {
         result = { stdout: "", stderr: `Internal simulator error: ${(error as Error).message}`, exitCode: 1 };
       }
@@ -201,7 +208,7 @@ export function TerminalPane({
           const line = bufferRef.current;
           bufferRef.current = "";
           term.write("\r\n");
-          runLine(line);
+          void runLine(line);
           return;
         }
         case "\u007f": {

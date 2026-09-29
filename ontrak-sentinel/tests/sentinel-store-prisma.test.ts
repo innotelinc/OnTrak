@@ -32,6 +32,7 @@ import {
   type IdentityPrismaClient,
   type IdentityRow,
   type OrganizationRow,
+  type PolicyRow,
   type SessionRow,
 } from "../src/lib/identity-store-prisma";
 import type { IdentityActor } from "../src/lib/identity-service";
@@ -58,17 +59,24 @@ function matches(row: Record<string, unknown>, where: Where): boolean {
  * rather than short-circuited.
  */
 function fakePrisma(): IdentityPrismaClient & {
-  rows: { organization: OrganizationRow[]; identity: IdentityRow[]; session: SessionRow[]; auditEvent: AuditEventRow[] };
+  rows: {
+    organization: OrganizationRow[];
+    identity: IdentityRow[];
+    identityPolicy: PolicyRow[];
+    session: SessionRow[];
+    auditEvent: AuditEventRow[];
+  };
 } {
   const organization: OrganizationRow[] = [];
   const identity: IdentityRow[] = [];
+  const identityPolicy: PolicyRow[] = [];
   const session: SessionRow[] = [];
   const auditEvent: AuditEventRow[] = [];
 
   const asRecord = (row: object): Record<string, unknown> => row as unknown as Record<string, unknown>;
 
   return {
-    rows: { organization, identity, session, auditEvent },
+    rows: { organization, identity, identityPolicy, session, auditEvent },
     organization: {
       async findFirst(args: unknown) {
         const where = (args as { where: Where }).where;
@@ -97,6 +105,24 @@ function fakePrisma(): IdentityPrismaClient & {
         const row = identity.find((entry) => entry.id === id);
         if (row) Object.assign(row, args.data as Partial<IdentityRow>);
         return row ?? null;
+      },
+    },
+    identityPolicy: {
+      async findMany(args: unknown) {
+        const where = (args as { where: Where }).where;
+        return identityPolicy.filter((row) => matches(asRecord(row), where));
+      },
+      async upsert(args: { where: unknown; create: unknown; update: unknown }) {
+        const key = args.where as { organizationId_scope: { organizationId: string; scope: string } };
+        const found = identityPolicy.find(
+          (row) => row.organizationId === key.organizationId_scope.organizationId && row.scope === key.organizationId_scope.scope,
+        );
+        if (found) {
+          Object.assign(found, args.update as Partial<PolicyRow>);
+          return found;
+        }
+        identityPolicy.push({ ...(args.create as PolicyRow) });
+        return args.create;
       },
     },
     session: {
