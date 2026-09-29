@@ -1,0 +1,142 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# ci.yml — what this repo checks on push and pull requests.
+#
+# The attribution guard has its own workflow (attribution-guard.yml); this file
+# covers this repo's own concerns:
+#
+#   * the backend suite — plain unittest, no pytest, no network, no estate. The
+#     parsers, the cron arithmetic and the finding lifecycle are the parts that
+#     must not rot, and they are pure functions, so they run anywhere.
+#   * the dashboard typecheck — the API surface the UI calls is typed, so a
+#     mismatch between the two is a build error here rather than a blank panel
+#     in production.
+#   * the credential scan — over the WHOLE tracked tree. The pre-commit hook
+#     only sees the added lines of one commit, so a value that predates it (or
+#     arrives in a file nobody re-reads) is only visible from here.
+#   * structure + landing — the shared conformity layers must stay present, and
+#     the landing page must stay renderable.
+#   * compose — the file an operator actually runs must parse against the
+#     template the repo ships as its documentation.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel in-flight runs when a newer commit lands on the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+
+      # No pip install: the suite is stdlib-only on purpose (see README →
+      # Tests). If a test ever needs fastapi, that is a signal the pure layer
+      # has grown a dependency, not a reason to install one here.
+      - name: Backend unit tests
+        run: python3 tests/run-all.py
+
+  web:
+    name: Dashboard typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # Match the runtime in web/Dockerfile (node:22-alpine).
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (tsc --noEmit)
+        run: npm run typecheck
+
+  secret-scan:
+    name: Credential scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Scan every tracked file for literal secrets
+        run: python3 scripts/secret-scan.py
+
+  structure:
+    name: Structure, landing, shell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Conformant structure is present
+        run: |
+          set -euo pipefail
+          for f in README.md LICENSE .env.example .gitignore docs/stack.md \
+                   web/landing/index.html .githooks/guard-lib \
+                   .github/workflows/attribution-guard.yml; do
+            if [ ! -f "$f" ]; then
+              echo "::error::missing required file: $f"
+              exit 1
+            fi
+          done
+          if ! grep -q '^\.env' .gitignore; then
+            echo "::error::.gitignore does not list .env"
+            exit 1
+          fi
+          echo "structure: ok"
+
+      - name: Landing sanity
+        run: |
+          set -euo pipefail
+          f=web/landing/index.html
+          for pat in '<title>' 'og:title' 'og:description' 'data:image/svg+xml'; do
+            if ! grep -qi -- "$pat" "$f"; then
+              echo "::error::landing page has no $pat"
+              exit 1
+            fi
+          done
+          echo "landing: ok"
+
+      - name: Shell syntax
+        run: |
+          set -euo pipefail
+          while IFS= read -r f; do
+            bash -n "$f" || { echo "::error file=$f::shell syntax error"; exit 1; }
+          done < <(git ls-files '*.sh')
+          echo "shell syntax: ok"
+
+  compose:
+    name: Compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The compose file parses against .env.example
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          docker compose config --quiet
+          rm -f .env
+          echo "compose config: ok"
