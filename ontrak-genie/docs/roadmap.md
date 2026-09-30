@@ -17,9 +17,9 @@ full developer reference.
 > over SSE, the workspace jail, the tool set, the approval gate, live draft and
 > live diff, per-file snapshots, the model-resilience chain, and a browser UI
 > with no build step. **0.2 is in progress** and is entirely about stack
-> citizenship: sign-in and tenancy are *wired and off* until they are configured,
-> the two edge names are live and answering, and bringing the remaining gates up
-> is the whole of the open work.
+> citizenship: sign-in is **on** at both edge names, tenancy is *wired and off*
+> until the control-plane URL is set, and secrets still come from `.env` rather
+> than Cerulean Vault — bringing those remaining gates up is the open work.
 
 ## 1. Vision
 
@@ -58,7 +58,7 @@ flowchart LR
 | Text-mode tool calls — salvage a weak model's JSON-prose call | `[x]` |
 | Command sandbox — `docker run --network none --read-only`, workspace only | `[x]` |
 | Persistence — sessions, transcripts, snapshots, `sweep.json`, `workspace.json` | `[x]` |
-| Sign-in — Authentik OIDC, code + PKCE, RS256 id_token vs JWKS, signed cookie | `[x]` (wired, off) |
+| Sign-in — Authentik OIDC, code + PKCE, RS256 id_token vs JWKS, signed cookie | `[x]` (on at both names) |
 | Tenancy — Distro control plane: identity, quota, usage, audit | `[x]` (wired, off) |
 | Per-account disk scope — `accounts/<account>/` for workspace, chats, history | `[x]` |
 | UI — transcript, tool cards, preview pane, diff view, sweep panel, a11y | `[x]` |
@@ -100,12 +100,15 @@ approved or denied at the gate, and the session resumed after a restart.
 **Goal:** make Genie a first-class member of the stack rather than a console that
 happens to be in the repo.
 
-- `[~]` **Sign-in on by default at the edge.** Authentik OIDC is wired
-  (`ONTRAK_OIDC_ISSUER`, `ONTRAK_OIDC_CLIENT_ID`, `ONTRAK_OIDC_SESSION_SECRET`)
-  and verified against the provider's JWKS; the redirect URI is registered on the
-  Cerulean Authentik provider. What remains is to set the three variables on the
-  deployment and confirm that configuring sign-in really closes the loopback trust
-  an empty `WEB_TOKEN` otherwise leaves open.
+- `[x]` **Sign-in on by default at the edge.** Authentik OIDC is configured on
+  the family deployment (`ONTRAK_OIDC_ISSUER` =
+  `https://auth.cerulean.innotel.us/application/o/ontrak`, the `ontrak` client id,
+  the client secret and a generated `ONTRAK_OIDC_SESSION_SECRET`), the `OnTrak`
+  provider carries a redirect URI per deployment name, and reaching the console
+  requires a sign-in. **Both names sign in on their own URI**: the redirect
+  resolution reads the browser's `Host` and picks the matching entry, so
+  `genie.ontrak.innotel.us` and `genie.innotel.us` each complete a code flow
+  rather than one name bouncing its session onto the other.
 - `[~]` **Tenancy through Distro's control plane.** `src/controlplane.ts` and
   `src/tenancy.ts` already speak the same `/api/internal/identity`,
   `/quota-check`, `/usage-report` and `/audit` contract Studio uses, with the
@@ -115,16 +118,15 @@ happens to be in the repo.
 - `[ ]` **Secrets from Cerulean Vault.** Replace `.env` values with a `vault://`
   reference resolved at deploy time, using the same path-scoped KV v2 token the
   rest of the estate uses. Until then `.env` is the only secret store.
-- `[~]` **The operator surface at the edge.** Cerulean owns DNS/TLS and NPM Edge
+- `[x]` **The operator surface at the edge.** Cerulean owns DNS/TLS and NPM Edge
   owns the public route; Genie registers the names through Cerulean rather than
   writing DNS or the NPM API itself (the platform rule the standard states).
-  **Both names are live** — `genie.ontrak.innotel.us` (family) and
+  **Both names are live and gated** — `genie.ontrak.innotel.us` (family) and
   `genie.innotel.us` (platform) are registered in the `innotel.us` zone and on
   the edge, each forwarding to the Genie app on `192.168.1.21:3400` under the
-  estate's wildcard certificate. What remains is the gate: the names answer
-  today, and turning on `ONTRAK_OIDC_*` — with the Authentik application and its
-  redirect URI created in the same change — is what puts them behind the same
-  sign-in as the rest of the estate.
+  estate's wildcard certificate (NPM hosts 195 and 197, certificates
+  `*.ontrak.innotel.us` and `*.innotel.us`), and both sit behind the same
+  Authentik sign-in as the rest of the estate.
 - `[ ]` **A published image and a stack entry.** A release image with a pinned
   version, and the compose entry the platform's group file expects, so a deploy is
   a pull rather than a build.
@@ -261,8 +263,10 @@ loosens the second, never the first.
    records and both proxy hosts are live against the Genie app on
    `192.168.1.21:3400`. The same change still owes the Authentik application and
    its redirect URI, so the name is gated rather than merely routed (v0.2).
-2. Turn sign-in and tenancy on together, since tenancy requires a subject to key
-   on, and set `WEB_TOKEN` aside only once sign-in is proven (v0.2).
+2. Turn tenancy on: set `CONTROL_PLANE_INTERNAL_URL` (the service token is
+   already in the deployment) so a turn resolves to an account and spends its
+   own gateway key. Sign-in is now proven on both names, so the subject tenancy
+   keys on exists; `WEB_TOKEN` stays as the API-client bearer until it does not.
 3. Move the deployment's secrets to Cerulean Vault `vault://` references with the
    path-scoped token (v0.2).
 4. Publish a versioned release image and add Genie's entry to the platform's group
