@@ -615,5 +615,6 @@ test("console: a directory is connected, previewed in place and synced with a re
   assert.match(decodeURIComponent(removed.headers.location), /Removed Entra ID/);
 
   const anonymous = await routeConsole(get(CONSOLE_PATHS.directory), h.service);
-  assert.equal(anonymous.status, 401);
+  assert.equal(anonymous.status, 303);
+  assert.equal(anonymous.headers.location, CONSOLE_PATHS.signIn);
 });

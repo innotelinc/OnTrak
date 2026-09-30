@@ -896,7 +896,8 @@ test("console: the feed page reads, a paste is answered in place, and a withdraw
 
   // And the page is still the session-gated one: no cookie, no list.
   const anonymous = await routeConsole(request("GET", CONSOLE_PATHS.intel), h.service);
-  assert.equal(anonymous.status, 401);
+  assert.equal(anonymous.status, 303);
+  assert.equal(anonymous.headers.location, CONSOLE_PATHS.signIn);
 
   // The verbs are the ones the routes declared, so a form post cannot be driven by a link.
   const wrongVerb = await routeConsole(request("GET", CONSOLE_PATHS.intelIngest, undefined, sessionId), h.service);

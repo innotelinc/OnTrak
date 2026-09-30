@@ -154,20 +154,25 @@ function request(
 /*  Reaching the console                                                      */
 /* -------------------------------------------------------------------------- */
 
-test("console: a page with no session is refused and names the cookie it wants", async () => {
+test("console: a page with no session is bounced to the sign-in form", async () => {
+  // Not an error page. A person who is not signed in is the normal case at the front
+  // door, and the one screen that can help them is the sign-in form — which the page
+  // used to merely link to, after asserting a cookie they had not sent.
   const h = harness();
   const response = await routeConsole(request("GET", CONSOLE_PATHS.home), h.service);
-  assert.equal(response.status, 401);
-  assert.match(response.body, /Console could not continue|Not allowed/);
-  assert.match(response.body, new RegExp(CONSOLE_SESSION_COOKIE));
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.location, CONSOLE_PATHS.signIn);
+  assert.match(response.headers["set-cookie"] ?? "", /Max-Age=0/, "the dead cookie is expired on the way");
   assert.equal(response.headers["cache-control"], "no-store");
 });
 
-test("console: a session id that does not exist is refused, not guessed into one", async () => {
+test("console: a session id that does not exist is bounced, not guessed into one", async () => {
   const h = harness();
   await h.organization("acme");
   const response = await routeConsole(request("GET", CONSOLE_PATHS.mfa, { sessionId: "not-a-session" }), h.service);
-  assert.equal(response.status, 401);
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.location, CONSOLE_PATHS.signIn);
+  assert.match(response.headers["set-cookie"] ?? "", /Max-Age=0/);
 });
 
 test("console: provisioning is an administrator's page, and a minted token is shown once in a body rather than a URL", async () => {
@@ -424,7 +429,8 @@ test("console: removing the last factor ends every session, including the one th
   // policy refuses a session that owes a second factor, everywhere. Getting back in is
   // an administrator's act — or a login path that prompts for one.
   const afterwards = await routeConsole(request("GET", CONSOLE_PATHS.mfa, { sessionId }), h.service);
-  assert.equal(afterwards.status, 401);
+  assert.equal(afterwards.status, 303, "the session that is now refused lands on the sign-in form");
+  assert.equal(afterwards.headers.location, CONSOLE_PATHS.signIn);
 
   // And an administrator can still bootstrap a new factor for the identity.
   const again = await h.mfa.beginEnrollment(actor, actor.id);
@@ -560,7 +566,8 @@ test("console: signing out ends the session and revokes the tokens it minted", a
 
   // And the cookie is worthless afterwards, which is the point of signing out.
   const afterwards = await routeConsole(request("GET", CONSOLE_PATHS.home, { sessionId }), h.service);
-  assert.equal(afterwards.status, 401);
+  assert.equal(afterwards.status, 303);
+  assert.equal(afterwards.headers.location, CONSOLE_PATHS.signIn);
 });
 
 test("console: signing out of one session leaves another of the same identity alone", async () => {

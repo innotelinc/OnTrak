@@ -237,9 +237,24 @@ export function consoleErrorStatus(message: string): number {
   return 400;
 }
 
+/**
+ * A refusal, as a page — except a session refusal, which is a bounce to the door.
+ *
+ * An absent or stale `sentinel_session` cookie is not a console fault: it is a person
+ * who is not signed in. Answering that with a `401` page read as broken two ways. It
+ * asserted the browser "is signed in … with the cookie, and it is no longer valid" to
+ * somebody who had sent no cookie at all, and it left them on an error page instead of
+ * the one screen that can fix it — the error page's own advice was "open the sign-in
+ * page in a browser and sign in again", which is a redirect this file can simply do.
+ *
+ * The cookie is expired on the way out, so a session that no longer exists stops being
+ * sent back on every request.
+ */
 function failure(message: string): HttpResponse {
-  const page = consoleErrorPage(message, consoleErrorStatus(message));
-  return html(page.status, page.html);
+  const status = consoleErrorStatus(message);
+  if (status === 401) return redirect(CONSOLE_PATHS.signIn, { "set-cookie": clearCookie() });
+  const page = consoleErrorPage(message, status);
+  return html(status, page.html);
 }
 
 /** Render a view, or answer the refusal as a page. */
