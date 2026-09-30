@@ -45,7 +45,14 @@ import {
   normalizeModelList,
   saveSession,
 } from "./store.js";
-import { beginTurn, countUsage, finishTurn, scopeFor, type TurnUsage } from "./tenancy.js";
+import {
+  beginTurn,
+  countUsage,
+  finishTurn,
+  resetCallerCache,
+  scopeFor,
+  type TurnUsage,
+} from "./tenancy.js";
 import {
   deleteWorkspaceEntry,
   ensureWorkspace,
@@ -325,6 +332,14 @@ async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): 
       // The account's own key when a control plane resolved one; otherwise
       // undefined, and the shared key applies exactly as it did before.
       apiKey: turn.apiKey,
+      /*
+       * The key may have been rotated since this process last resolved the
+       * account (it is cached for minutes), and a 401 proves it has: drop the
+       * cache so the next turn asks the plane again instead of replaying a dead
+       * key until the entry expires. Nothing is lost when it was not stale — the
+       * resolve is one cheap request, and only a turn that already failed.
+       */
+      onGatewayAuthFailure: () => resetCallerCache(),
       onUsage: (reported, model) => {
         usage = countUsage(reported, usage, model);
       },

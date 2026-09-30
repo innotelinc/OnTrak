@@ -514,6 +514,13 @@ The agent is deliberately constrained, because it runs with your privileges:
   spends *their* gateway key — and is refused when that account may not spend.
   Without them every turn spends the one `OMNIROUTE_API_KEY` in `.env`, which is
   the single-operator shape this ships as. See *Tenancy* below.
+- **A key the gateway rejects is not cached.** The resolved account is held for
+  five minutes so a reconnecting chat does not re-provision on every request. A
+  401/403 from the gateway — the answer that says the *credential* is wrong, not
+  the model — drops that cache immediately, so a key rotated on the control
+  plane takes effect on the next turn rather than after the entry expires.
+  Without it, a key that was just fixed keeps failing until the cache ages out,
+  which reads exactly like the failure it replaced.
 - **Commands run in a container.** See the next section.
 
 Once you expose this beyond localhost, put it behind a reverse proxy with TLS as
@@ -870,6 +877,7 @@ All optional — see `.env.example`.
 | `PORT` / `HOST`                             | `3400` / `127.0.0.1`     | Web server bind address (the compose stack sets `PORT` from `ONTRAK_GENIE_PORT`, 3410 by default) |
 | `OMNIROUTE_URL`                             | `http://127.0.0.1:20128/v1` | Gateway base URL — use a LAN address, never a Docker service name |
 | `OMNIROUTE_API_KEY`                         | *(empty)*                | Sent as a bearer token if set. May be a `vault://` reference — see *Secrets (Cerulean Vault)* |
+| `AGENT_GATEWAY_CONSOLE_URL`                 | *(empty)*                | Browser-facing gateway address, used only in the "connect another provider at …" message. Empty means `OMNIROUTE_URL` with any trailing `/v1` removed |
 | `AGENT_MODEL`                               | `auto/coding`            | Default model; overridable per request. Pin an explicit id — see *Picking a model* |
 | `AGENT_WORKSPACE`                           | `./workspace`            | The only directory the agent can touch   |
 | `AGENT_DATA_DIR`                            | `./.agent`               | Sessions and the last sweep report (`sweep.json`) |

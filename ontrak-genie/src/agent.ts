@@ -1,10 +1,11 @@
 import crypto from "node:crypto";
 
 import { approvalRequired, denialReason, requestApproval, type ApprovalDecision } from "./approval.js";
-import { config } from "./config.js";
+import { config, gatewayConsoleUrl } from "./config.js";
 import type { FileDiff } from "./diff.js";
 import { draftPreview, textDraftPreview } from "./draft.js";
 import {
+  GatewayError,
   completeChat,
   isAbortError,
   isRetryableFailure,
@@ -110,6 +111,17 @@ export interface RunAgentOptions {
    * nothing is passed and the shared `OMNIROUTE_API_KEY` applies as before.
    */
   apiKey?: string;
+  /**
+   * Called when the gateway rejects the key this turn spends (401/403).
+   *
+   * That answer is about the *credential*, not the model: no other model on the
+   * chain can fix it, which is why the turn stops there. The tenancy gate caches
+   * the account it resolved, so a key that was rotated or re-minted after that
+   * keeps being replayed until the cache ages out — five minutes of "every model
+   * failed" for a key that is already fixed. The caller uses this to drop the
+   * cached account and resolve again on the next turn.
+   */
+  onGatewayAuthFailure?: () => void;
   /**
    * Called with the gateway's own usage report after each successful model step.
    * The caller decides what a running total means — this loop only knows that a
@@ -444,6 +456,15 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
         }
       } catch (error) {
         failure = error instanceof Error ? error : new Error(String(error));
+        // A rejected credential is the one failure another model cannot fix, and
+        // it may be one the caller can: a stale cached account, above all.
+        if (failure instanceof GatewayError && (failure.status === 401 || failure.status === 403)) {
+          try {
+            options.onGatewayAuthFailure?.();
+          } catch {
+            // Bookkeeping must never replace the failure that caused it.
+          }
+        }
       }
 
       const empty =
@@ -539,7 +560,7 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
       const message =
         `${lead}${tried} This normally means none of the configured models is usable right now - ` +
         "free tiers rate-limit often. Connect another provider at " +
-        `${config.gatewayUrl.replace(/\/v1$/, "")}, pick a different model above, and ask me to continue.`;
+        `${gatewayConsoleUrl()}, pick a different model above, and ask me to continue.`;
       session.messages.push({ role: "assistant", content: `[gateway error] ${message}` });
       await saveSession(session);
       yield { type: "error", message };

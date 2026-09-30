@@ -85,6 +85,20 @@ export const config = {
   gatewayUrl: str("OMNIROUTE_URL", "http://127.0.0.1:20128/v1").replace(/\/+$/, ""),
   gatewayKey: str("OMNIROUTE_API_KEY", ""),
 
+  /**
+   * The gateway's browser-facing address, for the one message that sends a human
+   * to it.
+   *
+   * `OMNIROUTE_URL` is the address *this process* dials, and in a deployed stack
+   * that is routinely a LAN one (`http://192.168.1.71:20128/v1`) — reachable from
+   * this container and from nobody's laptop. A message that tells somebody to go
+   * connect a provider has to name an address their browser can open; an
+   * internal one also fails the provider's redirect-URI check, because the
+   * callback it sends is not the one registered for that app. Empty keeps the old
+   * behaviour (`OMNIROUTE_URL`), so a single-operator checkout reads the same.
+   */
+  gatewayConsoleUrl: str("AGENT_GATEWAY_CONSOLE_URL", "").replace(/\/+$/, ""),
+
   model: str("AGENT_MODEL", "auto/coding"),
   /**
    * Tried in order when the chosen model rate-limits, errors or answers with
@@ -176,3 +190,19 @@ export const config = {
   controlPlaneUrl: str("CONTROL_PLANE_INTERNAL_URL", ""),
   controlToken: str("CONTROL_INTERNAL_TOKEN", ""),
 } as const;
+
+/**
+ * Where to send a human who needs the gateway's own console.
+ *
+ * The browser-facing address when one is configured, otherwise the dialled URL
+ * with a trailing `/v1` removed — which is what the message said before there was
+ * anything better to say. Pure, so both halves are testable in one process: the
+ * configured value is read from the environment exactly once.
+ */
+export function gatewayConsoleHref(dialledUrl: string, consoleUrl: string): string {
+  return consoleUrl !== "" ? consoleUrl : dialledUrl.replace(/\/v1$/, "");
+}
+
+export function gatewayConsoleUrl(): string {
+  return gatewayConsoleHref(config.gatewayUrl, config.gatewayConsoleUrl);
+}
