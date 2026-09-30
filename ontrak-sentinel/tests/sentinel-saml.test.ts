@@ -414,7 +414,7 @@ test("metadata is served as SAML metadata and is safe to cache", async () => {
   const response = await routeSaml(request({ url: `${IDP}${SAML_PATHS.metadata}` }), r.saml);
   assert.equal(response.status, 200);
   assert.equal(response.headers["content-type"], SAML_METADATA_CONTENT_TYPE);
-  assert.match(response.headers["cache-control"] ?? "", /public/);
+  assert.match(String(response.headers["cache-control"] ?? ""), /public/);
   assert.match(response.body, /IDPSSODescriptor/);
 });
 
@@ -428,7 +428,7 @@ test("the SSO endpoint answers the redirect binding from the query string", asyn
     r.saml,
   );
   assert.equal(response.status, 200);
-  assert.match(response.headers["content-type"] ?? "", /text\/html/);
+  assert.match(String(response.headers["content-type"] ?? ""), /text\/html/);
   assert.equal(response.headers["cache-control"], "no-store");
   assert.match(response.body, /name="SAMLResponse"/);
 });

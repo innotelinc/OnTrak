@@ -160,7 +160,10 @@ export class ConsoleService implements ConsoleEndpoints {
      * door that is not there. A `Pick` rather than the class, so the console cannot reach the
      * parts of the flow it has no business in.
      */
-    private readonly upstream: Pick<UpstreamSignInService, "start" | "complete" | "enabled" | "label"> | null = null,
+    private readonly upstream: Pick<
+      UpstreamSignInService,
+      "start" | "complete" | "enabled" | "label" | "redirectOrigin"
+    > | null = null,
   ) {}
 
   /* ------------------------------------------------------------ sign in */
@@ -191,6 +194,15 @@ export class ConsoleService implements ConsoleEndpoints {
    * password and the factor, the audit entries — belongs to the sign-in service, and
    * duplicating any of it here is how a second, subtly different login appears.
    */
+  /**
+   * The one origin an upstream sign-in can finish on, so the router can compare it with the
+   * address the browser used. `null` when no provider is configured, which is the answer that
+   * turns the comparison off rather than one that pretends there is a host to match.
+   */
+  upstreamRedirectOrigin(): string | null {
+    return this.upstream?.enabled ? this.upstream.redirectOrigin : null;
+  }
+
   /** Begin an upstream sign-in: the provider's URL plus the sealed state cookie. */
   async upstreamStart(
     returnTo: string | null,

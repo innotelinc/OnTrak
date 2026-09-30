@@ -585,7 +585,7 @@ test("console: a directory is connected, previewed in place and synced with a re
     h.service,
   );
   assert.equal(connected.status, 303);
-  assert.match(decodeURIComponent(connected.headers.location), /Connected Entra ID/);
+  assert.match(decodeURIComponent(String(connected.headers.location)), /Connected Entra ID/);
 
   const after = await routeConsole(get(CONSOLE_PATHS.directory, sessionId), h.service);
   assert.match(after.body, /Entra ID/);
@@ -605,14 +605,14 @@ test("console: a directory is connected, previewed in place and synced with a re
   // A real sync redirects, because answering with a body would sync again on refresh.
   const synced = await routeConsole(post(CONSOLE_PATHS.directorySync, `connectionId=${connectionId}`, sessionId), h.service);
   assert.equal(synced.status, 303);
-  assert.match(decodeURIComponent(synced.headers.location), /1 created/);
+  assert.match(decodeURIComponent(String(synced.headers.location)), /1 created/);
 
   const runsPage = await routeConsole(get(CONSOLE_PATHS.directory, sessionId), h.service);
   assert.match(runsPage.body, /COMPLETED/);
 
   const removed = await routeConsole(post(CONSOLE_PATHS.directoryRemove, `connectionId=${connectionId}`, sessionId), h.service);
   assert.equal(removed.status, 303);
-  assert.match(decodeURIComponent(removed.headers.location), /Removed Entra ID/);
+  assert.match(decodeURIComponent(String(removed.headers.location)), /Removed Entra ID/);
 
   const anonymous = await routeConsole(get(CONSOLE_PATHS.directory), h.service);
   assert.equal(anonymous.status, 303);

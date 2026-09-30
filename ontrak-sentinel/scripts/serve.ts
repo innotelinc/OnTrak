@@ -577,6 +577,24 @@ async function main(): Promise<void> {
   console.log(`[sentinel] SAML SSO:      ${url}${SAML_PATHS.sso}`);
   console.log(`[sentinel] console: ${url}${CONSOLE_PATHS.home} (WebAuthn RP ID ${webAuthnRpId}, origin ${webAuthnOrigin})`);
   console.log(`[sentinel] sign in: ${url}${CONSOLE_PATHS.signIn} (or the bare host ${url}/, which redirects here)`);
+  // The provider door, said out loud at startup. Every part of it is a deployment's to get
+  // wrong and none of it is visible in a browser until somebody tries to sign in — and the
+  // two ways it is half-configured below are the ones that fail *after* the provider has
+  // already been asked, which reads to the person as a password problem. The redirect is
+  // included because it is the one address a sign-in can finish on: a console reached by any
+  // other name bounces the browser here first rather than sealing an attempt it will never
+  // see again.
+  console.log(
+    upstreamConfig
+      ? `[sentinel] console SSO: ${upstreamConfig.label} through ${upstreamConfig.issuer} (client ${upstreamConfig.clientId}), returning to ${upstreamConfig.redirectUri}`
+      : `[sentinel] console SSO: none configured, so the console signs in with its own passwords`,
+  );
+  if (upstreamConfig && !upstreamConfig.defaultOrganizationSlug) {
+    console.warn("[sentinel] SENTINEL_UPSTREAM_ORGANIZATION is unset, so SSO sign-in has no organization to sign into and will refuse every attempt.");
+  }
+  if (upstreamConfig && !upstreamConfig.adminGroup) {
+    console.warn("[sentinel] SENTINEL_UPSTREAM_ADMIN_GROUP is unset, so every SSO identity arrives as an AGENT.");
+  }
   console.log(`[sentinel] theme:   ${url}${CONSOLE_ASSET_PATHS.themeCss} · ${url}${CONSOLE_ASSET_PATHS.themeJs}`);
   console.log(`[sentinel] SCIM:      ${url}${SCIM_PATHS.users} (config: ${url}${SCIM_PATHS.serviceProviderConfig})`);
   console.log(

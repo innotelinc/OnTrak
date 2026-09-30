@@ -438,7 +438,7 @@ test("alerts: acknowledging and closing are POSTs, audited, and a close without 
     h.service,
   );
   assert.equal(acknowledged.status, 303, "a state change answers with a redirect, so a refresh does not repeat it");
-  assert.match(acknowledged.headers.location ?? "", new RegExp(`alert=${alertId}`), "and comes back to the alert, not the top of the queue");
+  assert.match(String(acknowledged.headers.location ?? ""), new RegExp(`alert=${alertId}`), "and comes back to the alert, not the top of the queue");
   const afterAck = await h.store.findAlert(actor.organizationId, alertId);
   assert.equal(afterAck?.state, "ACKNOWLEDGED");
   assert.equal(afterAck?.note, "Looking at it");

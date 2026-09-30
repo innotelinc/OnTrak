@@ -22,7 +22,12 @@ import { test } from "node:test";
 import { constants, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 
 import { sha256Hex } from "../src/lib/hash";
+import { ConsoleService } from "../src/lib/console-service";
+import { routeConsole } from "../src/lib/console-http";
+import { CONSOLE_PATHS, CONSOLE_SESSION_COOKIE } from "../src/lib/console-rules";
 import { IdentityService, MemoryIdentityStore, OrganizationAuditLog } from "../src/lib/identity-service";
+import { MemoryMfaStore, MfaService } from "../src/lib/mfa-service";
+import type { HttpRequest } from "../src/lib/oidc-http";
 import {
   buildAuthorizeUrl,
   identifierFromClaims,
@@ -30,6 +35,7 @@ import {
   readCallback,
   roleFromClaims,
   safeReturnTo,
+  UPSTREAM_STATE_COOKIE,
   upstreamAssertsMfa,
   upstreamConfigFromEnv,
 } from "../src/lib/upstream-rules";
@@ -316,4 +322,151 @@ test("a login the provider did not mark multi-factor is refused when MFA is requ
   );
   const done = await service.complete({ code: "code", state: attempt.state, stateCookie: sealed });
   assert.equal(done.ok, false);
+});
+
+/* -------------------------------------------------------------------------- */
+/*  The console's second door, end to end                                      */
+/* -------------------------------------------------------------------------- */
+
+/** A request as the console router sees one, carrying the cookies a browser would send. */
+function consoleRequest(method: string, path: string, cookies: Record<string, string> = {}): HttpRequest {
+  return { method, url: `https://sentinel.ontrak.innotel.us${path}`, headers: {}, cookies };
+}
+
+/**
+ * The whole way in, through the router rather than the service.
+ *
+ * The unit tests above prove each leg; this one proves they add up to a session a person
+ * can actually use, which is the only thing "sign in with SSO" means. It is also where
+ * the shape of the two cookies is pinned: the callback clears the spent attempt *and* sets
+ * the session, and the failure mode of packing both into one comma-joined `Set-Cookie` is
+ * silent — a browser takes the first cookie and the person is told they are not signed in
+ * by the page they were just sent to. Two headers, so a browser has nothing to guess at.
+ */
+test("the console's SSO door ends in a session the console itself accepts", async () => {
+  const { store, audit, spine } = await makeSpine("door");
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  let token = "";
+  const fetcher = async (url: string) => {
+    if (url.endsWith("/.well-known/openid-configuration")) {
+      return jsonResponse(200, { issuer: ISSUER, authorization_endpoint: AUTH, token_endpoint: TOKEN, jwks_uri: JWKS });
+    }
+    if (url === TOKEN) return jsonResponse(200, { id_token: token });
+    if (url === JWKS) return jsonResponse(200, { keys: [publicJwk(publicKey, "k1")] });
+    return jsonResponse(404, {});
+  };
+  const provider = new UpstreamSignInService(config() as never, store, spine, {
+    secret: SECRET,
+    audit,
+    fetchImpl: fetcher,
+    now: () => Date.UTC(2026, 8, 30),
+  });
+  const mfa = new MfaService(new MemoryMfaStore(), spine, audit, {
+    id: () => "door-factor",
+    secret: () => "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+    now: () => new Date(Date.UTC(2026, 8, 30)).toISOString(),
+    nowMs: () => Date.UTC(2026, 8, 30),
+  });
+  const doors = new ConsoleService(spine, mfa, null, null, null, null, "demo", null, null, null, provider);
+
+  // The form names the provider the deployment configured rather than drawing a control
+  // that could never work.
+  const page = await routeConsole(consoleRequest("GET", CONSOLE_PATHS.signIn), doors);
+  assert.equal(page.status, 200);
+  assert.match(page.body, /Sign in with Cerulean SSO/);
+
+  // Starting seals the attempt into a cookie and hands the browser to the provider.
+  const started = await routeConsole(consoleRequest("GET", CONSOLE_PATHS.upstreamStart), doors);
+  assert.equal(started.status, 303);
+  assert.match(String(started.headers.location), /^https:\/\/auth\.cerulean\.innotel\.us\/application\/o\/authorize\//);
+  const sealed = String(started.headers["set-cookie"]).split(";")[0]!.split("=")[1]!;
+  const attempt = open<{ state: string; nonce: string }>(sealed, SECRET)!;
+
+  token = signIdToken(
+    {
+      iss: ISSUER,
+      aud: "sentinel",
+      exp: Math.floor(Date.UTC(2026, 8, 30) / 1000) + 300,
+      nonce: attempt.nonce,
+      email: "ada@innotel.us",
+      name: "Ada Lovelace",
+      groups: ["cerulean-platform"],
+      amr: ["pwd", "otp"],
+    },
+    privateKey,
+    "k1",
+  );
+
+  const callback = await routeConsole(
+    consoleRequest("GET", `${CONSOLE_PATHS.upstreamCallback}?code=code&state=${encodeURIComponent(attempt.state)}`, {
+      [UPSTREAM_STATE_COOKIE]: sealed,
+    }),
+    doors,
+  );
+  assert.equal(callback.status, 303);
+  assert.equal(callback.headers.location, CONSOLE_PATHS.home);
+  const cookies = callback.headers["set-cookie"];
+  assert.ok(Array.isArray(cookies), "the two cookies travel as two headers");
+  assert.match(cookies[0]!, new RegExp(`^${UPSTREAM_STATE_COOKIE}=;`), "and the spent attempt is cleared");
+  assert.match(cookies[1]!, new RegExp(`^${CONSOLE_SESSION_COOKIE}=`), "while the session is set");
+
+  // The session the provider brokered is the one the console accepts: the page renders
+  // rather than bouncing the person straight back to the door they just came through.
+  const sessionId = cookies[1]!.split(";")[0]!.split("=")[1]!;
+  const home = await routeConsole(consoleRequest("GET", CONSOLE_PATHS.home, { [CONSOLE_SESSION_COOKIE]: sessionId }), doors);
+  assert.equal(home.status, 200);
+  assert.match(home.body, new RegExp(sessionId));
+});
+
+/**
+ * A console with the provider door open, for the two tests that never reach the provider.
+ * Discovery is the only thing stubbed, because starting a sign-in is the only network call
+ * either of them can reach.
+ */
+async function doorOnlyConsole(scope: string) {
+  const { store, audit, spine } = await makeSpine(scope);
+  const fetcher = async (url: string) =>
+    url.endsWith("/.well-known/openid-configuration")
+      ? jsonResponse(200, { issuer: ISSUER, authorization_endpoint: AUTH, token_endpoint: TOKEN, jwks_uri: JWKS })
+      : jsonResponse(404, {});
+  const provider = new UpstreamSignInService(config() as never, store, spine, { secret: SECRET, audit, fetchImpl: fetcher });
+  const mfa = new MfaService(new MemoryMfaStore(), spine, audit, {
+    id: () => `${scope}-factor`,
+    secret: () => "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+    now: () => new Date(Date.UTC(2026, 8, 30)).toISOString(),
+    nowMs: () => Date.UTC(2026, 8, 30),
+  });
+  return new ConsoleService(spine, mfa, null, null, null, null, "demo", null, null, null, provider);
+}
+
+/**
+ * The address a sign-in is started from has to be the address it comes back to.
+ *
+ * The sealed attempt is a cookie, and a cookie belongs to a host. Somebody who reaches the
+ * console by its LAN address, its IP or `localhost` and clicks the provider's button was
+ * previously handed to the provider and then returned to the *registered* host, where that
+ * cookie does not exist — a login that refused them for using the address they were given,
+ * with a sentence about the sign-in rather than about the address. The console now hands
+ * them to the one address that works before anything is sealed.
+ */
+test("a sign-in is started on the address the provider returns to, not the one that was typed", async () => {
+  const doors = await doorOnlyConsole("bounce");
+  const typed = { method: "GET", url: "http://192.168.1.21:8787" + CONSOLE_PATHS.upstreamStart, headers: {}, cookies: {} };
+  const bounced = await routeConsole(typed, doors);
+  assert.equal(bounced.status, 303);
+  assert.equal(
+    bounced.headers.location,
+    `https://sentinel.ontrak.innotel.us${CONSOLE_PATHS.upstreamStart}?via=192.168.1.21%3A8787`,
+  );
+  assert.equal(bounced.headers["set-cookie"], undefined, "and nothing is sealed for a host the provider never sees");
+
+  // The bounce carries its own marker, and a request that already has one proceeds. That is
+  // what stops a deployment whose proxy does not pass the public `Host` through from looping
+  // between the two: it starts the flow, and whatever the provider says is the answer.
+  const marked = await routeConsole(
+    consoleRequest("GET", `${CONSOLE_PATHS.upstreamStart}?via=192.168.1.21%3A8787`),
+    doors,
+  );
+  assert.equal(marked.status, 303);
+  assert.match(String(marked.headers.location), /^https:\/\/auth\.cerulean\.innotel\.us\/application\/o\/authorize\//);
 });

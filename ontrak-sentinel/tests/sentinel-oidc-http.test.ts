@@ -112,7 +112,7 @@ function formPost(url: string, form: Record<string, string>): HttpRequest {
 }
 
 function locationOf(response: HttpResponse): URL {
-  return new URL(response.headers.location ?? "");
+  return new URL(String(response.headers.location ?? ""));
 }
 
 function tokenForm(s: Signed, code: string, overrides: Record<string, string> = {}): Record<string, string> {
@@ -135,7 +135,7 @@ test("discovery advertises the endpoints a client needs, and only GET reaches it
   const response = await routeOidc(get(`${ISSUER}/.well-known/openid-configuration`), s.oidc);
 
   assert.equal(response.status, 200);
-  assert.match(response.headers["content-type"], /application\/json/);
+  assert.match(String(response.headers["content-type"]), /application\/json/);
   const doc = JSON.parse(response.body) as Record<string, unknown>;
   assert.equal(doc.issuer, ISSUER);
   assert.equal(doc.authorization_endpoint, `${ISSUER}/oauth2/authorize`);
@@ -143,7 +143,7 @@ test("discovery advertises the endpoints a client needs, and only GET reaches it
 
   const wrongMethod = await routeOidc({ ...get(`${ISSUER}/.well-known/openid-configuration`), method: "POST" }, s.oidc);
   assert.equal(wrongMethod.status, 405);
-  assert.match(wrongMethod.headers.allow ?? "", /GET/);
+  assert.match(String(wrongMethod.headers.allow ?? ""), /GET/);
 });
 
 test("the JWKS publishes the public half of the signing key, and is cacheable", async () => {
@@ -158,7 +158,7 @@ test("the JWKS publishes the public half of the signing key, and is cacheable", 
   assert.equal(body.keys[0].use, "sig");
   // The public part only: a private key would carry a `d`.
   assert.equal(body.keys[0].d, undefined);
-  assert.match(response.headers["cache-control"] ?? "", /max-age/);
+  assert.match(String(response.headers["cache-control"] ?? ""), /max-age/);
 });
 
 /* -------------------------------------------------------------------------- */
@@ -236,7 +236,7 @@ test("a code exchanges for a bearer token and an ID token signed for the client"
   const response = await routeOidc(formPost(`${ISSUER}/oauth2/token`, tokenForm(s, code)), s.oidc);
 
   assert.equal(response.status, 200);
-  assert.match(response.headers["cache-control"] ?? "", /no-store/);
+  assert.match(String(response.headers["cache-control"] ?? ""), /no-store/);
   const body = JSON.parse(response.body) as Record<string, unknown>;
   assert.equal(body.token_type, "Bearer");
   assert.equal(body.expires_in, 3600);

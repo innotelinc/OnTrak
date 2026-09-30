@@ -122,6 +122,17 @@ export class UpstreamSignInService {
   }
 
   /**
+   * The origin the provider will return the browser to.
+   *
+   * The one address a sign-in can finish on, which is not necessarily the one the browser
+   * used: the attempt travels in a cookie, and cookies do not cross hosts. A console that
+   * asks the provider from somewhere else starts a login whose ending it will never see.
+   */
+  get redirectOrigin(): string {
+    return new URL(this.config.redirectUri).origin;
+  }
+
+  /**
    * Begin a sign-in: seal an attempt and hand back the provider's authorization URL.
    *
    * `returnTo` is a *path*, never an absolute URL, and it is re-validated at the end rather

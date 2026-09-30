@@ -341,7 +341,7 @@ test("the end-session endpoint redirects to a registered destination and clears 
 
   assert.equal(response.status, 302);
   assert.equal(response.headers.location, `${REDIRECT_URI}?state=bye`);
-  assert.match(response.headers["set-cookie"] ?? "", /sentinel_session=;/);
+  assert.match(String(response.headers["set-cookie"] ?? ""), /sentinel_session=;/);
   assert.equal(response.headers["cache-control"], "no-store");
   assert.equal((await s.oidc.userinfo(s.accessToken)).ok, false);
 });

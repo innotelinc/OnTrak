@@ -876,8 +876,8 @@ test("console: the feed page reads, a paste is answered in place, and a withdraw
     h.service,
   );
   assert.equal(withdrawn.status, 303);
-  assert.match(withdrawn.headers.location ?? "", /^\/console\/intel\?flash=/);
-  assert.match(decodeURIComponent(withdrawn.headers.location ?? ""), /Withdrew 203\.0\.113\.9 from abuse-ch/);
+  assert.match(String(withdrawn.headers.location ?? ""), /^\/console\/intel\?flash=/);
+  assert.match(decodeURIComponent(String(withdrawn.headers.location ?? "")), /Withdrew 203\.0\.113\.9 from abuse-ch/);
   const left = await intel.list(actor);
   assert.ok(left.ok);
   assert.equal(left.value.length, 1);

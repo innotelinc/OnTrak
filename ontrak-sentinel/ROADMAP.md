@@ -333,7 +333,15 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
     multi-factor is still refused by the S0 spine when the policy requires one — the
     provider cannot be a way *around* the second factor — and the person is named by
     the provider's email while the **role comes only from the configured admin
-    group**, so a group name upstream cannot hand out a grant here. Covered by
+    group**, so a group name upstream cannot hand out a grant here. The address the
+    sign-in is started from is checked too, because the sealed attempt is a cookie:
+    reached by the LAN address, the IP or `localhost` the browser is **sent to the
+    registered redirect's host first** rather than handed to the provider with an
+    ending it will never see, and the two cookies a callback answers with travel as
+    two headers rather than one comma-joined value a browser may read as a single
+    cookie — the shape that would leave somebody signed out with no error. What is
+    configured is also said out loud once at startup, with a warning for the two
+    half-configurations that only fail after the provider has been asked. Covered by
     `tests/sentinel-upstream.test.ts`.
   - `[x]` **Per-role policies** (`POLICY_SCOPES` in `identity-rules.ts`, the
     `IdentityPolicy` scope column in `20261025000000_policy_scope`,
