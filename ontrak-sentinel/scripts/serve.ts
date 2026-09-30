@@ -76,7 +76,7 @@ import type { IdentityPrismaClient } from "../src/lib/identity-store-prisma";
 import { base32Decode, formatTotpSecret, totpCode, totpCounter } from "../src/lib/mfa-rules";
 import { MemoryMfaStore, MfaService, systemTotpSigner } from "../src/lib/mfa-service";
 import type { MfaPrismaClient, WebAuthnChallengePrismaClient } from "../src/lib/mfa-store-prisma";
-import { generateSigningKey, signingKeyFromPem, type SigningKey } from "../src/lib/oidc-keys";
+import { loadSigningKeys } from "../src/lib/oidc-keys";
 import { codeChallengeFor, type OidcClientRecord } from "../src/lib/oidc-rules";
 import { createOidcServices, HEALTH_PATH, startOidcServer } from "../src/lib/oidc-server";
 import { MemoryOidcStore, OidcService, type OidcStore } from "../src/lib/oidc-service";
@@ -118,54 +118,6 @@ const DEMO_ACS = "http://127.0.0.1:8788/saml/acs";
 const DEMO_ENTITY_ID = "http://127.0.0.1:8788/saml";
 const DEMO_SLUG = "demo";
 const DEMO_ADMIN = process.env.SENTINEL_ADMIN_EMAIL ?? "admin@demo.test";
-
-/**
- * The signing key, from wherever this run was told to get it.
- *
- * Three sources, in order of how deliberate they are:
- *
- *  - `SENTINEL_SIGNING_KEY` — the PEM itself, which is what a deployment that
- *    resolves its secrets before the process starts hands over.
- *  - `SENTINEL_SIGNING_KEY_FILE` — the path to that PEM. What a container stack
- *    wants, because the key is then a file on a volume that survives a rebuild
- *    rather than a value baked into a compose file or an image layer.
- *  - neither — an ephemeral key, correct for poking at the endpoints and
- *    catastrophic in a deployment: every ID token this process has signed stops
- *    verifying the moment it stops, including ones a client has already cached a
- *    JWKS for.
- *
- * A file that is named but unreadable **throws** rather than falling through to
- * the ephemeral key. Falling back would turn a mount that did not happen into a
- * provider that is silently signing with a key nobody agreed on, and the failure
- * would surface as clients rejecting tokens rather than as a deployment error.
- */
-function signingKey(): SigningKey {
-  const kid = process.env.SENTINEL_SIGNING_KID;
-  const pem = process.env.SENTINEL_SIGNING_KEY;
-  if (pem) return signingKeyFromPem(pem, kid);
-
-  const file = process.env.SENTINEL_SIGNING_KEY_FILE;
-  if (file) {
-    let text: string;
-    try {
-      text = readFileSync(file, "utf8");
-    } catch (error) {
-      throw new Error(
-        `SENTINEL_SIGNING_KEY_FILE is set to “${file}” but could not be read: ` +
-          `${error instanceof Error ? error.message : String(error)}. ` +
-          "Refusing to start on an ephemeral key instead, which would invalidate " +
-          "every token this provider has already signed.",
-      );
-    }
-    return signingKeyFromPem(text, kid);
-  }
-
-  console.warn(
-    "[sentinel] no SENTINEL_SIGNING_KEY or SENTINEL_SIGNING_KEY_FILE: generating an " +
-      "ephemeral key. Every ID token this process signs stops verifying when it stops.",
-  );
-  return generateSigningKey();
-}
 
 /**
  * Enroll the demo administrator's second factor the way the product does.
@@ -329,7 +281,17 @@ async function main(): Promise<void> {
   const host = process.env.SENTINEL_HOST ?? "127.0.0.1";
   const port = Number(process.env.SENTINEL_PORT ?? 8787);
   const durable = Boolean(process.env.DATABASE_URL);
-  const keys = signingKey();
+  // Which key signs and which keys are published: `loadSigningKeys` throws on the two
+  // misconfigurations that start and then quietly misbehave, so reaching here means the
+  // set is coherent. An ephemeral key is legal — it is what poking at the endpoints
+  // uses — but it is never what a deployment should have, so it says so out loud.
+  const { keys, ephemeral } = loadSigningKeys();
+  if (ephemeral) {
+    console.warn(
+      "[sentinel] no SENTINEL_SIGNING_KEY or SENTINEL_SIGNING_KEY_FILE: generating an " +
+        "ephemeral key. Every ID token this process signs stops verifying when it stops.",
+    );
+  }
 
   // The WebAuthn relying party. The console's own origin *is* the RP ID's host, so
   // the default is derived from `SENTINEL_ISSUER`; a deployment that serves the

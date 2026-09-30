@@ -18,7 +18,7 @@ import { sha256Hex } from "../src/lib/hash";
 import type { HashFn } from "../src/lib/audit-chain";
 import { DEFAULT_IDENTITY_POLICY } from "../src/lib/identity-rules";
 import { IdentityService, MemoryIdentityStore, OrganizationAuditLog, type IdentityActor } from "../src/lib/identity-service";
-import { generateSigningKey, verifyJwt, type SigningKey } from "../src/lib/oidc-keys";
+import { generateSigningKey, oneKey, verifyJwt, type SigningKey } from "../src/lib/oidc-keys";
 import { codeChallengeFor, validateClient } from "../src/lib/oidc-rules";
 import { MemoryOidcStore, OidcService, type OidcIds } from "../src/lib/oidc-service";
 
@@ -56,7 +56,7 @@ function harness() {
     now: () => new Date(clock).toISOString(),
     nowMs: () => clock,
   };
-  const oidc = new OidcService(new MemoryOidcStore(), identities, spine, { issuer: ISSUER, keys: KEYS }, audit, oidcIds, sha256);
+  const oidc = new OidcService(new MemoryOidcStore(), identities, spine, { issuer: ISSUER, keys: oneKey(KEYS) }, audit, oidcIds, sha256);
 
   return {
     spine,

@@ -148,7 +148,7 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
 - **Exit:** an admin creates an identity, sees every action in the tamper-evident
   log, and tenant isolation is covered by CI tests.
 
-### S1 — Sentinel Identity v1 `[~]`
+### S1 — Sentinel Identity v1 `[x]`
 **Goal:** a standards-compliant IdP the family can rely on.
 
 - OIDC authorization-code + PKCE; SAML 2.0 SSO; well-known discovery; JWKS.
@@ -227,11 +227,23 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
     request's wish: a request that asks for a different known format is refused,
     so a per-request parameter cannot widen what an administrator decided. Covered
     by `tests/sentinel-saml.test.ts`.
-  - `[~]` Deployable key management: `SENTINEL_SIGNING_KEY` loads the signing key
+  - `[x]` **Deployable key management, rotation included** (`SigningKeys` and
+    `loadSigningKeys` in `oidc-keys.ts`): `SENTINEL_SIGNING_KEY` loads the signing key
     from a PEM so it stays out of the source tree and out of a generated one, and
     the SAML signature and the JWKS publish the same material — a second key would
-    be a second thing somebody forgets to rotate. Rotation itself (publishing a
-    second `kid` and switching) is still to come.
+    be a second thing somebody forgets to rotate. Rotation is a **two-step, because a
+    key cannot be swapped in one**: for as long as a token the old key signed is
+    still valid, the new key has to be *published* before it can be *used*. Naming the
+    old key in `SENTINEL_SIGNING_PREVIOUS_KEY`/`_KID` publishes it beside the new one —
+    `SigningKeys` is active-first, the JWKS carries every key in it, and SAML metadata
+    emits one `KeyDescriptor` per key so a service provider that re-reads metadata can
+    verify either — while only the active key ever signs. Removing the two settings
+    retires the old key for real: what it signed stops verifying, so the overlap is a
+    window rather than a permanent second key. The two configurations that would
+    otherwise start and then quietly misbehave — a retired key with no `kid`, and one
+    named as its own predecessor — are refused at startup rather than published
+    ambiguously. Covered by `tests/sentinel-key-rotation.test.ts`, which includes a
+    token issued before a rotation verifying after it.
 - Enforced MFA (TOTP, WebAuthn), session/device management, logout and token
   revocation.
   - `[x]` **TOTP second factors** (`mfa-rules.ts`, `mfa-service.ts`,
@@ -698,13 +710,19 @@ logins with no notion of behaviour. Together they produce signals neither can:
 1. ~~Stand up the identity spine (S0): orgs, identities, sessions and the
    hash-chained audit log.~~ **Done** (schema migrated, adapter, verified chain).
 2. ~~Implement OIDC authorization-code + PKCE as the first usable IdP capability.~~
-   **Engine, HTTP surface and persistence done** (the second migration landed);
-   deployable key management, logout/token revocation and SAML are the next
-   slice.
+   **Done** — engine, HTTP surface and persistence (the second migration), then
+   SAML 2.0 (the third), logout and token revocation, and deployable key management
+   with rotation. **S1 is closed**; the milestone above records what each part
+   decided rather than only that it landed.
 3. ~~Implement the SCIM 2.0 server so a directory can provision identities.~~
-   **Server done** (Users, Groups, tokens, deprovisioning with session and token
-   kill; the sixth migration). What remains of S2 is the connector side — a
-   Graph/LDAP reader that pushes through the SCIM API — and access reviews.
+   **Done** — the server (Users, Groups, connector tokens, deprovisioning with
+   session and token kill; the sixth migration) *and* the connector that drives it
+   (`directory-client.ts`: Entra ID through Graph and Google Workspace, on a real
+   client-credentials flow, paging by the provider's own next-link). LDAP is
+   deliberately not built — an LDAP bind is a different protocol with a different
+   dependency, so a deployment that needs it supplies its own reader rather than
+   being handed a fake. What remains of S2 is **access reviews**: an attestation
+   that the people who have access should.
 4. Build the telemetry normalizer and one detection rule end to end (S3 spike).
 5. ~~Define the shared assurance-packet format with OnTrak Tix before either ships
    exports, so both are compatible from the start.~~ **Done on Sentinel's side**

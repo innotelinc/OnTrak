@@ -18,7 +18,7 @@ import { test } from "node:test";
 import { sha256Hex } from "../src/lib/hash";
 import type { HashFn } from "../src/lib/audit-chain";
 import { IdentityService, MemoryIdentityStore, OrganizationAuditLog, type IdentityActor } from "../src/lib/identity-service";
-import { generateSigningKey, verifyJwt, type SigningKey } from "../src/lib/oidc-keys";
+import { generateSigningKey, oneKey, verifyJwt, type SigningKey } from "../src/lib/oidc-keys";
 import { codeChallengeFor } from "../src/lib/oidc-rules";
 import { MemoryOidcStore, OidcService, type OidcIds } from "../src/lib/oidc-service";
 import { SESSION_COOKIE, SESSION_HEADER, routeOidc, type HttpRequest, type HttpResponse } from "../src/lib/oidc-http";
@@ -48,7 +48,7 @@ function harness() {
     now: () => new Date(clock).toISOString(),
     nowMs: () => clock,
   };
-  const oidc = new OidcService(new MemoryOidcStore(), identities, spine, { issuer: ISSUER, keys: KEYS }, audit, oidcIds, sha256);
+  const oidc = new OidcService(new MemoryOidcStore(), identities, spine, { issuer: ISSUER, keys: oneKey(KEYS) }, audit, oidcIds, sha256);
 
   return { spine, oidc, identities, audit, advance: (seconds: number) => { clock += seconds * 1000; } };
 }

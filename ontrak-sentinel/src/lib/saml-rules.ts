@@ -628,23 +628,35 @@ export function idpMetadataXml(input: {
   entityId: string;
   ssoUrl: string;
   nameIdFormats: readonly SamlNameIdFormat[];
-  key: { modulusB64: string; exponentB64: string; kid: string };
+  /** Every published key, active first. */
+  keys: readonly { modulusB64: string; exponentB64: string; kid: string }[];
   validUntilMs?: number;
 }): string {
   const formats = input.nameIdFormats.map((format) => `<md:NameIDFormat>${format}</md:NameIDFormat>`).join("");
   const validUntil =
     input.validUntilMs === undefined ? "" : ` validUntil="${new Date(input.validUntilMs).toISOString()}"`;
+  // One `KeyDescriptor` per published key, because that is what makes a rotation
+  // safe for an SP: it re-reads metadata on its own schedule, so the new key has to
+  // be visible here *before* the IdP starts signing with it. Advertising only the
+  // active key would make every assertion fail for whatever window the SP's cache
+  // is still holding the old one — and the SP has no way to know it needs to look.
+  const descriptors = input.keys
+    .map(
+      (key) =>
+        `<md:KeyDescriptor use="signing"><ds:KeyInfo xmlns:ds="${NS_DS}">` +
+        `<ds:KeyName>${xmlEscape(key.kid)}</ds:KeyName>` +
+        `<ds:KeyValue><ds:RSAKeyValue>` +
+        `<ds:Modulus>${key.modulusB64}</ds:Modulus>` +
+        `<ds:Exponent>${key.exponentB64}</ds:Exponent>` +
+        `</ds:RSAKeyValue></ds:KeyValue>` +
+        `</ds:KeyInfo></md:KeyDescriptor>`,
+    )
+    .join("");
   return (
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<md:EntityDescriptor xmlns:md="${NS_MD}" entityID="${xmlEscape(input.entityId)}"${validUntil}>` +
     `<md:IDPSSODescriptor WantAuthnRequestsSigned="false" protocolSupportEnumeration="${NS_SAMLP}">` +
-    `<md:KeyDescriptor use="signing"><ds:KeyInfo xmlns:ds="${NS_DS}">` +
-    `<ds:KeyName>${xmlEscape(input.key.kid)}</ds:KeyName>` +
-    `<ds:KeyValue><ds:RSAKeyValue>` +
-    `<ds:Modulus>${input.key.modulusB64}</ds:Modulus>` +
-    `<ds:Exponent>${input.key.exponentB64}</ds:Exponent>` +
-    `</ds:RSAKeyValue></ds:KeyValue>` +
-    `</ds:KeyInfo></md:KeyDescriptor>` +
+    descriptors +
     formats +
     `<md:SingleSignOnService Binding="${SAML_BINDINGS.redirect}" Location="${xmlEscape(input.ssoUrl)}"/>` +
     `<md:SingleSignOnService Binding="${SAML_BINDINGS.post}" Location="${xmlEscape(input.ssoUrl)}"/>` +

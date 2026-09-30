@@ -32,7 +32,7 @@ import type { HashFn } from "./audit-chain";
 import { sha256Hex } from "./hash";
 import { canManageIdentities, canReadDirectory, type IdentityRecord } from "./identity-rules";
 import type { AuditTrail, IdentityActor, IdentityService, IdentityStore, ServiceResult } from "./identity-service";
-import { jwks, signJwt, type SigningKey } from "./oidc-keys";
+import { activeKey, jwks, signJwt, type SigningKeys } from "./oidc-keys";
 import {
   CODE_TTL_SECONDS,
   TOKEN_TTL_SECONDS,
@@ -149,7 +149,12 @@ export function systemOidcIds(): OidcIds {
 export interface OidcConfig {
   /** The issuer identifier: clients check this against the ID token's `iss`. */
   issuer: string;
-  keys: SigningKey;
+  /**
+   * Every signing key this provider publishes, active first: the first signs, and
+   * all of them are in the JWKS so a client holding a token from before a rotation
+   * can still verify it.
+   */
+  keys: SigningKeys;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -262,9 +267,14 @@ export class OidcService {
     return discoveryDocument(this.config.issuer);
   }
 
-  /** The public keys a client verifies ID tokens with. */
+  /**
+   * The public keys a client verifies ID tokens with. Every published key, not just
+   * the active one: a client that fetched this set before a rotation is verifying
+   * tokens with the key they were signed with, and dropping a retired key here is
+   * what turns that client's cached copy into a set that no longer works.
+   */
   jwks(): { keys: Record<string, unknown>[] } {
-    return jwks(this.config.keys);
+    return jwks(...this.config.keys);
   }
 
   /* ------------------------------------------------------------ clients */
@@ -447,7 +457,7 @@ export class OidcService {
         nowMs: now,
         authTimeMs: record.issuedAt,
       }),
-      this.config.keys,
+      activeKey(this.config.keys),
     );
 
     await this.append(record.organizationId, record.identityId, "oauth.token", "OidcClient", client.clientId, {

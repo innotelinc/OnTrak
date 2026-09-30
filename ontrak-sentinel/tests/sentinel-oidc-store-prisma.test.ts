@@ -26,7 +26,7 @@ import { test } from "node:test";
 import type { HashFn } from "../src/lib/audit-chain";
 import { sha256Hex } from "../src/lib/hash";
 import { IdentityService, MemoryIdentityStore, OrganizationAuditLog, type IdentityActor } from "../src/lib/identity-service";
-import { generateSigningKey, type SigningKey } from "../src/lib/oidc-keys";
+import { generateSigningKey, oneKey, type SigningKey } from "../src/lib/oidc-keys";
 import { codeChallengeFor, type OidcClientRecord } from "../src/lib/oidc-rules";
 import {
   PrismaOidcStore,
@@ -177,7 +177,7 @@ function stack(
     new PrismaOidcStore(db),
     identities,
     spine,
-    { issuer: ISSUER, keys: KEYS },
+    { issuer: ISSUER, keys: oneKey(KEYS) },
     audit,
     ids,
     sha256,
@@ -480,7 +480,7 @@ test("configureOidc binds one stack for the process, and refuses before it is ca
     new MemoryOidcStore(),
     identities,
     spine,
-    { issuer: ISSUER, keys: KEYS },
+    { issuer: ISSUER, keys: oneKey(KEYS) },
     audit,
   );
   assert.equal(oidcServices().service, bound.service);

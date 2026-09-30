@@ -15,8 +15,10 @@
  *    asked at every other entry point.
  *  - **The assertion is signed with the OIDC signing key.** One key pair, one
  *    rotation, one thing to keep secret; a second key would be a second thing
- *    somebody forgets to rotate. `SigningKey` and the JWKS publication are shared
- *    with `oidc-keys.ts`.
+ *    somebody forgets to rotate. `SigningKeys` and the JWKS publication are shared
+ *    with `oidc-keys.ts`, so an assertion is signed with whatever key the ID tokens
+ *    are signed with — and metadata advertises all of them, the same overlap the
+ *    JWKS provides for OIDC.
  *  - **The response is delivered by HTTP-POST, in an auto-submitting form.** The
  *    assertion is a bearer credential, so it must not sit in a query string where
  *    it lands in a proxy log, a referrer and the browser's history — which is
@@ -33,7 +35,7 @@ import type { HashFn } from "./audit-chain";
 import { sha256Hex } from "./hash";
 import { canManageIdentities, canReadDirectory, type IdentityRecord } from "./identity-rules";
 import type { AuditTrail, IdentityActor, IdentityService, IdentityStore, ServiceResult } from "./identity-service";
-import type { SigningKey } from "./oidc-keys";
+import { activeKey, type SigningKeys } from "./oidc-keys";
 import {
   DEFAULT_NAME_ID_FORMAT,
   SAML_NAME_ID_FORMATS,
@@ -83,7 +85,8 @@ export function systemSamlIds(): SamlIds {
 export interface SamlConfig {
   /** The IdP's entity id, and the issuer the assertion carries. */
   entityId: string;
-  keys: SigningKey;
+  /** Every signing key, active first. The first signs; all are advertised. */
+  keys: SigningKeys;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -148,7 +151,7 @@ export class SamlService {
     private readonly ids: SamlIds = systemSamlIds(),
     private readonly hash: HashFn = sha256Hex,
     /** Injected so a test can drive the whole flow without an RSA key. */
-    private readonly sign: XmlSigner = rsaXmlSigner(config.keys),
+    private readonly sign: XmlSigner = rsaXmlSigner(activeKey(config.keys)),
   ) {}
 
   /** The IdP's SSO endpoint, as the SP should have addressed it. */
@@ -210,12 +213,14 @@ export class SamlService {
    * describes what the IdP is capable of rather than what one SP asked for.
    */
   metadata(): string {
-    const material = signingKeyMaterial(this.config.keys);
+    // Every key, not just the active one: see `idpMetadataXml`, which is where the
+    // reason an SP needs to see a key it has not been signed with yet is written down.
+    const material = this.config.keys.map(signingKeyMaterial);
     return idpMetadataXml({
       entityId: this.config.entityId,
       ssoUrl: this.ssoUrl,
       nameIdFormats: [...SAML_NAME_ID_FORMATS],
-      key: material,
+      keys: material,
     });
   }
 
@@ -301,7 +306,11 @@ export class SamlService {
         identity: identityForAssertion(session.value.identity),
         nowMs: now,
       },
-      signatureBlockXml({ signedInfoXml: signedInfo, signatureValueB64: signature, kid: this.config.keys.kid }),
+      signatureBlockXml({
+        signedInfoXml: signedInfo,
+        signatureValueB64: signature,
+        kid: activeKey(this.config.keys).kid,
+      }),
     );
 
     const response = samlResponseXml({

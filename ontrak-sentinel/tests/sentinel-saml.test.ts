@@ -24,7 +24,7 @@ import { deflateRawSync } from "node:zlib";
 import { sha256Hex } from "../src/lib/hash";
 import type { HashFn } from "../src/lib/audit-chain";
 import { IdentityService, MemoryIdentityStore, OrganizationAuditLog, type IdentityActor } from "../src/lib/identity-service";
-import { generateSigningKey, type SigningKey } from "../src/lib/oidc-keys";
+import { generateSigningKey, oneKey, type SigningKey } from "../src/lib/oidc-keys";
 import { routeSaml, SAML_METADATA_CONTENT_TYPE } from "../src/lib/saml-http";
 import { SAML_NAME_ID_FORMATS, SAML_PATHS, validateAuthnRequest, validateServiceProvider } from "../src/lib/saml-rules";
 import { signingKeyMaterial, verifySamlAssertion } from "../src/lib/saml-sign";
@@ -60,7 +60,7 @@ function harness() {
     spine,
     audit,
     ids,
-    saml: new SamlService(new MemorySamlStore(), spine, { entityId: IDP, keys: KEY }, audit, samlIds, sha256),
+    saml: new SamlService(new MemorySamlStore(), spine, { entityId: IDP, keys: oneKey(KEY) }, audit, samlIds, sha256),
     advance: (seconds: number) => {
       clock += seconds * 1000;
     },

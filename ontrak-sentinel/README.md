@@ -634,5 +634,21 @@ against the JWKS the provider itself serves. CI runs it against this compose sta
 on every push, so a Dockerfile that quietly stops working fails the build instead
 of a release.
 
-Per-role policies and key rotation are still to come; see
-[ROADMAP.md](./ROADMAP.md).
+**Rotating that key is a two-step**, because a key cannot be swapped in one: for as
+long as a token the old key signed is still valid, the new key has to be *published*
+before it can be *used*. Point `SENTINEL_SIGNING_KEY` and `SENTINEL_SIGNING_KID` at
+the new key and put the old one in `SENTINEL_SIGNING_PREVIOUS_KEY` with
+`SENTINEL_SIGNING_PREVIOUS_KID`. Both keys are then in the JWKS and in the SAML
+metadata — one `KeyDescriptor` per key, so a service provider that re-reads metadata
+can verify an assertion signed by either — while only the new key signs. Once every
+relying party has re-read the JWKS, remove the two `SENTINEL_SIGNING_PREVIOUS_*`
+settings, and the retired key is genuinely retired: what it signed stops verifying,
+so the window closes rather than leaving a second key published forever. The two
+mistakes that would start and then quietly misbehave — a retired key with no `kid`,
+and one named as its own predecessor — are refused at startup rather than published
+ambiguously. `tests/sentinel-key-rotation.test.ts` drives the whole thing, including
+a token issued before the rotation verifying after it.
+
+What remains on the identity side is the lifecycle work — access reviews and
+scheduled attestation — and then the detection and prevention halves of Sentinel
+Guard; see [ROADMAP.md](./ROADMAP.md).
