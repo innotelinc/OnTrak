@@ -65,13 +65,17 @@ In Docker:
 ```bash
 cp .env.example .env
 docker compose up -d --build
-# http://127.0.0.1:3400/?token=<WEB_TOKEN>
+# http://127.0.0.1:3410/?token=<WEB_TOKEN>
+#   :3410 rather than :3400, because this is the product-only stack and the
+#   family stack owns :3400 (see docs/family-operations.md). Set
+#   `ONTRAK_GENIE_PORT` to move either stack.
 ```
 
 As part of the family, from the repository root:
 
 ```bash
-make genie-up                 # serving on :3400
+make all-up                   # the whole family, Genie included on :3400
+make genie-up                 # just Genie, as its own stack, on :3410
 ```
 
 A gateway is required and is not shipped here: Genie speaks the OpenAI-compatible

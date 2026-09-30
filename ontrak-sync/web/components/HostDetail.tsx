@@ -59,7 +59,7 @@ export function HostDetail({ name }: { name: string }) {
           <p>
             {record.os ?? "OS unknown"} · kernel {record.kernel ?? "?"} ·{" "}
             {record.container_count} container(s) · last seen <When value={record.last_seen} />
-            {record.error ? <> · <span style={{ color: "#ff9d95" }}>{record.error}</span></> : null}
+            {record.error ? <> · <span style={{ color: "var(--bad)" }}>{record.error}</span></> : null}
           </p>
         </div>
         <div className="actions">

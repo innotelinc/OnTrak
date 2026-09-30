@@ -24,6 +24,11 @@ All six run on the **`ontrak` incus container**, `192.168.1.21`, on host **i1**
 (`192.168.1.51`). Each is independently deployable and each has its own stack;
 `docker-compose.all.yml` in the repository root runs them together.
 
+Genie is the one product whose own stack and the family's stack would otherwise be
+the same service on the same port, so the product-only compose in `ontrak-genie/`
+defaults to **:3410** and :3400 has exactly one owner — this table's `genie-app`.
+Both stacks read `ONTRAK_GENIE_PORT`, so one setting moves whichever you are starting.
+
 ```
                     ┌──────────────────────────────────────────┐
    browser ────────▶│  Cerulean edge (192.168.1.71)            │

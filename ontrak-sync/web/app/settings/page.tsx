@@ -181,7 +181,7 @@ export default function SettingsPage() {
               {preview
                 ? preview.valid
                   ? preview.description
-                  : <span style={{ color: "#ff9d95" }}>{preview.description}</span>
+                  : <span style={{ color: "var(--bad)" }}>{preview.description}</span>
                 : "checking…"}
             </small>
           </label>

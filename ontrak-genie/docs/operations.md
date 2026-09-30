@@ -781,7 +781,7 @@ All optional — see `.env.example`.
 
 | Variable                                    | Default                  | Purpose                                  |
 | ------------------------------------------- | ------------------------ | ---------------------------------------- |
-| `PORT` / `HOST`                             | `3400` / `127.0.0.1`     | Web server bind address                  |
+| `PORT` / `HOST`                             | `3400` / `127.0.0.1`     | Web server bind address (the compose stack sets `PORT` from `ONTRAK_GENIE_PORT`, 3410 by default) |
 | `OMNIROUTE_URL`                             | `http://127.0.0.1:20128/v1` | Gateway base URL — use a LAN address, never a Docker service name |
 | `OMNIROUTE_API_KEY`                         | *(empty)*                | Sent as a bearer token if set            |
 | `AGENT_MODEL`                               | `auto/coding`            | Default model; overridable per request. Pin an explicit id — see *Picking a model* |
@@ -873,7 +873,8 @@ npm run sandbox:build # rebuild the run_command container image
 `build`, `test`, `ui:smoke`. The build comes before the tests because the suite
 runs the compiled `dist/test/*.test.js`, not the TypeScript, and `ui:smoke` comes
 last because it needs a server to drive — start one first (or use the compose
-container, which is already on port 3400).
+container, which is already on `ONTRAK_GENIE_PORT` — 3410 by default, since the
+family stack owns :3400).
 
 `npm run offline:check` is the one check that cannot be a unit test, because the
 fallback it covers only happens when every main model has already failed. It starts

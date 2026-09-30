@@ -108,7 +108,7 @@ portal-logs: ## Tail the portal stack's logs
 	cd $(PORTAL_DIR) && docker compose logs -f
 
 .PHONY: genie-up
-genie-up: ## Build and start the agent console, serving on :3400
+genie-up: ## Build and start the agent console stack, serving on :3410 (:3400 belongs to the family stack)
 	cd $(GENIE_DIR) && docker compose up -d --build
 
 .PHONY: genie-down
