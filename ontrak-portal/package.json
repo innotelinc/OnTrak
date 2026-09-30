@@ -12,7 +12,9 @@
     "build": "next build",
     "start": "next start -p 3300",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --tsconfig tests/tsconfig.json --test tests/*.test.ts"
+    "copy:check": "node scripts/copy-check.mjs",
+    "test": "tsx --tsconfig tests/tsconfig.json --test tests/*.test.ts",
+    "check": "npm run typecheck && npm run copy:check && npm test"
   },
   "dependencies": {
     "jose": "^6.0.10",

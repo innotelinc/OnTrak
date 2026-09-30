@@ -375,7 +375,17 @@ test("authentication", async (t) => {
   });
 
   await t.test("the static shell stays public so the token prompt can render", async () => {
-    for (const pathname of ["/", "/app.js", "/style.css", "/unity-theme.css", "/unity-theme.js"]) {
+    for (const pathname of [
+      "/",
+      "/app.js",
+      "/style.css",
+      "/unity-theme.css",
+      "/unity-theme.js",
+      // The gate is public for the same reason the shell is: it is where a
+      // signed-out visitor is sent, so it cannot itself demand a session.
+      "/login",
+      "/login.html",
+    ]) {
       const response = await fetch(`${base}${pathname}`);
       assert.equal(response.status, 200, `${pathname} should be served`);
     }

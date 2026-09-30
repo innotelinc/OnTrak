@@ -251,6 +251,29 @@ test("a turn is attributed to the account that asked for it", async () => {
   assert.equal(report?.body.requests, 1);
 });
 
+test("a token holder is not sent to the sign-in gate", async () => {
+  // This deployment configures both sign-in *and* a shared bearer, which is the
+  // case that used to disagree with itself: `isAuthorized` let the token through
+  // while `/api/auth/status` described the same caller as signed out, so the
+  // console bounced them into a gate offering a sign-in they did not need.
+  const anonymous = (await (await fetch(`${base}/api/auth/status`)).json()) as {
+    oidc: boolean;
+    authenticated: boolean;
+  };
+  assert.equal(anonymous.oidc, true);
+  assert.equal(anonymous.authenticated, false);
+
+  const header = (await (
+    await fetch(`${base}/api/auth/status`, { headers: { authorization: "Bearer shared-bearer" } })
+  ).json()) as { authenticated: boolean };
+  assert.equal(header.authenticated, true, "a bearer holder must be reported as authorized");
+
+  const query = (await (await fetch(`${base}/api/auth/status?token=shared-bearer`)).json()) as {
+    authenticated: boolean;
+  };
+  assert.equal(query.authenticated, true, "and so must a ?token= holder");
+});
+
 test("the shared bearer alone cannot start a turn once a control plane is configured", async () => {
   planeCalls.length = 0;
   const before = gatewayKeys.length;

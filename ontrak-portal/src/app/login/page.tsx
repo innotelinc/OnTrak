@@ -31,10 +31,6 @@ export default async function LoginPage({ searchParams }: {
 
   const config = portalConfig();
   return (
-    <SignInPanel
-      ssoEnabled={ssoConfigured(config)}
-      providerName={config.providerName}
-      error={params.error ?? null}
-    />
+    <SignInPanel ssoEnabled={ssoConfigured(config)} error={params.error ?? null} />
   );
 }

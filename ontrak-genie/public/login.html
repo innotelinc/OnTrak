@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en" data-scheme="operations">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Sign in — OnTrak Genie</title>
+    <!--
+      The gate: the product's name and the one way in. There is deliberately no
+      password field — Genie delegates identity to the provider, and a second way
+      in would be a second place to audit.
+
+      This is a page rather than a bare redirect to `/api/auth/login` because the
+      gate has to render in the case where there is no provider at all, and that
+      route answers 404 when sign-in is off. The script below asks
+      `/api/auth/status` — unauthenticated by design — and either offers the
+      provider or says plainly that none is configured, rather than showing a
+      button that fails after the click.
+
+      The theme is the family's: `unity-theme.css` and `unity-theme.js` are
+      byte-identical copies of the canonical files, and the script is blocking so
+      the remembered scheme is applied before the first paint.
+    -->
+    <link rel="stylesheet" href="/unity-theme.css" />
+    <script>window.UNITY_DEFAULT_SCHEME = "operations";</script>
+    <script src="/unity-theme.js"></script>
+    <link rel="stylesheet" href="/style.css" />
+    <style>
+      /* Every name here is one style.css already defines — the aliases onto the
+         theme tokens — so the gate is themed where the theme is present and
+         legible where it is not. Nothing below is a second palette. */
+      body { display: grid; place-items: center; min-height: 100vh; }
+      .gate {
+        width: min(92vw, 360px);
+        display: flex; flex-direction: column; gap: 18px;
+        background: var(--bg-panel);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 30px 26px;
+      }
+      .gate__mark { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: 0.01em; }
+      .gate__mark span { color: var(--accent); }
+      .gate__note { margin: 0; color: var(--text-dim); font-size: 13px; line-height: 1.55; }
+      .gate__note code { font-family: var(--mono); color: var(--text); }
+      .gate__btn {
+        display: block; text-align: center; text-decoration: none;
+        background: var(--accent); color: #0b0d10;
+        border-radius: 10px; padding: 11px 18px; font-weight: 600;
+      }
+      .gate__btn:hover { filter: brightness(1.08); }
+    </style>
+  </head>
+  <body>
+    <main class="gate">
+      <h1 class="gate__mark">OnTrak <span>Genie</span></h1>
+      <p class="gate__note" id="gate-status">Checking how this deployment signs people in…</p>
+      <a class="gate__btn hidden" id="gate-signin" href="/api/auth/login">Sign in</a>
+    </main>
+
+    <script>
+      /*
+       * Ask the server which case this deployment is in, once. `/api/auth/status`
+       * is the only route that answers without a session, so it is the only thing
+       * that can tell a signed-out visitor whether to offer the provider. Somebody
+       * who is already signed in is sent on rather than shown a handshake they
+       * have already completed.
+       */
+      (async function () {
+        var note = document.getElementById("gate-status");
+        var button = document.getElementById("gate-signin");
+        // The page that sent somebody here names itself in `next`. Only a path on
+        // this origin is honoured — an absolute URL would turn the gate into an
+        // open redirect — and the server refuses the rest again on the way through.
+        var wanted = new URLSearchParams(location.search).get("next") || "/";
+        var next = wanted.charAt(0) === "/" && wanted.charAt(1) !== "/" ? wanted : "/";
+        if (next !== "/") {
+          button.setAttribute("href", "/api/auth/login?next=" + encodeURIComponent(next));
+        }
+        try {
+          var response = await fetch("/api/auth/status");
+          if (!response.ok) throw new Error("status " + response.status);
+          var status = await response.json();
+          if (status.oidc && status.authenticated) {
+            location.replace(next);
+            return;
+          }
+          if (status.oidc) {
+            note.hidden = true;
+            button.classList.remove("hidden");
+            return;
+          }
+          note.innerHTML =
+            "This deployment has no identity provider configured. Set " +
+            "<code>ONTRAK_OIDC_ISSUER</code> and <code>ONTRAK_OIDC_CLIENT_ID</code> " +
+            "and restart.";
+        } catch {
+          note.textContent = "Could not reach the console to check how it signs people in.";
+        }
+      })();
+    </script>
+  </body>
+</html>

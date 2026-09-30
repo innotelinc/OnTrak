@@ -18,6 +18,7 @@ import {
   mintSession,
   oidcEnabled,
   redirectUri,
+  safeReturnTo,
   sessionCookie,
   sessionFrom,
 } from "./oidc.js";
@@ -122,6 +123,12 @@ const STATIC_FILES: Record<string, { file: string; type: string }> = {
   // `theme/tests/test_theme_copies.py`.
   "/unity-theme.css": { file: "unity-theme.css", type: "text/css; charset=utf-8" },
   "/unity-theme.js": { file: "unity-theme.js", type: "text/javascript; charset=utf-8" },
+  // The sign-in gate. Public like the shell, and for the same reason: it is what
+  // a signed-out visitor is sent to, so it cannot itself require a session. It is
+  // a page rather than a redirect because it has to render the case where no
+  // provider is configured at all — see `public/login.html`.
+  "/login": { file: "login.html", type: "text/html; charset=utf-8" },
+  "/login.html": { file: "login.html", type: "text/html; charset=utf-8" },
 };
 
 async function serveStatic(res: http.ServerResponse, pathname: string): Promise<boolean> {
@@ -184,11 +191,23 @@ async function handleAuthRoutes(
 
   if (pathname === "/api/auth/status" && req.method === "GET") {
     const session = sessionFrom(req);
+    /*
+     * The answer has to agree with `isAuthorized`, or the console lies to
+     * itself. The case that does not: a deployment with **both** sign-in and
+     * `WEB_TOKEN` configured. A caller holding the token is authorized, but
+     * reporting `authenticated: false` sent the shell to the gate, which
+     * offered a sign-in that a token holder does not need — a lockout dressed
+     * as a redirect. So the token is checked here the same way it is there.
+     */
+    const tokenHeld =
+      config.webToken !== "" &&
+      (req.headers.authorization === `Bearer ${config.webToken}` ||
+        url.searchParams.get("token") === config.webToken);
     sendJson(res, 200, {
       oidc: oidcEnabled(),
       // Without sign-in configured this mirrors the server: a token or a
       // loopback caller is as authorized as it gets.
-      authenticated: session !== null || (config.webToken === "" && !oidcEnabled()),
+      authenticated: session !== null || tokenHeld || (config.webToken === "" && !oidcEnabled()),
       identity:
         session === null ? null : { sub: session.sub, email: session.email, name: session.name },
     });
@@ -197,7 +216,9 @@ async function handleAuthRoutes(
 
   if (pathname === "/api/auth/login" && req.method === "GET") {
     if (!oidcEnabled()) throw new HttpError(404, "sign-in is not configured");
-    res.writeHead(302, { Location: await beginLogin() });
+    // `next` comes from the gate, which got it from the page that bounced the
+    // visitor. It is normalized to a path on this origin before it is kept.
+    res.writeHead(302, { Location: await beginLogin(safeReturnTo(url.searchParams.get("next"))) });
     res.end();
     return true;
   }
@@ -211,9 +232,9 @@ async function handleAuthRoutes(
       throw new HttpError(401, `the provider refused the sign-in: ${refusal}`);
     }
 
-    let identity;
+    let completed;
     try {
-      identity = await completeLogin(url.searchParams.get("code") ?? "", state);
+      completed = await completeLogin(url.searchParams.get("code") ?? "", state);
     } catch (failure) {
       // A sign-in that did not work is a 401, not a 500 — but a provider that
       // could not be reached is a 502, and conflating the two sends the operator
@@ -222,7 +243,12 @@ async function handleAuthRoutes(
       throw new HttpError(status, (failure as Error).message);
     }
 
-    res.writeHead(302, { Location: "/", "Set-Cookie": sessionCookie(mintSession(identity)) });
+    // Back to the page the visitor asked for rather than always the root, which
+    // is what a link into a deep page expects of a sign-in.
+    res.writeHead(302, {
+      Location: completed.returnTo,
+      "Set-Cookie": sessionCookie(mintSession(completed.identity)),
+    });
     res.end();
     return true;
   }

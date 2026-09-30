@@ -225,6 +225,23 @@ interface Pending {
   verifier: string;
   nonce: string;
   at: number;
+  /** Where the browser was headed when it was sent to the provider. */
+  returnTo: string;
+}
+
+/**
+ * A path this deployment will send a browser to after a sign-in, or `/`.
+ *
+ * Only a path on this origin is accepted. A `next` that is an absolute URL turns
+ * the gate into an open redirect — the browser goes to the provider to prove who
+ * it is and comes back elsewhere — and `//host` is an absolute URL wearing a
+ * path's clothes, so it is refused with it. A path is still usable for the only
+ * thing this is for: coming back to the page you asked for.
+ */
+export function safeReturnTo(value: string | null | undefined): string {
+  if (typeof value !== "string" || value === "") return "/";
+  if (!value.startsWith("/") || value.startsWith("//")) return "/";
+  return value;
 }
 
 /**
@@ -243,14 +260,14 @@ function sweep(now = Date.now()): void {
 }
 
 /** Where to send the browser, and the state that ties the answer back to it. */
-export async function beginLogin(): Promise<string> {
+export async function beginLogin(returnTo = "/"): Promise<string> {
   sweep();
   const discovery = await discover();
   const state = crypto.randomBytes(16).toString("base64url");
   const nonce = crypto.randomBytes(16).toString("base64url");
   const verifier = crypto.randomBytes(32).toString("base64url");
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
-  pending.set(state, { verifier, nonce, at: Date.now() });
+  pending.set(state, { verifier, nonce, at: Date.now(), returnTo: safeReturnTo(returnTo) });
 
   const url = new URL(discovery.authorization_endpoint);
   url.searchParams.set("response_type", "code");
@@ -266,13 +283,19 @@ export async function beginLogin(): Promise<string> {
 
 export class LoginError extends Error {}
 
+/** The identity a sign-in proved, and the path it was started from. */
+export interface CompletedLogin {
+  identity: Identity;
+  returnTo: string;
+}
+
 /**
  * Exchange the code and verify the token it came with.
  *
  * The state is consumed before the exchange, so a replayed callback finds
  * nothing rather than a second session.
  */
-export async function completeLogin(code: string, state: string): Promise<Identity> {
+export async function completeLogin(code: string, state: string): Promise<CompletedLogin> {
   sweep();
   const entry = pending.get(state);
   if (entry === undefined) throw new LoginError("this sign-in is unknown or has expired — start again");
@@ -310,7 +333,7 @@ export async function completeLogin(code: string, state: string): Promise<Identi
     (typeof claims.preferred_username === "string" && claims.preferred_username) ||
     email ||
     claims.sub;
-  return { sub: claims.sub, email, name };
+  return { identity: { sub: claims.sub, email, name }, returnTo: entry.returnTo };
 }
 
 /** Drop a started sign-in, e.g. when the provider answered with an error. */
