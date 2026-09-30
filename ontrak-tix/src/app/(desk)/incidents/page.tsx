@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../lib/session";
-import { hasPermission } from "../../../lib/access-rules";
+import { actorHasPermission } from "../../../lib/access-rules";
 import {
   commsTemplateServicesFor,
   complianceServicesFor,
@@ -64,7 +64,7 @@ export default async function IncidentsPage({
   searchParams: Promise<{ flash?: string; error?: string }>;
 }) {
   const actor = await requireActor();
-  if (!hasPermission(actor.role, "ticket:read:any")) redirect("/portal");
+  if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
 
   const { flash, error } = await searchParams;
   const service = incidentServicesFor();
@@ -141,7 +141,7 @@ export default async function IncidentsPage({
     templates,
   };
 
-  const canAct = hasPermission(actor.role, "ticket:update");
+  const canAct = actorHasPermission(actor, "ticket:update");
   const open = views.filter((view) => !isIncidentClosed(view.incident.phase));
   const critical = open.filter((view) => severityRank(view.incident.severity) <= severityRank("SEV2"));
   const unstaffed = open.filter((view) => unassignedRoles(view.incident).includes("COMMANDER"));

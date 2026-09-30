@@ -1125,11 +1125,58 @@ up to an adjuster or auditor.
   - `[x]` **Retention and legal hold** landed with M3 rather than here (the
     `RetentionPolicy`/`LegalHold` pair, object-locked evidence, the retention sweep
     and `GOVERNANCE`-vs-`COMPLIANCE` retention in **M3 — Incident response &
-    defensible documentation** above), so what is left of this bullet is only the
-    first two words of it.
-  - `[ ]` Granular roles: the permission matrix is fixed today (`access-rules.ts`),
-    and a desk that wants "an agent who may close but not delete" has to change
-    code.
+    defensible documentation** above). The other three words of this bullet are
+    the two entries below.
+  - `[x]` **Granular roles** (`role-rules.ts`, `role-service.ts`,
+    `role-store-prisma.ts`, `Actor.permissions`/`actorHasPermission` in
+    `access-rules.ts`, the `TenantRole` model with `User.tenantRoleId`,
+    `/admin/roles`, and `tests/tix-m6-roles.test.ts`): the matrix is no longer
+    code only, so a desk that wants "an agent who may close but not delete" — or
+    one that may close and *not* read every client's queue — writes a role rather
+    than waiting for a release. Six decisions carry it.
+    **A role narrows its base role and can never add to it.** It is authored *on*
+    one of the four built-ins and keeps a subset of that role's permissions, so a
+    role definition cannot become a privilege escalation: the worst a mistaken or
+    malicious one can do is take something away from somebody who already had it.
+    It also means `Role` keeps meaning what it already meant everywhere else — the
+    tenant-isolation checks, the API token scopes (which still name the *least*
+    role that could serve a scope) and SCIM's role mapping never learn about tenant
+    roles at all. The intersection is computed in one place
+    (`effectivePermissions`) and stored already narrowed, so the row cannot
+    disagree with the rule that reads it, and an unknown permission is dropped
+    rather than kept in the array for a later release to start honouring.
+    **Reading is one question asked in one place.** `actorHasPermission` judges an
+    actor by their resolved set when they carry one and by their built-in role when
+    they do not — so a desk that has written no roles behaves exactly as before,
+    and the ~130 call sites could move to the actor without a behaviour change
+    anywhere. **The narrowing is not carried in the session cookie**, because a
+    cookie cannot be re-issued when an administrator edits a role, and a permission
+    that outlives its own revocation until the session expires is the one failure
+    granular roles must not have; it is resolved as the actor is built for the
+    request (`withEffectivePermissions`, one query, on the read that already
+    resolves a session). **A change that would strand the desk is refused**: saving
+    or assigning anything that would leave nobody active holding `tenant:manage` is
+    refused with a sentence naming the way out, and the screen prints the guard's
+    own answer rather than only revealing it as a rejection. Archiving needs no
+    guard at all and deliberately has none — a role can only narrow, so retiring
+    one can only give power back, and a check that cannot fail would hide the rule
+    it pretended to enforce. **An archived role is not a deleted one**: the row
+    stays, its holders fall back to their built-in role, and every audit entry that
+    named it by key still resolves; the key is fixed once written for exactly that
+    reason. And **every change is on the tenant's chain** — `role.create`,
+    `role.update`, `role.archive`, `role.assign` and `role.unassign`, each carrying
+    what was kept and what was withheld, so "who gave them that, and when" and
+    "what did that role mean in March" are both answerable. The screen is one page
+    for both halves of the question (what each role may do, and who holds which
+    role), chooses the base role through the URL so the checklist rendered is the
+    checklist the server honours, and shows a permission the base role does not
+    hold rather than hiding it — because "why can I not grant that?" deserves an
+    answer on the page. Covered by `tests/tix-m6-roles.test.ts` (30 checks: the
+    intersection narrowing rather than granting, an archived or
+    differently-based role not narrowing at all, an empty set being a real
+    narrowing rather than a missing one, the last-administrator refusal for both a
+    save and an assignment, and the row mappers reading an unknown role as the
+    least powerful one there is).
   - `[x]` **Audit-evidence export** (`audit-export-rules.ts`,
     `AssuranceService.auditExport`, `GET /api/audit/packet`, and the M6's tests in
     `tests/tix-m6-audit-export.test.ts`): the chain was readable in the console and
@@ -1180,9 +1227,14 @@ up to an adjuster or auditor.
 > entry as one document in the *same* format as an incident packet — the record and
 > not the payloads, a broken chain exported with `verified: false` inside the signed
 > anchor rather than withheld, and the export itself recorded on the chain it
-> describes. What remains in M6 is the connector marketplace pattern and granular
-> roles (the permission matrix is still fixed in `access-rules.ts`). See
-> [docs/api.md](./docs/api.md) and [docs/rules.md](./docs/rules.md).
+> describes. The desk's authority is its own data now too: a role written on this
+> desk narrows one of the four built-ins and can never add to it, so it cannot
+> escalate anything; the narrowing is resolved as each request's actor is built
+> rather than carried in a cookie that cannot be re-issued, `actorHasPermission`
+> answers every one of the ~130 call sites, and a save or an assignment that would
+> leave nobody able to administer the desk is refused by name. What remains in M6
+> is the connector marketplace pattern. See [docs/api.md](./docs/api.md) and
+> [docs/rules.md](./docs/rules.md).
 
 - **Exit:** a monitoring alert opens a ticket and closes it when the alert clears
   (**done**); audit evidence exports on demand (**done** — a signed tenant-wide

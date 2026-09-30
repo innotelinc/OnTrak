@@ -18,7 +18,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import {
   brandFor,
@@ -110,7 +110,7 @@ export class ClientBrandingService {
   async save(actor: Actor, clientId: string, input: BrandingInput): Promise<ServiceResult<ClientBrandingRecord>> {
     const visible = await this.visible(actor, clientId);
     if (!visible.ok) return visible;
-    if (!hasPermission(actor.role, "client:manage")) {
+    if (!actorHasPermission(actor, "client:manage")) {
       return { ok: false, error: "You do not manage clients." };
     }
 

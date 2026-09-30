@@ -19,7 +19,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import {
   activeRetainer,
@@ -171,7 +171,7 @@ export class TimeService {
 
   /** Every card in the tenant: the desk's default and each client's own. */
   async rateCards(actor: Actor): Promise<ServiceResult<RateCardRecord[]>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to the desk's rates." };
     }
     return { ok: true, value: await this.store.listRateCards(actor.tenantId) };
@@ -256,7 +256,7 @@ export class TimeService {
 
   /** Log time against a ticket, or against the desk when there is no ticket. */
   async log(actor: Actor, input: TimeEntryInput): Promise<ServiceResult<TimeEntryRecord>> {
-    if (!hasPermission(actor.role, "ticket:update")) {
+    if (!actorHasPermission(actor, "ticket:update")) {
       return { ok: false, error: "You do not log time." };
     }
 
@@ -337,7 +337,7 @@ export class TimeService {
 
   /** The desk's time, scoped by the client scope the actor already works under. */
   async entries(actor: Actor, filters: TimeFilters = {}): Promise<ServiceResult<TimeEntryRecord[]>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to the desk's time." };
     }
     const scope = await this.clients.scope(actor);
@@ -409,7 +409,7 @@ export class TimeService {
   /* ------------------------------------------------------------ tax rules */
 
   async taxRules(actor: Actor): Promise<ServiceResult<TaxRuleRecord[]>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to the desk's tax rules." };
     }
     return { ok: true, value: await this.store.listTaxRules(actor.tenantId) };
@@ -488,7 +488,7 @@ export class TimeService {
 
   /** A client's retainers, each with its balance derived from the entries drawn. */
   async retainers(actor: Actor, clientId: string): Promise<ServiceResult<RetainerView[]>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to the desk's retainers." };
     }
     if (!(await this.clients.canSee(actor, clientId))) {
@@ -693,7 +693,7 @@ export class TimeService {
 
   /** Read an invoice that was already issued, by its reference. */
   async issued(actor: Actor, ref: string): Promise<ServiceResult<InvoiceStanding>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to the desk's invoices." };
     }
 
@@ -809,7 +809,7 @@ export class TimeService {
 
   /** Credit notes against an invoice, or every note the desk has issued. */
   async creditNotes(actor: Actor, invoiceRef?: string): Promise<ServiceResult<CreditNoteRecord[]>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to the desk's credit notes." };
     }
     return { ok: true, value: await this.store.listCreditNotes(actor.tenantId, invoiceRef) };
@@ -865,7 +865,7 @@ export class TimeService {
   }
 
   private billableBy(actor: Actor): { ok: false; error: string } | null {
-    if (!hasPermission(actor.role, "queue:manage")) return { ok: false, error: "You do not manage what the desk charges." };
+    if (!actorHasPermission(actor, "queue:manage")) return { ok: false, error: "You do not manage what the desk charges." };
     return null;
   }
 

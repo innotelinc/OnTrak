@@ -17,7 +17,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import type { ClientService } from "./client-service";
 import { canSeeClient } from "./client-rules";
@@ -71,7 +71,7 @@ export class ClientSurveyService {
     clientId: string,
     input: { periodStart: string; periodEnd: string },
   ): Promise<ServiceResult<ClientSurveyRecord>> {
-    if (!hasPermission(actor.role, "client:manage")) {
+    if (!actorHasPermission(actor, "client:manage")) {
       return { ok: false, error: "You do not manage clients." };
     }
     // The id comes from a form, and a form is a suggestion: the client has to be
@@ -114,7 +114,7 @@ export class ClientSurveyService {
 
   /** The surveys asked of one client, newest first. */
   async list(actor: Actor, clientId: string): Promise<ServiceResult<ClientSurveyRecord[]>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to the desk's surveys." };
     }
     if (!(await this.clients.canSee(actor, clientId))) {
@@ -126,7 +126,7 @@ export class ClientSurveyService {
 
   /** Every survey the actor may see, for the per-client report. */
   async all(actor: Actor): Promise<ServiceResult<ClientSurveyRecord[]>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to the desk's surveys." };
     }
     const scope = await this.clients.scope(actor);

@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../lib/session";
-import { hasPermission } from "../../../lib/access-rules";
+import { actorHasPermission } from "../../../lib/access-rules";
 import { knowledgeServicesFor } from "../../../lib/db";
 import { articleExcerpt } from "../../../lib/knowledge-rules";
 import type { ArticleOverview } from "../../../lib/knowledge-service";
@@ -91,10 +91,10 @@ export default async function KnowledgePage({
   searchParams: Promise<{ flash?: string; error?: string; article?: string }>;
 }) {
   const actor = await requireActor();
-  if (!hasPermission(actor.role, "ticket:read:any")) redirect("/portal");
+  if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
 
   const { flash, error, article: articleId } = await searchParams;
-  const canManage = hasPermission(actor.role, "ticket:update");
+  const canManage = actorHasPermission(actor, "ticket:update");
 
   const listed = await knowledgeServicesFor().list(actor);
   const articles = listed.ok ? listed.value : [];

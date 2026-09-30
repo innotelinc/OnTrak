@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../lib/session";
-import { hasPermission } from "../../../lib/access-rules";
+import { actorHasPermission } from "../../../lib/access-rules";
 import {
   clientServicesFor,
   ticketServicesFor,
@@ -28,7 +28,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
   const actor = await requireActor();
   // The worklist is tenant-wide, so it is a staff view; a requester belongs in
   // the portal, which scopes every ticket through `canReadTicket`.
-  if (!hasPermission(actor.role, "ticket:read:any")) redirect("/portal");
+  if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
 
   const params = await searchParams;
   const clients = clientServicesFor();
@@ -90,7 +90,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
         views={views}
         activeFilter={filter}
         actorId={actor.id}
-        canShare={hasPermission(actor.role, "ticket:update")}
+        canShare={actorHasPermission(actor, "ticket:update")}
         saveAction={saveViewAction}
         deleteAction={deleteViewAction}
       />
@@ -105,7 +105,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
           basePath="/inbox"
           selectedId={selected?.id ?? null}
           sla={sla}
-          bulk={hasPermission(actor.role, "ticket:update") ? { action: bulkAction } : undefined}
+          bulk={actorHasPermission(actor, "ticket:update") ? { action: bulkAction } : undefined}
         />
         {selected ? (
           <TicketDetail ticket={selected} sla={slaStatusFor(selected, policies, now)} links={links} />

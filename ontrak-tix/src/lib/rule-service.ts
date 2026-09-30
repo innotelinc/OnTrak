@@ -19,7 +19,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import {
   dryRun,
@@ -79,7 +79,7 @@ export class RuleService {
 
   /** Every rule the tenant has, in the order they run. */
   async list(actor: Actor): Promise<ServiceResult<RuleOverview[]>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to the desk's rules." };
     }
     const rules = await this.store.listRules(actor.tenantId);
@@ -318,7 +318,7 @@ export class RuleService {
   /* ------------------------------------------------------------- internals */
 
   private requireManage(actor: Actor): ServiceResult<never> | null {
-    if (!hasPermission(actor.role, "rule:manage")) return { ok: false, error: "You do not manage the desk's rules." };
+    if (!actorHasPermission(actor, "rule:manage")) return { ok: false, error: "You do not manage the desk's rules." };
     return null;
   }
 

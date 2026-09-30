@@ -15,7 +15,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { currentActor } from "../../../../lib/session";
 import { clientBrandingServicesFor, clientServicesFor, timeServicesFor } from "../../../../lib/db";
-import { hasPermission } from "../../../../lib/access-rules";
+import { actorHasPermission } from "../../../../lib/access-rules";
 import { buildInvoiceCsv } from "../../../../lib/invoice-csv";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +24,7 @@ export const runtime = "nodejs";
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const actor = await currentActor();
   if (!actor) return NextResponse.redirect(new URL("/sign-in", request.url));
-  if (!hasPermission(actor.role, "ticket:read:any")) {
+  if (!actorHasPermission(actor, "ticket:read:any")) {
     return NextResponse.json({ error: "Not permitted." }, { status: 403 });
   }
 

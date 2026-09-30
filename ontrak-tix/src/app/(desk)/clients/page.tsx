@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../lib/session";
-import { hasPermission } from "../../../lib/access-rules";
+import { actorHasPermission } from "../../../lib/access-rules";
 import {
   clientBrandingServicesFor,
   clientServicesFor,
@@ -54,11 +54,11 @@ export default async function ClientsPage({
   searchParams: Promise<{ flash?: string; error?: string }>;
 }) {
   const actor = await requireActor();
-  if (!hasPermission(actor.role, "ticket:read:any")) redirect("/portal");
+  if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
 
   const { flash, error } = await searchParams;
   const service = clientServicesFor();
-  const canManage = hasPermission(actor.role, "client:manage");
+  const canManage = actorHasPermission(actor, "client:manage");
 
   const now = new Date().toISOString();
   const today = now.slice(0, 10);

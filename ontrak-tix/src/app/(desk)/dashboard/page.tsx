@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { TicketTable } from "../../../components/TicketTable";
-import { hasPermission } from "../../../lib/access-rules";
+import { actorHasPermission } from "../../../lib/access-rules";
 import { clientServicesFor, prisma, slaPolicyStoreFor, ticketServicesFor } from "../../../lib/db";
 import { scopeByClient } from "../../../lib/client-rules";
 import { buildInboxView } from "../../../lib/inbox-view";
@@ -159,7 +159,7 @@ export default async function DashboardPage() {
   const actor = await requireActor();
   // The overview is tenant-wide, so it is a staff view; a requester belongs in the
   // portal, which scopes every ticket through `canReadTicket`.
-  if (!hasPermission(actor.role, "ticket:read:any")) redirect("/portal");
+  if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
 
   const [everything, policies, scope] = await Promise.all([
     ticketServicesFor().store.listTickets(actor.tenantId),

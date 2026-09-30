@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../lib/session";
-import { hasPermission } from "../../../lib/access-rules";
+import { actorHasPermission } from "../../../lib/access-rules";
 import { macroServicesFor, prisma, slaPolicyServicesFor } from "../../../lib/db";
 import { ACTION_KINDS, describeAction } from "../../../lib/rule-rules";
 import type { MacroOverview } from "../../../lib/macro-service";
@@ -104,10 +104,10 @@ export default async function MacrosPage({
   searchParams: Promise<{ flash?: string; error?: string; edit?: string }>;
 }) {
   const actor = await requireActor();
-  if (!hasPermission(actor.role, "ticket:read:any")) redirect("/portal");
+  if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
 
   const { flash, error, edit } = await searchParams;
-  const canManage = hasPermission(actor.role, "rule:manage");
+  const canManage = actorHasPermission(actor, "rule:manage");
 
   const listed = await macroServicesFor().list(actor);
   const macros = listed.ok ? listed.value : [];

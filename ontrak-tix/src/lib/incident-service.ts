@@ -14,7 +14,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import {
   advancePhase,
@@ -144,7 +144,7 @@ export class IncidentService {
 
   /** Declare an incident. The severity comes from the matrix unless overridden. */
   async declare(actor: Actor, input: IncidentInput): Promise<ServiceResult<IncidentRecord>> {
-    if (!hasPermission(actor.role, "ticket:update")) {
+    if (!actorHasPermission(actor, "ticket:update")) {
       return { ok: false, error: "You cannot declare incidents." };
     }
     const issues = validateIncident(input);
@@ -191,7 +191,7 @@ export class IncidentService {
    * it, and an incident with no commander is how a response stalls silently.
    */
   async advance(actor: Actor, incidentId: string, to: IncidentPhase): Promise<ServiceResult<IncidentRecord>> {
-    if (!hasPermission(actor.role, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
+    if (!actorHasPermission(actor, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
 
     const incident = await this.store.findIncident(actor.tenantId, incidentId);
     if (!incident) return { ok: false, error: "Incident not found." };
@@ -231,7 +231,7 @@ export class IncidentService {
     role: IncidentRole,
     userId: string | null,
   ): Promise<ServiceResult<IncidentRecord>> {
-    if (!hasPermission(actor.role, "ticket:update")) return { ok: false, error: "You cannot staff incidents." };
+    if (!actorHasPermission(actor, "ticket:update")) return { ok: false, error: "You cannot staff incidents." };
     if (!isIncidentRole(role)) return { ok: false, error: `Unknown incident role "${role}".` };
 
     const incident = await this.store.findIncident(actor.tenantId, incidentId);
@@ -250,7 +250,7 @@ export class IncidentService {
 
   /** Add a free-text timeline note (a decision, a containment step, a call). */
   async addNote(actor: Actor, incidentId: string, summary: string): Promise<ServiceResult<IncidentRecord>> {
-    if (!hasPermission(actor.role, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
+    if (!actorHasPermission(actor, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
     const incident = await this.store.findIncident(actor.tenantId, incidentId);
     if (!incident) return { ok: false, error: "Incident not found." };
 

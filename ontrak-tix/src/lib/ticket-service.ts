@@ -14,7 +14,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { canAssignTicket, canReplyToTicket, canUpdateTicket, hasPermission, type Actor } from "./access-rules";
+import { canAssignTicket, canReplyToTicket, canUpdateTicket, actorHasPermission, type Actor } from "./access-rules";
 import {
   ticketRef,
   transition,
@@ -169,7 +169,7 @@ export function planTicketCreation(
   nextSeq: number,
   ids: IdSource,
 ): ServiceResult<{ ticket: TicketRecord; audit: AuditEventInput }> {
-  if (!hasPermission(actor.role, "ticket:create")) {
+  if (!actorHasPermission(actor, "ticket:create")) {
     return { ok: false, error: "You cannot create tickets." };
   }
 
@@ -233,7 +233,7 @@ export function planReply(
     return { ok: false, error: "You cannot reply on this ticket." };
   }
   // An internal note is staff-only work product; a requester may never write one.
-  if (kind === "INTERNAL_NOTE" && !hasPermission(actor.role, "ticket:update")) {
+  if (kind === "INTERNAL_NOTE" && !actorHasPermission(actor, "ticket:update")) {
     return { ok: false, error: "You cannot add internal notes." };
   }
   const trimmed = body.trim();
@@ -250,7 +250,7 @@ export function planReply(
   // The response clock starts when an *agent* first answers in public. A
   // requester's own reply or an internal note never stops the clock.
   const isFirstAgentResponse =
-    kind === "PUBLIC_REPLY" && ticket.firstResponseAt === null && hasPermission(actor.role, "ticket:update");
+    kind === "PUBLIC_REPLY" && ticket.firstResponseAt === null && actorHasPermission(actor, "ticket:update");
   const next: TicketRecord = {
     ...ticket,
     updatedAt: at,

@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../lib/session";
-import { hasPermission } from "../../../lib/access-rules";
+import { actorHasPermission } from "../../../lib/access-rules";
 import { prisma, rotaServicesFor } from "../../../lib/db";
 import { formatLoggedMinutes } from "../../../lib/time-rules";
 import { coverageSummary } from "../../../lib/rota-rules";
@@ -29,10 +29,10 @@ export default async function HandoffPage({
   searchParams: Promise<{ flash?: string; error?: string; from?: string; to?: string }>;
 }) {
   const actor = await requireActor();
-  if (!hasPermission(actor.role, "ticket:read:any")) redirect("/portal");
+  if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
 
   const { flash, error, from, to } = await searchParams;
-  const canManage = hasPermission(actor.role, "queue:manage");
+  const canManage = actorHasPermission(actor, "queue:manage");
 
   const today = new Date().toISOString().slice(0, 10);
   const windowFrom = from && /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : today;

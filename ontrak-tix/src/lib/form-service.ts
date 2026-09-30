@@ -19,7 +19,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import {
   canManageForms,
@@ -96,7 +96,7 @@ export class FormService {
   /* --------------------------------------------------------------- fields */
 
   async fields(actor: Actor): Promise<ServiceResult<FieldOverview[]>> {
-    if (!hasPermission(actor.role, "ticket:read")) return { ok: false, error: "You do not have access to the desk's fields." };
+    if (!actorHasPermission(actor, "ticket:read")) return { ok: false, error: "You do not have access to the desk's fields." };
     const [fields, layouts] = await Promise.all([this.store.listFields(actor.tenantId), this.store.listLayouts(actor.tenantId)]);
     return {
       ok: true,
@@ -212,13 +212,13 @@ export class FormService {
   /* -------------------------------------------------------------- layouts */
 
   async layouts(actor: Actor): Promise<ServiceResult<QueueFormRecord[]>> {
-    if (!hasPermission(actor.role, "ticket:read")) return { ok: false, error: "You do not have access to the desk's forms." };
+    if (!actorHasPermission(actor, "ticket:read")) return { ok: false, error: "You do not have access to the desk's forms." };
     return { ok: true, value: await this.store.listLayouts(actor.tenantId) };
   }
 
   /** The form a queue shows, and — for the console — which of the two it came from. */
   async layoutFor(actor: Actor, queueId: string | null): Promise<ServiceResult<FormLayout>> {
-    if (!hasPermission(actor.role, "ticket:read")) return { ok: false, error: "You do not have access to the desk's forms." };
+    if (!actorHasPermission(actor, "ticket:read")) return { ok: false, error: "You do not have access to the desk's forms." };
     const [fields, layouts] = await Promise.all([this.store.listFields(actor.tenantId), this.store.listLayouts(actor.tenantId)]);
     return { ok: true, value: resolveLayout(fields, layouts, queueId) };
   }

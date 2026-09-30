@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { Actor } from "./access-rules";
-import { hasPermission } from "./access-rules";
+import { actorHasPermission } from "./access-rules";
 import type { TicketPriority, TicketType } from "./ticket-rules";
 import { applyTicketTemplate, validateTicketTemplate, type TicketTemplate } from "./template-rules";
 
@@ -55,7 +55,7 @@ export class TicketTemplateService {
   }
 
   async create(actor: Actor, input: TemplateInput): Promise<TemplateResult<TicketTemplate>> {
-    if (!hasPermission(actor.role, "ticket:update")) {
+    if (!actorHasPermission(actor, "ticket:update")) {
       return { ok: false, error: "You cannot manage ticket templates." };
     }
 
@@ -86,7 +86,7 @@ export class TicketTemplateService {
   }
 
   async remove(actor: Actor, id: string): Promise<TemplateResult<{ id: string }>> {
-    if (!hasPermission(actor.role, "ticket:update")) {
+    if (!actorHasPermission(actor, "ticket:update")) {
       return { ok: false, error: "You cannot manage ticket templates." };
     }
     await this.store.remove(actor.tenantId, id);
@@ -110,7 +110,7 @@ export class TicketTemplateService {
 
 /** Whether an actor may see the template library on the new-ticket form. */
 export function canUseTicketTemplates(actor: Actor): boolean {
-  return hasPermission(actor.role, "ticket:create") || hasPermission(actor.role, "ticket:update");
+  return actorHasPermission(actor, "ticket:create") || actorHasPermission(actor, "ticket:update");
 }
 
 /** An in-memory store for tests and local development. */

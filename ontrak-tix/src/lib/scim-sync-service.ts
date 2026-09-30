@@ -21,7 +21,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import type { IdentityUser } from "./identity-service";
 import type { ScimClient, ScimRequestError } from "./scim-client";
@@ -84,7 +84,7 @@ export class ScimSyncService {
    * write is, not where the button is.
    */
   async push(actor: Actor): Promise<ServiceResult<ScimSyncOutcome>> {
-    if (!hasPermission(actor.role, "tenant:manage")) {
+    if (!actorHasPermission(actor, "tenant:manage")) {
       return { ok: false, error: "You cannot provision identities for this tenant." };
     }
     return this.pushTenant(actor.tenantId);

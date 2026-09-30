@@ -20,7 +20,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import { commsIssues, commsTemplateByKey } from "./comms-rules";
 import { docsAudit } from "./incident-docs-service";
@@ -135,7 +135,7 @@ export class IncidentComplianceService {
 
   /** Which regimes this incident's facts suggest, and which are already tracked. */
   async suggestions(actor: Actor, incidentId: string): Promise<ServiceResult<SuggestedObligation[]>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) return { ok: false, error: "You do not have access to incidents." };
+    if (!actorHasPermission(actor, "ticket:read:any")) return { ok: false, error: "You do not have access to incidents." };
     const incident = await this.incidents.findIncident(actor.tenantId, incidentId);
     if (!incident) return { ok: false, error: "Incident not found." };
 
@@ -519,7 +519,7 @@ export class IncidentComplianceService {
   }
 
   private writable(actor: Actor): { ok: false; error: string } | null {
-    if (!hasPermission(actor.role, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
+    if (!actorHasPermission(actor, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
     return null;
   }
 

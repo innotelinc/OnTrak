@@ -28,7 +28,7 @@
 
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import {
   DELIVERY_MAX_ATTEMPTS,
@@ -182,7 +182,7 @@ export class WebhookService {
   /* ----------------------------------------------------------- endpoints */
 
   async register(actor: Actor, input: RegisterWebhookInput): Promise<ServiceResult<CreatedWebhookEndpoint>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage webhook endpoints." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage webhook endpoints." };
 
     const issues = validateWebhookEndpoint(input);
     if (issues.length > 0) return { ok: false, error: issues[0].message };
@@ -218,14 +218,14 @@ export class WebhookService {
   }
 
   async list(actor: Actor): Promise<ServiceResult<WebhookEndpointRecord[]>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage webhook endpoints." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage webhook endpoints." };
     const endpoints = await this.store.listEndpoints(actor.tenantId);
     return { ok: true, value: endpoints.sort((a, b) => a.name.localeCompare(b.name)) };
   }
 
   /** Switch an endpoint on or off without losing its history. */
   async setEnabled(actor: Actor, endpointId: string, enabled: boolean): Promise<ServiceResult<WebhookEndpointRecord>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage webhook endpoints." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage webhook endpoints." };
 
     const endpoint = await this.store.findEndpoint(actor.tenantId, endpointId);
     if (!endpoint) return { ok: false, error: "That endpoint does not exist." };
@@ -248,7 +248,7 @@ export class WebhookService {
    * subscription and losing its delivery history.
    */
   async rotateSecret(actor: Actor, endpointId: string): Promise<ServiceResult<CreatedWebhookEndpoint>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage webhook endpoints." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage webhook endpoints." };
 
     const endpoint = await this.store.findEndpoint(actor.tenantId, endpointId);
     if (!endpoint) return { ok: false, error: "That endpoint does not exist." };
@@ -260,7 +260,7 @@ export class WebhookService {
   }
 
   async remove(actor: Actor, endpointId: string): Promise<ServiceResult<{ id: string }>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage webhook endpoints." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage webhook endpoints." };
 
     const endpoint = await this.store.findEndpoint(actor.tenantId, endpointId);
     if (!endpoint) return { ok: false, error: "That endpoint does not exist." };
@@ -402,7 +402,7 @@ export class WebhookService {
     actor: Actor,
     filter: { endpointId?: string; status?: DeliveryStatus; limit?: number } = {},
   ): Promise<ServiceResult<DeliveryOverview[]>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage webhook endpoints." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage webhook endpoints." };
 
     const rows = await this.store.listDeliveries(actor.tenantId, filter);
     const endpoints = await this.store.listEndpoints(actor.tenantId);
@@ -414,7 +414,7 @@ export class WebhookService {
   }
 
   async findDelivery(actor: Actor, deliveryId: string): Promise<ServiceResult<WebhookDeliveryRecord>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage webhook endpoints." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage webhook endpoints." };
     const delivery = await this.store.findDelivery(actor.tenantId, deliveryId);
     if (!delivery) return { ok: false, error: "That delivery does not exist." };
     return { ok: true, value: delivery };

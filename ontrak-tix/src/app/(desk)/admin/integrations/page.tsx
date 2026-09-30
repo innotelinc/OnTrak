@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../../lib/session";
-import { hasPermission } from "../../../../lib/access-rules";
+import { actorHasPermission } from "../../../../lib/access-rules";
 import { apiTokenServicesFor, chatNotifyServicesFor, rmmServicesFor, webhookServicesFor } from "../../../../lib/db";
 import { allApiScopes, API_PREFIX, API_VERSION } from "../../../../lib/public-api-rules";
 import {
@@ -74,7 +74,7 @@ export default async function IntegrationsPage({
   searchParams: Promise<{ flash?: string; error?: string; minted?: string; registered?: string }>;
 }) {
   const actor = await requireActor();
-  if (!hasPermission(actor.role, "tenant:manage")) redirect("/inbox");
+  if (!actorHasPermission(actor, "tenant:manage")) redirect("/inbox");
 
   const { flash, error, minted, registered } = await searchParams;
 

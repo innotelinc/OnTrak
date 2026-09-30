@@ -21,7 +21,7 @@
  *    operator would never have written down.
  */
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditChain } from "./audit-chain";
 import type { AlertVerdict } from "./alert-promotion-rules";
 import type { IncidentRecord, IncidentStore } from "./incident-service";
@@ -106,7 +106,7 @@ export class WarRoomService {
 
   /** Assemble the timeline for one incident. Staff-only, like every read here. */
   async timeline(actor: Actor, incidentId: string): Promise<ServiceResult<WarRoomTimeline>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to incidents." };
     }
 
@@ -128,7 +128,7 @@ export class WarRoomService {
    * method above is the same code path with a `Map` of one.
    */
   async timelines(actor: Actor, incidents: readonly IncidentRecord[]): Promise<ServiceResult<Map<string, WarRoomTimeline>>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to incidents." };
     }
     if (incidents.length === 0) return { ok: true, value: new Map() };

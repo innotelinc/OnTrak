@@ -22,7 +22,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import { verifyAuditChain, type AuditChain, type AuditEventInput, type AuditSink, type HashFn } from "./audit-chain";
 import {
   AUDIT_EXPORT_KIND,
@@ -72,7 +72,7 @@ export class AssuranceService {
    * leaves the building, so who pulled it is recorded.
    */
   async packet(actor: Actor, incidentId: string): Promise<ServiceResult<AssurancePacket>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to incidents." };
     }
 
@@ -129,7 +129,7 @@ export class AssuranceService {
    * covers. The export itself is then an audited act like any other.
    */
   async auditExport(actor: Actor): Promise<ServiceResult<AuditChainPacket>> {
-    if (!hasPermission(actor.role, "audit:read")) {
+    if (!actorHasPermission(actor, "audit:read")) {
       return { ok: false, error: "You do not have access to the audit trail." };
     }
 

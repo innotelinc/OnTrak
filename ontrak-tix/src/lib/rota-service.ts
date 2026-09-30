@@ -18,7 +18,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import {
   coverageAt,
@@ -97,7 +97,7 @@ export class RotaService {
     actor: Actor,
     input: { from: string; to: string; queueId?: string | null; at?: string },
   ): Promise<ServiceResult<RotaView>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to the rota." };
     }
     if (!input.from || !input.to || input.from > input.to) {
@@ -129,7 +129,7 @@ export class RotaService {
   /* -------------------------------------------------------------- writing */
 
   async addShift(actor: Actor, input: ShiftInput): Promise<ServiceResult<RotaShiftRecord>> {
-    if (!hasPermission(actor.role, "queue:manage")) {
+    if (!actorHasPermission(actor, "queue:manage")) {
       return { ok: false, error: "You do not publish the rota." };
     }
     if (!input.userId) return { ok: false, error: "Choose who is covering." };
@@ -177,7 +177,7 @@ export class RotaService {
   }
 
   async removeShift(actor: Actor, shiftId: string): Promise<ServiceResult<RotaShiftRecord>> {
-    if (!hasPermission(actor.role, "queue:manage")) {
+    if (!actorHasPermission(actor, "queue:manage")) {
       return { ok: false, error: "You do not publish the rota." };
     }
     const shift = await this.store.findShift(actor.tenantId, shiftId);

@@ -5,6 +5,9 @@ import { redirect } from "next/navigation";
 import { SignJWT, jwtVerify } from "jose";
 
 import type { Actor } from "./access-rules";
+import { prisma } from "./db";
+import { PrismaRoleStore } from "./role-store-prisma";
+import { withEffectivePermissions } from "./role-service";
 import {
   TIX_SESSION_COOKIE,
   cookieIsSecure,
@@ -119,10 +122,27 @@ export async function getTixSession(): Promise<TixSessionClaims | null> {
   return verifyTixSessionToken(token);
 }
 
-/** The current actor, or null when signed out. */
+/**
+ * The store the role narrowing is read through, built once per process.
+ *
+ * A tenant role is deliberately **not** carried in the session cookie (M6): the cookie cannot be
+ * re-issued when an administrator edits a role, so a permission read from it would outlive its
+ * own revocation until the session expired. It is resolved here instead, on the way into every
+ * request that has an actor.
+ */
+const roleStore = new PrismaRoleStore(prisma);
+
+/**
+ * The current actor, or null when signed out, with the permissions their tenant role leaves.
+ *
+ * The narrowing is applied here rather than in `sessionActor`, which stays pure and is what the
+ * middleware uses on the edge — where there is no database to ask and no permission decision to
+ * make.
+ */
 export async function currentActor(): Promise<Actor | null> {
   const claims = await getTixSession();
-  return claims ? sessionActor(claims) : null;
+  if (!claims) return null;
+  return withEffectivePermissions(roleStore, sessionActor(claims));
 }
 
 /**

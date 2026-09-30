@@ -16,7 +16,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink, HashFn } from "./audit-chain";
 import { assignedRoles } from "./incident-rules";
 import type { IncidentEvent, IncidentRecord, IncidentStore } from "./incident-service";
@@ -202,7 +202,7 @@ export class IncidentDocsService {
    * work already done.
    */
   async startPlaybook(actor: Actor, incidentId: string): Promise<ServiceResult<PlaybookStepRecord[]>> {
-    if (!hasPermission(actor.role, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
+    if (!actorHasPermission(actor, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
     const incident = await this.incidents.findIncident(actor.tenantId, incidentId);
     if (!incident) return { ok: false, error: "Incident not found." };
 
@@ -254,7 +254,7 @@ export class IncidentDocsService {
 
   /** Record a piece of evidence against the incident. */
   async recordEvidence(actor: Actor, incidentId: string, input: EvidenceInput): Promise<ServiceResult<EvidenceItem>> {
-    if (!hasPermission(actor.role, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
+    if (!actorHasPermission(actor, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
     const issues = validateEvidence(input);
     if (issues.length > 0) return { ok: false, error: issues[0] };
 
@@ -316,7 +316,7 @@ export class IncidentDocsService {
     incidentId: string,
     input: { kind: EvidenceKind; label: string; contentType?: string; bytes: Uint8Array; note?: string | null },
   ): Promise<ServiceResult<{ item: EvidenceItem; artifact: EvidenceArtifactRecord; stored: StorePutResult }>> {
-    if (!hasPermission(actor.role, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
+    if (!actorHasPermission(actor, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
     if (!this.storage) return { ok: false, error: "Evidence storage is not configured for this deployment." };
     if (!isEvidenceKind(input.kind)) return { ok: false, error: "Unknown evidence kind." };
     if (input.bytes.byteLength === 0) return { ok: false, error: "That file is empty." };
@@ -416,7 +416,7 @@ export class IncidentDocsService {
   ): Promise<ServiceResult<EvidenceArtifactRecord>> {
     // Deliberately stronger than the write path: recording evidence is a normal
     // act, destroying it is not.
-    if (!hasPermission(actor.role, "tenant:manage")) {
+    if (!actorHasPermission(actor, "tenant:manage")) {
       return { ok: false, error: "Removing evidence under retention needs an administrator." };
     }
     if (!this.storage) return { ok: false, error: "Evidence storage is not configured for this deployment." };
@@ -636,7 +636,7 @@ export class IncidentDocsService {
     evidenceId: string,
     input: CustodyTransferInput,
   ): Promise<ServiceResult<CustodyEntry>> {
-    if (!hasPermission(actor.role, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
+    if (!actorHasPermission(actor, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
     const issues = validateCustodyTransfer(input);
     if (issues.length > 0) return { ok: false, error: issues[0] };
 
@@ -689,7 +689,7 @@ export class IncidentDocsService {
    * time is enough information for a reader.
    */
   async placeLegalHold(actor: Actor, incidentId: string, reason: string): Promise<ServiceResult<LegalHold>> {
-    if (!hasPermission(actor.role, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
+    if (!actorHasPermission(actor, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
     const text = reason.trim();
     if (!text) return { ok: false, error: "A legal hold needs a reason." };
 
@@ -719,7 +719,7 @@ export class IncidentDocsService {
 
   /** Release a legal hold, recording who released it and why. */
   async releaseLegalHold(actor: Actor, incidentId: string, reason: string): Promise<ServiceResult<LegalHold>> {
-    if (!hasPermission(actor.role, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
+    if (!actorHasPermission(actor, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
     const text = reason.trim();
     if (!text) return { ok: false, error: "Releasing a legal hold needs a reason." };
 
@@ -862,7 +862,7 @@ export class IncidentDocsService {
     to: StepStatus,
     note: string | undefined,
   ): Promise<ServiceResult<PlaybookStepRecord>> {
-    if (!hasPermission(actor.role, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
+    if (!actorHasPermission(actor, "ticket:update")) return { ok: false, error: "You cannot update incidents." };
     const incident = await this.incidents.findIncident(actor.tenantId, incidentId);
     if (!incident) return { ok: false, error: "Incident not found." };
 

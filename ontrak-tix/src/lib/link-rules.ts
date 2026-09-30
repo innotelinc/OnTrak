@@ -13,7 +13,7 @@
  */
 
 import type { Actor } from "./access-rules";
-import { hasPermission } from "./access-rules";
+import { actorHasPermission } from "./access-rules";
 import { highestPriority } from "./ticket-rules";
 import { applyPauseForStatus, type TicketMessage, type TicketRecord } from "./ticket-service";
 
@@ -120,7 +120,7 @@ export function linkViews(
 
 /** Only staff who may update tickets may relate or merge them. */
 export function canLinkTickets(actor: Actor): boolean {
-  return hasPermission(actor.role, "ticket:update");
+  return actorHasPermission(actor, "ticket:update");
 }
 
 export interface MergePlan {

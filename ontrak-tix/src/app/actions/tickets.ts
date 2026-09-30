@@ -12,7 +12,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
-import { hasPermission, type Actor } from "../../lib/access-rules";
+import { actorHasPermission, type Actor } from "../../lib/access-rules";
 import { requireActor } from "../../lib/session";
 import { readCustomValues } from "../../lib/form-payload";
 import { ticketServices } from "../../lib/ticket-server";
@@ -75,7 +75,7 @@ async function blockedByClientScope(actor: Actor, ticketIds: readonly string[]):
   // Client scope is a staff rule. A requester reaches their own ticket through
   // `canReadTicket`, and filing that ticket under a client must not lock its
   // requester out of the conversation they are in.
-  if (!hasPermission(actor.role, "ticket:read:any")) return blocked;
+  if (!actorHasPermission(actor, "ticket:read:any")) return blocked;
 
   const scope = await clientServicesFor().scope(actor);
   if (scope.kind === "all") return blocked;

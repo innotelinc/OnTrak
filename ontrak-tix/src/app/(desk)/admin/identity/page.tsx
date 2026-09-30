@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../../lib/session";
-import { hasPermission } from "../../../../lib/access-rules";
+import { actorHasPermission } from "../../../../lib/access-rules";
 import { identityServicesFor } from "../../../../lib/db";
 import { OIDC_CLIENT_SECRET_ENV } from "../../../../lib/oidc-client";
 import { IdentityConnectionForm } from "../../../../components/IdentityConnectionForm";
@@ -25,7 +25,7 @@ export default async function IdentityAdminPage({
   searchParams: Promise<{ flash?: string; error?: string }>;
 }) {
   const actor = await requireActor();
-  if (!hasPermission(actor.role, "tenant:manage")) redirect("/inbox");
+  if (!actorHasPermission(actor, "tenant:manage")) redirect("/inbox");
 
   const { flash, error } = await searchParams;
   const connection = await identityServicesFor().connectionFor(actor.tenantId);

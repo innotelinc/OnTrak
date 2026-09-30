@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../../lib/session";
-import { hasPermission } from "../../../../lib/access-rules";
+import { actorHasPermission } from "../../../../lib/access-rules";
 import { commsTemplateServicesFor } from "../../../../lib/db";
 import { COMMS_AUDIENCES, audienceLabel, authorableRegimes } from "../../../../lib/comms-rules";
 import { createCommsTemplateAction, retireCommsTemplateAction } from "../../../actions/incidents";
@@ -24,10 +24,10 @@ export default async function IncidentTemplatesPage({
   searchParams: Promise<{ flash?: string; error?: string }>;
 }) {
   const actor = await requireActor();
-  if (!hasPermission(actor.role, "ticket:read:any")) redirect("/portal");
+  if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
 
   const { flash, error } = await searchParams;
-  const canManage = hasPermission(actor.role, "ticket:update");
+  const canManage = actorHasPermission(actor, "ticket:update");
   const templates = await commsTemplateServicesFor().list(actor.tenantId, { includeRetired: true });
   const live = templates.filter((template) => template.retiredAt === null);
   const retired = templates.filter((template) => template.retiredAt !== null);

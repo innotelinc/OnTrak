@@ -16,7 +16,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 
-import { hasPermission } from "../../../../../lib/access-rules";
+import { actorHasPermission } from "../../../../../lib/access-rules";
 import { incidentDocsServicesFor } from "../../../../../lib/db";
 import { requireActor } from "../../../../../lib/session";
 
@@ -28,7 +28,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const actor = await requireActor();
-  if (!hasPermission(actor.role, "ticket:read:any")) {
+  if (!actorHasPermission(actor, "ticket:read:any")) {
     return NextResponse.json({ error: "You do not have access to incidents." }, { status: 403 });
   }
 

@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 
 import { requireActor } from "../../../../lib/session";
-import { canAssignTicket, canReplyToTicket, canUpdateTicket, hasPermission } from "../../../../lib/access-rules";
+import { canAssignTicket, canReplyToTicket, canUpdateTicket, actorHasPermission } from "../../../../lib/access-rules";
 import {
   ticketServicesFor,
   slaPolicyStoreFor,
@@ -47,7 +47,7 @@ export default async function TicketPage({
   const actor = await requireActor();
   // Staff-only: a requester's own ticket lives in the portal, scoped by
   // `canReadTicket`, so this desk view must never expose the tenant worklist.
-  if (!hasPermission(actor.role, "ticket:read:any")) redirect("/portal");
+  if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
   const { id } = await params;
   const { flash, error } = await searchParams;
 

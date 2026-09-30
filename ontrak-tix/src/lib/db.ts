@@ -90,6 +90,8 @@ import { PrismaChatStore, type ChatPrismaClient } from "./chat-notify-store-pris
 import { FormService } from "./form-service";
 import type { TicketFormGate } from "./ticket-service";
 import { PrismaFormStore, type FormPrismaClient } from "./form-store-prisma";
+import { RoleService, systemRoleIds } from "./role-service";
+import { PrismaRoleStore, type RolePrismaClient } from "./role-store-prisma";
 
 /**
  * The OnTrak Tix database client and service bootstrap.
@@ -206,6 +208,7 @@ let webhooks: WebhookService | null = null;
 let rmm: RmmConnectorService | null = null;
 let chatNotify: ChatNotifyService | null = null;
 let forms: FormService | null = null;
+let roles: RoleService | null = null;
 
 function csat(): CsatService {
   satisfaction ??= new CsatService(new PrismaCsatStore(prisma as unknown as CsatPrismaClient));
@@ -682,6 +685,22 @@ export function warRoomServicesFor(): WarRoomService {
 export function formServicesFor(): FormService {
   forms ??= new FormService(new PrismaFormStore(prisma as unknown as FormPrismaClient), ticketServices().audit);
   return forms;
+}
+
+/**
+ * The configured granular-role service (M6).
+ *
+ * It shares the ticket stack's audit sink, so a role written, a role archived and a role handed
+ * to somebody all join the same per-tenant hash chain as the work those roles govern — which is
+ * the only reason a role definition is worth having rather than a code edit.
+ */
+export function roleServicesFor(): RoleService {
+  roles ??= new RoleService(
+    new PrismaRoleStore(prisma as unknown as RolePrismaClient),
+    systemRoleIds(),
+    ticketServices().audit,
+  );
+  return roles;
 }
 
 /**

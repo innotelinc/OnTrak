@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../lib/session";
-import { hasPermission } from "../../../lib/access-rules";
+import { actorHasPermission } from "../../../lib/access-rules";
 import { prisma, ruleServicesFor, slaPolicyServicesFor, ticketServicesFor } from "../../../lib/db";
 import {
   ACTION_KINDS,
@@ -238,10 +238,10 @@ export default async function RulesPage({
   searchParams: Promise<{ flash?: string; error?: string; rule?: string; trigger?: string }>;
 }) {
   const actor = await requireActor();
-  if (!hasPermission(actor.role, "ticket:read:any")) redirect("/portal");
+  if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
 
   const { flash, error, rule: ruleId, trigger } = await searchParams;
-  const canManage = hasPermission(actor.role, "rule:manage");
+  const canManage = actorHasPermission(actor, "rule:manage");
 
   const listed = await ruleServicesFor().list(actor);
   const rules = listed.ok ? listed.value : [];

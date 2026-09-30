@@ -85,6 +85,9 @@ model Tenant {
   // queue shows them on.
   customFields          CustomField[]
   queueForms            QueueForm[]
+  // The desk's own shape of authority (M6): roles it writes for itself, which
+  // can only ever narrow one of the four built-ins.
+  tenantRoles           TenantRole[]
 
   @@index([slug])
 }
@@ -96,6 +99,8 @@ model User {
   email        String
   displayName  String
   role         Role     @default(REQUESTER)
+  /// The tenant role narrowing `role` (M6), if this desk has handed them one.
+  tenantRoleId String?
   active       Boolean  @default(true)
   /// Local sign-in fallback (`scrypt:salt:hash`). Superseded by the Sentinel IdP at M2.
   passwordHash String?
@@ -105,6 +110,7 @@ model User {
   updatedAt    DateTime @updatedAt
 
   tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantRole  TenantRole?        @relation(fields: [tenantRoleId], references: [id], onDelete: SetNull)
   requested   Ticket[]           @relation("TicketRequester")
   assigned    Ticket[]           @relation("TicketAssignee")
   messages    Message[]
@@ -116,6 +122,7 @@ model User {
   @@unique([tenantId, email])
   @@index([tenantId, role])
   @@index([tenantId, externalId])
+  @@index([tenantId, tenantRoleId])
 }
 
 enum Role {
@@ -1738,4 +1745,36 @@ model ChatDelivery {
   @@index([tenantId, createdAt])
   /// For the sweep that finds what is owed an attempt.
   @@index([status, nextAttemptAt])
+}
+
+/// A role this desk wrote for itself (M6).
+///
+/// It **narrows** one of the four built-in roles rather than replacing it: a holder is still an
+/// `AGENT` to every other part of the product — tenant isolation, the API token scopes, SCIM's
+/// role mapping — and this row says which of an agent's own powers they keep. A role is stored
+/// already intersected with its `baseRole`'s matrix, so the row cannot disagree with the rule
+/// that reads it. See `src/lib/role-rules.ts` for why that direction, and only that direction,
+/// is allowed.
+model TenantRole {
+  id          String    @id @default(cuid())
+  tenantId    String
+  /// Stable machine key, fixed once written: audit entries name the role by this, and a key
+  /// that changed would leave every past entry pointing at something that no longer answers.
+  key         String
+  name        String
+  description String?
+  baseRole    Role
+  /// The permissions this role keeps, each one also held by `baseRole`.
+  permissions String[]
+  /// Archived rather than deleted, so its holders fall back to their base role and the audit
+  /// trail still resolves the name.
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant  Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  holders User[]
+
+  @@unique([tenantId, key])
+  @@index([tenantId, archivedAt])
 }

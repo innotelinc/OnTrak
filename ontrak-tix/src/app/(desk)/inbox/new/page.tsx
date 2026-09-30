@@ -1,6 +1,6 @@
 import { requireActor, getTixSession } from "../../../../lib/session";
 import { sessionDisplayName } from "../../../../lib/session-rules";
-import { hasPermission } from "../../../../lib/access-rules";
+import { actorHasPermission } from "../../../../lib/access-rules";
 import { TICKET_PRIORITIES, TICKET_TYPES } from "../../../../lib/ticket-rules";
 import { canUseTicketTemplates } from "../../../../lib/template-service";
 import { clientServicesFor, formServicesFor, knowledgeServicesFor, templateServicesFor } from "../../../../lib/db";
@@ -25,7 +25,7 @@ export default async function NewTicketPage({
 }) {
   const actor = await requireActor();
   const { error, template: templateId, subject } = await searchParams;
-  const mayPickRequester = actor.role !== "REQUESTER" && hasPermission(actor.role, "ticket:create");
+  const mayPickRequester = actor.role !== "REQUESTER" && actorHasPermission(actor, "ticket:create");
   const mayUseTemplates = canUseTicketTemplates(actor);
 
   // The client the work is for, from the ones this actor serves. A desk that

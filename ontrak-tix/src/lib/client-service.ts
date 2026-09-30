@@ -18,7 +18,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import {
   actAsActive,
@@ -94,7 +94,7 @@ export class ClientService {
 
   /** The clients the actor may see, with their contacts and assignments. */
   async list(actor: Actor): Promise<ServiceResult<ClientOverview[]>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to clients." };
     }
 
@@ -253,7 +253,7 @@ export class ClientService {
   }
 
   async endActingAs(actor: Actor, sessionId: string, endReason = ""): Promise<ServiceResult<ClientActAsRecord>> {
-    if (!hasPermission(actor.role, "client:manage")) {
+    if (!actorHasPermission(actor, "client:manage")) {
       return { ok: false, error: "You do not manage clients." };
     }
 
@@ -279,7 +279,7 @@ export class ClientService {
   /* ------------------------------------------------------------ internals */
 
   private manageable(actor: Actor): { ok: false; error: string } | null {
-    if (!hasPermission(actor.role, "client:manage")) return { ok: false, error: "You do not manage clients." };
+    if (!actorHasPermission(actor, "client:manage")) return { ok: false, error: "You do not manage clients." };
     return null;
   }
 

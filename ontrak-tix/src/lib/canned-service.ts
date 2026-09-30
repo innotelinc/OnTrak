@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 
 import { canLinkTickets } from "./link-rules";
 import type { Actor } from "./access-rules";
-import { hasPermission } from "./access-rules";
+import { actorHasPermission } from "./access-rules";
 import { validateCannedResponse, type CannedResponse } from "./canned-rules";
 
 export interface CannedStore {
@@ -47,7 +47,7 @@ export class CannedResponseService {
     actor: Actor,
     input: { title: string; body: string; shortcut?: string | null },
   ): Promise<CannedResult<CannedResponse>> {
-    if (!hasPermission(actor.role, "ticket:update")) {
+    if (!actorHasPermission(actor, "ticket:update")) {
       return { ok: false, error: "You cannot manage canned responses." };
     }
 
@@ -79,7 +79,7 @@ export class CannedResponseService {
   }
 
   async remove(actor: Actor, id: string): Promise<CannedResult<{ id: string }>> {
-    if (!hasPermission(actor.role, "ticket:update")) {
+    if (!actorHasPermission(actor, "ticket:update")) {
       return { ok: false, error: "You cannot manage canned responses." };
     }
     await this.store.remove(actor.tenantId, id);
@@ -89,7 +89,7 @@ export class CannedResponseService {
 
 /** Whether an actor may see the canned-response library. */
 export function canUseCannedResponses(actor: Actor): boolean {
-  return hasPermission(actor.role, "ticket:reply") || canLinkTickets(actor);
+  return actorHasPermission(actor, "ticket:reply") || canLinkTickets(actor);
 }
 
 /** An in-memory store for tests and local development. */

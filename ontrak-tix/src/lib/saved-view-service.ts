@@ -8,7 +8,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import { sanitizeInboxFilter, validateSavedView, type SavedView } from "./saved-view-rules";
 import type { InboxFilter } from "./inbox-rules";
 
@@ -47,7 +47,7 @@ export class SavedViewService {
     actor: Actor,
     input: { name: string; filter: InboxFilter | unknown; shared?: boolean },
   ): Promise<SavedViewResult<SavedView>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You cannot save inbox views." };
     }
 
@@ -66,7 +66,7 @@ export class SavedViewService {
       ownerId: actor.id,
       name,
       filter: sanitizeInboxFilter(input.filter),
-      shared: input.shared === true && hasPermission(actor.role, "ticket:update"),
+      shared: input.shared === true && actorHasPermission(actor, "ticket:update"),
       createdAt: this.ids.now(),
     };
     await this.store.insert(view);
@@ -75,7 +75,7 @@ export class SavedViewService {
 
   /** Remove a view. Only its owner, or an admin, may. */
   async remove(actor: Actor, id: string): Promise<SavedViewResult<{ id: string }>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You cannot remove inbox views." };
     }
     const all = await this.store.listForTenant(actor.tenantId);

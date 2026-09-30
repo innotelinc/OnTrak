@@ -5,7 +5,7 @@ import { DeskNav, type NavGroup } from "../../components/DeskNav";
 import { ThemeToggle } from "../../components/ThemeToggle";
 import { signOutAction } from "../actions/session";
 import { currentActor, currentSessionName } from "../../lib/session";
-import { hasPermission } from "../../lib/access-rules";
+import { actorHasPermission } from "../../lib/access-rules";
 import { notificationServicesFor } from "../../lib/db";
 
 /**
@@ -26,7 +26,12 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
   const [actor, name] = await Promise.all([currentActor(), currentSessionName()]);
   const isRequester = actor?.role === "REQUESTER";
   // Tenant-wide configuration is an administrator's view, not an agent's.
-  const canManageTenant = actor ? hasPermission(actor.role, "tenant:manage") : false;
+  const canManageTenant = actor ? actorHasPermission(actor, "tenant:manage") : false;
+  // Roles are a map of the desk's own privileges, so the link follows its own permission rather
+  // than the menu's: an actor whose tenant role dropped `tenant:manage` may still administer
+  // people, and one whose role dropped `user:manage` is not offered a page that would refuse
+  // them.
+  const canManageRoles = actor ? actorHasPermission(actor, "user:manage") : false;
   // Staff-only, and only counted when there is somewhere to show it: the badge
   // is a courtesy, so a signed-out shell never touches the database.
   const unread = actor && !isRequester ? (await notificationServicesFor().listFor(actor)).unread : 0;
@@ -79,14 +84,22 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
             { href: "/notifications", label: "Notifications", badge: unread },
           ],
         },
-        ...(canManageTenant
+        ...(canManageTenant || canManageRoles
           ? [
               {
                 title: "Administration",
+                // Each entry follows the permission its own page asks for, so a dispatcher
+                // (who may administer people but not the tenant) is offered Roles and is not
+                // offered three pages that would immediately redirect them.
                 items: [
-                  { href: "/admin/identity", label: "Identity" },
-                  { href: "/admin/forms", label: "Fields" },
-                  { href: "/admin/integrations", label: "Integrations" },
+                  ...(canManageTenant
+                    ? [
+                        { href: "/admin/identity", label: "Identity" },
+                        { href: "/admin/forms", label: "Fields" },
+                        { href: "/admin/integrations", label: "Integrations" },
+                      ]
+                    : []),
+                  ...(canManageRoles ? [{ href: "/admin/roles", label: "Roles" }] : []),
                 ],
               },
             ]

@@ -22,7 +22,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import {
   validateCommsTemplate,
   type CommsAudience,
@@ -104,7 +104,7 @@ export class IncidentCommsTemplateService {
   }
 
   async create(actor: Actor, input: CommsTemplateInput): Promise<ServiceResult<CommsTemplateRecord>> {
-    if (!hasPermission(actor.role, "ticket:update")) {
+    if (!actorHasPermission(actor, "ticket:update")) {
       return { ok: false, error: "You cannot manage incident notification templates." };
     }
 
@@ -147,7 +147,7 @@ export class IncidentCommsTemplateService {
 
   /** Edit a draft in place. A retired one can be brought back the same way. */
   async update(actor: Actor, templateId: string, input: CommsTemplateInput): Promise<ServiceResult<CommsTemplateRecord>> {
-    if (!hasPermission(actor.role, "ticket:update")) {
+    if (!actorHasPermission(actor, "ticket:update")) {
       return { ok: false, error: "You cannot manage incident notification templates." };
     }
 
@@ -187,7 +187,7 @@ export class IncidentCommsTemplateService {
 
   /** Retire a draft: it stops being offered, and it stays on the record. */
   async retire(actor: Actor, templateId: string, retired: boolean): Promise<ServiceResult<CommsTemplateRecord>> {
-    if (!hasPermission(actor.role, "ticket:update")) {
+    if (!actorHasPermission(actor, "ticket:update")) {
       return { ok: false, error: "You cannot manage incident notification templates." };
     }
 

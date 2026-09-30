@@ -33,7 +33,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 
-import { hasPermission } from "../../../../lib/access-rules";
+import { actorHasPermission } from "../../../../lib/access-rules";
 import { assuranceServicesFor } from "../../../../lib/db";
 import { requireActor } from "../../../../lib/session";
 
@@ -42,7 +42,7 @@ export const runtime = "nodejs";
 
 export async function GET(_request: NextRequest): Promise<NextResponse> {
   const actor = await requireActor();
-  if (!hasPermission(actor.role, "audit:read")) {
+  if (!actorHasPermission(actor, "audit:read")) {
     return NextResponse.json({ error: "You do not have access to the audit trail." }, { status: 403 });
   }
 

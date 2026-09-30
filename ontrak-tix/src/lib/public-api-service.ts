@@ -25,7 +25,7 @@
 
 import { randomBytes, randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor, type Role } from "./access-rules";
+import { actorHasPermission, type Actor, type Role } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import {
   API_TOKEN_PREFIX,
@@ -152,7 +152,7 @@ export class ApiTokenService {
    * inside the tenant.
    */
   async create(actor: Actor, input: CreateApiTokenInput): Promise<ServiceResult<CreatedApiToken>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage API tokens." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage API tokens." };
 
     const issues: ApiIssue[] = validateApiToken(input);
     if (issues.length > 0) return { ok: false, error: issues[0].message };
@@ -197,7 +197,7 @@ export class ApiTokenService {
 
   /** The tenant's tokens, newest first. Never includes a secret. */
   async list(actor: Actor): Promise<ServiceResult<ApiTokenRecord[]>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage API tokens." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage API tokens." };
     const tokens = await this.store.listTokens(actor.tenantId);
     return { ok: true, value: tokens.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) };
   }
@@ -207,7 +207,7 @@ export class ApiTokenService {
    * second click is what a person does when the first looked like it did nothing.
    */
   async revoke(actor: Actor, tokenId: string): Promise<ServiceResult<ApiTokenRecord>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage API tokens." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage API tokens." };
 
     const record = await this.store.findToken(actor.tenantId, tokenId);
     if (!record) return { ok: false, error: "That token does not exist." };

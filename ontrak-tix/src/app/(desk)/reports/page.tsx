@@ -11,7 +11,7 @@ import {
   slaPolicyStoreFor,
   ticketServicesFor,
 } from "../../../lib/db";
-import { hasPermission } from "../../../lib/access-rules";
+import { actorHasPermission } from "../../../lib/access-rules";
 import { buildSlaReport, clientScorecards, type ClientScorecard, type ReportSurvey, type TicketSlaStatus } from "../../../lib/report-rules";
 import {
   csatByGroup,
@@ -202,7 +202,7 @@ function StatusTable({ rows, empty }: { rows: TicketSlaStatus[]; empty: string }
 export default async function ReportsPage() {
   const actor = await requireActor();
   // A report is a tenant-wide view; a requester has no business here.
-  if (!hasPermission(actor.role, "ticket:read:any")) redirect("/portal");
+  if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
 
   const now = new Date().toISOString();
   const [tickets, policies, escalations, csat, ticketSurveys, clients, clientSurveys, knowledge] = await Promise.all([

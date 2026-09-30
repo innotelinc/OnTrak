@@ -20,7 +20,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor, type Role } from "./access-rules";
+import { actorHasPermission, type Actor, type Role } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import {
   authorizeSignIn,
@@ -85,7 +85,7 @@ export class IdentityService {
 
   /** Store the tenant's IdP connection. Administrator-only. */
   async configure(actor: Actor, input: IdentityConnectionInput): Promise<ServiceResult<IdentityConnection>> {
-    if (!hasPermission(actor.role, "tenant:manage")) {
+    if (!actorHasPermission(actor, "tenant:manage")) {
       return { ok: false, error: "You cannot configure identity for this tenant." };
     }
     const issues = validateIdentityConnection(input);

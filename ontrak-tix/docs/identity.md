@@ -23,6 +23,12 @@ tenant — plus the persistence, the audit trail and the OIDC handshake.
 | Tests | `tests/tix-m2-identity.test.ts`, `tests/tix-m2-sso.test.ts` |
 | A real test IdP, and the handshake driven against it | `tests/support/local-idp.ts`, `tests/tix-m2-sso-local-idp.test.ts` |
 | The handshake driven through the running app | `tests/tix-m2-sso-live.test.ts` |
+| Pure role rules: narrowing, validation, the stranding guard | `src/lib/role-rules.ts` |
+| Role service | `src/lib/role-service.ts` |
+| Prisma adapter (roles + holders) | `src/lib/role-store-prisma.ts` |
+| Role administration UI | `src/app/(desk)/admin/roles/page.tsx`, `src/app/actions/roles.ts` |
+| Models | `prisma/schema.prisma` (`TenantRole`, `User.tenantRoleId`) |
+| Tests | `tests/tix-m6-roles.test.ts` |
 
 ## The connection
 
@@ -240,6 +246,49 @@ the group mapped to, that the session is real (the page renders with it and
 redirects without it), that the sign-in is on the tenant's hash chain, and that an
 unknown workspace, a tenant with no connection, a blank workspace and a forged
 callback are each refused with a readable message.
+
+## Roles (M6)
+
+A tenant role is written on this desk, against one of the four built-in roles,
+and **keeps a subset of that role's permissions**. It cannot add one. That is the
+whole design: the worst a mistaken role can do is take something away from
+somebody who already had it, and `Role` keeps meaning what it already meant
+everywhere else — the isolation checks here, the API token scopes, and SCIM's
+`mapRole` never learn that tenant roles exist.
+
+The intersection is computed once (`effectivePermissions`) and stored already
+narrowed, so a row cannot disagree with the rule that reads it. An unknown
+permission is dropped rather than left in the array for a later release to start
+honouring, and a `baseRole` this release does not know reads as `REQUESTER` — the
+least powerful role there is.
+
+`actorHasPermission` is what every page and action asks. An actor carrying a
+resolved set is judged by it; an actor carrying none is judged by their built-in
+role, which is why a desk that has written no roles behaves exactly as it did
+before. The narrowing is resolved as the actor is built for a request
+(`withEffectivePermissions`) rather than carried in the session cookie: a cookie
+cannot be re-issued when an administrator edits a role, and a permission that
+outlives its own revocation until the session expires is the one failure this
+feature must not have.
+
+Two edits that would leave nobody active holding `tenant:manage` are refused — a
+save that removes it from a role somebody holds, and an assignment of a narrow
+role to the last administrator. Archiving has no such guard, and the absence is
+deliberate: a role can only narrow, so retiring one can only give power back.
+
+Every change lands on the tenant's hash chain: `role.assign` and `role.unassign`
+beside `role.create`, `role.update` and `role.archive`, so "who gave them that, and
+when" is answerable from the record rather than from memory — and each entry
+carries what the role kept as well as what it withheld. The role's **key is fixed once written** for that reason —
+entries name the role by key, and a key that changed would leave every past entry
+pointing at something that no longer answers. Archiving is not deleting: the row
+stays and its holders fall back to their built-in role.
+
+The screen is `/admin/roles`, one page for both halves of the question — what each
+role may do, and who holds which role. It needs `user:manage` (a role catalogue is
+a map of the desk's own privileges), shows a permission the base role does not
+hold rather than hiding it, and chooses the base role through the URL so the
+checklist rendered is the checklist the server will honour.
 
 ## What is not here yet
 

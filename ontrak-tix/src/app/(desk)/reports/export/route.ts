@@ -17,7 +17,7 @@ import {
   slaPolicyStoreFor,
   ticketServicesFor,
 } from "../../../../lib/db";
-import { hasPermission } from "../../../../lib/access-rules";
+import { actorHasPermission } from "../../../../lib/access-rules";
 import { buildSlaReport, clientScorecards, type ReportSurvey } from "../../../../lib/report-rules";
 import { buildClientCsv, buildSlaCsv } from "../../../../lib/report-csv";
 
@@ -28,7 +28,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const actor = await currentActor();
   if (!actor) return NextResponse.redirect(new URL("/sign-in", request.url));
   // A report is a tenant-wide view; a requester has no business here.
-  if (!hasPermission(actor.role, "ticket:read:any")) {
+  if (!actorHasPermission(actor, "ticket:read:any")) {
     return NextResponse.json({ error: "Not permitted." }, { status: 403 });
   }
 

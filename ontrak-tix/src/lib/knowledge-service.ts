@@ -15,7 +15,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import {
   articleHazards,
@@ -69,7 +69,7 @@ export class KnowledgeService {
 
   /** Every article the tenant keeps, for the console. Most recently changed first. */
   async list(actor: Actor): Promise<ServiceResult<ArticleOverview[]>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to the knowledge base." };
     }
     const articles = await this.store.listArticles(actor.tenantId);
@@ -99,7 +99,7 @@ export class KnowledgeService {
 
   /** Suggestions for staff, who may also be shown an article that is not public. */
   async suggestForStaff(actor: Actor, query: string): Promise<ServiceResult<ArticleSuggestion[]>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to the knowledge base." };
     }
     const articles = await this.store.listArticles(actor.tenantId);
@@ -212,7 +212,7 @@ export class KnowledgeService {
   /* ------------------------------------------------------------- internals */
 
   private requireAuthor(actor: Actor): ServiceResult<never> | null {
-    if (!hasPermission(actor.role, "ticket:update")) return { ok: false, error: "You do not manage the knowledge base." };
+    if (!actorHasPermission(actor, "ticket:update")) return { ok: false, error: "You do not manage the knowledge base." };
     return null;
   }
 

@@ -25,7 +25,7 @@ import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { hasPermission, type Actor } from "../../lib/access-rules";
+import { actorHasPermission, type Actor } from "../../lib/access-rules";
 import { apiTokenServicesFor, chatNotifyServicesFor, webhookServicesFor } from "../../lib/db";
 import {
   REVEAL_PATH,
@@ -49,7 +49,7 @@ function done(message: string): never {
 /** Tenant-wide configuration is an administrator's, checked here as well as in the service. */
 async function requireIntegrationsAdmin(): Promise<Actor> {
   const actor = await requireActor();
-  if (!hasPermission(actor.role, "tenant:manage")) redirect("/inbox");
+  if (!actorHasPermission(actor, "tenant:manage")) redirect("/inbox");
   return actor;
 }
 

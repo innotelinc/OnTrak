@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { hasPermission } from "../../../../lib/access-rules";
+import { actorHasPermission } from "../../../../lib/access-rules";
 import { formServicesFor, prisma } from "../../../../lib/db";
 import { FIELD_TYPES } from "../../../../lib/form-rules";
 import { requireActor } from "../../../../lib/session";
@@ -33,7 +33,7 @@ type Search = Promise<{ edit?: string; queue?: string; flash?: string; error?: s
 
 export default async function FormsPage({ searchParams }: { searchParams: Search }) {
   const actor = await requireActor();
-  if (!hasPermission(actor.role, "tenant:manage")) redirect("/?error=You%20do%20not%20administer%20the%20desk%27s%20forms.");
+  if (!actorHasPermission(actor, "tenant:manage")) redirect("/?error=You%20do%20not%20administer%20the%20desk%27s%20forms.");
 
   const query = await searchParams;
   const forms = formServicesFor();

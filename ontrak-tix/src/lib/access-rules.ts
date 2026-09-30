@@ -32,6 +32,30 @@ export type Permission =
   | "audit:read";
 
 /**
+ * Every permission this release knows, in the order the role screen lists them.
+ *
+ * A tenant role (M6, `role-rules.ts`) may name any of these, so the closed set is written down
+ * once here rather than being inferable only from the union type — a screen cannot offer a
+ * permission that does not exist, nor miss one that does.
+ */
+export const PERMISSIONS: readonly Permission[] = [
+  "ticket:create",
+  "ticket:read",
+  "ticket:read:any",
+  "ticket:reply",
+  "ticket:update",
+  "ticket:assign",
+  "ticket:close",
+  "ticket:delete",
+  "queue:manage",
+  "client:manage",
+  "rule:manage",
+  "user:manage",
+  "tenant:manage",
+  "audit:read",
+];
+
+/**
  * The permission matrix. `ticket:read` means "may read a ticket I am in scope
  * for"; `ticket:read:any` means "may read any ticket in my tenant". Requesters
  * get the former and are scoped to their own tickets by `canReadTicket`.
@@ -87,12 +111,32 @@ export function hasPermission(role: Role, permission: Permission): boolean {
   return ROLE_PERMISSIONS[role]?.includes(permission) ?? false;
 }
 
+/**
+ * Whether an *actor* holds a permission.
+ *
+ * This is the function a page or a server action should ask, because it is the one that knows
+ * about tenant roles (M6): an actor carrying a resolved `permissions` set is judged by that,
+ * and an actor that carries none is judged by their built-in role — which is every actor that
+ * existed before this, and every actor on a desk that has written no roles at all.
+ */
+export function actorHasPermission(actor: Actor, permission: Permission): boolean {
+  if (actor.permissions) return actor.permissions.includes(permission);
+  return hasPermission(actor.role, permission);
+}
+
 /** The authenticated caller, as resolved from the session. */
 export interface Actor {
   id: string;
   /** The tenant the caller belongs to. Cross-tenant reads are never implied. */
   tenantId: string;
   role: Role;
+  /**
+   * The permissions this actor actually holds (M6), when a tenant role has narrowed them.
+   *
+   * Absent means "the built-in role's own set", which is what every caller had before tenant
+   * roles existed — so a session that never resolved one behaves exactly as it used to.
+   */
+  permissions?: readonly Permission[];
 }
 
 /** The minimum a ticket has to expose for an access decision. */
@@ -114,7 +158,7 @@ export function isSameTenant(actor: Actor, tenantId: string): boolean {
  */
 export function canReadTicket(actor: Actor, ticket: TicketScope): boolean {
   if (!isSameTenant(actor, ticket.tenantId)) return false;
-  if (hasPermission(actor.role, "ticket:read:any")) return true;
+  if (actorHasPermission(actor, "ticket:read:any")) return true;
   return ticket.requesterId === actor.id;
 }
 
@@ -125,13 +169,13 @@ export function canReadTicket(actor: Actor, ticket: TicketScope): boolean {
  */
 export function canUpdateTicket(actor: Actor, ticket: TicketScope): boolean {
   if (!isSameTenant(actor, ticket.tenantId)) return false;
-  return hasPermission(actor.role, "ticket:update");
+  return actorHasPermission(actor, "ticket:update");
 }
 
 /** Only staff who may assign, and only inside their own tenant. */
 export function canAssignTicket(actor: Actor, ticket: TicketScope): boolean {
   if (!isSameTenant(actor, ticket.tenantId)) return false;
-  return hasPermission(actor.role, "ticket:assign");
+  return actorHasPermission(actor, "ticket:assign");
 }
 
 /**
@@ -140,7 +184,7 @@ export function canAssignTicket(actor: Actor, ticket: TicketScope): boolean {
  */
 export function canReplyToTicket(actor: Actor, ticket: TicketScope): boolean {
   if (!isSameTenant(actor, ticket.tenantId)) return false;
-  if (!hasPermission(actor.role, "ticket:reply")) return false;
+  if (!actorHasPermission(actor, "ticket:reply")) return false;
   return canReadTicket(actor, ticket);
 }
 

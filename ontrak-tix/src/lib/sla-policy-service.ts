@@ -21,7 +21,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import type { ClientService } from "./client-service";
 import {
@@ -131,7 +131,7 @@ export class SlaPolicyService {
 
   /** The desk's queues, so the console can offer them as a promise's scope. */
   async deskQueues(actor: Actor): Promise<ServiceResult<{ id: string; name: string }[]>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to the desk's queues." };
     }
     if (!this.directory) return { ok: true, value: [] };
@@ -140,7 +140,7 @@ export class SlaPolicyService {
 
   /** Every policy in the tenant, so a page can render the ladder. */
   async list(actor: Actor): Promise<ServiceResult<SlaPolicyRecord[]>> {
-    if (!hasPermission(actor.role, "ticket:read:any")) {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
       return { ok: false, error: "You do not have access to the desk's promises." };
     }
     return { ok: true, value: await this.store.listForTenant(actor.tenantId) };
@@ -322,7 +322,7 @@ export class SlaPolicyService {
   }
 
   private authorable(actor: Actor): { ok: false; error: string } | null {
-    if (!hasPermission(actor.role, "queue:manage")) return { ok: false, error: "You do not manage the desk's promises." };
+    if (!actorHasPermission(actor, "queue:manage")) return { ok: false, error: "You do not manage the desk's promises." };
     return null;
   }
 

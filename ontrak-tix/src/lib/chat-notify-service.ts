@@ -27,7 +27,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { hasPermission, type Actor } from "./access-rules";
+import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import {
   CHAT_MAX_ATTEMPTS,
@@ -168,7 +168,7 @@ export class ChatNotifyService {
   /* ------------------------------------------------------------ channels */
 
   async register(actor: Actor, input: RegisterChannelInput): Promise<ServiceResult<ChatChannelRecord>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage notification channels." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage notification channels." };
 
     const issues = validateChatChannel(input);
     if (issues.length > 0) return { ok: false, error: issues[0].message };
@@ -204,13 +204,13 @@ export class ChatNotifyService {
   }
 
   async list(actor: Actor): Promise<ServiceResult<ChatChannelRecord[]>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage notification channels." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage notification channels." };
     const channels = await this.store.listChannels(actor.tenantId);
     return { ok: true, value: channels.sort((a, b) => a.name.localeCompare(b.name)) };
   }
 
   async setEnabled(actor: Actor, channelId: string, enabled: boolean): Promise<ServiceResult<ChatChannelRecord>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage notification channels." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage notification channels." };
 
     const channel = await this.store.findChannel(actor.tenantId, channelId);
     if (!channel) return { ok: false, error: "That channel does not exist." };
@@ -225,7 +225,7 @@ export class ChatNotifyService {
   }
 
   async remove(actor: Actor, channelId: string): Promise<ServiceResult<{ id: string }>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage notification channels." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage notification channels." };
 
     const channel = await this.store.findChannel(actor.tenantId, channelId);
     if (!channel) return { ok: false, error: "That channel does not exist." };
@@ -246,7 +246,7 @@ export class ChatNotifyService {
    * arrive while somebody is watching, and to see the provider's answer in the log.
    */
   async sendTest(actor: Actor, channelId: string): Promise<ServiceResult<{ delivery: ChatDeliveryRecord; outcome: TransportOutcome }>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage notification channels." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage notification channels." };
 
     const channel = await this.store.findChannel(actor.tenantId, channelId);
     if (!channel) return { ok: false, error: "That channel does not exist." };
@@ -336,7 +336,7 @@ export class ChatNotifyService {
     actor: Actor,
     filter: { channelId?: string; status?: DeliveryStatus; limit?: number } = {},
   ): Promise<ServiceResult<DeliveryOverview[]>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage notification channels." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage notification channels." };
 
     const rows = await this.store.listDeliveries(actor.tenantId, filter);
     const channels = await this.store.listChannels(actor.tenantId);
@@ -352,7 +352,7 @@ export class ChatNotifyService {
   }
 
   async findDelivery(actor: Actor, deliveryId: string): Promise<ServiceResult<ChatDeliveryRecord>> {
-    if (!hasPermission(actor.role, "tenant:manage")) return { ok: false, error: "You do not manage notification channels." };
+    if (!actorHasPermission(actor, "tenant:manage")) return { ok: false, error: "You do not manage notification channels." };
     const delivery = await this.store.findDelivery(actor.tenantId, deliveryId);
     if (!delivery) return { ok: false, error: "That delivery does not exist." };
     return { ok: true, value: delivery };

@@ -1,6 +1,6 @@
 import { requireActor } from "../../../lib/session";
 import { cannedServicesFor } from "../../../lib/db";
-import { hasPermission } from "../../../lib/access-rules";
+import { actorHasPermission } from "../../../lib/access-rules";
 import { createCannedAction, deleteCannedAction } from "../../actions/tickets";
 
 export const metadata = { title: "Canned responses" };
@@ -17,7 +17,7 @@ export default async function CannedPage({
   const actor = await requireActor();
   const { flash, error } = await searchParams;
   const responses = await cannedServicesFor().list(actor.tenantId);
-  const canManage = hasPermission(actor.role, "ticket:update");
+  const canManage = actorHasPermission(actor, "ticket:update");
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">

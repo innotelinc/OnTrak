@@ -1,6 +1,6 @@
 import { requireActor } from "../../../lib/session";
 import { templateServicesFor } from "../../../lib/db";
-import { hasPermission } from "../../../lib/access-rules";
+import { actorHasPermission } from "../../../lib/access-rules";
 import { TICKET_PRIORITIES, TICKET_TYPES } from "../../../lib/ticket-rules";
 import { TEMPLATE_PLACEHOLDERS } from "../../../lib/template-rules";
 import { createTemplateAction, deleteTemplateAction } from "../../actions/tickets";
@@ -22,7 +22,7 @@ export default async function TemplatesPage({
   const actor = await requireActor();
   const { flash, error } = await searchParams;
   const templates = await templateServicesFor().list(actor.tenantId);
-  const canManage = hasPermission(actor.role, "ticket:update");
+  const canManage = actorHasPermission(actor, "ticket:update");
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">

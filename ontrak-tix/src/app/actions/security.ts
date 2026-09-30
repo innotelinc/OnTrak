@@ -13,7 +13,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
-import { hasPermission, type Actor } from "../../lib/access-rules";
+import { actorHasPermission, type Actor } from "../../lib/access-rules";
 import { requireActor } from "../../lib/session";
 import { alertPromotionServicesFor, securityAlertServicesFor } from "../../lib/db";
 import {
@@ -38,7 +38,7 @@ function text(formData: FormData, field: string): string {
 
 /** Triage is staff work: anyone who may update a ticket may judge an alert. */
 function assertCanTriage(actor: Actor): void {
-  if (!hasPermission(actor.role, "ticket:update")) fail("You cannot triage security alerts.");
+  if (!actorHasPermission(actor, "ticket:update")) fail("You cannot triage security alerts.");
 }
 
 function pick<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {

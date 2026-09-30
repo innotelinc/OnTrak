@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../lib/session";
-import { hasPermission } from "../../../lib/access-rules";
+import { actorHasPermission } from "../../../lib/access-rules";
 import { clientServicesFor, timeServicesFor } from "../../../lib/db";
 import { entryAmountCents, formatLoggedMinutes, formatMoney } from "../../../lib/time-rules";
 import { formatRate } from "../../../lib/billing-rules";
@@ -40,7 +40,7 @@ export default async function TimePage({
 }) {
   const actor = await requireActor();
   // Time is a desk-wide ledger; a requester has no business seeing it.
-  if (!hasPermission(actor.role, "ticket:read:any")) redirect("/portal");
+  if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
 
   const params = await searchParams;
   const today = new Date().toISOString().slice(0, 10);
@@ -75,7 +75,7 @@ export default async function TimePage({
   // shows what was charged rather than what today's rules would charge.
   const issued = invoiceRef ? await service.issued(actor, invoiceRef) : null;
   const standing = issued && issued.ok ? issued.value : null;
-  const canBill = hasPermission(actor.role, "queue:manage");
+  const canBill = actorHasPermission(actor, "queue:manage");
   const names = new Map(scope.map((client) => [client.id, client.name]));
   const cardOf = (clientId: string | null) => cards.ok ? cards.value.find((card) => card.clientId === clientId) : undefined;
 
