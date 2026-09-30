@@ -25,6 +25,11 @@ import { randomUUID } from "node:crypto";
 import { hasPermission, type Actor } from "./access-rules";
 import { verifyAuditChain, type AuditChain, type AuditEventInput, type AuditSink, type HashFn } from "./audit-chain";
 import {
+  AUDIT_EXPORT_KIND,
+  buildAuditChainPacket,
+  type AuditChainPacket,
+} from "./audit-export-rules";
+import {
   ASSURANCE_PACKET_VERSION,
   buildAssurancePacket,
   type AssurancePacket,
@@ -108,6 +113,82 @@ export class AssuranceService {
     }
     return { ok: true, value: packet };
   }
+
+  /**
+   * The tenant's whole audit trail as a signed packet (M6).
+   *
+   * The incident packet is one incident's slice of the chain; this is the chain. It is
+   * gated on `audit:read` rather than `ticket:read:any`, because "may read this desk's
+   * tickets" and "may take away the record of everything anybody did here" are
+   * different questions and only one of them is an administrative act.
+   *
+   * A chain that does not verify is exported **anyway**, with `verified: false` inside
+   * the signed anchor. Withholding a broken trail would be refusing the evidence at the
+   * exact moment it matters, and the one failure that must not happen — a broken chain
+   * presented as sound — is impossible because the flag is inside what the signature
+   * covers. The export itself is then an audited act like any other.
+   */
+  async auditExport(actor: Actor): Promise<ServiceResult<AuditChainPacket>> {
+    if (!hasPermission(actor.role, "audit:read")) {
+      return { ok: false, error: "You do not have access to the audit trail." };
+    }
+
+    const chain = await this.deps.auditReader.read(actor.tenantId);
+    const check = verifyAuditChain(chain, this.hash);
+
+    // Every entry, oldest first, reduced to the fields the packet states — the payload
+    // detail is deliberately left behind: an export is a record of *what happened*, and
+    // widening it to whatever each event happened to carry is how a token or a note
+    // ends up in a document that leaves the building.
+    const entries: PacketAuditEntry[] = chain.events.map(({ seq, at, actor: by, action, recordHash }) => ({
+      seq,
+      at,
+      actor: by,
+      action,
+      recordHash,
+    }));
+
+    const packet = buildAuditChainPacket(
+      {
+        tenantId: actor.tenantId,
+        entries,
+        audit: {
+          head: chain.head,
+          length: chain.events.length,
+          verified: check.ok,
+          // The export event lands one past the head this packet cites.
+          exportSeq: chain.events.length + 1,
+        },
+        generatedAt: this.now(),
+      },
+      this.hash,
+      this.deps.sign,
+    );
+
+    if (this.deps.audit) {
+      await this.deps.audit.append(auditExportEvent(actor, packet, this.now()));
+    }
+    return { ok: true, value: packet };
+  }
+}
+
+/** The audit event a tenant-wide export writes: the digest, so the copy can be cited. */
+export function auditExportEvent(actor: Actor, packet: AuditChainPacket, at: string): AuditEventInput {
+  return {
+    id: randomUUID(),
+    tenantId: actor.tenantId,
+    at,
+    actor: actor.id,
+    action: "audit.chain.export",
+    targetType: "tenant",
+    targetId: actor.tenantId,
+    detail: {
+      kind: AUDIT_EXPORT_KIND,
+      version: packet.version || ASSURANCE_PACKET_VERSION,
+      entries: packet.entries.length,
+      contentHash: packet.contentHash,
+    },
+  };
 }
 
 /** The audit event an export writes: the digest, so the packet can be cited. */

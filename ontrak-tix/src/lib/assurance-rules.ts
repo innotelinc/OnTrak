@@ -197,13 +197,35 @@ export type SignFn = (payload: string) => string;
 export type VerifyPacketResult = { ok: true; contentHash: string } | { ok: false; reason: string };
 
 /**
+ * The envelope every packet of this format carries, whatever it is about: the audit
+ * anchor, when it was produced, its two digests, its signature and the algorithm.
+ *
+ * It exists so that verification can be written once. M6's tenant audit export is a
+ * different *subject* in the same envelope, and the last thing a family of signed
+ * documents needs is two implementations of "is this signature ours" that are free to
+ * drift apart.
+ */
+export interface SignedPacketEnvelope {
+  /** Where in the chain the document was cut. Verified by being inside the digest. */
+  audit: unknown;
+  generatedAt: string;
+  recordHash: string;
+  contentHash: string;
+  signature: string;
+  algorithm: string;
+}
+
+/**
  * Verify a packet without the database: recompute both digests from the packet's
  * own contents and check the signature over the content digest. An edit after
  * signing fails the signature check; a hand-rewritten packet fails the digest
  * checks; and a packet whose *record* was altered fails the record check even if
  * someone recomputed the rest.
+ *
+ * It takes the envelope rather than one packet type, so the incident packet and the
+ * tenant audit export are checked by the same code.
  */
-export function verifyAssurancePacket(packet: AssurancePacket, hash: HashFn, sign: SignFn): VerifyPacketResult {
+export function verifyAssurancePacket(packet: SignedPacketEnvelope, hash: HashFn, sign: SignFn): VerifyPacketResult {
   const { generatedAt, contentHash, recordHash, signature, algorithm, ...content } = packet;
   void generatedAt;
 

@@ -1130,9 +1130,31 @@ up to an adjuster or auditor.
   - `[ ]` Granular roles: the permission matrix is fixed today (`access-rules.ts`),
     and a desk that wants "an agent who may close but not delete" has to change
     code.
-  - `[ ]` Audit-evidence export: the chain is readable in the console and the
-    assurance packet is signed per incident; a tenant-wide export for an auditor
-    is not built.
+  - `[x]` **Audit-evidence export** (`audit-export-rules.ts`,
+    `AssuranceService.auditExport`, `GET /api/audit/packet`, and the M6's tests in
+    `tests/tix-m6-audit-export.test.ts`): the chain was readable in the console and
+    the assurance packet was signed per incident, so what was missing was the
+    document for the question an auditor actually asks — *show me everything this
+    desk did*, not *what happened to this ticket*. It is deliberately the **same
+    envelope** as the M3 incident packet: same `version`, same `HMAC-SHA256`, same
+    `recordHash`/`contentHash`/`signature` discipline, and it is verified by the same
+    function (which now takes the envelope rather than one packet type, so the two
+    kinds cannot drift apart about what a valid signature is). Three things carry it.
+    **The record is carried and the payload is not** — every entry's seq, time, actor,
+    action and record hash, and none of the free-form `detail` a handler attached,
+    because an export that widened itself to whatever was in the bag is how a reset
+    token or an internal note ends up in a document that leaves the building. **A
+    trail that does not verify still exports**, with `verified: false` *inside the
+    signed anchor* — withholding a broken chain would refuse the evidence at the
+    moment it is worth the most, and the one failure that must not happen, a break
+    presented as sound, is impossible because the flag is under the signature; the
+    report then says both true things in one line ("the packet is intact, but the
+    trail did NOT verify"). And **exporting is itself audited**
+    (`audit.chain.export`, carrying the digest and citing the seq the packet named),
+    so who took a copy is on the chain the copy describes. Gated on `audit:read`
+    rather than `ticket:read:any`: reading this desk's tickets and taking away the
+    record of everything anybody did here are different questions, and only one of
+    them is administrative.
 > M6 progress: **the public API, its webhooks, the integrations console and the
 > monitoring connector are live.** A scoped bearer token is a hash in the database
 > and a string on one screen; a sixty-second window per token is enforced by
@@ -1153,13 +1175,18 @@ up to an adjuster or auditor.
 > ask its own questions: custom fields are defined once, placed on a form per queue
 > (the default form is what every queue without one shows), and checked on the
 > ticket path — the portal, the console and the API get the same answer about a
-> required field because there is one place that answers it. What remains in M6 is
-> the connector marketplace pattern and the enterprise controls — granular roles,
-> audit-evidence export and retention/legal-hold policy. See
+> required field because there is one place that answers it. The tenant's whole
+> evidence trail also leaves the building now: `GET /api/audit/packet` signs every
+> entry as one document in the *same* format as an incident packet — the record and
+> not the payloads, a broken chain exported with `verified: false` inside the signed
+> anchor rather than withheld, and the export itself recorded on the chain it
+> describes. What remains in M6 is the connector marketplace pattern and granular
+> roles (the permission matrix is still fixed in `access-rules.ts`). See
 > [docs/api.md](./docs/api.md) and [docs/rules.md](./docs/rules.md).
 
 - **Exit:** a monitoring alert opens a ticket and closes it when the alert clears
-  (**done**); audit evidence exports on demand; the API is versioned and documented.
+  (**done**); audit evidence exports on demand (**done** — a signed tenant-wide
+  export at `/api/audit/packet`); the API is versioned and documented (**done**).
 
 ### M7 — Intelligence & scale `[ ]`
 **Goal:** enterprise hardening and assistance.
