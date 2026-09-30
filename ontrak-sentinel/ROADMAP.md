@@ -472,15 +472,53 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
   - `[x]` **Joiner and leaver**, and the mover's writes: creating a user, renaming
     one, changing their role and switching them off all arrive over SCIM and land on
     the same code paths a console write does, so the rules cannot disagree about
-    them. Access **reviews** — an attestation that the people who have access should
-    — are not started.
-  - `[ ]` Access reviews and scheduled attestation.
+    them.
+  - `[~]` **Access reviews and scheduled attestation** (`access-review-rules.ts`,
+    `access-review-service.ts`, `access-review-store-prisma.ts`,
+    `access-review-scheduler.ts`, the eighth migration
+    `20261030000000_access_review`, and the `SENTINEL_ACCESS_REVIEW_INTERVAL_MINUTES`
+    wiring in `scripts/serve.ts`): the attestation that the people who have access
+    should. A review covers the whole organization or one group, snapshots the
+    **active** roster once, and asks a **named reviewer** to mark each identity kept
+    or revoked by a deadline. Four decisions carry it, and each one is a way of
+    answering “yes” without anybody looking that this refuses: **`PENDING` is the
+    default and is not an approval**, so a scope that resolves to nobody is refused
+    rather than opened empty (an empty review and one that passed are identical in a
+    list), an unrecognised decision counts as undecided rather than as a yes, and
+    re-sending `PENDING` is not a decision; **the list is a snapshot**, because a
+    list that grew when somebody was hired could never be finished and a joiner is
+    the next review's problem — which is what *periodic* attestation means; **lateness
+    is derived from the clock, never stored**, because a stored `OVERDUE` flag is one
+    that a scheduler which did not run leaves wrong, and the review that most needs to
+    look late is the one nobody is scheduling; and **a `REVOKED` decision is carried
+    out through `deprovisionForActor`** — the same path a SCIM `active:false` takes,
+    sessions and access tokens included — with a deployment that cannot deprovision
+    **refusing** the attestation rather than recording one that did nothing, because
+    an operator must never be told a revocation happened while the person is still
+    signing in. Recurring reviews come from a schedule ticked by
+    `SENTINEL_ACCESS_REVIEW_INTERVAL_MINUTES` (unset is **off** — a tick opens reviews
+    in every organization, so turning it on is a decision), and a schedule missed by
+    months opens **one** review and reports the intervals it swallowed rather than
+    thirty identical ones. Closing with items unattested is allowed and records how
+    many were never looked at; cancelling keeps the list of what was asked. Covered by
+    `tests/sentinel-access-review.test.ts` (31 tests: the rules, the snapshot, the
+    refusals, the evidence entries, the scheduler and its failure handling). What is
+    **not** here: a console page of its own — a review is opened, answered and closed
+    through the service and its scheduler, and the console surface is the next slice
+    of this bullet. A per-role policy scope is deliberately not offered as a review
+    scope for the reason given in `access-review-rules.ts`: a role is a property of a
+    person that an administrator changes, so a review scoped to one would silently
+    change its own population the next time somebody was promoted.
 - **Exit:** creating/removing a user in a source directory provisions and
   deprovisions in Sentinel and downstream apps automatically, with an audit trail.
-  The provider half is done: a directory connector pointed at
-  `POST /scim/v2/Users` provisions, and switching a user off there ends their
-  sessions and revokes their tokens with an entry on the organization's evidence
-  chain. The remaining work is the connector that *drives* it.
+  **Met on the provider side.** A connector pushes to `POST /scim/v2/Users`, and the
+  reader on the pulling side (`directory-client.ts`, Entra ID and Google Workspace)
+  drives the same writes; switching a user off either way ends their sessions and
+  revokes their access tokens with an entry on the organization's evidence chain.
+  The attestation half is built too — an access review snapshots the roster, asks a
+  named reviewer, carries a `REVOKED` decision out through that same deprovisioning
+  path, and a schedule opens the recurring ones. What is left in S2 is the console
+  page for reviews, not a different capability.
 
 ### S3 — Sentinel Guard v1 (detection) `[~]`
 **Goal:** see what is happening.
@@ -721,8 +759,12 @@ logins with no notion of behaviour. Together they produce signals neither can:
    client-credentials flow, paging by the provider's own next-link). LDAP is
    deliberately not built — an LDAP bind is a different protocol with a different
    dependency, so a deployment that needs it supplies its own reader rather than
-   being handed a fake. What remains of S2 is **access reviews**: an attestation
-   that the people who have access should.
+   being handed a fake. ~~What remains of S2 is **access reviews**.~~ **Access
+   reviews have landed** (see the S2 bullet above): the rules, the service, the
+   store and its migration, and the scheduler that opens the recurring ones. What
+   remains of that bullet is the **console page** — until it exists a review is
+   driven through the service — and that is the next slice of S2 rather than a
+   different milestone.
 4. Build the telemetry normalizer and one detection rule end to end (S3 spike).
 5. ~~Define the shared assurance-packet format with OnTrak Tix before either ships
    exports, so both are compatible from the start.~~ **Done on Sentinel's side**

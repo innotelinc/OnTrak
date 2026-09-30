@@ -55,6 +55,13 @@ import { sha256Hex } from "../src/lib/hash";
 import { hashPassword } from "../src/lib/password";
 import { SignInService, systemSignInIds } from "../src/lib/sign-in-service";
 import { MemoryIndicatorStore, ThreatIntelService, type IndicatorStore } from "../src/lib/threat-intel-service";
+import {
+  AccessReviewService,
+  MemoryAccessReviewStore,
+  type AccessReviewStore,
+} from "../src/lib/access-review-service";
+import { PrismaAccessReviewStore, type AccessReviewPrismaClient } from "../src/lib/access-review-store-prisma";
+import { accessReviewIntervalMs, startAccessReviewScheduler } from "../src/lib/access-review-scheduler";
 import { PrismaIndicatorStore, type IndicatorPrismaClient } from "../src/lib/threat-intel-store-prisma";
 import {
   configureDirectories,
@@ -315,6 +322,8 @@ async function main(): Promise<void> {
   let alertStore: AlertStore;
   /** The indicators detection matches against (S3); empty until a feed is ingested. */
   let intelStore: IndicatorStore;
+  /** Access reviews and their schedules (S2). */
+  let reviewStore: AccessReviewStore;
 
   // Where a directory connector points. `meta.location` links are built from it, so
   // they name the deployment's own origin rather than 127.0.0.1.
@@ -362,6 +371,7 @@ async function main(): Promise<void> {
     ).service;
     alertStore = new PrismaAlertStore(prisma as unknown as AlertPrismaClient);
     intelStore = new PrismaIndicatorStore(prisma as unknown as IndicatorPrismaClient);
+    reviewStore = new PrismaAccessReviewStore(prisma as unknown as AccessReviewPrismaClient);
   } else {
     identities = new MemoryIdentityStore();
     audit = new OrganizationAuditLog(sha256Hex);
@@ -377,6 +387,7 @@ async function main(): Promise<void> {
     directories = new DirectoryService(new MemoryDirectoryStore(), spine, scim, directoryReaders(), audit);
     alertStore = new MemoryAlertStore();
     intelStore = new MemoryIndicatorStore();
+    reviewStore = new MemoryAccessReviewStore();
   }
 
   /**
@@ -417,6 +428,12 @@ async function main(): Promise<void> {
     sha256Hex,
     threatIntel,
   );
+
+  // Access reviews (S2). The deprovisioning port is the SCIM service rather than a second
+  // way of switching somebody off, so a `REVOKED` decision ends the identity's sessions and
+  // its access tokens exactly as a directory's `active:false` does — and a deployment that
+  // cannot deprovision gets a refusal rather than a recorded revocation that did nothing.
+  const accessReviews = new AccessReviewService(reviewStore, identities, scim, audit);
 
   // The sign-in service and the directory reader are both optional, and independent:
   // a deployment can serve a login with no directories, or read directories with no
@@ -530,6 +547,22 @@ async function main(): Promise<void> {
   });
 
   console.log(`[sentinel] OIDC provider listening on ${url} (issuer ${issuer})`);
+  // Scheduled attestation: off unless a deployment asks for it, because a tick opens
+  // reviews in every organization here and a product that did that uninvited on first
+  // boot would be writing attestations nobody asked for. The handle is deliberately not
+  // kept: the timer is `unref`'d, so it never holds the process open, and a deployment
+  // that restarts simply loses the next tick rather than a partially-opened review.
+  const reviewIntervalMs = accessReviewIntervalMs(process.env);
+  if (reviewIntervalMs === null) {
+    console.log(
+      "[sentinel] access reviews: scheduled attestation is off (set SENTINEL_ACCESS_REVIEW_INTERVAL_MINUTES to turn it on)",
+    );
+  } else {
+    startAccessReviewScheduler(accessReviews, {
+      intervalMs: reviewIntervalMs,
+      log: (message) => console.log(`[sentinel] access reviews: ${message}`),
+    });
+  }
   console.log(
     `[sentinel] storage: ${durable ? "PostgreSQL — clients, codes and tokens are persisted" : "in-memory — a restart forgets everything"}`,
   );

@@ -52,15 +52,19 @@ this, what can they reach, and what have they done"* in one place.
 
 ## Status
 
-**S0, S1 and S2 complete; S3 started.** The identity spine exists, persists, and
-issues identity; a directory can provision into it and it can read one; the first
-Guard slice turns telemetry into an alert that names a person; a feed of
+**S0 and S1 complete; S2 complete but for the access-review console page; S3
+started.** The identity spine exists, persists, and
+issues identity; a directory can provision into it and it can read one; access
+reviews ask the question provisioning cannot — should these people still have
+this access? — with recurring attestation off until a deployment asks for it; the
+first Guard slice turns telemetry into an alert that names a person; a feed of
 indicators now raises how that alert is judged; and the console works the queue
 that produces, with a posture summary beside it. What is *not* here is still
 stated: a synced group decides nothing yet (roles and groups as policy is S1's
-last bullet), Guard has no streaming listener, no detection-coverage map and no
-STIX/TAXII feed transport, and rule rotation and signing-key provisioning are
-open. The identity spine:
+last bullet), an access review is driven through its service and the scheduler
+rather than a console page of its own, Guard has no streaming listener, no
+detection-coverage map and no STIX/TAXII feed transport, and rule rotation and
+signing-key provisioning are open. The identity spine:
 
 - `src/lib/audit-chain.ts` — the hash-chained, append-only audit log with
   tamper detection (the evidence spine). `src/lib/hash.ts` is the one SHA-256 the
@@ -76,7 +80,7 @@ open. The identity spine:
   The client is described structurally, so the adapter runs against the generated
   client, a fake, or a repository layer.
 -  `prisma/schema.prisma` + `prisma/migrations/` — the data model, **migrated**
-  in ten steps: `20260928000000_init` (the spine and the evidence log),
+  in eleven steps: `20260928000000_init` (the spine and the evidence log),
   `20260929000000_oidc` (the grant rows), `20260930000000_logout_saml`
   (`AccessToken.revokedAt` and the SAML service providers),
   `20261001000000_mfa_totp` (the TOTP enrollment state on `MfaFactor`),
@@ -87,7 +91,8 @@ open. The identity spine:
   `IdentityPolicy`),  `20261026000000_directory_sync` (`DirectoryConnection` and
   `DirectorySyncRun`), `20261027000000_guard_alert` (`Alert`, `AlertEvent`) and
   `20261028000000_threat_intel` (the `Indicator` table and the matches kept on
-  `Alert.threatIntel`).
+  `Alert.threatIntel`) and `20261030000000_access_review` (`AccessReview`,
+  `AccessReviewItem` and `AccessReviewSchedule`).
   Every table
   carries the organization it belongs to with a cascading foreign key, and
   `AuditEvent` is unique on `(organizationId, seq)` because each organization has
@@ -211,9 +216,38 @@ open. The identity spine:
   with the writing switched off. `preferDirectory` lets the directory win and says
   so in the report; `preferLocal` keeps the local edit and reports the
 disagreement. Matching is by the directory's own id first, so a rename is a move
-  rather than a second person; a leaver is deactivated rather than deleted, down
-  the same path a SCIM `active:false` takes. Covered by
+  rather than a second person; a leaver is deactivated rather than deleted,  down the same path a SCIM `active:false` takes. Covered by
   `tests/sentinel-directory.test.ts`.
+- `src/lib/access-review-rules.ts` + `access-review-service.ts` +
+  `access-review-store-prisma.ts` + `access-review-scheduler.ts` + the eighth
+  migration `20261030000000_access_review` (S2) — **access reviews and scheduled
+  attestation**. Provisioning answers *who exists*; this answers the question
+  provisioning cannot: *should these people still have this access?* A review is
+  opened over a scope (the whole organization, or one group), snapshots the active
+  roster **once**, and asks a **named reviewer** to mark each person kept or
+  revoked by a deadline. Four decisions carry it. **A snapshot, not a live
+  query** — a list that grew when somebody was hired could never be finished, so a
+  later joiner is the next review's problem, which is what *periodic* attestation
+  means; and a deactivated identity is not on it, because there is no access left
+  to attest. **`PENDING` is the default and is not an approval** — the difference
+  between “reviewed and kept” and “nobody got to it” is the thing an auditor is
+  actually asking about, so a scope that resolves to nobody is refused rather than
+  opened empty, and an unrecognised decision counts as undecided rather than as a
+  yes. **Lateness is derived, never stored** — `OVERDUE` is `dueAt` against the
+  clock, because a stored flag is one that a scheduler which did not run leaves
+  wrong, and the review that most needs to look late is exactly the one nobody is
+  scheduling. **A revocation goes through the deprovisioning path** the SCIM
+  `active:false` uses, sessions and access tokens included, and where this
+  deployment has no way to deprovision the attestation is refused instead of
+  recorded — an operator must never be told a revocation happened while the person
+  is still signing in. Recurring reviews come from a schedule, ticked by
+  `SENTINEL_ACCESS_REVIEW_INTERVAL_MINUTES` (unset means off, since a tick opens
+  reviews in every organization here): a schedule that was missed by months opens
+  **one** review and reports how many intervals it swallowed, so a month of
+  downtime does not come back as thirty reviews that bury the one that matters.
+  Closed reviews are evidence, not work — cancelling keeps the list of what was
+  asked, and closing with items unattested is allowed and records how many were
+  never looked at. Covered by `tests/sentinel-access-review.test.ts`.
 - `src/lib/telemetry-rules.ts` + `detection-rules.ts` + `detection-service.ts` +
   `guard-service.ts` + `guard-http.ts` (S3) — **the first Guard slice**. A
   source-neutral `ObservedEvent` (kind, addresses, ports, direction, protocol,

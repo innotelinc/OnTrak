@@ -374,6 +374,32 @@ export function canManagePolicies(role: IdentityRole): boolean {
   return role === "ADMIN";
 }
 
+/**
+ * Who may open, schedule, close or cancel an access review.
+ *
+ * Administration, not review: deciding *who is asked* and *about whom* is the same kind
+ * of act as managing a directory connection, while answering a review is deliberately
+ * narrower — see below.
+ */
+export function canManageAccessReviews(role: IdentityRole): boolean {
+  return role === "ADMIN";
+}
+
+/**
+ * Whether this actor may answer a review — attest one identity on it.
+ *
+ * The reviewer is **a named person**, so the review is answerable by them and by an
+ * administrator, and by nobody else. Not by every administrator's delegate, and not by
+ * whoever happens to hold a role today: an attestation says “I looked and this is still
+ * warranted”, which is a statement about a person, and widening who may make it is how
+ * an attestation becomes a formality. An administrator is included because somebody has
+ * to be able to finish a review whose reviewer has left — and because they are the only
+ * role that can open one in the first place.
+ */
+export function canAttestAccessReview(role: IdentityRole, actorId: string, reviewerId: string): boolean {
+  return role === "ADMIN" || actorId === reviewerId;
+}
+
 /** When a session issued at `issuedAt` stops being usable on age alone. */
 export function sessionExpiry(issuedAt: number, policy: IdentityPolicy = DEFAULT_IDENTITY_POLICY): number {
   return issuedAt + policy.maxSessionSeconds * 1000;

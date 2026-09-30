@@ -58,6 +58,11 @@ model Organization {
   groups       Group[]
   directories  DirectoryConnection[]
   directoryRuns DirectorySyncRun[]
+  // ...and the other half of the lifecycle: somebody periodically attesting that the
+  // access the directory granted should still be there.
+  accessReviews         AccessReview[]
+  accessReviewItems     AccessReviewItem[]
+  accessReviewSchedules AccessReviewSchedule[]
 
   // Guard (S3): what detection decided about the telemetry it was sent, and what
   // somebody has published as worth watching.
@@ -101,6 +106,7 @@ model Identity {
   webauthnChallenges WebAuthnChallenge[]
   sessions           Session[]
   groupMemberships   GroupMember[]
+  accessReviewItems  AccessReviewItem[]
 
   @@unique([organizationId, identifier])
   /// Unique when present, and deliberately not across the NULLs: Postgres treats
@@ -637,4 +643,100 @@ model SamlServiceProvider {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
+}
+
+/// One access review: the campaign in which somebody periodically attests that the
+/// people holding access should still have it (S2).
+///
+/// The whole point is that the answer is *recorded per person* rather than being a
+/// formality somebody signs. `AccessReviewItem.decision` therefore defaults to
+/// `PENDING`, not to `KEPT`: an item nobody looked at is not an approval, and the
+/// difference between "reviewed and kept" and "nobody got to it" is the only thing an
+/// auditor is actually asking about.
+///
+/// `reviewerId` is a named person, not a derived role. A role would have made the
+/// meaning of a finished review change the day somebody's role did, which is the one
+/// thing an attestation must not do — the record has to say who was asked, and it has
+/// to keep saying it.
+model AccessReview {
+  id             String    @id @default(cuid())
+  organizationId String
+  /// What an administrator called it, e.g. “Service desk — quarter end”.
+  name           String
+  /// `ORGANIZATION` | `GROUP`, narrowed on read.
+  scopeKind      String
+  /// The group id when `scopeKind` is `GROUP`; empty for an organization-wide review.
+  scopeValue     String    @default("")
+  reviewerId     String
+  dueAt          DateTime
+  /// `OPEN` | `COMPLETED` | `CANCELLED`, narrowed on read. Being late is *derived*
+  /// from `dueAt` rather than stored, because a stored flag is one a scheduler that
+  /// did not run leaves wrong.
+  status         String    @default("OPEN")
+  /// The schedule that opened it, or `null` when somebody opened it by hand.
+  scheduleId     String?
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  items        AccessReviewItem[]
+  schedule     AccessReviewSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
+  @@index([reviewerId])
+}
+
+/// One person on one review's list, and what the reviewer decided about them.
+model AccessReviewItem {
+  id             String    @id @default(cuid())
+  organizationId String
+  reviewId       String
+  identityId     String
+  /// `PENDING` | `KEPT` | `REVOKED`, narrowed on read.
+  decision       String    @default("PENDING")
+  decidedBy      String?
+  decidedAt      DateTime?
+  /// Why, in the reviewer's words. Optional, because a `KEPT` with a reason would be
+  /// noise, and a `REVOKED` without one is a decision somebody will ask about.
+  note           String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  review       AccessReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  identity     Identity     @relation(fields: [identityId], references: [id], onDelete: Cascade)
+
+  /// The pair is the key, so an identity cannot appear on one review's list twice —
+  /// two rows for one person would make “how many are outstanding?” ambiguous.
+  @@unique([reviewId, identityId])
+  @@index([organizationId])
+  @@index([identityId])
+}
+
+/// A recurring attestation: the schedule that opens a review without anybody
+/// remembering to. A review nobody schedules is a review that stops happening.
+model AccessReviewSchedule {
+  id             String    @id @default(cuid())
+  organizationId String
+  name           String
+  scopeKind      String
+  scopeValue     String    @default("")
+  reviewerId     String
+  /// How often a review is opened, in days. Bounded by the rules module, because an
+  /// interval of zero would open one per tick and an interval of years is a schedule
+  /// that exists to be pointed at.
+  intervalDays   Int
+  nextRunAt      DateTime
+  lastRunAt      DateTime?
+  enabled        Boolean   @default(true)
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  reviews      AccessReview[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  /// The scheduler asks one question — what is due — so it is an index.
+  @@index([nextRunAt])
 }
