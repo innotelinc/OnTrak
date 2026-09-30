@@ -46,6 +46,10 @@ function mintIdToken(claims: Record<string, unknown>, alg = "RS256"): string {
 /** What the provider remembers about the last sign-in it was asked to serve. */
 let pending: { nonce: string; challenge: string; issuer: string } | null = null;
 let lastTokenBody = "";
+// Flipped by the trailing-slash test below. Authentik publishes its issuer with
+// a trailing slash, so discovery has to see that as the same issuer rather than
+// a mix-up.
+let discoveryIssuerSuffix = "";
 
 const idp = http.createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://127.0.0.1`);
@@ -57,7 +61,7 @@ const idp = http.createServer((req, res) => {
 
   if (url.pathname === "/.well-known/openid-configuration") {
     return json({
-      issuer,
+      issuer: issuer + discoveryIssuerSuffix,
       authorization_endpoint: `${issuer}/authorize`,
       token_endpoint: `${issuer}/token`,
       jwks_uri: `${issuer}/jwks`,
@@ -120,7 +124,7 @@ process.env.ONTRAK_OIDC_REDIRECT_URL = "http://127.0.0.1:9/api/auth/callback";
 
 const { createServer } = await import("../server.js");
 const { ensureWorkspace } = await import("../workspace.js");
-const { mintSession, readSession, verifyIdToken, resetOidcCaches, sessionFrom } = await import("../oidc.js");
+const { discover, mintSession, readSession, verifyIdToken, resetOidcCaches, sessionFrom } = await import("../oidc.js");
 
 await ensureWorkspace();
 const server = createServer();
@@ -313,6 +317,19 @@ test("a session cookie cannot be edited", () => {
   claims.exp = claims.exp + 86_400;
   const forged = `${header64}.${base64url(JSON.stringify(claims))}.${signature64}`;
   assert.equal(readSession(forged), null, "a re-signed-by-nobody cookie must be refused");
+});
+
+test("a discovery issuer with a trailing slash names the same issuer", async () => {
+  // Authentik publishes `…/application/o/ontrak/` while a deployment configures
+  // it without the slash; both name the same provider, and discovery must not
+  // call that a mix-up. Regression: this threw before the comparison normalized
+  // the trailing slash, which left sign-in dead on the family's provider.
+  discoveryIssuerSuffix = "/";
+  resetOidcCaches();
+  const doc = await discover(true);
+  assert.equal(doc.issuer, `${IDP}/`, "discovery reports the issuer as the provider published it");
+  discoveryIssuerSuffix = "";
+  resetOidcCaches();
 });
 
 test("an expired session cookie is refused", () => {

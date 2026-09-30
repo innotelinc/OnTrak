@@ -122,7 +122,12 @@ export async function discover(force = false): Promise<Discovery> {
   // A document that names a different issuer than the one that served it is how
   // a mix-up attack starts: the provider we trusted would be vouching for
   // tokens from somewhere else.
-  if (value.issuer !== config.oidcIssuer && value.issuer !== base) {
+  //
+  // A trailing slash is not a different issuer. Authentik publishes its issuer
+  // with one (`…/application/o/ontrak/`) while a deployment naturally configures
+  // it without, and both name the same provider — the same leniency `base`
+  // already applies when it strips one to build the discovery URL.
+  if (value.issuer.replace(/\/+$/, "") !== base) {
     throw new Error(`discovery issuer ${value.issuer} does not match configured ${config.oidcIssuer}`);
   }
   discoveryCache = { at: Date.now(), value };
