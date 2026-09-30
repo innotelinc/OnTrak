@@ -16,4 +16,10 @@ that do things:
 Only `remote` and `applier` touch the Network, and only `applier` writes to it.
 """
 
-__version__ = "1.0.0"
+# This is the number a client sees, not an internal label: `/api/meta` returns it
+# and FastAPI puts it in the OpenAPI document. It lives here alone — `api.py` reads
+# it rather than repeating it — because a version written down in three places is a
+# version that eventually disagrees with itself, which is exactly what happened: this
+# said 1.0.0 while the API it belongs to advertised 1.1.0, and the image was tagged a
+# third value again.
+__version__ = "1.1.0"

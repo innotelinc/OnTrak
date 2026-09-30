@@ -40,7 +40,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import db, identity, oidc
+from . import __version__, db, identity, oidc
 from .applier import apply_findings
 from .config import Settings
 from .policy import Cron, CronError, Policy, describe, next_runs
@@ -223,7 +223,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if state["scheduler"] is not None:
             state["scheduler"].stop()
 
-    app = FastAPI(title="Ontrak Sync", version="1.1.0", lifespan=lifespan)
+    app = FastAPI(title="Ontrak Sync", version=__version__, lifespan=lifespan)
     app.state.conn = conn
 
     # The dashboard is a separate origin in development and same-origin behind the
@@ -384,7 +384,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         return {
             "service": "ontrak-sync",
-            "version": "1.1.0",
+            "version": __version__,
             "hosts": [asdict(h) for h in settings.hosts],
             "scheduler_enabled": settings.scheduler_enabled,
             "users_exist": identity.count_users(conn) > 0,
