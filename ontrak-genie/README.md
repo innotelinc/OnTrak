@@ -78,6 +78,11 @@ make all-up                   # the whole family, Genie included on :3400
 make genie-up                 # just Genie, as its own stack, on :3410
 ```
 
+`make genie-up` refuses while `make all-up` is already serving Genie on :3400,
+and says so — both stacks reaching for one port is a container that crash-loops on
+`EADDRINUSE` with nothing explaining why. Stop the family stack first with
+`make all-down`, or use the console it is already serving.
+
 A gateway is required and is not shipped here: Genie speaks the OpenAI-compatible
 API, so it points at the stack's shared OmniRoute. Its address comes from the
 deployment's environment — no internal address is committed, and `.env` is
