@@ -36,6 +36,16 @@ import { routeScim, type ScimEndpoints } from "./scim-http";
 /** A form post is a few kilobytes; anything larger is not one. */
 export const MAX_BODY_BYTES = 64 * 1024;
 
+/**
+ * The liveness path the family's portal probes to draw a product's status light.
+ *
+ * Unauthenticated by design: asking the Network "are you there" must not need a
+ * credential the portal would have to hold, which is why every member of the
+ * family exposes one path for it. It sits at the root rather than under
+ * `/console` so it is answerable before sign-in is reachable at all.
+ */
+export const HEALTH_PATH = "/health";
+
 function readBody(request: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -120,6 +130,34 @@ export interface ServerSurfaces {
 }
 
 /**
+ * The liveness answer, or `null` when this is not the health path.
+ *
+ * It reports only that the process is up and answering. A check that also
+ * depended on Postgres would take the product down for a dependency the caller
+ * cannot fix and turn a slow query into an outage report; the database's own
+ * health is the compose healthcheck's business, not the portal's.
+ */
+function health(request: HttpRequest): HttpResponse | null {
+  const method = request.method.toUpperCase();
+  if (method !== "GET" && method !== "HEAD") return null;
+  let pathname: string;
+  try {
+    pathname = new URL(request.url).pathname.replace(/\/+$/, "") || "/";
+  } catch {
+    return null;
+  }
+  if (pathname !== HEALTH_PATH) return null;
+  return {
+    status: 200,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    },
+    body: method === "HEAD" ? "" : JSON.stringify({ status: "ok", service: "ontrak-sentinel" }),
+  };
+}
+
+/**
  * A static asset, or `null` when this path is not one.
  *
  * Only `GET` and `HEAD` — a `POST` to `/unity-theme.css` is not a stylesheet request,
@@ -169,6 +207,13 @@ export function createOidcServer(service: OidcEndpoints, surfaces: ServerSurface
       try {
         const body = await readBody(request);
         const httpRequest = toHttpRequest(request, body);
+        // Liveness is answered before any router: it is the one path a caller can
+        // ask without a credential, and no surface may claim it.
+        const alive = health(httpRequest);
+        if (alive) {
+          sendResponse(response, alive);
+          return;
+        }
         // The theme is answered first because it is not a decision: a path in the map
         // is a file, and asking four routers to agree about that would be four chances
         // for one of them to claim `/unity-theme.css` and answer it with JSON.

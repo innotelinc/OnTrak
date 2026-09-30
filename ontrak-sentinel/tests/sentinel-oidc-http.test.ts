@@ -385,3 +385,25 @@ test("the node adapter serves the same surface over a real socket", async () => 
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+test("the health path answers without a credential, for the family's status light", async () => {
+  const s = await signedIn();
+  const { server, url } = await startOidcServer(s.oidc, { port: 0 });
+  try {
+    // No session, no bearer: the portal's probe holds neither.
+    const health = await fetch(`${url}/health`);
+    assert.equal(health.status, 200);
+    assert.equal(health.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await health.json(), { status: "ok", service: "ontrak-sentinel" });
+
+    // The probe may use HEAD; a `HEAD /health` is the same answer with no body.
+    const head = await fetch(`${url}/health`, { method: "HEAD" });
+    assert.equal(head.status, 200);
+
+    // A path that merely starts with the health path is not it.
+    const notIt = await fetch(`${url}/health/extra`);
+    assert.equal(notIt.status, 404);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});

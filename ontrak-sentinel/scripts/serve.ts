@@ -78,7 +78,7 @@ import { MemoryMfaStore, MfaService, systemTotpSigner } from "../src/lib/mfa-ser
 import type { MfaPrismaClient, WebAuthnChallengePrismaClient } from "../src/lib/mfa-store-prisma";
 import { generateSigningKey, signingKeyFromPem, type SigningKey } from "../src/lib/oidc-keys";
 import { codeChallengeFor, type OidcClientRecord } from "../src/lib/oidc-rules";
-import { createOidcServices, startOidcServer } from "../src/lib/oidc-server";
+import { createOidcServices, HEALTH_PATH, startOidcServer } from "../src/lib/oidc-server";
 import { MemoryOidcStore, OidcService, type OidcStore } from "../src/lib/oidc-service";
 import { PrismaOidcStore, type OidcPrismaClient } from "../src/lib/oidc-store-prisma";
 import { SAML_PATHS, type SamlServiceProviderRecord } from "../src/lib/saml-rules";
@@ -573,6 +573,7 @@ async function main(): Promise<void> {
   );
   console.log(`[sentinel] discovery: ${url}/.well-known/openid-configuration`);
   console.log(`[sentinel] jwks:      ${url}/.well-known/jwks.json`);
+  console.log(`[sentinel] health:    ${url}${HEALTH_PATH} (the family portal's status light)`);
   console.log(`[sentinel] SAML metadata: ${url}${SAML_PATHS.metadata}`);
   console.log(`[sentinel] SAML SSO:      ${url}${SAML_PATHS.sso}`);
   console.log(`[sentinel] console: ${url}${CONSOLE_PATHS.home} (WebAuthn RP ID ${webAuthnRpId}, origin ${webAuthnOrigin})`);

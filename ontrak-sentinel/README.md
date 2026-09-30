@@ -311,8 +311,11 @@ disagreement. Matching is by the directory's own id first, so a rename is a move
   `otpauth://` URI, because the default policy requires a second factor and a
   flipped boolean would not have proved one. It also serves the console at
   `/console` and prints the cookie line that gets a browser into it, and mounts the
-  Guard surface at `/guard/v1` when a token is configured. Deployable key
-  management and rotation are the next slice, so there is no image yet.
+  Guard surface at `/guard/v1` when a token is configured. It answers `GET /health`
+  without a credential — that is the path the family portal probes to draw a
+  product's status light, and it is answered before any router so no surface can
+  claim it. Deployable key management and rotation are the next slice, so there is
+  no image yet.
 
 The full platform is built *after* OnTrak Tix; see [ROADMAP.md](./ROADMAP.md).
 
