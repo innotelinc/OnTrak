@@ -218,7 +218,9 @@ async function handleAuthRoutes(
     if (!oidcEnabled()) throw new HttpError(404, "sign-in is not configured");
     // `next` comes from the gate, which got it from the page that bounced the
     // visitor. It is normalized to a path on this origin before it is kept.
-    res.writeHead(302, { Location: await beginLogin(safeReturnTo(url.searchParams.get("next"))) });
+    res.writeHead(302, {
+      Location: await beginLogin(safeReturnTo(url.searchParams.get("next")), req.headers.host),
+    });
     res.end();
     return true;
   }

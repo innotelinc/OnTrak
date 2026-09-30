@@ -73,10 +73,34 @@ export function oidcEnabled(): boolean {
  * registered *byte for byte*, and it is the address the *browser* reaches — not
  * the one this process is bound to. Deriving it from HOST would send
  * `0.0.0.0` to the provider, which is why the fallback is loopback only.
+ *
+ * A deployment reachable at more than one name (the family's
+ * `genie.ontrak.innotel.us` and the platform's `genie.innotel.us`) may list them
+ * comma-separated. The provider matches the URI, so a name that is not listed
+ * cannot sign in; the entry whose host matches the browser's `Host` header is
+ * chosen, and the first entry is the default for any other caller.
  */
-export function redirectUri(): string {
-  if (config.oidcRedirectUrl !== "") return config.oidcRedirectUrl;
-  return `http://127.0.0.1:${config.port}/api/auth/callback`;
+export function pickRedirectUri(configured: string, host: string | undefined, port: number): string {
+  const uris = configured
+    .split(",")
+    .map((uri) => uri.trim())
+    .filter((uri) => uri !== "");
+  const first = uris[0];
+  if (first === undefined) return `http://127.0.0.1:${port}/api/auth/callback`;
+  if (uris.length === 1 || !host) return first;
+  const wanted = (host.split(":")[0] ?? "").toLowerCase();
+  const match = uris.find((uri) => {
+    try {
+      return new URL(uri).hostname.toLowerCase() === wanted;
+    } catch {
+      return false;
+    }
+  });
+  return match ?? first;
+}
+
+export function redirectUri(host?: string): string {
+  return pickRedirectUri(config.oidcRedirectUrl, host, config.port);
 }
 
 // --- small helpers ----------------------------------------------------------
@@ -227,6 +251,8 @@ interface Pending {
   at: number;
   /** Where the browser was headed when it was sent to the provider. */
   returnTo: string;
+  /** The redirect URI this sign-in started with, so the exchange matches it. */
+  redirectUri: string;
 }
 
 /**
@@ -259,20 +285,27 @@ function sweep(now = Date.now()): void {
   }
 }
 
-/** Where to send the browser, and the state that ties the answer back to it. */
-export async function beginLogin(returnTo = "/"): Promise<string> {
+/**
+ * Where to send the browser, and the state that ties the answer back to it.
+ *
+ * `host` is the browser's `Host` header: on a deployment with more than one
+ * name it decides which of the configured redirect URIs this sign-in uses, and
+ * that choice is stored with the state so the token exchange repeats it.
+ */
+export async function beginLogin(returnTo = "/", host?: string): Promise<string> {
   sweep();
   const discovery = await discover();
+  const uri = redirectUri(host);
   const state = crypto.randomBytes(16).toString("base64url");
   const nonce = crypto.randomBytes(16).toString("base64url");
   const verifier = crypto.randomBytes(32).toString("base64url");
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
-  pending.set(state, { verifier, nonce, at: Date.now(), returnTo: safeReturnTo(returnTo) });
+  pending.set(state, { verifier, nonce, at: Date.now(), returnTo: safeReturnTo(returnTo), redirectUri: uri });
 
   const url = new URL(discovery.authorization_endpoint);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", config.oidcClientId);
-  url.searchParams.set("redirect_uri", redirectUri());
+  url.searchParams.set("redirect_uri", uri);
   url.searchParams.set("scope", "openid email profile");
   url.searchParams.set("state", state);
   url.searchParams.set("nonce", nonce);
@@ -306,7 +339,7 @@ export async function completeLogin(code: string, state: string): Promise<Comple
   const form = new URLSearchParams({
     grant_type: "authorization_code",
     code,
-    redirect_uri: redirectUri(),
+    redirect_uri: entry.redirectUri,
     client_id: config.oidcClientId,
     code_verifier: entry.verifier,
   });

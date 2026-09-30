@@ -478,6 +478,17 @@ The agent is deliberately constrained, because it runs with your privileges:
   keeps the result in a signed cookie. **Configuring sign-in refuses
   unauthenticated calls even when `WEB_TOKEN` is empty**, so switching it on
   cannot leave a published port open by accident.
+
+  **Sign-in on more than one name.** The provider matches the redirect URI byte
+  for byte, and the URI is the address the *browser* reaches — so a deployment
+  reachable at two names (the family's `genie.ontrak.innotel.us` and the
+  platform's `genie.innotel.us`) registers both and lists them in
+  `ONTRAK_OIDC_REDIRECT_URL`, comma-separated. The entry whose host matches the
+  browser's `Host` header is the one a sign-in starts with, and that choice is
+  carried with the state so the token exchange repeats it rather than re-deriving
+  it. A name that is not listed falls back to the first entry; a caller that is
+  not on a listed name signs in and lands on the first, which is the honest
+  answer to "which of this deployment's names was this registered for".
 - **Whose key pays.** With `CONTROL_PLANE_INTERNAL_URL` and
   `CONTROL_INTERNAL_TOKEN` set, a turn is attributed to the signed-in person and
   spends *their* gateway key — and is refused when that account may not spend.
@@ -811,7 +822,7 @@ All optional — see `.env.example`.
 | `ONTRAK_OIDC_ISSUER`                        | *(empty)*                | Authentik issuer. With the two below, require sign-in on `/api/*` |
 | `ONTRAK_OIDC_CLIENT_ID`                     | *(empty)*                | OIDC client id registered with the provider |
 | `ONTRAK_OIDC_CLIENT_SECRET`                 | *(empty)*                | Only for a confidential client; omit it with PKCE |
-| `ONTRAK_OIDC_REDIRECT_URL`                  | `http://127.0.0.1:<PORT>/api/auth/callback` | Must match the registered URI byte for byte, as the browser reaches it |
+| `ONTRAK_OIDC_REDIRECT_URL`                  | `http://127.0.0.1:<PORT>/api/auth/callback` | Must match a URI registered with the provider byte for byte. Comma-separate one per name; the entry matching the browser's `Host` is used (see *Sign-in on more than one name*) |
 | `ONTRAK_OIDC_SESSION_SECRET`                | *(empty)*                | Signs the session cookie. Required for sign-in |
 | `ONTRAK_OIDC_SESSION_HOURS`                 | `12`                     | How long a sign-in lasts before the person is sent back to the provider |
 
