@@ -417,3 +417,56 @@ test("the console's SSO door ends in a session the console itself accepts", asyn
   assert.equal(home.status, 200);
   assert.match(home.body, new RegExp(sessionId));
 });
+
+/**
+ * A console with the provider door open, for the two tests that never reach the provider.
+ * Discovery is the only thing stubbed, because starting a sign-in is the only network call
+ * either of them can reach.
+ */
+async function doorOnlyConsole(scope: string) {
+  const { store, audit, spine } = await makeSpine(scope);
+  const fetcher = async (url: string) =>
+    url.endsWith("/.well-known/openid-configuration")
+      ? jsonResponse(200, { issuer: ISSUER, authorization_endpoint: AUTH, token_endpoint: TOKEN, jwks_uri: JWKS })
+      : jsonResponse(404, {});
+  const provider = new UpstreamSignInService(config() as never, store, spine, { secret: SECRET, audit, fetchImpl: fetcher });
+  const mfa = new MfaService(new MemoryMfaStore(), spine, audit, {
+    id: () => `${scope}-factor`,
+    secret: () => "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+    now: () => new Date(Date.UTC(2026, 8, 30)).toISOString(),
+    nowMs: () => Date.UTC(2026, 8, 30),
+  });
+  return new ConsoleService(spine, mfa, null, null, null, null, "demo", null, null, null, provider);
+}
+
+/**
+ * The address a sign-in is started from has to be the address it comes back to.
+ *
+ * The sealed attempt is a cookie, and a cookie belongs to a host. Somebody who reaches the
+ * console by its LAN address, its IP or `localhost` and clicks the provider's button was
+ * previously handed to the provider and then returned to the *registered* host, where that
+ * cookie does not exist — a login that refused them for using the address they were given,
+ * with a sentence about the sign-in rather than about the address. The console now hands
+ * them to the one address that works before anything is sealed.
+ */
+test("a sign-in is started on the address the provider returns to, not the one that was typed", async () => {
+  const doors = await doorOnlyConsole("bounce");
+  const typed = { method: "GET", url: "http://192.168.1.21:8787" + CONSOLE_PATHS.upstreamStart, headers: {}, cookies: {} };
+  const bounced = await routeConsole(typed, doors);
+  assert.equal(bounced.status, 303);
+  assert.equal(
+    bounced.headers.location,
+    `https://sentinel.ontrak.innotel.us${CONSOLE_PATHS.upstreamStart}?via=192.168.1.21%3A8787`,
+  );
+  assert.equal(bounced.headers["set-cookie"], undefined, "and nothing is sealed for a host the provider never sees");
+
+  // The bounce carries its own marker, and a request that already has one proceeds. That is
+  // what stops a deployment whose proxy does not pass the public `Host` through from looping
+  // between the two: it starts the flow, and whatever the provider says is the answer.
+  const marked = await routeConsole(
+    consoleRequest("GET", `${CONSOLE_PATHS.upstreamStart}?via=192.168.1.21%3A8787`),
+    doors,
+  );
+  assert.equal(marked.status, 303);
+  assert.match(String(marked.headers.location), /^https:\/\/auth\.cerulean\.innotel\.us\/application\/o\/authorize\//);
+});

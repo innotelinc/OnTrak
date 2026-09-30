@@ -93,6 +93,14 @@ export interface ConsoleEndpoints {
     returnTo: string | null,
     secure: boolean,
   ): Promise<ServiceResult<{ redirectTo: string; cookie: string }>>;
+  /**
+   * The origin the provider returns the browser to, or `null` when none is configured.
+   *
+   * Asked before starting a flow rather than after: the two hosts have to agree for the
+   * sealed attempt to survive the round trip, and when they do not the browser can be sent
+   * to the right one first. Optional, so an endpoints stub in a test stays a stub.
+   */
+  upstreamRedirectOrigin?(): string | null;
   upstreamCallback(input: {
     code: string;
     state: string;
@@ -187,6 +195,9 @@ export interface ConsoleEndpoints {
   removeCredential(sessionId: string, credentialId: string): Promise<ServiceResult<{ removed: number }>>;
   logout(sessionId: string): Promise<ServiceResult<{ revoked: number }>>;
 }
+
+/** The query parameter that marks a request as already bounced to the canonical host. */
+const VIA_PARAM = "via";
 
 const NOT_FOUND: HttpResponse = {
   status: 404,
@@ -740,6 +751,24 @@ async function handleUpstreamStart(
   endpoints: ConsoleEndpoints,
   request: HttpRequest,
 ): Promise<HttpResponse> {
+  // A sign-in started at an address the provider will not return to is a login with a
+  // known-dead ending: the sealed attempt is a cookie on *this* host, and the callback
+  // arrives at the registered one, where that cookie does not exist. Somebody who typed the
+  // LAN address or the IP did nothing wrong and would get "that sign-in could not be
+  // completed" for it. The deployment knows the one address that works, so the browser is
+  // handed there before anything is sealed.
+  //
+  // `via` is what keeps this from becoming a loop: if the bounce lands somewhere that is
+  // still not the canonical host — a proxy that does not pass the public `Host` through —
+  // the flow proceeds and the provider's own answer is the answer.
+  const canonical = endpoints.upstreamRedirectOrigin?.() ?? null;
+  if (canonical && canonical !== url.origin && !url.searchParams.has(VIA_PARAM)) {
+    const bounce = new URL(`${canonical}${url.pathname}`);
+    bounce.search = url.search;
+    bounce.searchParams.set(VIA_PARAM, url.host);
+    return redirect(bounce.toString());
+  }
+
   const result = await endpoints.upstreamStart(url.searchParams.get("returnTo"), requestIsSecure(request));
   if (!result.ok) return failure(result.error);
   return redirect(result.value.redirectTo, { "set-cookie": result.value.cookie });
