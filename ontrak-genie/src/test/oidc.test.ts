@@ -141,9 +141,15 @@ after(async () => {
 /* ------------------------------------------------------------------ helpers */
 
 /** Start a sign-in and return what the provider was asked for. */
-async function startLogin(): Promise<{ state: string; nonce: string; challenge: string; url: URL }> {
+async function startLogin(
+  next?: string,
+): Promise<{ state: string; nonce: string; challenge: string; url: URL }> {
   resetOidcCaches();
-  const response = await fetch(`${base}/api/auth/login`, { redirect: "manual" });
+  const target =
+    next === undefined
+      ? `${base}/api/auth/login`
+      : `${base}/api/auth/login?next=${encodeURIComponent(next)}`;
+  const response = await fetch(target, { redirect: "manual" });
   assert.equal(response.status, 302);
   const location = response.headers.get("location");
   assert.ok(location, "login must redirect");
@@ -209,6 +215,28 @@ test("the whole authorization-code round trip grants a session", async () => {
   const sessionValue = decodeURIComponent(cookie.split(";")[0]?.split("=").slice(1).join("=") ?? "");
   const files = await fetch(`${base}/api/files`, { headers: { Cookie: `ontrak_genie_session=${sessionValue}` } });
   assert.equal(files.status, 200);
+});
+
+test("a sign-in returns to the page it was started from", async () => {
+  const { state } = await startLogin("/workspace?file=notes.md");
+  const callback = await fetch(`${base}/api/auth/callback?code=c&state=${state}`, {
+    redirect: "manual",
+  });
+  assert.equal(callback.status, 302);
+  assert.equal(callback.headers.get("location"), "/workspace?file=notes.md");
+});
+
+test("a next that is not a path on this origin is refused", async () => {
+  // `next` is attacker-reachable: it is whatever sent somebody to the gate. An
+  // absolute URL would make the sign-in an open redirect, and `//host` is an
+  // absolute URL wearing a path's clothes.
+  for (const hostile of ["https://evil.example/steal", "//evil.example/steal"]) {
+    const { state } = await startLogin(hostile);
+    const callback = await fetch(`${base}/api/auth/callback?code=c&state=${state}`, {
+      redirect: "manual",
+    });
+    assert.equal(callback.headers.get("location"), "/", `${hostile} must not be returned to`);
+  }
 });
 
 test("the session reports the identity it was minted for", async () => {

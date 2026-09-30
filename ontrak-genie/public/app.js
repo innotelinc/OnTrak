@@ -162,10 +162,20 @@ function authHint(response, payload) {
  */
 async function signInIfRequired() {
   try {
-    const response = await fetch("/api/auth/status");
+    // The token goes with the question. A deployment can require a shared bearer
+    // *and* sign-in, and asking without it would report a token holder as signed
+    // out — which is a redirect into a gate holding the credential they already
+    // have.
+    const response = await fetch("/api/auth/status", { headers: withAuth() });
     if (!response.ok) return;
     const status = await response.json();
-    if (status.oidc && !status.authenticated) location.replace("/login");
+    if (status.oidc && !status.authenticated) {
+      // The gate takes `next`, so a link into a page inside the console comes
+      // back to it rather than always to the root. Today the console has one
+      // page; the parameter is what makes the second one not a regression.
+      const here = location.pathname + location.search;
+      location.replace(here === "/" ? "/login" : `/login?next=${encodeURIComponent(here)}`);
+    }
   } catch {
     // Unreachable is not this function's problem — the loads below report that
     // the way they always have.

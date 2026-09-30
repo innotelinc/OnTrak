@@ -68,12 +68,20 @@
       (async function () {
         var note = document.getElementById("gate-status");
         var button = document.getElementById("gate-signin");
+        // The page that sent somebody here names itself in `next`. Only a path on
+        // this origin is honoured — an absolute URL would turn the gate into an
+        // open redirect — and the server refuses the rest again on the way through.
+        var wanted = new URLSearchParams(location.search).get("next") || "/";
+        var next = wanted.charAt(0) === "/" && wanted.charAt(1) !== "/" ? wanted : "/";
+        if (next !== "/") {
+          button.setAttribute("href", "/api/auth/login?next=" + encodeURIComponent(next));
+        }
         try {
           var response = await fetch("/api/auth/status");
           if (!response.ok) throw new Error("status " + response.status);
           var status = await response.json();
           if (status.oidc && status.authenticated) {
-            location.replace("/");
+            location.replace(next);
             return;
           }
           if (status.oidc) {
