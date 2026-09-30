@@ -374,6 +374,20 @@ test("authentication", async (t) => {
     assert.equal(response.status, 401);
   });
 
+  await t.test("the health path is public, for the family's status light", async () => {
+    const response = await fetch(`${base}/health`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), { status: "ok", service: "ontrak-genie" });
+
+    // The probe may use HEAD; the same answer with no body.
+    assert.equal((await fetch(`${base}/health`, { method: "HEAD" })).status, 200);
+
+    // A path that merely starts with it is not it — the API gate must still be
+    // the thing that answers `/api/...`.
+    assert.equal((await fetch(`${base}/health/extra`)).status, 404);
+  });
+
   await t.test("the static shell stays public so the token prompt can render", async () => {
     for (const pathname of [
       "/",

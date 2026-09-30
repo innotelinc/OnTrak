@@ -614,6 +614,15 @@ async function handleApi(
 }
 
 /**
+ * The liveness path the family portal probes to draw this product's status light.
+ *
+ * Unauthenticated by design: asking the Network "are you there" must not need a
+ * credential the portal would have to hold, which is why every member of the
+ * family answers on this one path.
+ */
+export const HEALTH_PATH = "/health";
+
+/**
  * Build the HTTP server without binding it.
  *
  * Kept separate from the listener below so a test can start one on an ephemeral
@@ -624,6 +633,19 @@ export function createServer(): http.Server {
     void (async () => {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       try {
+        // Liveness, answered before the API gate: it takes no session, no bearer
+        // and no gateway, so a gateway that is down cannot make the console look
+        // like it is.
+        if (url.pathname === HEALTH_PATH && (req.method === "GET" || req.method === "HEAD")) {
+          const body = JSON.stringify({ status: "ok", service: "ontrak-genie" });
+          res.writeHead(200, {
+            "Content-Type": "application/json; charset=utf-8",
+            "Cache-Control": "no-store",
+            ...(req.method === "HEAD" ? {} : { "Content-Length": Buffer.byteLength(body) }),
+          });
+          res.end(req.method === "HEAD" ? undefined : body);
+          return;
+        }
         if (url.pathname.startsWith("/api/")) {
           if (await handleAuthRoutes(req, res, url)) return;
           if (!isAuthorized(req, url)) throw new HttpError(401, "unauthorized");

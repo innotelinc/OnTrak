@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "copy:check": "node scripts/copy-check.mjs",
     "test": "tsx --tsconfig tests/tsconfig.json --test tests/*.test.ts",
+    "health:check": "tsx scripts/health-check.ts",
     "check": "npm run typecheck && npm run copy:check && npm test"
   },
   "dependencies": {

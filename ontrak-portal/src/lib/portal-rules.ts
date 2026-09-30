@@ -73,7 +73,7 @@ export const PRODUCTS: readonly Product[] = [
     host: "its",
     roles: ["STUDENT", "INSTRUCTOR", "ADMIN"],
     tone: "training",
-    health: "/login",
+    health: "/health",
   },
   {
     key: "tix",
@@ -84,7 +84,7 @@ export const PRODUCTS: readonly Product[] = [
     host: "tix",
     roles: ["TECHNICIAN", "ADMIN", "SYSADMIN"],
     tone: "desk",
-    health: "/",
+    health: "/health",
   },
   {
     key: "sentinel",
@@ -106,7 +106,7 @@ export const PRODUCTS: readonly Product[] = [
     host: "sync",
     roles: ["SYSADMIN", "ADMIN"],
     tone: "operations",
-    health: "/api/health",
+    health: "/health",
   },
   {
     key: "genie",
@@ -119,9 +119,9 @@ export const PRODUCTS: readonly Product[] = [
     // audience in the family rather than the widest.
     roles: ["SYSADMIN", "ADMIN"],
     tone: "agent",
-    // The console's own shell is public by design (it has to render the sign-in
-    // button), so it is the one endpoint this probe can ask without a credential.
-    health: "/",
+    // Every product answers `/health` without a credential; the console is no
+    // exception, and it reports without starting a turn or touching the gateway.
+    health: "/health",
   },
 ];
 
