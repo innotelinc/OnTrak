@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { requireSession } from "@/lib/auth";
 import { readSnapshot, SCENARIO_INCLUDE, secondsRemaining, toDefinition } from "@/lib/scenarios";
 import { LOCALE_COOKIE, resolveLocale } from "@/lib/i18n";
+import { localizeDefinition, localizedObjective } from "@/lib/scenario-i18n";
 import { normalizeFidelity, resolveFidelity, sandboxAvailability, sandboxConfigFromEnv } from "@/lib/sim/fidelity";
 import { AttemptRunner } from "@/components/console/AttemptRunner";
 import { LocaleProvider } from "@/lib/i18n-client";
@@ -34,6 +35,11 @@ export default async function AttemptPage({ params }: { params: Promise<{ id: st
   const store = await cookies();
   const locale = resolveLocale(store.get(LOCALE_COOKIE)?.value);
 
+  // The student's copy of the scenario text (v1.1). The authored definition stays the record:
+  // it already seeded the engine state above, and grading will read it again on submit. This
+  // is the same scenario, read in the reader's language.
+  const localized = localizeDefinition(definition, locale);
+
   // Which machine this attempt runs in (v1.2). Resolved here rather than in the browser,
   // because only the server knows whether a sandbox exists — and a student who is going to
   // get the simulated console anyway should be told before they type, not after.
@@ -55,14 +61,14 @@ export default async function AttemptPage({ params }: { params: Promise<{ id: st
       scenario={{
         id: attempt.scenario.id,
         title: attempt.scenario.title,
-        objective: attempt.scenario.summary || definition.objective,
+        objective: localizedObjective(definition, locale, attempt.scenario.summary),
         platform: attempt.scenario.platform,
         engine: attempt.scenario.engine,
         difficulty: attempt.scenario.difficulty,
         timeLimitSec: attempt.scenario.timeLimitSec,
         passScore: attempt.scenario.passScore,
       }}
-      definition={definition}
+      definition={localized}
       initialState={initialState}
       fidelity={{
         requested,

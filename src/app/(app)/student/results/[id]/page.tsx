@@ -9,7 +9,8 @@ import { certificateViewFor, readStoredCertificate } from "@/lib/certificates";
 import { certificateCode } from "@/lib/credentials";
 import { PageHeader } from "@/components/PageHeader";
 import { cn, formatDateTime, formatDuration } from "@/lib/cn";
-import { getTranslator } from "@/lib/i18n-server";
+import { currentLocale, getTranslator } from "@/lib/i18n-server";
+import { localizeCheckLabel, localizeDefinition } from "@/lib/scenario-i18n";
 
 export const metadata: Metadata = { title: "Attempt report" };
 
@@ -17,6 +18,7 @@ export default async function ResultPage({ params }: { params: Promise<{ id: str
   const { id } = await params;
   const user = await requireSession();
   const t = await getTranslator();
+  const locale = await currentLocale();
 
   const attempt = await prisma.attempt.findUnique({
     where: { id },
@@ -36,6 +38,10 @@ export default async function ResultPage({ params }: { params: Promise<{ id: str
   });
 
   const definition = toDefinition(attempt.scenario);
+  // The authored definition is the record — the hints below are scored from it and a stored
+  // label is what the check was called when it ran. `localized` is the same scenario as this
+  // reader should see it (v1.1).
+  const localized = localizeDefinition(definition, locale);
   const percent = attemptPercent(attempt);
   const passed = percent >= attempt.scenario.passScore;
   const earned = attempt.checkResults.filter((result) => result.passed);
@@ -163,7 +169,9 @@ export default async function ResultPage({ params }: { params: Promise<{ id: str
                     </svg>
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-ink">{result.label}</p>
+                    <p className="text-sm font-semibold text-ink">
+                      {localizeCheckLabel(definition, locale, result.checkId, result.label)}
+                    </p>
                     <p className="mt-0.5 text-sm text-ink-soft">{result.detail}</p>
                   </div>
                   <span className={cn("font-mono text-xs font-semibold", result.passed ? "text-teal" : "text-pink")}>
@@ -282,7 +290,7 @@ export default async function ResultPage({ params }: { params: Promise<{ id: str
         <Card>
           <h3 className="font-display text-sm font-semibold tracking-wide text-ink uppercase">{t("report.objectives")}</h3>
           <ul className="mt-3 space-y-2 text-sm text-ink-soft">
-            {definition.tasks.map((task) => (
+            {localized.tasks.map((task) => (
               <li key={task} className="flex gap-2">
                 <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-brand" />
                 {task}

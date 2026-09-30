@@ -26,6 +26,7 @@ import {
   type Fidelity,
   type SandboxAvailability,
 } from "./sim/fidelity";
+import { overlayCoverage } from "./scenario-i18n";
 import type { EngineId, EngineState, Platform, ScenarioCheck, ScenarioDefinition } from "./sim/types";
 
 export interface ValidationIssue {
@@ -89,6 +90,9 @@ const DEFINITION_ENVELOPE = z.object({
   hints: z.array(HINT).optional(),
   allowHints: z.boolean().optional(),
   authorNotes: z.string().optional(),
+  // Declared here even though the shape is checked by hand below: a key the envelope does not
+  // name is *stripped* by zod, and a stripped overlay is a translation that silently vanishes.
+  i18n: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
 });
 
 /** Every check kind the engine understands, used to catch typos early. */
@@ -248,6 +252,15 @@ export function validateDefinition(raw: unknown, env: Record<string, string | un
         field: "fidelity",
         message: `${sandbox.reason} The scenario saves fine, but it will not be offered to students here.`,
       });
+    }
+  }
+
+  // Scenario translations (v1.1). Nothing here is fatal — an overlay only ever replaces text,
+  // so a wrong one can mislead a reader but cannot change what the grader grades. Each problem
+  // therefore becomes a warning naming the locale, in the same voice the rest of this file uses.
+  for (const coverage of overlayCoverage(definition)) {
+    for (const problem of coverage.problems) {
+      issues.push({ level: "warning", field: `i18n.${coverage.locale}`, message: problem });
     }
   }
 

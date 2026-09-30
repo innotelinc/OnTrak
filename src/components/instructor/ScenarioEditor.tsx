@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { saveScenario } from "@/app/actions/instructor";
 import { CHECK_KINDS, validateDefinition } from "@/lib/validate";
 import { TEMPLATES, serializeDefinition } from "@/lib/templates";
+import { coverageSummary, overlayCoverage } from "@/lib/scenario-i18n";
 import { Badge, Button, Card, Field, Input, Select, Textarea } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { useTranslator } from "@/lib/i18n-client";
@@ -77,6 +78,10 @@ export function ScenarioEditor({
   const result = validation.result;
   const errors = result?.issues.filter((issue) => issue.level === "error") ?? [];
   const warnings = result?.issues.filter((issue) => issue.level === "warning") ?? [];
+  const coverage = useMemo(
+    () => (result?.definition ? overlayCoverage(result.definition) : []),
+    [result],
+  );
 
   function loadTemplate(which: Platform) {
     // Loading a starter replaces the whole definition, so make sure the author
@@ -245,6 +250,14 @@ export function ScenarioEditor({
                   <dd className="font-display text-xl font-semibold text-amber">{warnings.length}</dd>
                 </div>
               </dl>
+            ) : null}
+
+            {/* Scenario translations (v1.1): the overlay is JSON an author edits, so what it
+                actually covers is read back out of it here rather than assumed. */}
+            {coverage.length > 0 ? (
+              <p className="mt-3 font-mono text-[11px] leading-relaxed text-ink-faint">
+                {coverageSummary(coverage)}
+              </p>
             ) : null}
 
             <ul className="mt-4 space-y-2 text-sm">

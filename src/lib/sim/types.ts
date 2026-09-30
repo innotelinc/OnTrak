@@ -408,6 +408,34 @@ export interface ScenarioHint {
   penalty?: number;
 }
 
+/**
+ * A locale tag the app may hold a scenario translation for.
+ *
+ * Deliberately a plain string: everything under `sim/` must stay dependency-free, and the
+ * engine runs in the browser, in the grader and in tests, none of which own a locale list.
+ * `src/lib/scenario-i18n.ts` narrows it against `LOCALES` and reports an unknown tag rather
+ * than ignoring it.
+ */
+export type ScenarioTextLocale = string;
+
+/**
+ * The text a scenario authors, in one locale (v1.1).
+ *
+ * Every field is optional and every field *replaces* the authored string when present. An
+ * overlay cannot add a task, a check or a hint — see `src/lib/scenario-i18n.ts` for why that
+ * is the whole point rather than a limitation.
+ */
+export interface ScenarioTextOverrides {
+  /** Replaces `objective`. */
+  objective?: string;
+  /** Parallel to `tasks`; an index with no entry keeps the authored task. */
+  tasks?: string[];
+  /** Check `id` → the label that check is read by. */
+  checks?: Record<string, string>;
+  /** Hint `id` → the text that hint is read by. */
+  hints?: Record<string, string>;
+}
+
 export interface ScenarioDefinition {
   version: 1;
   platform: Platform;
@@ -455,6 +483,14 @@ export interface ScenarioDefinition {
   docs?: OfficeDoc[];
   checks: ScenarioCheck[];
   hints?: ScenarioHint[];
+  /**
+   * Translations of the authored text, by locale (v1.1).
+   *
+   * This is the one part of a definition that changes only what a reader *sees*: grading, the
+   * console's state and every check read the authored fields above and never this block. See
+   * `src/lib/scenario-i18n.ts`.
+   */
+  i18n?: Record<ScenarioTextLocale, ScenarioTextOverrides>;
   /** Allow hint spending at all. */
   allowHints?: boolean;
   /** Instructor-facing authoring notes; never sent to the student. */

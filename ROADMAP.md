@@ -87,7 +87,7 @@ enterprise readiness.
 The feature set in §2. Exit already met: a class can sign in, run graded
 scenarios on three platforms, and instructors can author, assign and re-grade.
 
-### v1.1 — Content, insight & polish `[~]`
+### v1.1 — Content, insight & polish `[x]`
 **Goal:** more practice, better feedback, a smoother surface.
 
 - `[x]` An analytics dashboard for instructors: per-check pass rates,
@@ -122,7 +122,7 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   rendered alongside the other panels on wide screens and writable on mobile. It
   writes to the same `machine.notes` the command and the grader use, so grading
   and autosave are unchanged.
-- `[~]` Localization groundwork: translator + `en`/`es` dictionaries, a locale
+- `[x]` Localization groundwork: translator + `en`/`es` dictionaries, a locale
   cookie and a shell language switch are in place. The staff and admin surfaces
   are now fully translated through a shared `getTranslator()` server helper
   (with a client `LocaleProvider`/`useTranslator()` for the scenario editor):
@@ -134,8 +134,44 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   deep simulator surfaces are now translated too: the Terminal chrome and
   quick-keys, the Office panels (spreadsheets, documents and the mailbox) and
   the Windows desktop (window chrome, all eight apps, taskbar and start menu).
-  Remaining: the server-generated task/check text, which comes from the
-  scenario definition rather than the UI.
+  The **scenario-authored text** — the one thing that could not live in a
+  dictionary, because it is data rather than copy — now has an overlay of its
+  own (v1.1's last item). A definition may carry `i18n: { <locale>: { objective,
+  tasks, checks, hints } }`, and `src/lib/scenario-i18n.ts` is the single place
+  that applies it. Four decisions carry it, and all four exist so a translation
+  can change what a reader *sees* and nothing else. **An overlay replaces text,
+  never structure**: it cannot add or remove a task, a check or a hint, so a
+  translation cannot make a scenario easier, harder or differently gradeable,
+  and the grader goes on reading the authored `checks`, `tasks` and `hints`
+  exactly as before. **Fallback is per string, not per locale** — a missing
+  translation keeps the authored line, so a half-finished locale reads as a
+  mixture rather than as blank rows a student cannot interpret. **An over-long
+  task list is clamped and reported, not obeyed**, because a seventh task in a
+  six-task scenario would invent a line the grader has no check for. And
+  **checks and hints are keyed by `id`, not by position**, which is what lets a
+  stored evaluation — whose label is the record of what the check was called
+  when it ran — be read back in the reader's language
+  (`localizeCheckLabel`) without the row ever being rewritten. The overlay is
+  applied on the two student-facing surfaces (the attempt console and the
+  attempt report) and nowhere else, deliberately: a staff member looking at a
+  scenario is looking at the thing they author and edit, so they get the
+  authored text. `validateDefinition` keeps the block rather than stripping it
+  (a key the envelope does not name is silently dropped) and reports a stale
+  overlay — an unknown locale, a translated check or hint id the scenario does
+  not have, an over-long task list — as a **warning, never an error**, because a
+  wrong translation misleads a reader but cannot change what is graded; the
+  editor prints the coverage it actually read out of the JSON. Covered by
+  `tests/scenario-i18n.test.ts`, which pairs every "the student reads Spanish"
+  case with the structure it must not have moved, and asserts the authored
+  definition is never mutated.
+  **What is deliberately not here is content.** The ten bundled scenarios still
+  ship English-authored text and an empty overlay: writing Spanish for them is
+  translation work rather than code, and the catalog's own `title`, `summary`
+  and `description` are staff metadata (like a product name) rather than
+  definition text, so a fully translated catalog would need those columns keyed
+  per locale — a later step. What this item owed was the *mechanism*, and a
+  scenario can now be read in a second language without a line of code
+  changing.
 - `[x]` Hardening pass on staff-owned data: attempt viewing, the instructor
   analytics dashboard and re-grading are scoped to the instructor's own
   students, authored scenarios and assignments (administrators still see
@@ -158,9 +194,14 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   by `prisma migrate deploy` in every environment (see CONTRIBUTING.md), so a
   deploy no longer depends on a `db push` having been run by hand at some point.
 - **Exit:** a cohort dashboard renders trends (`[x]`); strings are externalised
-  and a non-English locale ships (`[~]`, in progress); the a11y implementation,
-  the automated axe/keyboard audit (`npm test`) and the browser paint-rule sweep
+  — including the scenario-authored text, which now travels as per-locale
+  overlays in the definition rather than being baked into the single authored
+  string — and a non-English locale ships (`[x]`); the a11y implementation, the
+  automated axe/keyboard audit (`npm test`) and the browser paint-rule sweep
   (`npm run test:a11y`) have all landed and pass (`[x]`).
+  The one bullet above that is not `[x]` is the certificate *cohort packet*,
+  which its own text defers to v1.5: everything v1.1 asked of verifiable
+  completion records has shipped.
 
 ### v1.2 — Real drivers `[x]`
 **Goal:** higher-fidelity practice behind the existing seam.
@@ -375,6 +416,11 @@ flowchart LR
 2. Persist completion records against the attempt and export a proof-of-training
    packet per cohort, so the certificate work already shipped becomes auditable
    (v1.5).
-3. Close out v1.1: the only open item is the scenario-authored task/check text,
-   which lives in the definition rather than the UI.
+3. ~~Close out v1.1: the scenario-authored task/check text, which lives in the
+   definition rather than the UI.~~ **Done** — see the localization bullet above:
+   a definition carries per-locale overlays and `src/lib/scenario-i18n.ts`
+   applies them on the two student-facing surfaces. What remains is *content*
+   rather than product work: the ten bundled scenarios have no Spanish overlay
+   yet, and their catalog titles and summaries are columns rather than
+   definition text.
 4. Decide the LMS/LTI scope — build versus integrate — before starting v1.3.
