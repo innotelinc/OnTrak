@@ -19,6 +19,9 @@
  * belongs to, and it says so in a switch rather than in a comment.
  */
 
+import { buildCompliancePacket, type CompliancePacket } from "./assurance-packet";
+import { assuranceSigner } from "./assurance-sign";
+import { sha256Hex } from "./hash";
 import type { IdentityActor, IdentityService, ServiceResult } from "./identity-service";
 import {
   canManageIdentities,
@@ -656,6 +659,52 @@ export class ConsoleService implements ConsoleEndpoints {
           scopes: roles.length,
         },
       },
+    };
+  }
+
+  /**
+   * The posture as a signed assurance packet (S4).
+   *
+   * Built from the *same* view the page renders, in one call, so the document a reviewer
+   * forwards and the screen they looked at cannot disagree about a control — which is the
+   * failure mode that makes a compliance report worse than none. The anchor is the chain
+   * state at this instant, and it is deliberately `verified: false` rather than absent when
+   * the actor may not read the trail: a packet that quietly dropped the anchor would be a
+   * packet asserting more than the exporter could see.
+   *
+   * The signature key is read here rather than injected through the constructor, because a
+   * deployment without one should get a readable refusal from the route instead of an
+   * export that silently produces an unsigned-looking document.
+   */
+  async compliancePacket(sessionId: string): Promise<ServiceResult<CompliancePacket>> {
+    const view = await this.compliance(sessionId);
+    if (!view.ok) return view;
+
+    let sign;
+    try {
+      sign = assuranceSigner();
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+
+    const chain = view.value.chain;
+    return {
+      ok: true,
+      value: buildCompliancePacket(
+        {
+          generatedAt: view.value.generatedAt,
+          organization: view.value.actor.organizationName,
+          generatedBy: view.value.actor.identifier,
+          view: view.value,
+          audit: {
+            verified: chain !== null && chain.ok,
+            length: chain?.length ?? 0,
+            detail: chain?.detail ?? "Your role may not read the evidence trail, so this packet asserts no anchor.",
+          },
+        },
+        sha256Hex,
+        sign,
+      ),
     };
   }
 

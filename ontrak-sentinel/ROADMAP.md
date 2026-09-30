@@ -559,8 +559,33 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
   effective policy, `triageSummary` for the backlog, `auditTrail` for the chain — so
   the report cannot describe a control the login path does not apply, and it says
   `WARN` or `FAIL` where a control is not in force instead of a tick with a footnote.
-  What is **not** here: an export (PDF, CSV or a signed packet), retention windows,
-  control *history* over time, and any S4 enforcement action at all.
+  - `[x]` **The export, in the family's shared packet format**
+    (`assurance-packet.ts`, `assurance-sign.ts`, `ConsoleService.compliancePacket`,
+    `GET /console/compliance/packet`, and the download offered on the page itself):
+    the roadmap's own next step was to *define the shared assurance-packet format with
+    OnTrak Tix before either ships exports*, and this is Sentinel's half of that
+    agreement. The envelope is Tix's and deliberately not a Sentinel dialect — the same
+    `version` (`1.0`), the same `HMAC-SHA256`, the same three hashes with the same
+    division of labour: a `recordHash` over the posture alone (so an archived packet and
+    a fresh one are comparable however much time has passed), a `contentHash` over the
+    record *and* the evidence anchor (because "where in history was this cut?" is part
+    of the assertion), and a `signature` over the content digest (so nothing, anchor
+    included, can be edited without the key). It carries the same rows the page
+    renders, because it is built from the same view in one call — a document and a
+    screen that could disagree about a control would make the export worse than nothing.
+    Verification needs the packet's bytes and the key and nothing else: no session, no
+    database, no `Prisma`, which is what lets somebody who has never seen this
+    deployment check a forwarded file. The key is `SENTINEL_ASSURANCE_SECRET`, falling
+    back to the IdP's own signing key so a deployment that has an identity provider can
+    export without being told about a second variable first. Covered by
+    `tests/sentinel-assurance-packet.test.ts` (13 checks: the format asserted as
+    literals so a drift breaks a test rather than the agreement, an edited control, a
+    moved anchor, a re-signed forgery refused by anyone without the key, and the
+    page's own affordance).
+  - What is **not** here: retention windows, control *history* over time, a CSV or
+    PDF rendering for readers who will not take JSON, and any S4 enforcement action at
+    all — the first three because the packet is the artefact the family agreed on, and
+    the last because it is the rest of S4.
 - Policy-gated enforcement actions (block, quarantine, rate-limit) with
   approvals, safe-lists for critical infrastructure, and one-click rollback.
 - Reversible-by-default, rate-limited, blast-radius caps; every action audited.
@@ -653,5 +678,10 @@ logins with no notion of behaviour. Together they produce signals neither can:
    kill; the sixth migration). What remains of S2 is the connector side — a
    Graph/LDAP reader that pushes through the SCIM API — and access reviews.
 4. Build the telemetry normalizer and one detection rule end to end (S3 spike).
-5. Define the shared assurance-packet format with OnTrak Tix before either ships
-   exports, so both are compatible from the start.
+5. ~~Define the shared assurance-packet format with OnTrak Tix before either ships
+   exports, so both are compatible from the start.~~ **Done on Sentinel's side**
+   (`assurance-packet.ts`, S4 below): the envelope *is* Tix's — same `version`, same
+   `HMAC-SHA256`, same `recordHash`/`contentHash`/`signature` discipline — and the test
+   asserts the format as literals, so the day one product changes its envelope the two
+   disagree in CI rather than in an auditor's hands. What that leaves is the other half
+   of the shared work: one verification tool both packets can be handed to.

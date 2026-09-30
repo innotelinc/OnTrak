@@ -54,6 +54,7 @@ import {
   type ConsoleSignInView,
   type ConsoleSyncReportView,
 } from "./console-rules";
+import type { CompliancePacket } from "./assurance-packet";
 import type { SignInInput } from "./sign-in-rules";
 import type { WebAuthnRegistrationResponse } from "./webauthn-rules";
 import type { WebAuthnRegistrationOptions } from "./webauthn-service";
@@ -130,6 +131,13 @@ export interface ConsoleEndpoints {
   closeAlert(sessionId: string, alertId: string, note: string): Promise<ServiceResult<{ ruleName: string }>>;
   /** The compliance posture summary (S4). Read-only: it writes nothing and grants nothing. */
   compliance(sessionId: string): Promise<ServiceResult<ConsoleComplianceView>>;
+  /**
+   * The posture as a signed assurance packet, in the family's shared format (S4).
+   *
+   * Read-only like the page it is built from, and built *from* it: the packet carries
+   * the same rows, so the document and the screen cannot disagree about a control.
+   */
+  compliancePacket(sessionId: string): Promise<ServiceResult<CompliancePacket>>;
   /** The session policies the organization has, one card per scope. */
   policies(sessionId: string): Promise<ServiceResult<ConsolePoliciesView>>;
   /** Write the baseline or one role's override; the scope is echoed for the flash. */
@@ -173,10 +181,14 @@ function html(status: number, body: string): HttpResponse {
   return { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }, body };
 }
 
-function json(status: number, value: unknown): HttpResponse {
+function json(status: number, value: unknown, headers: Record<string, string> = {}): HttpResponse {
   return {
     status,
-    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      ...headers,
+    },
     body: JSON.stringify(value),
   };
 }
@@ -475,6 +487,22 @@ async function handleCompliancePage(url: URL, sessionId: string, endpoints: Cons
   return respond(result, (view) => html(200, renderCompliance(view, flashFrom(url), errorFrom(url))));
 }
 
+/**
+ * The signed compliance packet (S4), as a file.
+ *
+ * Served as a download rather than rendered, because the artefact's whole purpose is to
+ * leave this system: it is what gets attached to an audit response or an insurance
+ * renewal, and it is verifiable by whoever receives it without an account here.
+ */
+async function handleCompliancePacket(sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const result = await endpoints.compliancePacket(sessionId);
+  return respond(result, (packet) =>
+    json(200, packet, {
+      "content-disposition": `attachment; filename="sentinel-compliance-${packet.generatedAt.replace(/[:.]/g, "-")}.json"`,
+    }),
+  );
+}
+
 async function handlePoliciesPage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
   const result = await endpoints.policies(sessionId);
   return respond(result, (view) => html(200, renderPolicies(view, flashFrom(url), errorFrom(url))));
@@ -750,6 +778,8 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
       return post(() => handleCloseAlert(request, sessionId, endpoints));
     case CONSOLE_PATHS.compliance:
       return get(() => handleCompliancePage(url, sessionId, endpoints));
+    case CONSOLE_PATHS.compliancePacket:
+      return get(() => handleCompliancePacket(sessionId, endpoints));
     case CONSOLE_PATHS.mfa:
       return get(() => handleMfaPage(url, sessionId, endpoints));
     case CONSOLE_PATHS.totpBegin:

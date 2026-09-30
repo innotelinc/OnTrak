@@ -96,6 +96,14 @@ export const CONSOLE_PATHS = {
    * rows the product enforces, rather than typed into a report.
    */
   compliance: "/console/compliance",
+  /**
+   * The same posture, as a signed file (S4).
+   *
+   * A separate path from the page because it answers with a document rather than a
+   * screen: the point of it is to leave this system and be verifiable by somebody who
+   * has no account here — which is what the family's shared packet format is for.
+   */
+  compliancePacket: "/console/compliance/packet",
   provisioning: "/console/provisioning",
   mintToken: "/console/provisioning/token",
   revokeToken: "/console/provisioning/token/revoke",
@@ -1423,6 +1431,12 @@ export function renderCompliance(view: ConsoleComplianceView, flash?: string | n
     alertSummary +
     `<h2>Evidence integrity</h2>` +
     chain +
+    `<h2>Take it with you</h2>` +
+    `<div class="card"><p><a href="${CONSOLE_PATHS.compliancePacket}" download>Download this posture as a signed packet</a></p>` +
+    `<p class="muted">The file carries the controls, the coverage and the evidence anchor above, with a ` +
+    `fingerprint of the posture and a signature over the whole document. It verifies with the deployment's ` +
+    `key and nothing else — no account here, no session, no database — which is what makes it usable as ` +
+    `evidence rather than as a screenshot. Its format is the one OnTrak Tix's incident packets use.</p></div>` +
     `<p class="muted">Generated ${escapeHtml(view.generatedAt)}. Every figure above is read from the same rows the ` +
     `product enforces: no control is reported as satisfied because a setting exists somewhere else.</p>`;
 
