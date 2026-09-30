@@ -615,7 +615,15 @@ const TOGGLE_SCRIPT =
   `window.addEventListener('ontrak:theme',paint);paint();` +
   `})();</script>`;
 
-/** A refusal, as a page rather than a stack trace. */
+/**
+ * A refusal, as a page rather than a stack trace.
+ *
+ * The paragraph below is the one place the console explains how it is reached, and it
+ * exists because of a real confusion: an operator who reached `/console` without a live
+ * cookie read "the console is reached with a browser session" as "you came in by the
+ * wrong door". It has to say the opposite — that this page is the door, and that the way
+ * through it is an email address, a password and an authenticator code.
+ */
 export function consoleErrorPage(message: string, status: number): { status: number; html: string } {
   return {
     status,
@@ -624,8 +632,13 @@ export function consoleErrorPage(message: string, status: number): { status: num
       actor: null,
       body:
         `<p class="error" role="alert">${escapeHtml(message)}</p>` +
-        `<p class="muted">The console is reached with a browser session (the <code>${CONSOLE_SESSION_COOKIE}</code> cookie). ` +
-        `An expired or revoked session is ordinary — signing in again is the fix.</p>` +
+        `<p class="muted">You are signed in to this console with the <code>${CONSOLE_SESSION_COOKIE}</code> cookie, ` +
+        `and it is no longer valid. Sentinel <em>is</em> the Network's identity provider, so there is no single ` +
+        `sign-on screen in front of this one: signing in means the email address, the password and the ` +
+        `authenticator code enrolled on the account.</p>` +
+        `<p class="muted">Sessions expire on their own, and an administrator can revoke one. When either happens ` +
+        `you land on this page — open the sign-in page in a browser and sign in again. That is the whole fix, and ` +
+        `nothing about the account has changed.</p>` +
         `<p><a href="${CONSOLE_PATHS.signIn}">Sign in to the console</a> · ` +
         `<a href="${CONSOLE_PATHS.home}">Back to the console</a></p>`,
       error: null,
