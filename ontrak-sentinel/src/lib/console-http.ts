@@ -36,6 +36,7 @@ import {
   consoleSignedOutPage,
   renderAlerts,
   renderCompliance,
+  renderCoverage,
   renderDirectory,
   renderIntel,
   renderMfa,
@@ -46,6 +47,7 @@ import {
   renderSignIn,
   type ConsoleAlertsView,
   type ConsoleComplianceView,
+  type ConsoleCoverageView,
   type ConsoleDirectoryView,
   type ConsoleIntelView,
   type ConsoleMfaView,
@@ -183,6 +185,11 @@ export interface ConsoleEndpoints {
   closeAlert(sessionId: string, alertId: string, note: string): Promise<ServiceResult<{ ruleName: string }>>;
   /** The compliance posture summary (S4). Read-only: it writes nothing and grants nothing. */
   compliance(sessionId: string): Promise<ServiceResult<ConsoleComplianceView>>;
+  /**
+   * The detection-coverage map (S3). Read-only, and derived from the rulebook rather than
+   * from a store: it reports what detection reads, gaps included.
+   */
+  coverage(sessionId: string): Promise<ServiceResult<ConsoleCoverageView>>;
   /**
    * The posture as a signed assurance packet, in the family's shared format (S4).
    *
@@ -677,6 +684,11 @@ async function handleCompliancePage(url: URL, sessionId: string, endpoints: Cons
   return respond(result, (view) => html(200, renderCompliance(view, flashFrom(url), errorFrom(url))));
 }
 
+async function handleCoveragePage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const result = await endpoints.coverage(sessionId);
+  return respond(result, (view) => html(200, renderCoverage(view, flashFrom(url), errorFrom(url))));
+}
+
 /**
  * The signed compliance packet (S4), as a file.
  *
@@ -1053,6 +1065,8 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
       return post(() => handleAcknowledgeAlert(request, sessionId, endpoints));
     case CONSOLE_PATHS.alertClose:
       return post(() => handleCloseAlert(request, sessionId, endpoints));
+    case CONSOLE_PATHS.coverage:
+      return get(() => handleCoveragePage(url, sessionId, endpoints));
     case CONSOLE_PATHS.compliance:
       return get(() => handleCompliancePage(url, sessionId, endpoints));
     case CONSOLE_PATHS.compliancePacket:

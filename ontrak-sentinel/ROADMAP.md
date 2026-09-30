@@ -570,9 +570,15 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
   alert backlog and the chain's verification result, from the same rows the product
   enforces; it is read-only and reports an absence as an absence rather than as a
   tick. Covered by `tests/sentinel-alert-triage.test.ts` and, for the operator's
-  side, `docs/alert-triage.md`. **The coverage map is not started**, and neither are
-  suppression, assignment or notification: one alert is acted on at a time, by
-  whoever gets there first, and nothing is sent anywhere when a CRITICAL is raised.
+  side, `docs/alert-triage.md`. **The coverage map is built**
+  (`detection-coverage-rules.ts`, `/console/coverage`, covered by
+  `tests/sentinel-detection-coverage.test.ts`): derived from the rulebook the build runs,
+  it reports which declared kinds and sources a rule reads and which none does — gaps
+  first, because they are the answer — so a source being *declared* is never mistaken for
+  a source being *watched*. It reports what the rules read, not what arrives: every source
+  is still declared vocabulary rather than a running collector, and the page says so. What
+  is still not here is suppression, assignment and notification: one alert is acted on at a
+  time, by whoever gets there first, and nothing is sent anywhere when a CRITICAL is raised.
 
   The join is only as good as the address a session carries, and today none do:
   `issueSession` records the address its caller supplies, and the only caller in this

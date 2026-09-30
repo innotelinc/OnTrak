@@ -138,13 +138,26 @@ function normalizeEpoch(value: number): number {
   return value < 1e12 ? Math.round(value * 1000) : Math.round(value);
 }
 
-function kindOf(record: Record<string, unknown>, source: TelemetrySource): TelemetryKind {
-  const stated = (pick(record, ["kind", "source_kind", "type"]) ?? "").toUpperCase();
-  if ((TELEMETRY_KINDS as readonly string[]).includes(stated)) return stated as TelemetryKind;
+/**
+ * The kind a source's events are filed under when the payload states none.
+ *
+ * Exported because the coverage map has to give the same answer this does: a page that
+ * judged source coverage by its own reading of "what kind is a NetFlow record?" would be
+ * a second opinion about the normalizer, and the two would drift. `AUTH` is never a
+ * default — it is a kind a payload claims (`kind: AUTH`), not one a source implies — which
+ * is why an authentication source has to say so rather than be assumed from its name.
+ */
+export function defaultKindForSource(source: TelemetrySource): TelemetryKind {
   if (source === "NETFLOW" || source === "IPFIX" || source === "FIREWALL") return "NETWORK";
   if (source === "EBPF" || source === "EDR") return "HOST";
   if (source === "PROXY") return "HTTP";
   return "NETWORK";
+}
+
+function kindOf(record: Record<string, unknown>, source: TelemetrySource): TelemetryKind {
+  const stated = (pick(record, ["kind", "source_kind", "type"]) ?? "").toUpperCase();
+  if ((TELEMETRY_KINDS as readonly string[]).includes(stated)) return stated as TelemetryKind;
+  return defaultKindForSource(source);
 }
 
 function directionOf(value: unknown): TrafficDirection | null {

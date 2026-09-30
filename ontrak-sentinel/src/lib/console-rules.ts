@@ -44,6 +44,9 @@ import type { Severity } from "./detection-rules";
 // which a match annotates rather than escalates. Both are named here rather than retyped, so
 // the page cannot promise something the matcher does not do.
 import { CONFIDENCE_FLOOR, INDICATOR_KINDS } from "./threat-intel-rules";
+// The coverage map's shape, read from the module that derives it: the page renders what the
+// rulebook says, never a list kept beside it, so it cannot claim detection nothing performs.
+import type { CoverageReport } from "./detection-coverage-rules";
 import { UPSTREAM_PATHS } from "./upstream-rules";
 
 /* -------------------------------------------------------------------------- */
@@ -104,6 +107,15 @@ export const CONSOLE_PATHS = {
   intel: "/console/intel",
   intelIngest: "/console/intel/feed",
   intelWithdraw: "/console/intel/indicator/withdraw",
+  /**
+   * The detection-coverage map (S3): what the rulebook reads, and what it does not.
+   *
+   * Read-only, and its subject is the *gaps*: the sources and kinds this build declares
+   * but no rule looks at. It derives every figure from the rules the pipeline runs, so the
+   * page cannot promise coverage the deployment does not have — which is the failure a
+   * coverage map exists to prevent, not to commit.
+   */
+  coverage: "/console/coverage",
   /**
    * The Guard queue (S4): what detection raised, narrowed to what is still open.
    *
@@ -495,6 +507,23 @@ export interface ConsoleIntelView {
   report: ConsoleFeedReportView | null;
 }
 
+/**
+ * The detection-coverage map (S3): which declared kinds and sources the rulebook reads, and
+ * which it does not.
+ *
+ * Read-only, and derived from the rules the deployment runs rather than from a list kept
+ * beside them, so the page cannot claim detection the pipeline does not perform. `gaps` is
+ * the reason it exists: a coverage map that only listed what is covered would answer the
+ * opposite of the question somebody brought to it.
+ */
+export interface ConsoleCoverageView {
+  actor: ConsoleActor;
+  session: ConsoleSessionView;
+  /** The map, built from the rulebook this build ships. */
+  report: CoverageReport;
+  generatedAt: string;
+}
+
 export interface ConsolePoliciesView {
   actor: ConsoleActor;
   session: ConsoleSessionView;
@@ -631,6 +660,7 @@ export function consolePage(input: ConsolePageInput): string {
       `<a href="${CONSOLE_PATHS.directory}">Directories</a>` +
       `<a href="${CONSOLE_PATHS.reviews}">Access reviews</a>` +
       `<a href="${CONSOLE_PATHS.intel}">Threat intel</a>` +
+      `<a href="${CONSOLE_PATHS.coverage}">Coverage</a>` +
       `<a href="${CONSOLE_PATHS.provisioning}">Provisioning</a>` +
       `<a href="${CONSOLE_PATHS.compliance}">Compliance</a>` +
       `</nav>`
@@ -1733,6 +1763,93 @@ export function renderCompliance(view: ConsoleComplianceView, flash?: string | n
     `product enforces: no control is reported as satisfied because a setting exists somewhere else.</p>`;
 
   return consolePage({ title: "Compliance", actor: view.actor, body, flash, error });
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Coverage                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The detection-coverage map (S3).
+ *
+ * The gaps come first because they are the answer: everything below them exists so a reader
+ * can see *why* a name is in the gap list, and so an operator can tell "no rule reads this"
+ * from "a rule reads it but is quiet". Nothing here is written by hand — the rulebook is the
+ * input — which is what lets the page be trusted as a statement about the running build.
+ */
+export function renderCoverage(view: ConsoleCoverageView, flash?: string | null, error?: string | null): string {
+  const report = view.report;
+
+  const kindRows = report.kinds
+    .map(
+      (entry) =>
+        `<tr><td>${escapeHtml(entry.kind)}</td>` +
+        `<td class="${entry.covered ? "control-ok" : "control-fail"}">${entry.covered ? "read" : "nothing reads it"}</td>` +
+        `<td class="muted">${entry.rules.length ? entry.rules.map((id) => escapeHtml(id)).join(", ") : "—"}</td></tr>`,
+    )
+    .join("");
+
+  const sourceRows = report.sources
+    .map(
+      (entry) =>
+        `<tr><td>${escapeHtml(entry.source)}</td><td class="muted">${escapeHtml(entry.kind)}</td>` +
+        `<td class="${entry.covered ? "control-ok" : "control-fail"}">${entry.covered ? "read" : "blind"}</td>` +
+        `<td class="muted">${entry.rules.length ? entry.rules.map((id) => escapeHtml(id)).join(", ") : "—"}</td></tr>`,
+    )
+    .join("");
+
+  const ruleRows = report.rules
+    .map(
+      (rule) =>
+        `<tr><td>${escapeHtml(rule.id)} <span class="muted">v${escapeHtml(rule.version)}</span></td>` +
+        `<td>${escapeHtml(rule.name)}</td>` +
+        `<td class="sev sev-${rule.severity.toLowerCase()}">${escapeHtml(rule.severity)}</td>` +
+        `<td class="muted">${escapeHtml(rule.shape)}</td>` +
+        `<td class="muted">${(rule.kinds.length ? rule.kinds : ["any kind"]).map((value) => escapeHtml(value)).join(", ")}` +
+        `${rule.sources.length ? ` · ${rule.sources.map((value) => escapeHtml(value)).join(", ")}` : ""}</td></tr>`,
+    )
+    .join("");
+
+  const gaps = report.gaps.length
+    ? `<div class="card"><ul>${report.gaps
+        .map(
+          (gap) =>
+            `<li><strong>${escapeHtml(gap.name)}</strong> <span class="muted">(${escapeHtml(gap.what)})</span> — ` +
+            `${escapeHtml(gap.detail)}</li>`,
+        )
+        .join("")}</ul></div>`
+    : `<p class="flash">Every declared kind and source is read by at least one rule.</p>`;
+
+  const unreachable = report.unreachable.length
+    ? `<h2>Rules that read nothing</h2>` +
+      `<div class="card"><p class="muted">A rule that names a kind or source this build does not have would ` +
+      `never see an event; it is listed here rather than left to look like coverage.</p><ul>${report.unreachable
+        .map((entry) => `<li><strong>${escapeHtml(entry.id)}</strong> — ${escapeHtml(entry.detail)}</li>`)
+        .join("")}</ul></div>`
+    : "";
+
+  const body =
+    `<p class="muted">This is what detection <em>actually reads</em>, derived from the rules this deployment runs ` +
+    `rather than from the sources it can accept. A source is “read” when a rule would look at an event from it — not ` +
+    `because a collector is posting, and not because the name exists.</p>` +
+    `<h2>Blind spots</h2>` +
+    gaps +
+    `<h2>By kind</h2>` +
+    `<div class="card"><table><thead><tr><th>Kind</th><th></th><th>Rules</th></tr></thead><tbody>${kindRows}</tbody></table>` +
+    `<p class="muted">The kind is the normalizer's, not the sender's: an event is filed by the kind its payload ` +
+    `states, falling back to the kind its source implies. AUTH is never implied — a payload has to claim it.</p></div>` +
+    `<h2>By source</h2>` +
+    `<div class="card"><table><thead><tr><th>Source</th><th>Kind</th><th></th><th>Rules</th></tr></thead><tbody>${sourceRows}</tbody></table>` +
+    `<p class="muted">Every source here is declared vocabulary. The ingest surface accepts a batch a collector posts ` +
+    `(<code>POST /guard/v1/events</code>); no source has a streaming listener yet, so “read” is a statement about ` +
+    `the rules, not about a feed being live.</p></div>` +
+    unreachable +
+    `<h2>The rulebook</h2>` +
+    `<div class="card"><table><thead><tr><th>Rule</th><th>Name</th><th>Severity</th><th>Shape</th><th>Reads</th></tr></thead><tbody>${ruleRows}</tbody></table></div>` +
+    `<p class="muted">Generated ${escapeHtml(view.generatedAt)} from the ${escapeHtml(report.rules.length)} rule(s) ` +
+    `in this build. Adding a rule adds it here; nothing on this page is maintained by hand.</p>`;
+
+  return consolePage({ title: "Coverage", actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */

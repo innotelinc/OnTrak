@@ -50,6 +50,7 @@ import {
   waitingMinutes,
   type TriageFilter,
 } from "./alert-triage-rules";
+import { coverageReport } from "./detection-coverage-rules";
 import type { AlertRecord, DetectionService } from "./detection-service";
 import type { MfaService, MfaStatus } from "./mfa-service";
 import type { OidcStore } from "./oidc-service";
@@ -63,6 +64,7 @@ import type {
   ConsoleAlertsView,
   ConsoleAlertView,
   ConsoleComplianceView,
+  ConsoleCoverageView,
   ConsoleSignInView,
   ConsoleActor,
   ConsoleConnectionView,
@@ -929,6 +931,35 @@ export class ConsoleService implements ConsoleEndpoints {
           baselineStored: baseline !== null,
           scopes: roles.length,
         },
+      },
+    };
+  }
+
+  /* --------------------------------------------------------------- coverage */
+
+  /**
+   * The detection-coverage map (S3): which declared kinds and sources the rulebook reads,
+   * and which it does not.
+   *
+   * Read-only, and computed from the rules this build runs rather than from anything stored,
+   * so it cannot report coverage the pipeline does not perform. It needs no detection
+   * service: the map is a statement about the rulebook, which exists whether or not a
+   * deployment wired the pipeline up.
+   */
+  async coverage(sessionId: string): Promise<ServiceResult<ConsoleCoverageView>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+
+    const session = await this.spine.resolveOwnSession(context.value.sessionId);
+    if (!session.ok) return session;
+
+    return {
+      ok: true,
+      value: {
+        actor: consoleActor(await this.organizationName(context.value), session.value.identity),
+        session: sessionView(session.value.session),
+        report: coverageReport(),
+        generatedAt: new Date().toISOString(),
       },
     };
   }
