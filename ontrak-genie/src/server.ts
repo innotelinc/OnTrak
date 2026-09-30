@@ -117,6 +117,11 @@ const STATIC_FILES: Record<string, { file: string; type: string }> = {
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
   "/highlight.js": { file: "highlight.js", type: "text/javascript; charset=utf-8" },
   "/style.css": { file: "style.css", type: "text/css; charset=utf-8" },
+  // The family theme, served inline rather than bundled: this app has no bundler, and
+  // both files are byte-identical copies of `theme/unity-theme.{css,js}` checked by
+  // `theme/tests/test_theme_copies.py`.
+  "/unity-theme.css": { file: "unity-theme.css", type: "text/css; charset=utf-8" },
+  "/unity-theme.js": { file: "unity-theme.js", type: "text/javascript; charset=utf-8" },
 };
 
 async function serveStatic(res: http.ServerResponse, pathname: string): Promise<boolean> {

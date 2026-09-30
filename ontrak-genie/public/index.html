@@ -1,10 +1,22 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-scheme="operations">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
     <title>Coding Agent</title>
+    <!--
+      The family theme (Unity). Genie is a CodeOps console, so its house scheme is the
+      operations one and a person can still switch light/dark/system.
+
+      `unity-theme.js` is a *blocking* script on purpose: it has to run before the
+      first paint so that <html> already carries the remembered mode. Deferred, the
+      page would paint the default palette and then correct itself, which reads as a
+      flicker. Both files are byte-identical copies of the canonical theme.
+    -->
+    <link rel="stylesheet" href="/unity-theme.css" />
+    <script>window.UNITY_DEFAULT_SCHEME = "operations";</script>
+    <script src="/unity-theme.js"></script>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
@@ -42,6 +54,13 @@
             <span id="offline-label" class="muted">checking offline fallback...</span>
           </div>
           <div id="workspace-label" class="muted mono"></div>
+          <div class="theme-row">
+            <div class="ot-theme" role="group" aria-label="Colour theme">
+              <button type="button" data-theme-mode="system">System</button>
+              <button type="button" data-theme-mode="light">Light</button>
+              <button type="button" data-theme-mode="dark">Dark</button>
+            </div>
+          </div>
         </div>
       </aside>
 
@@ -260,6 +279,33 @@
 
     <div id="live" class="sr-only" role="status" aria-live="polite"></div>
 
+    <script>
+      /*
+       * The theme switch, wired to the shared script in the head. The buttons report
+       * the document's state rather than the click that asked for the change, so this
+       * control cannot end up showing a preference other than the one in force — which
+       * is what keeps it honest if the preference is changed from another tab.
+       */
+      (function () {
+        var api = window.UnityTheme || window.OntrakTheme;
+        if (!api) return;
+        function paint() {
+          var now = api.mode();
+          var all = document.querySelectorAll("[data-theme-mode]");
+          for (var i = 0; i < all.length; i++) {
+            all[i].setAttribute("aria-pressed", String(all[i].getAttribute("data-theme-mode") === now));
+          }
+        }
+        var buttons = document.querySelectorAll("[data-theme-mode]");
+        for (var i = 0; i < buttons.length; i++) {
+          buttons[i].addEventListener("click", function () {
+            api.setMode(this.getAttribute("data-theme-mode"));
+          });
+        }
+        window.addEventListener("unity:theme", paint);
+        paint();
+      })();
+    </script>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

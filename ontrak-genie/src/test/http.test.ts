@@ -375,7 +375,7 @@ test("authentication", async (t) => {
   });
 
   await t.test("the static shell stays public so the token prompt can render", async () => {
-    for (const pathname of ["/", "/app.js", "/style.css"]) {
+    for (const pathname of ["/", "/app.js", "/style.css", "/unity-theme.css", "/unity-theme.js"]) {
       const response = await fetch(`${base}${pathname}`);
       assert.equal(response.status, 200, `${pathname} should be served`);
     }

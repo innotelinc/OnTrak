@@ -56,6 +56,9 @@ APPS = (
     ("ontrak-sentinel/src/theme", ("unity-theme.css",)),
     ("ontrak-sync/web/public", ("unity-theme.js",)),
     ("ontrak-sync/web/app/theme", ("unity-theme.css",)),
+    # Genie has no bundler: both files are served as static assets out of `public/`
+    # (see STATIC_FILES in ontrak-genie/src/server.ts), so both live there.
+    ("ontrak-genie/public", ("unity-theme.css", "unity-theme.js")),
     ("public", ("unity-theme.js",)),          # the training range at the root
     ("src/theme", ("unity-theme.css",)),
 )
