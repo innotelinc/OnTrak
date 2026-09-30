@@ -52,17 +52,16 @@ this, what can they reach, and what have they done"* in one place.
 
 ## Status
 
-**S0 and S1 complete; S2 complete but for the access-review console page; S3
-started.** The identity spine exists, persists, and
+**S0, S1 and S2 complete; S3 started.** The identity spine exists, persists, and
 issues identity; a directory can provision into it and it can read one; access
 reviews ask the question provisioning cannot — should these people still have
-this access? — with recurring attestation off until a deployment asks for it; the
+this access? — on a console page of their own, with recurring attestation off
+until a deployment asks for it; the
 first Guard slice turns telemetry into an alert that names a person; a feed of
 indicators now raises how that alert is judged; and the console works the queue
 that produces, with a posture summary beside it. What is *not* here is still
 stated: a synced group decides nothing yet (roles and groups as policy is S1's
-last bullet), an access review is driven through its service and the scheduler
-rather than a console page of its own, Guard has no streaming listener, no
+last bullet), Guard has no streaming listener, no
 detection-coverage map and no STIX/TAXII feed transport, and rule rotation and
 signing-key provisioning are open. The identity spine:
 
@@ -247,7 +246,11 @@ disagreement. Matching is by the directory's own id first, so a rename is a move
   downtime does not come back as thirty reviews that bury the one that matters.
   Closed reviews are evidence, not work — cancelling keeps the list of what was
   asked, and closing with items unattested is allowed and records how many were
-  never looked at. Covered by `tests/sentinel-access-review.test.ts`.
+  never looked at. The console page at `/console/reviews` is the register, one
+  review's list, and the forms that open the next review and schedule one; a
+  reviewer who does not administer the register reaches only the review they were
+  named on, and the register itself stays administrators' work. Covered by
+  `tests/sentinel-access-review.test.ts`.
 - `src/lib/telemetry-rules.ts` + `detection-rules.ts` + `detection-service.ts` +
   `guard-service.ts` + `guard-http.ts` (S3) — **the first Guard slice**. A
   source-neutral `ObservedEvent` (kind, addresses, ports, direction, protocol,
@@ -683,6 +686,7 @@ and one named as its own predecessor — are refused at startup rather than publ
 ambiguously. `tests/sentinel-key-rotation.test.ts` drives the whole thing, including
 a token issued before the rotation verifying after it.
 
-What remains on the identity side is the lifecycle work — access reviews and
-scheduled attestation — and then the detection and prevention halves of Sentinel
-Guard; see [ROADMAP.md](./ROADMAP.md).
+The identity side is complete through S2 — provisioning, deprovisioning, directory
+sync, access reviews and scheduled attestation, all reachable from the console.
+What remains is the detection and prevention halves of Sentinel Guard; see
+[ROADMAP.md](./ROADMAP.md).

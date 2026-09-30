@@ -116,6 +116,12 @@ export interface AccessReviewView {
   items: AccessReviewItemView[];
 }
 
+/** A group a `GROUP` scope can name, as a picker needs it: an id and a label. */
+export interface AccessReviewGroupRecord {
+  id: string;
+  name: string;
+}
+
 /** What the scheduler did on one tick. */
 export interface AccessReviewTickReport {
   opened: { scheduleId: string; reviewId: string; missed: number }[];
@@ -155,6 +161,13 @@ export interface AccessReviewStore {
    * act and the review should not depend on the connector being configured.
    */
   listGroupMemberIds(organizationId: string, groupId: string): Promise<string[]>;
+
+  /**
+   * The groups this organization has, for a picker. A `GROUP` scope is named by an id,
+   * and asking an operator to type one is asking them to get it wrong silently — the
+   * review would then open empty, which `open` refuses with no hint about the cause.
+   */
+  listGroups(organizationId: string): Promise<AccessReviewGroupRecord[]>;
 }
 
 export interface AccessReviewIds {
@@ -478,6 +491,19 @@ export class AccessReviewService {
     return { ok: true, value: await this.store.listSchedules(actor.organizationId) };
   }
 
+  /**
+   * The groups a `GROUP` scope may name.
+   *
+   * Administering only, the same as opening a review: this is the picker for the form that
+   * opens one, and a reviewer who never opens reviews has no use for it. Reading a group
+   * through here rather than through the SCIM surface is deliberate — the SCIM reader
+   * wants a connector's caller, and a browser session is not one.
+   */
+  async groups(actor: IdentityActor): Promise<ServiceResult<AccessReviewGroupRecord[]>> {
+    if (!canManageAccessReviews(actor.role)) return { ok: false, error: "You do not administer access reviews." };
+    return { ok: true, value: await this.store.listGroups(actor.organizationId) };
+  }
+
   async createSchedule(actor: IdentityActor, input: CreateScheduleInput): Promise<ServiceResult<AccessReviewScheduleRecord>> {
     if (!canManageAccessReviews(actor.role)) return { ok: false, error: "You do not administer access reviews." };
 
@@ -739,7 +765,11 @@ export class MemoryAccessReviewStore implements AccessReviewStore {
   private readonly items = new Map<string, AccessReviewItemRecord>();
   private readonly schedules = new Map<string, AccessReviewScheduleRecord>();
 
-  constructor(private readonly groupMembers: Record<string, string[]> = {}) {}
+  constructor(
+    private readonly groupMembers: Record<string, string[]> = {},
+    /** The groups a picker can offer. Defaults to the keys of `groupMembers`. */
+    private readonly groups: AccessReviewGroupRecord[] = Object.keys(groupMembers).map((id) => ({ id, name: id })),
+  ) {}
 
   async listReviews(organizationId: string): Promise<AccessReviewRecord[]> {
     return [...this.reviews.values()].filter((review) => review.organizationId === organizationId);
@@ -808,5 +838,9 @@ export class MemoryAccessReviewStore implements AccessReviewStore {
 
   async listGroupMemberIds(_organizationId: string, groupId: string): Promise<string[]> {
     return [...(this.groupMembers[groupId] ?? [])];
+  }
+
+  async listGroups(_organizationId: string): Promise<AccessReviewGroupRecord[]> {
+    return [...this.groups];
   }
 }

@@ -80,6 +80,22 @@ export const CONSOLE_PATHS = {
   directoryRemove: "/console/directory/connection/remove",
   directorySync: "/console/directory/sync",
   /**
+   * Access reviews (S2): the register of attestations, and the acts on one.
+   *
+   * One page with three verbs' worth of surface, like the Guard queue: the register and one
+   * review's list (`?review=<id>`), and the changes as their own POST paths below. Naming
+   * them separately is what keeps a review's decisions off a path a link or a crawler can
+   * reach — attesting to somebody's access is a POST or it did not happen.
+   */
+  reviews: "/console/reviews",
+  reviewOpen: "/console/reviews/open",
+  reviewAttest: "/console/reviews/attest",
+  reviewClose: "/console/reviews/close",
+  reviewCancel: "/console/reviews/cancel",
+  reviewSchedule: "/console/reviews/schedule",
+  reviewScheduleToggle: "/console/reviews/schedule/toggle",
+  reviewScheduleRemove: "/console/reviews/schedule/remove",
+  /**
    * Threat intelligence (S3): the indicators this organization matches against.
    *
    * Under `/console` with everything else, for the same reason the console's sign-in is:
@@ -348,6 +364,78 @@ export interface ConsoleDirectoryView {
   runs: ConsoleDirectoryRunView[];
 }
 
+/**
+ * The access-review page (S2): the register of attestations, one review's list, and the
+ * schedules that open the next ones.
+ *
+ * Everything the page needs to show a review is projected here rather than read off the
+ * service's own records, for the reason every other page does it: a change to a stored
+ * record should not be able to change what an operator sees without this file agreeing.
+ * In particular `state` is the *derived* one — `OVERDUE` is computed from the clock by the
+ * rules, never stored — so the page can never show a stale flag as a fact.
+ */
+export interface ConsoleReviewItemView {
+  identityId: string;
+  /** The person: a display name, else their identifier, else the id itself. */
+  name: string;
+  identifier: string;
+  role: string;
+  active: boolean;
+  decision: string;
+  decidedAt: string | null;
+  note: string | null;
+}
+
+export interface ConsoleReviewView {
+  id: string;
+  name: string;
+  scopeKind: string;
+  /** The group's name when the scope is a group, else "". */
+  scopeValue: string;
+  reviewerId: string;
+  /** The reviewer's display name, as shown; falls back to the id when they are gone. */
+  reviewerName: string;
+  dueAt: string;
+  status: string;
+  /** `OPEN`, `OVERDUE`, `COMPLETED` or `CANCELLED`, derived with the clock. */
+  state: string;
+  progress: { total: number; kept: number; revoked: number; pending: number };
+  createdAt: string;
+}
+
+export interface ConsoleReviewScheduleView {
+  id: string;
+  name: string;
+  scopeKind: string;
+  scopeValue: string;
+  reviewerId: string;
+  reviewerName: string;
+  intervalDays: number;
+  nextRunAt: string;
+  lastRunAt: string | null;
+  enabled: boolean;
+}
+
+export interface ConsoleReviewsView {
+  actor: ConsoleActor;
+  session: ConsoleSessionView;
+  reviews: ConsoleReviewView[];
+  schedules: ConsoleReviewScheduleView[];
+  /** The review named by `?review=`, or `null` on a plain read. */
+  open: {
+    review: ConsoleReviewView;
+    items: ConsoleReviewItemView[];
+    /** Whether this actor is the reviewer (or an administrator), so the forms can appear. */
+    canAttest: boolean;
+    /** Whether this actor administers reviews, so close/cancel and the schedules appear. */
+    canManage: boolean;
+  } | null;
+  /** People a review or schedule can be assigned to: the active roster. */
+  reviewers: { id: string; name: string }[];
+  /** Groups a `GROUP` scope may name. Empty when this deployment has no groups. */
+  groups: { id: string; name: string }[];
+}
+
 /** What a preview or a completed sync is shown as. */
 export interface ConsoleSyncReportView {
   connectionName: string;
@@ -541,6 +629,7 @@ export function consolePage(input: ConsolePageInput): string {
       `<a href="${CONSOLE_PATHS.mfa}">Second factor</a>` +
       `<a href="${CONSOLE_PATHS.policies}">Policies</a>` +
       `<a href="${CONSOLE_PATHS.directory}">Directories</a>` +
+      `<a href="${CONSOLE_PATHS.reviews}">Access reviews</a>` +
       `<a href="${CONSOLE_PATHS.intel}">Threat intel</a>` +
       `<a href="${CONSOLE_PATHS.provisioning}">Provisioning</a>` +
       `<a href="${CONSOLE_PATHS.compliance}">Compliance</a>` +
@@ -972,6 +1061,180 @@ export function renderDirectory(
     `a person who disappears from the answer is left alone, because a partial answer is how a sync offboards a company.</p>`;
 
   return consolePage({ title: "Directories", actor: view.actor, body, flash, error });
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Access reviews (S2)                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** How a scope reads to a person, in one line. */
+function reviewScopeLabel(kind: string, value: string): string {
+  if (kind === "GROUP") return value ? `group ${escapeHtml(value)}` : "a group";
+  return "everybody";
+}
+
+/** A person, as a select option list. The id is the value; the name is what is read. */
+function peopleOptions(people: readonly { id: string; name: string }[], selectedId?: string): string {
+  return people
+    .map((person) => `<option value="${escapeHtml(person.id)}"${person.id === selectedId ? " selected" : ""}>${escapeHtml(person.name)}</option>`)
+    .join("");
+}
+
+/**
+ * The access-review page.
+ *
+ * The page's job is to make the *distinction* the feature exists for visible: an
+ * undecided item reads as undecided, an overdue review reads as overdue, and a closed
+ * review keeps its count of what was never looked at. Everything else on it is the two
+ * forms that open the next review and the next schedule.
+ *
+ * A decision that revokes access is offered *beside* one that keeps it rather than behind
+ * a menu: “keep” and “revoke” are the two answers an attestation has, and hiding one of
+ * them turns a two-second decision into a page nobody finishes. The service still carries
+ * out the revocation properly, and refuses the record if it cannot.
+ */
+export function renderReviews(view: ConsoleReviewsView, flash?: string | null, error?: string | null): string {
+  const stateClass = (state: string): string =>
+    state === "OVERDUE" ? "sev-high" : state === "OPEN" ? "control-warn" : "muted";
+
+  const reviewRows = view.reviews.length
+    ? `<table><thead><tr><th>Review</th><th>Scope</th><th>State</th><th>Progress</th><th>Due</th></tr></thead><tbody>${view.reviews
+        .map(
+          (review) =>
+            `<tr><td><a href="${CONSOLE_PATHS.reviews}?review=${encodeURIComponent(review.id)}">${escapeHtml(review.name)}</a></td>` +
+            `<td class="muted">${reviewScopeLabel(review.scopeKind, review.scopeValue)}</td>` +
+            `<td class="${stateClass(review.state)}">${escapeHtml(review.state)}</td>` +
+            `<td class="muted">${review.progress.total} people: ${review.progress.kept} kept, ${review.progress.revoked} revoked, ` +
+            `<strong>${review.progress.pending} undecided</strong></td>` +
+            `<td class="muted">${escapeHtml(review.dueAt)}</td></tr>`,
+        )
+        .join("")}</tbody></table>`
+    : `<p class="muted">No access review has been opened yet. A directory says who exists; a review is how a named person says the access is still warranted.</p>`;
+
+  const detail = view.open
+    ? (() => {
+        const { review, items, canAttest, canManage } = view.open;
+        const openNow = review.state === "OPEN" || review.state === "OVERDUE";
+        const itemRows = items.length
+          ? `<table><thead><tr><th>Person</th><th>Access</th><th>Decision</th><th></th></tr></thead><tbody>${items
+              .map((item) => {
+                const decided =
+                  item.decision === "PENDING"
+                    ? `<span class="muted">not yet decided</span>`
+                    : `<strong>${escapeHtml(item.decision)}</strong>` +
+                      (item.decidedAt ? `<span class="muted"> · ${escapeHtml(item.decidedAt)}</span>` : "") +
+                      (item.note ? `<br><span class="muted">${escapeHtml(item.note)}</span>` : "");
+                const actions =
+                  canAttest && openNow
+                    ? `<form method="post" action="${CONSOLE_PATHS.reviewAttest}" style="display:inline">` +
+                      `<input type="hidden" name="reviewId" value="${escapeHtml(review.id)}">` +
+                      `<input type="hidden" name="identityId" value="${escapeHtml(item.identityId)}">` +
+                      `<input type="hidden" name="decision" value="KEPT">` +
+                      `<button type="submit">Keep</button></form> ` +
+                      `<form method="post" action="${CONSOLE_PATHS.reviewAttest}" style="display:inline">` +
+                      `<input type="hidden" name="reviewId" value="${escapeHtml(review.id)}">` +
+                      `<input type="hidden" name="identityId" value="${escapeHtml(item.identityId)}">` +
+                      `<input type="hidden" name="decision" value="REVOKED">` +
+                      `<button type="submit" class="quiet">Revoke</button></form>`
+                    : "";
+                return (
+                  `<tr><td>${escapeHtml(item.name)}<br><span class="muted">${escapeHtml(item.identifier)}</span></td>` +
+                  `<td class="muted">${escapeHtml(item.role)}${item.active ? "" : " · deactivated"}</td>` +
+                  `<td>${decided}</td><td>${actions}</td></tr>`
+                );
+              })
+              .join("")}</tbody></table>`
+          : `<p class="muted">This review has no items.</p>`;
+
+        const controls = canManage && openNow
+          ? `<form method="post" action="${CONSOLE_PATHS.reviewClose}" style="display:inline">` +
+            `<input type="hidden" name="reviewId" value="${escapeHtml(review.id)}">` +
+            `<button type="submit">Close review</button></form> ` +
+            `<form method="post" action="${CONSOLE_PATHS.reviewCancel}" style="display:inline">` +
+            `<input type="hidden" name="reviewId" value="${escapeHtml(review.id)}">` +
+            `<button type="submit" class="quiet">Cancel</button></form>`
+          : "";
+
+        return (
+          `<h2>${escapeHtml(review.name)}</h2><div class="card">` +
+          `<p class="muted">${reviewScopeLabel(review.scopeKind, review.scopeValue)} · reviewer ${escapeHtml(review.reviewerName)} · ` +
+          `due ${escapeHtml(review.dueAt)} · <span class="${stateClass(review.state)}">${escapeHtml(review.state)}</span></p>` +
+          `<p>${review.progress.total} people: <strong>${review.progress.kept}</strong> kept, ` +
+          `<strong>${review.progress.revoked}</strong> revoked, <strong>${review.progress.pending}</strong> never decided.</p>` +
+          itemRows +
+          (controls ? `<p>${controls}</p>` : "") +
+          (openNow && !canAttest
+            ? `<p class="muted">This review is answered by ${escapeHtml(review.reviewerName)}, or by an administrator.</p>`
+            : "") +
+          `</div>`
+        );
+      })()
+    : "";
+
+  const scheduleRows = view.schedules.length
+    ? `<table><thead><tr><th>Schedule</th><th>Scope</th><th>Every</th><th>Next</th><th>State</th><th></th></tr></thead><tbody>${view.schedules
+        .map(
+          (schedule) =>
+            `<tr><td>${escapeHtml(schedule.name)}<br><span class="muted">reviewer ${escapeHtml(schedule.reviewerName)}</span></td>` +
+            `<td class="muted">${reviewScopeLabel(schedule.scopeKind, schedule.scopeValue)}</td>` +
+            `<td class="muted">${schedule.intervalDays} day(s)</td>` +
+            `<td class="muted">${escapeHtml(schedule.nextRunAt)}</td>` +
+            `<td class="${schedule.enabled ? "muted" : "control-warn"}">${schedule.enabled ? "on" : "paused"}</td>` +
+            `<td>` +
+            `<form method="post" action="${CONSOLE_PATHS.reviewScheduleToggle}" style="display:inline">` +
+            `<input type="hidden" name="scheduleId" value="${escapeHtml(schedule.id)}">` +
+            `<input type="hidden" name="enabled" value="${schedule.enabled ? "0" : "1"}">` +
+            `<button type="submit">${schedule.enabled ? "Pause" : "Resume"}</button></form> ` +
+            `<form method="post" action="${CONSOLE_PATHS.reviewScheduleRemove}" style="display:inline">` +
+            `<input type="hidden" name="scheduleId" value="${escapeHtml(schedule.id)}">` +
+            `<button type="submit" class="quiet">Remove</button></form>` +
+            `</td></tr>`,
+        )
+        .join("")}</tbody></table>`
+    : `<p class="muted">No recurring review. Turning one on means a tick in this deployment opens the next review for you.</p>`;
+
+  // The two forms ask for the same three things, so the fields are built once with a
+  // prefix that keeps every `id` unique — duplicated ids would make the second form's
+  // labels point at the first form's inputs.
+  const scopeFields = (prefix: string): string =>
+    `<p><label class="muted" for="${prefix}scopeKind">Scope</label> <select id="${prefix}scopeKind" name="scopeKind">` +
+    optionList(["ORGANIZATION", "GROUP"], "ORGANIZATION") +
+    `</select></p>` +
+    (view.groups.length
+      ? `<p><label class="muted" for="${prefix}scopeValue">Group (group scope only)</label> <select id="${prefix}scopeValue" name="scopeValue">` +
+        `<option value=""></option>${peopleOptions(view.groups)}</select></p>`
+      : `<p class="muted">This deployment has no groups, so a review can only cover everybody.</p>`);
+
+  const openForm = view.reviewers.length
+    ? `<h2>Open a review</h2><div class="card"><form method="post" action="${CONSOLE_PATHS.reviewOpen}">` +
+      `<p><label class="muted" for="oname">Name it</label> <input id="oname" name="name" placeholder="Quarterly — production access" required></p>` +
+      scopeFields("") +
+      `<p><label class="muted" for="oreviewer">Reviewer</label> <select id="oreviewer" name="reviewerId">${peopleOptions(view.reviewers)}</select></p>` +
+      `<p><label class="muted" for="windowDays">Answer within</label> <input id="windowDays" name="windowDays" type="number" min="1" value="14"> days</p>` +
+      `<button type="submit">Open review</button>` +
+      `<p class="muted">The list is taken once, now: somebody hired tomorrow is the next review's problem, which is what <em>periodic</em> attestation means.</p>` +
+      `</form></div>`
+    : `<h2>Open a review</h2><p class="muted">There is nobody in this organization to review, so a review would attest to nothing.</p>`;
+
+  const scheduleForm = view.reviewers.length
+    ? `<h2>Schedule a recurring review</h2><div class="card"><form method="post" action="${CONSOLE_PATHS.reviewSchedule}">` +
+      `<p><label class="muted" for="sname">Name it</label> <input id="sname" name="name" placeholder="Quarterly — service desk" required></p>` +
+      scopeFields("s") +
+      `<p><label class="muted" for="sreviewer">Reviewer</label> <select id="sreviewer" name="reviewerId">${peopleOptions(view.reviewers)}</select></p>` +
+      `<p><label class="muted" for="intervalDays">Every</label> <input id="intervalDays" name="intervalDays" type="number" min="1" max="366" value="90"> days</p>` +
+      `<button type="submit">Schedule</button>` +
+      `<p class="muted">A schedule only opens reviews when this deployment's scheduler is running; until then a pause and a note are all it is.</p>` +
+      `</form></div>`
+    : "";
+
+  const body =
+    openForm +
+    detail +
+    `<h2>The register</h2><div class="card">${reviewRows}</div>` +
+    scheduleForm +
+    `<h2>Schedules</h2><div class="card">${scheduleRows}</div>`;
+
+  return consolePage({ title: "Access reviews", actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */

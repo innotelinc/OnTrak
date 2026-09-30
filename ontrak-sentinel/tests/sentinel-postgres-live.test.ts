@@ -18,7 +18,10 @@ import { test } from "node:test";
 
 import { PrismaClient } from "@prisma/client";
 
+import { AccessReviewService } from "../src/lib/access-review-service";
+import { PrismaAccessReviewStore, type AccessReviewPrismaClient } from "../src/lib/access-review-store-prisma";
 import { PrismaAlertStore, type AlertPrismaClient } from "../src/lib/alert-store-prisma";
+import type { ScimService } from "../src/lib/scim-service";
 import type { AlertRecord } from "../src/lib/detection-service";
 import { sha256Hex } from "../src/lib/hash";
 import { createIdentityServices } from "../src/lib/identity-server";
@@ -249,6 +252,151 @@ test("threat intelligence persists: a feed row is refreshed in place, and an ale
     assert.equal((await intel.activeIndicators(organization.id, at + 2 * 86_400_000)).length, 0, "the expiry is enforced");
   } finally {
     // The tenant cascades: identities, indicators and the evidence rows go with it.
+    await prisma.organization.delete({ where: { id: organization.id } }).catch(() => undefined);
+    await prisma.$disconnect();
+  }
+});
+
+/**
+ * The access-review side of S2, against the same database.
+ *
+ * Everything the fake-client unit suite cannot catch lives here: an item's compound key is
+ * `(reviewId, identityId)` and not a surrogate id, an update goes through that key rather
+ * than the row's `id`, `dueAt`/`nextRunAt`/`decidedAt` cross the `DateTime` boundary in both
+ * directions, `enabled` narrows the scheduler's query, and deleting a schedule is scoped by
+ * organization. A migration that got any of those wrong would pass the unit suite and fail
+ * the first time somebody answered a review.
+ */
+test("access reviews persist: a snapshot, a decision, a revocation and a schedule", async (t) => {
+  const db = await live();
+  if (!db) {
+    t.skip("set DATABASE_URL to a migrated Sentinel database to run the live test");
+    return;
+  }
+  const { prisma, services } = db;
+  const DAY = 24 * 60 * 60 * 1000;
+
+  const slug = `live-review-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  const created = await services.service.bootstrapOrganization("live-test", { name: "Live Review", slug }, {
+    identifier: `admin@${slug}.test`,
+    displayName: "Live Admin",
+  });
+  assert.equal(created.ok, true, created.ok ? "" : created.error);
+  if (!created.ok) return;
+  const { organization, admin } = created.value;
+  const actor = { id: admin.id, organizationId: organization.id, role: "ADMIN" as const };
+
+  // The revocation is recorded rather than carried out here: what this test proves is that
+  // the *record* survives the database, and the deprovisioning path has its own tests.
+  const deprovisioned: string[] = [];
+  const scim = {
+    async deprovisionForActor(_actor: unknown, identityId: string) {
+      deprovisioned.push(identityId);
+      return { ok: true as const, value: { identity: { id: identityId }, sessionsEnded: 1 } };
+    },
+  } as unknown as Pick<ScimService, "deprovisionForActor">;
+
+  const store = new PrismaAccessReviewStore(prisma as unknown as AccessReviewPrismaClient);
+  const reviews = new AccessReviewService(store, services.store, scim, services.audit);
+
+  try {
+    const agent = await services.service.createIdentity(actor, {
+      identifier: `agent@${slug}.test`,
+      displayName: "Live Agent",
+      role: "AGENT",
+    });
+    assert.equal(agent.ok, true, agent.ok ? "" : agent.error);
+    if (!agent.ok) return;
+
+    // A group, through the real tables, so a GROUP scope resolves through them.
+    const group = await prisma.group.create({ data: { organizationId: organization.id, displayName: `desk-${slug}` } });
+    await prisma.groupMember.create({ data: { groupId: group.id, identityId: agent.value.id } });
+    assert.deepEqual(await store.listGroupMemberIds(organization.id, group.id), [agent.value.id]);
+    assert.deepEqual(await store.listGroups(organization.id), [{ id: group.id, name: `desk-${slug}` }]);
+
+    // The whole organization: the administrator and the agent, snapshotted once.
+    const opened = await reviews.open(actor, {
+      name: "Quarter end",
+      scopeKind: "ORGANIZATION",
+      scopeValue: "",
+      reviewerId: actor.id,
+    });
+    assert.equal(opened.ok, true, opened.ok ? "" : opened.error);
+    if (!opened.ok) return;
+    const reviewId = opened.value.review.id;
+
+    const items = await store.listItems(organization.id, reviewId);
+    assert.equal(items.length, 2);
+    assert.ok(items.every((item) => item.decision === "PENDING"), "an item nobody answered is not an approval");
+
+    // A decision travels through the compound key and comes back with its timestamp.
+    const kept = await reviews.attest(actor, reviewId, agent.value.id, "KEPT", "still on the desk");
+    assert.equal(kept.ok, true, kept.ok ? "" : kept.error);
+    const storedItem = await store.findItem(organization.id, reviewId, agent.value.id);
+    assert.ok(storedItem);
+    assert.equal(storedItem.decision, "KEPT");
+    assert.equal(storedItem.note, "still on the desk");
+    assert.ok(storedItem.decidedAt && Number.isFinite(Date.parse(storedItem.decidedAt)));
+
+    // A revocation goes out through the deprovisioning port, and the record says so.
+    const revoked = await reviews.attest(actor, reviewId, actor.id, "REVOKED", "stepping down");
+    assert.equal(revoked.ok, true, revoked.ok ? "" : revoked.error);
+    assert.deepEqual(deprovisioned, [actor.id]);
+    assert.equal((await store.findItem(organization.id, reviewId, actor.id))?.decision, "REVOKED");
+
+    // Closing is a status and a timestamp that survive the round trip.
+    const closed = await reviews.close(actor, reviewId);
+    assert.equal(closed.ok, true, closed.ok ? "" : closed.error);
+    const reread = await store.findReview(organization.id, reviewId);
+    assert.ok(reread);
+    assert.equal(reread.status, "COMPLETED");
+    assert.ok(reread.completedAt && Number.isFinite(Date.parse(reread.completedAt)));
+
+    // A group-scoped review resolves through the membership rows, not through a caller.
+    const scoped = await reviews.open(actor, {
+      name: "Service desk",
+      scopeKind: "GROUP",
+      scopeValue: group.id,
+      reviewerId: actor.id,
+    });
+    assert.equal(scoped.ok, true, scoped.ok ? "" : scoped.error);
+    if (!scoped.ok) return;
+    assert.deepEqual(
+      (await store.listItems(organization.id, scoped.value.review.id)).map((item) => item.identityId),
+      [agent.value.id],
+    );
+
+    // A schedule: `nextRunAt` is a future instant, the due query respects `enabled`, and the
+    // delete is scoped by organization.
+    const scheduled = await reviews.createSchedule(actor, {
+      name: "Quarterly",
+      scopeKind: "ORGANIZATION",
+      scopeValue: "",
+      reviewerId: actor.id,
+      intervalDays: 90,
+    });
+    assert.equal(scheduled.ok, true, scheduled.ok ? "" : scheduled.error);
+    if (!scheduled.ok) return;
+    const scheduleId = scheduled.value.id;
+
+    const listed = await store.listSchedules(organization.id);
+    assert.equal(listed.length, 1);
+    assert.ok(Date.parse(listed[0]!.nextRunAt) > Date.now(), "a new schedule does not fire immediately");
+    const far = new Date(Date.now() + 91 * DAY).toISOString();
+    assert.equal((await store.dueSchedules(far)).length, 1);
+
+    const paused = await reviews.setScheduleEnabled(actor, scheduleId, false);
+    assert.equal(paused.ok, true, paused.ok ? "" : paused.error);
+    assert.equal((await store.dueSchedules(far)).length, 0, "a paused schedule is not due");
+
+    const removed = await reviews.removeSchedule(actor, scheduleId);
+    assert.equal(removed.ok, true, removed.ok ? "" : removed.error);
+    assert.equal((await store.listSchedules(organization.id)).length, 0);
+
+    // The reviews it opened are evidence and stay; the label linking them is gone.
+    assert.equal((await store.listReviews(organization.id)).length, 2);
+  } finally {
+    // The tenant cascades: identities, reviews, items, schedules, groups and evidence.
     await prisma.organization.delete({ where: { id: organization.id } }).catch(() => undefined);
     await prisma.$disconnect();
   }

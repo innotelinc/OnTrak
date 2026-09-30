@@ -22,6 +22,7 @@
  */
 
 import type {
+  AccessReviewGroupRecord,
   AccessReviewItemRecord,
   AccessReviewRecord,
   AccessReviewScheduleRecord,
@@ -77,6 +78,11 @@ export interface AccessReviewScheduleRow {
 
 export interface GroupMemberRow {
   identityId: string;
+}
+
+export interface GroupRow {
+  id: string;
+  displayName: string;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -268,10 +274,13 @@ export interface AccessReviewPrismaClient {
     findFirst(args: unknown): Promise<AccessReviewScheduleRow | null>;
     create(args: { data: unknown }): Promise<unknown>;
     update(args: { where: unknown; data: unknown }): Promise<unknown>;
-    delete(args: { where: unknown }): Promise<unknown>;
+    deleteMany(args: { where: unknown }): Promise<unknown>;
   };
   groupMember: {
     findMany(args: unknown): Promise<GroupMemberRow[]>;
+  };
+  group: {
+    findMany(args: unknown): Promise<GroupRow[]>;
   };
 }
 
@@ -363,7 +372,11 @@ export class PrismaAccessReviewStore implements AccessReviewStore {
    * cascading, so removing a schedule cannot take a review with it.
    */
   async removeSchedule(organizationId: string, scheduleId: string): Promise<void> {
-    await this.db.accessReviewSchedule.delete({ where: { organizationId_id: { organizationId, id: scheduleId } } });
+    // `deleteMany` with the tenant in the `where`, rather than `delete` by primary key: the
+    // row is named by an id a caller supplied, and a delete that trusted it would let one
+    // organization's id remove another's schedule. `delete` cannot express this, because the
+    // schema's compound unique is `(organizationId, name)` and not `(organizationId, id)`.
+    await this.db.accessReviewSchedule.deleteMany({ where: { organizationId, id: scheduleId } });
   }
 
   async dueSchedules(nowIso: string): Promise<AccessReviewScheduleRecord[]> {
@@ -377,5 +390,14 @@ export class PrismaAccessReviewStore implements AccessReviewStore {
   async listGroupMemberIds(_organizationId: string, groupId: string): Promise<string[]> {
     const rows = await this.db.groupMember.findMany({ where: { groupId } });
     return rows.map((row) => row.identityId);
+  }
+
+  /** Tenant-scoped like every other read here: one organization's groups, by name. */
+  async listGroups(organizationId: string): Promise<AccessReviewGroupRecord[]> {
+    const rows = await this.db.group.findMany({
+      where: { organizationId },
+      orderBy: { displayName: "asc" },
+    });
+    return rows.map((row) => ({ id: row.id, name: row.displayName }));
   }
 }

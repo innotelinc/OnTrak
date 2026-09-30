@@ -42,6 +42,7 @@ import {
   renderOverview,
   renderPolicies,
   renderProvisioning,
+  renderReviews,
   renderSignIn,
   type ConsoleAlertsView,
   type ConsoleComplianceView,
@@ -51,6 +52,7 @@ import {
   type ConsoleOverviewView,
   type ConsolePoliciesView,
   type ConsoleProvisioningView,
+  type ConsoleReviewsView,
   type ConsoleSignInView,
   type ConsoleSyncReportView,
 } from "./console-rules";
@@ -126,6 +128,31 @@ export interface ConsoleEndpoints {
   removeDirectory(sessionId: string, connectionId: string): Promise<ServiceResult<{ name: string }>>;
   /** `dryRun` writes nothing, so it is safe for the page to render the plan in place. */
   syncDirectory(sessionId: string, connectionId: string, dryRun: boolean): Promise<ServiceResult<ConsoleSyncReportView>>;
+  /**
+   * The access-review register (S2), with one review's list when `reviewId` names it.
+   *
+   * One read for the register and one for the review, from the same service, so the count
+   * in the table and the list below it cannot disagree about the same review.
+   */
+  reviews(sessionId: string, reviewId: string | null): Promise<ServiceResult<ConsoleReviewsView>>;
+  /** Open a review. The list is snapshotted at this moment by the service, not here. */
+  openReview(
+    sessionId: string,
+    input: { name: string; scopeKind: string; scopeValue: string; reviewerId: string; windowDays: number },
+  ): Promise<ServiceResult<{ name: string }>>;
+  /** Answer one identity on a review. `note` is optional; the decision is not. */
+  attestReview(
+    sessionId: string,
+    input: { reviewId: string; identityId: string; decision: string; note: string | null },
+  ): Promise<ServiceResult<{ reviewId: string; decision: string }>>;
+  closeReview(sessionId: string, reviewId: string): Promise<ServiceResult<{ name: string }>>;
+  cancelReview(sessionId: string, reviewId: string): Promise<ServiceResult<{ name: string }>>;
+  createReviewSchedule(
+    sessionId: string,
+    input: { name: string; scopeKind: string; scopeValue: string; reviewerId: string; intervalDays: number },
+  ): Promise<ServiceResult<{ name: string }>>;
+  setReviewScheduleEnabled(sessionId: string, scheduleId: string, enabled: boolean): Promise<ServiceResult<{ name: string }>>;
+  removeReviewSchedule(sessionId: string, scheduleId: string): Promise<ServiceResult<{ name: string }>>;
   /** The indicators this organization matches against (S3), and what the last push did. */
   intel(sessionId: string): Promise<ServiceResult<ConsoleIntelView>>;
   /**
@@ -440,6 +467,126 @@ async function handleSyncDirectory(request: HttpRequest, sessionId: string, endp
 
   const view = await endpoints.directory(sessionId);
   return respond(view, (page) => html(200, renderDirectory(page, result.value)));
+}
+
+async function handleReviewsPage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const result = await endpoints.reviews(sessionId, url.searchParams.get("review"));
+  return respond(result, (view) => html(200, renderReviews(view, flashFrom(url), errorFrom(url))));
+}
+
+/**
+ * Open a review.
+ *
+ * A redirect to the register rather than a rendered body, for the same reason connecting a
+ * directory is: a state change that answered with a body would open a second review on
+ * every refresh, and the second one would cover the same people and look identical.
+ */
+async function handleOpenReview(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const result = await endpoints.openReview(sessionId, {
+    name: params.name ?? "",
+    scopeKind: params.scopeKind ?? "ORGANIZATION",
+    scopeValue: params.scopeValue ?? "",
+    reviewerId: params.reviewerId ?? "",
+    windowDays: Number(params.windowDays),
+  });
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.reviews}?flash=${encodeURIComponent(
+      `Opened ${result.value.name}. Every person on its list starts undecided, and undecided is not an approval.`,
+    )}`,
+  );
+}
+
+/**
+ * Answer one identity on a review.
+ *
+ * The decision goes back to the service, which carries a revocation out before it records
+ * it; a refusal here is that refusal's own sentence rather than one this layer invented.
+ */
+async function handleAttestReview(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const reviewId = params.reviewId ?? "";
+  const identityId = params.identityId ?? "";
+  if (!reviewId) return failure("Choose a review first.");
+  if (!identityId) return failure("Choose the person this decision is about.");
+
+  const result = await endpoints.attestReview(sessionId, {
+    reviewId,
+    identityId,
+    decision: params.decision ?? "",
+    note: params.note?.trim() ? params.note : null,
+  });
+  if (!result.ok) return failure(result.error);
+  const said = result.value.decision === "REVOKED" ? "Revoked" : "Kept";
+  return redirect(
+    `${CONSOLE_PATHS.reviews}?review=${encodeURIComponent(result.value.reviewId)}&flash=${encodeURIComponent(
+      `${said}. The decision is on the evidence chain against your identity.`,
+    )}`,
+  );
+}
+
+async function handleCloseReview(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const reviewId = formParams(request).reviewId ?? "";
+  if (!reviewId) return failure("Choose a review first.");
+  const result = await endpoints.closeReview(sessionId, reviewId);
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.reviews}?review=${encodeURIComponent(reviewId)}&flash=${encodeURIComponent(
+      `Closed ${result.value.name}. Undecided items stay on the record as undecided.`,
+    )}`,
+  );
+}
+
+async function handleCancelReview(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const reviewId = formParams(request).reviewId ?? "";
+  if (!reviewId) return failure("Choose a review first.");
+  const result = await endpoints.cancelReview(sessionId, reviewId);
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.reviews}?flash=${encodeURIComponent(`Cancelled ${result.value.name}. Its list is kept: an abandoned review is what a register is for.`)}`,
+  );
+}
+
+async function handleCreateReviewSchedule(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const result = await endpoints.createReviewSchedule(sessionId, {
+    name: params.name ?? "",
+    scopeKind: params.scopeKind ?? "ORGANIZATION",
+    scopeValue: params.scopeValue ?? "",
+    reviewerId: params.reviewerId ?? "",
+    intervalDays: Number(params.intervalDays),
+  });
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.reviews}?flash=${encodeURIComponent(
+      `Scheduled ${result.value.name}. It opens its first review when it falls due, and only if this deployment's scheduler is running.`,
+    )}`,
+  );
+}
+
+async function handleToggleReviewSchedule(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const scheduleId = params.scheduleId ?? "";
+  if (!scheduleId) return failure("Choose a schedule first.");
+  const enabled = params.enabled === "1" || params.enabled === "true";
+  const result = await endpoints.setReviewScheduleEnabled(sessionId, scheduleId, enabled);
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.reviews}?flash=${encodeURIComponent(
+      `${enabled ? "Resumed" : "Paused"} ${result.value.name}. ${enabled ? "A pause does not skip a period: a missed run opens one review and says it was late." : ""}`,
+    )}`,
+  );
+}
+
+async function handleRemoveReviewSchedule(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const scheduleId = formParams(request).scheduleId ?? "";
+  if (!scheduleId) return failure("Choose a schedule first.");
+  const result = await endpoints.removeReviewSchedule(sessionId, scheduleId);
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.reviews}?flash=${encodeURIComponent(`Removed ${result.value.name}. The reviews it already opened stay.`)}`,
+  );
 }
 
 async function handleIntelPage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
@@ -878,6 +1025,22 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
       return post(() => handleRemoveDirectory(request, sessionId, endpoints));
     case CONSOLE_PATHS.directorySync:
       return post(() => handleSyncDirectory(request, sessionId, endpoints));
+    case CONSOLE_PATHS.reviews:
+      return get(() => handleReviewsPage(url, sessionId, endpoints));
+    case CONSOLE_PATHS.reviewOpen:
+      return post(() => handleOpenReview(request, sessionId, endpoints));
+    case CONSOLE_PATHS.reviewAttest:
+      return post(() => handleAttestReview(request, sessionId, endpoints));
+    case CONSOLE_PATHS.reviewClose:
+      return post(() => handleCloseReview(request, sessionId, endpoints));
+    case CONSOLE_PATHS.reviewCancel:
+      return post(() => handleCancelReview(request, sessionId, endpoints));
+    case CONSOLE_PATHS.reviewSchedule:
+      return post(() => handleCreateReviewSchedule(request, sessionId, endpoints));
+    case CONSOLE_PATHS.reviewScheduleToggle:
+      return post(() => handleToggleReviewSchedule(request, sessionId, endpoints));
+    case CONSOLE_PATHS.reviewScheduleRemove:
+      return post(() => handleRemoveReviewSchedule(request, sessionId, endpoints));
     case CONSOLE_PATHS.intel:
       return get(() => handleIntelPage(url, sessionId, endpoints));
     case CONSOLE_PATHS.intelIngest:

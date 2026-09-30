@@ -383,7 +383,7 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
   assertion) from a confirmed factor has been seen; auth and privilege events are
   fully audited.
 
-### S2 — Provisioning & lifecycle `[~]`
+### S2 — Provisioning & lifecycle `[x]`
 **Goal:** identities stay in sync without manual work.
 
 - SCIM 2.0 server (Users/Groups); directory sync (AD/Entra/Google) with safe
@@ -473,7 +473,7 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
     one, changing their role and switching them off all arrive over SCIM and land on
     the same code paths a console write does, so the rules cannot disagree about
     them.
-  - `[~]` **Access reviews and scheduled attestation** (`access-review-rules.ts`,
+  - `[x]` **Access reviews and scheduled attestation** (`access-review-rules.ts`,
     `access-review-service.ts`, `access-review-store-prisma.ts`,
     `access-review-scheduler.ts`, the eighth migration
     `20261030000000_access_review`, and the `SENTINEL_ACCESS_REVIEW_INTERVAL_MINUTES`
@@ -501,11 +501,15 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
     months opens **one** review and reports the intervals it swallowed rather than
     thirty identical ones. Closing with items unattested is allowed and records how
     many were never looked at; cancelling keeps the list of what was asked. Covered by
-    `tests/sentinel-access-review.test.ts` (31 tests: the rules, the snapshot, the
-    refusals, the evidence entries, the scheduler and its failure handling). What is
-    **not** here: a console page of its own — a review is opened, answered and closed
-    through the service and its scheduler, and the console surface is the next slice
-    of this bullet. A per-role policy scope is deliberately not offered as a review
+    `tests/sentinel-access-review.test.ts` (35 tests: the rules, the snapshot, the
+    refusals, the evidence entries, the scheduler and its failure handling, and the
+    console surface). The console page (`/console/reviews`) is the register, one
+    review's list, and the forms that open the next review and schedule one — so a
+    review is opened, answered, closed and scheduled without leaving the browser, with
+    the same refusals the service makes rather than a second set invented for the page.
+    A reviewer who does not administer the register reaches only the review they were
+    named on; the register itself stays administrators' work. A per-role policy scope
+    is deliberately not offered as a review
     scope for the reason given in `access-review-rules.ts`: a role is a property of a
     person that an administrator changes, so a review scoped to one would silently
     change its own population the next time somebody was promoted.
@@ -517,8 +521,8 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
   revokes their access tokens with an entry on the organization's evidence chain.
   The attestation half is built too — an access review snapshots the roster, asks a
   named reviewer, carries a `REVOKED` decision out through that same deprovisioning
-  path, and a schedule opens the recurring ones. What is left in S2 is the console
-  page for reviews, not a different capability.
+  path, a schedule opens the recurring ones, and the console page drives all of it.
+  **S2 is complete.**
 
 ### S3 — Sentinel Guard v1 (detection) `[~]`
 **Goal:** see what is happening.
@@ -761,10 +765,9 @@ logins with no notion of behaviour. Together they produce signals neither can:
    dependency, so a deployment that needs it supplies its own reader rather than
    being handed a fake. ~~What remains of S2 is **access reviews**.~~ **Access
    reviews have landed** (see the S2 bullet above): the rules, the service, the
-   store and its migration, and the scheduler that opens the recurring ones. What
-   remains of that bullet is the **console page** — until it exists a review is
-   driven through the service — and that is the next slice of S2 rather than a
-   different milestone.
+   store and its migration, the scheduler that opens the recurring ones, and the
+   `/console/reviews` page that opens, answers, closes and schedules them. That
+   closes the bullet.
 4. Build the telemetry normalizer and one detection rule end to end (S3 spike).
 5. ~~Define the shared assurance-packet format with OnTrak Tix before either ships
    exports, so both are compatible from the start.~~ **Done on Sentinel's side**

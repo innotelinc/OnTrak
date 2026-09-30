@@ -466,6 +466,10 @@ async function main(): Promise<void> {
     threatIntel,
     detection,
     upstream,
+    // The register the console renders (S2). Passed whole: the console's constructor narrows
+    // it to the methods the pages use, so a browser session cannot reach `tick` and open
+    // reviews for every organization in the deployment.
+    accessReviews,
   );
   const guardService = new GuardService(detection, identities, {
     token: (process.env.SENTINEL_GUARD_TOKEN ?? "").trim() || null,

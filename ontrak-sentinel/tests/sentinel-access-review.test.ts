@@ -45,6 +45,11 @@ import {
   startAccessReviewScheduler,
 } from "../src/lib/access-review-scheduler";
 import type { ScimService } from "../src/lib/scim-service";
+import { ConsoleService } from "../src/lib/console-service";
+import { routeConsole } from "../src/lib/console-http";
+import { CONSOLE_PATHS, CONSOLE_SESSION_COOKIE } from "../src/lib/console-rules";
+import { MemoryMfaStore, MfaService } from "../src/lib/mfa-service";
+import type { HttpRequest } from "../src/lib/oidc-http";
 
 const sha256: HashFn = sha256Hex;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -805,4 +810,236 @@ test("the loop ticks on its own, and stop() ends it", async () => {
   assert.equal(timer.cleared(), 1, "stop clears the interval");
   assert.equal(calls, 2, "nothing ticks after stop");
   scheduler.stop();
+});
+
+/* -------------------------------------------------------------------------- */
+/*  The console (S2)                                                          */
+/* -------------------------------------------------------------------------- */
+
+const CONSOLE_ORIGIN = "https://id.sentinel.test";
+
+/**
+ * A console over the same deployment, signed in as the administrator.
+ *
+ * The console is wired with the real spine and the real access-review service, so what the
+ * routes render is what the product would render; the only stub is the WebAuthn slot this
+ * deployment does not configure.
+ */
+async function consoleHarness(options: { people?: string[]; groupMembers?: Record<string, string[]>; scim?: { ok: boolean; error?: string } } = {}) {
+  const r = await ready(options);
+  assert.ok((await r.spine.setMfaEnrolled(r.admin, r.admin.id, true)).ok);
+  const session = await r.spine.issueSession(r.admin.organizationId, r.admin.id);
+  assert.equal(session.ok, true, session.ok ? "" : session.error);
+  if (!session.ok) throw new Error("unreachable");
+
+  const service = new ConsoleService(
+    r.spine,
+    new MfaService(new MemoryMfaStore(), r.spine),
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    r.service,
+  );
+  return { ...r, sessionId: session.value.id, console: service };
+}
+
+function consoleRequest(
+  method: string,
+  path: string,
+  options: { sessionId?: string | null; body?: string } = {},
+): HttpRequest {
+  const headers: Record<string, string | undefined> = {};
+  const cookies: Record<string, string> = {};
+  if (options.sessionId) cookies[CONSOLE_SESSION_COOKIE] = options.sessionId;
+  if (options.body) headers["content-type"] = "application/x-www-form-urlencoded";
+  return { method, url: `${CONSOLE_ORIGIN}${path}`, headers, body: options.body, cookies };
+}
+
+function form(fields: Record<string, string>): string {
+  return new URLSearchParams(fields).toString();
+}
+
+test("console: the register is behind a session, and a deployment with no review store says so", async () => {
+  const h = await consoleHarness();
+
+  const anonymous = await routeConsole(consoleRequest("GET", CONSOLE_PATHS.reviews), h.console);
+  assert.equal(anonymous.status, 303, "a register of attestations is not a public page");
+  assert.equal(anonymous.headers.location, CONSOLE_PATHS.signIn);
+
+  const bare = new ConsoleService(h.spine, new MfaService(new MemoryMfaStore(), h.spine));
+  const refused = await routeConsole(consoleRequest("GET", CONSOLE_PATHS.reviews, { sessionId: h.sessionId }), bare);
+  assert.equal(refused.status, 400);
+  assert.match(refused.body, /Access reviews are not available/);
+
+  // A decision cannot be smuggled in as a read: the POST paths do not answer GET.
+  const wrongVerb = await routeConsole(consoleRequest("GET", CONSOLE_PATHS.reviewAttest, { sessionId: h.sessionId }), h.console);
+  assert.equal(wrongVerb.status, 405);
+  assert.equal(wrongVerb.headers.allow, "POST");
+});
+
+test("console: a review is opened, answered and closed, and a revocation is carried out", async () => {
+  const h = await consoleHarness({ people: ["desk-1@acme.test", "desk-2@acme.test"] });
+  const { sessionId, admin, people } = h;
+
+  const opened = await routeConsole(
+    consoleRequest("POST", CONSOLE_PATHS.reviewOpen, {
+      sessionId,
+      body: form({ name: "Quarter end", scopeKind: "ORGANIZATION", scopeValue: "", reviewerId: admin.id, windowDays: "14" }),
+    }),
+    h.console,
+  );
+  assert.equal(opened.status, 303, "opening a review is a state change, so it redirects");
+  assert.match(String(opened.headers.location), /Opened%20Quarter%20end|Opened\+Quarter\+end/);
+
+  const listed = await h.service.reviews(admin);
+  assert.ok(listed.ok, listed.ok ? "" : listed.error);
+  const reviewId = listed.value[0]!.review.id;
+  // Everybody active, the administrator included: a review that skipped the person who
+  // opened it would be attesting to a subset nobody chose.
+  assert.equal(listed.value[0]!.progress.pending, 3);
+
+  const page = await routeConsole(consoleRequest("GET", `${CONSOLE_PATHS.reviews}?review=${encodeURIComponent(reviewId)}`, { sessionId }), h.console);
+  assert.equal(page.status, 200);
+  assert.match(page.body, /Quarter end/);
+  assert.match(page.body, /never decided/);
+  assert.match(page.body, />Keep</, "a decision that keeps access is offered");
+  assert.match(page.body, />Revoke</, "and one that revokes it is beside it, not behind a menu");
+
+  // Pending is what an item is before anybody answers it, not something to set.
+  const pending = await routeConsole(
+    consoleRequest("POST", CONSOLE_PATHS.reviewAttest, { sessionId, body: form({ reviewId, identityId: people[0]!.id, decision: "PENDING" }) }),
+    h.console,
+  );
+  assert.equal(pending.status, 400);
+
+  const kept = await routeConsole(
+    consoleRequest("POST", CONSOLE_PATHS.reviewAttest, { sessionId, body: form({ reviewId, identityId: people[0]!.id, decision: "KEPT" }) }),
+    h.console,
+  );
+  assert.equal(kept.status, 303);
+
+  const revoked = await routeConsole(
+    consoleRequest("POST", CONSOLE_PATHS.reviewAttest, { sessionId, body: form({ reviewId, identityId: people[1]!.id, decision: "REVOKED" }) }),
+    h.console,
+  );
+  assert.equal(revoked.status, 303);
+  assert.equal(h.calls.length, 1, "a revocation goes through the deprovisioning path");
+  assert.equal(h.calls[0]!.identityId, people[1]!.id);
+  assert.match(h.calls[0]!.reason, /no longer warranted/);
+
+  const closed = await routeConsole(
+    consoleRequest("POST", CONSOLE_PATHS.reviewClose, { sessionId, body: form({ reviewId }) }),
+    h.console,
+  );
+  assert.equal(closed.status, 303);
+  const after = await h.service.view(admin, reviewId);
+  assert.ok(after.ok, after.ok ? "" : after.error);
+  assert.equal(after.value.review.status, "COMPLETED");
+  assert.equal(after.value.progress.kept, 1);
+  assert.equal(after.value.progress.revoked, 1);
+  assert.equal(after.value.progress.pending, 1, "closing does not turn an undecided item into a decision");
+});
+
+test("console: schedules are created, paused and removed, and the pause does not skip a period", async () => {
+  const h = await consoleHarness();
+  const { sessionId, admin } = h;
+
+  const made = await routeConsole(
+    consoleRequest("POST", CONSOLE_PATHS.reviewSchedule, {
+      sessionId,
+      body: form({ name: "Quarterly", scopeKind: "ORGANIZATION", scopeValue: "", reviewerId: admin.id, intervalDays: "90" }),
+    }),
+    h.console,
+  );
+  assert.equal(made.status, 303);
+
+  const listed = await h.service.schedules(admin);
+  assert.ok(listed.ok, listed.ok ? "" : listed.error);
+  const scheduleId = listed.value[0]!.id;
+  const dueBefore = listed.value[0]!.nextRunAt;
+
+  const paused = await routeConsole(
+    consoleRequest("POST", CONSOLE_PATHS.reviewScheduleToggle, { sessionId, body: form({ scheduleId, enabled: "0" }) }),
+    h.console,
+  );
+  assert.equal(paused.status, 303);
+  const afterPause = await h.service.schedules(admin);
+  assert.ok(afterPause.ok);
+  assert.equal(afterPause.value[0]!.enabled, false);
+  assert.equal(afterPause.value[0]!.nextRunAt, dueBefore, "pausing does not move the next run");
+
+  const removed = await routeConsole(
+    consoleRequest("POST", CONSOLE_PATHS.reviewScheduleRemove, { sessionId, body: form({ scheduleId }) }),
+    h.console,
+  );
+  assert.equal(removed.status, 303);
+  const left = await h.service.schedules(admin);
+  assert.ok(left.ok);
+  assert.equal(left.value.length, 0);
+});
+
+test("console: a reviewer who does not administer the register reaches only their review", async () => {
+  const h = await consoleHarness({ people: ["desk-1@acme.test"] });
+  const reviewer = h.people[0]!;
+
+  // Somebody else opens a review with this person as its reviewer.
+  assert.ok((await h.spine.setMfaEnrolled(h.admin, reviewer.id, true)).ok);
+  const opened = await h.service.open(h.admin, {
+    name: "Desk access",
+    scopeKind: "ORGANIZATION",
+    scopeValue: "",
+    reviewerId: reviewer.id,
+  });
+  assert.ok(opened.ok, opened.ok ? "" : opened.error);
+  if (!opened.ok) throw new Error("unreachable");
+  const reviewId = opened.value.review.id;
+
+  const session = await h.spine.issueSession(h.admin.organizationId, reviewer.id);
+  assert.ok(session.ok, session.ok ? "" : session.error);
+  if (!session.ok) throw new Error("unreachable");
+  const theirs = session.value.id;
+
+  // The register is administrators' work, and this reviewer is not one.
+  const register = await routeConsole(consoleRequest("GET", CONSOLE_PATHS.reviews, { sessionId: theirs }), h.console);
+  assert.equal(register.status, 403);
+
+  // But the review they were named on is theirs to answer, and the page offers the decision.
+  const page = await routeConsole(
+    consoleRequest("GET", `${CONSOLE_PATHS.reviews}?review=${encodeURIComponent(reviewId)}`, { sessionId: theirs }),
+    h.console,
+  );
+  assert.equal(page.status, 200);
+  assert.match(page.body, />Keep</);
+  assert.match(page.body, /Desk access/);
+
+  const kept = await routeConsole(
+    consoleRequest("POST", CONSOLE_PATHS.reviewAttest, { sessionId: theirs, body: form({ reviewId, identityId: reviewer.id, decision: "KEPT" }) }),
+    h.console,
+  );
+  assert.equal(kept.status, 303, "an attestation names the person who made it, and they may");
+
+  // Somebody who is neither an administrator nor the reviewer may not answer it at all.
+  const bystander = await h.spine.createIdentity(h.admin, { identifier: "bystander@acme.test", displayName: "Bea" });
+  assert.ok(bystander.ok, bystander.ok ? "" : bystander.error);
+  if (!bystander.ok) throw new Error("unreachable");
+  // Enrolled, so the only thing refusing them is the review's rule rather than the session policy.
+  assert.ok((await h.spine.setMfaEnrolled(h.admin, bystander.value.id, true)).ok);
+  const strangerSession = await h.spine.issueSession(h.admin.organizationId, bystander.value.id);
+  assert.ok(strangerSession.ok, strangerSession.ok ? "" : strangerSession.error);
+  if (!strangerSession.ok) throw new Error("unreachable");
+  const refused = await routeConsole(
+    consoleRequest("POST", CONSOLE_PATHS.reviewAttest, {
+      sessionId: strangerSession.value.id,
+      body: form({ reviewId, identityId: h.admin.id, decision: "KEPT" }),
+    }),
+    h.console,
+  );
+  assert.equal(refused.status, 400, "answering a review is the reviewer's, or an administrator's");
+  assert.match(refused.body, /not the reviewer/);
 });

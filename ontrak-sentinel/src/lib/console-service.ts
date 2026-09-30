@@ -24,6 +24,8 @@ import { assuranceSigner } from "./assurance-sign";
 import { sha256Hex } from "./hash";
 import type { IdentityActor, IdentityService, ServiceResult } from "./identity-service";
 import {
+  canAttestAccessReview,
+  canManageAccessReviews,
   canManageIdentities,
   DEFAULT_IDENTITY_POLICY,
   POLICY_SCOPE_ALL,
@@ -32,6 +34,11 @@ import {
   type IdentityPolicy,
   type IdentityRole,
 } from "./identity-rules";
+import type {
+  AccessReviewRecord,
+  AccessReviewScheduleRecord,
+  AccessReviewService,
+} from "./access-review-service";
 import {
   alertTimeline,
   annotationSummary,
@@ -68,6 +75,9 @@ import type {
   ConsolePoliciesView,
   ConsolePolicyView,
   ConsoleProvisioningView,
+  ConsoleReviewScheduleView,
+  ConsoleReviewView,
+  ConsoleReviewsView,
   ConsoleSessionView,
   ConsoleSyncReportView,
 } from "./console-rules";
@@ -163,6 +173,32 @@ export class ConsoleService implements ConsoleEndpoints {
     private readonly upstream: Pick<
       UpstreamSignInService,
       "start" | "complete" | "enabled" | "label" | "redirectOrigin"
+    > | null = null,
+    /**
+     * Access reviews (S2), when this deployment has a store for them.
+     *
+     * Optional like the other services: a deployment without a review store still serves its
+     * console, and the page says the feature is not available rather than offering forms
+     * whose submissions would fail with a database error.
+     *
+     * A `Pick` of the methods the page uses rather than the class, the same posture `tokens`
+     * and `detection` take: the console can open, answer, close and schedule a review, and it
+     * deliberately cannot reach the scheduler's `tick` — a browser session that could drive a
+     * global tick would open reviews for every organization in the deployment.
+     */
+    private readonly accessReviews: Pick<
+      AccessReviewService,
+      | "reviews"
+      | "view"
+      | "open"
+      | "attest"
+      | "close"
+      | "cancel"
+      | "schedules"
+      | "createSchedule"
+      | "setScheduleEnabled"
+      | "removeSchedule"
+      | "groups"
     > | null = null,
   ) {}
 
@@ -391,6 +427,177 @@ export class ConsoleService implements ConsoleEndpoints {
         detail: result.value.detail ?? "",
         changes: result.value.plan.changes.map((change) => ({ action: change.action, detail: change.detail })),
         skipped: result.value.plan.skipped,
+      },
+    };
+  }
+
+  /* -------------------------------------------------------- access reviews */
+
+  async reviews(sessionId: string, reviewId: string | null): Promise<ServiceResult<ConsoleReviewsView>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    return this.reviewsView(context.value, reviewId);
+  }
+
+  async openReview(
+    sessionId: string,
+    input: { name: string; scopeKind: string; scopeValue: string; reviewerId: string; windowDays: number },
+  ): Promise<ServiceResult<{ name: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.accessReviews) return accessReviewsUnavailable();
+    const result = await this.accessReviews.open(context.value.actor, input);
+    return result.ok ? { ok: true, value: { name: result.value.review.name } } : result;
+  }
+
+  /**
+   * Answer one identity.
+   *
+   * The `REVOKED` decision reaches `AccessReviewService.attest`, which carries it out and
+   * refuses the record if it cannot — so a revocation that this deployment cannot enforce
+   * surfaces here as that refusal rather than as a stored decision that did nothing.
+   */
+  async attestReview(
+    sessionId: string,
+    input: { reviewId: string; identityId: string; decision: string; note: string | null },
+  ): Promise<ServiceResult<{ reviewId: string; decision: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.accessReviews) return accessReviewsUnavailable();
+    const result = await this.accessReviews.attest(
+      context.value.actor,
+      input.reviewId,
+      input.identityId,
+      input.decision,
+      input.note ?? undefined,
+    );
+    return result.ok ? { ok: true, value: { reviewId: result.value.review.id, decision: input.decision } } : result;
+  }
+
+  async closeReview(sessionId: string, reviewId: string): Promise<ServiceResult<{ name: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.accessReviews) return accessReviewsUnavailable();
+    const result = await this.accessReviews.close(context.value.actor, reviewId);
+    return result.ok ? { ok: true, value: { name: result.value.review.name } } : result;
+  }
+
+  async cancelReview(sessionId: string, reviewId: string): Promise<ServiceResult<{ name: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.accessReviews) return accessReviewsUnavailable();
+    const result = await this.accessReviews.cancel(context.value.actor, reviewId);
+    return result.ok ? { ok: true, value: { name: result.value.review.name } } : result;
+  }
+
+  async createReviewSchedule(
+    sessionId: string,
+    input: { name: string; scopeKind: string; scopeValue: string; reviewerId: string; intervalDays: number },
+  ): Promise<ServiceResult<{ name: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.accessReviews) return accessReviewsUnavailable();
+    const result = await this.accessReviews.createSchedule(context.value.actor, input);
+    return result.ok ? { ok: true, value: { name: result.value.name } } : result;
+  }
+
+  async setReviewScheduleEnabled(sessionId: string, scheduleId: string, enabled: boolean): Promise<ServiceResult<{ name: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.accessReviews) return accessReviewsUnavailable();
+    const result = await this.accessReviews.setScheduleEnabled(context.value.actor, scheduleId, enabled);
+    return result.ok ? { ok: true, value: { name: result.value.name } } : result;
+  }
+
+  async removeReviewSchedule(sessionId: string, scheduleId: string): Promise<ServiceResult<{ name: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.accessReviews) return accessReviewsUnavailable();
+
+    // The service's removal answers with `{ removed: true }`; the flash wants the name, so it
+    // is read before the row goes. Read here rather than by widening the service's result:
+    // the sentence is a page's concern and the removal is not.
+    const listed = await this.accessReviews.schedules(context.value.actor);
+    const name = listed.ok ? (listed.value.find((entry) => entry.id === scheduleId)?.name ?? "that schedule") : "that schedule";
+    const result = await this.accessReviews.removeSchedule(context.value.actor, scheduleId);
+    return result.ok ? { ok: true, value: { name } } : result;
+  }
+
+  /**
+   * Assemble the register, one review's list, and the two pickers.
+   *
+   * The roster is read once and used for three things — the reviewer's name on each row, the
+   * labels on a review's items, and the reviewer picker — so a page and its table cannot name
+   * the same person differently. A roster the actor may not read degrades to identifiers
+   * rather than failing the page: an AUDITOR can read the register they cannot administer.
+   */
+  private async reviewsView(context: ConsoleContext, reviewId: string | null): Promise<ServiceResult<ConsoleReviewsView>> {
+    if (!this.accessReviews) return accessReviewsUnavailable();
+
+    const canManage = canManageAccessReviews(context.actor.role);
+    const [session, roster] = await Promise.all([
+      this.spine.resolveOwnSession(context.sessionId),
+      this.spine.listIdentities(context.actor),
+    ]);
+    if (!session.ok) return session;
+
+    const people = roster.ok ? roster.value : [];
+    const byId = new Map(people.map((person) => [person.id, person]));
+    const nameOf = (identityId: string): string => {
+      const person = byId.get(identityId);
+      return person ? person.displayName || person.identifier : identityId;
+    };
+
+    let open: ConsoleReviewsView["open"] = null;
+    if (reviewId) {
+      const one = await this.accessReviews.view(context.actor, reviewId);
+      if (!one.ok) return one;
+      open = {
+        review: reviewView(one.value.review, one.value.state, one.value.progress, nameOf),
+        items: one.value.items.map((item) => ({
+          identityId: item.identityId,
+          name: item.identity ? item.identity.displayName || item.identity.identifier : item.identityId,
+          identifier: item.identity?.identifier ?? item.identityId,
+          role: item.identity?.role ?? "",
+          active: item.identity?.active ?? false,
+          decision: item.decision,
+          decidedAt: item.decidedAt,
+          note: item.note,
+        })),
+        canAttest: canAttestAccessReview(context.actor.role, context.actor.id, one.value.review.reviewerId),
+        canManage,
+      };
+    }
+
+    const actor = consoleActor(await this.organizationName(context), session.value.identity);
+    const base = { actor, session: sessionView(session.value.session), open };
+
+    // A reviewer who does not administer the register reaches only the review they were named
+    // on. The service refuses the register to them — deliberately — and reading it anyway would
+    // turn their page into a refusal even though the one review they can answer is right there.
+    if (!canManage) {
+      if (!open) return { ok: false, error: "You do not administer access reviews." };
+      return { ok: true, value: { ...base, reviews: [open.review], schedules: [], reviewers: [], groups: [] } };
+    }
+
+    const [list, schedules, groups] = await Promise.all([
+      this.accessReviews.reviews(context.actor),
+      this.accessReviews.schedules(context.actor),
+      this.accessReviews.groups(context.actor),
+    ]);
+    if (!list.ok) return list;
+    if (!schedules.ok) return schedules;
+
+    return {
+      ok: true,
+      value: {
+        ...base,
+        reviews: list.value.map((entry) => reviewView(entry.review, entry.state, entry.progress, nameOf)),
+        schedules: schedules.value.map((entry) => scheduleView(entry, nameOf)),
+        reviewers: people
+          .filter((person) => person.active)
+          .map((person) => ({ id: person.id, name: person.displayName || person.identifier })),
+        groups: groups.ok ? groups.value.map((group) => ({ id: group.id, name: group.name })) : [],
       },
     };
   }
@@ -1182,6 +1389,55 @@ function sessionView(session: { id: string; issuedAt: number; lastSeenAt: number
     issuedAt: new Date(session.issuedAt).toISOString(),
     lastSeenAt: new Date(session.lastSeenAt).toISOString(),
     expiresAt: new Date(session.expiresAt).toISOString(),
+  };
+}
+
+/** The one sentence a deployment without a review store gets, from every entry point. */
+function accessReviewsUnavailable(): { ok: false; error: string } {
+  return {
+    ok: false,
+    error: "Access reviews are not available on this deployment (no review store is configured).",
+  };
+}
+
+/** A stored review, projected for the register. `state` is the derived one, not the stored one. */
+function reviewView(
+  review: AccessReviewRecord,
+  state: string,
+  progress: { total: number; kept: number; revoked: number; pending: number },
+  nameOf: (identityId: string) => string,
+): ConsoleReviewView {
+  return {
+    id: review.id,
+    name: review.name,
+    scopeKind: review.scopeKind,
+    scopeValue: review.scopeValue,
+    reviewerId: review.reviewerId,
+    reviewerName: nameOf(review.reviewerId),
+    dueAt: review.dueAt,
+    status: review.status,
+    state,
+    progress: { ...progress },
+    createdAt: review.createdAt,
+  };
+}
+
+/** A stored schedule, projected for the page. */
+function scheduleView(
+  schedule: AccessReviewScheduleRecord,
+  nameOf: (identityId: string) => string,
+): ConsoleReviewScheduleView {
+  return {
+    id: schedule.id,
+    name: schedule.name,
+    scopeKind: schedule.scopeKind,
+    scopeValue: schedule.scopeValue,
+    reviewerId: schedule.reviewerId,
+    reviewerName: nameOf(schedule.reviewerId),
+    intervalDays: schedule.intervalDays,
+    nextRunAt: schedule.nextRunAt,
+    lastRunAt: schedule.lastRunAt,
+    enabled: schedule.enabled,
   };
 }
 
