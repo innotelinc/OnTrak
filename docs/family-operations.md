@@ -159,8 +159,30 @@ Each product is still its own stack with its own project name, so a rebuild of o
 recreates that product's containers and keeps every volume — the family file is for
 running them together, not a requirement for running one.
 
-The images are built on the host, so a deploy is a rebuild rather than a pull. The
-`.env` files are **not** in the repository and each one is load-bearing:
+Those two commands are the **development** shape: they build on the host. The three
+deployments — Training, Tix and Sentinel — have overlays beside them that name a
+published image and reset the build context, so starting one is a pull:
+
+```bash
+make sentinel-prod-up                    # or prod-up / tix-prod-up
+```
+
+`ONTRAK_TRAINING_IMAGE_TAG`, `ONTRAK_TIX_IMAGE_TAG` and `ONTRAK_SENTINEL_IMAGE_TAG`
+in that product's `.env.production` choose the release; each defaults to the version
+its overlay was written against. Images come from `ghcr.io/innotelinc/ontrak-*`,
+published either by `make publish-images` or by cutting a release, which runs
+`publish.yml`. So a deployment needs registry access and a credential
+(`gh auth token | docker login ghcr.io -u <user> --password-stdin`) rather than a
+toolchain and the memory to run several Next builds at once.
+
+One thing to know before publishing by hand: the migration image is **separate and
+required**. Each migration runs in its Dockerfile's `builder` stage — the stage that
+carries the Prisma CLI and the schema tree, which the serving image deliberately
+leaves out — so `ontrak-<product>-migrate` is published alongside
+`ontrak-<product>`. Publishing only the serving images leaves a deployment that
+cannot migrate.
+
+The `.env` files are **not** in the repository and each one is load-bearing:
 `/usr/src/ontrak/.env` (the training app and the shared stack), `ontrak-tix/.env`,
 `ontrak-sentinel/.env`, `ontrak-sync/.env` (the live `ONTRAK_API_TOKEN`) and
 `ontrak-portal/.env` (the session signing secret). Back them up before a redeploy —

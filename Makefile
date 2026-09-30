@@ -223,26 +223,30 @@ prod-check: ## Validate all three deployment overlays (throwaway secrets, cleane
 # The overlays demand real secrets, so these need `.env.production` — copy the
 # `.env.production.example` beside the compose file and fill it in. `prod-check`
 # above validates them without one.
+#
+# No `--build`: the overlays name a published image and reset the build context,
+# so starting a deployment is a pull. `ONTRAK_*_IMAGE_TAG` in `.env.production`
+# picks the release each one runs.
 
 .PHONY: prod-up
-prod-up: ## Start the training app as a deployment (needs .env.production)
-	docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+prod-up: ## Start the training app as a deployment (pulls its image; needs .env.production)
+	docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 .PHONY: prod-down
 prod-down: ## Stop the training app deployment (keeps its volumes)
 	docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml down
 
 .PHONY: tix-prod-up
-tix-prod-up: ## Start Tix as a deployment (needs .env.production)
-	cd $(TIX_DIR) && docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+tix-prod-up: ## Start Tix as a deployment (pulls its image; needs .env.production)
+	cd $(TIX_DIR) && docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 .PHONY: tix-prod-down
 tix-prod-down: ## Stop the Tix deployment (keeps its volumes)
 	cd $(TIX_DIR) && docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml down
 
 .PHONY: sentinel-prod-up
-sentinel-prod-up: ## Start Sentinel as a deployment (needs .env.production)
-	cd $(SENTINEL_DIR) && docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+sentinel-prod-up: ## Start Sentinel as a deployment (pulls its image; needs .env.production)
+	cd $(SENTINEL_DIR) && docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 .PHONY: sentinel-prod-down
 sentinel-prod-down: ## Stop the Sentinel deployment (keeps its volume)
@@ -356,6 +360,14 @@ secrets: ## Scan the tracked tree for credential-shaped content
 	python3 scripts/secret-scan.py
 
 ## ---- Delivery ----
+# `publish-images` is the only target that writes to a registry, and the only one
+# that needs credentials. It is the local twin of `.github/workflows/publish.yml`:
+# same products, same stage per product, same tag shape — so a release cut by CI
+# and an image pushed by hand are the same artifact under the same name.
+
+.PHONY: publish-images
+publish-images: ## Build and push every product image to GHCR (VERSION defaults to each product's)
+	bash scripts/publish-images.sh
 
 .PHONY: clean
 clean: ## Remove build output and test artifacts

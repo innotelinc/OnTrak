@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # publish.yml — the one workflow that writes to a registry.
 #
-# ci.yml builds both images on every push so they cannot rot; this publishes
+# ci.yml builds every image on every push so they cannot rot; this publishes
 # them, and only when a release is published — or when an operator asks by hand.
 # The two are kept apart on purpose: a push to main must never produce a tag an
 # environment could pull without someone having decided to release.
@@ -9,7 +9,19 @@
 # Images land at:
 #   ghcr.io/<owner>/ontrak-training
 #   ghcr.io/<owner>/ontrak-tix
+#   ghcr.io/<owner>/ontrak-sentinel
 #   ghcr.io/<owner>/ontrak-genie
+#   ghcr.io/<owner>/ontrak-{training,tix,sentinel}-migrate
+#
+# **The `-migrate` images are what make a deployment pull-only.** The prod overlays
+# fetch their images rather than building them, and the migration runs in the
+# `builder` stage — which the serving image deliberately leaves out, because it
+# carries the Prisma CLI and the schema tree that a running app does not need. A
+# release that published only the serving images would leave every deployment
+# building the migration on the host, which is the thing pulling was meant to stop.
+# Sentinel is here rather than only in the host-built stack because its overlay
+# pulls too. `scripts/publish-images.sh` mirrors this list exactly, so a release cut
+# here and an image pushed by hand are the same artifact under the same name.
 #
 # A release tags them `latest` plus the version and its major.minor; a manual
 # run tags them by commit, so it can prove the pipeline without minting a
@@ -44,15 +56,28 @@ jobs:
         include:
           # `target` is per-entry, and it has to be: the products do not agree on
           # the name of their serving stage (Training and Tix end at `runner`,
-          # Genie at `runtime`). Naming it is what makes this a publish of the
-          # stage that ships rather than of whichever stage happens to be last in
-          # the Dockerfile.
+          # Genie at `runtime`), and each product's migration is a different stage
+          # again (`builder`). Naming it is what makes this a publish of the stage
+          # that ships rather than of whichever stage happens to be last in the
+          # Dockerfile.
           - app: training
             context: .
             target: runner
+          - app: training-migrate
+            context: .
+            target: builder
           - app: tix
             context: ontrak-tix
             target: runner
+          - app: tix-migrate
+            context: ontrak-tix
+            target: builder
+          - app: sentinel
+            context: ontrak-sentinel
+            target: runner
+          - app: sentinel-migrate
+            context: ontrak-sentinel
+            target: builder
           - app: genie
             context: ontrak-genie
             target: runtime

@@ -10,10 +10,21 @@
 # which is:
 #
 #   docker compose --env-file .env.production \
-#     -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#     -f docker-compose.yml -f docker-compose.prod.yml up -d
 #
-# Five things change, and each is the point of the file:
+# Six things change, and each is the point of the file:
 #
+#   * **The images are pulled, not built.** `image:` names the release to fetch
+#     and `build: !reset null` removes the build context the development file
+#     declares, so a deployment needs no source tree, no toolchain and no minutes
+#     of CPU on the host — it fetches the artifact that was built and tested once,
+#     somewhere with the memory to do it. `ONTRAK_SENTINEL_IMAGE_TAG` chooses the
+#     release (defaulting to the version this file was written against); set it in
+#     `.env.production` to move the deployment. Both the provider and the migration
+#     need an image, because the migration runs in the builder stage and that stage
+#     is deliberately not in the app image; `signing-key` reuses the app image
+#     because it is the same stage, disabled here but still needing something to
+#     start.
 #   * The database is no longer published. Only the provider needs it, and it
 #     reaches it over the compose network; a host port would hand the whole
 #     identity store — every organization's people, sessions and evidence chain
@@ -52,6 +63,9 @@ services:
 
   migrate:
     restart: "no"
+    image: ghcr.io/innotelinc/ontrak-sentinel-migrate:${ONTRAK_SENTINEL_IMAGE_TAG:-0.1.0}
+    build: !reset null
+    pull_policy: always
     environment:
       DATABASE_URL: postgresql://ontrak:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}@db:5432/sentinel
 
@@ -60,11 +74,19 @@ services:
   # by any later run that started without the explicit one — which is exactly the
   # silent key change this mechanism exists to prevent.
   signing-key:
+    # The app image again: it is the same runner stage, and a service that has been
+    # told to exit immediately still has to have something to start.
+    image: ghcr.io/innotelinc/ontrak-sentinel:${ONTRAK_SENTINEL_IMAGE_TAG:-0.1.0}
+    build: !reset null
+    pull_policy: always
     command: ["/bin/sh", "-c", "exit 0"]
     volumes: !override []
 
   app:
     restart: always
+    image: ghcr.io/innotelinc/ontrak-sentinel:${ONTRAK_SENTINEL_IMAGE_TAG:-0.1.0}
+    build: !reset null
+    pull_policy: always
     # The whole configuration comes from the production file, exactly as `.env`
     # supplies it in development — the development file is not read at all.
     env_file: !override [.env.production]
