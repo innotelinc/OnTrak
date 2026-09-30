@@ -402,6 +402,14 @@ test("console: the sign-in page renders a password field and the shared theme", 
   assert.match(response.body, /data-scheme="soc"/);
   assert.match(response.body, /href="\/unity-theme\.css"/);
   assert.match(response.body, /src="\/unity-theme\.js"/);
+  // The page introduces the product rather than opening on two words of instruction:
+  // the mark, and the name it belongs to.
+  assert.match(response.body, /class="brand-mark"/);
+  assert.match(response.body, /class="brand-name">OnTrak Sentinel</);
+  assert.doesNotMatch(response.body, /<h1>Sign in<\/h1>/);
+  // The tab still names the page, so a person with the sign-in open in a background tab
+  // can tell what it is.
+  assert.match(response.body, /<title>Sign in · OnTrak Sentinel<\/title>/);
 });
 
 test("console: a good sign-in answers 303 with the session cookie", async () => {

@@ -134,6 +134,44 @@ export const CONSOLE_ASSET_PATHS = {
  */
 export const CONSOLE_SCHEME = "soc";
 
+/**
+ * The Sentinel mark: a shield with a heartbeat across it.
+ *
+ * Sentinel's console is the one page in the Network a person reaches without a
+ * product tile to click, so it has to say *whose* page it is before it asks for a
+ * password. The shield is the security-operations reading of the family's mark —
+ * the same idea as the IT Support Training icon — and the trace inside it is what
+ * the product does: watch the wire and raise what it finds. It is inline rather
+ * than a file because the console ships no static assets of its own and because
+ * the colours are theme tokens, so it repaints with the palette.
+ */
+const SENTINEL_MARK =
+  `<svg class="brand-mark" viewBox="0 0 48 48" role="img" aria-label="OnTrak Sentinel">` +
+  `<defs><linearGradient id="sentinel-mark" x1="0" y1="0" x2="1" y2="1">` +
+  `<stop offset="0%" stop-color="var(--brand)"/>` +
+  `<stop offset="100%" stop-color="var(--tone-sentinel)"/>` +
+  `</linearGradient></defs>` +
+  `<path d="M24 3.5 42.5 11v13.2C42.5 35 35.3 43.3 24 45.5 12.7 43.3 5.5 35 5.5 24.2V11Z" fill="url(#sentinel-mark)"/>` +
+  `<path d="M12.5 25.5h6.2l2.9-7.4 4.4 14.8 3-8.2h6.5" fill="none" stroke="var(--brand-ink)" ` +
+  `stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>` +
+  `</svg>`;
+
+/**
+ * The product lockup: the mark, the name, and one line saying what this is.
+ *
+ * Rendered instead of the page's `<h1>` on the sign-in page and nowhere else. Every
+ * other page is reached by somebody already inside, who knows where they are and
+ * wants the page's own title; the sign-in page is the one place a person arrives
+ * cold, so there the product signs its name.
+ */
+function brandHead(sub: string): string {
+  return (
+    `<div class="brand-head">${SENTINEL_MARK}` +
+    `<div class="brand-text"><span class="brand-name">OnTrak Sentinel</span>` +
+    `<span class="brand-sub">${escapeHtml(sub)}</span></div></div>`
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Escaping                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -436,6 +474,14 @@ const STYLES = `
   /* The sign-in page is a single narrow column, centred in the viewport rather than
      in the 52rem reading column: a login form adrift in a wide empty page looks
      like a page that failed to load. */
+  /* The product lockup. Sized so the mark reads at a glance without the name
+     becoming a headline: on the sign-in page the form is the subject, not the
+     branding. */
+  .brand-head { display: flex; align-items: center; gap: var(--space-3); margin: 0 0 var(--space-4); }
+  .brand-mark { width: 44px; height: 44px; flex: none; }
+  .brand-text { display: flex; flex-direction: column; }
+  .brand-name { font-size: 1.3rem; font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; }
+  .brand-sub { color: var(--ink-faint); font-size: .78rem; text-transform: uppercase; letter-spacing: .09em; }
   .signin { max-width: 24rem; margin: 8vh auto 0; }
   .signin h1 { font-size: 1.5rem; }
   .signin .sub { color: var(--ink-faint); margin-bottom: var(--space-5); }
@@ -449,6 +495,15 @@ export interface ConsolePageInput {
   body: string;
   flash?: string | null;
   error?: string | null;
+  /**
+   * Lead with the product mark and name instead of the page's own `<h1>`.
+   *
+   * Only the sign-in page sets it: it is the one screen a person reaches without
+   * having chosen the product, so the product has to introduce itself there.
+   */
+  brand?: boolean;
+  /** The line under the product name when `brand` is set. */
+  brandSub?: string;
 }
 
 /**
@@ -492,6 +547,12 @@ export function consolePage(input: ConsolePageInput): string {
       }${escapeHtml(input.actor.identifier)} · ${escapeHtml(input.actor.organizationName)}</p>`
     : "";
 
+  // The sign-in page introduces the product; every other page leads with its own
+  // title, because the person is already inside and knows where they are.
+  const heading = input.brand
+    ? brandHead(input.brandSub ?? "security console")
+    : `<h1>${escapeHtml(input.title)}</h1>`;
+
   return (
     // `data-scheme` is how the shared theme is told which palette to paint; the mode
     // (light/dark/system) is whichever the person chose, restored by the theme script
@@ -508,7 +569,7 @@ export function consolePage(input: ConsolePageInput): string {
     `<link rel="stylesheet" href="${CONSOLE_ASSET_PATHS.themeCss}">` +
     `<script src="${CONSOLE_ASSET_PATHS.themeJs}"></script>` +
     `<style>${STYLES}</style></head>` +
-    `<body><div class="bar">${nav}${actions}</div><main><h1>${escapeHtml(input.title)}</h1>${who}` +
+    `<body><div class="bar">${nav}${actions}</div><main>${heading}${who}` +
     (input.error ? `<p class="error" role="alert">${escapeHtml(input.error)}</p>` : "") +
     (input.flash ? `<p class="flash">${escapeHtml(input.flash)}</p>` : "") +
     input.body +
@@ -622,6 +683,11 @@ export function renderSignIn(view: ConsoleSignInView): string {
 
   return consolePage({
     title: "Sign in",
+    // The tab still says "Sign in · OnTrak Sentinel"; the page itself leads with the
+    // mark and the name, because the product is what a person arriving cold needs to
+    // recognise before they type a password.
+    brand: true,
+    brandSub: "security console",
     actor: null,
     body:
       `<div class="signin">` +
