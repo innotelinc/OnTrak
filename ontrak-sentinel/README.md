@@ -620,6 +620,22 @@ the alert underneath it. **Close** requires a reason, because an incident review
 evidence chain as `guard.alert.acknowledged` / `guard.alert.closed`, against the person
 who did it.
 
+**Assign** hands the alert to one person, which is the difference between an incident with
+an owner and two people acknowledging the same thing. The row carries the assignee's id
+*and* the name they had at that moment — an identity is renamed and deactivated, and a
+closed incident still has to say who was asked — the filter offers *mine* and *unassigned*,
+and the header counts how many open alerts nobody has picked up. `guard.alert.assigned` /
+`guard.alert.unassigned` go on the chain with the person who made the handover, and a
+repeat **keeps** the owner: somebody is already working it.
+
+Who may be handed one is a rule about people, and it is shared with the picker the page
+renders, so the list cannot offer a name the service would refuse. Only an active *human*
+can own an incident: a service identity is refused by name, and so is somebody who has been
+switched off — an alert showing a name that will never pick it up is invisible to the
+*unassigned* queue, which is worse than one that says nobody has it. A closed alert has no
+work left to hand on, so the page offers no picker for it and the service refuses the
+handover by name.
+
 Beside the queue, `/console/compliance` is the summary a reviewer is handed: the controls
 in force, the population each policy scope governs and the number it resolves to, the
 alert backlog, and whether the evidence chain still verifies. Two things are deliberate.

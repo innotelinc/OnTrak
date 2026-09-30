@@ -32,12 +32,18 @@ import { POLICY_SCOPES, type PolicyScope } from "./identity-rules";
 // offers to narrow by has to be what the filter actually understands.
 import {
   ALERT_SEVERITIES,
+  ASSIGNEE_ANY,
+  ASSIGNEE_MINE,
+  ASSIGNEE_NONE,
   filterQuery,
   type AlertTimelineEntry,
   type RelatedAlert,
   type TriageFilter,
   type TriageSummary,
 } from "./alert-triage-rules";
+// Who may be handed an alert, read from the module both this page and the service share, so
+// the picker cannot offer a name the service would refuse.
+import type { AssignableIdentity } from "./alert-assignment-rules";
 import type { AlertState } from "./detection-service";
 import type { Severity } from "./detection-rules";
 // Read for the feed page's help text: the kinds it will classify, and the confidence below
@@ -127,6 +133,15 @@ export const CONSOLE_PATHS = {
   alerts: "/console/alerts",
   alertAcknowledge: "/console/alerts/acknowledge",
   alertClose: "/console/alerts/close",
+  /**
+   * Handing an alert to somebody, and giving it back to the queue (S3).
+   *
+   * Two paths rather than one with an empty target, because the two acts read differently on
+   * the evidence chain (`guard.alert.assigned` / `guard.alert.unassigned`) and a form whose
+   * meaning depends on which control was left blank is a form that will be submitted wrong.
+   */
+  alertAssign: "/console/alerts/assign",
+  alertUnassign: "/console/alerts/unassign",
   /**
    * The compliance posture summary (S4).
    *
@@ -1006,6 +1021,21 @@ function optionList(values: readonly string[], selected: string): string {
     .join("");
 }
 
+/**
+ * `optionList` for a select whose values are not the words a person reads.
+ *
+ * The filter's owner select is the case: `MINE` and `NONE` are the query-string grammar, and
+ * a queue that asked an operator to pick "NONE" would be asking them to guess.
+ */
+function labelledOptionList(options: readonly (readonly [string, string])[], selected: string): string {
+  return options
+    .map(
+      ([value, label]) =>
+        `<option value="${escapeHtml(value)}"${value === selected ? " selected" : ""}>${escapeHtml(label)}</option>`,
+    )
+    .join("");
+}
+
 export function renderDirectory(
   view: ConsoleDirectoryView,
   report: ConsoleSyncReportView | null,
@@ -1384,6 +1414,10 @@ export interface ConsoleAlertView {
   lastSeenAt: string;
   occurrences: number;
   note: string | null;
+  /** Whoever is working it, or `null` for one nobody has picked up. */
+  assigneeId: string | null;
+  assigneeLabel: string | null;
+  assignedAt: string | null;
   /** How many indicators the alert's evidence matched, escalations and annotations. */
   indicators: number;
   /** Whether a feed raised the severity its rule fired at. */
@@ -1406,7 +1440,15 @@ export interface ConsoleAlertInvestigationView {
   annotation: string | null;
   related: RelatedAlert[];
   timeline: AlertTimelineEntry[];
-  actions: { canAcknowledge: boolean; canClose: boolean };
+  actions: { canAcknowledge: boolean; canClose: boolean; canAssign: boolean };
+  /**
+   * Who this alert may be handed to.
+   *
+   * Built from `assignableIdentities`, so the picker offers exactly the people the service
+   * will accept: a list assembled for the page would eventually offer a name the service
+   * refuses, and the refusal would read as a bug in triage rather than as a rule.
+   */
+  assignable: AssignableIdentity[];
 }
 
 /**
@@ -1450,6 +1492,16 @@ export function renderAlerts(view: ConsoleAlertsView, flash?: string | null, err
   const query = filterQuery(filter);
   const severityOptions = optionList(["ALL", ...ALERT_SEVERITIES], filter.severity);
   const stateOptions = optionList(["OPEN", "ALL", "NEW", "ACKNOWLEDGED", "CLOSED"], filter.state);
+  // "Mine" is a value the filter carries rather than one it resolves, so it still reads back
+  // as the thing the operator asked for after the page has rendered.
+  const assigneeOptions = labelledOptionList(
+    [
+      [ASSIGNEE_ANY, "anyone"],
+      [ASSIGNEE_MINE, "mine"],
+      [ASSIGNEE_NONE, "unassigned"],
+    ],
+    filter.assignee,
+  );
 
   const form =
     `<form method="get" action="${CONSOLE_PATHS.alerts}">` +
@@ -1457,7 +1509,8 @@ export function renderAlerts(view: ConsoleAlertsView, flash?: string | null, err
     // "exactly", because that is what the filter does: a select whose label promised "at
     // least" over an exact match would have an operator believing a CRITICAL was hidden
     // from a HIGH view.
-    `<label class="muted" for="severity">severity</label> <select id="severity" name="severity">${severityOptions}</select></p>` +
+    `<label class="muted" for="severity">severity</label> <select id="severity" name="severity">${severityOptions}</select> ` +
+    `<label class="muted" for="assignee">owned by</label> <select id="assignee" name="assignee">${assigneeOptions}</select></p>` +
     `<p><label class="muted" for="search">Search</label> <input id="search" name="search" value="${escapeHtml(filter.search)}" placeholder="rule, address, asset, indicator"> ` +
     `<button type="submit">Apply</button> <a class="muted" href="${CONSOLE_PATHS.alerts}">Clear</a></p>` +
     (filter.identityId
@@ -1465,6 +1518,9 @@ export function renderAlerts(view: ConsoleAlertsView, flash?: string | null, err
       : "") +
     (filter.address
       ? `<p class="muted">Narrowed to one address: <code>${escapeHtml(filter.address)}</code></p>`
+      : "") +
+    (filter.assignee !== ASSIGNEE_ANY && filter.assignee !== ASSIGNEE_MINE && filter.assignee !== ASSIGNEE_NONE
+      ? `<p class="muted">Narrowed to one owner: <code>${escapeHtml(filter.assignee)}</code></p>`
       : "") +
     `</form>`;
 
@@ -1485,10 +1541,18 @@ export function renderAlerts(view: ConsoleAlertsView, flash?: string | null, err
     `<p class="muted">${summary.escalated} were raised by a feed rather than by the rule that fired` +
     (summary.oldestOpenAt ? ` · oldest open last seen ${escapeHtml(summary.oldestOpenAt)}` : "") +
     (summary.lastSeenAt ? ` · newest activity ${escapeHtml(summary.lastSeenAt)}` : "") +
+    `</p>` +
+    // The "whoever gets there first" problem, as a number. It is a muted line rather than an
+    // alert-coloured one because an unowned alert is the normal state of a fresh queue; what
+    // is worth seeing is that the number is not going down.
+    `<p class="muted">` +
+    (summary.unassigned === 0
+      ? "Every open alert has an owner."
+      : `${summary.assigned} open alert(s) have an owner; ${summary.unassigned} are waiting for one — one alert is worked by one person, and an unowned alert is one nobody is working.`) +
     `</p></div>`;
 
   const rows = view.alerts.length
-    ? `<table><thead><tr><th>Severity</th><th>Rule</th><th>About</th><th>Last seen</th><th>Seen</th><th></th></tr></thead><tbody>${view.alerts
+    ? `<table><thead><tr><th>Severity</th><th>Rule</th><th>About</th><th>Owner</th><th>Last seen</th><th>Seen</th><th></th></tr></thead><tbody>${view.alerts
         .map((alert) => {
           const about = alert.identityLabel
             ? `${escapeHtml(alert.identityLabel)}${alert.sourceAddress ? ` <span class="muted">from ${escapeHtml(alert.sourceAddress)}</span>` : ""}`
@@ -1503,6 +1567,9 @@ export function renderAlerts(view: ConsoleAlertsView, flash?: string | null, err
             (alert.escalated ? ` <span class="muted">· from a feed</span>` : "") +
             `<br><span class="muted">${escapeHtml(alert.state.toLowerCase())}${alert.note ? ` · ${escapeHtml(alert.note)}` : ""}</span></td>` +
             `<td class="muted">${about}${alert.asset ? `<br>${escapeHtml(alert.asset)}` : ""}</td>` +
+            (alert.assigneeLabel
+              ? `<td class="muted">${escapeHtml(alert.assigneeLabel)}${alert.assignedAt ? `<br>since ${escapeHtml(alert.assignedAt)}` : ""}</td>`
+              : `<td class="muted">unassigned</td>`) +
             `<td class="muted">${escapeHtml(alert.lastSeenAt)}${waiting}</td>` +
             `<td class="muted">${escapeHtml(alert.occurrences)}${alert.indicators ? `<br>${alert.indicators} indicator(s)` : ""}</td>` +
             `<td>` +
@@ -1573,6 +1640,27 @@ function renderInvestigation(view: ConsoleAlertInvestigationView, query: string)
       `stop the alert being refreshed by a repeat.</p></form>`
     : `<p class="muted">Already acknowledged: it stays in the queue until somebody closes it with a reason.</p>`;
 
+  const assignment = view.actions.canAssign
+    ? `<form method="post" action="${CONSOLE_PATHS.alertAssign}">` +
+      `<input type="hidden" name="alertId" value="${escapeHtml(subject.id)}">` +
+      `<p><label class="muted" for="assignee">Give it to</label> ` +
+      `<select id="assignee" name="assigneeId">${labelledOptionList(
+        [["", subject.assigneeId ? "somebody else" : "choose somebody"], ...view.assignable.map((identity) => [identity.id, identity.label] as const)],
+        "",
+      )}</select> ` +
+      `<button type="submit">Assign</button></p>` +
+      `<p class="muted">An alert is worked by one person. The queue can be narrowed to what is yours, and the chain ` +
+      `records who handed it to whom — which is the whole difference between one incident with an owner and two ` +
+      `people acknowledging the same thing.</p></form>` +
+      (subject.assigneeId
+        ? `<form method="post" action="${CONSOLE_PATHS.alertUnassign}">` +
+          `<input type="hidden" name="alertId" value="${escapeHtml(subject.id)}">` +
+          `<button type="submit" class="quiet">Give it back to the queue</button>` +
+          `<p class="muted">Unowned is a real state, and it is the one a shift should start from — not a ` +
+          `name left on an alert nobody is working.</p></form>`
+        : "")
+    : `<p class="muted">This alert is closed: it is the record of who worked it, so there is nothing left to hand on.</p>`;
+
   const close = view.actions.canClose
     ? `<form method="post" action="${CONSOLE_PATHS.alertClose}">` +
       `<input type="hidden" name="alertId" value="${escapeHtml(subject.id)}">` +
@@ -1598,16 +1686,28 @@ function renderInvestigation(view: ConsoleAlertInvestigationView, query: string)
     }${subject.sourceAddress ? ` · from <code>${escapeHtml(subject.sourceAddress)}</code>` : ""}` +
     `${subject.device ? ` · device ${escapeHtml(subject.device)}` : ""}` +
     `${subject.asset ? ` · asset ${escapeHtml(subject.asset)}` : ""}</p>` +
+    `<p class="muted">${
+      subject.assigneeLabel
+        ? `Owner: <strong>${escapeHtml(subject.assigneeLabel)}</strong>${subject.assignedAt ? ` since ${escapeHtml(subject.assignedAt)}` : ""}`
+        : "Owner: nobody yet"
+    }</p>` +
     (subject.identityId
       ? `<p class="muted"><a href="${CONSOLE_PATHS.alerts}?${escapeHtml(
-          filterQuery({ state: "OPEN", severity: "ALL", identityId: subject.identityId, address: null, search: "" }),
+          filterQuery({ state: "OPEN", severity: "ALL", assignee: ASSIGNEE_ANY, identityId: subject.identityId, address: null, search: "" }),
         )}">Everything open about this identity</a></p>`
       : "") +
     (subject.sourceAddress
       ? `<p class="muted"><a href="${CONSOLE_PATHS.alerts}?${escapeHtml(
-          filterQuery({ state: "OPEN", severity: "ALL", identityId: null, address: subject.sourceAddress, search: "" }),
+          filterQuery({ state: "OPEN", severity: "ALL", assignee: ASSIGNEE_ANY, identityId: null, address: subject.sourceAddress, search: "" }),
         )}">Everything open from this address</a></p>`
       : "") +
+    // "Mine" is resolved by the browser's own cookie, not here: this link is the operator
+    // asking for their own work, and the filter keeps that word rather than an id.
+    `<p class="muted"><a href="${CONSOLE_PATHS.alerts}?${escapeHtml(
+      filterQuery({ state: "OPEN", severity: "ALL", assignee: ASSIGNEE_MINE, identityId: null, address: null, search: "" }),
+    )}">Everything open that is mine</a> · <a href="${CONSOLE_PATHS.alerts}?${escapeHtml(
+      filterQuery({ state: "OPEN", severity: "ALL", assignee: ASSIGNEE_NONE, identityId: null, address: null, search: "" }),
+    )}">everything open that nobody has picked up</a></p>` +
     (view.escalation ? `<p class="error" role="alert">Raised above its rule's own severity. ${escapeHtml(view.escalation)}</p>` : "") +
     (view.annotation ? `<p class="muted">${escapeHtml(view.annotation)}</p>` : "") +
     `<h3>What else is this</h3>` +
@@ -1615,8 +1715,8 @@ function renderInvestigation(view: ConsoleAlertInvestigationView, query: string)
     `<h3>What happened</h3>` +
     `<div class="card">${timeline}</div>` +
     `<h3>What to do</h3>` +
-    `<div class="card">${acknowledge}${close}` +
-    `<p class="muted">Both actions are recorded on the organization's evidence chain, against your identity.</p></div>` +
+    `<div class="card">${acknowledge}${assignment}${close}` +
+    `<p class="muted">All three actions are recorded on the organization's evidence chain, against your identity.</p></div>` +
     `</div>`
   );
 }

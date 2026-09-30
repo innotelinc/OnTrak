@@ -39,6 +39,7 @@ import type {
   AccessReviewScheduleRecord,
   AccessReviewService,
 } from "./access-review-service";
+import { assignableIdentities } from "./alert-assignment-rules";
 import {
   alertTimeline,
   annotationSummary,
@@ -163,7 +164,10 @@ export class ConsoleService implements ConsoleEndpoints {
      * Named `detection` rather than `alerts`, because `alerts` is a page method on this class
      * and a member of the same name would shadow it.
      */
-    private readonly detection: Pick<DetectionService, "alerts" | "acknowledge" | "close"> | null = null,
+    private readonly detection: Pick<
+      DetectionService,
+      "alerts" | "acknowledge" | "close" | "assign" | "unassign"
+    > | null = null,
     /**
      * Upstream sign-in, when the deployment federates a provider.
      *
@@ -708,12 +712,16 @@ export class ConsoleService implements ConsoleEndpoints {
     if (!context.ok) return context;
     if (!this.detection) return { ok: false, error: "This deployment runs no detection pipeline, so there is no alert queue." };
 
-    const [all, session] = await Promise.all([
+    const [all, session, roster] = await Promise.all([
       this.detection.alerts(context.value.actor),
       this.spine.resolveOwnSession(context.value.sessionId),
+      // Read for the picker. Both are `canReadDirectory` reads, so this cannot be the first
+      // thing to fail for a role that could already read the queue above.
+      this.spine.listIdentities(context.value.actor),
     ]);
     if (!all.ok) return all;
     if (!session.ok) return session;
+    if (!roster.ok) return roster;
 
     const at = Date.now();
     const wanted = (subjectId ?? "").trim();
@@ -728,6 +736,7 @@ export class ConsoleService implements ConsoleEndpoints {
           related: relatedAlerts(all.value, subject),
           timeline: alertTimeline(subject),
           actions: triageActions(subject),
+          assignable: assignableIdentities(roster.value),
         }
       : null;
 
@@ -738,7 +747,9 @@ export class ConsoleService implements ConsoleEndpoints {
         session: sessionView(session.value.session),
         filter,
         summary: triageSummary(all.value),
-        alerts: filterAlerts(all.value, filter).map((alert) => alertView(alert, at)),
+        // The viewer is passed in rather than baked into the filter, so `assignee=MINE`
+        // survives the round trip through the query string as the word the operator chose.
+        alerts: filterAlerts(all.value, filter, context.value.actor.id).map((alert) => alertView(alert, at)),
         investigation,
       },
     };
@@ -765,6 +776,39 @@ export class ConsoleService implements ConsoleEndpoints {
 
     const closed = await this.detection.close(context.value.actor, alertId, note);
     return closed.ok ? { ok: true, value: { ruleName: closed.value.ruleName } } : closed;
+  }
+
+  /**
+   * Hand an alert to somebody, or refuse by name.
+   *
+   * Who may be handed one is `assignmentRefusal`'s decision and it is not repeated here: the
+   * page's picker is built from the same function, so a name it offered is a name the service
+   * takes. The label comes back for the flash, so the operator is told who they gave it to
+   * rather than merely that something happened.
+   */
+  async assignAlert(
+    sessionId: string,
+    alertId: string,
+    assigneeId: string,
+  ): Promise<ServiceResult<{ ruleName: string; assigneeLabel: string | null }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.detection) return { ok: false, error: "This deployment runs no detection pipeline, so there is no alert queue." };
+
+    const assigned = await this.detection.assign(context.value.actor, alertId, assigneeId);
+    return assigned.ok
+      ? { ok: true, value: { ruleName: assigned.value.ruleName, assigneeLabel: assigned.value.assigneeLabel } }
+      : assigned;
+  }
+
+  /** Give it back to the queue. Unowned is a state, not a gap in the record. */
+  async unassignAlert(sessionId: string, alertId: string): Promise<ServiceResult<{ ruleName: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!this.detection) return { ok: false, error: "This deployment runs no detection pipeline, so there is no alert queue." };
+
+    const cleared = await this.detection.unassign(context.value.actor, alertId);
+    return cleared.ok ? { ok: true, value: { ruleName: cleared.value.ruleName } } : cleared;
   }
 
   /* -------------------------------------------------------------- compliance */
@@ -1496,6 +1540,9 @@ function alertView(alert: AlertRecord, at: number): ConsoleAlertView {
     lastSeenAt: alert.lastSeenAt,
     occurrences: alert.occurrences,
     note: alert.note,
+    assigneeId: alert.assigneeId,
+    assigneeLabel: alert.assigneeLabel,
+    assignedAt: alert.assignedAt,
     indicators: alert.threatIntel.length,
     escalated: alert.threatIntel.some((match) => match.escalates),
     waitingMinutes: waitingMinutes(alert, at),

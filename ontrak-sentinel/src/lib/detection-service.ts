@@ -53,6 +53,7 @@ import {
   type ObservedEvent,
   type TelemetrySource,
 } from "./telemetry-rules";
+import { assignmentRefusal } from "./alert-assignment-rules";
 import {
   escalateSeverity,
   matchIndicators,
@@ -101,6 +102,19 @@ export interface AlertRecord {
   threatIntel: IndicatorMatch[];
   /** An operator's note when they acknowledged or closed it. */
   note: string | null;
+  /**
+   * The person who owns this alert, or `null` for one nobody has picked up.
+   *
+   * An id *and* a label, for the same reason the correlated identity is both: an identity is
+   * renamed and deactivated, and an alert read next month has to be able to say who was
+   * asked to look at it. The id is what the queue's filter compares; the label is what the
+   * page shows, and it is written when the alert is handed over rather than looked up on
+   * every read.
+   */
+  assigneeId: string | null;
+  assigneeLabel: string | null;
+  /** When it was handed over, so a row can say how long somebody has been holding it. */
+  assignedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -263,6 +277,11 @@ export class DetectionService {
         evidence: draft.evidence.slice(0, ALERT_EVIDENCE_MAX),
         threatIntel,
         note: null,
+        // A sensor raises an alert; it does not hand it to anybody. Every alert starts
+        // unowned, which is what makes "unassigned" a meaningful queue.
+        assigneeId: null,
+        assigneeLabel: null,
+        assignedAt: null,
         createdAt: now,
         updatedAt: now,
       };
@@ -313,6 +332,85 @@ export class DetectionService {
   async acknowledge(actor: IdentityActor, alertId: string, note: string | null): Promise<ServiceResult<AlertRecord>> {
     if (!canReadDirectory(actor.role)) return { ok: false, error: "You do not have access to Guard alerts." };
     return this.transition(actor, alertId, "ACKNOWLEDGED", note);
+  }
+
+  /**
+   * Hand an alert to somebody.
+   *
+   * Handing on a closed alert is refused rather than allowed and ignored: the row is the
+   * record of who worked an incident, and there is no work left for an owner to do. The
+   * reasons a target is refused come from `assignmentRefusal` rather than being restated
+   * here, so the picker the console renders and the check this makes cannot disagree — a
+   * picker offering a name the service then refuses would make the refusal look like a bug.
+   *
+   * Re-assigning to the person who already holds it is allowed and recorded. A second click
+   * is not a mistake worth an error page, and the chain keeping both is the honest record.
+   */
+  async assign(actor: IdentityActor, alertId: string, assigneeId: string): Promise<ServiceResult<AlertRecord>> {
+    if (!canReadDirectory(actor.role)) return { ok: false, error: "You do not have access to Guard alerts." };
+    if (!assigneeId.trim()) return { ok: false, error: "Choose who is taking this alert." };
+    return this.setAssignee(actor, alertId, assigneeId.trim());
+  }
+
+  /** Give it back to the queue, so "nobody has picked this up" stays sayable. */
+  async unassign(actor: IdentityActor, alertId: string): Promise<ServiceResult<AlertRecord>> {
+    if (!canReadDirectory(actor.role)) return { ok: false, error: "You do not have access to Guard alerts." };
+    return this.setAssignee(actor, alertId, null);
+  }
+
+  /**
+   * The one writer of the three assignment columns.
+   *
+   * `null` clears the label and the instant along with the id, because a row that read
+   * `unassigned` while still naming somebody would be two answers to one question.
+   */
+  private async setAssignee(
+    actor: IdentityActor,
+    alertId: string,
+    assigneeId: string | null,
+  ): Promise<ServiceResult<AlertRecord>> {
+    const found = await this.store.findAlert(actor.organizationId, alertId);
+    if (!found) return { ok: false, error: "That alert does not exist." };
+    if (found.state === "CLOSED") {
+      return {
+        ok: false,
+        error: "That alert is closed — it is the record of who worked it, so there is nothing left to hand on.",
+      };
+    }
+
+    let assigneeLabel: string | null = null;
+    if (assigneeId) {
+      const identity = await this.identities.findIdentity(actor.organizationId, assigneeId);
+      const refusal = assignmentRefusal(identity);
+      if (refusal) return { ok: false, error: refusal };
+      assigneeLabel = identity?.displayName || identity?.identifier || null;
+    }
+
+    const now = this.ids.now();
+    const next: AlertRecord = {
+      ...found,
+      assigneeId,
+      assigneeLabel,
+      assignedAt: assigneeId ? now : null,
+      updatedAt: now,
+    };
+    await this.store.updateAlert(next);
+    await this.append(
+      actor.organizationId,
+      assigneeId ? "guard.alert.assigned" : "guard.alert.unassigned",
+      next.id,
+      {
+        // The operator is named in the detail, as acknowledgment and closure are: the chain
+        // entry for a triage act is written by the console, and this is the field that says
+        // which person made it.
+        by: actor.id,
+        assigneeId,
+        assigneeLabel,
+        previousAssigneeId: found.assigneeId,
+        ruleId: next.ruleId,
+      },
+    );
+    return { ok: true, value: next };
   }
 
   /**
@@ -402,6 +500,12 @@ export class DetectionService {
         ...existing.threatIntel,
         ...record.threatIntel.filter((match) => !known.has(match.indicator.id)),
       ],
+      // Who owns the alert is part of the incident rather than of the sighting: a repeat
+      // refreshes it and must not quietly hand it back to the queue. Named explicitly, since
+      // the incoming record always arrives with no owner.
+      assigneeId: existing.assigneeId,
+      assigneeLabel: existing.assigneeLabel,
+      assignedAt: existing.assignedAt,
       updatedAt: record.updatedAt,
     };
     await this.store.updateAlert(merged);

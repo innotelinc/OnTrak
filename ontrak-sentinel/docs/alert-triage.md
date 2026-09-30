@@ -29,6 +29,7 @@ is a queue nobody reads to the bottom.
 | --- | --- | --- |
 | `state` | `OPEN` (default), `ALL`, `NEW`, `ACKNOWLEDGED`, `CLOSED` | Which states to show |
 | `severity` | `ALL` (default), `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` | Exact severity, not "at least" |
+| `assignee` | `ANY` (default), `MINE`, `NONE`, an identity id | Who owns it. `MINE` is the reader's own, resolved where the comparison happens rather than when the filter is read, so the select reads back as the word that was chosen |
 | `identityId` | an identity id | Everything open about one person |
 | `address` | an address | Everything open from one address |
 | `search` | free text | Rule name, rule id, identity, address, asset, device, note, indicator |
@@ -46,9 +47,14 @@ it came from.
 
 The header and the table answer **two different questions**. The header describes
 everything the organization has (open, new, acknowledged, closed, per severity, how many a
-feed raised, the oldest open sighting, the newest activity); the table is what the filter
-selected. A single number would have to pick one, and the one that gets reported upward is
-usually the header's.
+feed raised, the oldest open sighting, the newest activity, and how many open alerts have
+an owner); the table is what the filter selected. A single number would have to pick one,
+and the one that gets reported upward is usually the header's.
+
+The owner count is stated separately because it is the number the field exists for: an open
+alert nobody owns is one nobody is working, and the header says so in as many words
+(`0 open alert(s) have an owner; 1 are waiting for one`) rather than leaving it to be
+inferred from a column.
 
 Ordering is part of the rule, not of the store query: **loudest first, then most recent,
 then by rule name and id**. Two alerts that share a millisecond still come back in a
@@ -90,8 +96,8 @@ by hand.
 
 ## Acting on it
 
-Both actions are `POST`s that answer `303`, so a refresh re-fetches a page rather than
-repeating the change. Both require `canReadDirectory` on the actor, which is `ADMIN`,
+All four actions are `POST`s that answer `303`, so a refresh re-fetches a page rather than
+repeating the change. All four require `canReadDirectory` on the actor, which is `ADMIN`,
 `AGENT` or `AUDITOR`; a `SERVICE` identity is refused, which is the same rule
 `DetectionService` applies to reading the queue.
 
@@ -133,11 +139,63 @@ curl -sS -i -X POST http://127.0.0.1:8787/console/alerts/close \
   --data-urlencode "note=Blocked at the edge; the host is being rebuilt"
 ```
 
-Both land on the organization's evidence chain as `guard.alert.acknowledged` and
-`guard.alert.closed`, against the actor who acted, with the note. The alert's own
-escalation is recorded when it is *raised* (`guard.alert.raised`, `guard.alert.repeated`),
-including the indicators that moved its severity and the identity, device and asset it was
-correlated to.
+### `POST /console/alerts/assign`
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `alertId` | yes | The alert to hand over |
+| `assigneeId` | yes | An **active human** identity in this organization |
+
+Handing an alert to one person is the difference between an incident with an owner and two
+people acknowledging the same thing. Two of the rules are about people rather than about
+permissions, and both are refused by name: a **service identity** cannot own an incident,
+and a **deactivated** identity cannot be given one — an alert showing a name that will never
+pick it up is invisible to the `unassigned` queue, which is worse than one that says nobody
+has it. Offboarding already ends that person's sessions and revokes their tokens; this is
+the same fact one level out.
+
+The rule lives in `alert-assignment-rules.ts` and is used by **both** the service and the
+picker the page renders (`assignableIdentities` filters through `assignmentRefusal`), so the
+list can never offer a name the service would refuse — a refusal an operator met after
+choosing a name from a list would read as a bug in triage rather than as a rule.
+
+Both the identity id and its display name at that moment are written to the alert, so a
+later rename or offboarding does not rewrite who was asked. An empty `assigneeId` is refused
+with `400`. A **closed** alert is refused by name: the row is the record of who worked it and
+there is no work left to hand on.
+
+```sh
+curl -sS -i -X POST http://127.0.0.1:8787/console/alerts/assign \
+  -H "X-Sentinel-Session: $SESSION" \
+  --data-urlencode "alertId=$ALERT_ID" \
+  --data-urlencode "assigneeId=$IDENTITY_ID"
+```
+
+### `POST /console/alerts/unassign`
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `alertId` | yes | The alert to give back to the queue |
+
+Unowned is a state, not a gap in the record, so it has its own path rather than being
+"assign to nobody": the two read differently on the chain. Clearing the owner clears all
+three columns together, so a row can never say `unassigned` while still naming somebody.
+
+```sh
+curl -sS -i -X POST http://127.0.0.1:8787/console/alerts/unassign \
+  -H "X-Sentinel-Session: $SESSION" \
+  --data-urlencode "alertId=$ALERT_ID"
+```
+
+All four land on the organization's evidence chain as `guard.alert.acknowledged`,
+`guard.alert.closed`, `guard.alert.assigned` and `guard.alert.unassigned`, against the actor
+who acted, with the note or the new owner. The alert's own escalation is recorded when it is
+*raised* (`guard.alert.raised`, `guard.alert.repeated`), including the indicators that moved
+its severity and the identity, device and asset it was correlated to.
+
+A repeat is *not* one of these actions. When more of the same telemetry arrives the alert is
+refreshed in place and **keeps its owner**: somebody is already working it, and more of the
+same is not a reason to hand it back to the queue.
 
 ## The posture summary — `GET /console/compliance`
 
@@ -171,12 +229,15 @@ of it is on `/console/policies`; the posture page never writes.
 
 ## Not here yet, and named rather than implied
 
-- **No detection-coverage map.** The queue says what fired; nothing yet says which rules
-  and sources are silent, so a deployment cannot see a telemetry gap from the console.
 - **No suppression or bulk action.** One alert is acknowledged or closed at a time. There
   is no "close everything at this address" and no maintenance window, because both are how
   an alert gets closed without anybody deciding anything.
-- **No assignment.** An alert can be acknowledged by whoever gets there first; there is no
-  owner, no handover and no shift view.
 - **No notification.** Nothing is sent anywhere when a `CRITICAL` alert is raised; the
-  queue is a page somebody has to open.
+  queue is a page somebody has to open. Assignment gives an alert an owner, not a way of
+  reaching them.
+- **No shift view.** The queue can be narrowed to *mine* and to *unassigned*, which is what
+  the owner field makes sayable, but there is no roster, no rota and no handover between
+  shifts — an alert someone holds overnight stays theirs until they hand it on or close it.
+
+The detection-coverage map, which answers *which rules and sources are silent*, is a page of
+its own at `/console/coverage` rather than part of the queue.

@@ -17,6 +17,13 @@
  *    rule fires at — a feed can raise it — so `escalationSummary` says which indicator did
  *    it, in the operator's own words, from the record rather than from the feed that may
  *    since have been withdrawn.
+ *  - **Who owns it?** "One alert is acted on at a time, by whoever gets there first" is how
+ *    two operators acknowledge the same incident and neither investigates it, so the queue
+ *    can be narrowed to one person's work (`ASSIGNEE_MINE`, `ASSIGNEE_NONE`) and every row
+ *    carries its owner. *Who may be handed one* is a rule about people rather than about the
+ *    queue, and it lives in `alert-assignment-rules.ts` — imported by the service that
+ *    performs the handover as well as by this module, which is the one arrangement that does
+ *    not close an import cycle.
  *
  * Two deliberate omissions. A closed alert is not a neighbour and never appears in
  * `relatedAlerts`: the investigation is about what is open, and a resolved printer ticket
@@ -74,10 +81,29 @@ export interface TriageFilter {
   address: string | null;
   /** Free text across the fields a person would search by. */
   search: string;
+  /** Who owns the alert: one of the three reserved words below, or an identity id. */
+  assignee: AssigneeFilter;
 }
 
+/** Every alert, whoever owns it. The "off" value, as `severity: "ALL"` is. */
+export const ASSIGNEE_ANY = "ANY";
+/** Nobody has picked it up — the queue a shift should start from. */
+export const ASSIGNEE_NONE = "NONE";
+/**
+ * The reader's own.
+ *
+ * Deliberately kept as the word rather than resolved to an id when the filter is read: a
+ * filter that had already replaced `MINE` with an identity could not be shown back to the
+ * operator as the thing they picked, so their select would come back with a colleague's
+ * name in it and no way to ask for "mine" again. Which alerts that means is decided where
+ * the comparison happens, because who is asking is not on the record.
+ */
+export const ASSIGNEE_MINE = "MINE";
+/** The three reserved words, or an identity id. */
+export type AssigneeFilter = string;
+
 export function noFilter(): TriageFilter {
-  return { state: "OPEN", severity: "ALL", identityId: null, address: null, search: "" };
+  return { state: "OPEN", severity: "ALL", identityId: null, address: null, search: "", assignee: ASSIGNEE_ANY };
 }
 
 /** Every value the state filter will accept, so a query string cannot invent one. */
@@ -107,6 +133,15 @@ export function filterFrom(params: { get(name: string): string | null }): Triage
   const address = (params.get("address") ?? "").trim();
   if (address) filter.address = address;
 
+  // The reserved words are upper-cased so a hand-typed `?assignee=mine` works, and anything
+  // else is taken as an identity id: an id that matches nothing filters to nothing, which is
+  // a queue an operator can see and correct, and is not the same as an error page.
+  const assignee = (params.get("assignee") ?? "").trim();
+  if (assignee) {
+    const reserved = assignee.toUpperCase();
+    filter.assignee = [ASSIGNEE_ANY, ASSIGNEE_NONE, ASSIGNEE_MINE].includes(reserved) ? reserved : assignee;
+  }
+
   filter.search = params.get("search") ?? "";
   return filter;
 }
@@ -119,6 +154,7 @@ export function filterQuery(filter: TriageFilter): string {
   const params = new URLSearchParams();
   params.set("state", filter.state);
   params.set("severity", filter.severity);
+  if (filter.assignee !== ASSIGNEE_ANY) params.set("assignee", filter.assignee);
   if (filter.identityId) params.set("identityId", filter.identityId);
   if (filter.address) params.set("address", filter.address);
   if (filter.search.trim()) params.set("search", filter.search);
@@ -141,7 +177,7 @@ function haystack(alert: AlertRecord): string {
     .toLowerCase();
 }
 
-export function matchesFilter(alert: AlertRecord, filter: TriageFilter): boolean {
+export function matchesFilter(alert: AlertRecord, filter: TriageFilter, viewerId: string | null = null): boolean {
   if (filter.state === "OPEN") {
     if (!isOpen(alert.state)) return false;
   } else if (filter.state !== "ALL" && alert.state !== filter.state) {
@@ -151,6 +187,15 @@ export function matchesFilter(alert: AlertRecord, filter: TriageFilter): boolean
   if (filter.severity !== "ALL" && alert.severity !== filter.severity) return false;
   if (filter.identityId && alert.identityId !== filter.identityId) return false;
   if (filter.address && alert.sourceAddress !== filter.address) return false;
+
+  if (filter.assignee === ASSIGNEE_NONE) {
+    if (alert.assigneeId) return false;
+  } else if (filter.assignee !== ASSIGNEE_ANY) {
+    const owner = filter.assignee === ASSIGNEE_MINE ? viewerId : filter.assignee;
+    // With nobody to be "mine", nothing matches. Showing the whole queue instead would be a
+    // narrowed view that is not narrowed, and the operator would read it as their work.
+    if (!owner || alert.assigneeId !== owner) return false;
+  }
 
   const needle = filter.search.trim().toLowerCase();
   if (needle && !haystack(alert).includes(needle)) return false;
@@ -173,8 +218,12 @@ export function sortForQueue(alerts: readonly AlertRecord[]): AlertRecord[] {
   );
 }
 
-export function filterAlerts(alerts: readonly AlertRecord[], filter: TriageFilter): AlertRecord[] {
-  return sortForQueue(alerts.filter((alert) => matchesFilter(alert, filter)));
+export function filterAlerts(
+  alerts: readonly AlertRecord[],
+  filter: TriageFilter,
+  viewerId: string | null = null,
+): AlertRecord[] {
+  return sortForQueue(alerts.filter((alert) => matchesFilter(alert, filter, viewerId)));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -192,6 +241,15 @@ export interface TriageSummary {
   escalated: number;
   /** Open, and loudest — the number that should be zero at the end of a shift. */
   openHighOrCritical: number;
+  /** Open, and owned by somebody. */
+  assigned: number;
+  /**
+   * Open, and owned by nobody.
+   *
+   * Counted separately from `open` on purpose: the two together are what makes the
+   * "whoever gets there first" problem visible on the page rather than in a post-mortem.
+   */
+  unassigned: number;
   /** ISO instants, or `null` when there is nothing in that bucket. */
   oldestOpenAt: string | null;
   lastSeenAt: string | null;
@@ -205,6 +263,8 @@ export function triageSummary(alerts: readonly AlertRecord[]): TriageSummary {
   let closed = 0;
   let escalated = 0;
   let openHighOrCritical = 0;
+  let assigned = 0;
+  let unassigned = 0;
   let oldestOpenAt: string | null = null;
   let lastSeenAt: string | null = null;
 
@@ -217,6 +277,8 @@ export function triageSummary(alerts: readonly AlertRecord[]): TriageSummary {
 
     if (isOpen(alert.state)) {
       open += 1;
+      if (alert.assigneeId) assigned += 1;
+      else unassigned += 1;
       if (isAtLeast(alert.severity, "HIGH")) openHighOrCritical += 1;
       // Oldest by when it was *last* seen, because that is the clock a repeat refreshes:
       // an incident still arriving is not stale, whatever its first packet's age.
@@ -234,6 +296,8 @@ export function triageSummary(alerts: readonly AlertRecord[]): TriageSummary {
     bySeverity,
     escalated,
     openHighOrCritical,
+    assigned,
+    unassigned,
     oldestOpenAt,
     lastSeenAt,
   };
@@ -468,9 +532,17 @@ export function alertTimeline(alert: AlertRecord): AlertTimelineEntry[] {
  * and no actions — offering "acknowledge" on something already closed is how a queue grows
  * a state nobody meant.
  */
-export function triageActions(alert: AlertRecord): { canAcknowledge: boolean; canClose: boolean } {
+export function triageActions(alert: AlertRecord): {
+  canAcknowledge: boolean;
+  canClose: boolean;
+  canAssign: boolean;
+} {
   return {
     canAcknowledge: alert.state === "NEW",
     canClose: isOpen(alert.state),
+    // Handing on a closed alert is not a thing: the row is the record of who worked it, and
+    // there is no work left for an owner to do.
+    canAssign: isOpen(alert.state),
   };
 }
+

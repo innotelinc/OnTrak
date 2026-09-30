@@ -26,6 +26,9 @@ import { test } from "node:test";
 import type { HashFn } from "../src/lib/audit-chain";
 import {
   ALERT_SEVERITIES,
+  ASSIGNEE_ANY,
+  ASSIGNEE_MINE,
+  ASSIGNEE_NONE,
   alertTimeline,
   annotationSummary,
   escalationSummary,
@@ -124,6 +127,9 @@ function alert(over: Partial<AlertRecord> = {}): AlertRecord {
     evidence: [event()],
     threatIntel: [],
     note: null,
+    assigneeId: null,
+    assigneeLabel: null,
+    assignedAt: null,
     createdAt: AT_ISO,
     updatedAt: AT_ISO,
     ...over,
@@ -276,12 +282,63 @@ test("triage: the timeline reads the record, and the escalation survives a withd
   const instants = timeline.map((entry) => entry.at);
   assert.deepEqual([...instants].sort((a, b) => a.localeCompare(b)), instants, "the timeline reads oldest first");
 
-  assert.deepEqual(triageActions(alert({ state: "NEW" })), { canAcknowledge: true, canClose: true });
-  assert.deepEqual(triageActions(alert({ state: "ACKNOWLEDGED" })), { canAcknowledge: false, canClose: true });
+  assert.deepEqual(triageActions(alert({ state: "NEW" })), {
+    canAcknowledge: true,
+    canClose: true,
+    canAssign: true,
+  });
+  assert.deepEqual(triageActions(alert({ state: "ACKNOWLEDGED" })), {
+    canAcknowledge: false,
+    canClose: true,
+    canAssign: true,
+  });
   assert.deepEqual(
     triageActions(alert({ state: "CLOSED" })),
-    { canAcknowledge: false, canClose: false },
+    { canAcknowledge: false, canClose: false, canAssign: false },
     "a closed alert offers no action that would take it out of the state it is in",
+  );
+});
+
+test("triage: the owner filter keeps the operator's own word, and unassigned is its own queue", () => {
+  const mine = alert({ id: "a-mine", assigneeId: "identity-1", assigneeLabel: "sam@acme.test" });
+  const theirs = alert({ id: "a-theirs", assigneeId: "identity-2", assigneeLabel: "kim@acme.test" });
+  const nobodys = alert({ id: "a-none" });
+  const all = [mine, theirs, nobodys];
+  const filter = (value: string) => filterFrom(new URLSearchParams(`assignee=${value}`));
+
+  assert.equal(filter("").assignee, ASSIGNEE_ANY, "an absent owner filter is every alert");
+  assert.equal(filter("MINE").assignee, ASSIGNEE_MINE);
+  assert.equal(filter("mine").assignee, ASSIGNEE_MINE, "a hand-typed query string is not case-sensitive");
+  assert.equal(filter("NONE").assignee, ASSIGNEE_NONE);
+  assert.equal(filter("identity-2").assignee, "identity-2", "anything else is an identity id");
+
+  // Who is asking is not on the record, so `MINE` is resolved where the comparison happens.
+  const ids = (query: string, viewer: string | null = null) => filterAlerts(all, filter(query), viewer).map((a) => a.id);
+  assert.deepEqual(ids("MINE", "identity-1"), ["a-mine"]);
+  assert.deepEqual(ids("MINE", "identity-2"), ["a-theirs"]);
+  assert.deepEqual(
+    ids("MINE"),
+    [],
+    "with nobody to be \"mine\", nothing matches — an empty queue is not the whole queue",
+  );
+  assert.deepEqual(ids("NONE"), ["a-none"]);
+  assert.deepEqual(ids("identity-2"), ["a-theirs"]);
+  assert.equal(ids("ANY").length, 3);
+
+  // It round-trips as the word rather than as an id, so the select reads back as what was chosen.
+  assert.match(filterQuery(filter("MINE")), /assignee=MINE/);
+  assert.equal(filterFrom(new URLSearchParams(filterQuery(filter("MINE")))).assignee, ASSIGNEE_MINE);
+  assert.doesNotMatch(filterQuery(noFilter()), /assignee=/, "the default is left out of the address bar");
+
+  // And the summary tells the two apart, because that number is the whole point of the field.
+  const summary = triageSummary(all);
+  assert.equal(summary.open, 3);
+  assert.equal(summary.assigned, 2);
+  assert.equal(summary.unassigned, 1);
+  assert.equal(
+    triageSummary([alert({ state: "CLOSED", assigneeId: "identity-1" })]).assigned,
+    0,
+    "a closed alert is not work anybody is holding",
   );
 });
 
@@ -475,6 +532,128 @@ test("alerts: acknowledging and closing are POSTs, audited, and a close without 
   );
   assert.equal(reopened.status, 200);
   assert.match(reopened.body, /nothing left to do to it/);
+});
+
+test("alerts: an alert is handed to one person, and the chain says who handed it over", async () => {
+  const h = harness();
+  const { actor, sessionId } = await h.organization("acme");
+  const recorded = await h.detection.record(actor.organizationId, [event()]);
+  const alertId = recorded.alerts[0].id;
+
+  // Somebody to hand it to, and a connector nobody may hand it to.
+  const sam = await h.spine.createIdentity(actor, {
+    identifier: "sam@acme.test",
+    displayName: "Sam Reed",
+    role: "AGENT",
+  });
+  assert.ok(sam.ok, sam.ok ? "" : sam.error);
+  const bot = await h.spine.createIdentity(actor, {
+    identifier: "connector-bot",
+    displayName: "Connector Bot",
+    kind: "SERVICE",
+    role: "SERVICE",
+  });
+  assert.ok(bot.ok, bot.ok ? "" : bot.error);
+
+  const opened = await routeConsole(
+    request("GET", `${CONSOLE_PATHS.alerts}?alert=${encodeURIComponent(alertId)}`, { sessionId }),
+    h.service,
+  );
+  assert.equal(opened.status, 200);
+  assert.match(opened.body, /Owner: nobody yet/, "every alert starts unowned, and the page says so");
+  assert.match(
+    opened.body,
+    /0 open alert\(s\) have an owner; 1 are waiting for one/,
+    "and the queue counts what nobody is working, which is the number the field exists for",
+  );
+  assert.match(opened.body, /Sam Reed/, "the picker offers the people the service will accept");
+  assert.doesNotMatch(opened.body, /Connector Bot/, "and not a machine account, which cannot own an incident");
+
+  // A blank choice is refused by the rule about the record, not by the form.
+  const blank = await routeConsole(
+    request("POST", CONSOLE_PATHS.alertAssign, { sessionId, body: `alertId=${alertId}&assigneeId=` }),
+    h.service,
+  );
+  assert.equal(blank.status, 400);
+  assert.match(blank.body, /Choose who is taking this alert/);
+
+  const machine = await routeConsole(
+    request("POST", CONSOLE_PATHS.alertAssign, { sessionId, body: `alertId=${alertId}&assigneeId=${bot.value.id}` }),
+    h.service,
+  );
+  assert.equal(machine.status, 400, "a service identity is refused by name rather than silently ignored");
+  assert.match(machine.body, /service identity is not somebody/);
+
+  const assigned = await routeConsole(
+    request("POST", CONSOLE_PATHS.alertAssign, { sessionId, body: `alertId=${alertId}&assigneeId=${sam.value.id}` }),
+    h.service,
+  );
+  assert.equal(assigned.status, 303);
+  const after = await h.store.findAlert(actor.organizationId, alertId);
+  assert.equal(after?.assigneeId, sam.value.id);
+  assert.equal(after?.assigneeLabel, "Sam Reed", "the label is written with the id, so a rename does not rewrite history");
+  assert.ok(after?.assignedAt, "and the row can say how long somebody has been holding it");
+
+  // The row says who is holding it, and who has not been picked up.
+  const queue = await routeConsole(request("GET", CONSOLE_PATHS.alerts, { sessionId }), h.service);
+  assert.equal(queue.status, 200);
+  assert.match(queue.body, /name="assignee"/, "the queue can be narrowed to an owner");
+  assert.match(queue.body, /Sam Reed/, "the owner is on the row");
+  assert.match(queue.body, /Every open alert has an owner\./, "and every open alert now has one");
+
+  // "Mine" is the operator's own word, and it still reads back as that word. This
+  // administrator owns nothing, so the narrowed queue is empty — which is not the whole queue.
+  const mine = await routeConsole(
+    request("GET", `${CONSOLE_PATHS.alerts}?assignee=MINE`, { sessionId }),
+    h.service,
+  );
+  assert.equal(mine.status, 200);
+  assert.match(mine.body, /value="MINE" selected/, "the select reads back as the word that was asked for");
+  assert.doesNotMatch(mine.body, /Sam Reed/, "and the queue is narrowed, not merely labelled");
+
+  // A repeat refreshes the alert; it does not quietly hand it back to the queue.
+  await h.detection.record(actor.organizationId, [event()]);
+  assert.equal(
+    (await h.store.findAlert(actor.organizationId, alertId))?.assigneeLabel,
+    "Sam Reed",
+    "somebody is working this, and more of the same is not a reason to take it off them",
+  );
+
+  // Giving it back is its own act, and unowned is a state rather than a gap.
+  const cleared = await routeConsole(
+    request("POST", CONSOLE_PATHS.alertUnassign, { sessionId, body: `alertId=${alertId}` }),
+    h.service,
+  );
+  assert.equal(cleared.status, 303);
+  assert.equal((await h.store.findAlert(actor.organizationId, alertId))?.assigneeId, null);
+  assert.equal((await h.store.findAlert(actor.organizationId, alertId))?.assignedAt, null, "the instant goes with the owner");
+
+  // A closed alert is the record of who worked it: there is no work left to hand on.
+  await h.detection.assign(actor, alertId, sam.value.id);
+  await h.detection.close(actor, alertId, "Blocked at the edge");
+  const closed = await routeConsole(
+    request("POST", CONSOLE_PATHS.alertAssign, { sessionId, body: `alertId=${alertId}&assigneeId=${sam.value.id}` }),
+    h.service,
+  );
+  assert.equal(closed.status, 400);
+  assert.match(closed.body, /is closed/);
+  assert.equal(
+    (await h.store.findAlert(actor.organizationId, alertId))?.assigneeLabel,
+    "Sam Reed",
+    "a refused handover changes nothing on the row",
+  );
+
+  const trail = await h.spine.auditTrail(actor);
+  assert.ok(trail.ok, trail.ok ? "" : trail.error);
+  const actions = trail.value.events.map((entry) => entry.action);
+  assert.ok(actions.includes("guard.alert.assigned"), "the handover is on the chain");
+  assert.ok(actions.includes("guard.alert.unassigned"), "and so is giving it back");
+  const handover = trail.value.events.find((entry) => entry.action === "guard.alert.assigned");
+  assert.equal(
+    (handover?.detail as { assigneeLabel?: string } | undefined)?.assigneeLabel,
+    "Sam Reed",
+    "the entry says who it went to, so the chain answers the question on its own",
+  );
 });
 
 test("compliance: the report reads the controls rather than asserting them", async () => {

@@ -183,6 +183,19 @@ export interface ConsoleEndpoints {
   acknowledgeAlert(sessionId: string, alertId: string, note: string | null): Promise<ServiceResult<{ ruleName: string }>>;
   /** Somebody decided it is handled; a reason is required by the service, not by this layer. */
   closeAlert(sessionId: string, alertId: string, note: string): Promise<ServiceResult<{ ruleName: string }>>;
+  /**
+   * Hand it to somebody (S3).
+   *
+   * Whether the named identity *may* hold an alert is a rule about people rather than a rule
+   * about HTTP, so an empty or unusable `assigneeId` reaches the service and comes back named.
+   */
+  assignAlert(
+    sessionId: string,
+    alertId: string,
+    assigneeId: string,
+  ): Promise<ServiceResult<{ ruleName: string; assigneeLabel: string | null }>>;
+  /** Give it back to the queue. */
+  unassignAlert(sessionId: string, alertId: string): Promise<ServiceResult<{ ruleName: string }>>;
   /** The compliance posture summary (S4). Read-only: it writes nothing and grants nothing. */
   compliance(sessionId: string): Promise<ServiceResult<ConsoleComplianceView>>;
   /**
@@ -679,6 +692,42 @@ async function handleCloseAlert(request: HttpRequest, sessionId: string, endpoin
   );
 }
 
+async function handleAssignAlert(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const alertId = params.alertId ?? "";
+  if (!alertId) return failure("Choose an alert first.");
+
+  // A blank choice reaches the service, which refuses it by name, for the same reason a blank
+  // close reason does: it is a rule about an incident record, not a rule about a form.
+  const result = await endpoints.assignAlert(sessionId, alertId, params.assigneeId ?? "");
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.alerts}?alert=${encodeURIComponent(alertId)}&flash=${encodeURIComponent(
+      `Assigned ${result.value.ruleName} to ${result.value.assigneeLabel ?? "somebody"}. The handover is on the organization's evidence chain against your identity.`,
+    )}`,
+  );
+}
+
+/**
+ * Take the owner off an alert.
+ *
+ * Its own path rather than an "assign to nobody": the two read differently on the chain, and a
+ * form whose meaning depended on leaving a select blank is one that gets submitted wrong.
+ */
+async function handleUnassignAlert(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const alertId = params.alertId ?? "";
+  if (!alertId) return failure("Choose an alert first.");
+
+  const result = await endpoints.unassignAlert(sessionId, alertId);
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.alerts}?alert=${encodeURIComponent(alertId)}&flash=${encodeURIComponent(
+      `Took the owner off ${result.value.ruleName}. It is back in the queue for whoever picks it up next.`,
+    )}`,
+  );
+}
+
 async function handleCompliancePage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
   const result = await endpoints.compliance(sessionId);
   return respond(result, (view) => html(200, renderCompliance(view, flashFrom(url), errorFrom(url))));
@@ -1065,6 +1114,10 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
       return post(() => handleAcknowledgeAlert(request, sessionId, endpoints));
     case CONSOLE_PATHS.alertClose:
       return post(() => handleCloseAlert(request, sessionId, endpoints));
+    case CONSOLE_PATHS.alertAssign:
+      return post(() => handleAssignAlert(request, sessionId, endpoints));
+    case CONSOLE_PATHS.alertUnassign:
+      return post(() => handleUnassignAlert(request, sessionId, endpoints));
     case CONSOLE_PATHS.coverage:
       return get(() => handleCoveragePage(url, sessionId, endpoints));
     case CONSOLE_PATHS.compliance:

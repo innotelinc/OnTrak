@@ -223,6 +223,9 @@ test("threat intelligence persists: a feed row is refreshed in place, and an ale
       evidence: [flow.event],
       threatIntel: [match],
       note: null,
+      assigneeId: null,
+      assigneeLabel: null,
+      assignedAt: null,
       createdAt: iso,
       updatedAt: iso,
     };
@@ -244,6 +247,25 @@ test("threat intelligence persists: a feed row is refreshed in place, and an ale
     assert.equal(read.threatIntel[0].observable, "203.0.113.9");
     assert.equal(read.threatIntel[0].escalates, true);
     assert.equal(read.evidence.length, 1, "and the evidence came back as events, not strings");
+    assert.equal(read.assigneeId, null, "an alert is raised unowned");
+
+    // Ownership across the `DateTime` boundary and back, and then *cleared* — which is the
+    // case a unit suite with a fake client cannot see. Prisma reads `undefined` as "leave this
+    // column alone", so a mapper that passed the field through unguarded would accept the
+    // clear, report success, and leave the old name on the row: an alert somebody gave back to
+    // the queue that still shows an owner, which is the one outcome this column exists to stop.
+    const handoverIso = new Date(at + 60_000).toISOString();
+    await alerts.updateAlert({ ...read, assigneeId: "identity-live", assigneeLabel: "Sam Reed", assignedAt: handoverIso });
+    const owned = await alerts.findAlert(organization.id, record.id);
+    assert.equal(owned?.assigneeId, "identity-live");
+    assert.equal(owned?.assigneeLabel, "Sam Reed");
+    assert.equal(owned?.assignedAt, handoverIso);
+
+    await alerts.updateAlert({ ...(owned as AlertRecord), assigneeId: null, assigneeLabel: null, assignedAt: null });
+    const released = await alerts.findAlert(organization.id, record.id);
+    assert.equal(released?.assigneeId, null, "giving an alert back to the queue has to erase all three columns");
+    assert.equal(released?.assigneeLabel, null);
+    assert.equal(released?.assignedAt, null);
 
     // Withdrawing is a delete, and it is one tenant's row that goes.
     const withdrawn = await intel.withdraw(actor, changed.id);

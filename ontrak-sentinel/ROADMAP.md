@@ -565,7 +565,23 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
   opens one alert with its timeline — first seen, evidence, repeat, indicator
   matches and the operator's note in one list — and offers acknowledge and close as
   `POST`s that answer `303`, audited as `guard.alert.acknowledged` /
-  `guard.alert.closed`. A second page, `/console/compliance`, reports the controls
+  `guard.alert.closed`. **Assignment is built too** (`alert-assignment-rules.ts`, the
+  `assigneeId`/`assigneeLabel`/`assignedAt` columns in `20261031000000_alert_assignment`):
+  an alert can be handed to a named person and given back to the queue, the filter offers
+  *mine* and *unassigned*, and the header counts how many open alerts nobody owns — which
+  is the number that makes "one alert is acted on at a time, by whoever gets there first"
+  visible instead of a post-mortem finding. Two rules are about people rather than about
+  permissions, and both are refused by name: a `SERVICE` identity cannot own an incident,
+  and a **deactivated** identity cannot be given one, because an alert showing a name that
+  will never pick it up is invisible to the `unassigned` queue and worse than one that says
+  nobody has it. `assignableIdentities` filters through `assignmentRefusal`, so the picker
+  the page renders and the check the service makes are one statement. A repeat **keeps** the
+  owner, and a closed alert refuses a handover: it is the record of who worked it. The audit
+  entries are `guard.alert.assigned` / `guard.alert.unassigned`, carrying the previous owner
+  as well as the new one. Covered by `tests/sentinel-alert-assignment.test.ts` and the
+  assignment tests in `tests/sentinel-alert-triage.test.ts`, plus the live-Postgres test that
+  a clear really clears all three columns (Prisma reads `undefined` as "leave it alone").
+  A second page, `/console/compliance`, reports the controls
   in force, the population each policy scope governs and what it resolves to, the
   alert backlog and the chain's verification result, from the same rows the product
   enforces; it is read-only and reports an absence as an absence rather than as a
@@ -577,8 +593,10 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
   first, because they are the answer — so a source being *declared* is never mistaken for
   a source being *watched*. It reports what the rules read, not what arrives: every source
   is still declared vocabulary rather than a running collector, and the page says so. What
-  is still not here is suppression, assignment and notification: one alert is acted on at a
-  time, by whoever gets there first, and nothing is sent anywhere when a CRITICAL is raised.
+  is still not here is suppression and notification: one alert is acted on at a time, and
+  nothing is sent anywhere when a CRITICAL is raised. Assignment gives an alert an owner, not
+  a way of reaching them, and there is no shift view — a queue can be narrowed to *mine* and
+  to *unassigned*, but an alert somebody holds overnight stays theirs until they hand it on.
 
   The join is only as good as the address a session carries, and today none do:
   `issueSession` records the address its caller supplies, and the only caller in this

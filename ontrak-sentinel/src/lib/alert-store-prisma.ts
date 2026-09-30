@@ -48,6 +48,9 @@ export interface AlertRow {
   evidence: unknown;
   threatIntel: unknown;
   note: string | null;
+  assigneeId: string | null;
+  assigneeLabel: string | null;
+  assignedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -143,6 +146,12 @@ export function toAlertRecord(row: AlertRow): AlertRecord {
     evidence: evidenceOf(row.evidence),
     threatIntel: threatIntelOf(row.threatIntel),
     note: row.note,
+    // Read defensively like the note, for the same reason: these columns arrived after the
+    // table did, so a row written by an older build has nothing here and must not be reported
+    // as owned by `undefined`.
+    assigneeId: row.assigneeId ?? null,
+    assigneeLabel: row.assigneeLabel ?? null,
+    assignedAt: row.assignedAt ? toIso(row.assignedAt) : null,
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
   };
@@ -170,12 +179,20 @@ export function toAlertCreate(record: AlertRecord) {
     evidence: record.evidence,
     threatIntel: record.threatIntel,
     note: record.note,
+    assigneeId: record.assigneeId,
+    assigneeLabel: record.assigneeLabel,
+    assignedAt: record.assignedAt ? new Date(record.assignedAt) : null,
     createdAt: new Date(record.createdAt),
     updatedAt: new Date(record.updatedAt),
   };
 }
 
-/** The mutable half. What fired, and about whom, is what the alert *is*. */
+/**
+ * The mutable half. What fired, and about whom, is what the alert *is* — and so is who owns
+ * it, which is why the owner is written here rather than only on the create path: an alert is
+ * raised unowned by a sensor and handed to somebody afterwards, and a repeat has to write the
+ * owner through rather than clearing it.
+ */
 export function toAlertUpdate(record: AlertRecord) {
   return {
     state: record.state,
@@ -191,6 +208,9 @@ export function toAlertUpdate(record: AlertRecord) {
     // was handed rather than to decide which half moved.
     threatIntel: record.threatIntel,
     note: record.note,
+    assigneeId: record.assigneeId,
+    assigneeLabel: record.assigneeLabel,
+    assignedAt: record.assignedAt ? new Date(record.assignedAt) : null,
     updatedAt: new Date(record.updatedAt),
   };
 }

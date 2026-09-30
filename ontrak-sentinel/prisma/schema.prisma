@@ -315,6 +315,15 @@ model Alert {
   threatIntel    Json      @default("[]")
   /// An operator's reason when they acknowledged or closed it.
   note           String?
+  /// The person who owns this alert, or null for one nobody has picked up.
+  ///
+  /// An id *and* a label, as `identityId`/`identityLabel` are: an identity is renamed and
+  /// deactivated, and an alert read next month has to be able to say who was asked to look at
+  /// it. The label is written when the alert is handed over rather than resolved on every read.
+  assigneeId     String?
+  assigneeLabel  String?
+  /// When it was handed over, so a row can say how long somebody has been holding it.
+  assignedAt     DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
