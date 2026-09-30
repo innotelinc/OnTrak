@@ -741,7 +741,7 @@ test("a create answers 201 with its Location, a delete answers 204, and the meth
 
   const wrongMethod = await routeScim(request({ method: "PUT", path: "/scim/v2/Users", headers: auth }), endpoints(h));
   assert.equal(wrongMethod.status, 405);
-  assert.match(wrongMethod.headers.allow, /POST/);
+  assert.match(String(wrongMethod.headers.allow), /POST/);
 
   const unknown = await routeScim(request({ method: "GET", path: "/scim/v2/Organizations", headers: auth }), endpoints(h));
   assert.equal(unknown.status, 404);

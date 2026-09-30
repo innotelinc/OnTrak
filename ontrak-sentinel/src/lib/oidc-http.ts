@@ -54,7 +54,16 @@ export interface HttpRequest {
 
 export interface HttpResponse {
   status: number;
-  headers: Record<string, string>;
+  /**
+   * A header's value, or its values when the header may legitimately repeat.
+   *
+   * `set-cookie` is why this is not plain `string`. Ending an upstream sign-in both
+   * clears the sealed attempt and sets the session, and two cookies packed into one
+   * header are split by browsers on a comma — usually. "Usually" is a completed sign-in
+   * that leaves somebody holding no session, so the adapter writes an array as repeated
+   * headers, which is what the wire has always wanted.
+   */
+  headers: Record<string, string | string[]>;
   body: string;
 }
 

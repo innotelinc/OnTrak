@@ -162,7 +162,7 @@ test("console: a page with no session is bounced to the sign-in form", async () 
   const response = await routeConsole(request("GET", CONSOLE_PATHS.home), h.service);
   assert.equal(response.status, 303);
   assert.equal(response.headers.location, CONSOLE_PATHS.signIn);
-  assert.match(response.headers["set-cookie"] ?? "", /Max-Age=0/, "the dead cookie is expired on the way");
+  assert.match(String(response.headers["set-cookie"] ?? ""), /Max-Age=0/, "the dead cookie is expired on the way");
   assert.equal(response.headers["cache-control"], "no-store");
 });
 
@@ -172,7 +172,7 @@ test("console: a session id that does not exist is bounced, not guessed into one
   const response = await routeConsole(request("GET", CONSOLE_PATHS.mfa, { sessionId: "not-a-session" }), h.service);
   assert.equal(response.status, 303);
   assert.equal(response.headers.location, CONSOLE_PATHS.signIn);
-  assert.match(response.headers["set-cookie"] ?? "", /Max-Age=0/);
+  assert.match(String(response.headers["set-cookie"] ?? ""), /Max-Age=0/);
 });
 
 test("console: provisioning is an administrator's page, and a minted token is shown once in a body rather than a URL", async () => {
@@ -211,7 +211,7 @@ test("console: provisioning is an administrator's page, and a minted token is sh
   );
   // A state change that finished redirects, so a refresh re-reads the page.
   assert.equal(revoked.status, 303);
-  assert.match(revoked.headers.location, /provisioning/);
+  assert.match(String(revoked.headers.location), /provisioning/);
 
   const after = await routeConsole(request("GET", CONSOLE_PATHS.provisioning, { sessionId }), h.service);
   assert.match(after.body, /revoked/);
@@ -288,7 +288,7 @@ test("console: a GET-only page answers a POST with 405 rather than doing somethi
   const { sessionId } = await h.organization("acme");
   const response = await routeConsole(request("POST", CONSOLE_PATHS.home, { sessionId, body: "" }), h.service);
   assert.equal(response.status, 405);
-  assert.match(response.headers.allow ?? "", /GET/);
+  assert.match(String(response.headers.allow ?? ""), /GET/);
 });
 
 /* -------------------------------------------------------------------------- */
@@ -332,7 +332,7 @@ test("console: a code from the secret completes the enrollment, and the policy i
     h.service,
   );
   assert.equal(confirmed.status, 303);
-  assert.match(confirmed.headers.location ?? "", /flash=/);
+  assert.match(String(confirmed.headers.location ?? ""), /flash=/);
 
   const identity = await h.spine.identity(actor, actor.id);
   assert.ok(identity.ok);
@@ -423,7 +423,7 @@ test("console: removing the last factor ends every session, including the one th
 
   const removed = await routeConsole(request("POST", CONSOLE_PATHS.removeAll, { sessionId, body: "" }), h.service);
   assert.equal(removed.status, 303);
-  assert.match(decodeURIComponent(removed.headers.location ?? ""), /Every session for this identity is now refused/);
+  assert.match(decodeURIComponent(String(removed.headers.location ?? "")), /Every session for this identity is now refused/);
 
   // This is the consequence the page warns about, and it is deliberate: the default
   // policy refuses a session that owes a second factor, everywhere. Getting back in is
@@ -451,7 +451,7 @@ test("console: removing every factor clears the flag, and the next session is re
 
   const removed = await routeConsole(request("POST", CONSOLE_PATHS.removeAll, { sessionId, body: "" }), h.service);
   assert.equal(removed.status, 303);
-  assert.match(decodeURIComponent(removed.headers.location ?? ""), /Removed 1 factor/);
+  assert.match(decodeURIComponent(String(removed.headers.location ?? "")), /Removed 1 factor/);
 
   const identity = await h.spine.identity(actor, actor.id);
   assert.ok(identity.ok);
@@ -553,7 +553,7 @@ test("console: signing out ends the session and revokes the tokens it minted", a
   assert.match(response.body, /revoked/);
   // The cookie is expired as part of the answer: a live session id would just be sent
   // again by the browser.
-  assert.match(response.headers["set-cookie"] ?? "", new RegExp(`^${CONSOLE_SESSION_COOKIE}=;`));
+  assert.match(String(response.headers["set-cookie"] ?? ""), new RegExp(`^${CONSOLE_SESSION_COOKIE}=;`));
 
   const session = await h.spine.checkSession(actor.organizationId, sessionId);
   assert.equal(session.active, false);

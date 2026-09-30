@@ -298,7 +298,7 @@ test("console: the policies page shows every scope, and a POST saves one", async
     h.service,
   );
   assert.equal(saved.status, 303);
-  assert.match(saved.headers.location, /policy/);
+  assert.match(String(saved.headers.location), /policy/);
 
   const after = await routeConsole(get(CONSOLE_PATHS.policies, sessionId), h.service);
   assert.match(after.body, /Stored here/);

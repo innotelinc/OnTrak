@@ -210,7 +210,7 @@ function json(status: number, value: unknown, headers: Record<string, string> = 
   };
 }
 
-function redirect(location: string, headers: Record<string, string> = {}): HttpResponse {
+function redirect(location: string, headers: Record<string, string | string[]> = {}): HttpResponse {
   // `303` rather than `302`: the answer to a POST is a GET, and saying so is what
   // stops a refresh from repeating the change.
   return { status: 303, headers: { location, "cache-control": "no-store", ...headers }, body: "" };
@@ -770,8 +770,11 @@ async function handleUpstreamCallback(
   });
   if (!result.ok) return failure(result.error);
 
+  // Two cookies leave here, and each gets its own header rather than sharing one behind a
+  // comma. A spent attempt is worth clearing, and a session the browser quietly drops half
+  // of is a sign-in that appears to work and leaves nobody signed in.
   return redirect(result.value.redirectTo, {
-    "set-cookie": `${result.value.clearCookie}, ${sessionCookie(result.value.sessionId, requestIsSecure(request))}`,
+    "set-cookie": [result.value.clearCookie, sessionCookie(result.value.sessionId, requestIsSecure(request))],
   });
 }
 

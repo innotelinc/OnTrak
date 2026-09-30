@@ -424,7 +424,7 @@ test("console: a good sign-in answers 303 with the session cookie", async () => 
   );
   assert.equal(response.status, 303);
   assert.equal(response.headers.location, CONSOLE_PATHS.home);
-  const cookie = response.headers["set-cookie"] ?? "";
+  const cookie = String(response.headers["set-cookie"] ?? "");
   assert.match(cookie, new RegExp(`${CONSOLE_SESSION_COOKIE}=`));
   assert.match(cookie, /HttpOnly/);
   assert.match(cookie, /SameSite=Lax/);
@@ -445,7 +445,7 @@ test("console: behind a TLS proxy the cookie is Secure, because the browser saw 
     h.service,
   );
   assert.equal(response.status, 303);
-  assert.match(response.headers["set-cookie"] ?? "", /Secure/);
+  assert.match(String(response.headers["set-cookie"] ?? ""), /Secure/);
 });
 
 test("console: on a plain-HTTP LAN address the cookie is not Secure, which is what makes it stick", async () => {
@@ -462,7 +462,7 @@ test("console: on a plain-HTTP LAN address the cookie is not Secure, which is wh
   assert.equal(response.status, 303);
   // A `Secure` cookie the browser refuses to store presents as a sign-in that
   // succeeds and leaves you signed out, so this is not a cosmetic distinction.
-  assert.equal((response.headers["set-cookie"] ?? "").includes("Secure"), false);
+  assert.equal((String(response.headers["set-cookie"] ?? "")).includes("Secure"), false);
 });
 
 test("console: a failed sign-in re-renders the form, sets no cookie, and keeps the address", async () => {
@@ -517,6 +517,6 @@ test("console: a dead session is bounced to the sign-in form, not left on an err
     const response = await routeConsole({ ...request("GET", CONSOLE_PATHS.home), cookies }, h.service);
     assert.equal(response.status, 303, "a session that is not there is not an error");
     assert.equal(response.headers.location, CONSOLE_PATHS.signIn);
-    assert.match(response.headers["set-cookie"] ?? "", /Max-Age=0/, "the dead cookie is expired");
+    assert.match(String(response.headers["set-cookie"] ?? ""), /Max-Age=0/, "the dead cookie is expired");
   }
 });
