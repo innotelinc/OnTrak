@@ -26,13 +26,21 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY public ./public
 COPY package.json ./
+# The Vault resolver and the entrypoint that runs it. `scripts/` is otherwise
+# dockerignored (see .dockerignore); this is the one file from it the image needs.
+COPY scripts/vault-env.mjs ./scripts/vault-env.mjs
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
 
 # `run_command` runs inside this image (compose sets AGENT_SANDBOX=host, since
 # this container is already the boundary), so it needs what the workspace itself
 # expects: a shell, git for the diff view, ripgrep to search, and python3 for a
 # Python project.
 RUN apk add --no-cache bash git ripgrep python3 py3-pip \
+    && chmod +x /app/docker-entrypoint.sh \
     && mkdir -p /workspace /data
 
 EXPOSE 3400
+# The entrypoint resolves any `vault://` values (a no-op with none), then execs
+# the server — so a reference that cannot be resolved stops the container.
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["node", "dist/server.js"]

@@ -17,9 +17,10 @@ full developer reference.
 > over SSE, the workspace jail, the tool set, the approval gate, live draft and
 > live diff, per-file snapshots, the model-resilience chain, and a browser UI
 > with no build step. **0.2 is in progress** and is entirely about stack
-> citizenship: sign-in is **on** at both edge names, tenancy is *wired and off*
-> until the control-plane URL is set, and secrets still come from `.env` rather
-> than Cerulean Vault — bringing those remaining gates up is the open work.
+> citizenship: sign-in is **on** at both edge names, secrets are read from
+> **Cerulean Vault** through path-scoped `vault://` references, and tenancy is
+> *wired and off* until the control-plane URL is set — the remaining v0.2 item is
+> a published image with a stack entry.
 
 ## 1. Vision
 
@@ -85,8 +86,8 @@ flowchart LR
   environment.
 - **Stack placement.** Genie is the **CodeOps** member of the OnTrak family and a
   component of the Innotel Platform Stack. It consumes OmniRoute, Distro's control
-  plane, Authentik, and (planned) Cerulean Vault, Cerulean DNS/TLS and NPM Edge.
-  It owns none of them.
+  plane, Authentik, Cerulean Vault or Cerulean DNS/TLS and NPM Edge. It owns none
+  of them.
 
 ## 4. Milestones
 
@@ -115,9 +116,16 @@ happens to be in the repo.
   deliberate key posture (strict identity, fail-open quota, best-effort ledger).
   What remains is a URL and a service token — and sign-in, because the plane keys
   accounts on the OIDC subject and a shared bearer carries none.
-- `[ ]` **Secrets from Cerulean Vault.** Replace `.env` values with a `vault://`
-  reference resolved at deploy time, using the same path-scoped KV v2 token the
-  rest of the estate uses. Until then `.env` is the only secret store.
+- `[x]` **Secrets from Cerulean Vault.** `.env` now holds `vault://` references
+  rather than values, resolved at container startup by `scripts/vault-env.mjs`
+  (run from `docker-entrypoint.sh`) under the path-scoped KV v2 `ontrak` token the
+  rest of the estate uses — covering only `cerulean/data/ontrak`. The resolver is
+  fail-fast: a reference that cannot be resolved, a missing key or an unreachable
+  store stops the container instead of booting with a literal `vault://` string,
+  which is what makes a partially-migrated deployment impossible rather than
+  merely unlikely (§8). Cerulean mints the token (it is in `VAULT_PRODUCT_TOKENS`)
+  and the family stack mounts it read-only; moving the first values in is one
+  `scripts/vault-migrate.py` run.
 - `[x]` **The operator surface at the edge.** Cerulean owns DNS/TLS and NPM Edge
   owns the public route; Genie registers the names through Cerulean rather than
   writing DNS or the NPM API itself (the platform rule the standard states).
@@ -246,7 +254,11 @@ loosens the second, never the first.
   a change must land in both, and neither should grow a private variant.
 - **Vault migration** — moving `.env` values to `vault://` needs the path-scoped
   token and a deploy-time resolver; a half-migrated deployment is worse than an
-  un-migrated one.
+  un-migrated one. **Mitigated:** the resolver is fail-fast, so a reference whose
+  secret, key or store is missing stops the container at startup rather than
+  booting with a placeholder — a partial migration fails loudly, not silently.
+  What remains is keeping the two halves in step: a value moved to Vault must
+  arrive as a reference *in the same change*, or the plaintext stays authoritative.
 
 ## 9. Not in this roadmap
 
@@ -269,7 +281,11 @@ loosens the second, never the first.
    already in the deployment) so a turn resolves to an account and spends its
    own gateway key. Sign-in is now proven on both names, so the subject tenancy
    keys on exists; `WEB_TOKEN` stays as the API-client bearer until it does not.
-3. Move the deployment's secrets to Cerulean Vault `vault://` references with the
-   path-scoped token (v0.2).
+3. ~~Move the deployment's secrets to Cerulean Vault `vault://` references with
+   the path-scoped token (v0.2).~~ **Done** — `OMNIROUTE_API_KEY`,
+   `ONTRAK_OIDC_CLIENT_SECRET` and `ONTRAK_OIDC_SESSION_SECRET` live at
+   `cerulean/ontrak` and `.env` points at them; the image resolves them at boot
+   under the `ontrak` policy. `WEB_TOKEN` and `CONTROL_INTERNAL_TOKEN` are unset
+   on the deployment today and move the same way when they are set.
 4. Publish a versioned release image and add Genie's entry to the platform's group
    compose so a deploy is a pull (v0.2).

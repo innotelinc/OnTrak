@@ -62,6 +62,13 @@ services:
       # Sessions and transcripts. Named rather than bind-mounted so a rebuild or
       # a `docker compose down` does not throw away the chats.
       - agent-data:/data
+      # Cerulean Vault: when .env carries `vault://` references (see the
+      # "Cerulean Vault" section of .env.example), mount this stack's
+      # path-scoped token here and set VAULT_TOKEN_FILE to this path in .env.
+      # Cerulean writes it to ./data/vault/token/ontrak.token on the host that
+      # runs Vault. Uncomment when Vault is in use; a missing source file is a
+      # directory Docker creates, not a token, so this stays off by default.
+      # - ./data/vault/token/ontrak.token:/vault/token/ontrak.token:ro
     # Deliberately the static shell, not /api/health: the shell is public by
     # design (it has to render the token prompt), so this works whether or not
     # WEB_TOKEN is set, and it answers "is this container serving?" without

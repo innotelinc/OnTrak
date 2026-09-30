@@ -786,6 +786,55 @@ the single configured workspace exactly as it did before: `AGENT_WORKSPACE` and
 `GET /api/health` reports `tenancy: true` when a plane is configured, which is the
 quickest way to confirm a deployment picked the settings up.
 
+## Secrets (Cerulean Vault)
+
+The platform's secret store is **Cerulean Vault** (HashiCorp Vault, KV v2), and
+`.env` is a reference file rather than the store itself. Any value may be a
+`vault://<mount>/<path>#<key>` reference — the same grammar Cerulean, Onyx, Atlas,
+Zeus and Distro resolve — and the image's entrypoint resolves every one of them
+**before the server boots**, so nothing in `src/` knows a reference was there.
+
+```bash
+# .env — the secret lives in Vault; this file only points at it
+VAULT_ADDR=http://192.168.1.71:8200
+VAULT_TOKEN_FILE=/vault/token/ontrak.token
+VAULT_PREFIX=cerulean
+OMNIROUTE_API_KEY=vault://cerulean/ontrak#OMNIROUTE_API_KEY
+ONTRAK_OIDC_CLIENT_SECRET=vault://cerulean/ontrak#ONTRAK_OIDC_CLIENT_SECRET
+ONTRAK_OIDC_SESSION_SECRET=vault://cerulean/ontrak#ONTRAK_OIDC_SESSION_SECRET
+```
+
+The resolver (`scripts/vault-env.mjs`, run by `docker-entrypoint.sh`) is
+**fail-fast**: no `VAULT_ADDR` with a reference present, an unreachable store, a
+missing path or a missing key each stop the container, so a deployment can never
+boot holding a literal `vault://` string or a stale credential. With no references
+it is a silent no-op, which is why it always runs. A leftover `infisical://` value
+is refused outright — Infisical is retired, and a stale reference is not a
+fallback.
+
+**One token per product, narrowed to its own path.** Cerulean mints a periodic
+token for each name in its `VAULT_PRODUCT_TOKENS` and writes it to
+`./data/vault/token/<product>.token`. Genie's is `ontrak`, scoped to
+`cerulean/data/ontrak` (and its metadata) and nothing else, so a leaked copy
+cannot read a sibling's secrets. It never gets the mount-wide `cerulean.token`.
+The family stack mounts that file read-only at `/vault/token/ontrak.token`; the
+`docker-compose.yml` here documents the same mount for a standalone deployment.
+
+**Move the values with the platform tool**, which reads the secret, unions it with
+what is already in Vault and never prints a value:
+
+```bash
+VAULT_ADDR=http://192.168.1.71:8200 VAULT_TOKEN_FILE=./data/vault/token/ontrak.token \
+VAULT_PREFIX=cerulean VAULT_PATH=ontrak \
+python3 scripts/vault-migrate.py --from-env-file .env \
+  --keys OMNIROUTE_API_KEY,ONTRAK_OIDC_CLIENT_SECRET,ONTRAK_OIDC_SESSION_SECRET
+```
+
+It prints the `vault://` lines to put back in `.env`. Then restart the container:
+the entrypoint resolves them before `node dist/server.js` runs. Rotating a secret
+is a write to Vault (or a re-run of the command above) plus a restart — `.env`
+never holds the value again.
+
 ## Configuration
 
 All optional — see `.env.example`.
@@ -794,7 +843,7 @@ All optional — see `.env.example`.
 | ------------------------------------------- | ------------------------ | ---------------------------------------- |
 | `PORT` / `HOST`                             | `3400` / `127.0.0.1`     | Web server bind address (the compose stack sets `PORT` from `ONTRAK_GENIE_PORT`, 3410 by default) |
 | `OMNIROUTE_URL`                             | `http://127.0.0.1:20128/v1` | Gateway base URL — use a LAN address, never a Docker service name |
-| `OMNIROUTE_API_KEY`                         | *(empty)*                | Sent as a bearer token if set            |
+| `OMNIROUTE_API_KEY`                         | *(empty)*                | Sent as a bearer token if set. May be a `vault://` reference — see *Secrets (Cerulean Vault)* |
 | `AGENT_MODEL`                               | `auto/coding`            | Default model; overridable per request. Pin an explicit id — see *Picking a model* |
 | `AGENT_WORKSPACE`                           | `./workspace`            | The only directory the agent can touch   |
 | `AGENT_DATA_DIR`                            | `./.agent`               | Sessions and the last sweep report (`sweep.json`) |
@@ -821,10 +870,14 @@ All optional — see `.env.example`.
 | `CONTROL_INTERNAL_TOKEN`                    | *(empty)*                | Control-plane service token (`x-control-internal-token`); empty or a placeholder means tenancy is off |
 | `ONTRAK_OIDC_ISSUER`                        | *(empty)*                | Authentik issuer. With the two below, require sign-in on `/api/*` |
 | `ONTRAK_OIDC_CLIENT_ID`                     | *(empty)*                | OIDC client id registered with the provider |
-| `ONTRAK_OIDC_CLIENT_SECRET`                 | *(empty)*                | Only for a confidential client; omit it with PKCE |
+| `ONTRAK_OIDC_CLIENT_SECRET`                 | *(empty)*                | Only for a confidential client; omit it with PKCE. May be a `vault://` reference |
 | `ONTRAK_OIDC_REDIRECT_URL`                  | `http://127.0.0.1:<PORT>/api/auth/callback` | Must match a URI registered with the provider byte for byte. Comma-separate one per name; the entry matching the browser's `Host` is used (see *Sign-in on more than one name*) |
-| `ONTRAK_OIDC_SESSION_SECRET`                | *(empty)*                | Signs the session cookie. Required for sign-in |
+| `ONTRAK_OIDC_SESSION_SECRET`                | *(empty)*                | Signs the session cookie. Required for sign-in. May be a `vault://` reference |
 | `ONTRAK_OIDC_SESSION_HOURS`                 | `12`                     | How long a sign-in lasts before the person is sent back to the provider |
+| `VAULT_ADDR`                                | *(empty)*                | Cerulean Vault base URL. Empty = no references are resolved (*Secrets (Cerulean Vault)*) |
+| `VAULT_TOKEN_FILE`                          | *(empty)*                | File holding this stack's path-scoped token (or `VAULT_TOKEN`, the direct value) |
+| `VAULT_PREFIX`                              | `cerulean`               | KV v2 mount point; only change it for an external Vault mounted elsewhere |
+| `VAULT_NAMESPACE` / `VAULT_SKIP_VERIFY` / `VAULT_CACERT` | *(empty)*    | Enterprise namespace and TLS knobs; all unused on the platform's OSS Vault |
 
 ## Agent tools
 

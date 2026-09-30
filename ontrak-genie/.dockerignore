@@ -30,7 +30,10 @@ freebuff
 install.sh
 
 # The sandbox is its own image (sandbox/Dockerfile, `npm run sandbox:build`) and
-# the docs and dev scripts are not part of the server.
+# the docs and dev scripts are not part of the server. The Vault resolver the
+# entrypoint runs (scripts/vault-env.mjs) is the one exception: it ships with the
+# image, so the pattern excludes the directory's contents and re-includes it.
 sandbox
-scripts
+scripts/*
+!scripts/vault-env.mjs
 README.md
