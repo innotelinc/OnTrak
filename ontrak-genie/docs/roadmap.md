@@ -18,9 +18,9 @@ full developer reference.
 > live diff, per-file snapshots, the model-resilience chain, and a browser UI
 > with no build step. **0.2 is in progress** and is entirely about stack
 > citizenship: sign-in is **on** at both edge names, secrets are read from
-> **Cerulean Vault** through path-scoped `vault://` references, and tenancy is
-> *wired and off* until the control-plane URL is set — the remaining v0.2 item is
-> a published image with a stack entry.
+> **Cerulean Vault** through path-scoped `vault://` references, tenancy is **on**
+> through Distro's control plane, and the image is published with a pull-only
+> overlay beside the product compose. **0.2 is complete.**
 
 ## 1. Vision
 
@@ -110,12 +110,15 @@ happens to be in the repo.
   resolution reads the browser's `Host` and picks the matching entry, so
   `genie.ontrak.innotel.us` and `genie.innotel.us` each complete a code flow
   rather than one name bouncing its session onto the other.
-- `[~]` **Tenancy through Distro's control plane.** `src/controlplane.ts` and
-  `src/tenancy.ts` already speak the same `/api/internal/identity`,
-  `/quota-check`, `/usage-report` and `/audit` contract Studio uses, with the
-  deliberate key posture (strict identity, fail-open quota, best-effort ledger).
-  What remains is a URL and a service token — and sign-in, because the plane keys
-  accounts on the OIDC subject and a shared bearer carries none.
+- `[x]` **Tenancy through Distro's control plane.** `src/controlplane.ts` and
+  `src/tenancy.ts` speak the same `/api/internal/identity`, `/quota-check`,
+  `/usage-report` and `/audit` contract Studio uses, with the deliberate key
+  posture (strict identity, fail-open quota, best-effort ledger). On the family
+  deployment `CONTROL_PLANE_INTERNAL_URL` points at Distro's plane and the service
+  token arrives as the `vault://cerulean/ontrak#CONTROL_INTERNAL_TOKEN` reference,
+  so a turn resolves to the signed-in subject's own account and spends that
+  account's gateway key instead of the shared one — which is what makes
+  per-account quota and usage real. Sign-in is what gives the subject to key on.
 - `[x]` **Secrets from Cerulean Vault.** `.env` now holds `vault://` references
   rather than values, resolved at container startup by `scripts/vault-env.mjs`
   (run from `docker-entrypoint.sh`) under the path-scoped KV v2 `ontrak` token the
@@ -135,9 +138,14 @@ happens to be in the repo.
   estate's wildcard certificate (NPM hosts 195 and 197, certificates
   `*.ontrak.innotel.us` and `*.innotel.us`), and both sit behind the same
   Authentik sign-in as the rest of the estate.
-- `[ ]` **A published image and a stack entry.** A release image with a pinned
-  version, and the compose entry the platform's group file expects, so a deploy is
-  a pull rather than a build.
+- `[x]` **A published image and a stack entry.** Genie is `0.2.0` and publishes to
+  `ghcr.io/innotelinc/ontrak-genie` as its `runtime` stage — one image and no
+  `-migrate` twin, because it has no database — from the same `publish.yml` /
+  `scripts/publish-images.sh` list the other products use. Beside the product
+  compose sits `docker-compose.prod.yml`, the pull-only overlay
+  (`make genie-prod-up`, `ONTRAK_GENIE_IMAGE_TAG`), and the family stack's
+  `genie-app` entry names the same version, so a deploy is a pull rather than a
+  build.
 - `[x]` **Model-chain health on the deployment.** The chain is pinned in the
   deployment's environment rather than left on `auto/*`:
   `AGENT_MODEL=gemini/gemini-3.1-flash-lite` with
@@ -277,15 +285,22 @@ loosens the second, never the first.
    records and both proxy hosts are live against the Genie app on
    `192.168.1.21:3400`. The same change still owes the Authentik application and
    its redirect URI, so the name is gated rather than merely routed (v0.2).
-2. Turn tenancy on: set `CONTROL_PLANE_INTERNAL_URL` (the service token is
-   already in the deployment) so a turn resolves to an account and spends its
-   own gateway key. Sign-in is now proven on both names, so the subject tenancy
-   keys on exists; `WEB_TOKEN` stays as the API-client bearer until it does not.
+2. ~~Turn tenancy on~~ **Done** — `CONTROL_PLANE_INTERNAL_URL` points at
+   Distro's plane on `192.168.1.61:20140` and `CONTROL_INTERNAL_TOKEN` arrives as
+   a `vault://cerulean/ontrak#CONTROL_INTERNAL_TOKEN` reference, so a turn
+   resolves to the signed-in subject's account and spends its own gateway key.
+   The token moved to Vault in the same change, as item 3 requires. `WEB_TOKEN`
+   stays as the API-client bearer until it does not.
 3. ~~Move the deployment's secrets to Cerulean Vault `vault://` references with
    the path-scoped token (v0.2).~~ **Done** — `OMNIROUTE_API_KEY`,
    `ONTRAK_OIDC_CLIENT_SECRET` and `ONTRAK_OIDC_SESSION_SECRET` live at
    `cerulean/ontrak` and `.env` points at them; the image resolves them at boot
    under the `ontrak` policy. `WEB_TOKEN` and `CONTROL_INTERNAL_TOKEN` are unset
    on the deployment today and move the same way when they are set.
-4. Publish a versioned release image and add Genie's entry to the platform's group
-   compose so a deploy is a pull (v0.2).
+4. ~~Publish a versioned release image and add Genie's entry to the platform's
+   group compose so a deploy is a pull (v0.2).~~ **Done** — Genie publishes as
+   `ghcr.io/innotelinc/ontrak-genie:0.2.0` (the `runtime` stage, and no migration
+   image because there is no database), the family stack's `genie-app` entry names
+   that version, and `ontrak-genie/docker-compose.prod.yml` with
+   `make genie-prod-up` is the pull-only deploy path the other products already
+   had.

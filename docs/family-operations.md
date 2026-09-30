@@ -159,17 +159,17 @@ Each product is still its own stack with its own project name, so a rebuild of o
 recreates that product's containers and keeps every volume — the family file is for
 running them together, not a requirement for running one.
 
-Those two commands are the **development** shape: they build on the host. The three
-deployments — Training, Tix and Sentinel — have overlays beside them that name a
-published image and reset the build context, so starting one is a pull:
+Those two commands are the **development** shape: they build on the host. The four
+deployments — Training, Tix, Sentinel and Genie — have overlays beside them that
+name a published image and reset the build context, so starting one is a pull:
 
 ```bash
-make sentinel-prod-up                    # or prod-up / tix-prod-up
+make sentinel-prod-up                    # or prod-up / tix-prod-up / genie-prod-up
 ```
 
-`ONTRAK_TRAINING_IMAGE_TAG`, `ONTRAK_TIX_IMAGE_TAG` and `ONTRAK_SENTINEL_IMAGE_TAG`
-in that product's `.env.production` choose the release; each defaults to the version
-its overlay was written against. Images come from `ghcr.io/innotelinc/ontrak-*`,
+`ONTRAK_TRAINING_IMAGE_TAG`, `ONTRAK_TIX_IMAGE_TAG`, `ONTRAK_SENTINEL_IMAGE_TAG`
+and `ONTRAK_GENIE_IMAGE_TAG` in that product's `.env.production` choose the release;
+each defaults to the version its overlay was written against. Images come from `ghcr.io/innotelinc/ontrak-*`,
 published either by `make publish-images` or by cutting a release, which runs
 `publish.yml`. So a deployment needs registry access and a credential
 (`gh auth token | docker login ghcr.io -u <user> --password-stdin`) rather than a
@@ -180,7 +180,9 @@ required**. Each migration runs in its Dockerfile's `builder` stage — the stag
 carries the Prisma CLI and the schema tree, which the serving image deliberately
 leaves out — so `ontrak-<product>-migrate` is published alongside
 `ontrak-<product>`. Publishing only the serving images leaves a deployment that
-cannot migrate.
+cannot migrate. Genie is the exception in both directions: it has no database, so
+it publishes one image (`ontrak-genie`, the `runtime` stage) and no `-migrate`
+twin, and its overlay pins that single image.
 
 The `.env` files are **not** in the repository and each one is load-bearing:
 `/usr/src/ontrak/.env` (the training app and the shared stack), `ontrak-tix/.env`,

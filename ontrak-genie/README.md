@@ -111,26 +111,31 @@ ontrak-genie/
 
 ## Status
 
-Version 0.1.0. The console is complete and the checks pass; what is genuinely
-outstanding is stack citizenship, and it is stated rather than implied:
+Version 0.2.0. The console is complete, the checks pass, and it is now a
+first-class member of the stack rather than a console that happens to live in the
+repo:
 
 - **Auth** is either a static `WEB_TOKEN` (the API path, and what a laptop with no
-  provider uses) or sign-in through Cerulean's Authentik, which is wired and off
-  until configured — set the issuer, the client id and the session secret to
-  require it. Turning it on also closes the loopback trust the console otherwise
-  starts with, so an empty `WEB_TOKEN` stops meaning "no gate".
-- **Tenancy** is Distro's control plane, wired and off until
-  `CONTROL_PLANE_INTERNAL_URL` and `CONTROL_INTERNAL_TOKEN` are set. With it on, a
-  turn spends the signed-in account's own gateway key and is refused when that
-  account may not spend — which means it needs sign-in as well, because the plane
-  keys accounts on the OIDC subject. The key posture is deliberate: no account, no
-  turn; a quota read that fails does not stop the work; the ledger write never
-  fails an answer. With it on the disk is per-account as well — each account's
-  workspace, chats and file history live under `accounts/<account>/`, and a
-  request with no account gets a `401` rather than the shared workspace. See
-  [docs/operations.md](docs/operations.md).
-- **Secrets** are read from `.env`. The platform path is a Cerulean Vault
-  `vault://` reference resolved at deploy time.
+  provider uses) or sign-in through Cerulean's Authentik, which is **on** at both
+  of the family's names — set the issuer, the client id and the session secret to
+  require it anywhere else. Turning it on also closes the loopback trust the
+  console otherwise starts with, so an empty `WEB_TOKEN` stops meaning "no gate".
+- **Tenancy** is Distro's control plane, and it is **on** on the family
+  deployment: `CONTROL_PLANE_INTERNAL_URL` points at the plane and
+  `CONTROL_INTERNAL_TOKEN` arrives as a Cerulean Vault reference, so a turn spends
+  the signed-in account's own gateway key and is refused when that account may not
+  spend. That means it needs sign-in as well, because the plane keys accounts on
+  the OIDC subject. The key posture is deliberate: no account, no turn; a quota
+  read that fails does not stop the work; the ledger write never fails an answer.
+  The disk is per-account too — each account's workspace, chats and file history
+  live under `accounts/<account>/`, and a request with no account gets a `401`
+  rather than the shared workspace. See [docs/operations.md](docs/operations.md).
+- **Secrets** are Cerulean Vault `vault://` references the image resolves before
+  the server starts, so `.env` is a reference file rather than the store.
+- **Delivery** is a pull: the image publishes to
+  `ghcr.io/innotelinc/ontrak-genie`, and `docker-compose.prod.yml` beside the
+  product compose names a version instead of building one
+  (`make genie-prod-up`, `ONTRAK_GENIE_IMAGE_TAG`).
 
 ## License
 

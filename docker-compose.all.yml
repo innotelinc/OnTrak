@@ -435,7 +435,7 @@ services:
   genie-app:
     build:
       context: ontrak-genie
-    image: innotel/ontrak-genie:0.1.0
+    image: innotel/ontrak-genie:0.2.0
     restart: unless-stopped
     env_file:
       - path: ontrak-genie/.env
@@ -450,11 +450,16 @@ services:
       AGENT_SANDBOX: host
       OMNIROUTE_URL: ${OMNIROUTE_URL:-}
       WEB_TOKEN: ${WEB_TOKEN:-}
-      # Tenancy, when the family has a control plane: with both set, each turn
-      # spends the signed-in account's own gateway key. Empty (the default) leaves
-      # Genie single-operator, spending OMNIROUTE_API_KEY above.
+      # Tenancy, when the family has a control plane: with the origin and the
+      # service token set, each turn spends the signed-in account's own gateway
+      # key. Empty (the default) leaves Genie single-operator, spending
+      # OMNIROUTE_API_KEY above.
       CONTROL_PLANE_INTERNAL_URL: ${CONTROL_PLANE_INTERNAL_URL:-}
-      CONTROL_INTERNAL_TOKEN: ${CONTROL_INTERNAL_TOKEN:-}
+      # The service token is NOT set here: it comes from `ontrak-genie/.env` (the
+      # env_file above) as a Cerulean Vault `vault://` reference, resolved by the
+      # image's entrypoint at startup. Interpolating it from this file's plaintext
+      # would shadow that reference — the same trap the sign-in secrets below
+      # avoid.
       # Sign-in, which tenancy needs: the plane keys accounts on the OIDC
       # subject, so tenancy without it refuses every turn. Off unless the issuer,
       # the client id and the session secret are all supplied. The redirect URI

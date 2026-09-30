@@ -711,6 +711,11 @@ CONTROL_PLANE_INTERNAL_URL=https://distro.example.com
 CONTROL_INTERNAL_TOKEN=<the plane's service token>
 ```
 
+The token is a credential, so it can be a `vault://` reference like everything
+else in `.env`; the entrypoint resolves it before the server boots, so the
+deployment never holds the value itself. The family deployment carries it as
+`CONTROL_INTERNAL_TOKEN=vault://cerulean/ontrak#CONTROL_INTERNAL_TOKEN`.
+
 The URL is the plane's **origin**: this console calls `/api/internal/identity`,
 `/api/internal/quota-check`, `/api/internal/usage-report` and
 `/api/internal/audit` under it. The contract is Distro's — the same endpoints and
@@ -800,6 +805,7 @@ VAULT_ADDR=http://192.168.1.71:8200
 VAULT_TOKEN_FILE=/vault/token/ontrak.token
 VAULT_PREFIX=cerulean
 OMNIROUTE_API_KEY=vault://cerulean/ontrak#OMNIROUTE_API_KEY
+CONTROL_INTERNAL_TOKEN=vault://cerulean/ontrak#CONTROL_INTERNAL_TOKEN
 ONTRAK_OIDC_CLIENT_SECRET=vault://cerulean/ontrak#ONTRAK_OIDC_CLIENT_SECRET
 ONTRAK_OIDC_SESSION_SECRET=vault://cerulean/ontrak#ONTRAK_OIDC_SESSION_SECRET
 ```
@@ -827,7 +833,7 @@ what is already in Vault and never prints a value:
 VAULT_ADDR=http://192.168.1.71:8200 VAULT_TOKEN_FILE=./data/vault/token/ontrak.token \
 VAULT_PREFIX=cerulean VAULT_PATH=ontrak \
 python3 scripts/vault-migrate.py --from-env-file .env \
-  --keys OMNIROUTE_API_KEY,ONTRAK_OIDC_CLIENT_SECRET,ONTRAK_OIDC_SESSION_SECRET
+  --keys OMNIROUTE_API_KEY,CONTROL_INTERNAL_TOKEN,ONTRAK_OIDC_CLIENT_SECRET,ONTRAK_OIDC_SESSION_SECRET
 ```
 
 It prints the `vault://` lines to put back in `.env`. Then restart the container:
@@ -867,7 +873,7 @@ All optional — see `.env.example`.
 | `AGENT_TOOL_RESULT_LIMIT`                   | `60000`                  | Cap on a single tool result              |
 | `WEB_TOKEN`                                 | *(empty)*                | Require this bearer token on `/api/*`    |
 | `CONTROL_PLANE_INTERNAL_URL`                | *(empty)*                | Distro control-plane origin. With the token below, every turn is attributed and quota-gated — see *Tenancy* |
-| `CONTROL_INTERNAL_TOKEN`                    | *(empty)*                | Control-plane service token (`x-control-internal-token`); empty or a placeholder means tenancy is off |
+| `CONTROL_INTERNAL_TOKEN`                    | *(empty)*                | Control-plane service token (`x-control-internal-token`); empty or a placeholder means tenancy is off. May be a `vault://` reference — see *Secrets (Cerulean Vault)* |
 | `ONTRAK_OIDC_ISSUER`                        | *(empty)*                | Authentik issuer. With the two below, require sign-in on `/api/*` |
 | `ONTRAK_OIDC_CLIENT_ID`                     | *(empty)*                | OIDC client id registered with the provider |
 | `ONTRAK_OIDC_CLIENT_SECRET`                 | *(empty)*                | Only for a confidential client; omit it with PKCE. May be a `vault://` reference |

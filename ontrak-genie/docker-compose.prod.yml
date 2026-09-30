@@ -1,0 +1,68 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# OnTrak Genie — the deployment overlay.
+#
+# `docker-compose.yml` describes the development stack. This sits on top of it
+# for an actual deployment, so it is always used as an overlay, never alone:
+#
+#   cp .env.production.example .env.production   # then fill it in
+#   make genie-prod-up
+#
+# which is:
+#
+#   docker compose --env-file .env.production \
+#     -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Four things change, and each is the point of the file:
+#
+#   * **The image is pulled, not built.** `image:` names the release to fetch and
+#     `build: !reset null` removes the build context the development file
+#     declares, so a deployment needs no source tree, no Node toolchain and no
+#     minutes of CPU on the host — it fetches the artifact that was built and
+#     tested once, somewhere with the memory to do it. `ONTRAK_GENIE_IMAGE_TAG`
+#     chooses the release (defaulting to the version this file was written
+#     against); set it in `.env.production` to move the deployment.
+#   * The workspace and the data directory are **named volumes**. Development
+#     binds `./workspace` beside the compose file, which only works where the
+#     source tree is; a deployment has no tree to bind, and the chats and the
+#     per-file history have to outlive a rebuild either way.
+#   * **The whole configuration comes from `.env.production`** rather than from
+#     `.env` — the development file is not read at all, so a deployment cannot
+#     inherit a laptop's `.env` by accident.
+#   * Containers **restart always**, because a deployment is expected to come
+#     back by itself rather than wait for someone to notice.
+#
+# Genie is the one product with no database and no migration, so there is no
+# `db` or `migrate` service to pin here and no `-migrate` image is published for
+# it: one image is the whole deployment.
+#
+# The console keeps `network_mode: host` from the development file. That is why
+# there is no port mapping to override: with host networking the address the
+# server binds *is* the published port, so `ONTRAK_GENIE_PORT` in
+# `.env.production` is what moves it. On the family host :3400 belongs to the
+# family stack's `genie-app`, so a standalone deployment of this overlay sets
+# something else — the development default of :3410 is a safe choice.
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  agent:
+    restart: always
+    image: ghcr.io/innotelinc/ontrak-genie:${ONTRAK_GENIE_IMAGE_TAG:-0.2.0}
+    build: !reset null
+    pull_policy: always
+    env_file: !override [.env.production]
+    volumes: !override
+      # The agent can only touch this directory.
+      - genie-workspace:/workspace
+      # Sessions and transcripts, kept across a rebuild.
+      - agent-data:/data
+      # Cerulean Vault: when `.env.production` carries `vault://` references (see
+      # the "Cerulean Vault" section of .env.example), mount this stack's
+      # path-scoped token here and set VAULT_TOKEN_FILE to this path in
+      # `.env.production`. Cerulean writes it to ./data/vault/token/ontrak.token
+      # on the host that runs Vault. Uncomment when Vault is in use; a missing
+      # source file is a directory Docker creates, not a token, so this stays off
+      # by default.
+      # - ./data/vault/token/ontrak.token:/vault/token/ontrak.token:ro
+
+volumes:
+  genie-workspace:

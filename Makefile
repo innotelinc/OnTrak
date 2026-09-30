@@ -206,8 +206,8 @@ check-compose: ## Validate every development compose file against its .env.examp
 	docker compose -f docker-compose.all.yml config --quiet && echo "compose: family ok"
 
 .PHONY: prod-check
-prod-check: ## Validate all three deployment overlays (throwaway secrets, cleaned up)
-	@set -e; for d in . $(TIX_DIR) $(SENTINEL_DIR); do \
+prod-check: ## Validate all four deployment overlays (throwaway secrets, cleaned up)
+	@set -e; for d in . $(TIX_DIR) $(SENTINEL_DIR) $(GENIE_DIR); do \
 	  made=; \
 	  if [ ! -f "$$d/.env.production" ]; then \
 	    cp "$$d/.env.production.example" "$$d/.env.production"; made=1; \
@@ -251,6 +251,14 @@ sentinel-prod-up: ## Start Sentinel as a deployment (pulls its image; needs .env
 .PHONY: sentinel-prod-down
 sentinel-prod-down: ## Stop the Sentinel deployment (keeps its volume)
 	cd $(SENTINEL_DIR) && docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml down
+
+.PHONY: genie-prod-up
+genie-prod-up: ## Start Genie as a deployment (pulls its image; needs .env.production)
+	cd $(GENIE_DIR) && docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+.PHONY: genie-prod-down
+genie-prod-down: ## Stop the Genie deployment (keeps its volumes)
+	cd $(GENIE_DIR) && docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml down
 
 ## ---- The training app ----
 
