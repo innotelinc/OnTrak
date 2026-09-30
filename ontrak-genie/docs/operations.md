@@ -156,7 +156,7 @@ models**. Every row below comes from a real request, not a model card:
 
 | Model id | Structured `tool_call`? | Notes |
 | -------- | ----------------------- | ----- |
-| `gemini/gemini-3.1-flash-lite` | yes, fast, and always up | **Current default** — the only explicit id that survived the full sweep |
+| `gemini/gemini-3.1-flash-lite` | yes, fast, and always up | The only explicit id that survived the full sweep; **now the last fallback** — see the note below |
 | `gemini/gemini-3-flash-preview` | yes when its credentials are free | Stronger, but cooling down much of the time |
 | `gemini/gemini-2.5-flash` | yes when its credentials are free | Second fallback |
 | `auto/best-coding` | lottery | Served `gemini-2.5-flash`, `gemini-3-flash-preview` *and* `gemini-3.1-flash-lite` on separate calls |
@@ -177,6 +177,15 @@ A combo name describes intent, not capability, and OmniRoute will happily accept
 one it cannot satisfy. Reliability comes first, because a model that is cooling
 down cannot answer however strong it is. That is why the *weaker* model leads
 here, with the stronger ones behind it in the chain.
+
+**The default moved after this sweep.** Later the same day the Gemini free tier
+exhausted its daily quota and a Gemini-only chain died on the first turn, taking
+every fallback with it — the sweep's measurement was accurate, but "always up"
+was not durable. The default is now `openrouter/free` (OpenRouter's free router)
+with `openrouter/cohere/north-mini-code:free` behind it and
+`gemini/gemini-3.1-flash-lite` last, so a deployment whose quota has reset still
+reaches it. Each entry was checked for a real tool call before being written into
+`.env.example`.
 
 #### Checking instead of guessing
 
@@ -330,8 +339,8 @@ is cooling down. Either way a turn used to die mid-task.
 model throttles, errors, or answers with nothing:
 
 ```ini
-AGENT_MODEL=gemini/gemini-3.1-flash-lite
-AGENT_FALLBACK_MODELS=gemini/gemini-3-flash-preview,gemini/gemini-2.5-flash
+AGENT_MODEL=openrouter/free
+AGENT_FALLBACK_MODELS=openrouter/cohere/north-mini-code:free,gemini/gemini-3.1-flash-lite
 ```
 
 A retry is only attempted while **nothing has reached the browser**, so a reply is

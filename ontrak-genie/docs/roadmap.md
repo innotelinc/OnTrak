@@ -148,10 +148,13 @@ happens to be in the repo.
   build.
 - `[x]` **Model-chain health on the deployment.** The chain is pinned in the
   deployment's environment rather than left on `auto/*`:
-  `AGENT_MODEL=gemini/gemini-3.1-flash-lite` with
-  `AGENT_FALLBACK_MODELS=gemini/gemini-3-flash-preview,gemini/gemini-2.5-flash`,
-  both explicit ids the sweep found tool-capable. The chain-health row and
-  `model-health` remain the guards.
+  `AGENT_MODEL=openrouter/free` with
+  `AGENT_FALLBACK_MODELS=openrouter/cohere/north-mini-code:free,gemini/gemini-3.1-flash-lite`,
+  every entry an explicit id checked for a real tool call. The chain leads with
+  OpenRouter's free router because a free Gemini tier exhausts its daily quota
+  and a Gemini-only chain then dies on the first turn; the Gemini model stays
+  last so a deployment whose quota has reset still reaches it. The chain-health
+  row and `model-health` remain the guards.
 
 **Exit:** reaching `genie.innotel.us` requires an Authentik sign-in, a signed-in
 turn spends that account's own gateway key and is refused when it may not spend,
