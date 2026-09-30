@@ -489,6 +489,17 @@ The agent is deliberately constrained, because it runs with your privileges:
   it. A name that is not listed falls back to the first entry; a caller that is
   not on a listed name signs in and lands on the first, which is the honest
   answer to "which of this deployment's names was this registered for".
+
+  **Proving it, rather than assuming it.** `scripts/verify-sso.py` drives the whole
+  thing against a live deployment: it creates a throwaway Authentik identity,
+  completes a real authorization-code flow, and asserts that the API is closed
+  without a session, that the authorize URL names this name's callback and this
+  client, that the session resolves to a subject, and that signing out ends it. No
+  admin token, or a deployment it cannot reach, is a SKIP (exit 2) rather than a
+  failure — which is what lets the estate's posture runner call it from any host
+  (`ips/scripts/check-sign-in-posture.sh`). The token is read from the environment,
+  then this repo's `.env`, then the estate's `cerulean/.env`, so the check never
+  needs a credential a deployment of this console would hold.
 - **Whose key pays.** With `CONTROL_PLANE_INTERNAL_URL` and
   `CONTROL_INTERNAL_TOKEN` set, a turn is attributed to the signed-in person and
   spends *their* gateway key — and is refused when that account may not spend.
