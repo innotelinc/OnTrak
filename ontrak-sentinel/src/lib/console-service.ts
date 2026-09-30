@@ -79,6 +79,8 @@ import type { ConsoleEndpoints } from "./console-http";
 import type { AuditEvent } from "./audit-chain";
 import type { SignInService } from "./sign-in-service";
 import type { SignInInput } from "./sign-in-rules";
+import { UPSTREAM_PATHS } from "./upstream-rules";
+import type { UpstreamSignInService } from "./upstream-service";
 
 /** What resolving a session gives every handler. */
 interface ConsoleContext {
@@ -150,6 +152,15 @@ export class ConsoleService implements ConsoleEndpoints {
      * and a member of the same name would shadow it.
      */
     private readonly detection: Pick<DetectionService, "alerts" | "acknowledge" | "close"> | null = null,
+    /**
+     * Upstream sign-in, when the deployment federates a provider.
+     *
+     * Optional for the same reason the password service is: a deployment with neither is an
+     * identity provider that still works, and the sign-in page says so rather than offering a
+     * door that is not there. A `Pick` rather than the class, so the console cannot reach the
+     * parts of the flow it has no business in.
+     */
+    private readonly upstream: Pick<UpstreamSignInService, "start" | "complete" | "enabled" | "label"> | null = null,
   ) {}
 
   /* ------------------------------------------------------------ sign in */
@@ -160,7 +171,16 @@ export class ConsoleService implements ConsoleEndpoints {
    * unknown visitor.
    */
   async signInView(): Promise<ServiceResult<ConsoleSignInView>> {
-    return { ok: true, value: { identifier: null, organization: this.signInOrganization, error: null, flash: null } };
+    return {
+      ok: true,
+      value: {
+        identifier: null,
+        organization: this.signInOrganization,
+        error: null,
+        flash: null,
+        upstream: this.upstream?.enabled ? { path: UPSTREAM_PATHS.start, label: this.upstream.label } : null,
+      },
+    };
   }
 
   /**
@@ -171,6 +191,38 @@ export class ConsoleService implements ConsoleEndpoints {
    * password and the factor, the audit entries — belongs to the sign-in service, and
    * duplicating any of it here is how a second, subtly different login appears.
    */
+  /** Begin an upstream sign-in: the provider's URL plus the sealed state cookie. */
+  async upstreamStart(
+    returnTo: string | null,
+    secure: boolean,
+  ): Promise<ServiceResult<{ redirectTo: string; cookie: string }>> {
+    if (!this.upstream?.enabled) return { ok: false, error: "Upstream sign-in is not configured on this deployment." };
+    const result = await this.upstream.start({ returnTo, secure });
+    if (!result.ok) return { ok: false, error: result.error };
+    return { ok: true, value: { redirectTo: result.value.redirectTo, cookie: result.value.setCookie } };
+  }
+
+  /** Finish an upstream sign-in, returning the session for the router to put in a cookie. */
+  async upstreamCallback(input: {
+    code: string;
+    state: string;
+    stateCookie: string | null;
+    userAgent: string | null;
+    ipAddress: string | null;
+  }): Promise<ServiceResult<{ sessionId: string; redirectTo: string; clearCookie: string }>> {
+    if (!this.upstream?.enabled) return { ok: false, error: "Upstream sign-in is not configured on this deployment." };
+    const result = await this.upstream.complete(input);
+    if (!result.ok) return { ok: false, error: result.error };
+    return {
+      ok: true,
+      value: {
+        sessionId: result.value.sessionId,
+        redirectTo: result.value.redirectTo,
+        clearCookie: result.value.clearCookie,
+      },
+    };
+  }
+
   async signIn(input: SignInInput): Promise<ServiceResult<{ sessionId: string; redirectTo: string }>> {
     if (!this.signInService) {
       return {

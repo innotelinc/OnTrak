@@ -315,6 +315,26 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
     administrator (or from a login path that prompts for one — S2's password
     credentials), and removing your last factor ends every session you hold including
     the one you are reading the page on. Covered by `tests/sentinel-console.test.ts`.
+  - `[x]` **The console's own sign-in through a provider** (`upstream-rules.ts`,
+    `upstream-service.ts`, `console-*.ts`, the `upstreamStart`/`upstreamCallback`
+    paths, and a run of `serve.ts`): Sentinel is the family's identity provider, so
+    its own console was the one login in the family that checked a password itself —
+    a second password beside the one the deployment's provider already holds, and a
+    second thing to reset and a second place to forget a leaver. The console now also
+    accepts an **authorization-code** sign-in from a configured provider, and keeps
+    the password form for a deployment that has none — `upstream: { path, label }`
+    (or `null`) in the sign-in view, so the page says *whose* SSO it is rather than
+    rendering a control that could never work. The state, the nonce and the PKCE
+    verifier are **sealed into a cookie** rather than carried in the callback, so the
+    reply is matched against a value the browser never saw in the open; the ID token
+    is verified **RS256 against the provider's JWKS** before a single claim is
+    believed, with `iss`/`aud`/`exp` checked as well as the signature. Two limits are
+    the point of it rather than an omission: a login the provider did not mark as
+    multi-factor is still refused by the S0 spine when the policy requires one — the
+    provider cannot be a way *around* the second factor — and the person is named by
+    the provider's email while the **role comes only from the configured admin
+    group**, so a group name upstream cannot hand out a grant here. Covered by
+    `tests/sentinel-upstream.test.ts`.
   - `[x]` **Per-role policies** (`POLICY_SCOPES` in `identity-rules.ts`, the
     `IdentityPolicy` scope column in `20261025000000_policy_scope`,
     `IdentityService.policyForRole`/`setPolicy`, the `policies` console page): an

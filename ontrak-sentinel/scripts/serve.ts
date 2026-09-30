@@ -33,6 +33,8 @@ import { PrismaClient } from "@prisma/client";
 
 import { PrismaAlertStore, type AlertPrismaClient } from "../src/lib/alert-store-prisma";
 import { ConsoleService } from "../src/lib/console-service";
+import { upstreamConfigFromEnv } from "../src/lib/upstream-rules";
+import { UpstreamSignInService } from "../src/lib/upstream-service";
 import { CONSOLE_ASSET_PATHS, CONSOLE_PATHS } from "../src/lib/console-rules";
 import { MemoryCredentialStore, type CredentialStore } from "../src/lib/credential-store";
 import { PrismaCredentialStore, type CredentialPrismaClient } from "../src/lib/credential-store-prisma";
@@ -457,6 +459,22 @@ async function main(): Promise<void> {
   // The sign-in service and the directory reader are both optional, and independent:
   // a deployment can serve a login with no directories, or read directories with no
   // console login configured. Passing both is what lets the console show either.
+  // Upstream sign-in: a deployment that federates a provider (Cerulean's Authentik) sets
+  // the SENTINEL_UPSTREAM_* variables and the console gains a second door. Absent means the
+  // console is password-only, which is a legitimate deployment and the default here.
+  const upstreamConfig = upstreamConfigFromEnv(process.env);
+  const upstream = upstreamConfig
+    ? new UpstreamSignInService(upstreamConfig, identities, spine, {
+        // The state cookie's key. Without an explicit one the attempts do not survive a
+        // restart, which is survivable (a sign-in is retried) but is said out loud once.
+        secret: (process.env.SENTINEL_UPSTREAM_STATE_SECRET ?? "").trim() || randomBytes(32).toString("base64url"),
+        audit,
+      })
+    : null;
+  if (upstreamConfig && !(process.env.SENTINEL_UPSTREAM_STATE_SECRET ?? "").trim()) {
+    console.warn("[sentinel] SENTINEL_UPSTREAM_STATE_SECRET is unset; sealed sign-in attempts will not survive a restart.");
+  }
+
   const console_ = new ConsoleService(
     spine,
     mfa,
@@ -468,6 +486,7 @@ async function main(): Promise<void> {
     directories,
     threatIntel,
     detection,
+    upstream,
   );
   const guardService = new GuardService(detection, identities, {
     token: (process.env.SENTINEL_GUARD_TOKEN ?? "").trim() || null,

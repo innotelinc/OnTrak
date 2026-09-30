@@ -56,6 +56,7 @@ import {
 } from "./console-rules";
 import type { CompliancePacket } from "./assurance-packet";
 import type { SignInInput } from "./sign-in-rules";
+import { UPSTREAM_STATE_COOKIE, readCallback } from "./upstream-rules";
 import type { WebAuthnRegistrationResponse } from "./webauthn-rules";
 import type { WebAuthnRegistrationOptions } from "./webauthn-service";
 
@@ -83,6 +84,22 @@ export interface ConsoleEndpoints {
    * response headers would be the second place a session could be started.
    */
   signIn(input: SignInInput): Promise<ServiceResult<{ sessionId: string; redirectTo: string }>>;
+  /**
+   * The provider door. `start` is the redirect *to* the provider (with the sealed state as
+   * a cookie); `callback` is the reply, and answers with the session id for the same reason
+   * `signIn` does: the HTTP layer owns the cookie.
+   */
+  upstreamStart(
+    returnTo: string | null,
+    secure: boolean,
+  ): Promise<ServiceResult<{ redirectTo: string; cookie: string }>>;
+  upstreamCallback(input: {
+    code: string;
+    state: string;
+    stateCookie: string | null;
+    userAgent: string | null;
+    ipAddress: string | null;
+  }): Promise<ServiceResult<{ sessionId: string; redirectTo: string; clearCookie: string }>>;
   overview(sessionId: string): Promise<ServiceResult<ConsoleOverviewView>>;
   provisioning(sessionId: string): Promise<ServiceResult<ConsoleProvisioningView>>;
   /** The directories this organization reads, and what their last runs did. */
@@ -688,12 +705,58 @@ async function handleSignInSubmit(
   const result = await endpoints.signIn(input);
   if (!result.ok) {
     const view = await endpoints.signInView();
-    const shown = view.ok ? view.value : { identifier: null, organization: null, error: null, flash: null };
+    const shown = view.ok ? view.value : { identifier: null, organization: null, error: null, flash: null, upstream: null };
     return html(200, renderSignIn({ ...shown, identifier: input.identifier, error: result.error, flash: null }));
   }
 
   return redirect(result.value.redirectTo, {
     "set-cookie": sessionCookie(result.value.sessionId, requestIsSecure(request)),
+  });
+}
+
+/**
+ * Hand the browser to the provider.
+ *
+ * `returnTo` is a path, and the service re-validates it on the way back rather than trusting
+ * it here — it is sealed into the cookie, but it still makes the round trip through a browser.
+ */
+async function handleUpstreamStart(
+  url: URL,
+  endpoints: ConsoleEndpoints,
+  request: HttpRequest,
+): Promise<HttpResponse> {
+  const result = await endpoints.upstreamStart(url.searchParams.get("returnTo"), requestIsSecure(request));
+  if (!result.ok) return failure(result.error);
+  return redirect(result.value.redirectTo, { "set-cookie": result.value.cookie });
+}
+
+/**
+ * Take the provider's answer.
+ *
+ * Two cookies leave here and one header carries them: the sealed state is cleared, and the
+ * session is set. Both are written with `Max-Age` and neither contains a comma, so joining
+ * them is unambiguous — which is the one property that makes a single `Set-Cookie` header
+ * safe to use for two cookies.
+ */
+async function handleUpstreamCallback(
+  url: URL,
+  endpoints: ConsoleEndpoints,
+  request: HttpRequest,
+): Promise<HttpResponse> {
+  const read = readCallback(url.searchParams);
+  if (!read.ok) return failure(read.error);
+
+  const result = await endpoints.upstreamCallback({
+    code: read.code,
+    state: read.state,
+    stateCookie: request.cookies?.[UPSTREAM_STATE_COOKIE] ?? null,
+    userAgent: header(request, "user-agent") || null,
+    ipAddress: header(request, "x-forwarded-for").split(",")[0]?.trim() || null,
+  });
+  if (!result.ok) return failure(result.error);
+
+  return redirect(result.value.redirectTo, {
+    "set-cookie": `${result.value.clearCookie}, ${sessionCookie(result.value.sessionId, requestIsSecure(request))}`,
   });
 }
 
@@ -740,6 +803,10 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
       return method === "POST"
         ? handleSignInSubmit(request, endpoints)
         : get(() => handleSignInPage(url, endpoints));
+    case CONSOLE_PATHS.upstreamStart:
+      return get(() => handleUpstreamStart(url, endpoints, request));
+    case CONSOLE_PATHS.upstreamCallback:
+      return get(() => handleUpstreamCallback(url, endpoints, request));
     case CONSOLE_PATHS.home:
       return get(() => handleHome(url, sessionId, endpoints));
     case CONSOLE_PATHS.provisioning:

@@ -44,6 +44,7 @@ import type { Severity } from "./detection-rules";
 // which a match annotates rather than escalates. Both are named here rather than retyped, so
 // the page cannot promise something the matcher does not do.
 import { CONFIDENCE_FLOOR, INDICATOR_KINDS } from "./threat-intel-rules";
+import { UPSTREAM_PATHS } from "./upstream-rules";
 
 /* -------------------------------------------------------------------------- */
 /*  Paths                                                                     */
@@ -62,6 +63,17 @@ export const CONSOLE_PATHS = {
    * put behind a VPN without catching the OIDC endpoints too).
    */
   signIn: "/console/sign-in",
+  /**
+   * The console's *other* sign-in: the provider.
+   *
+   * Sentinel owns a password for its own console, but a deployment with a provider does
+   * not want a second one. These two paths are the authorization-code legs — the first
+   * hands the browser to the provider, the second receives the reply — and they live under
+   * the same `/console` prefix as everything else, so a deployment can put one prefix behind
+   * a VPN without catching the OIDC endpoints the family depends on.
+   */
+  upstreamStart: UPSTREAM_PATHS.start,
+  upstreamCallback: UPSTREAM_PATHS.callback,
   policies: "/console/policies",
   directory: "/console/directory",
   directoryConnect: "/console/directory/connection",
@@ -679,6 +691,14 @@ export interface ConsoleSignInView {
   organization: string | null;
   error: string | null;
   flash: string | null;
+  /**
+   * The provider door, when a deployment has one.
+   *
+   * `null` — not a disabled button — is the honest way to say "this console has no provider
+   * configured": a greyed-out control that can never work is a question the page cannot
+   * answer. The label is the deployment's, so the page can say *whose* SSO it is.
+   */
+  upstream: { path: string; label: string } | null;
 }
 
 /**
@@ -714,6 +734,10 @@ export function renderSignIn(view: ConsoleSignInView): string {
       `<div class="signin">` +
       `<p class="muted">OnTrak Sentinel is the identity provider for the Network: this console holds the ` +
       `identities, so this is the one place that checks a password itself.</p>` +
+      (view.upstream
+        ? `<p><a class="button" href="${escapeHtml(view.upstream.path)}">Sign in with ${escapeHtml(view.upstream.label)}</a></p>` +
+          `<p class="hint muted">or sign in with the password for this console</p>`
+        : "") +
       `<form method="post" action="${CONSOLE_PATHS.signIn}">` +
       `<span class="field"><label for="identifier">Email address</label>` +
       `<input id="identifier" name="identifier" type="text" inputmode="email" autocomplete="username" ` +
