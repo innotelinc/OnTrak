@@ -107,8 +107,23 @@ portal-down: ## Stop the portal stack
 portal-logs: ## Tail the portal stack's logs
 	cd $(PORTAL_DIR) && docker compose logs -f
 
+# :3400 belongs to the family stack (`docker-compose.all.yml`, service `genie-app`),
+# where Genie is a member. This target starts Genie's *own* stack instead, which is
+# the single-product path for a laptop and serves :3410. Two stacks both reaching
+# for :3400 is one container crash-looping on `EADDRINUSE` with nothing on screen
+# saying why, so the collision is refused here, by name, rather than left to the
+# kernel to report as a restart loop.
+FAMILY_GENIE_SERVICE := genie-app
+FAMILY_GENIE_PORT := 3400
+
 .PHONY: genie-up
-genie-up: ## Build and start the agent console stack, serving on :3410 (:3400 belongs to the family stack)
+genie-up: ## Build and start Genie's own stack on :3410 (refuses while the family stack serves :3400)
+	@if docker compose -f docker-compose.all.yml ps --status running --services 2>/dev/null | grep -qx '$(FAMILY_GENIE_SERVICE)'; then \
+		echo "make genie-up: the family stack is already serving Genie as '$(FAMILY_GENIE_SERVICE)' on :$(FAMILY_GENIE_PORT)."; \
+		echo "  :$(FAMILY_GENIE_PORT) is the family stack's. Use that console, or 'make all-down' to stop it first."; \
+		echo "  This target is the single-product path for a laptop, and serves :3410."; \
+		exit 1; \
+	fi
 	cd $(GENIE_DIR) && docker compose up -d --build
 
 .PHONY: genie-down
