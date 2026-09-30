@@ -29,9 +29,6 @@ export const metadata: Metadata = { title: "Sign in" };
  */
 const defaultTenant = (process.env.ONTRAK_TIX_DEFAULT_TENANT ?? "").trim();
 
-/** What the IdP calls itself here. Shared with the rest of the family. */
-const providerName = (process.env.ONTRAK_OIDC_PROVIDER_NAME ?? "Cerulean").trim() || "Cerulean";
-
 export default async function SignInPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const { error } = await searchParams;
   const startHref = defaultTenant
@@ -48,8 +45,6 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
         <h1 className="font-display text-2xl font-semibold text-ink">
           OnTrak <span className="text-brand">Tix</span>
         </h1>
-        <p className="mt-1.5 text-sm text-ink-faint">One sign-in, through {providerName}.</p>
-
         {error ? (
           <p role="alert" className="ot-note ot-note--bad mt-5 text-left">
             {error}
@@ -63,7 +58,7 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
             href={startHref}
             className="mt-6 block rounded-full bg-brand px-4 py-2.5 text-sm font-semibold text-brand-ink hover:opacity-95"
           >
-            Sign in with {providerName}
+            Sign in
           </a>
         ) : (
           // Multi-tenant: the workspace is what a person actually knows, and only it
@@ -83,15 +78,10 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
               type="submit"
               className="w-full rounded-full bg-brand px-4 py-2.5 text-sm font-semibold text-brand-ink hover:opacity-95"
             >
-              Continue with {providerName}
+              Continue
             </button>
           </form>
         )}
-
-        <p className="mt-6 text-xs text-ink-faint">
-          Accounts, groups and second factors are managed in {providerName}. The group you belong to decides your role
-          here.
-        </p>
       </div>
     </main>
   );
