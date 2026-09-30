@@ -321,7 +321,8 @@ test("console: the policies page needs a session, and a non-admin cannot write",
   const { sessionId, actor, organizationId } = await organization(h, "guard");
 
   const anonymous = await routeConsole(get(CONSOLE_PATHS.policies), h.service);
-  assert.equal(anonymous.status, 401);
+  assert.equal(anonymous.status, 303);
+  assert.equal(anonymous.headers.location, CONSOLE_PATHS.signIn);
 
   // The auditor has no second factor, so the baseline has to allow a session without
   // one — said deliberately, through the product, rather than by patching a store.

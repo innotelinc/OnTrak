@@ -310,11 +310,15 @@ sentinel-serve: ## Run the identity provider from source (http://localhost:8787)
 ## ---- Checks (what CI runs) ----
 
 .PHONY: check
-check: theme typecheck test build ## Everything CI runs, in the order CI runs it
+check: theme copy-check typecheck test build ## Everything CI runs, in the order CI runs it
 
 .PHONY: theme
 theme: ## Prove every product ships the canonical theme, byte for byte
 	python3 theme/tests/test_theme_copies.py
+
+.PHONY: copy-check
+copy-check: ## Prove every product's front door carries the product and the way in, nothing else
+	node scripts/copy-check.mjs
 
 .PHONY: typecheck
 typecheck: ## Typecheck all five products

@@ -23,7 +23,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { HashFn } from "../src/lib/audit-chain";
-import { CONSOLE_PATHS, CONSOLE_SESSION_COOKIE, consoleErrorPage } from "../src/lib/console-rules";
+import { CONSOLE_PATHS, CONSOLE_SESSION_COOKIE } from "../src/lib/console-rules";
 import { ConsoleService } from "../src/lib/console-service";
 import { routeConsole } from "../src/lib/console-http";
 import { MemoryCredentialStore } from "../src/lib/credential-store";
@@ -503,20 +503,20 @@ test("console: an unconfigured sign-in says so instead of pretending", async () 
   assert.equal(response.headers["set-cookie"], undefined);
 });
 
-test("console: a dead session is told how to sign in again, not told it used the wrong door", () => {
-  // The page an operator lands on when their cookie has expired or been revoked. The
-  // wording has to answer the only question they have; the previous version named the
-  // cookie and was read, reasonably, as "you came in the wrong way".
-  const page = consoleErrorPage("That session does not exist.", 403);
-  assert.equal(page.status, 403);
-  assert.match(page.html, /<title>Not allowed · OnTrak Sentinel<\/title>/);
-  // It says the console is the door, not that it is the wrong one...
-  assert.match(page.html, /identity provider/i);
-  assert.match(page.html, /no single sign-on screen/i);
-  // ...and it says what signing in actually takes.
-  assert.match(page.html, /authenticator code/i);
-  assert.match(page.html, /sign in again/i);
-  // The two ways forward are both links, and both point where they say.
-  assert.match(page.html, new RegExp(`href="${CONSOLE_PATHS.signIn}"`));
-  assert.match(page.html, new RegExp(`href="${CONSOLE_PATHS.home}"`));
+test("console: a dead session is bounced to the sign-in form, not left on an error page", async () => {
+  // The front door when the cookie has expired or been revoked — or was never sent at
+  // all, which is the same case and the common one. This used to answer a `401` page
+  // that named the cookie, and it was read, reasonably, as "you came in the wrong way";
+  // worse, it told somebody with no cookie that theirs "is no longer valid". It is a
+  // bounce now, and the dead cookie is expired on the way out so it stops being sent.
+  const h = harness();
+  await h.organization();
+
+  const presented: Record<string, string>[] = [{}, { [CONSOLE_SESSION_COOKIE]: "a-session-that-is-gone" }];
+  for (const cookies of presented) {
+    const response = await routeConsole({ ...request("GET", CONSOLE_PATHS.home), cookies }, h.service);
+    assert.equal(response.status, 303, "a session that is not there is not an error");
+    assert.equal(response.headers.location, CONSOLE_PATHS.signIn);
+    assert.match(response.headers["set-cookie"] ?? "", /Max-Age=0/, "the dead cookie is expired");
+  }
 });

@@ -645,6 +645,19 @@ const TOGGLE_SCRIPT =
  * through it is an email address, a password and an authenticator code.
  */
 export function consoleErrorPage(message: string, status: number): { status: number; html: string } {
+  /*
+   * A session that is gone never reaches this page — it is bounced to the sign-in
+   * form, with the cookie expired, so the sentence below cannot claim a credential
+   * the browser did not present. What is left is a request that was understood and
+   * refused, and the two kinds say different things.
+   */
+  const because =
+    status === 403
+      ? `Your session is valid, but this account is not allowed to do that. An administrator can change the ` +
+        `role it holds, and nothing about the account or the sign-in has changed.`
+      : `Sentinel <em>is</em> the Network's identity provider, so its console is the sign-in screen: the email ` +
+        `address, the password and the authenticator code enrolled on the account are the way in.`;
+
   return {
     status,
     html: consolePage({
@@ -652,13 +665,7 @@ export function consoleErrorPage(message: string, status: number): { status: num
       actor: null,
       body:
         `<p class="error" role="alert">${escapeHtml(message)}</p>` +
-        `<p class="muted">You are signed in to this console with the <code>${CONSOLE_SESSION_COOKIE}</code> cookie, ` +
-        `and it is no longer valid. Sentinel <em>is</em> the Network's identity provider, so there is no single ` +
-        `sign-on screen in front of this one: signing in means the email address, the password and the ` +
-        `authenticator code enrolled on the account.</p>` +
-        `<p class="muted">Sessions expire on their own, and an administrator can revoke one. When either happens ` +
-        `you land on this page — open the sign-in page in a browser and sign in again. That is the whole fix, and ` +
-        `nothing about the account has changed.</p>` +
+        `<p class="muted">${because}</p>` +
         `<p><a href="${CONSOLE_PATHS.signIn}">Sign in to the console</a> · ` +
         `<a href="${CONSOLE_PATHS.home}">Back to the console</a></p>`,
       error: null,
@@ -750,8 +757,6 @@ export function renderSignIn(view: ConsoleSignInView): string {
       `pattern="[0-9]{6,8}" placeholder="123456"></span>` +
       `<button type="submit">Sign in</button>` +
       `</form>` +
-      `<p class="muted">Every other product in the Network signs in through Sentinel rather than holding ` +
-      `passwords of its own.</p>` +
       `</div>`,
     flash: view.flash,
     error: view.error,

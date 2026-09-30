@@ -373,7 +373,8 @@ test("alerts: the queue is behind a session, and a deployment without detection 
   const { sessionId } = await h.organization("acme");
 
   const anonymous = await routeConsole(request("GET", CONSOLE_PATHS.alerts), h.service);
-  assert.equal(anonymous.status, 401, "a queue of incidents is not a public page");
+  assert.equal(anonymous.status, 303, "a queue of incidents is not a public page");
+  assert.equal(anonymous.headers.location, CONSOLE_PATHS.signIn, "and it sends you to the sign-in form");
   assert.equal(anonymous.headers["cache-control"], "no-store");
 
   // A deployment that ingests no telemetry has no queue, and says so rather than showing an
@@ -515,5 +516,6 @@ test("compliance: the report reads the controls rather than asserting them", asy
   assert.doesNotMatch(after.body, /resolves to the built-in default/);
 
   const anonymous = await routeConsole(request("GET", CONSOLE_PATHS.compliance), h.service);
-  assert.equal(anonymous.status, 401);
+  assert.equal(anonymous.status, 303);
+  assert.equal(anonymous.headers.location, CONSOLE_PATHS.signIn);
 });
