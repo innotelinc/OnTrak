@@ -157,6 +157,7 @@ main { flex: 1; padding: var(--space-5) 0 var(--space-6); }
 .tile--desk::before { background: var(--tone-tix); }
 .tile--security::before { background: var(--tone-sentinel); }
 .tile--operations::before { background: var(--tone-sync); }
+.tile--agent::before { background: var(--tone-genie); }
 
 .tile__top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .tile h2 { margin: 0; font-size: 15.5px; font-weight: 650; }

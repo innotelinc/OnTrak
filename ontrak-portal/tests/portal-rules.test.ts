@@ -77,13 +77,18 @@ describe("the catalogue", () => {
     assert.deepEqual(productsFor("INSTRUCTOR").map((p) => p.key), ["its"]);
     assert.deepEqual(productsFor("TECHNICIAN").map((p) => p.key), ["tix"]);
     assert.deepEqual(productsFor("ANALYST").map((p) => p.key), ["sentinel"]);
-    assert.deepEqual(productsFor("SYSADMIN").map((p) => p.key), ["tix", "sentinel", "sync"]);
-    assert.deepEqual(productsFor("ADMIN").map((p) => p.key), ["its", "tix", "sentinel", "sync"]);
+    assert.deepEqual(productsFor("SYSADMIN").map((p) => p.key), ["tix", "sentinel", "sync", "genie"]);
+    assert.deepEqual(productsFor("ADMIN").map((p) => p.key), ["its", "tix", "sentinel", "sync", "genie"]);
   });
 
   it("does not show a student the sysadmin's product", () => {
     assert.equal(canOpen("STUDENT", "sync"), false);
     assert.equal(canOpen("STUDENT", "sentinel"), false);
+    // Genie reads, writes and runs code, so the narrow audience is the point.
+    assert.equal(canOpen("STUDENT", "genie"), false);
+    assert.equal(canOpen("TECHNICIAN", "genie"), false);
+    assert.equal(canOpen("ANALYST", "genie"), false);
+    assert.equal(canOpen("SYSADMIN", "genie"), true);
     assert.equal(canOpen("SYSADMIN", "sync"), true);
     assert.equal(canOpen("ANALYST", "tix"), false);
   });

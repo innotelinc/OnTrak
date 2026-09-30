@@ -38,7 +38,7 @@ export type Role =
   | "STUDENT";
 
 /** The keys are also the subdomain labels — see `urlFor`. */
-export type ProductKey = "its" | "tix" | "sentinel" | "sync";
+export type ProductKey = "its" | "tix" | "sentinel" | "sync" | "genie";
 
 export interface Product {
   key: ProductKey;
@@ -53,7 +53,7 @@ export interface Product {
   /** Which roles are shown this product. */
   roles: readonly Role[];
   /** A colour family, so the tiles are distinguishable at a glance. */
-  tone: "training" | "desk" | "security" | "operations";
+  tone: "training" | "desk" | "security" | "operations" | "agent";
   /**
    * Where to read a one-line status from, relative to the product's own origin.
    * Absent where the product has no unauthenticated endpoint to ask — and an
@@ -107,6 +107,21 @@ export const PRODUCTS: readonly Product[] = [
     roles: ["SYSADMIN", "ADMIN"],
     tone: "operations",
     health: "/api/health",
+  },
+  {
+    key: "genie",
+    name: "OnTrak Genie",
+    tagline:
+      "The browser coding console: choose a folder, describe the change, and watch an agent read, edit and run code in it.",
+    audience: "sysadmins and builders",
+    host: "genie",
+    // It can read, write and run code, so it is deliberately the narrowest
+    // audience in the family rather than the widest.
+    roles: ["SYSADMIN", "ADMIN"],
+    tone: "agent",
+    // The console's own shell is public by design (it has to render the sign-in
+    // button), so it is the one endpoint this probe can ask without a credential.
+    health: "/",
   },
 ];
 
