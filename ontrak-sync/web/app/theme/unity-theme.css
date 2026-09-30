@@ -79,12 +79,13 @@
   --unknown: #6b6b76;
   --unknown-soft: #efeff3;
 
-  /* The four products' identifying colours. A tone is a *label*, never the only
+  /* The products' identifying colours. A tone is a *label*, never the only
      signal: every tile also carries the product's name in text. */
   --tone-its: #4d6b00;
   --tone-tix: #0a5c9e;
   --tone-sentinel: #b0246a;
   --tone-sync: #05685e;
+  --tone-genie: #7c3aed;
 
   --shadow-card: 0 1px 2px rgb(25 20 48 / 5%), 0 10px 30px -14px rgb(25 20 48 / 18%);
   --shadow-pop: 0 8px 28px -8px rgb(25 20 48 / 26%);
@@ -142,6 +143,7 @@
     --tone-tix: #6cc0ff;
     --tone-sentinel: #ff7cb4;
     --tone-sync: #3fd3c1;
+    --tone-genie: #c4b5fd;
 
     --shadow-card: 0 1px 2px rgb(0 0 0 / 30%), 0 12px 32px -14px rgb(0 0 0 / 60%);
     --shadow-pop: 0 10px 34px -8px rgb(0 0 0 / 66%);
@@ -184,6 +186,7 @@
   --tone-tix: #6cc0ff;
   --tone-sentinel: #ff7cb4;
   --tone-sync: #3fd3c1;
+  --tone-genie: #c4b5fd;
 
   --shadow-card: 0 1px 2px rgb(0 0 0 / 30%), 0 12px 32px -14px rgb(0 0 0 / 60%);
   --shadow-pop: 0 10px 34px -8px rgb(0 0 0 / 66%);
@@ -213,6 +216,7 @@
   --tone-tix: #1f6feb;
   --tone-sentinel: #9d174d;
   --tone-sync: #0f766e;
+  --tone-genie: #7c3aed;
 
   --shadow-card: 0 1px 2px rgb(16 23 29 / 5%), 0 10px 30px -14px rgb(16 23 29 / 18%);
 }
@@ -252,6 +256,7 @@
   --tone-tix: #79c0ff;
   --tone-sentinel: #ff7b72;
   --tone-sync: #56d4dd;
+  --tone-genie: #d0bcff;
 
   --shadow-card: 0 1px 2px rgb(0 0 0 / 34%), 0 12px 32px -14px rgb(0 0 0 / 62%);
 }
