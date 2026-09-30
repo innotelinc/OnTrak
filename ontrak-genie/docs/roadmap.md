@@ -1,0 +1,269 @@
+# OnTrak Genie roadmap
+
+**Classification: CodeOps** — the browser console for a coding agent: an agent's
+work made visible and gated, in one workspace, on the operator's own machine.
+See [stack.md](stack.md) for the role and [operations.md](operations.md) for the
+full developer reference.
+
+> Status legend: `[x]` shipped · `[~]` in progress · `[ ]` planned · `[-]` out of
+> scope for v1
+>
+> This is the single source of truth for **what** Genie does and **what comes
+> next**. It is written so the next person reads the code rather than rebuilding
+> it: every shipped line points at the file that carries it, and every open line
+> states what is missing rather than implying it is done.
+
+> **Status.** **0.1 shipped** — the console is complete: the agent loop streamed
+> over SSE, the workspace jail, the tool set, the approval gate, live draft and
+> live diff, per-file snapshots, the model-resilience chain, and a browser UI
+> with no build step. **0.2 is in progress** and is entirely about stack
+> citizenship: sign-in and tenancy are *wired and off* until they are configured,
+> the two edge names are live and answering, and bringing the remaining gates up
+> is the whole of the open work.
+
+## 1. Vision
+
+Watch the agent work — and stop it before it matters. The usual coding-agent
+interface shows a spinner, then a finished diff you have to audit afterwards;
+Genie shows the tool calls as they are decided, the file being written while it
+is still being written, and a diff against disk *before* the write lands — with a
+human gate between a plan and a changed machine.
+
+```mermaid
+flowchart LR
+  A[Task in the browser] --> B[Agent loop]
+  B --> C[Tool call — streamed as it is decided]
+  C --> D{Touches machine?}
+  D -->|yes| E[Approval gate — Approve or Deny]
+  D -->|no| F[Workspace jail]
+  E --> G[Workspace jail]
+  F --> H[Live draft + live diff in the preview pane]
+  G --> H
+```
+
+## 2. v0.1 status (shipped)
+
+| Capability | Status |
+| --- | --- |
+| Agent loop — request → tool call → result, streamed over SSE | `[x]` |
+| Workspace jail — escapes and absolute paths refused, trees skipped | `[x]` |
+| Tool set — `read`, `edit`, `write`, `list`, `search`, `run` | `[x]` |
+| Approval gate — `off` / `risky` / `all`, deny ends the turn, times out closed | `[x]` |
+| Live draft — the write rendered character by character while it arrives | `[x]` |
+| Live diff — the change against the on-disk baseline, before the write lands | `[x]` |
+| Per-file snapshots — a viewer diff against what replaced the file | `[x]` |
+| Model resilience — fallback chain, retry re-walk, chain-health timer | `[x]` |
+| Catalog sweep — probe which advertised ids can actually call a tool, from the UI | `[x]` |
+| Offline gateway — a second, independent gateway tried only after the chain | `[x]` |
+| Text-mode tool calls — salvage a weak model's JSON-prose call | `[x]` |
+| Command sandbox — `docker run --network none --read-only`, workspace only | `[x]` |
+| Persistence — sessions, transcripts, snapshots, `sweep.json`, `workspace.json` | `[x]` |
+| Sign-in — Authentik OIDC, code + PKCE, RS256 id_token vs JWKS, signed cookie | `[x]` (wired, off) |
+| Tenancy — Distro control plane: identity, quota, usage, audit | `[x]` (wired, off) |
+| Per-account disk scope — `accounts/<account>/` for workspace, chats, history | `[x]` |
+| UI — transcript, tool cards, preview pane, diff view, sweep panel, a11y | `[x]` |
+| Unity theme + landing page published under the family site | `[x]` |
+| Checks — `node --test`, `ui-smoke`, `draft-check`, `offline-check`, `model-health` | `[x]` |
+| No runtime dependencies in `public/` — the console is served, not built | `[x]` |
+
+**v0.1 is complete as an agent console.** What is outstanding is not the console
+— it is that the console does not yet stand in the stack the way its siblings do.
+
+## 3. Architecture recap
+
+- **One HTTP server** (`src/server.ts`) — UI + JSON API + SSE, no framework and
+  no bundler; `public/` is served as written.
+- **The turn loop** (`src/agent.ts`) — chain selection, retry re-walk, tool
+  dispatch and event emission; the approval gate (`src/approval.ts`) parks the
+  stream on a second connection rather than blocking it.
+- **The jail** (`src/workspace.ts`) and the account scope (`src/scope.ts`) are
+  the two answers to "where may this touch": the former bounds the sandbox, the
+  latter keys it to an account. Every store, the path jail, the ripgrep root and
+  the `run_command` mount resolve through them.
+- **The model layer** never holds a provider credential — Genie speaks only the
+  OpenAI-compatible wire format, and the gateway's address arrives from the
+  environment.
+- **Stack placement.** Genie is the **CodeOps** member of the OnTrak family and a
+  component of the Innotel Platform Stack. It consumes OmniRoute, Distro's control
+  plane, Authentik, and (planned) Cerulean Vault, Cerulean DNS/TLS and NPM Edge.
+  It owns none of them.
+
+## 4. Milestones
+
+### v0.1 — The console `[x]`
+
+The feature set in §2. Exit met: a task can be stated, watched while it is worked,
+approved or denied at the gate, and the session resumed after a restart.
+
+### v0.2 — Stack citizenship `[~]`
+
+**Goal:** make Genie a first-class member of the stack rather than a console that
+happens to be in the repo.
+
+- `[~]` **Sign-in on by default at the edge.** Authentik OIDC is wired
+  (`ONTRAK_OIDC_ISSUER`, `ONTRAK_OIDC_CLIENT_ID`, `ONTRAK_OIDC_SESSION_SECRET`)
+  and verified against the provider's JWKS; the redirect URI is registered on the
+  Cerulean Authentik provider. What remains is to set the three variables on the
+  deployment and confirm that configuring sign-in really closes the loopback trust
+  an empty `WEB_TOKEN` otherwise leaves open.
+- `[~]` **Tenancy through Distro's control plane.** `src/controlplane.ts` and
+  `src/tenancy.ts` already speak the same `/api/internal/identity`,
+  `/quota-check`, `/usage-report` and `/audit` contract Studio uses, with the
+  deliberate key posture (strict identity, fail-open quota, best-effort ledger).
+  What remains is a URL and a service token — and sign-in, because the plane keys
+  accounts on the OIDC subject and a shared bearer carries none.
+- `[ ]` **Secrets from Cerulean Vault.** Replace `.env` values with a `vault://`
+  reference resolved at deploy time, using the same path-scoped KV v2 token the
+  rest of the estate uses. Until then `.env` is the only secret store.
+- `[~]` **The operator surface at the edge.** Cerulean owns DNS/TLS and NPM Edge
+  owns the public route; Genie registers the names through Cerulean rather than
+  writing DNS or the NPM API itself (the platform rule the standard states).
+  **Both names are live** — `genie.ontrak.innotel.us` (family) and
+  `genie.innotel.us` (platform) are registered in the `innotel.us` zone and on
+  the edge, each forwarding to the Genie app on `192.168.1.21:3400` under the
+  estate's wildcard certificate. What remains is the gate: the names answer
+  today, and turning on `ONTRAK_OIDC_*` — with the Authentik application and its
+  redirect URI created in the same change — is what puts them behind the same
+  sign-in as the rest of the estate.
+- `[ ]` **A published image and a stack entry.** A release image with a pinned
+  version, and the compose entry the platform's group file expects, so a deploy is
+  a pull rather than a build.
+- `[ ]` **Model-chain health on the deployment.** Pin explicit tool-calling ids
+  (the sweep shows the catalog is far larger than what works) and record the
+  chain in the deployment's environment rather than leaving `auto/*` in place; the
+  chain-health row and `model-health` are the guards.
+
+**Exit:** reaching `genie.innotel.us` requires an Authentik sign-in, a signed-in
+turn spends that account's own gateway key and is refused when it may not spend,
+secrets are read from Vault, and the name is a Cerulean-registered route — not a
+hand-written DNS record and an NPM host someone clicked.
+
+### v0.3 — Resilience and reach `[ ]`
+
+**Goal:** the console stays useful when the gateway, the plane or the model does
+not.
+
+- `[ ]` **Streaming fidelity where the gateway supports it.** The LAN gateway's
+  Gemini path hands a whole tool call over in one frame, so the live pane shows a
+  file appear complete; `draft:check` measures which path a deployment has, and
+  the pane should advertise the difference rather than imply a stream that is not
+  happening.
+- `[ ]` **A second approval channel.** The gate is a browser click; a headless
+  driver (CLI, CI) that can answer it deliberately and auditably would let the
+  same agent run unattended with the gate intact.
+- `[ ]` **Session and workspace management.** Listing, naming, archiving and
+  deleting chats and workspaces from the UI, with the sweep report and the
+  workspace choice per account rather than per deployment.
+- `[ ]` **Per-account usage visible in the console.** The ledger is written today;
+  showing an account its own spend, beside the quota the plane reports, is the
+  half a user can act on.
+- `[ ]` **Sandbox network policy as a deliberate option.** `--network none` is
+  correct and stays the default; a documented, opt-in allowance for package
+  installs would remove the one case where the sandbox cannot do the work.
+
+### v0.4 — Beyond a single operator `[ ]`
+
+**Goal:** more than one person, more than one workspace, without the operator
+becoming the bottleneck.
+
+- `[ ]` **Shared sessions.** Hand a transcript to a colleague with the same
+  visibility, still gated per turn.
+- `[ ]` **Repository-aware workspaces.** Gitea/Atlas as the source of a workspace
+  — clone, branch and open a PR from the console — with the same jail and gate.
+- `[ ]` **Diff review before write, not only during.** The live diff already
+  exists; a queued "propose then commit" mode lets a reviewer approve a change set
+  rather than one write at a time.
+- `[ ]` **ONYX** is explicitly *not* this: Genie owns no storage; a shared artifact
+  that outlives a workspace is ONYX's to hold.
+
+### v1.0 — The CodeOps surface `[ ]`
+
+**Goal:** the counterpart, in a browser, of a terminal agent session — with the
+gate the terminal does not have.
+
+- `[ ]` Multi-tenant by account with isolated workspaces, quotas and audit.
+- `[ ]` Deployment posture: retained audit, an operator runbook, and a
+  documented threat model for exposing a shell-capable agent at a name.
+- **Exit:** two accounts run isolated workspaces under one deployment with a
+  gate on every destructive call and an auditable record of who spent what.
+
+## 5. Safety and autonomy ladder
+
+Genie's approval gate *is* its autonomy control: autonomy is earned per
+deployment, not configured by a prompt, and the gate is the only thing between a
+plan and a changed machine.
+
+| Rung | Name | What it means | State |
+| --- | --- | --- | --- |
+| **L0** | Manual | `AGENT_APPROVAL=risky` (or `all`): every command and large write waits for a click | current |
+| **L1** | Watched auto | A recorded run of a known task shape from which the operator raises the threshold — never by disabling the gate | later |
+| **L2** | Policy-bounded | The gate stays, but a signed policy names what may run unattended inside the sandbox | later |
+| **L3** | Unattended | `[-]` **Out of scope.** A coding agent that changes a host without a human decision is not a configuration this product ships | out |
+
+The sandbox and the gate are independent on purpose: sandboxing stops a command
+from reaching the host, approval stops it from running at all. Raising a rung
+loosens the second, never the first.
+
+## 6. Cross-cutting requirements
+
+- **Safety first** — no privilege escalation, no `--network none` removal by
+  default, no unreviewed write over the threshold; the refusal comes back to the
+  model, never a crash.
+- **No runtime dependencies** in `public/` — the console is served, not built, and
+  the vendored highlighter keeps an invalid file watchable.
+- **Testing** — every fix ships a regression test; `npm run check` runs the
+  typecheck, the build, the unit suite and the browser smoke test in one command.
+- **A11y** — landmarks, labelled controls, focus handling and a polite live
+  region that announces tool results without narrating every streamed token.
+- **Unity** — the family token set, not a private palette.
+- **Attribution and license** — MIT, one author, no vendored provider SDK.
+
+## 7. Success metrics
+
+| Metric | Why |
+| --- | --- |
+| Turns that reach a tool call vs. turns that die on a model | Chain health actually matters |
+| Approval decisions per turn, and deny rate | Whether the gate is used or clicked through |
+| Time-to-first-tool-call after a task is stated | Responsiveness of the console |
+| Sweep: usable ids ÷ ids claiming tool calling | The catalog is not a capability |
+| Sessions resumed after a restart | Whether persistence is real |
+| Accounts whose turns spend their own key | Whether tenancy is actually on |
+
+## 8. Risks and open questions
+
+- **Exposing a shell-capable agent at a public name** is the central risk. The
+  posture is one gate (Authentik) plus the sandbox; the threat model in v1.0 is a
+  deliverable, not a paragraph.
+- **Provider capacity** — free tiers throttle, and a model that cannot call a tool
+  fails the turn however strong it is; the chain mitigates, it does not remove it.
+- **Local model quality** — a 7B model drives tools but rewrites more than asked;
+  the offline gateway is a floor, not a peer.
+- **Distro contract drift** — Genie and Studio share one control-plane contract;
+  a change must land in both, and neither should grow a private variant.
+- **Vault migration** — moving `.env` values to `vault://` needs the path-scoped
+  token and a deploy-time resolver; a half-migrated deployment is worse than an
+  un-migrated one.
+
+## 9. Not in this roadmap
+
+- **Identity (Authentik), secrets (Cerulean Vault), trust/DNS/TLS (Cerulean),
+  storage (ONYX), revenue (Magnate) and model routing policy** — Genie integrates
+  with these instead of re-implementing them; it chooses which model id to ask for
+  and reports what came back, and the gateway decides which provider answers.
+- **Auto-merge and unattended host changes** — see the ladder's L3.
+- **A second builder/execution plane.** Atlas keeps the ecosystem's code and CI;
+  Genie is a console over a workspace, not a factory.
+
+## 10. Immediate next steps
+
+1. ~~Register `genie.ontrak.innotel.us` and `genie.innotel.us` through Cerulean
+   (DNS + NPM Edge) against a decided deployment target.~~ **Done** — both A
+   records and both proxy hosts are live against the Genie app on
+   `192.168.1.21:3400`. The same change still owes the Authentik application and
+   its redirect URI, so the name is gated rather than merely routed (v0.2).
+2. Turn sign-in and tenancy on together, since tenancy requires a subject to key
+   on, and set `WEB_TOKEN` aside only once sign-in is proven (v0.2).
+3. Move the deployment's secrets to Cerulean Vault `vault://` references with the
+   path-scoped token (v0.2).
+4. Publish a versioned release image and add Genie's entry to the platform's group
+   compose so a deploy is a pull (v0.2).

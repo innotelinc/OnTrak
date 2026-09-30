@@ -94,6 +94,7 @@ gitignored.
 | --- | --- |
 | [docs/operations.md](docs/operations.md) | The full developer reference: HTTP API, SSE events, every environment variable, the check commands, the Docker and sandbox setup. |
 | [docs/stack.md](docs/stack.md) | Genie's role in the Innotel Platform Stack — what it owns, provides and consumes, and the service map. |
+| [docs/roadmap.md](docs/roadmap.md) | What is shipped, what is open, and what comes next — the milestones from the console to stack citizenship. |
 
 ## Repository layout
 
