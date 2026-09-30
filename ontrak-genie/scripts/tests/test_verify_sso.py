@@ -127,10 +127,18 @@ class ExitCodeTest(unittest.TestCase):
         sys.argv = self.saved_argv
 
     def test_no_admin_token_is_a_skip_not_a_failure(self):
-        sys.argv = ["verify-sso.py", "--url", "https://genie.example"]
-        stream = io.StringIO()
-        with redirect_stdout(stream):
-            code = verify_sso.main()
+        # Files are stubbed out because in the estate layout this script's
+        # `../../cerulean/.env` fallback *does* hold a token, and the point here is
+        # what happens when nothing supplies one.
+        original = verify_sso.read_env_file
+        verify_sso.read_env_file = lambda path: {}
+        try:
+            sys.argv = ["verify-sso.py", "--url", "https://genie.example"]
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                code = verify_sso.main()
+        finally:
+            verify_sso.read_env_file = original
         self.assertEqual(code, 2)
         self.assertIn("no Authentik admin token", stream.getvalue())
         self.assertEqual(verify_sso.failures, [])
