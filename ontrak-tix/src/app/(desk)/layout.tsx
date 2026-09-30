@@ -104,7 +104,6 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
           <a href="https://ontrak.innotel.us" className="hover:text-brand">
             OnTrak Unity ↗
           </a>
-          <p className="mt-1">Innotel Labs · the Network</p>
         </div>
       </aside>
 

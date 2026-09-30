@@ -184,12 +184,8 @@ export function LoginPanel({
         ssoEnabled ? (
           <div className="gate__sso">
             <a className="gate__sso-button" href={api.ssoStartUrl(next)}>
-              Sign in with {provider}
+              Sign in
             </a>
-            <p className="faint" style={{ marginTop: 8 }}>
-              Your account, groups and second factor are managed in {provider}. The group you belong to decides your
-              role here.
-            </p>
           </div>
         ) : meta !== null ? (
           <p className="faint" style={{ marginTop: 14, marginBottom: 0 }}>
