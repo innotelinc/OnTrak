@@ -122,6 +122,12 @@ const STATIC_FILES: Record<string, { file: string; type: string }> = {
   // `theme/tests/test_theme_copies.py`.
   "/unity-theme.css": { file: "unity-theme.css", type: "text/css; charset=utf-8" },
   "/unity-theme.js": { file: "unity-theme.js", type: "text/javascript; charset=utf-8" },
+  // The sign-in gate. Public like the shell, and for the same reason: it is what
+  // a signed-out visitor is sent to, so it cannot itself require a session. It is
+  // a page rather than a redirect because it has to render the case where no
+  // provider is configured at all — see `public/login.html`.
+  "/login": { file: "login.html", type: "text/html; charset=utf-8" },
+  "/login.html": { file: "login.html", type: "text/html; charset=utf-8" },
 };
 
 async function serveStatic(res: http.ServerResponse, pathname: string): Promise<boolean> {

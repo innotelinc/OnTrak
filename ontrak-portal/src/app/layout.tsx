@@ -79,8 +79,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </header>
           <main>{children}</main>
           <footer className="footer">
-            <span>OnTrak Unity · Innotel Labs</span>
-            <span>One identity, every product.</span>
+            <span>OnTrak Unity</span>
           </footer>
         </div>
       </body>

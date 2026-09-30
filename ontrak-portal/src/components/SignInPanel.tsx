@@ -21,9 +21,8 @@ import { useEffect, useState } from "react";
 
 import { safeReturnTo } from "@/lib/oidc-rules";
 
-export function SignInPanel({ ssoEnabled, providerName, error }: {
+export function SignInPanel({ ssoEnabled, error }: {
   ssoEnabled: boolean;
-  providerName: string;
   /** A reason handed in from the callback, shown as-is. */
   error: string | null;
 }) {
@@ -48,15 +47,11 @@ export function SignInPanel({ ssoEnabled, providerName, error }: {
       <h1 className="gate__mark">
         OnTrak <span>Unity</span>
       </h1>
-      <p className="gate__sub">
-        {ssoEnabled ? `One sign-in, through ${providerName}` : "Single sign-on is not configured"}
-      </p>
-
       {error ? <div className="note note--bad" role="alert">{error}</div> : null}
 
       {ssoEnabled ? (
         <a className="sso-button" href={`/api/sso/start?next=${encodeURIComponent(next)}`}>
-          Sign in with {providerName}
+          Sign in
         </a>
       ) : (
         <div className="note note--warn" role="status">
@@ -65,11 +60,6 @@ export function SignInPanel({ ssoEnabled, providerName, error }: {
           <code>ONTRAK_OIDC_CLIENT_ID</code> and restart the portal.
         </div>
       )}
-
-      <p className="faint" style={{ marginTop: 18, marginBottom: 0 }}>
-        Accounts, groups and second factors are managed in {providerName}. The group
-        you belong to is what decides your role here.
-      </p>
     </div>
   );
 }

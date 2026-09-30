@@ -109,10 +109,15 @@
           <span class="mark">OG</span>
           <span>OnTrak Genie</span>
         </a>
+        <!-- This page is published under the project's GitHub Pages site, not by a
+             deployment, so the console's address has to be absolute — the
+             `<product>.<base domain>` convention the portal also links by. It
+             points at the console's own `/login` gate rather than at
+             `/api/auth/login`: the gate is served whether or not sign-in is
+             configured, and it is the thing that renders when there is no
+             provider. A relative `/` here would land on the Pages org root. -->
         <nav>
-          <a href="https://github.com/innotelinc/OnTrak/tree/main/ontrak-genie#readme">Docs</a>
-          <a href="https://github.com/innotelinc/OnTrak/tree/main/ontrak-genie">Source ↗</a>
-          <a class="gh" href="https://github.com/innotelinc/OnTrak">The family ↗</a>
+          <a class="gh" href="https://genie.ontrak.innotel.us/login">Sign in</a>
         </nav>
         <div class="ot-theme" role="group" aria-label="Colour theme" data-unity-switch><button type="button" data-theme-mode="system" aria-pressed="false">System</button><button type="button" data-theme-mode="light" aria-pressed="false">Light</button><button type="button" data-theme-mode="dark" aria-pressed="false">Dark</button></div>
       </div>
@@ -209,21 +214,12 @@
           <h3>Model resilience</h3>
           <p>A fallback chain, a chain-health badge and a catalog sweep — plus an optional second gateway (a local model, no key) tried only after the chain is exhausted.</p>
         </div>
-        <div class="card">
-          <h3>Sign-in, optional</h3>
-          <p>Authentik OIDC: authorization code with PKCE, RS256 <code>id_token</code> verification against the provider's JWKS, and a signed session cookie. Off until it is configured.</p>
-        </div>
       </div>
     </section>
 
     <footer>
       <div class="wrap">
-        <div>© 2026 OnTrak Genie — CodeOps. An Innotel Labs product.</div>
-        <div style="margin-top:6px;">
-          <a href="https://github.com/innotelinc/OnTrak">OnTrak</a> ·
-          <a href="https://innotelinc.github.io/OnTrak/">The family landing</a> ·
-          <a href="https://github.com/innotelinc/innotel-platform-stack">Innotel Platform Stack</a>
-        </div>
+        <div>© 2026 OnTrak Genie — CodeOps.</div>
       </div>
     </footer>
   </div>

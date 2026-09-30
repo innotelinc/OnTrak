@@ -149,19 +149,23 @@ function authHint(response, payload) {
 }
 
 /**
- * Send the browser to the identity provider when the server says it uses one.
+ * Send the browser to the sign-in gate when the server says it uses one.
  *
  * A 401 looks the same whether a deployment wants a shared token or a sign-in,
  * so the console cannot tell them apart from the failure. `/api/auth/status` is
  * the one route that answers without a session, and asking it once at startup is
  * what keeps a signed-out visitor from being shown a console that cannot load.
+ *
+ * The target is `/login` and not the provider directly: the gate names the
+ * product and handles the case where no provider is configured, which a bare
+ * redirect into `/api/auth/login` cannot.
  */
 async function signInIfRequired() {
   try {
     const response = await fetch("/api/auth/status");
     if (!response.ok) return;
     const status = await response.json();
-    if (status.oidc && !status.authenticated) location.replace("/api/auth/login");
+    if (status.oidc && !status.authenticated) location.replace("/login");
   } catch {
     // Unreachable is not this function's problem — the loads below report that
     // the way they always have.
