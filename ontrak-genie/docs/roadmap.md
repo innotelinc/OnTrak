@@ -24,11 +24,11 @@ full developer reference.
 
 ## 1. Vision
 
-Watch the agent work — and stop it before it matters. The usual coding-agent
-interface shows a spinner, then a finished diff you have to audit afterwards;
-Genie shows the tool calls as they are decided, the file being written while it
-is still being written, and a diff against disk *before* the write lands — with a
-human gate between a plan and a changed machine.
+Your wish is my command. The usual coding-agent interface shows a spinner, then
+a finished diff you have to audit afterwards; Genie shows the tool calls as they
+are decided, the file being written while it is still being written, and a diff
+against disk *before* the write lands — with a human gate between a plan and a
+changed machine.
 
 ```mermaid
 flowchart LR

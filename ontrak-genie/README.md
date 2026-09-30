@@ -2,7 +2,7 @@
 
 # OnTrak Genie
 
-**Watch the agent work — and stop it before it matters.**
+**Your wish is my command.**
 
 **CodeOps · self-hosted · every write is visible while it is written**
 
