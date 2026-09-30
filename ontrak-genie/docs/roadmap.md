@@ -130,10 +130,12 @@ happens to be in the repo.
 - `[ ]` **A published image and a stack entry.** A release image with a pinned
   version, and the compose entry the platform's group file expects, so a deploy is
   a pull rather than a build.
-- `[ ]` **Model-chain health on the deployment.** Pin explicit tool-calling ids
-  (the sweep shows the catalog is far larger than what works) and record the
-  chain in the deployment's environment rather than leaving `auto/*` in place; the
-  chain-health row and `model-health` are the guards.
+- `[x]` **Model-chain health on the deployment.** The chain is pinned in the
+  deployment's environment rather than left on `auto/*`:
+  `AGENT_MODEL=gemini/gemini-3.1-flash-lite` with
+  `AGENT_FALLBACK_MODELS=gemini/gemini-3-flash-preview,gemini/gemini-2.5-flash`,
+  both explicit ids the sweep found tool-capable. The chain-health row and
+  `model-health` remain the guards.
 
 **Exit:** reaching `genie.innotel.us` requires an Authentik sign-in, a signed-in
 turn spends that account's own gateway key and is refused when it may not spend,
