@@ -5,7 +5,6 @@ import {
   controlPlaneEnabled,
   provisionIdentity,
   readControlPlaneConfig,
-  recordAudit,
   reportTurnUsage,
   type ControlPlaneConfig,
 } from "./controlplane.js";
@@ -293,26 +292,6 @@ export async function finishTurn(turn: Turn, usage: TurnUsage): Promise<void> {
   const plane = readControlPlaneConfig();
   if (plane === null) return;
   await reportTurnUsage(plane, turn.caller.gatewayKey, usage);
-}
-
-/**
- * An audit row for an export: the workspace left this system and became another
- * one's input, which is the kind of action a ledger is for.
- */
-export async function auditExport(
-  session: Session | null,
-  details: { targetId?: string; meta?: Record<string, unknown> } = {},
-): Promise<void> {
-  const plane = readControlPlaneConfig();
-  if (plane === null) return;
-
-  await recordAudit(plane, {
-    action: "build.export",
-    sub: session?.sub,
-    actorEmail: session?.email,
-    targetId: details.targetId,
-    meta: details.meta,
-  });
 }
 
 /** Whether this deployment resolves and gates turns through the control plane. */

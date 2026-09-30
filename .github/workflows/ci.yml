@@ -421,8 +421,8 @@ jobs:
 
   # OnTrak Genie is where the family's toolchain work is watched, and its suite is
   # the only thing standing between a turn and a real workspace: the jail that
-  # refuses an escape, the approval gate, the OIDC verifier and the factory
-  # handoff are all covered there. It builds before it tests, because `npm test`
+  # refuses an escape, the folder picker's fence, the approval gate and the OIDC
+  # verifier are all covered there. It builds before it tests, because `npm test`
   # runs the compiled suite (`node --test dist/test/*.test.js`) — the same files
   # the image executes, so a green run here is a green run against the shipped
   # shape rather than against the source.

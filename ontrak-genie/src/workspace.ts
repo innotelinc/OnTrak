@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { defaultScope, workspaceRoot } from "./scope.js";
+import { defaultScope, loadSelectedWorkspace, sandboxRoot, workspaceRoot } from "./scope.js";
 
 export class WorkspaceError extends Error {}
 
@@ -29,9 +29,41 @@ export function resolveInWorkspace(rel: string): string {
   return abs;
 }
 
+/**
+ * Resolve a caller-supplied relative path against the **sandbox** and refuse
+ * anything that escapes it.
+ *
+ * The sibling of `resolveInWorkspace`, and the difference between them is the
+ * whole of the folder picker: the agent works in the chosen directory, so its
+ * tools go through `resolveInWorkspace`; the operator choosing that directory is
+ * looking at the sandbox around it, so the picker goes through here. Both refuse
+ * absolute paths and `..`, which is what makes a picker unable to leave the
+ * mount no matter what it is asked for.
+ */
+export function resolveInBase(rel: string): string {
+  const root = sandboxRoot();
+  const fence = root.endsWith(path.sep) ? root : root + path.sep;
+  const cleaned = String(rel ?? "").trim();
+  if (cleaned === "" || cleaned === ".") return root;
+  if (path.isAbsolute(cleaned)) {
+    throw new WorkspaceError(`paths must be relative to the workspace root, got: ${rel}`);
+  }
+  const abs = path.resolve(root, cleaned);
+  if (abs !== root && !abs.startsWith(fence)) {
+    throw new WorkspaceError(`path escapes the workspace: ${rel}`);
+  }
+  return abs;
+}
+
 /** Workspace-relative, forward-slashed, for display and for the model. */
 export function toRel(abs: string): string {
   const rel = path.relative(workspaceRoot(), abs);
+  return rel === "" ? "." : rel.split(path.sep).join("/");
+}
+
+/** Sandbox-relative, forward-slashed, for the folder picker. */
+export function toRelFromBase(abs: string): string {
+  const rel = path.relative(sandboxRoot(), abs);
   return rel === "" ? "." : rel.split(path.sep).join("/");
 }
 
@@ -44,9 +76,46 @@ export function toRel(abs: string): string {
  * be a listing that grows for nobody's benefit.
  */
 export async function ensureWorkspace(): Promise<void> {
+  // The chosen directory has to be read before the first scope is built, because
+  // the scope root is derived from it.
+  await loadSelectedWorkspace();
   const shared = defaultScope();
+  await fs.mkdir(shared.base, { recursive: true });
   await fs.mkdir(shared.root, { recursive: true });
   await fs.mkdir(shared.sessions, { recursive: true });
+}
+
+/**
+ * Every directory the operator may choose, sandbox-relative and sorted.
+ *
+ * Depth-limited and ignoring the same directories the tree ignores (`.git`,
+ * `node_modules`, build output), because this is a picker rather than an
+ * inventory: a walk that descends into `node_modules` to offer fifteen thousand
+ * folders is one nobody can use. "." is always present, so the sandbox itself is
+ * always a choice you can go back to.
+ */
+export async function listWorkspaceDirs(maxDepth = 3): Promise<string[]> {
+  const found: string[] = ["."];
+
+  const walk = async (abs: string, rel: string, depth: number): Promise<void> => {
+    if (depth > maxDepth) return;
+    let dirents;
+    try {
+      dirents = await fs.readdir(abs, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const dirent of dirents) {
+      if (!dirent.isDirectory() || isIgnoredDir(dirent.name) || dirent.name.startsWith(".")) continue;
+      const childRel = rel === "." ? dirent.name : `${rel}/${dirent.name}`;
+      found.push(childRel);
+      await walk(path.join(abs, dirent.name), childRel, depth + 1);
+    }
+  };
+
+  await walk(sandboxRoot(), ".", 1);
+  found.sort((a, b) => (a === "." ? -1 : b === "." ? 1 : a.localeCompare(b)));
+  return found;
 }
 
 export type DirEntry = { name: string; path: string; type: "file" | "dir"; size: number };

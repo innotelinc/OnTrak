@@ -651,34 +651,21 @@ A single-page app with no build step (`public/`), served by the agent itself.
   coloured instead of throwing. It handles Python, JavaScript/TypeScript, JSON and
   shell, tells JSON keys from values, and leaves anything else as plain text rather
   than guessing. The workspace viewer uses it too.
-- **Export to factory.** The toolbar's `export` button turns the workspace into a
-  build request Olympus can manufacture — the one place this console hands work to
-  another system, and the reason its `docs/stack.md` says it does not grow a
-  builder. The spec is assembled by the server (`src/builder.ts`) from what is
-  actually in the workspace: a file index with sizes, the entry point, the stack
-  the file set implies, and the test command the file set can actually run. It is
-  **deterministic** — no second model call — so the same workspace and the same
-  stated intent always produce the same bytes, which is what makes the result
-  reviewable rather than something to accept on faith. The form asks only for what
-  cannot be observed: a name, a core purpose, a feature list. An unstated purpose
-  is written into the spec as *not stated* rather than guessed, because a spec that
-  states a stack the project was not built to is how the factory builds the wrong
-  thing. `preview` shows the spec and writes nothing; `export` writes it into
-  `AGENT_FACTORY_DIR` as `build-requests/<slug>.md`, refusing to replace an
-  existing file unless you tick the box — a hand-edited request is not silently
-  overwritten by its own export.
-
-  The four headings mirror Olympus's `factory/APP_SPEC_TEMPLATE.md` exactly, and
-  that is the contract: `make app SPEC=build-requests/<slug>.md` builds the file
-  locally, and Olympus's `olympus-app-builder.yml` builds the same file on push.
-  Writing the spec is all this does — Genie never plans, packages or publishes, so
-  there is never a second builder to disagree with Olympus about what the app is.
-
   Drafts exist only during a turn, so the pane is also restorable: reopening a chat
   puts its newest file-writing call back on screen, marked as coming from the
   transcript. A reload therefore does not leave an empty pane beside a conversation
   that plainly wrote a file, and the pane's open/closed state is remembered for the
   tab.
+- **Choosing the working directory.** A deployment names one sandbox (`AGENT_WORKSPACE`),
+  and the workspace panel picks a folder inside it — the agent then reads, writes and
+  runs there. The panel also makes folders, so a new project does not have to exist
+  before it can be named. The choice is stored at `<AGENT_DATA_DIR>/workspace.json`
+  and is deployment-wide: the next person to open the console lands where the
+  operator left off rather than back at the sandbox root. What it can never be is
+  *outside* the sandbox — the picker resolves through the same fence the tools do,
+  so `..` and absolute paths are refused before anything is written, and the
+  browser cannot be talked into handing the agent the host. With tenancy on the
+  sandbox is the account's own directory, so the choice is scoped to that account.
 - **Accessibility.** Landmarks and labelled controls, a skip link, visible focus
   rings, `aria-expanded` on the panel toggle, a dialog role with focus handling
   for the file viewer, and a polite live region that announces tool results,
@@ -767,10 +754,9 @@ silently sharing one.
 Everything that touches disk resolves through `src/scope.ts`, which is the single
 answer to "where is the workspace": the path jail (`resolveInWorkspace`), the
 session store, the snapshot store, the ripgrep root, the container mount for
-`run_command`, and the factory export. A request enters its account's scope once,
-in the server, before routing — so the tree, a file read, a diff, a delete, the
-chat list and an export all agree, and none of them can be talked back into the
-shared root.
+`run_command`, and the sandbox mount. A request enters its account's scope once,
+in the server, before routing — so the tree, a file read, a diff and a delete all
+agree, and none of them can be talked back into the shared root.
 
 Two details that are deliberate:
 
@@ -819,7 +805,6 @@ All optional — see `.env.example`.
 | `AGENT_REQUEST_TIMEOUT_MS`                  | `300000`                 | Per-model-request timeout                |
 | `AGENT_STREAM`                              | `true`                   | Set `false` if a provider mishandles SSE |
 | `AGENT_TOOL_RESULT_LIMIT`                   | `60000`                  | Cap on a single tool result              |
-| `AGENT_FACTORY_DIR`                         | *(empty)*                | Olympus's `build-requests/`, where an exported spec is written. Unset means an export shows the spec instead of writing it |
 | `WEB_TOKEN`                                 | *(empty)*                | Require this bearer token on `/api/*`    |
 | `CONTROL_PLANE_INTERNAL_URL`                | *(empty)*                | Distro control-plane origin. With the token below, every turn is attributed and quota-gated — see *Tenancy* |
 | `CONTROL_INTERNAL_TOKEN`                    | *(empty)*                | Control-plane service token (`x-control-internal-token`); empty or a placeholder means tenancy is off |
@@ -861,8 +846,9 @@ All optional — see `.env.example`.
 | `DELETE` | `/api/file?path=`     | Delete a workspace file (`404` if it is not there, `400` for a directory) |
 | `GET`    | `/api/file/diff?path=`| Current file vs. the last version the agent changed |
 | `POST`   | `/api/file/diff`      | Diff a body still being written (`{ path, content }`) against the file on disk |
-| `GET`    | `/api/factory/spec`   | Whether a factory directory is configured, and where |
-| `POST`   | `/api/factory/spec`   | Assemble an Olympus build request from the workspace (`{ name, purpose?, features?, kind?, write?, overwrite? }`) |
+| `GET`    | `/api/workspace`      | The directory the agent works in, the sandbox around it, and every folder inside it that can be chosen |
+| `POST`   | `/api/workspace`      | Choose the working directory (`{ path }`, sandbox-relative; `400` if it escapes the sandbox) |
+| `POST`   | `/api/workspace/mkdir`| Create a folder in the working directory (`{ name }`; `400` for a name that is a path, `409` if it is taken) |
 
 `POST /api/chat` takes `{ message, sessionId?, model?, maxSteps? }` and streams
 `AgentEvent`s: `session`, `step`, `draft` (a file being generated, with the content
@@ -999,7 +985,6 @@ src/draft.ts       reading a tool call that is still arriving, for the preview
 src/sandbox.ts     run_command backend: docker flags, probing, fallback
 src/approval.ts    approval policy + the pending-request broker
 src/snapshots.ts   previous contents of agent-written files
-src/builder.ts     assembling an Olympus build request from a workspace
 src/tools.ts       tool definitions, previews, execution, command guard
 src/agent.ts       the multi-step loop: model chain, approval, tool calls
 src/store.ts       JSON session persistence

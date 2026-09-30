@@ -568,6 +568,10 @@ try {
         ['#sessions[aria-label]', 'labelled session list'],
         ['#fallbacks[aria-label]', 'labelled fallback chain'],
         ['#use-offline', 'labelled offline opt-out'],
+        ['#settings[role="dialog"][aria-modal="true"]', 'chat settings dialog'],
+        ['#chat-settings[aria-controls="settings"]', 'settings toggle bound to its dialog'],
+        ['#toggle-files[aria-controls="files-panel"]', 'workspace toggle bound to its panel'],
+        ['#workspace-pick[aria-label]', 'labelled workspace picker'],
         ['#sweep[role="dialog"][aria-modal="true"]', 'sweep dialog'],
         ['#sweep-open[title]', 'labelled sweep button'],
         ['#preview[aria-label]', 'labelled preview pane'],
@@ -902,100 +906,6 @@ try {
       );
     }
     return `${usable}/${relevant.length} ready, warning ${warned ? "shown" : "not shown"}`;
-  });
-
-  /**
-   * The factory handoff, previewed only.
-   *
-   * Preview writes nothing, and that is deliberate: this suite runs against a real
-   * workspace, so an export here would leave a build request behind for someone to
-   * find. The write path is covered by the HTTP suite. What is checked here is the
-   * part only a browser can show — that the operator sees the spec, and the command
-   * that would manufacture it, before anything leaves the console.
-   */
-  await check("a build request can be assembled and reviewed from the console", async () => {
-    await session.evaluate("document.querySelector('#factory-open').click();");
-
-    const opened = await session.waitFor(
-      `!document.querySelector('#factory').classList.contains('hidden')`,
-      5_000,
-    );
-    if (!opened) throw new Error("the export dialog did not open");
-
-    // The note is written synchronously, then refined once the server's
-    // configuration is known, so it must never be blank — not even briefly.
-    const noted = await session.waitFor(
-      `(document.querySelector('#factory-note')?.textContent ?? '').trim() !== ''`,
-      5_000,
-    );
-    if (!noted) throw new Error("the dialog does not say where a spec would go");
-
-    const shape = await session.evaluate(`
-      const dialog = document.querySelector('#factory');
-      return {
-        role: dialog.getAttribute('role'),
-        modal: dialog.getAttribute('aria-modal'),
-        labelled:
-          dialog.getAttribute('aria-labelledby') === 'factory-title' &&
-          (document.querySelector('#factory-title')?.textContent ?? '') !== '',
-      };`);
-
-    if (shape.role !== "dialog" || shape.modal !== "true") {
-      throw new Error(`role=${shape.role} aria-modal=${shape.modal}`);
-    }
-    if (!shape.labelled) throw new Error("the dialog has no labelled title");
-
-    await session.evaluate(`
-      document.querySelector('#factory-name').value = 'UI Smoke Spec';
-      document.querySelector('#factory-purpose').value = 'Prove the export path renders a spec.';
-      document.querySelector('#factory-features').value = 'One thing\\nAnother thing';
-      document.querySelector('#factory-preview').click();
-      return true;`);
-
-    const rendered = await session.waitFor(
-      `(document.querySelector('#factory-body')?.textContent ?? '').includes('## 🚦 Verification Criteria')`,
-      10_000,
-    );
-    if (!rendered) throw new Error("the spec never rendered in the dialog");
-
-    const view = await session.evaluate(`
-      return {
-        body: document.querySelector('#factory-body').textContent,
-        status: document.querySelector('#factory-status').textContent,
-        steps: [...document.querySelectorAll('#factory-steps .factory-step')].map((node) => node.textContent),
-      };`);
-
-    // These headings are the contract with the factory's template: a spec missing
-    // one is a spec Olympus cannot parse.
-    for (const heading of [
-      "# Application Specification: UI Smoke Spec",
-      "## 🎯 Core Purpose",
-      "## 🧰 Tech Stack",
-      "## 🛠️ Key Features & Pages",
-      "## 🚦 Verification Criteria",
-    ]) {
-      if (!view.body.includes(heading)) throw new Error(`the spec is missing: ${heading}`);
-    }
-    if (!view.body.includes("Prove the export path renders a spec.")) {
-      throw new Error("the purpose the operator typed is not in the spec");
-    }
-    if (!view.status.includes("nothing written")) {
-      throw new Error(`a preview reported: ${view.status}`);
-    }
-    if (!view.steps.some((step) => step.includes("make app SPEC=build-requests/ui-smoke-spec.md"))) {
-      throw new Error("the spec does not name the command that would manufacture it");
-    }
-
-    await session.evaluate(`
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      return true;`);
-    const closed = await session.waitFor(
-      `document.querySelector('#factory').classList.contains('hidden')`,
-      5_000,
-    );
-    if (!closed) throw new Error("Escape did not close the export dialog");
-
-    return `${view.body.length} chars of spec, nothing written`;
   });
 
   await check("nothing threw in the browser console", async () => {

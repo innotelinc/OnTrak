@@ -178,10 +178,6 @@
               <td>Which model ids actually work is not something a catalog tells you, and a large advertised list is not a usable one.</td>
               <td>Sweep the catalog from the browser: probe the ids that claim tool support and keep the ones that answer.</td>
             </tr>
-            <tr>
-              <td>Work that stops at the preview is work someone retypes into the builder.</td>
-              <td><code>export</code> assembles a build request from the workspace — file index, stack, entry point, the test command that actually exists — deterministically, with no second model call.</td>
-            </tr>
           </tbody>
         </table>
       </div>
@@ -216,27 +212,6 @@
         <div class="card">
           <h3>Sign-in, optional</h3>
           <p>Authentik OIDC: authorization code with PKCE, RS256 <code>id_token</code> verification against the provider's JWKS, and a signed session cookie. Off until it is configured.</p>
-        </div>
-      </div>
-    </section>
-
-    <section>
-      <div class="sec-head">
-        <h2>The factory handoff</h2>
-        <p>Genie produces the request; Olympus produces the build.</p>
-      </div>
-      <div class="cards">
-        <div class="card">
-          <h3>A spec, not a prompt</h3>
-          <p><code>export</code> writes <code>build-requests/&lt;slug&gt;.md</code> in the shape the factory's own template defines — core purpose, tech stack, features, verification criteria.</p>
-        </div>
-        <div class="card">
-          <h3>Deterministic, and reviewable</h3>
-          <p>The request is assembled from the file index, sizes, the entry point and the stack implied by what is there. Unstated intent is written as unstated rather than guessed, so it can be read and edited before anything is built.</p>
-        </div>
-        <div class="card">
-          <h3>One direction only</h3>
-          <p>Genie learns whether the spec was written, never how the build is going. A console that polls the factory becomes a second factory.</p>
         </div>
       </div>
     </section>

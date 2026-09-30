@@ -92,7 +92,6 @@ const planeUrl = `http://127.0.0.1:${(plane.address() as AddressInfo).port}`;
 const gatewayPort = (gateway.address() as AddressInfo).port;
 
 const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "genie-tenancy-"));
-const factoryDir = path.join(workspace, "build-requests");
 
 // Set before the config module is first imported, which is what makes this file
 // the control-plane deployment and the rest of the suite the single-operator one.
@@ -103,7 +102,6 @@ process.env.AGENT_MODEL = "fake/model";
 process.env.AGENT_FALLBACK_MODELS = "";
 process.env.AGENT_OFFLINE_URL = "";
 process.env.AGENT_HEALTH_INTERVAL_MS = "0";
-process.env.AGENT_FACTORY_DIR = factoryDir;
 process.env.OMNIROUTE_URL = `http://127.0.0.1:${gatewayPort}/v1`;
 // The one gateway key this deployment holds: it must be *unused* by a turn once a
 // control plane is configured, which is the whole posture being tested.
@@ -344,30 +342,4 @@ test("two signed-in accounts are two workspaces and two chat lists", async () =>
     (session) => session.id,
   );
   assert.ok(ownIds.includes(mine), "the chat is in the account that made it");
-});
-
-test("an export is attributed and audited", async () => {
-  planeCalls.length = 0;
-  // Into the *account's* workspace, and beside it a decoy at the deployment's
-  // shared root. The spec must be built from the first and never the second —
-  // with tenancy on, no signed-in request is served from the shared root at all.
-  const root = accountScope("u-1").root;
-  await fs.mkdir(root, { recursive: true });
-  await fs.writeFile(path.join(root, "index.html"), "<h1>hello</h1>\n", "utf8");
-  await fs.writeFile(path.join(workspace, "shared-decoy.txt"), "nobody's file\n", "utf8");
-
-  const response = await post("/api/factory/spec", { name: "Todo List", kind: "app" }, { cookie });
-  assert.equal(response.status, 200);
-  const body = (await response.json()) as { written?: boolean; filename?: string; markdown?: string };
-  assert.equal(body.written, true);
-  assert.match(String(body.markdown), /index\.html/, "the spec describes the account's own files");
-  assert.doesNotMatch(String(body.markdown), /shared-decoy/, "and nothing from the shared root");
-
-  await waitFor(() => planeCalls.some((call) => call.path === "/api/internal/audit"), "the audit row");
-  const audit = planeCalls.find((call) => call.path === "/api/internal/audit");
-  assert.equal(audit?.internalToken, "plane-token");
-  assert.equal(audit?.body.action, "build.export");
-  assert.equal(audit?.body.sub, "sub-1");
-  assert.equal(audit?.body.actorEmail, "dev@innotel.us");
-  assert.equal(audit?.body.targetId, body.filename);
 });

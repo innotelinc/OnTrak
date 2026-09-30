@@ -16,7 +16,7 @@ import { config, isPlaceholderSecret } from "./config.js";
  *   quota      → the user's gateway key in, allow/deny out (bearer = gateway key,
  *                which is how the control plane identifies the account)
  *   audit      → a row for an action that touches a public name or another
- *                system — here, exporting a workspace to the factory
+ *                system on the deployment's behalf
  *
  * Nothing here ever hands the gateway key to the browser: the server calls these
  * from request handlers only, and the turn it authorises spends the key without

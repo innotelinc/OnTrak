@@ -37,7 +37,16 @@ import { config } from "./config.js";
 export type Scope = {
   /** The control-plane account, or null when this deployment has no tenancy. */
   userId: string | null;
-  /** The root this request may read and write, and never escape. */
+  /**
+   * The sandbox: the whole tree this slice may ever reach. A chosen working
+   * directory is inside this and can never be outside it, which is what keeps
+   * "pick a folder" from becoming "pick any folder on the host".
+   */
+  base: string;
+  /**
+   * The directory the agent works in: `base`, or a directory chosen inside it.
+   * Everything the tools read and write resolves here, and never escapes it.
+   */
   root: string;
   /** Where this request's chats live. */
   sessions: string;
@@ -45,11 +54,62 @@ export type Scope = {
   snapshots: string;
 };
 
+/**
+ * The chosen working directory, as a path relative to the sandbox root.
+ *
+ * Empty means "the sandbox itself", which is where a fresh deployment starts
+ * and what every existing install keeps getting until somebody picks a folder.
+ * It is deployment-wide rather than per-account because the browser window that
+ * picks it is the operator's, and a second person signing in to the same console
+ * should land where the operator put the work, not back at the sandbox root.
+ */
+let selected = "";
+
+/** The chosen directory as it is stored: relative, forward-slashed, or "". */
+export function selectedWorkspace(): string {
+  return selected;
+}
+
+const SELECTION_FILE = (): string => path.join(config.dataDir, "workspace.json");
+
+/**
+ * Read the saved choice, if there is one.
+ *
+ * A missing or unreadable file is not an error: it is the state every install
+ * starts in, and refusing to boot because a preference could not be read would
+ * trade a working console for a nicer error message.
+ */
+export async function loadSelectedWorkspace(): Promise<void> {
+  try {
+    const raw = JSON.parse(await fs.readFile(SELECTION_FILE(), "utf8")) as { dir?: unknown };
+    selected = typeof raw.dir === "string" ? raw.dir : "";
+  } catch {
+    selected = "";
+  }
+}
+
+/**
+ * Remember the chosen directory. The caller validates it against the sandbox
+ * first (`resolveInBase`), so this only has to store what it was handed.
+ */
+export async function setSelectedWorkspace(rel: string): Promise<void> {
+  selected = rel;
+  await fs.mkdir(path.dirname(SELECTION_FILE()), { recursive: true });
+  await fs.writeFile(SELECTION_FILE(), `${JSON.stringify({ dir: rel }, null, 2)}\n`, "utf8");
+}
+
+/** Where a chosen directory is joined onto the sandbox it must stay inside. */
+function rootUnder(base: string): string {
+  return selected === "" ? base : path.join(base, selected);
+}
+
 /** The single-operator slice: the configured workspace, shared by everyone. */
 export function defaultScope(): Scope {
+  const base = config.workspace;
   return {
     userId: null,
-    root: config.workspace,
+    base,
+    root: rootUnder(base),
     sessions: path.join(config.dataDir, "sessions"),
     snapshots: path.join(config.dataDir, "snapshots"),
   };
@@ -93,9 +153,11 @@ export function accountDirName(userId: string): string {
  */
 export function accountScope(userId: string): Scope {
   const name = accountDirName(userId);
+  const base = path.join(config.workspace, ACCOUNTS, name);
   return {
     userId,
-    root: path.join(config.workspace, ACCOUNTS, name),
+    base,
+    root: rootUnder(base),
     sessions: path.join(config.dataDir, ACCOUNTS, name, "sessions"),
     snapshots: path.join(config.dataDir, ACCOUNTS, name, "snapshots"),
   };
@@ -106,6 +168,11 @@ const context = new AsyncLocalStorage<Scope>();
 /** The active slice, or the single-operator one when nothing entered a scope. */
 export function currentScope(): Scope {
   return context.getStore() ?? defaultScope();
+}
+
+/** The sandbox root: the whole tree this slice may reach, chosen directory included. */
+export function sandboxRoot(): string {
+  return currentScope().base;
 }
 
 export function workspaceRoot(): string {

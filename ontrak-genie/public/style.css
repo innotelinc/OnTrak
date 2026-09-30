@@ -65,7 +65,7 @@ html, body {
 
 .app {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr) 280px;
+  grid-template-columns: 240px minmax(0, 1fr);
   height: 100vh;
 }
 
@@ -457,44 +457,6 @@ pre.code {
 .viewer-note { padding: 14px 16px; margin: 0; }
 .diff-inline { border-bottom: none; }
 
-/* --- factory export --- */
-/* The form asks only for what cannot be observed. Everything else in the spec is
-   assembled from the workspace, so there is nothing here to duplicate. */
-
-.factory-note { margin: 0; padding: 12px 16px 4px; font-size: 12.5px; line-height: 1.5; }
-
-.factory-form {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 16px;
-  padding: 10px 16px 14px;
-  border-bottom: 1px solid var(--border);
-}
-.factory-form .field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
-.factory-form .field.wide { flex: 1 1 320px; }
-.factory-form .input-text { width: 200px; }
-.factory-form .field.wide .input-text { width: 100%; }
-.factory-form textarea.input-text { resize: vertical; line-height: 1.5; }
-
-.factory-steps { display: flex; flex-direction: column; gap: 5px; padding: 0 16px 12px; }
-.factory-steps:empty { padding-bottom: 0; }
-.factory-step {
-  font-size: 12px;
-  color: var(--text-dim);
-  border-left: 2px solid var(--border);
-  padding-left: 9px;
-  word-break: break-word;
-}
-
-#factory-status { padding: 12px 16px 8px; }
-#factory-status:empty { padding: 0; }
-#factory-body {
-  border-top: 1px solid var(--border);
-  /* A spec is prose and headings, not code: wrap it rather than scrolling it. */
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 /* --- composer --- */
 
 .composer {
@@ -524,13 +486,39 @@ pre.code {
 
 /* --- files --- */
 
+/*
+ * An overlay, not a docked third column. Docked, it took 280px from the pane the
+ * code is written in, and a long line in the preview was what paid for it.
+ * Closed is the default; the toggle in the top bar is the only way in and out.
+ */
 .files {
-  display: flex;
+  display: none;
   flex-direction: column;
   background: var(--bg-panel);
   border-left: 1px solid var(--border);
   min-height: 0;
 }
+.files.open {
+  display: flex;
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: 340px;
+  z-index: 30;
+}
+
+.files-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+
+.files-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.files-workspace .field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.files-workspace .select { width: 100%; }
+.files-note { margin: 0; font-size: 11px; line-height: 1.45; word-break: break-all; }
+.files-note:empty { display: none; }
 
 .files-path { padding: 8px 14px; font-size: 11px; color: var(--text-dim); border-bottom: 1px solid var(--border); word-break: break-all; }
 .files-list { flex: 1; overflow-y: auto; padding: 6px; min-height: 0; }
@@ -574,7 +562,7 @@ pre.code {
   display: none;
   flex-direction: column;
   flex: none;
-  height: min(42vh, 360px);
+  height: min(52vh, 520px);
   min-height: 140px;
   border-top: 1px solid var(--border);
   background: var(--bg-panel);
@@ -610,9 +598,13 @@ pre.code {
   max-height: none;
   border-bottom: none;
   border-right: 1px solid var(--border);
-}
-.preview.live #preview-body { flex: 1; min-width: 0; }
+}  .preview.live #preview-body { flex: 1; min-width: 0; }
 
+/*
+ * Wrapped, not scrolled sideways. This pane is narrow and the point of it is that
+ * you can read the file as it lands; a line that runs off the right edge asks you
+ * to scroll to see the half of it that matters.
+ */
 .preview-body {
   margin: 0;
   padding: 11px 14px;
@@ -622,8 +614,16 @@ pre.code {
   background: #0b0d11;
   font-size: 12.5px;
   line-height: 1.55;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
+
+.settings-form { gap: 14px; padding: 16px; overflow-y: auto; }
+.settings-form .field { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+.settings-form .field.check { flex-direction: row; align-items: center; gap: 8px; }
+.settings-form .input-text { width: 100%; }
+.settings-note { margin: 4px 0 0; font-size: 12px; line-height: 1.5; }
+.settings-note:empty { display: none; }
 /* The caret marks a file that is still arriving, not one that is finished. */
 .preview-body.generating::after {
   content: "▍";
@@ -691,13 +691,5 @@ pre.code {
 
 @media (max-width: 1080px) {
   .app { grid-template-columns: 200px minmax(0, 1fr); }
-  .files { display: none; }
-  .files.open {
-    display: flex;
-    position: fixed;
-    inset: 0 0 0 auto;
-    width: 320px;
-    z-index: 30;
-    border-left: 1px solid var(--border);
-  }
+  .files.open { width: min(340px, 90vw); }
 }
