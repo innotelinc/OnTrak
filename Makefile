@@ -21,6 +21,10 @@ PORTAL_DIR := ontrak-portal
 
 GENIE_DIR := ontrak-genie
 
+# Which env `make lan` provisions. The family stack reads `.env` at the repo
+# root; Genie's own stack reads its own, so: `make lan LAN_ENV_FILE=ontrak-genie/.env`.
+LAN_ENV_FILE ?= .env
+
 ## ---- Bootstrap ----
 
 .PHONY: help
@@ -134,6 +138,10 @@ genie-down: ## Stop the agent console stack
 genie-logs: ## Tail the agent console's logs
 	cd $(GENIE_DIR) && docker compose logs -f
 
+.PHONY: lan
+lan: ## Detect this host's LAN address and write the builder network into an env file
+	@scripts/lan-env.sh --file "$(LAN_ENV_FILE)"
+
 # The family stack: all five products, one network, one command. `up`/`down`
 # above are the training app's; this brings up everything, with Tix's outbound
 # provisioning already pointed at the provider over the network and the portal's
@@ -141,7 +149,7 @@ genie-logs: ## Tail the agent console's logs
 # docker-compose.all.yml for what single sign-on additionally needs.
 
 .PHONY: all-up
-all-up: ## Build and start all six products together (:3400, :3300, :3000, :3001, :8787, :8420/8421)
+all-up: lan ## Build and start all six products together (:3400, :3300, :3000, :3001, :8787, :8420/8421)
 	docker compose -f docker-compose.all.yml up -d --build
 
 .PHONY: all-down

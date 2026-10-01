@@ -475,10 +475,21 @@ services:
       # is a docker bridge address (`172.x`), so this is the one setting that
       # cannot be worked out from in here. It is the incus container's own LAN
       # address, which is the address that publishes this stack's ports.
-      AGENT_LAN_IP: ${AGENT_LAN_IP:-}
+      #
+      # `${LAN_IP}` is the platform's own name for that address and is what
+      # provisioning (`stack.sh lan`, which mirrors the same rule into
+      # `scripts/stack-lib.sh`) writes into the deployment env. Accepting it here
+      # means a deployment is wired up by the provisioner rather than by hand.
+      AGENT_LAN_IP: ${AGENT_LAN_IP:-${LAN_IP:-}}
       AGENT_PREVIEW_HOST: ${AGENT_PREVIEW_HOST:-loopback}
       AGENT_PREVIEW_PORT: ${ONTRAK_GENIE_PREVIEW_PORT:-5173}
       AGENT_PREVIEW_PUBLISH: ${AGENT_PREVIEW_PUBLISH:-false}
+      # The sandbox's network, so the *other* half of "the app and its sandbox hold
+      # the LAN address" is provided too: with the docker backend a command runs
+      # with `--network host` and holds this deployment's own address, instead of
+      # a bridge one nothing outside the host can dial. Unused when AGENT_SANDBOX
+      # is `host` (the family default), where commands already have it.
+      AGENT_SANDBOX_NETWORK: ${AGENT_SANDBOX_NETWORK:-none}
       OMNIROUTE_URL: ${OMNIROUTE_URL:-}
       WEB_TOKEN: ${WEB_TOKEN:-}
       # Tenancy, when the family has a control plane: with the origin and the
