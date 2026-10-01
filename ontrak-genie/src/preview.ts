@@ -315,13 +315,18 @@ export function detectPreviewCommand(root: string = workspaceRoot()): PreviewSug
   }
 
   if (isFile(path.join(root, "manage.py"))) {
-    return { command: "python3 manage.py runserver 127.0.0.1:$PORT", cwd: "." };
+    return { command: "python3 manage.py runserver ${HOST:-127.0.0.1}:$PORT", cwd: "." };
   }
 
   for (const dir of STATIC_DIRS) {
     const abs = dir === "." ? root : path.join(root, dir);
     if (isDir(abs) && isFile(path.join(abs, "index.html"))) {
-      return { command: "python3 -m http.server $PORT --bind 127.0.0.1", cwd: rel(abs) };
+      // `$HOST` rather than a constant: it is set by `startPreview` to whatever
+      // this deployment binds, so a published preview is served on the published
+      // address and a private one stays on loopback. A hard-coded `127.0.0.1`
+      // here would make the one detector that starts a server of its own the one
+      // detector that cannot be published.
+      return { command: "python3 -m http.server $PORT --bind ${HOST:-127.0.0.1}", cwd: rel(abs) };
     }
   }
 

@@ -154,7 +154,7 @@ test("what to run", async (t) => {
     await inFixture("index.html", "<html></html>");
     // The blank script is skipped rather than run, and the static page is found.
     assert.deepEqual(detectPreviewCommand(fixture), {
-      command: "python3 -m http.server $PORT --bind 127.0.0.1",
+      command: "python3 -m http.server $PORT --bind ${HOST:-127.0.0.1}",
       cwd: ".",
     });
   });
@@ -172,7 +172,10 @@ test("what to run", async (t) => {
     await fs.rm(at("."), { recursive: true, force: true });
     await inFixture("public/index.html", "<html></html>");
     assert.deepEqual(detectPreviewCommand(fixture), {
-      command: "python3 -m http.server $PORT --bind 127.0.0.1",
+      // The bind address comes from the environment, so a deployment that
+      // publishes its preview serves the static site on the published address
+      // rather than only on loopback.
+      command: "python3 -m http.server $PORT --bind ${HOST:-127.0.0.1}",
       cwd: "public",
     });
   });
