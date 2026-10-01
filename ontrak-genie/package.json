@@ -22,6 +22,7 @@
     "model:health": "node scripts/model-health.mjs",
     "offline:check": "node scripts/offline-check.mjs",
     "draft:check": "node scripts/draft-check.mjs",
+    "approvals": "node scripts/approvals.mjs",
     "copy:check": "node scripts/copy-check.mjs",
     "live:check": "node scripts/offline-check.mjs && node scripts/draft-check.mjs",
     "ui:smoke": "node scripts/ui-smoke.mjs"

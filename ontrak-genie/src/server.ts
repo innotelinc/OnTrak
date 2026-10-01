@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runAgent } from "./agent.js";
-import { pendingApprovals, resolveApproval } from "./approval.js";
+import { listPendingApprovals, pendingApprovals, resolveApproval } from "./approval.js";
 import { config } from "./config.js";
 import { controlPlaneEnabled } from "./controlplane.js";
 import { buildFileDiff } from "./diff.js";
@@ -154,6 +154,21 @@ async function serveStatic(res: http.ServerResponse, pathname: string): Promise<
 }
 
 // --- auth -------------------------------------------------------------------
+
+/**
+ * Who answered a prompt, for the decision log.
+ *
+ * A signed-in caller is named by their identity; a bare bearer is the shared
+ * token and can only be called that; loopback with neither is this machine. The
+ * point is that the log never implies a person answered when none did — an
+ * unattended approval is exactly the case worth being able to spot.
+ */
+function approvalActor(req: http.IncomingMessage): string {
+  const session = sessionFrom(req);
+  if (session !== null) return session.email !== "" ? session.email : `oidc:${session.sub}`;
+  if (config.webToken !== "") return "shared-token";
+  return "local";
+}
 
 /**
  * Who may call the API.
@@ -610,13 +625,25 @@ async function handleApi(
     return sendJson(res, 200, { removed: true, path: rel, bytes });
   }
 
+  /*
+   * What the gate is waiting on.
+   *
+   * The browser learns about a prompt from the turn's own SSE stream; a driver
+   * that is not watching one has no way to. This is that way - it lists the same
+   * prompts the cards show, so a CI job or a CLI can decide on what a person
+   * would have seen, then answer the same POST below.
+   */
+  if (pathname === "/api/approvals" && method === "GET") {
+    return sendJson(res, 200, { pending: listPendingApprovals() });
+  }
+
   const approvalMatch = /^\/api\/approvals\/([^/]+)$/.exec(pathname);
   if (approvalMatch && method === "POST") {
     const id = decodeURIComponent(approvalMatch[1] ?? "");
     const payload = await readJson(req);
     const decision = payload.decision === "approve" ? "approve" : payload.decision === "deny" ? "deny" : null;
     if (decision === null) throw new HttpError(400, 'decision must be "approve" or "deny"');
-    const resolved = resolveApproval(id, decision);
+    const resolved = resolveApproval(id, decision, approvalActor(req));
     // 404 means the turn already finished or timed out; the UI just shows that.
     return sendJson(res, resolved ? 200 : 404, { resolved });
   }

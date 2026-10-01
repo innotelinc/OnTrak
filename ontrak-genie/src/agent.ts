@@ -634,15 +634,22 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
 
       if (approvalRequired(call.function.name, preview)) {
         const approvalId = crypto.randomUUID();
+        const summary = preview?.summary ?? `${call.function.name} needs approval`;
         yield {
           type: "approval_request",
           id: approvalId,
           name: call.function.name,
-          summary: preview?.summary ?? `${call.function.name} needs approval`,
+          summary,
           ...(preview?.diff ? { diff: preview.diff } : {}),
         };
 
-        const decision = await requestApproval(approvalId, options.signal);
+        // The same name and summary the card shows, so a driver answering from
+        // `GET /api/approvals` is deciding on what the browser would have shown.
+        const decision = await requestApproval(approvalId, {
+          name: call.function.name,
+          summary,
+          signal: options.signal,
+        });
         yield { type: "approval_result", id: approvalId, decision };
 
         if (decision === "approve") {

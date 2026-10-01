@@ -869,8 +869,18 @@ test("approvals endpoint", async (t) => {
 
   await t.test("answering a parked turn releases it", async () => {
     const id = "http-approval-1";
-    const waiting = requestApproval(id, undefined, 10_000);
+    const waiting = requestApproval(id, { name: "run_command", summary: "npm test", timeoutMs: 10_000 });
     assert.equal(pendingApprovals(), 1);
+
+    // A driver that is not watching the tab has to be able to see what is waiting
+    // before it can answer it, which is what this route is for.
+    const listed = await api("/api/approvals");
+    assert.equal(listed.status, 200);
+    assert.deepEqual(
+      listed.body.pending.map((entry: { id: string }) => entry.id),
+      [id],
+    );
+    assert.equal(listed.body.pending[0].summary, "npm test");
 
     const answered = await api(`/api/approvals/${id}`, {
       method: "POST",
@@ -882,7 +892,11 @@ test("approvals endpoint", async (t) => {
   });
 
   await t.test("a decision of the wrong shape is a bad request", async () => {
-    const waiting = requestApproval("http-approval-2", undefined, 10_000);
+    const waiting = requestApproval("http-approval-2", {
+      name: "run_command",
+      summary: "npm test",
+      timeoutMs: 10_000,
+    });
     const answered = await api("/api/approvals/http-approval-2", {
       method: "POST",
       body: JSON.stringify({ decision: "maybe" }),

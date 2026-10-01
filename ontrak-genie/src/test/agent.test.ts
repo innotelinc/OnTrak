@@ -486,7 +486,7 @@ test("approval broker", async (t) => {
   const { requestApproval, resolveApproval, pendingApprovals } = await import("../approval.js");
 
   await t.test("answering releases the waiting turn", async () => {
-    const promise = requestApproval("approve-1", undefined, 5_000);
+    const promise = requestApproval("approve-1", { name: "run_command", summary: "npm test", timeoutMs: 5_000 });
     assert.equal(pendingApprovals(), 1);
     assert.equal(resolveApproval("approve-1", "approve"), true);
     assert.equal(await promise, "approve");
@@ -494,7 +494,7 @@ test("approval broker", async (t) => {
   });
 
   await t.test("denying releases it too, and is reported as a denial", async () => {
-    const promise = requestApproval("deny-1", undefined, 5_000);
+    const promise = requestApproval("deny-1", { name: "run_command", summary: "npm test", timeoutMs: 5_000 });
     assert.equal(resolveApproval("deny-1", "deny"), true);
     assert.equal(await promise, "deny");
   });
@@ -504,20 +504,36 @@ test("approval broker", async (t) => {
   });
 
   await t.test("it gives up on its own instead of hanging forever", async () => {
-    assert.equal(await requestApproval("timeout-1", undefined, 10), "timeout");
+    assert.equal(
+      await requestApproval("timeout-1", { name: "run_command", summary: "npm test", timeoutMs: 10 }),
+      "timeout",
+    );
     assert.equal(pendingApprovals(), 0);
   });
 
   await t.test("closing the stream cancels every pending prompt", async () => {
     const controller = new AbortController();
-    const promise = requestApproval("abort-1", controller.signal, 60_000);
+    const promise = requestApproval("abort-1", {
+      name: "run_command",
+      summary: "npm test",
+      signal: controller.signal,
+      timeoutMs: 60_000,
+    });
     controller.abort();
     assert.equal(await promise, "aborted");
     assert.equal(pendingApprovals(), 0);
   });
 
   await t.test("an already-cancelled request resolves immediately", async () => {
-    assert.equal(await requestApproval("abort-2", AbortSignal.abort(), 60_000), "aborted");
+    assert.equal(
+      await requestApproval("abort-2", {
+        name: "run_command",
+        summary: "npm test",
+        signal: AbortSignal.abort(),
+        timeoutMs: 60_000,
+      }),
+      "aborted",
+    );
   });
 });
 

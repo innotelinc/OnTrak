@@ -606,6 +606,23 @@ while the chat stream is parked, so nothing is blocked. A prompt is bound to its
 stream's abort signal: closing the tab or pressing Stop releases it immediately
 instead of leaving the turn hanging, and unanswered prompts time out on their own.
 
+The card is one of **two channels**, and the second is what lets the gate survive
+unattended running. `GET /api/approvals` lists what is waiting — the same id, tool
+and summary the card shows — and `npm run approvals` answers it:
+
+```bash
+npm run approvals -- list                 # what is waiting
+npm run approvals -- approve <id>         # answer it
+npm run approvals -- deny <id>
+```
+
+It authenticates like any other client (`WEB_TOKEN`, or a session), so it grants
+nothing a console could not already do; it exists because a CI job cannot click.
+Every decision — from either channel, including a timeout or a cancelled stream —
+is appended to `<AGENT_DATA_DIR>/approvals.jsonl` with the actor (`oidc:…` or an
+email, `shared-token`, `local`, or `system`), so "unattended" leaves a record of
+who let what run rather than no one at all.
+
 Verified live: an approved `python3 approval_demo.py` ran in the container and
 returned `ok`; a denied `echo should-not-run` never executed, and the model was
 told the user refused rather than being left to retry.
@@ -938,6 +955,7 @@ All optional — see `.env.example`.
 | `GET`    | `/api/sessions/:id`   | Full transcript                      |
 | `PATCH`  | `/api/sessions/:id`   | Save the session's model / chain / step budget |
 | `DELETE` | `/api/sessions/:id`   | Delete a session                     |
+| `GET`    | `/api/approvals`      | Pending approval prompts (id, tool, summary, deadline) |
 | `POST`   | `/api/approvals/:id`  | Answer a pending approval (`approve`/`deny`) |
 | `GET`    | `/api/files?path=`    | List a directory, with `changed` flags |
 | `GET`    | `/api/file?path=`     | Read a workspace file                |

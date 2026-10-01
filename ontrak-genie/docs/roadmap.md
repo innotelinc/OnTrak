@@ -177,9 +177,12 @@ not.
   comes from the server's own answer, not a frame count). Both shapes are pinned
   by `src/test/draft-streaming.test.ts`, and the pure rule by
   `draftStreamed` in `src/test/draft.test.ts`.
-- `[ ]` **A second approval channel.** The gate is a browser click; a headless
-  driver (CLI, CI) that can answer it deliberately and auditably would let the
-  same agent run unattended with the gate intact.
+- `[x]` **A second approval channel.** `GET /api/approvals` lists what the cards
+  would show and `POST /api/approvals/:id` still answers, so the gate is reachable
+  without watching a tab; `npm run approvals` (`scripts/approvals.mjs`) is the
+  headless driver a CI job uses. Every decision — from either channel, including a
+  timeout or a cancelled stream — is appended to `<AGENT_DATA_DIR>/approvals.jsonl`
+  with the actor, so unattended running still leaves a record of who let what run.
 - `[ ]` **Session and workspace management.** Listing, naming, archiving and
   deleting chats and workspaces from the UI, with the sweep report and the
   workspace choice per account rather than per deployment.
