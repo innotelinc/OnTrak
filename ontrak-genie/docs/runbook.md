@@ -17,6 +17,8 @@ plane on Distro (`192.168.1.61:20140`), Authentik at
 
 ```bash
 curl -fsS http://192.168.1.21:3400/api/health
+# {"error":"unauthorized"} means WEB_TOKEN is set — send it, do not assume the console is down:
+curl -fsS -H "Authorization: Bearer $WEB_TOKEN" http://192.168.1.21:3400/api/health
 ```
 
 Read four fields before anything else:
