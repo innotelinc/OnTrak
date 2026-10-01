@@ -243,6 +243,41 @@ export async function checkTurnQuota(
 }
 
 /**
+ * The account's own usage and the caps it is measured against (v0.3).
+ *
+ * The same call a turn makes: the plane identifies the account by its gateway
+ * key and answers with today's snapshot, the caps, and its own allow/deny
+ * verdict — so the number the console shows and the number that refuses the next
+ * turn come from one decision rather than two that drift. Read on demand rather
+ * than cached, because a stale spend figure is one a person stops believing.
+ */
+export type AccountUsage = {
+  allowed: boolean;
+  reasons: string[];
+  quota: QuotaSnapshot | null;
+  usageToday: UsageSnapshot | null;
+};
+
+export async function readAccountUsage(
+  plane: ControlPlaneConfig,
+  gatewayKey: string,
+): Promise<AccountUsage> {
+  const payload = await call(plane, "/api/internal/quota-check", {
+    method: "GET",
+    headers: { authorization: `Bearer ${gatewayKey}` },
+  });
+
+  return {
+    allowed: payload.allowed === true,
+    reasons: Array.isArray(payload.reasons)
+      ? payload.reasons.filter((reason): reason is string => typeof reason === "string")
+      : [],
+    quota: parseQuota(payload.quota),
+    usageToday: parseUsage(payload.usageToday),
+  };
+}
+
+/**
  * Record a finished turn.
  *
  * Best-effort on purpose: the turn has already been paid for, and failing it

@@ -5,9 +5,11 @@ import {
   controlPlaneEnabled,
   noteControlPlaneOutage,
   provisionIdentity,
+  readAccountUsage,
   readControlPlaneConfig,
   reportControlPlaneOutage,
   reportTurnUsage,
+  type AccountUsage,
   type ControlPlaneConfig,
 } from "./controlplane.js";
 import type { Session } from "./oidc.js";
@@ -298,6 +300,35 @@ export async function finishTurn(turn: Turn, usage: TurnUsage): Promise<void> {
   const plane = readControlPlaneConfig();
   if (plane === null) return;
   await reportTurnUsage(plane, turn.caller.gatewayKey, usage);
+}
+
+export type AccountUsageRead =
+  | { ok: true; email: string; usage: AccountUsage }
+  | { ok: false; status: number; message: string };
+
+/**
+ * What this account has spent, and the caps it is judged by (v0.3).
+ *
+ * The half a person can act on. The plane already records every turn's cost, so
+ * this shows it back beside the account's own ceiling — from the *same* verdict
+ * the turn gate reads, so the spend the console reports and the spend that
+ * refuses the next turn cannot disagree. It resolves the caller exactly as a turn
+ * does, then asks the plane; with no plane there is no account to read.
+ */
+export async function accountUsage(
+  session: Session | null,
+  /** Overridden only by a test; production always reads the configured plane. */
+  plane: ControlPlaneConfig | null = readControlPlaneConfig(),
+): Promise<AccountUsageRead> {
+  if (plane === null) {
+    return { ok: false, status: 404, message: "this deployment has no control plane to read usage from" };
+  }
+
+  const who = await identify(session, plane, REQUEST_MESSAGES);
+  if (!who.ok) return who;
+
+  const usage = await readAccountUsage(plane, who.caller.gatewayKey);
+  return { ok: true, email: who.caller.email, usage };
 }
 
 /** Whether this deployment resolves and gates turns through the control plane. */

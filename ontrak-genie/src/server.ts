@@ -55,6 +55,7 @@ import {
   saveSession,
 } from "./store.js";
 import {
+  accountUsage,
   beginTurn,
   countUsage,
   finishTurn,
@@ -645,6 +646,28 @@ async function handleApi(
       authRequired: config.webToken !== "",
       /** True when turns are attributed and quota-gated through the control plane. */
       tenancy: controlPlaneEnabled(),
+    });
+  }
+
+  if (pathname === "/api/account/usage" && method === "GET") {
+    // What this account has spent, and the ceiling it is measured against
+    // (v0.3). The console shows it beside the status rows; a deployment with no
+    // control plane has no account to read, which is an answer rather than an
+    // error — the row then says so instead of failing.
+    const usage = await accountUsage(sessionFrom(req));
+    if (!usage.ok) {
+      return sendJson(res, usage.status === 404 ? 200 : usage.status, {
+        tenancy: controlPlaneEnabled(),
+        error: usage.message,
+      });
+    }
+    return sendJson(res, 200, {
+      tenancy: true,
+      email: usage.email,
+      allowed: usage.usage.allowed,
+      reasons: usage.usage.reasons,
+      quota: usage.usage.quota,
+      usageToday: usage.usage.usageToday,
     });
   }
 

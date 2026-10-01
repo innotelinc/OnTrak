@@ -1445,6 +1445,44 @@ function renderModelHealth(info) {
 }
 
 /**
+ * Show the account its own spend and the ceiling it is measured against.
+ *
+ * The plane records every turn's cost, so this is the half a person can act on —
+ * how much of today's allowance is gone. The verdict and the caps come from the
+ * same decision the turn gate reads, so the number here and the refusal on the
+ * next turn cannot disagree. On a deployment with no control plane there is no
+ * account to bill, and the row says that rather than showing a fake zero.
+ */
+function renderAccountUsage(usage) {
+  const dot = $("#usage-dot");
+  const label = $("#usage-label");
+  if (dot === null || label === null) return;
+
+  if (usage?.tenancy !== true || !usage.usageToday) {
+    dot.className = "status-dot";
+    label.textContent = "no account usage";
+    label.title =
+      usage?.error ??
+      "This deployment runs as a single operator, so there is no account to read usage for.";
+    return;
+  }
+
+  const today = usage.usageToday;
+  const tokens = (today.tokensIn ?? 0) + (today.tokensOut ?? 0);
+  const cap = usage.quota?.requestsPerDay ?? null;
+  dot.className = `status-dot ${usage.allowed ? "ok" : "warn"}`;
+  label.textContent =
+    `today ${today.requests ?? 0} req / ${tokens} tok` + (cap === null ? " · uncapped" : ` / ${cap} req`);
+  label.title =
+    `Signed in as ${usage.email}.\n` +
+    `Today: ${today.requests ?? 0} requests, ${tokens} tokens, $${Number(today.costUsd ?? 0).toFixed(4)}.\n` +
+    (cap === null
+      ? "No daily request ceiling on this plan."
+      : `${usage.allowed ? "Within" : "Over"} the ${cap} request/day ceiling.`) +
+    (usage.reasons?.length ? `\n${usage.reasons.join(", ")}` : "");
+}
+
+/**
  * Show, persistently, which gateway is answering. A notice scrolls away; a model
  * quietly falling back to a 7B local one is something the user should not have
  * to infer from the transcript.
@@ -2064,6 +2102,14 @@ async function loadHealth() {
     }
 
     renderModelHealth(health.modelHealth);
+
+    // Its own request: usage is read from the plane, and the status poll should
+    // not wait on it or fail with it.
+    try {
+      renderAccountUsage(await api("/api/account/usage"));
+    } catch {
+      renderAccountUsage(null);
+    }
 
     if (health.offline) {
       const models = Array.isArray(health.offline.models) ? health.offline.models : [];

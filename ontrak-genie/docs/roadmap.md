@@ -188,9 +188,15 @@ not.
 - `[ ]` **Session and workspace management.** Listing, naming, archiving and
   deleting chats and workspaces from the UI, with the sweep report and the
   workspace choice per account rather than per deployment.
-- `[ ]` **Per-account usage visible in the console.** The ledger is written today;
-  showing an account its own spend, beside the quota the plane reports, is the
-  half a user can act on.
+- `[x]` **Per-account usage visible in the console.** The ledger is written and
+  the account can now read it back: `GET /api/account/usage` resolves the caller
+  exactly as a turn does and returns the plane's own answer — today's requests,
+  tokens and cost, the caps it is judged by, and its allow/deny verdict — and the
+  sidebar renders it (`usage: today n req / t tok / cap`). Because the number
+  shown and the number that refuses the next turn come from the *same* decision,
+  they cannot disagree; a deployment with no control plane has no account to read
+  and says so rather than showing a fake zero. Pinned by
+  `src/test/account-usage.test.ts`.
 - `[x]` **A toolchain in the workspace, and the network to use it.** The runtime
   image carries bash, git, ripgrep, curl, wget, jq, make, gcc/g++, python3 + pip
   and unzip, and the system prompt tells the agent to install what else it needs
