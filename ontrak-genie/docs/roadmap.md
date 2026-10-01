@@ -227,11 +227,20 @@ becoming the bottleneck.
 **Goal:** the counterpart, in a browser, of a terminal agent session — with the
 gate the terminal does not have.
 
-- `[ ]` Multi-tenant by account with isolated workspaces, quotas and audit.
+- `[ ]` **Multi-tenant by account, with isolated workspaces and an audit trail.**
+  The tenancy half is already there — an account's disk, chats and file history
+  are its own, and Distro bills each turn to that account's own gateway key. What
+  1.0 adds is the record an operator can read afterwards.
+- `[ ]` **A ceiling per account, not a price list.** The family runs on unlimited
+  usage, so a quota here is not a bill: it is attribution plus a bound on a
+  runaway loop. Every turn is already reported to Distro's ledger with the model
+  and the tokens it spent, so what 1.0 owes is the number *Genie* enforces — the
+  operator's own cap, named as a ceiling rather than as a cost.
 - `[ ]` Deployment posture: retained audit, an operator runbook, and a
   documented threat model for exposing a shell-capable agent at a name.
 - **Exit:** two accounts run isolated workspaces under one deployment with a
-  gate on every destructive call and an auditable record of who spent what.
+  gate on every destructive call and an auditable record of what each account
+  did — with usage explained rather than charged.
 
 ## 5. Safety and autonomy ladder
 
