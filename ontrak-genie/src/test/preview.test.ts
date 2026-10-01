@@ -1,0 +1,371 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import os from "node:os";
+import path from "node:path";
+import test, { after } from "node:test";
+
+/**
+ * The app preview: what gets run, where it is reached, and what happens when it
+ * is not there.
+ *
+ * The pane's promise is "the app, running, updating as it is edited", and every
+ * part of it is a thing that can be wrong in a way nobody sees: a detected command
+ * that runs the wrong script, a proxy that answers 200 with the console's own root
+ * document, a change feed that fires on `node_modules` and reloads the page forty
+ * times a second. So the tests here start a real server, fetch a real page through
+ * the real proxy, and watch a real directory.
+ *
+ * The dev server is a four-line script written into the workspace and run with
+ * `node`, so none of this depends on npm, a framework or the network.
+ */
+
+const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "genie-preview-"));
+
+process.env.AGENT_WORKSPACE = workspace;
+process.env.AGENT_DATA_DIR = path.join(workspace, ".agent");
+process.env.AGENT_SANDBOX = "host";
+process.env.AGENT_APPROVAL = "off";
+process.env.WEB_TOKEN = "preview-token";
+// Never dialled: nothing here runs a turn, and the import must not either.
+process.env.OMNIROUTE_URL = "http://127.0.0.1:9/v1";
+process.env.CONTROL_PLANE_INTERNAL_URL = "";
+process.env.CONTROL_INTERNAL_TOKEN = "";
+
+const {
+  detectPreviewCommand,
+  findFreePort,
+  portAnswers,
+  previewEvents,
+  previewStatus,
+  resetPreview,
+  startPreview,
+  stopPreview,
+} = await import("../preview.js");
+const { createServer } = await import("../server.js");
+const { ensureWorkspace } = await import("../workspace.js");
+
+await ensureWorkspace();
+const server = createServer();
+await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+const TOKEN = "preview-token";
+
+after(async () => {
+  await resetPreview();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  await fs.rm(workspace, { recursive: true, force: true });
+});
+
+/* ------------------------------------------------------------------ helpers */
+
+const write = (rel: string, content: string): Promise<void> =>
+  fs.mkdir(path.dirname(path.join(workspace, rel)), { recursive: true }).then(() =>
+    fs.writeFile(path.join(workspace, rel), content, "utf8"),
+  );
+
+const remove = (rel: string): Promise<void> =>
+  fs.rm(path.join(workspace, rel), { recursive: true, force: true });
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A page that asks for a root-relative asset, which is what the rewrite is for. */
+const PAGE = `<!doctype html>
+<html><head><title>preview fixture</title><base href="/"></head>
+<body><script src="/app.js"></script><a href="/about">about</a></body></html>`;
+
+const APP_JS = `window.previewFixture = true;\n`;
+
+/**
+ * The dev server the workspace runs.
+ *
+ * It honours `PORT`, listens on the loopback interface, and serves one HTML page
+ * plus one script — the smallest project that still exercises the rewrite, the
+ * asset proxy and the port handshake.
+ */
+const SERVER_JS = `
+const http = require("http");
+const page = ${JSON.stringify(PAGE)};
+const app = ${JSON.stringify(APP_JS)};
+http
+  .createServer((req, res) => {
+    if (req.url.startsWith("/app.js")) {
+      res.writeHead(200, { "Content-Type": "application/javascript" });
+      res.end(app);
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(page);
+  })
+  .listen(Number(process.env.PORT), "127.0.0.1");
+`;
+
+/* ------------------------------------------------------------- detection */
+
+test("what to run", async (t) => {
+  const fixture = path.join(workspace, "detect");
+  const at = (rel: string): string => path.join(fixture, rel);
+  const inFixture = async (rel: string, content: string): Promise<void> => {
+    await fs.mkdir(path.dirname(at(rel)), { recursive: true });
+    await fs.writeFile(at(rel), content, "utf8");
+  };
+
+  await t.test("an empty directory is nothing to run, and says so", async () => {
+    await fs.mkdir(at("."), { recursive: true });
+    assert.equal(detectPreviewCommand(fixture), null);
+  });
+
+  await t.test("a project's own dev script wins", async () => {
+    await inFixture("package.json", JSON.stringify({ scripts: { dev: "vite" } }));
+    assert.deepEqual(detectPreviewCommand(fixture), { command: "npm run dev", cwd: "." });
+  });
+
+  await t.test("start is used when there is no dev", async () => {
+    await inFixture("package.json", JSON.stringify({ scripts: { start: "node server.js" } }));
+    assert.deepEqual(detectPreviewCommand(fixture), { command: "npm run start", cwd: "." });
+  });
+
+  await t.test("an empty or missing script is not a start command", async () => {
+    await inFixture("package.json", JSON.stringify({ scripts: { dev: "   " } }));
+    await inFixture("index.html", "<html></html>");
+    // The blank script is skipped rather than run, and the static page is found.
+    assert.deepEqual(detectPreviewCommand(fixture), {
+      command: "python3 -m http.server $PORT --bind 127.0.0.1",
+      cwd: ".",
+    });
+  });
+
+  await t.test("a Django project runs its own server, and reads PORT", async () => {
+    await fs.rm(at("."), { recursive: true, force: true });
+    await fs.mkdir(at("."), { recursive: true });
+    await inFixture("manage.py", "print('x')\n");
+    const suggestion = detectPreviewCommand(fixture);
+    assert.equal(suggestion?.cwd, ".");
+    assert.match(suggestion?.command ?? "", /manage\.py runserver/);
+  });
+
+  await t.test("a static site is served from the directory holding its index", async () => {
+    await fs.rm(at("."), { recursive: true, force: true });
+    await inFixture("public/index.html", "<html></html>");
+    assert.deepEqual(detectPreviewCommand(fixture), {
+      command: "python3 -m http.server $PORT --bind 127.0.0.1",
+      cwd: "public",
+    });
+  });
+
+  await t.test("a malformed package.json is not fatal", async () => {
+    await fs.rm(at("."), { recursive: true, force: true });
+    await inFixture("package.json", "{ this is not json");
+    await inFixture("index.html", "<html></html>");
+    assert.match(detectPreviewCommand(fixture)?.command ?? "", /http\.server/);
+  });
+});
+
+/* ------------------------------------------------------- start, proxy, stop */
+
+test("the preview, end to end", async (t) => {
+  await write("server.js", SERVER_JS);
+
+  await t.test("nothing is running before anything is started", () => {
+    const status = previewStatus();
+    assert.equal(status.running, false);
+    assert.equal(status.port, null);
+    assert.equal(status.error, null);
+  });
+
+  await t.test("starting runs the project and reports where it landed", async () => {
+    const status = await startPreview({ command: "node server.js" });
+    assert.equal(status.running, true, status.error ?? "the fixture should have started");
+    assert.equal(status.command, "node server.js");
+    assert.equal(status.error, null, "a server that answered must not be reported as broken");
+    assert.ok(status.port !== null && status.port > 0);
+    // The port is not a guess: something is actually listening on it.
+    assert.equal(await portAnswers(status.port!), true);
+  });
+
+  await t.test("the running app is reachable through /preview/", async () => {
+    const response = await fetch(`${base}/preview/?token=${TOKEN}`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") ?? "", /text\/html/);
+
+    const body = await response.text();
+    assert.match(body, /preview fixture/, "the app's page should be what came back");
+    assert.equal(
+      body.includes('src="/preview/app.js"'),
+      true,
+      "a root-relative asset must be moved under the prefix",
+    );
+    assert.equal(
+      body.includes('href="/preview/about"'),
+      true,
+      "a root-relative link must be moved too",
+    );
+    // The base is rewritten as well, or it would send every relative URL back to
+    // the console's own root.
+    assert.match(body, /<base href="\/preview\/">/);
+  });
+
+  await t.test("a rewritten asset is proxied as itself, not as the page", async () => {
+    const response = await fetch(`${base}/preview/app.js?token=${TOKEN}`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") ?? "", /javascript/);
+    assert.equal(await response.text(), APP_JS);
+  });
+
+  await t.test("the preview is gated exactly like the API", async () => {
+    assert.equal((await fetch(`${base}/preview/`)).status, 401);
+    assert.equal((await fetch(`${base}/api/preview`)).status, 401);
+  });
+
+  await t.test("the API describes what is running", async () => {
+    const response = await fetch(`${base}/api/preview`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+    assert.equal(response.status, 200);
+    const status = await response.json();
+    assert.equal(status.running, true);
+    assert.equal(status.command, "node server.js");
+    assert.ok(status.port > 0);
+    assert.equal(status.url, "/preview/");
+  });
+
+  await t.test("the change stream is an event stream", async () => {
+    const response = await fetch(`${base}/api/preview/events?token=${TOKEN}`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") ?? "", /text\/event-stream/);
+    // Reading one frame proves it opened rather than hanging before the headers.
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+    assert.match(new TextDecoder().decode(first.value), /: connected/);
+    await reader.cancel();
+  });
+
+  await t.test("starting again replaces rather than accumulates", async () => {
+    const first = previewStatus().port;
+    const status = await startPreview({ command: "node server.js" });
+    assert.equal(status.running, true);
+    // One preview per workspace: the replacement took the same port back, and the
+    // old process is gone rather than holding a second one nobody opened.
+    assert.equal(status.port, first);
+    assert.equal(await portAnswers(status.port!), true);
+  });
+
+  await t.test("stopping ends it, and the pane says so rather than erroring", async () => {
+    const port = previewStatus().port!;
+    const stopped = await stopPreview();
+    assert.equal(stopped.running, false);
+    assert.equal(await portAnswers(port, 300), false);
+    assert.equal(previewStatus().running, false);
+    assert.equal(previewStatus().port, null);
+
+    // Idempotent: a second stop is not an error.
+    assert.equal((await stopPreview()).running, false);
+
+    const response = await fetch(`${base}/preview/?token=${TOKEN}`);
+    assert.equal(response.status, 503, "no preview is an answer, not a crash");
+    assert.match(await response.text(), /no preview is running/i);
+  });
+
+  await t.test("a project that cannot start reports its output instead of pretending", async () => {
+    const status = await startPreview({ command: "echo 'boom: no such module'; exit 3" });
+    assert.equal(status.running, false);
+    assert.equal(status.exitCode, 3);
+    assert.match(status.log, /boom: no such module/);
+    assert.match(String(status.error), /exited immediately/);
+  });
+
+  await t.test("nothing to run is a message, not a stack trace", async () => {
+    const empty = path.join(workspace, "empty-project");
+    await fs.mkdir(empty, { recursive: true });
+    const status = await startPreview({ command: "", cwd: "empty-project" });
+    assert.equal(status.running, false);
+    assert.match(String(status.error), /nothing here looks like an app/i);
+  });
+});
+
+/* ------------------------------------------------------------- change feed */
+
+test("the change feed", async (t) => {
+  await t.test("a file change is announced once, and noise is not", async () => {
+    const events = previewEvents();
+    let changes = 0;
+    const listener = (): void => {
+      changes += 1;
+    };
+    events.on("change", listener);
+
+    try {
+      // A write inside a directory the app never serves must not reload the pane:
+      // an `npm install` would otherwise reload it hundreds of times.
+      await write("node_modules/noise/index.js", "module.exports = 1;\n");
+      await write(".git/index", "not really a git index\n");
+      await sleep(350);
+      const noise = changes;
+      assert.equal(noise, 0, `ignored paths announced ${noise} change(s)`);
+
+      await write("index.html", "<html>changed</html>\n");
+      await sleep(350);
+      assert.ok(changes > noise, "a real edit should announce a change");
+    } finally {
+      events.off("change", listener);
+      await remove("node_modules");
+      await remove(".git");
+    }
+  });
+
+  await t.test("the last listener leaving closes the watcher", async () => {
+    // Proved by the absence of a leak rather than by inspecting the watcher: a
+    // subscription taken after the first was fully released still works, which it
+    // would not if the torn-down watcher were reused.
+    const first = previewEvents();
+    let seen = 0;
+    const listener = (): void => {
+      seen += 1;
+    };
+    first.on("change", listener);
+    first.off("change", listener);
+
+    const second = previewEvents();
+    let again = 0;
+    const other = (): void => {
+      again += 1;
+    };
+    second.on("change", other);
+    try {
+      await write("second.txt", "hello\n");
+      await sleep(350);
+      assert.equal(again > 0, true, "a fresh subscription must still hear changes");
+    } finally {
+      second.off("change", other);
+      await remove("second.txt");
+    }
+  });
+});
+
+/* -------------------------------------------------------------- port choice */
+
+test("ports", async (t) => {
+  await t.test("a busy port is not handed out", async () => {
+    const taken = await findFreePort(0);
+    const held = http.createServer(() => undefined);
+    await new Promise<void>((resolve) => held.listen(taken, "127.0.0.1", resolve));
+    try {
+      const chosen = await findFreePort(taken);
+      assert.notEqual(chosen, taken, "the port already in use must not be preferred");
+      assert.ok(chosen > 0, "a port the caller can actually listen on is required");
+    } finally {
+      await new Promise<void>((resolve) => held.close(() => resolve()));
+    }
+  });
+
+  await t.test("a free port is preferred over a random one", async () => {
+    const preferred = await findFreePort(0);
+    assert.equal(await findFreePort(preferred), preferred);
+  });
+
+  await t.test("no preference is not port zero", async () => {
+    // Handing "0" back would ask an app to listen somewhere the proxy could never
+    // reach, so a request for any port has to produce a real one.
+    assert.ok((await findFreePort(0)) > 0);
+  });
+});

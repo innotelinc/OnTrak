@@ -668,8 +668,10 @@ A single-page app with no build step (`public/`), served by the agent itself.
   gateway which of its advertised models can actually make a tool call, with live
   progress, the age of the report, and a report grouped by what you can do about
   it. See *Running a sweep from the UI*.
-- **Preview pane.** While the agent writes a file, the pane above the composer
-  shows the file *being written* rather than reporting it afterwards: the tool
+- **Preview pane.** Two things share it, and `show app` / `show code` switches
+  between them: the app *running* (below) and the file *being written*. The code
+  half shows the file as it is written rather than reporting it afterwards: the
+  tool
   call's arguments are forwarded as they arrive (`draft` events), rendered live
   with a caret and a size readout, and followed to the end unless you scroll away.
   When the write lands it says what changed, and `show change` / `show code`
@@ -711,6 +713,41 @@ A single-page app with no build step (`public/`), served by the agent itself.
   transcript. A reload therefore does not leave an empty pane beside a conversation
   that plainly wrote a file, and the pane's open/closed state is remembered for the
   tab.
+- **The running app.** The `preview` pane opens on the app, not on the code: it
+  runs the project and shows it, and reloads it as files change. Clicking the
+  toolbar button on something that is not running starts it, because an empty pane
+  with "set a variable" is not an answer to "show me the app".
+
+  Which command to run is worked out from the project rather than configured: its
+  own `dev` / `start` / `serve` / `preview` script, a `manage.py`, or a directory
+  with an `index.html` (served with `python3 -m http.server`). The pane says which
+  it picked — "detected: npm run dev" — so a guess the user did not make is still
+  a guess they can correct, and `AGENT_PREVIEW_COMMAND` (or the agent, which has
+  just read the project) overrides it. Nothing in the pane depends on the guess
+  being right; it is the difference between one click and two.
+
+  The app is proxied under `/preview/` on this server rather than exposed on its
+  own port, so the pane is same-origin: the app's own fetch, cookies and relative
+  URLs behave in the pane the way they will in production, and running one
+  account's app is gated exactly like reading its files. HTML documents get their
+  root-relative `src`/`href`/`action` rewritten to `/preview/…`, which is what
+  makes a framework that asks for `/assets/app.js` work through a prefix; anything
+  they load then resolves against `/preview/` by itself. A document over 4 MB is
+  streamed through unrewritten rather than buffered.
+
+  Reloading is the console's own, not the app's. A dev server with hot reloading
+  does this for itself and `python3 -m http.server` does not at all, so the pane
+  watches the workspace (`/api/preview/events`) and reloads the frame when the
+  files change — after 400 ms of quiet, because one save is several events. It
+  costs nothing when the app's own reload got there first.
+
+  One preview per workspace, and a second start replaces the first rather than
+  adding a port nobody opened. A server that ignores `PORT` (Vite, Astro) is
+  followed to whichever common port it took — but only to one that was silent
+  before this start, so it can never adopt another account's app. A server that
+  exits stays exited and its output is kept, because a crashed `npm run dev` is a
+  fact about the project and silently restarting it would hide the error that
+  answers "why is the preview blank".
 - **Choosing the working directory.** A deployment names one sandbox (`AGENT_WORKSPACE`),
   and the workspace panel picks a folder inside it — the agent then reads, writes and
   runs there. The panel also makes folders, so a new project does not have to exist
@@ -965,6 +1002,11 @@ All optional — see `.env.example`.
 | `GET`    | `/api/workspace`      | The directory the agent works in, the sandbox around it, and every folder inside it that can be chosen |
 | `POST`   | `/api/workspace`      | Choose the working directory (`{ path }`, sandbox-relative; `400` if it escapes the sandbox) |
 | `POST`   | `/api/workspace/mkdir`| Create a folder in the working directory (`{ name }`; `400` for a name that is a path, `409` if it is taken) |
+| `GET`    | `/api/preview`        | The app preview: running or not, the command, the port, the tail of its output, and the command that would be detected for this project |
+| `POST`   | `/api/preview/start`  | Run this project (`{ command?, cwd?, port? }`; without a command the project's own start is worked out) |
+| `POST`   | `/api/preview/stop`   | Stop it. Idempotent |
+| `GET`   | `/api/preview/events`  | `text/event-stream` of `change` when a workspace file changes, so the pane can reload. Debounced to one event per 250 ms |
+| `GET`   | `/preview/…`           | The running app, proxied byte for byte, same-origin. `503` when nothing is running, `502` when it cannot be reached |
 
 `POST /api/chat` takes `{ message, sessionId?, model?, maxSteps? }` and streams
 `AgentEvent`s: `session`, `step`, `draft` (a file being generated, with the content
@@ -976,7 +1018,7 @@ so far), `text`, `tool_call`, `tool_result` (with an optional `diff`), `notice`,
 ```bash
 npm run dev           # tsx watch (reload on change)
 npm run typecheck     # tsc --noEmit
-npm test              # node:test — 302 tests, no browser needed
+npm test              # node:test — 325 tests, no browser needed
 npm run ui:smoke      # drives the real UI in a headless Chromium
 npm run model:health  # which advertised models really do tool calling
 npm run offline:check # proves the offline fallback, with the gateway dead
@@ -1102,6 +1144,7 @@ src/omniroute.ts   OpenAI-compatible client (streaming, retry classification)
 src/modelHealth.ts periodic tool-call check on the chain, for the health row
 src/sweep.ts       on-demand catalog sweep, shared by the UI and the script
 src/draft.ts       reading a tool call that is still arriving, for the preview
+src/preview.ts     the app preview: what to run, the process, the port, the change feed
 src/sandbox.ts     run_command backend: docker flags, probing, fallback
 src/approval.ts    approval policy + the pending-request broker
 src/snapshots.ts   previous contents of agent-written files
@@ -1118,6 +1161,7 @@ sandbox/Dockerfile  image that run_command executes in
 scripts/           add-provider.mjs (connect a provider), ui-smoke.mjs (browser test),
                    model-health.mjs (CLI sweep), offline-check.mjs (offline proof),
                    draft-check.mjs (how the gateway streams a write),
+                   approvals.mjs (list/approve/deny from a terminal),
                    live-check is offline-check + draft-check via package.json
 src/test/          node:test suite
 ```

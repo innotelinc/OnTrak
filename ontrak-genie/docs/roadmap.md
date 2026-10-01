@@ -22,7 +22,9 @@ full developer reference.
 > through Distro's control plane, and the image is published with a pull-only
 > overlay beside the product compose. **0.2 is complete.** **0.3 is in progress**
 > — resilience and reach: making the console honest about what the gateway
-> actually streams, and giving the approval gate a channel besides the browser.
+> actually streams, giving the approval gate a channel besides the browser, giving
+> the workspace a real toolchain, and showing the app itself rather than only the
+> code that builds it.
 
 ## 1. Vision
 
@@ -189,9 +191,21 @@ not.
 - `[ ]` **Per-account usage visible in the console.** The ledger is written today;
   showing an account its own spend, beside the quota the plane reports, is the
   half a user can act on.
-- `[ ]` **Sandbox network policy as a deliberate option.** `--network none` is
-  correct and stays the default; a documented, opt-in allowance for package
-  installs would remove the one case where the sandbox cannot do the work.
+- `[x]` **A toolchain in the workspace, and the network to use it.** The runtime
+  image carries bash, git, ripgrep, curl, wget, jq, make, gcc/g++, python3 + pip
+  and unzip, and the system prompt tells the agent to install what else it needs
+  (`apk add`, `pip install`, `npm install`) rather than work around it — "curl not
+  found" is not an answer this agent gives. `AGENT_SANDBOX_NETWORK` (default
+  `none`) is the deliberate opt-in for the sandboxed case, and the compose
+  deployment runs on the host path where the container is already the boundary.
+- `[x]` **The app, running.** `preview` used to open on the code the agent was
+  writing; it now opens on the project *running*, and reloads it as files change.
+  `src/preview.ts` owns one dev server per workspace, the port it ended up on, and
+  the change feed; the app is proxied under `/preview/` (same-origin, gated like
+  any other read) with root-relative URLs rewritten, so a framework asking for
+  `/assets/app.js` works through the prefix. Which command to run is detected from
+  the project rather than configured, and named as detected in the pane; `show
+  code` still shows the file being written.
 
 ### v0.4 — Beyond a single operator `[ ]`
 

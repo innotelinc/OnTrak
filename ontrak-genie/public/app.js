@@ -361,30 +361,48 @@ function renderPreviewDiff() {
   box.append(rendered);
 }
 
-/** Which half of the pane is on screen: the code, the change, or both. */
+/**
+ * Which view of the pane is on screen.
+ *
+ * Three, and they are three rather than two because they answer different
+ * questions. **App** is the built thing running, which is what "preview" means to
+ * anybody who is not the person writing the code. **Code** is the file the agent
+ * is writing. **Change** is what that file did to the one it replaced. The app is
+ * the default the toolbar button opens, and it is the one view that survives the
+ * agent working: the other two are about a write that has already finished by the
+ * time you read them.
+ */
 function applyPreviewLayout() {
   const pane = state.preview;
   const hasDiff = pane.diff !== null && pane.diff !== undefined;
+  const app = pane.mode === "app";
   // A write that is still arriving shows the change beside the code: watching the
   // file take shape is the point, and the diff is the other half of that. Once
   // the call lands the pane goes back to one view and the toggle comes back.
   const live =
-    pane.generating === true && pane.name === "write_file" && hasDiff && previewIsOpen();
+    !app && pane.generating === true && pane.name === "write_file" && hasDiff && previewIsOpen();
   const showDiff = pane.mode === "change" && hasDiff;
 
   $("#preview").classList.toggle("live", live);
+  $("#preview-app").classList.toggle("hidden", !app);
+
+  const run = $("#preview-run");
+  run.textContent = app ? "show code" : "show app";
+  run.setAttribute("aria-pressed", app ? "true" : "false");
+  run.title = app ? "Show the code the agent is writing" : "Show the app, running";
 
   const toggle = $("#preview-toggle");
-  // With both halves on screen at once there is nothing to switch between.
-  toggle.classList.toggle("hidden", !hasDiff || live);
+  // With both halves on screen at once there is nothing to switch between, and
+  // the app view is a third thing neither half is about.
+  toggle.classList.toggle("hidden", !hasDiff || live || app);
   toggle.textContent = showDiff ? "show code" : "show change";
   toggle.setAttribute("aria-pressed", showDiff ? "true" : "false");
 
-  $("#preview-diff").classList.toggle("hidden", !(live || showDiff));
-  $("#preview-body").classList.toggle("hidden", !live && showDiff);
+  $("#preview-diff").classList.toggle("hidden", app || !(live || showDiff));
+  $("#preview-body").classList.toggle("hidden", app || (!live && showDiff));
 }
 
-/** Show the code, the change, or - when there is a diff - let the button pick. */
+/** Show the app, the code, or - when there is a diff - let the button pick. */
 function setPreviewMode(mode) {
   state.preview.mode = mode;
   applyPreviewLayout();
@@ -499,13 +517,16 @@ async function runLiveDiff() {
 
 function resetPreview() {
   cancelLiveDiff();
+  // A running app outlives the chat it was started from, so the pane stays on it
+  // rather than throwing the user back to an empty code view they did not ask for.
+  const mode = state.preview.mode === "app" ? "app" : "code";
   state.preview = {
     ...state.preview,
     name: null,
     path: null,
     content: "",
     diff: null,
-    mode: "code",
+    mode,
     toolId: null,
     toolName: null,
     generating: false,
@@ -515,7 +536,7 @@ function resetPreview() {
   setPreviewStatus("");
   previewBody("", false);
   renderPreviewDiff();
-  setPreviewMode("code");
+  setPreviewMode(mode);
   $("#preview-open").classList.add("hidden");
 }
 
@@ -543,7 +564,10 @@ function previewDraft(event) {
 
   $("#preview-title").textContent = pane.path ?? `${event.name} — path not named yet`;
   schedulePreviewBody(event.content, true);
-  setPreviewMode("code");
+  // The app view is not switched away from: a file being written is not a reason
+  // to take the running app off the screen, and the code is one click away. The
+  // pane only follows the write when the code is what it is already showing.
+  if (pane.mode !== "app") setPreviewMode("code");
   // The change, as far as it has been written, beside the file itself.
   scheduleLiveDiff();
   /*
@@ -597,7 +621,7 @@ function previewToolCall(event) {
 
   $("#preview-title").textContent = pane.path ?? event.name;
   previewBody(content, false);
-  setPreviewMode("code");
+  if (pane.mode !== "app") setPreviewMode("code");
   if (pane.streamed === false) {
     // Same distinction as above, now that the call has landed: say it arrived in
     // one piece rather than let the pane imply it was watched being written.
@@ -666,6 +690,210 @@ function showRestoredFile(entry) {
   setPreviewStatus(pane.diff ? `+${pane.diff.added} −${pane.diff.removed}` : "written", "ok");
   $("#preview-status").title = "From this chat's transcript; nothing is being written right now.";
   $("#preview-open").classList.toggle("hidden", pane.path === null);
+}
+
+/* --------------------------------------------------------------- the running app */
+
+/*
+ * The app, running, in the pane.
+ *
+ * Everything else in this pane is about the *source*: the file being written, the
+ * change it made. This is the other end of the same request — the thing the source
+ * is for — and it is what "preview" means to somebody who did not write the code.
+ *
+ * Three mechanics worth stating.
+ *
+ * **It starts itself.** Clicking "run" on a project nobody has configured should
+ * not answer with a variable name. The server works out what this project is
+ * (its own dev script, manage.py, a directory with an index.html); the pane sends
+ * that and shows what came back. `AGENT_PREVIEW_COMMAND` still overrides it.
+ *
+ * **The frame is same-origin, through the server.** Not a second host or port:
+ * the app's own fetch, cookies and relative URLs then behave in the pane the way
+ * they will in production, and the pane needs no certificate of its own.
+ *
+ * **It reloads on its own.** A dev server with hot reloading already does this;
+ * `python3 -m http.server` does not, and neither does anything whose watcher
+ * misses a file. The change stream covers both, and costs nothing when the app's
+ * own reload got there first.
+ */
+
+const previewApp = {
+  /** The last status the server reported, or null before the first answer. */
+  status: null,
+  /** The change stream, open while the app view is on screen. */
+  stream: null,
+  /** Debounce for reloads, so a write storm is one reload and not twenty. */
+  reloadTimer: null,
+};
+
+const PREVIEW_RELOAD_DELAY_MS = 400;
+
+function previewAppRunning() {
+  return previewApp.status !== null && previewApp.status.running === true;
+}
+
+/** Where the pane points its frame: the proxied app, with this tab's token. */
+function previewFrameUrl() {
+  const params = new URLSearchParams();
+  // A deployment with a shared token authorizes an iframe the same way it
+  // authorizes a fetch; without this the frame is a 401 the user cannot see.
+  if (authToken !== "") params.set("token", authToken);
+  params.set("_", String(Date.now()));
+  return `/preview/?${params.toString()}`;
+}
+
+/** Load the app into the frame. The cache-buster is what makes this a reload. */
+function loadPreviewFrame() {
+  const frame = $("#preview-frame");
+  frame.dataset.loaded = "1";
+  frame.src = previewFrameUrl();
+}
+
+function unloadPreviewFrame() {
+  const frame = $("#preview-frame");
+  delete frame.dataset.loaded;
+  frame.src = "about:blank";
+}
+
+/** Paint the pane from a server status. Pure: no requests, no side effects. */
+function applyPreviewApp(status) {
+  previewApp.status = status;
+  const running = status.running === true;
+
+  $("#preview-app-dot").className = `preview-dot ${running ? "up" : "down"}`;
+  $("#preview-app-url").textContent = running
+    ? `/preview/ · port ${status.port}`
+    : "no app running";
+  $("#preview-app-empty").classList.toggle("hidden", running);
+
+  $("#preview-frame").classList.toggle("hidden", !running);
+  $("#preview-app-start").classList.toggle("hidden", running);
+  $("#preview-app-stop").classList.toggle("hidden", !running);
+  $("#preview-app-reload").classList.toggle("hidden", !running);
+
+  const log = status.log ?? "";
+  $("#preview-app-log-toggle").classList.toggle("hidden", log === "");
+  $("#preview-app-log").textContent = log;
+  if (log === "") {
+    const toggle = $("#preview-app-log-toggle");
+    toggle.setAttribute("aria-expanded", "false");
+    $("#preview-app-log").classList.add("hidden");
+  }
+
+  /*
+   * One line that says what is true: why it is not up, or what was run. A
+   * detected command is named as detected, because a guess the user did not make
+   * is a guess they should be able to correct.
+   */
+  const note = $("#preview-app-note");
+  let note_ = "";
+  if (status.error) note_ = status.error;
+  else if (running && status.command) {
+    note_ = `${status.detected ? "detected" : "running"}: ${status.command}`;
+  } else if (!running && status.command) {
+    // Before the click, not after: "will run: npm run dev" is what makes the
+    // guess a thing the user can see and correct rather than a surprise.
+    note_ = `will run: ${status.command}`;
+  }
+  note.textContent = note_;
+  note.classList.toggle("hidden", note_ === "");
+
+  if (running && $("#preview-frame").dataset.loaded !== "1") loadPreviewFrame();
+  if (!running) unloadPreviewFrame();
+}
+
+/** Ask the server what is running; wrong answers leave the last one on screen. */
+async function refreshPreviewApp() {
+  try {
+    applyPreviewApp(await api("/api/preview"));
+  } catch {
+    /* the pane keeps whatever it last knew rather than blanking on a hiccup */
+  }
+}
+
+async function startPreviewApp() {
+  const button = $("#preview-app-start");
+  button.disabled = true;
+  button.textContent = "starting";
+  try {
+    // No command: the server picks this project's own, which is the whole point
+    // of the button. Anything it could not work out is in `error`, on screen.
+    applyPreviewApp(
+      await api("/api/preview/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }),
+    );
+  } catch (error) {
+    $("#preview-app-note").textContent = error.message;
+    $("#preview-app-note").classList.remove("hidden");
+  } finally {
+    button.disabled = false;
+    button.textContent = "run";
+  }
+}
+
+async function stopPreviewApp() {
+  try {
+    applyPreviewApp(await api("/api/preview/stop", { method: "POST" }));
+  } catch {
+    /* stopping is idempotent; a refusal is worth a refresh, not a dialog */
+  }
+  unloadPreviewFrame();
+  await refreshPreviewApp();
+}
+
+/** Reload the app, coalescing the burst a single save produces. */
+function schedulePreviewReload() {
+  if (!previewAppRunning()) return;
+  if (previewApp.reloadTimer !== null) clearTimeout(previewApp.reloadTimer);
+  previewApp.reloadTimer = setTimeout(() => {
+    previewApp.reloadTimer = null;
+    if (previewAppRunning()) loadPreviewFrame();
+  }, PREVIEW_RELOAD_DELAY_MS);
+}
+
+/**
+ * Open the change stream while the app view is on screen.
+ *
+ * Opened on the first look and closed when the pane is dismissed: a stream left
+ * open is a request that never ends, and one opened for a pane nobody is looking
+ * at is a reload nobody asked for.
+ */
+function watchPreviewChanges() {
+  if (previewApp.stream !== null) return;
+  const params = new URLSearchParams();
+  if (authToken !== "") params.set("token", authToken);
+  const stream = new EventSource(`/api/preview/events?${params.toString()}`);
+  stream.addEventListener("message", schedulePreviewReload);
+  // EventSource reconnects by itself; a failed one is a lost convenience, and
+  // the run/reload buttons still work.
+  previewApp.stream = stream;
+}
+
+function unwatchPreviewChanges() {
+  if (previewApp.reloadTimer !== null) clearTimeout(previewApp.reloadTimer);
+  previewApp.reloadTimer = null;
+  if (previewApp.stream !== null) previewApp.stream.close();
+  previewApp.stream = null;
+}
+
+/**
+ * Show the app view, starting the project if it is not up.
+ *
+ * `autoStart` is false for the restore-on-load path: reopening the console should
+ * not run anything by itself, but *clicking* preview should produce a picture of
+ * the app rather than instructions for getting one.
+ */
+async function showPreviewApp(autoStart = true) {
+  setPreviewMode("app");
+  watchPreviewChanges();
+  await refreshPreviewApp();
+  if (previewAppRunning()) return;
+  if (!autoStart) return;
+  if (previewApp.status !== null && previewApp.status.command) await startPreviewApp();
 }
 
 /* ---------------------------------------------------------------- approvals */
@@ -1611,6 +1839,10 @@ async function chooseWorkspace(path) {
   // leaving the list on a path that only existed in the old one.
   await loadFiles(".");
   await loadWorkspace();
+  // And a different preview: the running app belongs to a workspace, so the pane
+  // must not keep showing the old one's frame under the new one's name.
+  unloadPreviewFrame();
+  await refreshPreviewApp();
 }
 
 /** Create a folder in the working directory, then offer it as the working directory. */
@@ -1967,13 +2199,47 @@ function wire() {
     if (event.target === $("#viewer")) closeViewer();
   });
 
-  $("#toggle-preview").addEventListener("click", () => togglePreview());
-  $("#preview-close").addEventListener("click", () => togglePreview(false));
+  /*
+   * The toolbar button opens the app, not the code.
+   *
+   * "Preview" means the built thing to anybody who did not write it, and a pane
+   * that answers with the source of a file is answering a different question. The
+   * code is one click further in.
+   */
+  $("#toggle-preview").addEventListener("click", () => {
+    const opening = !previewIsOpen();
+    togglePreview();
+    if (opening) void showPreviewApp();
+    else unwatchPreviewChanges();
+  });
+  $("#preview-close").addEventListener("click", () => {
+    togglePreview(false);
+    unwatchPreviewChanges();
+  });
+  $("#preview-run").addEventListener("click", () => {
+    if (state.preview.mode === "app") {
+      setPreviewMode("code");
+      return;
+    }
+    void showPreviewApp();
+  });
   $("#preview-toggle").addEventListener("click", () =>
     setPreviewMode(state.preview.mode === "change" ? "code" : "change"),
   );
   $("#preview-open").addEventListener("click", () => {
     if (state.preview.path !== null) void openFile(state.preview.path);
+  });
+
+  $("#preview-app-start").addEventListener("click", () => void startPreviewApp());
+  $("#preview-app-stop").addEventListener("click", () => void stopPreviewApp());
+  $("#preview-app-reload").addEventListener("click", () => {
+    if (previewAppRunning()) loadPreviewFrame();
+    else void refreshPreviewApp();
+  });
+  $("#preview-app-log-toggle").addEventListener("click", () => {
+    const log = $("#preview-app-log");
+    const open = log.classList.toggle("hidden");
+    $("#preview-app-log-toggle").setAttribute("aria-expanded", open ? "false" : "true");
   });
 
   // Following the end of a growing file is the default; scrolling up stops it, so
@@ -2028,8 +2294,11 @@ wire();
 autoGrow();
 // Restore the pane's own state before any turn can change it: open if it was open,
 // and quiet if it was closed on purpose.
-if (storedPreviewOpen() === "1") togglePreview(true);
-else if (storedPreviewOpen() === "0") state.preview.dismissed = true;
+if (storedPreviewOpen() === "1") {
+  togglePreview(true);
+  // Reopened, not started: reloading the console is not a request to run the app.
+  void showPreviewApp(false);
+} else if (storedPreviewOpen() === "0") state.preview.dismissed = true;
 // Before anything is fetched: if this deployment signs people in, go there.
 void signInIfRequired();
 void loadModels();

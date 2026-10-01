@@ -5,6 +5,13 @@ import { fileURLToPath } from "node:url";
 
 import { runAgent } from "./agent.js";
 import { listPendingApprovals, pendingApprovals, resolveApproval } from "./approval.js";
+import {
+  previewEvents,
+  previewPort,
+  previewStatus,
+  startPreview,
+  stopPreview,
+} from "./preview.js";
 import { config } from "./config.js";
 import { controlPlaneEnabled } from "./controlplane.js";
 import { buildFileDiff } from "./diff.js";
@@ -137,6 +144,131 @@ const STATIC_FILES: Record<string, { file: string; type: string }> = {
   "/login": { file: "login.html", type: "text/html; charset=utf-8" },
   "/login.html": { file: "login.html", type: "text/html; charset=utf-8" },
 };
+
+/**
+ * Forward one request to the workspace's dev server.
+ *
+ * A straight byte pipe, because the response is whatever the project serves:
+ * HTML, a bundle, an image, an event stream. Nothing here parses it, which is
+ * what keeps the preview honest — a header the app set is a header the browser
+ * sees, and a status it returned is the status the pane acted on.
+ *
+ * `503` when nothing is running is a real answer, not an error: it is what the
+ * pane shows before somebody starts the app.
+ */
+/**
+ * Move a document's root-relative URLs under `/preview/`.
+ *
+ * The app is proxied on a prefix, but it was written to be served at a root: a
+ * Vite or CRA page asks for `/assets/app.js`, which the browser then fetches from
+ * *this* server's root and gets a 404. Rewriting the document's own attributes is
+ * what puts those requests back on the app. Only the page itself is touched —
+ * every script it loads then resolves its own imports against `/preview/`, which
+ * is already correct.
+ *
+ * Deliberately shallow: attributes only, no CSS, no `srcset`, no string surgery
+ * inside scripts. Anything beyond this is a rewrite engine, and a rewrite engine
+ * is a thing that breaks pages in ways nobody can debug.
+ */
+function prefixRootUrls(html: string): string {
+  return html.replace(
+    /\b(src|href|action|poster)\s*=\s*(["'])\/(?!\/|preview\/)/gi,
+    (_match, attribute: string, quote: string) => `${attribute}=${quote}/preview/`,
+  );
+}
+
+/** A document larger than this is streamed through unrewritten rather than buffered. */
+const HTML_REWRITE_LIMIT = 4 * 1024 * 1024;
+
+function proxyPreview(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  url: URL,
+): Promise<void> {
+  const port = previewPort();
+  if (port === null) {
+    res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("No preview is running yet. Start the app, then reload this pane.\n");
+    return Promise.resolve();
+  }
+
+  // `/preview/foo` is `/foo` to the app: it was written to be served at its own
+  // root, and a dev server that expected a prefix would not be a dev server.
+  const rest = url.pathname.replace(/^\/preview/, "") || "/";
+  const target = `${rest}${url.search ?? ""}`;
+
+  return new Promise<void>((resolve) => {
+    const upstream = http.request(
+      {
+        host: "127.0.0.1",
+        port,
+        path: target,
+        method: req.method,
+        headers: { ...req.headers, host: `127.0.0.1:${port}` },
+      },
+      (answer) => {
+        const type = String(answer.headers["content-type"] ?? "");
+        const rewritable =
+          type.includes("text/html") && answer.headers["content-encoding"] === undefined;
+        if (!rewritable) {
+          res.writeHead(answer.statusCode ?? 502, answer.headers);
+          answer.pipe(res);
+          answer.on("end", resolve);
+          return;
+        }
+
+        const chunks: Buffer[] = [];
+        let size = 0;
+        let flushed = false;
+        const flushAsIs = (): void => {
+          if (flushed) return;
+          flushed = true;
+          res.writeHead(answer.statusCode ?? 502, answer.headers);
+          for (const chunk of chunks) res.write(chunk);
+        };
+        answer.on("data", (chunk: Buffer) => {
+          if (flushed) {
+            res.write(chunk);
+            return;
+          }
+          chunks.push(chunk);
+          size += chunk.length;
+          // Too big to hold, and holding it is the only way to rewrite it: send
+          // what has arrived and get out of the way.
+          if (size > HTML_REWRITE_LIMIT) flushAsIs();
+        });
+        answer.on("end", () => {
+          if (flushed) {
+            res.end();
+          } else {
+            const headers = { ...answer.headers };
+            const body = Buffer.from(prefixRootUrls(Buffer.concat(chunks).toString("utf8")), "utf8");
+            /*
+             * The body is no longer the one the app sent, so neither of its
+             * length headers can be trusted. A dev server usually answers with
+             * `chunked` rather than a length, and the two cannot be sent
+             * together, so `chunked` goes and a measured length takes its place.
+             */
+            delete headers["content-length"];
+            delete headers["transfer-encoding"];
+            headers["content-length"] = String(body.length);
+            res.writeHead(answer.statusCode ?? 502, headers);
+            res.end(body);
+          }
+          resolve();
+        });
+      },
+    );
+    upstream.on("error", () => {
+      if (!res.headersSent) {
+        res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
+      }
+      res.end("The preview is not reachable — the app may have exited (see its output).\n");
+      resolve();
+    });
+    req.pipe(upstream);
+  });
+}
 
 async function serveStatic(res: http.ServerResponse, pathname: string): Promise<boolean> {
   const entry = STATIC_FILES[pathname];
@@ -626,6 +758,64 @@ async function handleApi(
   }
 
   /*
+   * The running app, and the three things a console needs to do with it: ask
+   * what is up, start it, stop it. The bytes themselves are proxied under
+   * `/preview/` (see `proxyPreview`) rather than here, because they are not the
+   * API — they are whatever the project serves.
+   */
+  if (pathname === "/api/preview" && method === "GET") {
+    return sendJson(res, 200, previewStatus());
+  }
+
+  if (pathname === "/api/preview/start" && method === "POST") {
+    const payload = await readJson(req).catch(() => ({}) as Record<string, unknown>);
+    const status = await startPreview({
+      command: typeof payload.command === "string" ? payload.command : undefined,
+      cwd: typeof payload.cwd === "string" ? payload.cwd : undefined,
+      port: typeof payload.port === "number" ? payload.port : undefined,
+    });
+    return sendJson(res, 200, status);
+  }
+
+  if (pathname === "/api/preview/stop" && method === "POST") {
+    return sendJson(res, 200, await stopPreview());
+  }
+
+  /*
+   * "The files changed" as a stream, so the pane reloads the app the moment it
+   * is edited rather than when somebody notices. Debounced here rather than in
+   * the browser: one save fires several events, and the point of the stream is
+   * to be cheap.
+   */
+  if (pathname === "/api/preview/events" && method === "GET") {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.write(": connected\n\n");
+
+    const events = previewEvents();
+    let pending: NodeJS.Timeout | null = null;
+    const onChange = (): void => {
+      if (pending !== null) return;
+      pending = setTimeout(() => {
+        pending = null;
+        res.write(`data: ${JSON.stringify({ type: "change" })}\n\n`);
+      }, 250);
+    };
+    events.on("change", onChange);
+    const keepAlive = setInterval(() => res.write(": ping\n\n"), 20_000);
+    req.on("close", () => {
+      events.off("change", onChange);
+      clearInterval(keepAlive);
+      if (pending !== null) clearTimeout(pending);
+    });
+    return;
+  }
+
+  /*
    * What the gate is waiting on.
    *
    * The browser learns about a prompt from the turn's own SSE stream; a driver
@@ -708,6 +898,24 @@ export function createServer(): http.Server {
           await runInScope(scope.scope, () => handleApi(req, res, url));
           return;
         }
+        /*
+         * The running app, proxied rather than iframed from somewhere else.
+         *
+         * Same origin on purpose: the app's own fetch and cookies then behave
+         * in the preview exactly as they will when it is deployed, and the pane
+         * does not need a second host, port or certificate. It is gated exactly
+         * like the API — running code is not a public asset — and resolved
+         * through the caller's scope, so one account's preview can never be
+         * reached with another's request.
+         */
+        if (url.pathname === "/preview" || url.pathname.startsWith("/preview/")) {
+          if (!isAuthorized(req, url)) throw new HttpError(401, "unauthorized");
+          const previewScope = await scopeFor(sessionFrom(req));
+          if (!previewScope.ok) throw new HttpError(previewScope.status, previewScope.message);
+          await runInScope(previewScope.scope, () => proxyPreview(req, res, url));
+          return;
+        }
+
         if (req.method === "GET" && (await serveStatic(res, url.pathname))) return;
         sendJson(res, 404, { error: "not found" });
       } catch (error) {

@@ -97,7 +97,7 @@
             <button
               id="toggle-preview"
               class="btn-ghost"
-              title="Show the code the agent is generating, as it writes it"
+              title="Run this project and watch it change as the agent edits it"
               aria-controls="preview"
               aria-expanded="false"
             >
@@ -108,12 +108,20 @@
 
         <div id="messages" class="messages" role="log" aria-label="Conversation"></div>
 
-        <aside id="preview" class="preview" aria-label="Code being generated">
+        <aside id="preview" class="preview" aria-label="The app and the code being generated">
           <div class="preview-head">
             <span class="brand">Preview</span>
             <span id="preview-title" class="mono muted">nothing generated yet</span>
             <span id="preview-status" class="badge hidden" role="status"></span>
             <div class="preview-actions">
+              <button
+                id="preview-run"
+                class="btn-ghost"
+                aria-pressed="true"
+                title="Switch between the running app and the code the agent is writing"
+              >
+                show app
+              </button>
               <button
                 id="preview-toggle"
                 class="btn-ghost hidden"
@@ -135,6 +143,51 @@
             </div>
           </div>
           <div class="preview-content">
+            <div id="preview-app" class="preview-app hidden">
+              <div class="preview-app-bar">
+                <span id="preview-app-dot" class="preview-dot" aria-hidden="true"></span>
+                <span id="preview-app-url" class="mono muted">no app running</span>
+                <span id="preview-app-note" class="preview-app-note muted"></span>
+                <div class="preview-app-actions">
+                  <button id="preview-app-start" class="btn-ghost" title="Run the project and show it here">
+                    run
+                  </button>
+                  <button
+                    id="preview-app-stop"
+                    class="btn-ghost hidden"
+                    title="Stop the running app"
+                  >
+                    stop
+                  </button>
+                  <button
+                    id="preview-app-reload"
+                    class="btn-ghost hidden"
+                    title="Reload the app in this pane"
+                  >
+                    reload
+                  </button>
+                  <button
+                    id="preview-app-log-toggle"
+                    class="btn-ghost hidden"
+                    aria-expanded="false"
+                    title="Show the app's own output"
+                  >
+                    output
+                  </button>
+                </div>
+              </div>
+              <pre id="preview-app-log" class="preview-app-log mono hidden" tabindex="0"></pre>
+              <iframe
+                id="preview-frame"
+                class="preview-frame hidden"
+                title="The app, running"
+                sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals allow-downloads"
+              ></iframe>
+              <p id="preview-app-empty" class="preview-app-empty muted">
+                Nothing is running yet. Use <span class="mono">run</span> to start this project,
+                or ask the agent to start it.
+              </p>
+            </div>
             <div id="preview-diff" class="preview-diff hidden"></div>
             <pre id="preview-body" class="preview-body mono" tabindex="0"></pre>
           </div>

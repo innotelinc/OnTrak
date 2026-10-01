@@ -188,6 +188,17 @@ export const config = {
   approvalMaxLines: int("AGENT_APPROVAL_MAX_LINES", 200),
   approvalTimeoutMs: int("AGENT_APPROVAL_TIMEOUT_MS", 300_000),
 
+  /**
+   * The live preview: the app running, beside the code that makes it.
+   *
+   * `previewPort` is the port a dev server is asked to listen on (a free one is
+   * chosen if it is taken, and the proxy follows), and `previewCommand` is what
+   * to run when nobody has said otherwise — the agent normally names it, having
+   * read the project. Empty means the console will not start an app by itself.
+   */
+  previewPort: int("AGENT_PREVIEW_PORT", 5173),
+  previewCommand: str("AGENT_PREVIEW_COMMAND", ""),
+
   sandbox: sandboxPreference("AGENT_SANDBOX", "auto"),
   sandboxNetwork: sandboxNetwork("AGENT_SANDBOX_NETWORK", "none"),
   sandboxImage: str("AGENT_SANDBOX_IMAGE", "coding-agent-sandbox:latest"),

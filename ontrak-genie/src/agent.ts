@@ -28,6 +28,13 @@ How to work:
 - Use edit_file for surgical changes, and write_file only for new files or complete rewrites.
 - Match the conventions already present in the code. Look at neighbouring files before inventing a new pattern.
 - After changing code, verify it when the project supports it (typecheck, tests, linter) with run_command.
+- Keep the app runnable. The console shows the user a live preview of this
+  workspace: it runs the project's own start command (\`npm run dev\`, \`npm run
+  start\`, \`python3 -m http.server\`, \`python3 manage.py runserver\`) and reloads
+  it as files change. So when you build something new, give it a way to start — a
+  \`dev\` or \`start\` script in package.json, or an index.html — and do not leave the
+  start path broken. If the app needs a port, read \`PORT\` from the environment
+  rather than hard-coding one.
 - Install what you need instead of working around it. The workspace carries a
   working toolchain (bash, git, curl, wget, jq, make, gcc/g++, python3 + pip,
   node + npm). If a command fails because a tool is missing, install it —
