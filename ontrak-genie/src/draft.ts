@@ -195,6 +195,40 @@ export function draftPreview(name: string, args: string): DraftPreview | null {
 }
 
 /**
+ * Did the pane get to show this file before it was finished?
+ *
+ * The preview is only live if the tool call actually streamed. A gateway that
+ * buffers the whole call - the LAN Gemini path does exactly this - delivers one
+ * frame that already holds the finished arguments, so the pane hears about the
+ * file only once it is complete and can never show it being written. That is a
+ * property of the gateway, not a bug here, and the honest thing is to say so
+ * rather than imply a stream that never happened.
+ *
+ * `previous` is the last draft of this attempt: a file the pane is already
+ * watching (same name and path, still unfinished) is being streamed, and so is
+ * one that is itself still arriving. The first the pane hears of a file that is
+ * *already* complete is the coalesced case.
+ */
+export interface DraftSequence {
+  /** `name:path` of the last draft, or null before the first. */
+  key: string | null;
+  /** Whether that last draft was the finished body. */
+  complete: boolean;
+}
+
+export function draftStreamed(
+  previous: DraftSequence,
+  draft: { name: string; path: string | null; complete: boolean },
+): { streamed: boolean; next: DraftSequence } {
+  const key = `${draft.name}:${draft.path ?? ""}`;
+  const continues = previous.key === key && previous.complete === false;
+  return {
+    streamed: continues || !draft.complete,
+    next: { key, complete: draft.complete },
+  };
+}
+
+/**
  * The file a *text-mode* tool call is writing, as it arrives.
  *
  * Smaller models - the local 7B this project falls back to, for one - print the

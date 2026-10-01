@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { draftPreview, scanStringFields, textDraftPreview } from "../draft.js";
+import { draftStreamed, draftPreview, scanStringFields, textDraftPreview } from "../draft.js";
 
 /**
  * Tests for reading a tool call that is still arriving.
@@ -141,5 +141,32 @@ test("textDraftPreview", async (t) => {
 
   await t.test("a tool the agent does not have is ignored", () => {
     assert.equal(textDraftPreview('{"name":"write_file"', new Set(["read_file"])), null);
+  });
+});
+
+test("whether the pane really watched a file being written", async (t) => {
+  const write = { name: "write_file", path: "note.txt", complete: true };
+  const partial = { name: "write_file", path: "note.txt", complete: false };
+  const start = { key: null, complete: false };
+
+  await t.test("a finished body the pane has never seen is not a stream", () => {
+    assert.deepEqual(draftStreamed(start, write), {
+      streamed: false,
+      next: { key: "write_file:note.txt", complete: true },
+    });
+  });
+
+  await t.test("a body still arriving is", () => {
+    const first = draftStreamed(start, partial);
+    assert.equal(first.streamed, true);
+    // …and the draft that finishes it stays streamed, because the pane did watch
+    // it grow - that is the whole distinction.
+    assert.equal(draftStreamed(first.next, write).streamed, true);
+  });
+
+  await t.test("a different file arriving whole starts the question again", () => {
+    const streamedFile = draftStreamed(start, partial);
+    const other = { name: "write_file", path: "other.txt", complete: true };
+    assert.equal(draftStreamed(streamedFile.next, other).streamed, false);
   });
 });

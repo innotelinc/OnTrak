@@ -34,6 +34,13 @@ const state = {
     toolId: null,
     toolName: null,
     generating: false,
+    /**
+     * Whether the gateway streamed the call, so the pane could show the file
+     * being written. `false` means it arrived complete in one frame; `undefined`
+     * means no draft ever arrived (streaming is off), which is not the same
+     * claim and must not be labelled as one.
+     */
+    streamed: undefined,
     /** Set when the user closes the pane, so a later draft does not reopen it. */
     dismissed: false,
     /** Whether the pane follows the end of the file as it grows. */
@@ -502,6 +509,7 @@ function resetPreview() {
     toolId: null,
     toolName: null,
     generating: false,
+    streamed: undefined,
   };
   $("#preview-title").textContent = "nothing generated yet";
   setPreviewStatus("");
@@ -531,18 +539,33 @@ function previewDraft(event) {
   if (event.path !== null && event.path !== undefined) pane.path = event.path;
   pane.content = event.content;
   pane.generating = true;
+  pane.streamed = event.streamed === true;
 
   $("#preview-title").textContent = pane.path ?? `${event.name} — path not named yet`;
   schedulePreviewBody(event.content, true);
   setPreviewMode("code");
   // The change, as far as it has been written, beside the file itself.
   scheduleLiveDiff();
-  setPreviewStatus(event.complete === true ? "writing complete" : "generating");
+  /*
+   * A file that was never shown growing is not a stream, and the chip should not
+   * pretend otherwise: this gateway hands the whole call over in one frame, so
+   * the first thing the pane hears of it is the finished body.
+   */
+  if (event.complete === true && event.streamed === false) {
+    setPreviewStatus("arrived complete", "ok");
+    $("#preview-status").title =
+      "The gateway sent this call in one frame, so the file could not be shown while it was written.";
+  } else {
+    setPreviewStatus(event.complete === true ? "writing complete" : "generating");
+  }
   $("#preview-open").classList.toggle("hidden", pane.path === null);
 
   // Announced once per file, not once per token: the live region is for state
   // changes, and every delta arriving is not one.
-  if (fresh) announce(`Generating ${event.name}${pane.path === null ? "" : `: ${pane.path}`}`);
+  if (fresh) {
+    const label = event.complete === true && event.streamed === false ? "Received" : "Generating";
+    announce(`${label} ${event.name}${pane.path === null ? "" : `: ${pane.path}`}`);
+  }
 }
 
 /** The call has landed: the body is final, so the caret comes off. */
@@ -575,7 +598,15 @@ function previewToolCall(event) {
   $("#preview-title").textContent = pane.path ?? event.name;
   previewBody(content, false);
   setPreviewMode("code");
-  setPreviewStatus(event.name === "edit_file" ? "edit ready" : "written");
+  if (pane.streamed === false) {
+    // Same distinction as above, now that the call has landed: say it arrived in
+    // one piece rather than let the pane imply it was watched being written.
+    setPreviewStatus("written in one frame", "ok");
+    $("#preview-status").title =
+      "The gateway sent this call in one frame, so the file could not be shown while it was written.";
+  } else {
+    setPreviewStatus(event.name === "edit_file" ? "edit ready" : "written");
+  }
   $("#preview-open").classList.toggle("hidden", pane.path === null);
 }
 

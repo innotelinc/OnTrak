@@ -215,6 +215,10 @@ const rules = [
   ["exactly one attempt was drafted", () => growth().length === 1],
   ["the last draft was marked complete", () => drafts.at(-1)?.complete === true],
   [
+    "every draft says whether the gateway streamed it",
+    () => drafts.every((draft) => typeof draft.streamed === "boolean"),
+  ],
+  [
     "the write really happened",
     () => call !== undefined && written.includes("draft check"),
   ],
@@ -243,7 +247,9 @@ if (failure !== null) {
     }
   }
 
-  if (drafts.length === 1) {
+  // The server's own answer, not a guess from the frame count: it is the value
+  // the pane shows, and it is what tells a coalesced call from a streamed one.
+  if (drafts.at(-1)?.streamed === false) {
     const message =
       "the gateway sent the whole tool call in one frame, so the pane can only show " +
       "this file once it is finished, never while it is being written";

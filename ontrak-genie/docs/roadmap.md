@@ -20,7 +20,9 @@ full developer reference.
 > citizenship: sign-in is **on** at both edge names, secrets are read from
 > **Cerulean Vault** through path-scoped `vault://` references, tenancy is **on**
 > through Distro's control plane, and the image is published with a pull-only
-> overlay beside the product compose. **0.2 is complete.**
+> overlay beside the product compose. **0.2 is complete.** **0.3 is in progress**
+> — resilience and reach: making the console honest about what the gateway
+> actually streams, and giving the approval gate a channel besides the browser.
 
 ## 1. Vision
 
@@ -166,11 +168,15 @@ hand-written DNS record and an NPM host someone clicked.
 **Goal:** the console stays useful when the gateway, the plane or the model does
 not.
 
-- `[ ]` **Streaming fidelity where the gateway supports it.** The LAN gateway's
-  Gemini path hands a whole tool call over in one frame, so the live pane shows a
-  file appear complete; `draft:check` measures which path a deployment has, and
-  the pane should advertise the difference rather than imply a stream that is not
-  happening.
+- `[x]` **Streaming fidelity where the gateway supports it.** The stream already
+  sees how a call arrives, so a `draft` event now carries `streamed`: false when
+  the pane was only ever shown the finished body — what the LAN gateway's Gemini
+  path produces by handing the whole call over in one frame. The pane says
+  *written in one frame* rather than implying a stream that never happened, and
+  `draft:check` reports the same field (its `--require-fragmented` failure now
+  comes from the server's own answer, not a frame count). Both shapes are pinned
+  by `src/test/draft-streaming.test.ts`, and the pure rule by
+  `draftStreamed` in `src/test/draft.test.ts`.
 - `[ ]` **A second approval channel.** The gate is a browser click; a headless
   driver (CLI, CI) that can answer it deliberately and auditably would let the
   same agent run unattended with the gate intact.

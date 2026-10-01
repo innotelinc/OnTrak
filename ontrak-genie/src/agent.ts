@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { approvalRequired, denialReason, requestApproval, type ApprovalDecision } from "./approval.js";
 import { config, gatewayConsoleUrl } from "./config.js";
 import type { FileDiff } from "./diff.js";
-import { draftPreview, textDraftPreview } from "./draft.js";
+import { draftPreview, draftStreamed, textDraftPreview, type DraftSequence } from "./draft.js";
 import {
   GatewayError,
   completeChat,
@@ -65,6 +65,13 @@ export type AgentEvent =
   | {
       type: "draft";
       reset: boolean;
+      /**
+       * Whether the pane showed this file before it was complete. False means
+       * the gateway handed the whole call over in one frame, so the preview can
+       * only report the finished file — the UI says as much instead of implying
+       * a stream that never happened (see `draftStreamed`).
+       */
+      streamed: boolean;
       name: string;
       path: string | null;
       content: string;
@@ -361,6 +368,9 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
       let mode: TextMode = "streaming";
       // Whether this attempt has already sent a draft, so the first one resets.
       let drafted = false;
+      // The file the pane is currently watching, so a draft can tell whether it
+      // is a live stream or the finished body arriving in one piece.
+      let draftSequence: DraftSequence = { key: null, complete: false };
       // How much of a text-mode draft has been sent, to throttle the updates.
       let draftedChars = 0;
       let draftedComplete = false;
@@ -394,7 +404,10 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
               if (draft === null) continue;
               const reset = !drafted;
               drafted = true;
-              yield { type: "draft", reset, ...draft };
+              if (reset) draftSequence = { key: null, complete: false };
+              const streamed = draftStreamed(draftSequence, draft);
+              draftSequence = streamed.next;
+              yield { type: "draft", reset, streamed: streamed.streamed, ...draft };
               continue;
             }
             if (next.value.type !== "text") continue;
@@ -439,7 +452,10 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
                   draftedComplete = textDraft.complete;
                   const reset = !drafted;
                   drafted = true;
-                  yield { type: "draft", reset, ...textDraft };
+                  if (reset) draftSequence = { key: null, complete: false };
+                  const streamed = draftStreamed(draftSequence, textDraft);
+                  draftSequence = streamed.next;
+                  yield { type: "draft", reset, streamed: streamed.streamed, ...textDraft };
                 }
               }
             }

@@ -994,7 +994,10 @@ that they named one file, that exactly one attempt was drafted and that the draf
 body is what landed on disk, and then reports the shape of it. A single draft means
 the pane cannot stream for that provider; `--require-fragmented` turns that into a
 failure, for pinning a provider to the behaviour you want. The container's Gemini
-path is currently the single-frame case, so the default run passes with a NOTE.
+path is currently the single-frame case, so the default run passes with a NOTE —
+and the pane agrees: each draft carries `streamed`, and a file the pane only ever
+saw finished is labelled *written in one frame* rather than shown as though it had
+been watched being written.
 
 `npm run live:check` is the two live checks in one command: the offline fallback
 (`offline:check`) and the shape of the configured gateway's streaming
