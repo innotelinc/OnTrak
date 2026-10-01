@@ -762,15 +762,41 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
     the waiting proposal, the second approver, the tightened safe-list, the hourly
     window, expiry by its own clock, a hand lift, and a policy that will not
     work).
-  - What is **not** here, and is the rest of this milestone: the **console
-    surface** (the page that shows what is in force, proposes an action, approves
-    one and lifts one — one-click rollback is a button nobody has drawn yet),
-    wiring `expire` to the deployment's scheduler, and the **enforcement plane**
-    itself: nothing here pushes a block to a firewall, an agent or a proxy, and
-    that is deliberate — `EnforcementTarget` is the whole contract a plane needs,
-    and an IPS that wrote its own packet filter would be a detection platform
-    pretending to be a firewall. Until an operator can reach this from the
-    console, prevention is a service somebody has to drive by hand.
+  - `[x]` **The surface a person reaches, and the clock that ends an action**
+    (`console-rules.ts` → `renderEnforcement`, the `CONSOLE_PATHS.enforcement*`
+    routes, `ConsoleService.enforcement`/`proposeEnforcement`/`approveEnforcement`/
+    `liftEnforcement`/`setEnforcementPolicy`, `enforcement-scheduler.ts`, and the
+    `expiringBefore`/`sweepExpired` pair behind it): the last thing the milestone
+    owed, and the reason it is the last is that an action nobody can undo is not
+    the thing to build first. `/console/enforcement` is the register — what is
+    **in force**, what is **waiting on a second administrator**, and the **policy
+    and safe-list** a proposal will be judged against — with propose, approve and
+    lift as their own POST paths, so a link or a crawler cannot block a network.
+    The page holds no rule of its own: a refusal an operator reads (`Refused: …
+    on the safe-list`) is the decision's own sentence, because a page that
+    pre-checked a target would be a second place the rails live. Administration
+    only, both to read and to act, and the nav hides the link for anybody else —
+    though the link is not the control, the service is. The **sweep** is what makes
+    a TTL a mechanism: `SENTINEL_ENFORCEMENT_SWEEP_INTERVAL_MINUTES` is **on by
+    default** at a minute (the opposite of scheduled attestation, because the
+    alternative to sweeping is a block that outlives its own stated lifetime), `0`
+    turns it off, `sweepExpired` runs deployment-wide so wiring the timer needs no
+    list of tenants, and it is idempotent because `lift` is. Wired at startup in
+    `scripts/serve.ts`, alongside the enforcement store the deployment now builds
+    (Postgres where there is a database, memory otherwise). Covered by
+    `tests/sentinel-enforcement-console.test.ts` (9 checks: the page behind an
+    administrator and a refusal for everybody else, an immediate apply against a
+    relaxed policy, a proposal that waits and the requester refused their own
+    approval, a safe-list refusal that stores nothing, a hand lift with and without
+    a note, a policy written through the page with an invalid one refused by name,
+    the sweep by its own clock, and the scheduler's own loop).
+  - What is **not** here: the **enforcement plane** — nothing in this build pushes a
+    block to a firewall, an agent or a proxy. That is deliberate and it is the only
+    thing left in S4: `EnforcementTarget` is the whole contract a plane needs, and an
+    IPS that wrote its own packet filter would be a detection platform pretending to
+    be a firewall. Every action is now one an operator can take and undo from a
+    browser; what an `ACTIVE` record does beyond *saying* a block is in force is the
+    plane's work, on a seam that is already the right shape.
 - Reversible-by-default, rate-limited, blast-radius caps; every action audited.
 - **Exit:** a threat is blocked within a defined latency; the block is approved,
   logged, reversible, and cannot be applied to a protected target.
@@ -912,11 +938,13 @@ missing rather than as a task name:
    **path** has landed too (`src/lib/enforcement-service.ts`, `enforcement-store-prisma.ts`
    and its two tables): propose, approve, apply, expire, lift, each step in the
    chain, with the rails re-run at the approval and the TTL actually lifting what
-   it promised. What is still missing is everything a person touches — the console
-   page that proposes, approves and lifts, the scheduler that calls `expire`, and
-   the plane that turns an active record into a filtered packet — so what stands
-   between today and 1.0 here is an enforcement action an *operator* can take and
-   undo, not a service somebody has to drive by hand.
+   it promised. The **surface and the clock** have landed as well —
+   `/console/enforcement` is the register, the forms and the policy page, and
+   `enforcement-scheduler.ts` runs the expiry sweep on a timer that is on by
+   default — so an operator can now take and undo an action from a browser without
+   a shell. What remains is the **enforcement plane** alone: turning an active
+   record into a filtered packet at a firewall, an agent or a proxy, on the
+   `EnforcementTarget` seam that is already the whole contract that needs.
 
 S5 and S6 sit behind all five. A 1.0 that arrives with an IdP, a detector, a
 working listener and a reversible action, all on one evidence chain, is the

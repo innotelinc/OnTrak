@@ -127,6 +127,14 @@ export interface EnforcementStore {
   listActions(organizationId: string): Promise<EnforcementActionRecord[]>;
   /** When actions for this organization were applied at or after `sinceIso`. */
   recentAppliedAt(organizationId: string, sinceIso: string): Promise<string[]>;
+  /**
+   * Every organization's actions still in force whose own deadline is at or before `atIso`.
+   *
+   * Deployment-wide rather than per-organization, which is what lets the timer be wired
+   * without a list of the deployment's tenants. Only `ACTIVE` records with a deadline are
+   * answered — a permanent action has nothing to expire.
+   */
+  expiringBefore(atIso: string): Promise<EnforcementActionRecord[]>;
   getPolicy(organizationId: string): Promise<EnforcementPolicyRecord | null>;
   savePolicy(record: EnforcementPolicyRecord): Promise<void>;
 }
@@ -175,6 +183,17 @@ export class EnforcementService {
   }
 
   /**
+   * The stored policy row, or `null` when nobody has written one.
+   *
+   * Separate from `policy` because the console shows the two differently: the *effective*
+   * policy is what a proposal will be judged by, and whether it is a decision this
+   * organization recorded or the built-in default is a different fact about it.
+   */
+  policyRecord(organizationId: string): Promise<EnforcementPolicyRecord | null> {
+    return this.store.getPolicy(organizationId);
+  }
+
+  /**
    * Store a policy.
    *
    * Stored whole rather than field by field, because a policy is what the rails are judged
@@ -205,7 +224,10 @@ export class EnforcementService {
       action: "enforcement.policy",
       targetType: "Organization",
       targetId: organizationId,
-      detail: { policy, by: by.label },
+      // The organization is named in the detail because that is where the chain sink reads
+      // it from: a policy change is on the organization's chain, and a sink that cannot
+      // place an event refuses to append it at all.
+      detail: { organizationId, policy, by: by.label },
     });
 
     return { ok: true, value: policy };
@@ -249,6 +271,7 @@ export class EnforcementService {
         targetType: "Enforcement",
         targetId: input.proposal.alertId,
         detail: {
+          organizationId: input.organizationId,
           code: decision.code,
           reason: decision.reason,
           action: input.proposal.action,
@@ -480,9 +503,35 @@ export class EnforcementService {
   }
 
   /**
-   * Lift everything whose own deadline has passed.
+   * Lift everything, in every organization, whose own deadline has passed.
    *
-   * The deployment calls this on a timer. Idempotent by construction: an action that is
+   * This is what the deployment's timer actually calls. `expire` is scoped to one
+   * organization because that is the unit the rest of the service works in; this is the
+   * deployment-wide sweep built on it, so wiring a timer does not require a list of tenants.
+   * Idempotent for the same reason `expire` is — a sweep that runs twice, or runs late, lifts
+   * each action exactly once and never writes a second lift row.
+   */
+  async sweepExpired(): Promise<{ lifted: string[] }> {
+    const at = this.ids.now();
+    const due = await this.store.expiringBefore(at);
+    const lifted: string[] = [];
+    for (const record of due) {
+      const result = await this.lift({
+        organizationId: record.organizationId,
+        actionId: record.id,
+        by: { identityId: "scheduler", label: "Sentinel scheduler" },
+      });
+      if (result.ok) lifted.push(record.id);
+    }
+    return { lifted };
+  }
+
+  /**
+   * Lift everything in one organization whose own deadline has passed.
+   *
+   * Kept beside the deployment-wide sweep rather than replaced by it: a caller that already
+   * has an organization (a test, an operator's script) should not have to sweep the whole
+   * deployment to lift what it is looking at. Idempotent by construction: an action that is
    * already `LIFTED` is skipped, so a sweep that runs twice, or runs late, lifts each action
    * exactly once and never writes a second lift row.
    */
@@ -592,6 +641,14 @@ export class MemoryEnforcementStore implements EnforcementStore {
       .filter((record) => record.organizationId === organizationId && record.appliedAt !== null)
       .map((record) => record.appliedAt!)
       .filter((at) => Date.parse(at) >= since);
+  }
+
+  async expiringBefore(atIso: string): Promise<EnforcementActionRecord[]> {
+    const at = Date.parse(atIso);
+    return [...this.actions.values()].filter(
+      (record) =>
+        record.state === "ACTIVE" && record.expiresAt !== null && Date.parse(record.expiresAt) <= at,
+    );
   }
 
   async getPolicy(organizationId: string): Promise<EnforcementPolicyRecord | null> {

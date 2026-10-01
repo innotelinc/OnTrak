@@ -319,6 +319,21 @@ export class PrismaEnforcementStore implements EnforcementStore {
       .filter((at): at is string => typeof at === "string");
   }
 
+  /**
+   * Every organization's actions in force whose own deadline has passed.
+   *
+   * The `state` filter is part of the query rather than a filter here, because the sweep
+   * runs on a timer over the whole deployment and reading back every action that has ever
+   * been lifted to discard it is a query that grows without bound. A permanent action has a
+   * null deadline and the `lte` comparison never matches it.
+   */
+  async expiringBefore(atIso: string): Promise<EnforcementActionRecord[]> {
+    const rows = await this.db.enforcementAction.findMany({
+      where: { state: "ACTIVE", expiresAt: { not: null, lte: new Date(atIso) } },
+    });
+    return rows.map(toEnforcementAction);
+  }
+
   async getPolicy(organizationId: string): Promise<EnforcementPolicyRecord | null> {
     const row = await this.db.enforcementPolicy.findUnique({ where: { organizationId } });
     return row ? toEnforcementPolicyRecord(row) : null;

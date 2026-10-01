@@ -53,6 +53,19 @@ import { CONFIDENCE_FLOOR, INDICATOR_KINDS } from "./threat-intel-rules";
 // The coverage map's shape, read from the module that derives it: the page renders what the
 // rulebook says, never a list kept beside it, so it cannot claim detection nothing performs.
 import type { CoverageReport } from "./detection-coverage-rules";
+// The enforcement page (S4): the shapes a proposal and a policy are, read from the module
+// the service decides with, so the form cannot ask for a field the decision never reads.
+// `ENFORCEMENT_TARGET_KINDS` and `ENFORCEMENT_ACTION_KINDS` are the vocabulary the form's
+// pickers offer, named rather than retyped — a target kind the decision would refuse must
+// not be a value the page can submit.
+import {
+  ENFORCEMENT_ACTION_KINDS,
+  ENFORCEMENT_TARGET_KINDS,
+  type EnforcementActionKind,
+  type EnforcementPolicy,
+  type EnforcementTarget,
+} from "./enforcement-rules";
+import type { EnforcementState } from "./enforcement-service";
 import { UPSTREAM_PATHS } from "./upstream-rules";
 
 /* -------------------------------------------------------------------------- */
@@ -159,6 +172,23 @@ export const CONSOLE_PATHS = {
    * has no account here — which is what the family's shared packet format is for.
    */
   compliancePacket: "/console/compliance/packet",
+  /**
+   * Guard's prevention surface (S4): what is in force, what is waiting, and the forms that
+   * propose, approve and lift an action.
+   *
+   * The last page in the product to arrive and the one the milestone was waiting on,
+   * because until an operator could reach enforcement from a browser, prevention was a
+   * service somebody had to drive by hand. One page and four POST paths, the same shape the
+   * Guard queue takes: the register is a `GET`, and every act on it — proposing, approving,
+   * lifting, and writing the policy the rails are judged against — is its own POST, so a link
+   * or a crawler cannot block a network. Administration only, both to read and to act: a
+   * safe-list is not a page for everybody, and the nav hides it for anyone else.
+   */
+  enforcement: "/console/enforcement",
+  enforcementPropose: "/console/enforcement/propose",
+  enforcementApprove: "/console/enforcement/approve",
+  enforcementLift: "/console/enforcement/lift",
+  enforcementPolicy: "/console/enforcement/policy",
   provisioning: "/console/provisioning",
   mintToken: "/console/provisioning/token",
   revokeToken: "/console/provisioning/token/revoke",
@@ -643,7 +673,7 @@ const STYLES = `
 export interface ConsolePageInput {
   title: string;
   /** Signed-out pages have no actor; the nav is then just a way back in. */
-  actor: { identifier: string; displayName: string; organizationName: string } | null;
+  actor: { identifier: string; displayName: string; organizationName: string; role?: string } | null;
   body: string;
   flash?: string | null;
   error?: string | null;
@@ -677,6 +707,11 @@ export function consolePage(input: ConsolePageInput): string {
       `<a href="${CONSOLE_PATHS.intel}">Threat intel</a>` +
       `<a href="${CONSOLE_PATHS.coverage}">Coverage</a>` +
       `<a href="${CONSOLE_PATHS.provisioning}">Provisioning</a>` +
+      // Prevention is an administrator's surface, and the nav says so rather than offering
+      // a page that would refuse on arrival: a link to a refusal is worse than no link.
+      (input.actor.role === "ADMIN"
+        ? `<a href="${CONSOLE_PATHS.enforcement}">Enforcement</a>`
+        : "") +
       `<a href="${CONSOLE_PATHS.compliance}">Compliance</a>` +
       `</nav>`
     : `<nav class="muted"><a href="${CONSOLE_PATHS.signIn}">Sign in</a></nav>`;
@@ -1863,6 +1898,212 @@ export function renderCompliance(view: ConsoleComplianceView, flash?: string | n
     `product enforces: no control is reported as satisfied because a setting exists somewhere else.</p>`;
 
   return consolePage({ title: "Compliance", actor: view.actor, body, flash, error });
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Enforcement                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One enforcement action, as the register shows it.
+ *
+ * The same record the service stores, flattened for reading: the interesting columns are
+ * *who asked*, *what it answers* and *how it ends*, because those are the three questions an
+ * incident review asks about a block. `rollbackLabel` is the inverse the decision computed at
+ * the moment of the decision, rendered rather than re-derived — so the page can say how an
+ * action will be undone instead of implying one exists.
+ */
+export interface ConsoleEnforcementActionView {
+  id: string;
+  action: EnforcementActionKind;
+  state: EnforcementState;
+  targets: EnforcementTarget[];
+  alertId: string;
+  /** The rule behind the alert this answers, when the queue still knows it. */
+  alertRuleName: string | null;
+  reason: string;
+  requestedByLabel: string;
+  requestedByRole: string;
+  approvedByLabel: string | null;
+  appliedAt: string | null;
+  expiresAt: string | null;
+  liftedAt: string | null;
+  liftedByLabel: string | null;
+  liftReason: string | null;
+  refusedReason: string | null;
+  /** The inverse, as the decision computed it, for the row's “how it ends” column. */
+  rollbackLabel: string | null;
+  createdAt: string;
+}
+
+/**
+ * Guard's prevention register (S4).
+ *
+ * Three lists rather than one, because the three are different questions: **in force** is
+ * "what is blocked right now", **waiting** is "what needs a second pair of eyes", and the
+ * history is "what was done and how it ended". The policy is on the page too, because the
+ * rails a proposal will be judged by are the thing an operator needs before they propose —
+ * a safe-list that is only visible after a refusal is one nobody learns from.
+ */
+export interface ConsoleEnforcementView {
+  actor: ConsoleActor;
+  session: ConsoleSessionView;
+  generatedAt: string;
+  policy: EnforcementPolicy;
+  /** False until somebody writes one: the built-in default, shown as inherited. */
+  policyStored: boolean;
+  actions: ConsoleEnforcementActionView[];
+  /** The open alerts an action may be proposed against — loudest first. */
+  candidates: { id: string; ruleName: string; severity: Severity }[];
+  /** The targets the policy refuses to enforce against. */
+  protectedTargets: string[];
+}
+
+/**
+ * The prevention page (S4).
+ *
+ * Read the order of it: what is **in force** comes first, because in an incident that is the
+ * only question, and the propose form comes last, because proposing is the deliberate act and
+ * the policy above it is what the proposal will be judged against.
+ */
+export function renderEnforcement(
+  view: ConsoleEnforcementView,
+  flash?: string | null,
+  error?: string | null,
+): string {
+  const targetList = (targets: EnforcementTarget[]): string =>
+    targets
+      .map((target) => `${target.kind} ${target.value}${target.label ? ` (${target.label})` : ""}`)
+      .join(", ");
+
+  const source = (action: ConsoleEnforcementActionView): string =>
+    `<span class="muted">answers ${escapeHtml(action.alertRuleName ?? action.alertId)}</span>`;
+
+  const inForce = view.actions.filter((action) => action.state === "ACTIVE");
+  const pending = view.actions.filter((action) => action.state === "PENDING");
+  const history = view.actions.filter((action) => action.state === "LIFTED" || action.state === "REFUSED");
+
+  const inForceRows = inForce.length
+    ? inForce
+        .map(
+          (action) =>
+            `<tr><td><strong class="sev">${escapeHtml(action.action)}</strong><br>` +
+            `<span class="muted">${escapeHtml(targetList(action.targets))}</span></td>` +
+            `<td>${escapeHtml(action.reason)}<br>${source(action)}</td>` +
+            `<td>${escapeHtml(action.requestedByLabel)}<br><span class="muted">in force since ${escapeHtml(action.appliedAt ?? action.createdAt)}</span></td>` +
+            `<td class="muted">${escapeHtml(action.approvedByLabel ?? action.requestedByLabel)}</td>` +
+            `<td class="muted">${action.expiresAt ? `lifts itself ${escapeHtml(action.expiresAt)}` : "until lifted by hand"}</td>` +
+            `<td><form method="post" action="${CONSOLE_PATHS.enforcementLift}">` +
+            `<input type="hidden" name="actionId" value="${escapeHtml(action.id)}">` +
+            `<input name="reason" placeholder="why now?">` +
+            `<button type="submit">Lift</button></form></td></tr>`,
+        )
+        .join("")
+    : `<tr><td colspan="6" class="muted">Nothing is being enforced against right now.</td></tr>`;
+
+  const pendingRows = pending.length
+    ? pending
+        .map(
+          (action) =>
+            `<tr><td><strong class="sev">${escapeHtml(action.action)}</strong><br>` +
+            `<span class="muted">${escapeHtml(targetList(action.targets))}</span></td>` +
+            `<td>${escapeHtml(action.reason)}<br>${source(action)}</td>` +
+            `<td>${escapeHtml(action.requestedByLabel)} <span class="muted">(${escapeHtml(action.requestedByRole)})</span></td>` +
+            `<td class="muted">waiting for a second administrator since ${escapeHtml(action.createdAt)}</td>` +
+            `<td><form method="post" action="${CONSOLE_PATHS.enforcementApprove}">` +
+            `<input type="hidden" name="actionId" value="${escapeHtml(action.id)}">` +
+            `<button type="submit">Approve</button></form></td></tr>`,
+        )
+        .join("")
+    : `<tr><td colspan="5" class="muted">Nothing is waiting on approval.</td></tr>`;
+
+  const historyRows = history.length
+    ? history
+        .map((action) => {
+          const ending =
+            action.state === "LIFTED"
+              ? `<span class="muted">lifted ${escapeHtml(action.liftedAt ?? "")} by ${escapeHtml(action.liftedByLabel ?? "—")}` +
+                `${action.liftReason ? ` — ${escapeHtml(action.liftReason)}` : ""}</span>`
+              : `<span class="muted">refused — ${escapeHtml(action.refusedReason ?? "a rail said no")}</span>`;
+          return (
+            `<tr><td><strong class="sev">${escapeHtml(action.action)}</strong><br>` +
+            `<span class="muted">${escapeHtml(targetList(action.targets))}</span></td>` +
+            `<td>${escapeHtml(action.reason)}<br>${source(action)}</td>` +
+            `<td>${escapeHtml(action.requestedByLabel)}</td>` +
+            `<td>${escapeHtml(action.state)}<br>${ending}</td></tr>`
+          );
+        })
+        .join("")
+    : `<tr><td colspan="4" class="muted">No action has ended yet.</td></tr>`;
+
+  const candidateOptions = view.candidates.length
+    ? view.candidates
+        .map(
+          (candidate) =>
+            `<option value="${escapeHtml(candidate.id)}">${escapeHtml(candidate.ruleName)} — ${escapeHtml(candidate.severity)}</option>`,
+        )
+        .join("")
+    : `<option value="">No open alert is waiting</option>`;
+
+  const protectedList = view.protectedTargets.length
+    ? `<ul>${view.protectedTargets.map((entry) => `<li><code>${escapeHtml(entry)}</code></li>`).join("")}</ul>`
+    : `<p class="muted">The safe-list is empty. That is a policy nobody has written yet, not a permission — ` +
+      `name the addresses and ids this deployment must never enforce against.</p>`;
+
+  const policyForm =
+    `<form method="post" action="${CONSOLE_PATHS.enforcementPolicy}">` +
+    `<label>Never enforce against (one CIDR, address or id per line)` +
+    `<textarea name="protectedTargets" rows="4">${escapeHtml(view.policy.protectedTargets.join("\n"))}</textarea></label>` +
+    `<label>Most targets one action may name<input name="maxTargets" type="number" min="1" value="${escapeHtml(view.policy.maxTargets)}"></label>` +
+    `<label>Actions allowed in a rolling hour<input name="maxActionsPerHour" type="number" min="0" value="${escapeHtml(view.policy.maxActionsPerHour)}"></label>` +
+    `<label>How long an action stands, in seconds (0 = until lifted by hand)` +
+    `<input name="defaultTtlSeconds" type="number" min="0" value="${escapeHtml(view.policy.defaultTtlSeconds)}"></label>` +
+    `<label class="check"><input type="checkbox" name="allowPermanent" value="1"${view.policy.allowPermanent ? " checked" : ""}> Allow an action that stands until lifted by hand</label>` +
+    `<label class="check"><input type="checkbox" name="requireSecondApprover" value="1"${view.policy.requireSecondApprover ? " checked" : ""}> Require a second administrator to approve</label>` +
+    `<button type="submit">Save the policy</button></form>`;
+
+  const proposeForm =
+    view.candidates.length === 0
+      ? `<p class="muted">There is no open alert to answer, so nothing can be proposed. An enforcement action has to ` +
+        `answer a detection — raise one on the <a href="${CONSOLE_PATHS.alerts}">Alerts</a> page first.</p>`
+      : `<form method="post" action="${CONSOLE_PATHS.enforcementPropose}">` +
+        `<label>Answer this alert<select name="alertId" required>${candidateOptions}</select></label>` +
+        `<label>Action<select name="action">${ENFORCEMENT_ACTION_KINDS.map(
+          (kind) => `<option value="${escapeHtml(kind)}">${escapeHtml(kind)}</option>`,
+        ).join("")}</select></label>` +
+        `<label>Targets (one per line, “KIND value label” — a bare line is an address)` +
+        `<textarea name="targets" rows="3" required placeholder="ADDRESS 203.0.113.7 scanner\nIDENTITY 8f3c…"></textarea></label>` +
+        `<label>Why (the audit row is what somebody reads later)` +
+        `<input name="reason" required maxlength="280" placeholder="e.g. credential stuffing from this address"></label>` +
+        `<label class="check"><input type="checkbox" name="permanent" value="1"> Stand until lifted by hand (refused unless the policy allows it)</label>` +
+        `<button type="submit">Propose</button></form>`;
+
+  const body =
+    `<p class="muted">Prevention is an administrator's action, and this is where it is taken and undone. ` +
+    `Every proposal is judged against the policy below — the safe-list first and absolutely — and an ` +
+    `action that is in force is a record here, not merely a call that was made.</p>` +
+    `<h2>In force</h2>` +
+    `<div class="card"><table><thead><tr><th>Action</th><th>Reason</th><th>Requested by</th><th>Approved by</th><th>Ends</th><th></th></tr></thead>` +
+    `<tbody>${inForceRows}</tbody></table></div>` +
+    `<h2>Waiting on a second administrator</h2>` +
+    `<div class="card"><table><thead><tr><th>Action</th><th>Reason</th><th>Requested by</th><th>Since</th><th></th></tr></thead>` +
+    `<tbody>${pendingRows}</tbody></table></div>` +
+    `<h2>The policy, and what it protects</h2>` +
+    `<div class="card"><p class="muted">${
+      view.policyStored ? "This organization has written its own policy." : "No policy has been written for this organization, so the cautious built-in default is in force."
+    }</p>${protectedList}${policyForm}</div>` +
+    `<h2>Propose an action</h2>` +
+    `<div class="card">${proposeForm}</div>` +
+    `<h2>What has ended</h2>` +
+    `<div class="card"><table><thead><tr><th>Action</th><th>Reason</th><th>Requested by</th><th>How it ended</th></tr></thead>` +
+    `<tbody>${historyRows}</tbody></table></div>` +
+    `<p class="muted">Generated ${escapeHtml(view.generatedAt)}. ${
+      inForce.length === 0 && pending.length === 0
+        ? "Nothing is in force and nothing is waiting."
+        : `${inForce.length} action(s) in force, ${pending.length} waiting.`
+    }</p>`;
+
+  return consolePage({ title: "Enforcement", actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */

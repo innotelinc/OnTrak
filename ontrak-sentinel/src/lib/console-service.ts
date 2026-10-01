@@ -24,6 +24,7 @@ import { assuranceSigner } from "./assurance-sign";
 import { sha256Hex } from "./hash";
 import type { IdentityActor, IdentityService, ServiceResult } from "./identity-service";
 import {
+  canApproveEnforcement,
   canAttestAccessReview,
   canManageAccessReviews,
   canManageIdentities,
@@ -46,6 +47,7 @@ import {
   escalationSummary,
   filterAlerts,
   relatedAlerts,
+  severityRank,
   triageActions,
   triageSummary,
   waitingMinutes,
@@ -53,6 +55,11 @@ import {
 } from "./alert-triage-rules";
 import { coverageReport } from "./detection-coverage-rules";
 import type { AlertRecord, DetectionService } from "./detection-service";
+// Guard's prevention service (S4): the console's half of it. Imported as a type for the
+// collaborator and as functions for the two things the page owns — reading the target box
+// and validating the action a form submitted.
+import { ENFORCEMENT_ACTION_KINDS, parseTargetLines, type EnforcementActionKind } from "./enforcement-rules";
+import type { EnforcementActionRecord, EnforcementService } from "./enforcement-service";
 import type { MfaService, MfaStatus } from "./mfa-service";
 import type { OidcStore } from "./oidc-service";
 import type { ScimService } from "./scim-service";
@@ -66,6 +73,8 @@ import type {
   ConsoleAlertView,
   ConsoleComplianceView,
   ConsoleCoverageView,
+  ConsoleEnforcementActionView,
+  ConsoleEnforcementView,
   ConsoleSignInView,
   ConsoleActor,
   ConsoleConnectionView,
@@ -205,6 +214,20 @@ export class ConsoleService implements ConsoleEndpoints {
       | "setScheduleEnabled"
       | "removeSchedule"
       | "groups"
+    > | null = null,
+    /**
+     * Guard's prevention service (S4), when the deployment wired one.
+     *
+     * Optional like the other collaborators: a deployment without an enforcement store still
+     * serves its console, and the page says prevention is not available rather than offering
+     * a form whose submission would fail with a database error. A `Pick` of the methods the
+     * page uses rather than the class, the same posture `detection` takes — the console can
+     * propose, approve and lift, and it deliberately cannot reach `expire`, because a browser
+     * session that could sweep every organization's deadlines is not a person doing their job.
+     */
+    private readonly prevention: Pick<
+      EnforcementService,
+      "list" | "policy" | "policyRecord" | "apply" | "approve" | "lift" | "setPolicy"
     > | null = null,
   ) {}
 
@@ -1054,6 +1077,255 @@ export class ConsoleService implements ConsoleEndpoints {
     };
   }
 
+  /* ------------------------------------------------------------ enforcement */
+
+  /**
+   * The prevention register (S4): what is in force, what is waiting, and the policy the two
+   * are judged against.
+   *
+   * Administration only, both to read and to act. A safe-list names the infrastructure this
+   * deployment must never enforce against, which is not a page everybody should be able to
+   * enumerate, and the act the page performs can break production. The candidates come from
+   * the queue the Alerts page renders — the same rows — so a proposal can only answer a
+   * detection this deployment actually holds, which is the rule `decideEnforcement` enforces
+   * by requiring an alert id at all.
+   */
+  async enforcement(sessionId: string): Promise<ServiceResult<ConsoleEnforcementView>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    const guard = this.preventionGate(context.value.actor.role);
+    if (!guard.ok) return guard;
+    if (this.prevention === null) {
+      return { ok: false, error: "This deployment runs no enforcement service, so nothing can be prevented." };
+    }
+
+    const [session, policy, record, actions] = await Promise.all([
+      this.spine.resolveOwnSession(context.value.sessionId),
+      this.prevention.policy(context.value.organizationId),
+      this.prevention.policyRecord(context.value.organizationId),
+      this.prevention.list(context.value.organizationId),
+    ]);
+    if (!session.ok) return session;
+
+    // The open queue, loudest first, as the alerts a proposal may answer. No detection
+    // pipeline is an absence rather than an empty queue, and the form says so.
+    const candidates: ConsoleEnforcementView["candidates"] = [];
+    if (this.detection) {
+      const queue = await this.detection.alerts(context.value.actor);
+      if (queue.ok) {
+        for (const alert of queue.value.filter((entry) => entry.state !== "CLOSED")) {
+          candidates.push({ id: alert.id, ruleName: alert.ruleName, severity: alert.severity });
+        }
+        candidates.sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
+      }
+    }
+    const ruleNames = new Map(candidates.map((candidate) => [candidate.id, candidate.ruleName]));
+
+    return {
+      ok: true,
+      value: {
+        actor: consoleActor(await this.organizationName(context.value), session.value.identity),
+        session: sessionView(session.value.session),
+        generatedAt: new Date().toISOString(),
+        policy,
+        policyStored: record !== null,
+        protectedTargets: policy.protectedTargets,
+        candidates,
+        actions: actions.map((action) => toConsoleEnforcementAction(action, ruleNames)),
+      },
+    };
+  }
+
+  /**
+   * Propose an action, and apply it if the rails allow it now.
+   *
+   * The service decides *everything* about whether this may happen — the safe-list, the
+   * blast radius, the rate limit, the second approver — and this method's only job is to say
+   * who asked and to read the form. It does not pre-check a target against the safe-list:
+   * a refusal an operator reads has to come from the same function that refuses in
+   * production, or the page and the product can disagree about what is protected.
+   */
+  async proposeEnforcement(
+    sessionId: string,
+    input: { action: string; alertId: string; reason: string; targets: string; permanent: boolean },
+  ): Promise<ServiceResult<{ outcome: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    const guard = this.preventionGate(context.value.actor.role);
+    if (!guard.ok) return guard;
+    if (this.prevention === null) {
+      return { ok: false, error: "This deployment runs no enforcement service, so nothing can be prevented." };
+    }
+
+    const action = input.action.toUpperCase();
+    if (!(ENFORCEMENT_ACTION_KINDS as readonly string[]).includes(action)) {
+      return { ok: false, error: `“${input.action}” is not an action this deployment can take.` };
+    }
+    const targets = parseTargetLines(input.targets);
+    if (targets.length === 0) {
+      return { ok: false, error: "Name at least one target, one per line." };
+    }
+
+    const session = await this.spine.resolveOwnSession(context.value.sessionId);
+    if (!session.ok) return session;
+
+    const applied = await this.prevention.apply({
+      organizationId: context.value.organizationId,
+      proposal: {
+        action: action as EnforcementActionKind,
+        targets,
+        alertId: input.alertId.trim(),
+        reason: input.reason,
+        requestedBy: {
+          identityId: context.value.identityId,
+          label: actorLabel(session.value.identity),
+          role: context.value.actor.role,
+        },
+        ...(input.permanent ? { permanent: true } : {}),
+      },
+    });
+    if (!applied.ok) return applied;
+
+    return {
+      ok: true,
+      value: {
+        outcome:
+          applied.value.gate === "IMMEDIATE"
+            ? `${applied.value.action.action} is in force.`
+            : `${applied.value.action.action} is proposed; a second administrator has to approve it before it takes effect.`,
+      },
+    };
+  }
+
+  /**
+   * A second administrator approves a waiting action.
+   *
+   * `canApproveEnforcement` is checked here *and* again inside the service's decision, which
+   * is not a duplicate: this one is the page refusing early, and the service re-decides at
+   * the approval so a policy or a safe-list tightened while the proposal waited still takes
+   * effect. The requester approving their own action is refused by the service, because the
+   * refusal is about the record and not about the form.
+   */
+  async approveEnforcement(sessionId: string, actionId: string): Promise<ServiceResult<{ outcome: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    const guard = this.preventionGate(context.value.actor.role);
+    if (!guard.ok) return guard;
+    if (this.prevention === null) {
+      return { ok: false, error: "This deployment runs no enforcement service, so nothing can be prevented." };
+    }
+
+    const session = await this.spine.resolveOwnSession(context.value.sessionId);
+    if (!session.ok) return session;
+
+    const approved = await this.prevention.approve({
+      organizationId: context.value.organizationId,
+      actionId,
+      approver: {
+        identityId: context.value.identityId,
+        label: actorLabel(session.value.identity),
+        role: context.value.actor.role,
+      },
+    });
+    if (!approved.ok) return approved;
+    return { ok: true, value: { outcome: `${approved.value.action.action} is in force.` } };
+  }
+
+  /**
+   * Lift an action by hand (S4).
+   *
+   * A lift is not policy-checked anywhere, deliberately: a rail that could stop you undoing
+   * your own outage is the last thing an incident needs. The reason is required by the page
+   * and defaults to naming who lifted it, because a lift with no note is the one row in the
+   * chain that would otherwise read as anonymous.
+   */
+  async liftEnforcement(
+    sessionId: string,
+    actionId: string,
+    reason: string,
+  ): Promise<ServiceResult<{ outcome: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    const guard = this.preventionGate(context.value.actor.role);
+    if (!guard.ok) return guard;
+    if (this.prevention === null) {
+      return { ok: false, error: "This deployment runs no enforcement service, so nothing can be prevented." };
+    }
+
+    const session = await this.spine.resolveOwnSession(context.value.sessionId);
+    if (!session.ok) return session;
+    const label = actorLabel(session.value.identity);
+
+    const lifted = await this.prevention.lift({
+      organizationId: context.value.organizationId,
+      actionId,
+      by: { identityId: context.value.identityId, label },
+      reason: reason.trim() === "" ? `Lifted from the console by ${label}.` : reason.trim(),
+    });
+    if (!lifted.ok) return lifted;
+    return { ok: true, value: { outcome: `${lifted.value.action} lifted.` } };
+  }
+
+  /**
+   * Write the policy the rails are judged against (S4).
+   *
+   * Stored whole, and validated by the service: a policy is what every rail reads, so a
+   * half-applied one is a set of rails nobody can reason about. The page's job is only to
+   * turn the boxes into the shape the rules module declares.
+   */
+  async setEnforcementPolicy(
+    sessionId: string,
+    input: {
+      protectedTargets: string;
+      maxTargets: number;
+      maxActionsPerHour: number;
+      defaultTtlSeconds: number;
+      allowPermanent: boolean;
+      requireSecondApprover: boolean;
+    },
+  ): Promise<ServiceResult<{ outcome: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    const guard = this.preventionGate(context.value.actor.role);
+    if (!guard.ok) return guard;
+    if (this.prevention === null) {
+      return { ok: false, error: "This deployment runs no enforcement service, so nothing can be prevented." };
+    }
+
+    const session = await this.spine.resolveOwnSession(context.value.sessionId);
+    if (!session.ok) return session;
+
+    const saved = await this.prevention.setPolicy(
+      context.value.organizationId,
+      {
+        protectedTargets: input.protectedTargets
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line !== "" && !line.startsWith("#")),
+        maxTargets: input.maxTargets,
+        maxActionsPerHour: input.maxActionsPerHour,
+        defaultTtlSeconds: input.defaultTtlSeconds,
+        allowPermanent: input.allowPermanent,
+        requireSecondApprover: input.requireSecondApprover,
+      },
+      { identityId: context.value.identityId, label: actorLabel(session.value.identity) },
+    );
+    if (!saved.ok) return saved;
+    return { ok: true, value: { outcome: "The enforcement policy is saved." } };
+  }
+
+  /**
+   * The gate the four enforcement methods share: an administrator, or a refusal.
+   *
+   * One function so the page and the four acts cannot disagree about who may do this — the
+   * same rule `canApproveEnforcement` applies in the decision, said once here for the screen.
+   */
+  private preventionGate(role: IdentityRole): ServiceResult<never> {
+    return canApproveEnforcement(role)
+      ? { ok: true, value: undefined as never }
+      : { ok: false, error: "Enforcement is an administrator's surface." };
+  }
+
   /* --------------------------------------------------------------- policies */
 
   /**
@@ -1546,6 +1818,51 @@ function alertView(alert: AlertRecord, at: number): ConsoleAlertView {
     indicators: alert.threatIntel.length,
     escalated: alert.threatIntel.some((match) => match.escalates),
     waitingMinutes: waitingMinutes(alert, at),
+  };
+}
+
+/**
+ * The identity behind a session, as the label an enforcement audit row carries.
+ *
+ * A display name is optional in the spine, so the identifier is the fallback — an audit row
+ * that named nobody would be worse than one that named somebody by their address.
+ */
+function actorLabel(identity: { identifier: string; displayName: string }): string {
+  return identity.displayName || identity.identifier;
+}
+
+/**
+ * One enforcement action, projected for the register.
+ *
+ * The mapping applies no rule: `state`, the times and the rollback label are read off the
+ * record the service stored, so the page cannot describe an action differently from the one
+ * that is in force. `alertRuleName` is resolved from the queue the page already read, and is
+ * `null` when the alert has since been closed out of it — an action whose alert is no longer
+ * in the queue still reads, it just names the id rather than the rule.
+ */
+function toConsoleEnforcementAction(
+  action: EnforcementActionRecord,
+  ruleNames: Map<string, string>,
+): ConsoleEnforcementActionView {
+  return {
+    id: action.id,
+    action: action.action,
+    state: action.state,
+    targets: action.targets,
+    alertId: action.alertId,
+    alertRuleName: ruleNames.get(action.alertId) ?? null,
+    reason: action.reason,
+    requestedByLabel: action.requestedByLabel,
+    requestedByRole: action.requestedByRole,
+    approvedByLabel: action.approvedByLabel,
+    appliedAt: action.appliedAt,
+    expiresAt: action.expiresAt,
+    liftedAt: action.liftedAt,
+    liftedByLabel: action.liftedByLabel,
+    liftReason: action.liftReason,
+    refusedReason: action.refusedReason,
+    rollbackLabel: action.rollback?.label ?? null,
+    createdAt: action.createdAt,
   };
 }
 

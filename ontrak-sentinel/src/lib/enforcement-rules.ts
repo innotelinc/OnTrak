@@ -51,12 +51,54 @@ export type EnforcementActionKind = "BLOCK" | "QUARANTINE" | "RATE_LIMIT";
 
 export type EnforcementTargetKind = "ADDRESS" | "IDENTITY" | "DEVICE";
 
+/**
+ * The vocabulary, as values rather than only as a type.
+ *
+ * A console picker and a parser both need the list at runtime, and a second copy of it
+ * in a template is how a form offers a value the decision would refuse. This is the one
+ * copy, and `EnforcementTargetKind` is a type *over* it so the two cannot drift.
+ */
+export const ENFORCEMENT_ACTION_KINDS = ["BLOCK", "QUARANTINE", "RATE_LIMIT"] as const;
+export const ENFORCEMENT_TARGET_KINDS = ["ADDRESS", "IDENTITY", "DEVICE"] as const;
+
 export interface EnforcementTarget {
   kind: EnforcementTargetKind;
   /** An IPv4/IPv6 address, or an identity/device id. */
   value: string;
   /** What to call it in the audit row — an address alone reads badly next month. */
   label?: string;
+}
+
+/**
+ * Read the console's target box into targets.
+ *
+ * One target per line, and the grammar is deliberately small: an optional kind, then the
+ * value, then an optional human label for the audit row — `ADDRESS 203.0.113.7 scanner`. A
+ * line with no recognised kind is an `ADDRESS`, because the common case is an operator
+ * pasting addresses and a box that refused those until they typed `ADDRESS` in front of each
+ * would be a box nobody uses. An empty line and a `#` comment are skipped rather than
+ * reported as bad input, the same way the threat-intel paste is read.
+ *
+ * It does **not** validate the value: whether an address is well-formed, or whether it is on
+ * the safe-list, is the decision's to answer, and a parser that also judged would be a second
+ * place the rules live. The label is the rest of the line, so a value with no label still
+ * produces a target rather than a refusal.
+ */
+export function parseTargetLines(text: string): EnforcementTarget[] {
+  const targets: EnforcementTarget[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    const tokens = line.split(/\s+/);
+    const first = tokens[0]!.toUpperCase();
+    const named = (ENFORCEMENT_TARGET_KINDS as readonly string[]).includes(first);
+    const kind: EnforcementTargetKind = named ? (first as EnforcementTargetKind) : "ADDRESS";
+    const value = named ? tokens[1] : tokens[0];
+    if (!value) continue;
+    const label = (named ? tokens.slice(2) : tokens.slice(1)).join(" ");
+    targets.push(label === "" ? { kind, value } : { kind, value, label });
+  }
+  return targets;
 }
 
 export interface EnforcementProposal {

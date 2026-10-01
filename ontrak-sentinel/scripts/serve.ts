@@ -67,6 +67,14 @@ import {
 } from "../src/lib/access-review-service";
 import { PrismaAccessReviewStore, type AccessReviewPrismaClient } from "../src/lib/access-review-store-prisma";
 import { accessReviewIntervalMs, startAccessReviewScheduler } from "../src/lib/access-review-scheduler";
+import {
+  EnforcementService,
+  MemoryEnforcementStore,
+  systemEnforcementIds,
+  type EnforcementStore,
+} from "../src/lib/enforcement-service";
+import { PrismaEnforcementStore, type EnforcementPrismaClient } from "../src/lib/enforcement-store-prisma";
+import { enforcementSweepIntervalMs, startEnforcementScheduler } from "../src/lib/enforcement-scheduler";
 import { PrismaIndicatorStore, type IndicatorPrismaClient } from "../src/lib/threat-intel-store-prisma";
 import {
   configureDirectories,
@@ -329,6 +337,8 @@ async function main(): Promise<void> {
   let intelStore: IndicatorStore;
   /** Access reviews and their schedules (S2). */
   let reviewStore: AccessReviewStore;
+  /** Guard's prevention actions and the policy they are judged against (S4). */
+  let enforcementStore: EnforcementStore;
 
   // Where a directory connector points. `meta.location` links are built from it, so
   // they name the deployment's own origin rather than 127.0.0.1.
@@ -377,6 +387,7 @@ async function main(): Promise<void> {
     alertStore = new PrismaAlertStore(prisma as unknown as AlertPrismaClient);
     intelStore = new PrismaIndicatorStore(prisma as unknown as IndicatorPrismaClient);
     reviewStore = new PrismaAccessReviewStore(prisma as unknown as AccessReviewPrismaClient);
+    enforcementStore = new PrismaEnforcementStore(prisma as unknown as EnforcementPrismaClient);
   } else {
     identities = new MemoryIdentityStore();
     audit = new OrganizationAuditLog(sha256Hex);
@@ -393,6 +404,7 @@ async function main(): Promise<void> {
     alertStore = new MemoryAlertStore();
     intelStore = new MemoryIndicatorStore();
     reviewStore = new MemoryAccessReviewStore();
+    enforcementStore = new MemoryEnforcementStore();
   }
 
   /**
@@ -440,6 +452,12 @@ async function main(): Promise<void> {
   // cannot deprovision gets a refusal rather than a recorded revocation that did nothing.
   const accessReviews = new AccessReviewService(reviewStore, identities, scim, audit);
 
+  // Guard's prevention (S4). Built beside detection rather than inside it: the two share an
+  // organization and little else, and a prevention action is its own record with its own
+  // lifetime — a block outlives the alert that led to it. The audit trail is passed so every
+  // proposal, approval, refusal and lift lands on the organization's evidence chain.
+  const enforcement = new EnforcementService(enforcementStore, audit, systemEnforcementIds());
+
   // The sign-in service and the directory reader are both optional, and independent:
   // a deployment can serve a login with no directories, or read directories with no
   // console login configured. Passing both is what lets the console show either.
@@ -475,6 +493,9 @@ async function main(): Promise<void> {
     // it to the methods the pages use, so a browser session cannot reach `tick` and open
     // reviews for every organization in the deployment.
     accessReviews,
+    // Guard's prevention (S4). Narrowed by the constructor to the methods the page uses, so a
+    // browser session cannot reach `sweepExpired` and lift another organization's blocks.
+    enforcement,
   );
   const guardService = new GuardService(detection, identities, {
     token: (process.env.SENTINEL_GUARD_TOKEN ?? "").trim() || null,
@@ -599,6 +620,22 @@ async function main(): Promise<void> {
     startAccessReviewScheduler(accessReviews, {
       intervalMs: reviewIntervalMs,
       log: (message) => console.log(`[sentinel] access reviews: ${message}`),
+    });
+  }
+  // The expiry sweep (S4). On by default, the opposite of scheduled attestation: the
+  // alternative to running it is a block that outlives the lifetime it was applied with,
+  // which is the outage a TTL exists to bound. `SENTINEL_ENFORCEMENT_SWEEP_INTERVAL_MINUTES=0`
+  // turns it off for a deployment that drives the sweep itself; an action with no deadline is
+  // never touched by it either way.
+  const sweepIntervalMs = enforcementSweepIntervalMs(process.env);
+  if (sweepIntervalMs === null) {
+    console.log(
+      "[sentinel] enforcement: the expiry sweep is off (SENTINEL_ENFORCEMENT_SWEEP_INTERVAL_MINUTES is 0)",
+    );
+  } else {
+    startEnforcementScheduler(enforcement, {
+      intervalMs: sweepIntervalMs,
+      log: (message) => console.log(`[sentinel] enforcement: ${message}`),
     });
   }
   console.log(

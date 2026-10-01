@@ -38,6 +38,7 @@ import {
   renderCompliance,
   renderCoverage,
   renderDirectory,
+  renderEnforcement,
   renderIntel,
   renderMfa,
   renderOverview,
@@ -49,6 +50,7 @@ import {
   type ConsoleComplianceView,
   type ConsoleCoverageView,
   type ConsoleDirectoryView,
+  type ConsoleEnforcementView,
   type ConsoleIntelView,
   type ConsoleMfaView,
   type ConsoleOverviewView,
@@ -210,6 +212,37 @@ export interface ConsoleEndpoints {
    * the same rows, so the document and the screen cannot disagree about a control.
    */
   compliancePacket(sessionId: string): Promise<ServiceResult<CompliancePacket>>;
+  /**
+   * The prevention register (S4): what is in force, what is waiting and what has ended.
+   *
+   * A page only an administrator may read, and the service is what refuses anybody else —
+   * the nav hides the link, but a link is not an access control and this router adds none.
+   */
+  enforcement(sessionId: string): Promise<ServiceResult<ConsoleEnforcementView>>;
+  /**
+   * Propose an action. The rails decide whether it applies now or waits for an approver; the
+   * outcome says which, so the page can tell the operator what actually happened.
+   */
+  proposeEnforcement(
+    sessionId: string,
+    input: { action: string; alertId: string; reason: string; targets: string; permanent: boolean },
+  ): Promise<ServiceResult<{ outcome: string }>>;
+  /** A second administrator's approval. The service refuses the requester's own. */
+  approveEnforcement(sessionId: string, actionId: string): Promise<ServiceResult<{ outcome: string }>>;
+  /** Lift an action by hand. Always allowed: see `liftEnforcement` in the service. */
+  liftEnforcement(sessionId: string, actionId: string, reason: string): Promise<ServiceResult<{ outcome: string }>>;
+  /** Write the policy the rails are judged against. */
+  setEnforcementPolicy(
+    sessionId: string,
+    input: {
+      protectedTargets: string;
+      maxTargets: number;
+      maxActionsPerHour: number;
+      defaultTtlSeconds: number;
+      allowPermanent: boolean;
+      requireSecondApprover: boolean;
+    },
+  ): Promise<ServiceResult<{ outcome: string }>>;
   /** The session policies the organization has, one card per scope. */
   policies(sessionId: string): Promise<ServiceResult<ConsolePoliciesView>>;
   /** Write the baseline or one role's override; the scope is echoed for the flash. */
@@ -728,6 +761,71 @@ async function handleUnassignAlert(request: HttpRequest, sessionId: string, endp
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/*  Enforcement (S4)                                                          */
+/* -------------------------------------------------------------------------- */
+
+async function handleEnforcementPage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const result = await endpoints.enforcement(sessionId);
+  return respond(result, (view) => html(200, renderEnforcement(view, flashFrom(url), errorFrom(url))));
+}
+
+/**
+ * Propose an action.
+ *
+ * A blank action, target box or alert reaches the service and comes back named rather than
+ * being refused here: what a proposal requires is a rule about a decision, and it lives with
+ * the decision. Only the two values a form cannot express — the checkbox and the numbers —
+ * are read here, and a blank number is passed through as `NaN` rather than defaulted, so the
+ * policy validator is the one that says the value is wrong.
+ *
+ * A redirect, not a rendered body: applying an action changes what is in force, and a state
+ * change that answered with a body would happen again on a refresh.
+ */
+async function handleProposeEnforcement(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const result = await endpoints.proposeEnforcement(sessionId, {
+    action: params.action ?? "",
+    alertId: params.alertId ?? "",
+    reason: params.reason ?? "",
+    targets: params.targets ?? "",
+    permanent: params.permanent === "1",
+  });
+  if (!result.ok) return failure(result.error);
+  return redirect(`${CONSOLE_PATHS.enforcement}?flash=${encodeURIComponent(result.value.outcome)}`);
+}
+
+async function handleApproveEnforcement(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const actionId = formParams(request).actionId ?? "";
+  if (!actionId) return failure("Choose an action first.");
+  const result = await endpoints.approveEnforcement(sessionId, actionId);
+  if (!result.ok) return failure(result.error);
+  return redirect(`${CONSOLE_PATHS.enforcement}?flash=${encodeURIComponent(result.value.outcome)}`);
+}
+
+async function handleLiftEnforcement(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const actionId = params.actionId ?? "";
+  if (!actionId) return failure("Choose an action first.");
+  const result = await endpoints.liftEnforcement(sessionId, actionId, params.reason ?? "");
+  if (!result.ok) return failure(result.error);
+  return redirect(`${CONSOLE_PATHS.enforcement}?flash=${encodeURIComponent(result.value.outcome)}`);
+}
+
+async function handleSetEnforcementPolicy(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const result = await endpoints.setEnforcementPolicy(sessionId, {
+    protectedTargets: params.protectedTargets ?? "",
+    maxTargets: Number(params.maxTargets ?? ""),
+    maxActionsPerHour: Number(params.maxActionsPerHour ?? ""),
+    defaultTtlSeconds: Number(params.defaultTtlSeconds ?? ""),
+    allowPermanent: params.allowPermanent === "1",
+    requireSecondApprover: params.requireSecondApprover === "1",
+  });
+  if (!result.ok) return failure(result.error);
+  return redirect(`${CONSOLE_PATHS.enforcement}?flash=${encodeURIComponent(result.value.outcome)}`);
+}
+
 async function handleCompliancePage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
   const result = await endpoints.compliance(sessionId);
   return respond(result, (view) => html(200, renderCompliance(view, flashFrom(url), errorFrom(url))));
@@ -1120,6 +1218,16 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
       return post(() => handleUnassignAlert(request, sessionId, endpoints));
     case CONSOLE_PATHS.coverage:
       return get(() => handleCoveragePage(url, sessionId, endpoints));
+    case CONSOLE_PATHS.enforcement:
+      return get(() => handleEnforcementPage(url, sessionId, endpoints));
+    case CONSOLE_PATHS.enforcementPropose:
+      return post(() => handleProposeEnforcement(request, sessionId, endpoints));
+    case CONSOLE_PATHS.enforcementApprove:
+      return post(() => handleApproveEnforcement(request, sessionId, endpoints));
+    case CONSOLE_PATHS.enforcementLift:
+      return post(() => handleLiftEnforcement(request, sessionId, endpoints));
+    case CONSOLE_PATHS.enforcementPolicy:
+      return post(() => handleSetEnforcementPolicy(request, sessionId, endpoints));
     case CONSOLE_PATHS.compliance:
       return get(() => handleCompliancePage(url, sessionId, endpoints));
     case CONSOLE_PATHS.compliancePacket:
