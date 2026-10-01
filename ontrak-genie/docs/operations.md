@@ -726,14 +726,31 @@ A single-page app with no build step (`public/`), served by the agent itself.
   just read the project) overrides it. Nothing in the pane depends on the guess
   being right; it is the difference between one click and two.
 
-  The app is proxied under `/preview/` on this server rather than exposed on its
-  own port, so the pane is same-origin: the app's own fetch, cookies and relative
-  URLs behave in the pane the way they will in production, and running one
-  account's app is gated exactly like reading its files. HTML documents get their
-  root-relative `src`/`href`/`action` rewritten to `/preview/…`, which is what
-  makes a framework that asks for `/assets/app.js` work through a prefix; anything
-  they load then resolves against `/preview/` by itself. A document over 4 MB is
-  streamed through unrewritten rather than buffered.
+  The app is proxied on this server rather than exposed on its own port, so the
+  pane is same-origin: the app's own fetch, cookies and relative URLs behave in
+  the pane the way they will in production, and running one account's app is gated
+  exactly like reading its files. Two paths reach it, and the second is the one
+  that makes a framework work:
+
+  * `/preview/…` is stripped and forwarded, and an HTML document's root-relative
+    `src`/`href`/`action` are rewritten to `/preview/…` on the way through, so a
+    page asking for `/assets/app.js` keeps its links inside the pane. A document
+    over 4 MB is streamed through unrewritten rather than buffered.
+  * **Anything else the console does not own belongs to the app while a preview is
+    running.** A build step's URLs cannot be rewritten — Vite asks for
+    `/@vite/client`, Next for `/_next/webpack-hmr`, and a dynamic import is a
+    string the bundler produced — and those requests land on the console's root,
+    where the answer used to be the console's own 404. The console's routes are a
+    closed set and are matched first (the shell and its assets, the gate,
+    `/health`, `/api/*`, `/preview/*`); what is left is the app's. The cost is
+    stated rather than hidden: while an app is running the console has no 404
+    page, because a typo reaches the app and gets the app's answer.
+  * **Websocket upgrades go to the app too.** A development server's hot reload
+    *is* a socket — Vite's client opens one on `/`, Next's on
+    `/_next/webpack-hmr` — and without it the app's console fills with a reconnect
+    loop that reads as a bug in the app. Upgrades carry the same cookie or token
+    as the page that opened them and are authorized the same way; with no preview
+    running, or on `/api/*`, the socket is closed rather than parked.
 
   Reloading is the console's own, not the app's. A dev server with hot reloading
   does this for itself and `python3 -m http.server` does not at all, so the pane
@@ -1018,7 +1035,7 @@ so far), `text`, `tool_call`, `tool_result` (with an optional `diff`), `notice`,
 ```bash
 npm run dev           # tsx watch (reload on change)
 npm run typecheck     # tsc --noEmit
-npm test              # node:test — 326 tests, no browser needed
+npm test              # node:test — 329 tests, no browser needed
 npm run ui:smoke      # drives the real UI in a headless Chromium
 npm run model:health  # which advertised models really do tool calling
 npm run offline:check # proves the offline fallback, with the gateway dead

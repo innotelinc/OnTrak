@@ -557,6 +557,98 @@ try {
     return empty ? "opens empty, closes, labelled" : `opens on ${opened.title}`;
   });
 
+  /**
+   * The app itself, through the pane, end to end.
+   *
+   * Everything the pane used to show was about the *source*; this is the one
+   * check that proves the other half — that a project can be started from the
+   * console, that the pane reaches it, and that the document it renders is the
+   * app's rather than the console's. The app is a server written for the test, so
+   * the check needs no project in the workspace and no dependency on disk; the
+   * command is passed the way the agent would pass it.
+   *
+   * It starts through the API rather than by clicking "run" with no command,
+   * because the pane's own guess depends on what is in the workspace, and a smoke
+   * test that sometimes starts whatever happens to be there is a test that
+   * sometimes runs somebody's dev server.
+   */
+  await check("the preview runs the project and shows the app, not the code", async () => {
+    const api = (pathname, init = {}) =>
+      fetch(`${BASE}${pathname}`, {
+        ...init,
+        headers: {
+          "Content-Type": "application/json",
+          ...(TOKEN === "" ? {} : { Authorization: `Bearer ${TOKEN}` }),
+        },
+      });
+
+    const marker = "GENIE_SMOKE_APP";
+    const command =
+      `node -e 'require("http").createServer((q,s)=>{` +
+      `s.writeHead(200,{"Content-Type":"text/html"});` +
+      `s.end("<!doctype html><html><body><h1>${marker}</h1></body></html>")` +
+      `}).listen(Number(process.env.PORT),"127.0.0.1")'`;
+
+    let started = false;
+    try {
+      const response = await api("/api/preview/start", {
+        method: "POST",
+        body: JSON.stringify({ command }),
+      });
+      const status = await response.json();
+      if (status.running !== true) {
+        throw new Error(`the preview did not start: ${status.error ?? status.log ?? "no reason given"}`);
+      }
+      started = true;
+
+      // Reach the app view the way a person does, from whichever mode the pane
+      // was left in.
+      const mode = await session.evaluate(`
+        const button = document.querySelector('#preview-run');
+        if (button.textContent.trim() === 'show code') button.click();
+        button.click();
+        return button.textContent.trim();`);
+      if (mode !== "show code") throw new Error(`the run button did not open the app view (says "${mode}")`);
+
+      const rendered = await session.waitFor(
+        `(() => {
+           const frame = document.querySelector('#preview-frame');
+           if (frame.classList.contains('hidden')) return false;
+           try { return (frame.contentDocument?.body?.textContent ?? '').includes(${JSON.stringify(marker)}); }
+           catch { return false; }
+         })()`,
+        20_000,
+      );
+      if (!rendered) throw new Error("the pane never rendered the running app");
+
+      const pane = await session.evaluate(`
+        return {
+          url: document.querySelector('#preview-app-url').textContent.trim(),
+          note: document.querySelector('#preview-app-note').textContent.trim(),
+          emptyHidden: document.querySelector('#preview-app-empty').classList.contains('hidden'),
+          stopOffered: !document.querySelector('#preview-app-stop').classList.contains('hidden'),
+        };`);
+      if (!pane.emptyHidden) throw new Error("the pane still claims nothing is running");
+      if (!pane.stopOffered) throw new Error("a running app offers no way to stop it");
+      if (!/\/preview\/ · port \d+/.test(pane.url)) throw new Error(`the pane does not say where the app is: "${pane.url}"`);
+      if (!pane.note.includes(command)) {
+        throw new Error("the pane does not say what it is running, so a wrong guess cannot be corrected");
+      }
+
+      // Stopping is the pane's own button, and the view has to survive it.
+      await session.evaluate("document.querySelector('#preview-app-stop').click();");
+      const stopped = await session.waitFor(
+        `document.querySelector('#preview-app-empty').classList.contains('hidden') === false`,
+        10_000,
+      );
+      if (!stopped) throw new Error("the pane did not go back to saying nothing is running");
+      started = false;
+      return "started, rendered in the frame, and stopped";
+    } finally {
+      if (started) await api("/api/preview/stop", { method: "POST" }).catch(() => undefined);
+    }
+  });
+
   await check("accessibility basics are present", async () => {
     const missing = await session.evaluate(`
       const want = [

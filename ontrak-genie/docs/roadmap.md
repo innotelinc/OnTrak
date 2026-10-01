@@ -201,11 +201,14 @@ not.
 - `[x]` **The app, running.** `preview` used to open on the code the agent was
   writing; it now opens on the project *running*, and reloads it as files change.
   `src/preview.ts` owns one dev server per workspace, the port it ended up on, and
-  the change feed; the app is proxied under `/preview/` (same-origin, gated like
-  any other read) with root-relative URLs rewritten, so a framework asking for
-  `/assets/app.js` works through the prefix. Which command to run is detected from
-  the project rather than configured, and named as detected in the pane; `show
-  code` still shows the file being written.
+  the change feed; the app is proxied same-origin and gated like any other read,
+  both under `/preview/` (with root-relative URLs rewritten, so a page asking for
+  `/assets/app.js` keeps its links inside the pane) and at the console's own root,
+  because a bundler's URLs — `/@vite/client`, `/_next/webpack-hmr`, a dynamic
+  import — are strings no rewrite can reach. Websocket upgrades are forwarded too,
+  which is what a development server's hot reload actually is. Which command to
+  run is detected from the project rather than configured, and named as detected
+  in the pane; `show code` still shows the file being written.
 
 ### v0.4 — Beyond a single operator `[ ]`
 

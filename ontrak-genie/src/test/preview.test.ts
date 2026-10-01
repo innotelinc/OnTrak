@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import http from "node:http";
+import net from "node:net";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -79,6 +80,16 @@ const PAGE = `<!doctype html>
 const APP_JS = `window.previewFixture = true;\n`;
 
 /**
+ * A module nothing in the page names.
+ *
+ * Vite asks for `/@vite/client`, Next for `/_next/webpack-hmr`, and a dynamic
+ * import is a string a build step produced — none of which the document's own
+ * attributes could tell a proxy about. This is that request: an absolute path on
+ * the console's origin that only the app knows how to answer.
+ */
+const RUNTIME_JS = `window.builtAtRuntime = true;\n`;
+
+/**
  * The dev server the workspace runs.
  *
  * It honours `PORT`, listens on the loopback interface, and serves one HTML page
@@ -89,17 +100,28 @@ const SERVER_JS = `
 const http = require("http");
 const page = ${JSON.stringify(PAGE)};
 const app = ${JSON.stringify(APP_JS)};
-http
-  .createServer((req, res) => {
-    if (req.url.startsWith("/app.js")) {
-      res.writeHead(200, { "Content-Type": "application/javascript" });
-      res.end(app);
-      return;
-    }
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(page);
-  })
-  .listen(Number(process.env.PORT), "127.0.0.1");
+const runtime = ${JSON.stringify(RUNTIME_JS)};
+const server = http.createServer((req, res) => {
+  if (req.url.startsWith("/runtime.js")) {
+    res.writeHead(200, { "Content-Type": "application/javascript" });
+    res.end(runtime);
+    return;
+  }
+  if (req.url.startsWith("/app.js")) {
+    res.writeHead(200, { "Content-Type": "application/javascript" });
+    res.end(app);
+    return;
+  }
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(page);
+});
+// A development server's hot reload is a websocket, and it is the one thing a
+// proxy cannot serve from a document rewrite.
+server.on("upgrade", (req, socket) => {
+  socket.write("HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\n\\r\\n");
+  socket.write("hot-reload-ok");
+});
+server.listen(Number(process.env.PORT), "127.0.0.1");
 `;
 
 /* ------------------------------------------------------------- detection */
@@ -212,6 +234,64 @@ test("the preview, end to end", async (t) => {
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type") ?? "", /javascript/);
     assert.equal(await response.text(), APP_JS);
+  });
+
+  await t.test("a path the bundle builds at runtime reaches the app", async () => {
+    // Not in the document, so nothing could have rewritten it: this is the
+    // request a framework makes for its own client, or a dynamic import makes
+    // for a chunk, and it arrives at the console's root.
+    const response = await fetch(`${base}/runtime.js?token=${TOKEN}`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") ?? "", /javascript/);
+    assert.equal(await response.text(), RUNTIME_JS);
+
+    // A nested one too — `/@vite/client` style, not a file at the root.
+    const nested = await fetch(`${base}/node_modules/.vite/deps/react.js?token=${TOKEN}`);
+    assert.equal(nested.status, 200);
+    assert.match(await nested.text(), /preview fixture/, "the app answers; the console does not");
+  });
+
+  await t.test("the console's own routes still win", async () => {
+    // The fixture serves `/app.js` as well. The console's shell must keep its
+    // asset, or the page that draws the preview would be replaced by the app.
+    const response = await fetch(`${base}/app.js`);
+    assert.equal(response.status, 200);
+    const body = await response.text();
+    assert.notEqual(body, APP_JS, "the console's own script must not be shadowed");
+    assert.match(body, /preview|sessionStorage|coding-agent/);
+
+    for (const pathname of ["/", "/style.css", "/login", "/health"]) {
+      const kept = await fetch(`${base}${pathname}`);
+      assert.equal(kept.status, 200, `${pathname} belongs to the console`);
+    }
+  });
+
+  await t.test("a websocket upgrade reaches the app", async () => {
+    const answer = await new Promise<string>((resolve, reject) => {
+      const socket = net.connect(Number(new URL(base).port), "127.0.0.1", () => {
+        socket.write(
+          `GET /?token=${TOKEN} HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\n` +
+            "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+            "Sec-WebSocket-Version: 13\r\n\r\n",
+        );
+      });
+      let received = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk: string) => {
+        received += chunk;
+        if (received.includes("hot-reload-ok")) {
+          socket.destroy();
+          resolve(received);
+        }
+      });
+      socket.on("error", reject);
+      socket.setTimeout(4_000, () => {
+        socket.destroy();
+        resolve(received);
+      });
+    });
+    assert.match(answer, /101 Switching Protocols/);
+    assert.match(answer, /hot-reload-ok/);
   });
 
   await t.test("the preview is gated exactly like the API", async () => {

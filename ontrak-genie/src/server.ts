@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import http from "node:http";
+import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -180,10 +181,49 @@ function prefixRootUrls(html: string): string {
 /** A document larger than this is streamed through unrewritten rather than buffered. */
 const HTML_REWRITE_LIMIT = 4 * 1024 * 1024;
 
+/**
+ * The app's own paths, forwarded as they were asked for.
+ *
+ * A rewrite of the document's attributes cannot reach a URL a bundle builds at
+ * runtime: Vite asks for `/@vite/client`, Next for `/_next/webpack-hmr`, and a
+ * dynamic import is a string a build step produced. Those requests arrive at
+ * *this* origin's root, where the console lives, so the console answers them —
+ * with its own 404, which is the blank page the pane used to show.
+ *
+ * So when nothing else claims a path, the running app does. The console's own
+ * routes are a closed set and they are matched first: the shell, its assets, the
+ * gate, `/health` and everything under `/api/` and `/preview/`. What is left is
+ * the app's namespace, and forwarding it unchanged is what makes a framework's
+ * absolute URLs work through a proxy at all.
+ *
+ * While a preview is running the console therefore has no 404 page — a typo
+ * reaches the app and gets the app's answer. That is the trade, and it is the
+ * right way round: a preview that renders is what was asked for.
+ */
+function proxyAppRoot(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  url: URL,
+): Promise<void> {
+  return forwardToApp(req, res, `${url.pathname}${url.search ?? ""}`, false);
+}
+
 function proxyPreview(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   url: URL,
+): Promise<void> {
+  // `/preview/foo` is `/foo` to the app: it was written to be served at its own
+  // root, and a dev server that expected a prefix would not be a dev server.
+  const rest = url.pathname.replace(/^\/preview/, "") || "/";
+  return forwardToApp(req, res, `${rest}${url.search ?? ""}`, true);
+}
+
+function forwardToApp(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  target: string,
+  rewriteDocument: boolean,
 ): Promise<void> {
   const port = previewPort();
   if (port === null) {
@@ -191,11 +231,6 @@ function proxyPreview(
     res.end("No preview is running yet. Start the app, then reload this pane.\n");
     return Promise.resolve();
   }
-
-  // `/preview/foo` is `/foo` to the app: it was written to be served at its own
-  // root, and a dev server that expected a prefix would not be a dev server.
-  const rest = url.pathname.replace(/^\/preview/, "") || "/";
-  const target = `${rest}${url.search ?? ""}`;
 
   return new Promise<void>((resolve) => {
     const upstream = http.request(
@@ -209,7 +244,9 @@ function proxyPreview(
       (answer) => {
         const type = String(answer.headers["content-type"] ?? "");
         const rewritable =
-          type.includes("text/html") && answer.headers["content-encoding"] === undefined;
+          rewriteDocument &&
+          type.includes("text/html") &&
+          answer.headers["content-encoding"] === undefined;
         if (!rewritable) {
           res.writeHead(answer.statusCode ?? 502, answer.headers);
           answer.pipe(res);
@@ -268,6 +305,57 @@ function proxyPreview(
     });
     req.pipe(upstream);
   });
+}
+
+/**
+ * A websocket, forwarded to the running app.
+ *
+ * This is what a development server's own hot reload actually is: Vite's client
+ * opens `ws://…/` and Next's opens `/_next/webpack-hmr`, and both are absolute
+ * paths on this origin. Without this they get a socket the console never answers,
+ * and the app's console fills with a reconnect loop that looks like a bug in the
+ * app rather than a limitation of the preview.
+ *
+ * The handshake is written out by hand rather than through `http.request`
+ * because an upgrade is not a request/response pair: the headers go upstream, and
+ * from then on the two sockets are one pipe.
+ */
+function proxyAppUpgrade(
+  req: http.IncomingMessage,
+  socket: net.Socket,
+  head: Buffer,
+  url: URL,
+): void {
+  const port = previewPort();
+  if (port === null) {
+    socket.destroy();
+    return;
+  }
+
+  const prefixed = url.pathname === "/preview" || url.pathname.startsWith("/preview/");
+  const rest = prefixed ? url.pathname.replace(/^\/preview/, "") || "/" : url.pathname;
+  const target = `${rest}${url.search ?? ""}`;
+
+  const upstream = net.connect({ host: "127.0.0.1", port }, () => {
+    const headers: Record<string, string | string[] | undefined> = {
+      ...req.headers,
+      host: `127.0.0.1:${port}`,
+    };
+    const lines = [`GET ${target} HTTP/1.1`];
+    for (const [name, value] of Object.entries(headers)) {
+      if (value === undefined) continue;
+      lines.push(`${name}: ${Array.isArray(value) ? value.join(", ") : value}`);
+    }
+    upstream.write(`${lines.join("\r\n")}\r\n\r\n`);
+    // Bytes the parser already read past the headers still belong to the stream.
+    if (head.length > 0) upstream.write(head);
+    socket.pipe(upstream);
+    upstream.pipe(socket);
+  });
+
+  upstream.on("error", () => socket.destroy());
+  socket.on("error", () => upstream.destroy());
+  socket.on("close", () => upstream.destroy());
 }
 
 async function serveStatic(res: http.ServerResponse, pathname: string): Promise<boolean> {
@@ -861,7 +949,7 @@ export const HEALTH_PATH = "/health";
  * port; importing this module must never claim the real one.
  */
 export function createServer(): http.Server {
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       try {
@@ -917,6 +1005,20 @@ export function createServer(): http.Server {
         }
 
         if (req.method === "GET" && (await serveStatic(res, url.pathname))) return;
+
+        /*
+         * Last, and only while an app is running: anything the console did not
+         * claim belongs to the app. Gated the same way `/preview/` is, because
+         * this is the same code being reached by a different path.
+         */
+        if (previewPort() !== null) {
+          if (!isAuthorized(req, url)) throw new HttpError(401, "unauthorized");
+          const appScope = await scopeFor(sessionFrom(req));
+          if (!appScope.ok) throw new HttpError(appScope.status, appScope.message);
+          await runInScope(appScope.scope, () => proxyAppRoot(req, res, url));
+          return;
+        }
+
         sendJson(res, 404, { error: "not found" });
       } catch (error) {
         if (res.headersSent) {
@@ -928,6 +1030,39 @@ export function createServer(): http.Server {
       }
     })();
   });
+
+  /*
+   * Websockets belong to the app. The console has none of its own, so with a
+   * preview running every upgrade is the development server's hot-reload socket
+   * — and the request carries the same cookie or token as the page that opened
+   * it, so it is authorized the same way.
+   */
+  server.on("upgrade", (req, socket, head) => {
+    const duplex = socket as net.Socket;
+    void (async () => {
+      const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+      try {
+        if (previewPort() === null || url.pathname.startsWith("/api/")) {
+          duplex.destroy();
+          return;
+        }
+        if (!isAuthorized(req, url)) {
+          duplex.destroy();
+          return;
+        }
+        const scope = await scopeFor(sessionFrom(req));
+        if (!scope.ok) {
+          duplex.destroy();
+          return;
+        }
+        await runInScope(scope.scope, async () => proxyAppUpgrade(req, duplex, head, url));
+      } catch {
+        duplex.destroy();
+      }
+    })();
+  });
+
+  return server;
 }
 
 // --- entrypoint -------------------------------------------------------------
