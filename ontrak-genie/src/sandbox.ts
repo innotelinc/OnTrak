@@ -130,7 +130,9 @@ export async function sandboxInfo(): Promise<SandboxInfo> {
       `Commands run in a locked-down ${config.sandboxImage} container ` +
       (config.sandboxNetwork === "bridge"
         ? "with network access, so the agent can install its own dependencies."
-        : "with no network access."),
+        : config.sandboxNetwork === "host"
+          ? "on this host's own network, so its addresses are this deployment's."
+          : "with no network access."),
   };
 }
 
@@ -168,8 +170,15 @@ export function sandboxInvocation(
     // operator who wants the agent to install its own dependencies sets
     // AGENT_SANDBOX_NETWORK=bridge (see config.ts), which trades that promise
     // for a working one - and is why it is named out loud rather than assumed.
+    //
+    // `host` is the third answer and the one a published deployment wants: a
+    // sandboxed command then holds the deployment's LAN address rather than a
+    // docker bridge address, so an app it starts is reachable at the address the
+    // deployment advertises and the gateway can call it back. It widens the
+    // sandbox's reach no further than Genie's own namespace, which is the
+    // container the operator already decided to run this in.
     "--network",
-    config.sandboxNetwork === "bridge" ? "bridge" : "none",
+    config.sandboxNetwork,
     // Immutable root filesystem. /tmp is the only writable scratch space.
     "--read-only",
     "--tmpfs",

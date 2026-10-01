@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { runAgent } from "./agent.js";
 import { listPendingApprovals, pendingApprovals, resolveApproval } from "./approval.js";
 import {
+  previewDialHost,
   previewEvents,
   previewPort,
   previewStatus,
@@ -232,14 +233,18 @@ function forwardToApp(
     return Promise.resolve();
   }
 
+  // Where the app actually is, which is not always loopback: a deployment can
+  // bind the preview to the LAN address it publishes.
+  const dial = previewDialHost();
+
   return new Promise<void>((resolve) => {
     const upstream = http.request(
       {
-        host: "127.0.0.1",
+        host: dial,
         port,
         path: target,
         method: req.method,
-        headers: { ...req.headers, host: `127.0.0.1:${port}` },
+        headers: { ...req.headers, host: `${dial}:${port}` },
       },
       (answer) => {
         const type = String(answer.headers["content-type"] ?? "");
@@ -336,10 +341,11 @@ function proxyAppUpgrade(
   const rest = prefixed ? url.pathname.replace(/^\/preview/, "") || "/" : url.pathname;
   const target = `${rest}${url.search ?? ""}`;
 
-  const upstream = net.connect({ host: "127.0.0.1", port }, () => {
+  const dial = previewDialHost();
+  const upstream = net.connect({ host: dial, port }, () => {
     const headers: Record<string, string | string[] | undefined> = {
       ...req.headers,
-      host: `127.0.0.1:${port}`,
+      host: `${dial}:${port}`,
     };
     const lines = [`GET ${target} HTTP/1.1`];
     for (const [name, value] of Object.entries(headers)) {

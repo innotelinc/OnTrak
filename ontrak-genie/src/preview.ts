@@ -5,6 +5,7 @@ import net from "node:net";
 import path from "node:path";
 
 import { config } from "./config.js";
+import { addressFor, lanAddress } from "./network.js";
 import { resolveInWorkspace } from "./workspace.js";
 import { workspaceRoot } from "./scope.js";
 
@@ -46,6 +47,18 @@ export interface PreviewStatus {
   port: number | null;
   /** Where the browser reaches it, relative to the console. */
   url: string;
+  /**
+   * The address the app is reachable at from the network, when the deployment
+   * publishes it, or null.
+   *
+   * This is the difference between "the person at this console can see the app"
+   * and "anything else on the network can call the app" — a gateway sending a
+   * webhook, a phone checking the page, a provider redirecting a sign-in back.
+   * Only a real LAN address is named here: inside a container the alternative is
+   * the docker bridge address, which resolves for this host and refuses for
+   * everybody the URL would be handed to.
+   */
+  address: string | null;
   /** When it started, ISO-8601. */
   startedAt: string | null;
   /** Its exit code once it has stopped, or null while it runs or if it never started. */
@@ -95,6 +108,7 @@ function emptyStatus(command: string | null = null, cwd: string | null = null): 
     cwd,
     port: null,
     url: "/preview/",
+    address: null,
     startedAt: null,
     exitCode: null,
     error: null,
@@ -117,17 +131,51 @@ export function previewStatus(): PreviewStatus {
       ? emptyStatus()
       : { ...emptyStatus(suggestion.command, suggestion.cwd), detected: true };
   }
+  const live = entry.exitCode === null;
   return {
-    running: entry.exitCode === null,
+    running: live,
     command: entry.command,
     cwd: entry.cwd,
     port: entry.port,
     url: "/preview/",
+    address: live ? publishedAddress(entry.port) : null,
     startedAt: entry.startedAt,
     exitCode: entry.exitCode,
     error: entry.error,
     log: entry.log,
   };
+}
+
+/**
+ * The address this app answers at from the network, or null when it does not.
+ *
+ * Null is the honest answer in three cases, and each is a real one: nothing is
+ * running; the deployment has not said the port is published
+ * (`AGENT_PREVIEW_PUBLISH`), so a URL would be a promise nothing keeps; and the
+ * app bound loopback, where the address would resolve to the app's own refusal.
+ * The console proxy still reaches all of them — this is only about the network.
+ */
+function publishedAddress(port: number): string | null {
+  if (!config.previewPublish) return null;
+  if (config.previewHost === "127.0.0.1") return null;
+  // Only the port the deployment published is reachable, and a project that
+  // ignored `PORT` (Vite takes 3000, Astro takes 4321) landed somewhere else.
+  // Advertising it would be naming a port nothing forwards, so it is not named.
+  if (port !== config.previewPort) return null;
+  const host = config.previewHost === "0.0.0.0" ? lanAddress() : config.previewHost;
+  return addressFor(host, port);
+}
+
+/**
+ * The address this process dials the app on.
+ *
+ * Not the advertised one: the app is usually on loopback, and even when it is
+ * bound to every interface, `127.0.0.1` is the shortest way to the same socket.
+ * A deployment that bound the app to one specific address is the case where they
+ * differ, and then the bind address is the only one that answers.
+ */
+export function previewDialHost(): string {
+  return config.previewHost === "0.0.0.0" ? "127.0.0.1" : config.previewHost;
 }
 
 /**
@@ -146,7 +194,7 @@ export function previewPort(): number | null {
 /** Is anything listening there yet? Used to report "started but not answering". */
 export async function portAnswers(port: number, timeoutMs = 1_500): Promise<boolean> {
   return await new Promise<boolean>((resolve) => {
-    const socket = net.connect({ host: "127.0.0.1", port });
+    const socket = net.connect({ host: previewDialHost(), port });
     const done = (answer: boolean): void => {
       socket.removeAllListeners();
       socket.destroy();
@@ -166,7 +214,7 @@ export async function findFreePort(preferred: number): Promise<number> {
       const server = net.createServer();
       server.once("error", () => resolve(false));
       server.once("listening", () => server.close(() => resolve(true)));
-      server.listen(port, "127.0.0.1");
+      server.listen(port, previewDialHost());
     });
 
   // Zero or less is "no preference", not port zero: handing that number back
@@ -176,7 +224,7 @@ export async function findFreePort(preferred: number): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
     const server = net.createServer();
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(0, previewDialHost(), () => {
       const address = server.address();
       const port = typeof address === "object" && address !== null ? address.port : preferred;
       server.close(() => resolve(port));
@@ -339,7 +387,8 @@ export async function startPreview(options: {
     env: {
       ...process.env,
       PORT: String(port),
-      HOST: "127.0.0.1",
+      // What the app binds. Not what it is *dialled* on — see `previewDialHost`.
+      HOST: config.previewHost,
       BROWSER: "none",
       CI: "1",
       AGENT_WORKSPACE: root,

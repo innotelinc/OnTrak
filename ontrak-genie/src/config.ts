@@ -42,7 +42,7 @@ function sandboxPreference(name: string, fallback: SandboxPreference): SandboxPr
   return raw === "docker" || raw === "host" || raw === "auto" ? raw : fallback;
 }
 
-type SandboxNetwork = "none" | "bridge";
+export type SandboxNetwork = "none" | "bridge" | "host";
 
 /**
  * Whether a sandboxed command may reach the network.
@@ -53,12 +53,32 @@ type SandboxNetwork = "none" | "bridge";
  * asked to build a real project needs `curl`, a `pip install`, or a package it
  * does not have yet. So this is a deliberate choice rather than a constant: an
  * operator who wants the agent to fetch its own dependencies sets `bridge`, and
- * one who wants the lockdown keeps the default. The host backend is unaffected —
- * commands there already have whatever network the process has.
+ * one who wants the lockdown keeps the default. `host` shares Genie's own
+ * network namespace, which on a deployment that publishes its ports is how a
+ * sandboxed command — and an app it starts — is reachable at the deployment's
+ * LAN address rather than behind a docker bridge address that only this host can
+ * dial. The host backend is unaffected — commands there already have whatever
+ * network the process has.
  */
 function sandboxNetwork(name: string, fallback: SandboxNetwork): SandboxNetwork {
   const raw = str(name, fallback).toLowerCase();
-  return raw === "bridge" || raw === "none" ? raw : fallback;
+  return raw === "bridge" || raw === "none" || raw === "host" ? raw : fallback;
+}
+
+/**
+ * An address a published port is reachable at, or the two words that mean "work
+ * it out" and "only this machine".
+ *
+ * `AGENT_PREVIEW_HOST` decides what the app binds: `loopback` (the default —
+ * nothing is exposed by accident), `all` (every interface, which is what a
+ * container published by compose needs, because the container's `0.0.0.0` is the
+ * host's published port), or an explicit address.
+ */
+function bindHost(name: string, fallback: string): string {
+  const raw = str(name, fallback).toLowerCase();
+  if (raw === "loopback" || raw === "local" || raw === "localhost") return "127.0.0.1";
+  if (raw === "all" || raw === "any" || raw === "0.0.0.0") return "0.0.0.0";
+  return str(name, fallback);
 }
 
 /**
@@ -198,6 +218,29 @@ export const config = {
    */
   previewPort: int("AGENT_PREVIEW_PORT", 5173),
   previewCommand: str("AGENT_PREVIEW_COMMAND", ""),
+  /**
+   * The address the running app is *reached at*, which is not the address this
+   * process dials it on.
+   *
+   * A container has several addresses and only one of them is useful to anyone
+   * outside it: the docker bridge (`172.x`) is reachable from that bridge and
+   * nowhere else, and loopback from this process alone. Handing a gateway a
+   * `172.17.0.1` is handing it an address that will refuse to connect — so the
+   * deployment names the LAN address here (`192.168.1.21`), and empty means
+   * "work it out from the routing table" (see `src/network.ts`).
+   */
+  lanIp: str("AGENT_LAN_IP", ""),
+  /**
+   * What the preview's dev server binds. See `bindHost` above: the default keeps
+   * the app on loopback, and a deployment that publishes the port sets `all`.
+   */
+  previewHost: bindHost("AGENT_PREVIEW_HOST", "loopback"),
+  /**
+   * Whether the advertised address is really reachable, i.e. the port is
+   * published and the app binds beyond loopback. Off, the console still proxies
+   * the app for the person using it, and says so instead of inventing a URL.
+   */
+  previewPublish: bool("AGENT_PREVIEW_PUBLISH", false),
 
   sandbox: sandboxPreference("AGENT_SANDBOX", "auto"),
   sandboxNetwork: sandboxNetwork("AGENT_SANDBOX_NETWORK", "none"),

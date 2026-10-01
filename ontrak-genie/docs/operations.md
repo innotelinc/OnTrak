@@ -567,14 +567,28 @@ Inside `docker compose` the agent is already containerised, so set
 The sandbox runs with `--network none`, so a command inside it has **no network
 at all** — no DNS, no `pip install`, no `npm install`. That is deliberate: it is
 the difference between a build step and a build step that can also phone home.
-If you need package installs inside the sandbox, that is a deliberate trade to
-make, not a bug to work around.
+That is the default, not the only setting: `AGENT_SANDBOX_NETWORK=bridge` gives a
+sandboxed command a docker bridge address, and `AGENT_SANDBOX_NETWORK=host` gives
+it Genie's own namespace, which on a published deployment is the deployment's LAN
+address. `host` is what a stack wants when something has to call *back* into what
+the sandbox started — an app on a preview port, a webhook, an OAuth redirect —
+because then the app holds the address the deployment advertises rather than a
+`172.x` address that resolves only for the host that produced it.
 
 The compose service publishes the UI on the host's own address and reaches the
 model gateway by its LAN address, because a container on a Compose bridge is only
 reachable at `172.17.x.x`. That address is meaningless to every other host on the
 network, so anything addressed by service name breaks the moment it leaves the
 Compose network.
+
+The rule, taken from the platform's own provisioning (`stack_lib_lan_ip` in the
+stack repo, and `src/network.ts` here): **a docker bridge or loopback address is
+never used as an upstream, and never advertised.** `AGENT_LAN_IP` names the
+address this deployment is reachable at; it is the setting to use in a container,
+where every address the process can see is a bridge address. Left empty, Genie
+picks one of this host's private addresses, `192.168.*` / `10.*` first. If it can
+find nothing worth naming — which is the normal answer inside a container with no
+`AGENT_LAN_IP` — it names nothing rather than naming the wrong thing.
 
 ## Approval gate
 
@@ -751,6 +765,26 @@ A single-page app with no build step (`public/`), served by the agent itself.
     loop that reads as a bug in the app. Upgrades carry the same cookie or token
     as the page that opened them and are authorized the same way; with no preview
     running, or on `/api/*`, the socket is closed rather than parked.
+
+  **The console's address is not a network address.** `/preview/` is reachable
+  from this browser and nowhere else: it is a path on the console, gated like any
+  other read. That is the right answer for the person looking at the console and
+  the wrong answer for everything else — a webhook delivery, a phone on the same
+  network, a provider redirecting a sign-in back, a gateway calling into the app.
+  So a deployment can publish the app for real, with three settings that each
+  answer one question:
+
+  * `AGENT_LAN_IP` — the address this deployment is reachable at (`192.168.1.21`).
+  * `AGENT_PREVIEW_HOST` — what the app binds: `loopback` (default), `all`, or an
+    explicit address. `all` is what a container published by compose needs.
+  * `AGENT_PREVIEW_PUBLISH=true` — turn the advertised address on, and publish the
+    port in compose.
+
+  Then `/api/preview` reports `address` (`http://192.168.1.21:5173/`) and the pane
+  shows it in place of its own path, on the same line as what was run. It is
+  reported only when it is true: `address` is `null` when nothing is running, when
+  the app bound loopback, and when publishing is off — because an address that
+  refuses is worse than no address, and the console keeps working either way.
 
   Reloading is the console's own, not the app's. A dev server with hot reloading
   does this for itself and `python3 -m http.server` does not at all, so the pane
@@ -1019,7 +1053,7 @@ All optional — see `.env.example`.
 | `GET`    | `/api/workspace`      | The directory the agent works in, the sandbox around it, and every folder inside it that can be chosen |
 | `POST`   | `/api/workspace`      | Choose the working directory (`{ path }`, sandbox-relative; `400` if it escapes the sandbox) |
 | `POST`   | `/api/workspace/mkdir`| Create a folder in the working directory (`{ name }`; `400` for a name that is a path, `409` if it is taken) |
-| `GET`    | `/api/preview`        | The app preview: running or not, the command, the port, the tail of its output, and the command that would be detected for this project |
+| `GET`    | `/api/preview`        | The app preview: running or not, the command, the port, the tail of its output, the command that would be detected for this project, and `address` — the LAN URL it answers at, or `null` when the deployment does not publish it |
 | `POST`   | `/api/preview/start`  | Run this project (`{ command?, cwd?, port? }`; without a command the project's own start is worked out) |
 | `POST`   | `/api/preview/stop`   | Stop it. Idempotent |
 | `GET`   | `/api/preview/events`  | `text/event-stream` of `change` when a workspace file changes, so the pane can reload. Debounced to one event per 250 ms |

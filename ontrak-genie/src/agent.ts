@@ -16,7 +16,33 @@ import {
 } from "./omniroute.js";
 import { modelHealth } from "./modelHealth.js";
 import { deriveTitle, saveSession, type Session } from "./store.js";
+import { lanAddress } from "./network.js";
 import { previewTool, runTool, toolSchemas, tools, type ToolOutcome } from "./tools.js";
+
+/**
+ * What the agent should say about where the app is reachable.
+ *
+ * Empty unless the deployment actually publishes the preview, because a prompt
+ * that names an address the deployment does not serve teaches the agent to hand
+ * out a URL that refuses. When it does publish, the useful thing is the exact
+ * host: `localhost` is what an agent guesses, and it is the one address a
+ * gateway or a phone cannot use.
+ */
+function previewAddressNote(): string {
+  if (!config.previewPublish || config.previewHost === "127.0.0.1") return "";
+  const host = config.previewHost === "0.0.0.0" ? lanAddress() : config.previewHost;
+  if (host === null || host === "") return "";
+  return (
+    `- This deployment publishes the preview on the network, so a running app is\n` +
+    `  reachable at \`http://${host}:${config.previewPort}\`. Bind that port — read\n` +
+    `  \`PORT\` from the environment rather than hard-coding it, and listen on\n` +
+    `  \`0.0.0.0\` — or the address the console shows will not be the one that\n` +
+    `  answers. When you tell the user where to open the app, or when\n` +
+    `  something needs to call back into it (a webhook, an OAuth redirect URI), use\n` +
+    `  that address — never \`localhost\`, and never a docker bridge address such as\n` +
+    `  \`172.17.0.1\`.\n`
+  );
+}
 
 export const SYSTEM_PROMPT = `You are a coding agent working inside a sandboxed workspace.
 
@@ -34,8 +60,9 @@ How to work:
   it as files change. So when you build something new, give it a way to start — a
   \`dev\` or \`start\` script in package.json, or an index.html — and do not leave the
   start path broken. If the app needs a port, read \`PORT\` from the environment
-  rather than hard-coding one.
-- Install what you need instead of working around it. The workspace carries a
+  rather than hard-coding one, and bind all interfaces (\`0.0.0.0\`) unless you
+  have a reason not to.
+${previewAddressNote()}- Install what you need instead of working around it. The workspace carries a
   working toolchain (bash, git, curl, wget, jq, make, gcc/g++, python3 + pip,
   node + npm). If a command fails because a tool is missing, install it —
   \`apk add <pkg>\` on this image, or \`pip install\` / \`npm install\` for

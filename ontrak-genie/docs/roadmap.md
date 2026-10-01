@@ -207,8 +207,16 @@ not.
   because a bundler's URLs — `/@vite/client`, `/_next/webpack-hmr`, a dynamic
   import — are strings no rewrite can reach. Websocket upgrades are forwarded too,
   which is what a development server's hot reload actually is. Which command to
-  run is detected from the project rather than configured, and named as detected
+  run is detected from the project rather than configured, and named  as detected
   in the pane; `show code` still shows the file being written.
+- `[x]` **An address the rest of the network can use.** The pane's `/preview/` is
+  a path on the console: right for the person looking at it, useless to a webhook,
+  a phone, or a gateway calling back into the app. `AGENT_LAN_IP`,
+  `AGENT_PREVIEW_HOST` and `AGENT_PREVIEW_PUBLISH` publish the app at the
+  deployment's LAN address and report it as `address`, so "where does the app
+  live" has one answer that is never `172.17.0.1` — the platform's own rule for
+  an upstream, applied to a preview. `AGENT_SANDBOX_NETWORK=host` is the same
+  answer for a sandboxed command that starts the app itself.
 
 ### v0.4 — Beyond a single operator `[ ]`
 

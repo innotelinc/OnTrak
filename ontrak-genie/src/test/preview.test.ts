@@ -195,6 +195,9 @@ test("the preview, end to end", async (t) => {
     assert.equal(status.running, false);
     assert.equal(status.port, null);
     assert.equal(status.error, null);
+    // Nothing is advertised either: an address for an app that is not running is
+    // a URL that refuses, which is worse than no URL.
+    assert.equal(status.address, null);
   });
 
   await t.test("starting runs the project and reports where it landed", async () => {
@@ -310,11 +313,15 @@ test("the preview, end to end", async (t) => {
       command: string | null;
       port: number | null;
       url: string;
+      address: string | null;
     };
     assert.equal(status.running, true);
     assert.equal(status.command, "node server.js");
     assert.ok((status.port ?? 0) > 0);
     assert.equal(status.url, "/preview/");
+    // This deployment publishes nothing (the default), so there is no network
+    // address to name — the console proxy is the only way in, which is true.
+    assert.equal(status.address, null, "an unpublished preview must not name an address");
   });
 
   await t.test("the change stream is an event stream", async () => {

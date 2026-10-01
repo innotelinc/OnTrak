@@ -448,6 +448,21 @@ services:
       # This container is already the boundary, so run_command stays inside it
       # rather than trying to nest Docker — there is no socket here to nest into.
       AGENT_SANDBOX: host
+      # The preview, published rather than only proxied.
+      #
+      # The pane always works — the console proxies the app — but that address is
+      # a path on the console and nothing else on the network can use it. With
+      # these set, the app the agent runs is reachable at the deployment's LAN
+      # address, which is what a webhook, a phone, or a gateway calling back into
+      # the app needs. `AGENT_LAN_IP` is the address this container is reachable
+      # at from the network: inside a container every address the process can see
+      # is a docker bridge address (`172.x`), so this is the one setting that
+      # cannot be worked out from in here. It is the incus container's own LAN
+      # address, which is the address that publishes this stack's ports.
+      AGENT_LAN_IP: ${AGENT_LAN_IP:-}
+      AGENT_PREVIEW_HOST: ${AGENT_PREVIEW_HOST:-loopback}
+      AGENT_PREVIEW_PORT: ${ONTRAK_GENIE_PREVIEW_PORT:-5173}
+      AGENT_PREVIEW_PUBLISH: ${AGENT_PREVIEW_PUBLISH:-false}
       OMNIROUTE_URL: ${OMNIROUTE_URL:-}
       WEB_TOKEN: ${WEB_TOKEN:-}
       # Tenancy, when the family has a control plane: with the origin and the
@@ -486,6 +501,11 @@ services:
       - ./data/vault/token/ontrak.token:/vault/token/ontrak.token:ro
     ports:
       - "${ONTRAK_GENIE_PORT:-3400}:3400"
+      # The preview. One published port, because the app is one app: a second
+      # project previewed at the same time lands on a free port of its own, is
+      # still visible in the pane, and is honestly reported as *not* on the
+      # network rather than given an address nothing forwards.
+      - "${ONTRAK_GENIE_PREVIEW_PORT:-5173}:${ONTRAK_GENIE_PREVIEW_PORT:-5173}"
     healthcheck:
       test:
         - CMD

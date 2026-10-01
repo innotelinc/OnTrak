@@ -56,6 +56,21 @@ services:
       AGENT_WORKSPACE: "/workspace"
       AGENT_DATA_DIR: "/data"
       AGENT_SANDBOX: "host"
+      # The app the agent runs, published on the host's own address.
+      #
+      # `network_mode: host` above is what makes this the honest thing to do
+      # here: with no bridge address there is no NAT hop, so a dev server bound
+      # to `0.0.0.0` inside this container is listening on the host's *own* LAN
+      # address — the preview panel names `http://<this host>:<port>`, and the
+      # gateway, a webhook or a phone on the same network can call it back. It
+      # is off by default (`AGENT_PREVIEW_HOST=loopback`): the published app is
+      # not behind the console's sign-in, so publishing is a decision, not a
+      # default. Turn it on with AGENT_PREVIEW_HOST=all and
+      # AGENT_PREVIEW_PUBLISH=true. AGENT_LAN_IP overrides the address Genie
+      # works out for itself.
+      AGENT_LAN_IP: "${AGENT_LAN_IP:-}"
+      AGENT_PREVIEW_HOST: "${AGENT_PREVIEW_HOST:-loopback}"
+      AGENT_PREVIEW_PUBLISH: "${AGENT_PREVIEW_PUBLISH:-false}"
     volumes:
       # The agent can only touch this directory.
       - ./workspace:/workspace

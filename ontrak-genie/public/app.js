@@ -762,9 +762,22 @@ function applyPreviewApp(status) {
   const running = status.running === true;
 
   $("#preview-app-dot").className = `preview-dot ${running ? "up" : "down"}`;
-  $("#preview-app-url").textContent = running
-    ? `/preview/ · port ${status.port}`
-    : "no app running";
+  /*
+   * The published address when the deployment has one, and the pane's own path
+   * otherwise. They are different facts: `/preview/` is where *this browser*
+   * reaches the app, and `http://<lan>:<port>/` — when it exists — is where
+   * anything else on the network does. Only the second one can be handed to a
+   * webhook or opened on a phone.
+   */
+  const appUrl = $("#preview-app-url");
+  appUrl.textContent = !running
+    ? "no app running"
+    : (status.address ?? `/preview/ · port ${status.port}`);
+  appUrl.title = !running
+    ? ""
+    : status.address
+      ? "Reachable on the network at this address"
+      : "Reachable in this console only; set AGENT_LAN_IP and AGENT_PREVIEW_PUBLISH to publish it";
   $("#preview-app-empty").classList.toggle("hidden", running);
 
   $("#preview-frame").classList.toggle("hidden", !running);
@@ -791,6 +804,7 @@ function applyPreviewApp(status) {
   if (status.error) note_ = status.error;
   else if (running && status.command) {
     note_ = `${status.detected ? "detected" : "running"}: ${status.command}`;
+    if (status.address) note_ += ` · served on the network at ${status.address}`;
   } else if (!running && status.command) {
     // Before the click, not after: "will run: npm run dev" is what makes the
     // guess a thing the user can see and correct rather than a surprise.
