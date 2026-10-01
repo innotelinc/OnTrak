@@ -312,7 +312,30 @@ try {
   await check("the model selector is populated", async () => {
     const options = await session.evaluate("return document.querySelector('#model').options.length;");
     if (options < 2) throw new Error(`only ${options} option(s)`);
-    return `${options} models, default ${await session.evaluate("return document.querySelector('#model').value;")}`;
+    const selected = await session.evaluate("return document.querySelector('#model').value;");
+    if (health.modelSelection !== "auto") return `${options} models, default ${selected}`;
+
+    /*
+     * An account without a paid plan is served a model rather than choosing one
+     * (`src/modelSelect.ts`). The catalog is still what it is, so the select is
+     * still populated — what must not be reachable is the control itself, and the
+     * badge is what stands in its place. Asserting the hidden state rather than
+     * the population is the difference between this check passing for the wrong
+     * reason and it passing for the right one.
+     */
+    const shape = await session.evaluate(`return {
+      field: document.querySelector('#model-field').classList.contains('hidden'),
+      settings: document.querySelector('#chat-settings').classList.contains('hidden'),
+      badge: !document.querySelector('#model-auto').classList.contains('hidden'),
+      badgeText: document.querySelector('#model-auto').textContent.trim(),
+    };`);
+    if (!shape.field) throw new Error("an automatic account can still see the model picker");
+    if (!shape.settings) throw new Error("an automatic account can still open the chain settings");
+    if (!shape.badge) throw new Error("no model is shown for an account that cannot choose one");
+    if (!shape.badgeText.startsWith("auto")) {
+      throw new Error(`the badge does not say the model is automatic: ${shape.badgeText}`);
+    }
+    return `${options} models in the catalog, served ${shape.badgeText} with no picker`;
   });
 
   await check(`the approval badge matches the config (${health.approval?.mode ?? "off"})`, async () => {
@@ -470,44 +493,65 @@ try {
    * copy-pasted by hand, which is the thing it exists to stop. Both render from
    * the same state, so they have to agree.
    */
-  await check("the models the sweep proved usable are reachable from the picker", async () => {
-    const response = await fetch(`${BASE}/api/models/sweep`, {
-      headers: TOKEN === "" ? {} : { Authorization: `Bearer ${TOKEN}` },
-    });
-    const { sweep } = await response.json();
-    const usable = (sweep?.results ?? [])
-      .filter((result) => result.ok)
-      .map((result) => result.model);
-    if (usable.length === 0) return "the last report has no usable models";
+  const auto = health.modelSelection === "auto";
+  await check(
+    auto
+      ? "the sweep says why a usable model cannot be selected here"
+      : "the models the sweep proved usable are reachable from the picker",
+    async () => {
+      const response = await fetch(`${BASE}/api/models/sweep`, {
+        headers: TOKEN === "" ? {} : { Authorization: `Bearer ${TOKEN}` },
+      });
+      const { sweep } = await response.json();
+      const usable = (sweep?.results ?? [])
+        .filter((result) => result.ok)
+        .map((result) => result.model);
+      if (usable.length === 0) return "the last report has no usable models";
 
-    const shape = await session.evaluate(`
-      document.querySelector('#sweep-open').click();
-      return {
-        rows: [...document.querySelectorAll('#sweep-report .sweep-row')].map((row) => ({
-          model: row.querySelector('.sweep-model').textContent.trim(),
-          use: row.querySelector('.sweep-use') !== null,
-        })),
-      };`);
+      const shape = await session.evaluate(`
+        document.querySelector('#sweep-open').click();
+        return {
+          rows: [...document.querySelectorAll('#sweep-report .sweep-row')].map((row) => ({
+            model: row.querySelector('.sweep-model').textContent.trim(),
+            use: row.querySelector('.sweep-use') !== null,
+            note: row.querySelector('.sweep-use-note') !== null,
+          })),
+        };`);
 
-    for (const model of usable) {
-      const row = shape.rows.find((entry) => entry.model.includes(model));
-      if (row === undefined) throw new Error(`${model} is usable but missing from the report`);
-      if (!row.use) throw new Error(`${model} is usable but offers no way to select it`);
-    }
+      for (const model of usable) {
+        const row = shape.rows.find((entry) => entry.model.includes(model));
+        if (row === undefined) throw new Error(`${model} is usable but missing from the report`);
+        if (auto) {
+          // A sweep result is information here, not an action: the account is served
+          // its model and the server would ignore a pinned one. The row says that
+          // rather than offering a button that does nothing.
+          if (row.use) {
+            throw new Error(`${model} offers a "use" button an automatic account cannot act on`);
+          }
+          if (!row.note) {
+            throw new Error(`${model} is usable but does not say why it cannot be selected`);
+          }
+        } else if (!row.use) {
+          throw new Error(`${model} is usable but offers no way to select it`);
+        }
+      }
 
-    const marked = await session.evaluate(`
-      const usable = ${JSON.stringify(usable)};
-      const options = [...document.querySelectorAll('#model option')];
-      return usable.filter((model) =>
-        options.some((option) => option.value === model && option.textContent.includes('✓')),
-      ).length;`);
+      const marked = await session.evaluate(`
+        const usable = ${JSON.stringify(usable)};
+        const options = [...document.querySelectorAll('#model option')];
+        return usable.filter((model) =>
+          options.some((option) => option.value === model && option.textContent.includes('✓')),
+        ).length;`);
 
-    await session.evaluate("document.querySelector('#sweep-close').click();");
-    if (marked < usable.length) {
-      throw new Error(`${usable.length - marked} usable model(s) are unmarked in the picker`);
-    }
-    return `${usable.length} usable model(s) marked and selectable`;
-  });
+      await session.evaluate("document.querySelector('#sweep-close').click();");
+      if (marked < usable.length) {
+        throw new Error(`${usable.length - marked} usable model(s) are unmarked in the picker`);
+      }
+      return auto
+        ? `${usable.length} usable model(s), each saying the account is served its model`
+        : `${usable.length} usable model(s) marked and selectable`;
+    },
+  );
 
   /**
    * The preview pane is where a file is watched while it is being written. A
