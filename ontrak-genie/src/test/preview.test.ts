@@ -222,10 +222,18 @@ test("the preview, end to end", async (t) => {
   await t.test("the API describes what is running", async () => {
     const response = await fetch(`${base}/api/preview`, { headers: { Authorization: `Bearer ${TOKEN}` } });
     assert.equal(response.status, 200);
-    const status = await response.json();
+    // Asserted through a declared shape rather than an inferred `unknown`: the
+    // build image resolves `Response.json()` differently from a developer's
+    // node_modules, and a test that only compiles on one of them is not a test.
+    const status = (await response.json()) as {
+      running: boolean;
+      command: string | null;
+      port: number | null;
+      url: string;
+    };
     assert.equal(status.running, true);
     assert.equal(status.command, "node server.js");
-    assert.ok(status.port > 0);
+    assert.ok((status.port ?? 0) > 0);
     assert.equal(status.url, "/preview/");
   });
 
