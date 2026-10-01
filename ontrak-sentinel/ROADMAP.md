@@ -9,6 +9,17 @@
 > product's slice of it is **S3 — Guard detection**, started (the normalizer, the
 > detection rules and the alert pipeline; no streaming listener yet); the others are
 > **OnTrak IT Support Training v1.2** and **OnTrak Tix M6**.
+>
+> **What 1.0 is.** Sentinel 1.0 is **S0–S4**, and nothing further is needed to
+> call it finished: a standards-compliant IdP the family can rely on (OIDC, SAML
+> 2.0, SCIM, MFA, sessions, access reviews) plus Guard's v1 — what it can *see*
+> and what it can *do about it* — with every one of those actions landing in the
+> same hash-chained evidence log and exportable as a signed assurance packet.
+> S5 (unified risk and response) and S6 (enterprise hardening) are deliberately
+> **after 1.0**: they make Sentinel larger, and 1.0 is the line where one
+> deployment is complete rather than where a fleet is. The rule for the boundary
+> is that 1.0 must not *depend* on a subsystem that does not exist yet — so
+> prevention lands with its approvals, safe-lists and rollback, not ahead of them.
 
 ---
 
@@ -92,6 +103,11 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
 - **No silent actions, no backdating, no deletion of history.**
 
 ## 6. Milestones
+
+**The 1.0 line runs from S0 to S4.** S0–S2 are the identity product; S3 and S4
+are Guard's v1, split at the point where it stops observing and starts acting.
+S5 and S6 are post-1.0 and are marked as such below, which is a statement about
+scope rather than about order — neither is a prerequisite for shipping 1.0.
 
 ### S0 — Foundations `[~]`
 **Goal:** the identity spine and the evidence log.
@@ -651,7 +667,7 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
   to the session's identity) — *live* telemetry means a collector posting, not yet a
   protocol listener.
 
-### S4 — Sentinel Guard v1 (prevention) `[~]`
+### S4 — Sentinel Guard v1 (prevention) `[~]` — **the last 1.0 milestone**
 **Goal:** act — safely and accountably.
 
 - `[~]` **Compliance reporting and posture summary** — the reviewer's half of the
@@ -698,7 +714,7 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
 - **Exit:** a threat is blocked within a defined latency; the block is approved,
   logged, reversible, and cannot be applied to a protected target.
 
-### S5 — Unified risk & response `[ ]`
+### S5 — Unified risk & response `[ ]` — *after 1.0*
 **Goal:** identity and network see the same picture.
 
 - Identity-aware detection (a login from a new geolocation plus anomalous flows
@@ -709,7 +725,7 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
 - **Exit:** an incident correlates identity + network signal, exports to Tix, and
   a step-up/revoke action is applied and audited.
 
-### S6 — Enterprise hardening `[ ]`
+### S6 — Enterprise hardening `[ ]` — *after 1.0*
 **Goal:** run it at scale, prove it.
 
 - Multi-tenant isolation, HA/failover, backup/DR, scale-out data plane.
@@ -800,3 +816,33 @@ logins with no notion of behaviour. Together they produce signals neither can:
    asserts the format as literals, so the day one product changes its envelope the two
    disagree in CI rather than in an auditor's hands. What that leaves is the other half
    of the shared work: one verification tool both packets can be handed to.
+
+### What stands between today and 1.0
+
+In the order they have to happen, and each one stated as the thing that is
+missing rather than as a task name:
+
+1. **Guard can only read what it is handed.** S3 detects, but nothing listens:
+   there is no streaming protocol listener (syslog, NetFlow, a pcap reader), so
+   the normalizer and the rules run against events something else has to feed
+   them. 1.0 needs at least one listener, because a detector nobody can point at
+   the network is a library.
+2. **A rule change is not a version.** Detection rules are code, and the corpus
+   they are judged against is not tracked, so "why did this fire last Tuesday"
+   has no answer. Versioning the rule set — and recording which version an alert
+   was raised under — is what makes the evidence trail as durable on the network
+   side as the hash-chained log already is on the identity side.
+3. **Alerts have no off switch.** There is no suppression, no maintenance window
+   and no notification transport, so every detection is a row in a queue that
+   somebody has to be looking at. 1.0 needs both the mute and the delivery.
+4. **Correlation is inert.** The identity-aware sweep exists but an interactive
+   login never writes `ipAddress`, so the one join that makes Sentinel more than
+   an IdP glued to an IDS has no data on the identity side. Closing that is
+   small and is the whole point of the product.
+5. **Prevention is the rest of S4** — block, quarantine, rate-limit, with
+   approvals, safe-lists and one-click rollback. This is last on purpose: an
+   action nobody can undo is not the thing to build first.
+
+S5 and S6 sit behind all five. A 1.0 that arrives with an IdP, a detector, a
+working listener and a reversible action, all on one evidence chain, is the
+product this roadmap describes; everything above that line is scale.
