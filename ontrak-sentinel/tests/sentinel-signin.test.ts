@@ -430,6 +430,32 @@ test("console: a good sign-in answers 303 with the session cookie", async () => 
   assert.match(cookie, /SameSite=Lax/);
 });
 
+test("console: a sign-in records the address it came from, so a network event can be joined to it", async () => {
+  const h = harness();
+  const { actor, secret } = await h.organization();
+  assert.ok(secret);
+  const response = await routeConsole(
+    request("POST", CONSOLE_PATHS.signIn, {
+      body: { identifier: "admin@acme.test", password: PASSWORD, code: h.code(secret) },
+      // A TLS proxy sets this; the first entry is the client that actually connected,
+      // and the rest is the proxy chain rather than the person.
+      headers: { "x-forwarded-for": "203.0.113.7, 10.0.0.1" },
+    }),
+    h.service,
+  );
+  assert.equal(response.status, 303);
+
+  const sessions = await h.spine.listSessions(actor);
+  assert.ok(sessions.ok, sessions.ok ? "" : sessions.error);
+  const live = sessions.value.filter((session) => session.revokedAt === null);
+  assert.equal(live.length, 1);
+  // The join `correlateIdentity` makes is an alert's `sourceAddress` against the address
+  // a session was granted from. A sign-in that stores no address leaves that join with no
+  // data on the identity side, which is the half Sentinel exists to supply.
+  assert.equal(live[0]?.ipAddress, "203.0.113.7");
+  assert.equal(live[0]?.userAgent, null, "and the address is the only thing the proxy supplied");
+});
+
 test("console: behind a TLS proxy the cookie is Secure, because the browser saw https", async () => {
   const h = harness();
   const { secret } = await h.organization();

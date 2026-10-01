@@ -923,10 +923,16 @@ missing rather than as a task name:
 3. **Alerts have no off switch.** There is no suppression, no maintenance window
    and no notification transport, so every detection is a row in a queue that
    somebody has to be looking at. 1.0 needs both the mute and the delivery.
-4. **Correlation is inert.** The identity-aware sweep exists but an interactive
-   login never writes `ipAddress`, so the one join that makes Sentinel more than
-   an IdP glued to an IDS has no data on the identity side. Closing that is
-   small and is the whole point of the product.
+4. ~~**Correlation is inert.**~~ **Closed (2026-10-01):** the interactive login
+   stores the address it came from (`x-forwarded-for`, first entry) on the session
+   it issues — both the password form and the Authentik callback — and a test now
+   drives the real console route to prove it: `sentinel-signin.test.ts` *a sign-in
+   records the address it came from* signs in through `routeConsole` with a proxy
+   address, then reads the session back through the store and requires the field,
+   which is exactly the join `correlateIdentity` makes against an alert's
+   `sourceAddress`. The identity half of the sweep therefore has data by
+   construction rather than only when a caller remembers to pass an address to
+   `issueSession` directly, as the guard test does.
 5. **Prevention is the rest of S4** — block, quarantine, rate-limit, with
    approvals, safe-lists and one-click rollback. This is last on purpose: an
    action nobody can undo is not the thing to build first, and the order inside
