@@ -87,6 +87,16 @@ services:
         condition: service_completed_successfully
     ports:
       - "${ONTRAK_SENTINEL_HTTP_PORT:-8787}:8787"
+      # Guard's syslog listener (S3): the one port here that is not HTTP, and the
+      # only one that is deliberately unauthenticated — syslog has no
+      # authentication to offer, so the bind address is the access control. It is
+      # published so a firewall or a kernel on another host can send to it; the
+      # listener itself is off unless SENTINEL_GUARD_SYSLOG_PORT is set, and a
+      # published UDP port with nothing behind it discards quietly. This mirrors
+      # the mapping `docker-compose.all.yml` gives the family stack, so both
+      # deployments listen the same way (see docs/guard-syslog.md).
+      - "${SENTINEL_GUARD_SYSLOG_PORT:-5514}:${SENTINEL_GUARD_SYSLOG_PORT:-5514}/udp"
+      - "${SENTINEL_GUARD_SYSLOG_PORT:-5514}:${SENTINEL_GUARD_SYSLOG_PORT:-5514}/tcp"
     # Optional, and the only stack here that can say so: Sentinel boots with
     # nothing configured, so a first `up` works before anyone has copied the
     # example across. Values set in `.env` still override the defaults below.
@@ -105,6 +115,14 @@ services:
       # proxy serves; the loopback default is only right for a local client.
       SENTINEL_ISSUER: ${SENTINEL_ISSUER:-http://127.0.0.1:8787}
       SENTINEL_ADMIN_EMAIL: ${SENTINEL_ADMIN_EMAIL:-admin@demo.test}
+      # The syslog listener's switches. The token and the tenant it files under
+      # are **not** set here: they come from `.env` (the env_file above), so a
+      # `vault://` reference is resolved by the entrypoint rather than shadowed by
+      # an empty interpolation. Only the port, the bind and the transport are
+      # here, because those are deployment facts rather than credentials.
+      SENTINEL_GUARD_SYSLOG_PORT: ${SENTINEL_GUARD_SYSLOG_PORT:-}
+      SENTINEL_GUARD_SYSLOG_HOST: ${SENTINEL_GUARD_SYSLOG_HOST:-127.0.0.1}
+      SENTINEL_GUARD_SYSLOG_TRANSPORT: ${SENTINEL_GUARD_SYSLOG_TRANSPORT:-both}
       # The key the one-shot service just ensured. `SENTINEL_SIGNING_KEY` takes
       # precedence over this, which is how a deployment that resolves its secrets
       # before the process starts overrides the volume.
