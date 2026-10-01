@@ -26,8 +26,9 @@
 #   # 3. Once the new Sentinel is confirmed serving, retire the old project
 #   ontrak-sentinel/scripts/consolidate-to-family.sh --retire
 #
-# Running it twice is safe: the copy is a full overwrite of the family volumes,
-# so a re-run either reconciles a partial copy or re-copies deliberately.
+# Running it twice is safe: the copy is a full overwrite of the family volumes, and
+the family Sentinel is stopped first so Postgres is not reading a directory that
+is being replaced underneath it.
 #
 # Overridable, for a host that names its projects differently:
 #   SENTINEL_STANDALONE_PROJECT  (default: ontrak-sentinel)
@@ -137,6 +138,14 @@ else
 fi
 
 # ── 2. Ensure the family volumes exist, then copy ────────────────────────────
+# The destination must not be *in use* while it is replaced: overwriting the
+# files under a running Postgres is how a cutover becomes a corruption. Stop the
+# family Sentinel as well, so a re-run (or a cutover over a half-started copy)
+# replaces a directory nothing is reading.
+if docker ps --format '{{.Names}}' | grep -qE "^${FAMILY_PROJECT}-sentinel-(app|db)-1$"; then
+  say "stopping the family Sentinel so its volumes are not in use during the copy…"
+  docker compose -p "$FAMILY_PROJECT" -f "$FAMILY_COMPOSE" stop sentinel-app sentinel-db >/dev/null 2>&1 || true
+fi
 for v in "$DST_DB" "$DST_KEYS"; do
   volume_exists "$v" || { docker volume create "$v" >/dev/null; say "created $v"; }
 done
@@ -149,7 +158,12 @@ ok "copied"
 
 # ── 3. Bring the family Sentinel up ──────────────────────────────────────────
 say "starting the family Sentinel (sentinel-db → migrate → signing-key → app)…"
-( cd "$ROOT" && docker compose -p "$FAMILY_PROJECT" -f "$FAMILY_COMPOSE" up -d sentinel-app ) >/dev/null
+# `--force-recreate`: a container left in `Created` by an earlier aborted `up`
+# can carry a stale (or absent) network attachment, and then the migrate service
+# cannot resolve `sentinel-db` and dies with P1001. Recreating from the current
+# file is what makes the cutover reproducible rather than dependent on how the
+# last attempt happened to stop.
+( cd "$ROOT" && docker compose -p "$FAMILY_PROJECT" -f "$FAMILY_COMPOSE" up -d --force-recreate sentinel-app ) >/dev/null
 ok "family Sentinel started"
 
 # ── 4. Verify the cutover ────────────────────────────────────────────────────
