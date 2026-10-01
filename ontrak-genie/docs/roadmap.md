@@ -61,6 +61,7 @@ flowchart LR
 | Live diff — the change against the on-disk baseline, before the write lands | `[x]` |
 | Per-file snapshots — a viewer diff against what replaced the file | `[x]` |
 | Model resilience — fallback chain, retry re-walk, chain-health timer | `[x]` |
+| Free-plan model service — a plan with no subscription is served the healthiest free model, and offered no picker | `[x]` |
 | Catalog sweep — probe which advertised ids can actually call a tool, from the UI | `[x]` |
 | Offline gateway — a second, independent gateway tried only after the chain | `[x]` |
 | Text-mode tool calls — salvage a weak model's JSON-prose call | `[x]` |

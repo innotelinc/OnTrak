@@ -64,12 +64,32 @@ export interface HealthTarget {
   apiKey?: string;
 }
 
-/** Every entry the server would try for a turn, in order. */
+/**
+ * Every entry a turn could be placed on, in order, deduplicated.
+ *
+ * This includes the **free pool** as well as the configured chain, and the free
+ * pool is the reason: `modelSelect.ts` orders an automatic turn by this probe, so
+ * a model the probe never asks about is a model the automatic chain can never
+ * prefer. The two lists overlap in a typical deployment, so duplicates are
+ * collapsed — a model probed twice would be two entries in the report and two
+ * requests against a provider that is already rate-limiting.
+ */
 export function healthTargets(): HealthTarget[] {
-  const targets: HealthTarget[] = [config.model, ...config.fallbackModels].map((model) => ({ model }));
+  const seen = new Set<string>();
+  const targets: HealthTarget[] = [];
+  const add = (target: HealthTarget): void => {
+    const key =
+      target.baseUrl === undefined ? target.model : `${target.baseUrl}\u0000${target.model}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    targets.push(target);
+  };
+
+  for (const model of [config.model, ...config.fallbackModels]) add({ model });
+  for (const model of config.freeModels) add({ model });
   if (config.offlineUrl !== "") {
     for (const model of config.offlineModels) {
-      targets.push({ model, baseUrl: config.offlineUrl, apiKey: config.offlineKey });
+      add({ model, baseUrl: config.offlineUrl, apiKey: config.offlineKey });
     }
   }
   return targets;

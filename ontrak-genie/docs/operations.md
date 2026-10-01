@@ -368,6 +368,51 @@ to a minute — a cooling-down credential is worth outlasting. It is guarded on 
 "nothing emitted" and "no tool has run", so a re-walk can never duplicate output or
 repeat work, and a cancelled request never triggers one.
 
+### Free accounts are served a model, not offered a menu
+
+The chain above still opens on `AGENT_MODEL`, and that is right for the person
+running the deployment. It is the wrong shape for an account that did not choose
+the chain and cannot act on it: a *static* list re-tries a cooling-down model
+first on every turn, and the person watches `429 … retrying with …` notices for
+as long as it takes to find one that answers.
+
+`AGENT_FREE_MODELS` is a curated pool, ordered by how reliably each entry makes a
+tool call, and a turn is placed in it per turn:
+
+```ini
+AGENT_FREE_MODELS=openrouter/free,openrouter/cohere/north-mini-code:free,gemini/gemini-3.1-flash-lite
+AGENT_FREE_PLANS=free,trial,community
+```
+
+Two things make it a *selection* rather than another list:
+
+- **The chain-health check orders it.** Every entry the pool names is probed on
+the usual interval (the same "can you make a tool call?" check the sidebar
+reports), and a turn moves the entries that answered to the front. A model the
+check has not looked at is **unknown, not broken**, so it stays in the chain
+behind the ones that passed; and if everything is cooling down the pool is
+returned in configured order, because "all of it is throttled" should not become
+"no model is configured".
+- **It is never empty and never silent.** The chain is still walked and the turn
+re-walked as before, so a pool that cools down mid-turn still completes. What changed is that, on an automatic turn, the per-candidate
+`… retrying with …` notice is **not** emitted — the chain is ours to manage, and
+that line per model is what made a busy free pool look like a broken console. The
+failures are still recorded, and `GET /api/health` still reports them.
+
+Which accounts this applies to comes from the control plane: `quota.plan` is
+`free` by default (see *Tenancy*), and `AGENT_FREE_PLANS` decides which names
+count as free. Anything else — including a name the plane has never heard of — is
+treated as paid, because the plane's own default for an account with no plan is
+the string `free`, so a plan an operator invented is far more likely a real
+subscription than a typo. `AGENT_FORCE_AUTO_MODEL=true` takes the choice away from
+everybody, paid or not.
+
+The picker is **hidden, not disabled**, and the console shows a `auto / <model>`
+badge in its place. A control whose setting the server ignores is worse than no
+control at all, and a greyed-out menu still asks "how do I unlock this?" when the
+answer is "subscribe". The model that actually answered stays visible, because
+somebody debugging a bad answer needs to know what replied.
+
 ### Offline fallback
 
 The chain above still assumes the gateway is up and the internet is reachable.
@@ -1023,6 +1068,9 @@ All optional — see `.env.example`.
 | `AGENT_DATA_DIR`                            | `./.agent`               | Sessions and the last sweep report (`sweep.json`) |
 | `AGENT_MAX_STEPS`                           | `30`                     | Assistant turns per message (overridable per chat/per request) |
 | `AGENT_FALLBACK_MODELS`                     | *(empty)*                | Ordered models to try when one throttles or returns nothing |
+| `AGENT_FREE_MODELS`                         | *(the shipped pool)*     | Models a free-plan account is served from, ordered by reliability. See *Free accounts are served a model* |
+| `AGENT_FREE_PLANS`                          | `free,trial,community`   | Plan names that count as free (case-insensitive); anything else keeps the model picker |
+| `AGENT_FORCE_AUTO_MODEL`                    | `false`                  | Take the model picker away from every account, paid or not |
 | `AGENT_OFFLINE_URL`                         | *(empty)*                | Second gateway tried last, e.g. Ollama on `127.0.0.1:11434` |
 | `AGENT_OFFLINE_KEY`                         | *(empty)*                | Key for that gateway, if it wants one   |
 | `AGENT_OFFLINE_MODELS`                      | *(empty)*                | Models to try on the offline gateway     |

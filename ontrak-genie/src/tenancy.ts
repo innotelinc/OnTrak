@@ -13,6 +13,7 @@ import {
   type ControlPlaneConfig,
 } from "./controlplane.js";
 import { ceilingFor, ceilingMessage, noteTurn, type Ceiling } from "./ceiling.js";
+import { autoSelection, isFreePlan } from "./modelSelect.js";
 import type { Session } from "./oidc.js";
 import { accountScope, defaultScope, type Scope } from "./scope.js";
 
@@ -65,6 +66,12 @@ export type Caller = {
   email: string;
   /** This user's own gateway key. Server-side only; never sent to the browser. */
   gatewayKey: string;
+  /**
+   * The account's plan, as the control plane reports it (`quota.plan`, default
+   * `"free"`). It decides one thing here: whether the person chooses a model or
+   * is served the automatic free one. See `modelSelect.ts`.
+   */
+  plan: string;
   /** True when this call created the account in the control plane. */
   created: boolean;
 };
@@ -128,6 +135,10 @@ export async function resolveCaller(
     sub,
     email: identity.email,
     gatewayKey: identity.gatewayKey,
+    // The plane's own default for an account with no plan is the string "free";
+    // falling back to it here too means an answer that omitted `quota` cannot
+    // accidentally read as a subscription.
+    plan: identity.quota?.plan ?? "free",
     created: identity.created,
   };
 
@@ -265,6 +276,44 @@ export async function scopeFor(
   const who = await identify(session, plane, REQUEST_MESSAGES);
   if (!who.ok) return who;
   return { ok: true, scope: accountScope(who.caller.userId) };
+}
+
+/** What this caller may choose, and what they are served instead. */
+export type ModelAccess = {
+  /** The plan the control plane reported, or a local label when there is none. */
+  plan: string;
+  /** True when the plan is a paid one — independent of whether the picker is shown. */
+  paid: boolean;
+  /** True when the model is chosen automatically and the picker is hidden. */
+  auto: boolean;
+};
+
+/** The same answer, from a caller the turn gate has already resolved. */
+export function accessForCaller(caller: Caller | null): ModelAccess {
+  // No control plane means no billing, so the single operator keeps the picker.
+  if (caller === null) return { plan: "operator", paid: true, auto: config.forceAutoModel };
+  return { plan: caller.plan, paid: !isFreePlan(caller.plan), auto: autoSelection(caller.plan) };
+}
+
+/**
+ * Whether this request's account chooses a model, or is served the free one.
+ *
+ * Called by `/api/health` and by the per-chat settings route, both of which need
+ * the answer without starting a turn. It fails to **free/auto** when the plane is
+ * unreachable rather than to paid: failing the other way would hand a picker to
+ * somebody the plane could not confirm, and a turn for that person is already
+ * refused a route later by `beginTurn`. Failing to auto costs a paying customer
+ * nothing but the picker for the duration of an outage.
+ */
+export async function modelAccessFor(session: Session | null): Promise<ModelAccess> {
+  const plane = readControlPlaneConfig();
+  if (plane === null) return accessForCaller(null);
+  if (session === null || session.sub.trim() === "") return { plan: "free", paid: false, auto: true };
+  try {
+    return accessForCaller(await resolveCaller(session, plane));
+  } catch {
+    return { plan: "unknown", paid: false, auto: true };
+  }
 }
 
 /**

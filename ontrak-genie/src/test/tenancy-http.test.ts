@@ -52,6 +52,12 @@ const plane = http.createServer((req, res) => {
 /** Every key the gateway was actually handed, in order. */
 const gatewayKeys: string[] = [];
 const gatewayModels: string[] = [];
+/**
+ * Scripted failures, consumed one per model call. The status is what matters:
+ * 429 is the retryable one, and the automatic chain's whole point is where it
+ * moves a turn when a candidate answers with it.
+ */
+const gatewayFailStatuses: number[] = [];
 
 const gateway = http.createServer((req, res) => {
   const chunks: Buffer[] = [];
@@ -70,6 +76,15 @@ const gateway = http.createServer((req, res) => {
       // A body-less probe still counts as a call; the model is then unknown.
     }
     gatewayModels.push(String(parsed.model ?? ""));
+
+    const failStatus = gatewayFailStatuses.shift();
+    if (failStatus !== undefined) {
+      res.writeHead(failStatus, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({ error: { message: "All credentials for this model are cooling down" } }),
+      );
+      return;
+    }
 
     // A short, well-formed stream that reports usage, so the ledger path has
     // something real to record rather than a placeholder.
@@ -100,6 +115,11 @@ process.env.AGENT_DATA_DIR = path.join(workspace, ".agent");
 process.env.AGENT_SANDBOX = "host";
 process.env.AGENT_MODEL = "fake/model";
 process.env.AGENT_FALLBACK_MODELS = "";
+// The free pool, named here rather than left at the shipped default: a test that
+// asserted `gemini/gemini-3.1-flash-lite` would break the day the default list
+// changes, and what is under test is that the pool is used *instead of* a chosen
+// model, not which models happen to be in it.
+process.env.AGENT_FREE_MODELS = "free/alpha,free/beta";
 process.env.AGENT_OFFLINE_URL = "";
 process.env.AGENT_HEALTH_INTERVAL_MS = "0";
 process.env.OMNIROUTE_URL = `http://127.0.0.1:${gatewayPort}/v1`;
@@ -150,6 +170,10 @@ function identityReply(
   gatewayKey: string,
   userId = "u-1",
   sub = "sub-1",
+  // Paid by default, so every test above keeps the model the console asked for.
+  // "free" is what selects the automatic pool, and the tests below ask for it
+  // explicitly rather than getting it by accident.
+  plan = "pro",
 ): { status?: number; body?: unknown } {
   return {
     status: 200,
@@ -158,6 +182,7 @@ function identityReply(
       oidcSub: sub,
       gatewayKey,
       created: false,
+      quota: { plan },
     },
   };
 }
@@ -365,4 +390,165 @@ test("two signed-in accounts are two workspaces and two chat lists", async () =>
     (session) => session.id,
   );
   assert.ok(ownIds.includes(mine), "the chat is in the account that made it");
+});
+
+/* -------------------------------------------- free accounts, served a model */
+
+/** How many usage reports have been written so far, so a test can wait for its own. */
+function usageReports(): number {
+  return planeCalls.filter((call) => call.path === "/api/internal/usage-report").length;
+}
+
+test("a free account is served the automatic pool, and a chosen model is ignored", async () => {
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeCalls.length = 0;
+  planeQueue.push(identityReply("sk-free-1", "u-free", "sub-free", "free"), {
+    status: 200,
+    body: { allowed: true },
+  });
+
+  const free = cookieFor("sub-free", "free@innotel.us");
+  const reportsBefore = usageReports();
+  // A model and a chain are sent deliberately: this is what a stale page — or a
+  // crafted request — would send, and the server must not honour either.
+  const response = await post(
+    "/api/chat",
+    { message: "hello", model: "chosen/by/hand", fallbackModels: ["also/mine"] },
+    { cookie: free },
+  );
+  assert.equal(response.status, 200);
+  const events = await drain(response);
+  assert.equal(events.at(-1)?.type, "done");
+
+  // The pool led, not the choice. This is the 429 fix stated as a test: the model
+  // that answered is the first available free one, never the one a client named.
+  assert.equal(gatewayModels.at(-1), "free/alpha");
+  assert.notEqual(gatewayModels.at(-1), "chosen/by/hand");
+
+  // The session event mirrors the server's own chain, so the console can show
+  // what actually answered rather than what it wished for.
+  const session = events.find((event) => event.type === "session") as
+    | { models?: string[] }
+    | undefined;
+  assert.deepEqual(session?.models, ["free/alpha", "free/beta"]);
+
+  // The ledger write happens *after* the response. Without waiting for it, it
+  // consumes the next test's queued identity reply, and the failure surfaces as a
+  // confusing 503 somewhere else entirely — so wait for *this* turn's report, not
+  // for one that some earlier test already wrote.
+  await waitFor(() => usageReports() > reportsBefore, "the free account's usage report");
+});
+
+test("a throttled automatic candidate moves on without the retry notice", async () => {
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeCalls.length = 0;
+  planeQueue.push(identityReply("sk-free-3", "u-free3", "sub-free3", "free"), {
+    status: 200,
+    body: { allowed: true },
+  });
+  // The first entry of the pool cools down mid-turn, which is exactly the line
+  // the console used to print: "… 429 …; retrying with …".
+  gatewayFailStatuses.length = 0;
+  gatewayFailStatuses.push(429);
+
+  const free = cookieFor("sub-free3", "free3@innotel.us");
+  const reportsBefore = usageReports();
+  const response = await post("/api/chat", { message: "hello" }, { cookie: free });
+  assert.equal(response.status, 200);
+  const events = await drain(response);
+
+  // The turn completed on the next entry.
+  assert.equal(events.at(-1)?.type, "done");
+  assert.deepEqual(gatewayModels.slice(-2), ["free/alpha", "free/beta"]);
+
+  // And the chatter is gone. The failure is not hidden — it is in the health
+  // report and in `failures` — it is simply not the person's to read on a chain
+  // they did not choose and cannot change.
+  const notices = events.filter((event) => event.type === "notice").map((event) => event.text);
+  assert.ok(
+    !notices.some((text) => /retrying with|429/.test(String(text))),
+    `no retry notice should reach a free account, got: ${JSON.stringify(notices)}`,
+  );
+
+  await waitFor(() => usageReports() > reportsBefore, "the throttled turn's usage report");
+});
+
+test("a paid account keeps the model it chose", async () => {
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeCalls.length = 0;
+  planeQueue.push(identityReply("sk-paid-1", "u-paid", "sub-paid", "pro"), {
+    status: 200,
+    body: { allowed: true },
+  });
+
+  const paid = cookieFor("sub-paid", "paid@innotel.us");
+  const reportsBefore = usageReports();
+  const response = await post(
+    "/api/chat",
+    { message: "hello", model: "mine/only" },
+    { cookie: paid },
+  );
+  assert.equal(response.status, 200);
+  await drain(response);
+  assert.equal(gatewayModels.at(-1), "mine/only");
+
+  await waitFor(() => usageReports() > reportsBefore, "the paid account's usage report");
+});
+
+test("health tells the console which selection mode this account has", async () => {
+  // Free: the picker is replaced by the automatic chain.
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-1", "u-1", "sub-1", "free"));
+  const free = (await (await get("/api/health", { cookie })).json()) as {
+    modelSelection: string;
+    paid: boolean;
+    autoModels: string[];
+    freeModels: string[];
+  };
+  assert.equal(free.modelSelection, "auto");
+  assert.equal(free.paid, false);
+  assert.deepEqual(free.freeModels, ["free/alpha", "free/beta"]);
+  assert.deepEqual(free.autoModels, ["free/alpha", "free/beta"]);
+
+  // Paid: the picker stays, and the plan is reported rather than inferred.
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-1", "u-1", "sub-1", "pro"));
+  const paid = (await (await get("/api/health", { cookie })).json()) as {
+    modelSelection: string;
+    paid: boolean;
+    plan: string;
+  };
+  assert.equal(paid.plan, "pro");
+  assert.equal(paid.paid, true);
+  assert.equal(paid.modelSelection, "manual");
+});
+
+test("a free account cannot store a model on its chat, because nothing would read it", async () => {
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-free-2", "u-free2", "sub-free2", "free"));
+  const free = cookieFor("sub-free2", "free2@innotel.us");
+
+  const created = await post("/api/sessions", {}, { cookie: free });
+  assert.equal(created.status, 201);
+  const id = ((await created.json()) as { session: { id: string } }).session.id;
+
+  const patched = await fetch(`${base}/api/sessions/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", cookie: free },
+    body: JSON.stringify({ model: "chosen/by/hand", fallbackModels: ["also/mine"] }),
+  });
+  assert.equal(patched.status, 200);
+  const session = (
+    (await patched.json()) as { session: { model?: string; fallbackModels?: string[] } }
+  ).session;
+  // The write was skipped, so the chat keeps no model — and the next turn is
+  // placed by the pool regardless.
+  assert.notEqual(session.model, "chosen/by/hand");
+  assert.notDeepEqual(session.fallbackModels, ["also/mine"]);
 });

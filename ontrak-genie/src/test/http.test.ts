@@ -237,6 +237,12 @@ process.env.AGENT_APPROVAL = "risky";
 process.env.AGENT_APPROVAL_TIMEOUT_MS = "3000";
 process.env.AGENT_FALLBACK_MODELS = "";
 process.env.AGENT_MODEL = "fake/model";
+// Pin the free pool to the model this suite's fake gateway serves. The chain
+// health check probes the pool as well as the configured chain, so leaving this
+// unset would add the shipped catalog to `total` and make the assertions below
+// about *this* deployment's entries meaningless. It also dedupes against the
+// chain entry, so this suite still probes two models.
+process.env.AGENT_FREE_MODELS = "fake/model";
 // One retry, and no waiting: the cooldown path is real and worth exercising, but
 // the default 20 s backoff would make this file take minutes.
 process.env.AGENT_RETRY_ATTEMPTS = "1";
@@ -811,6 +817,14 @@ test("health", async (t) => {
     assert.deepEqual(body.offline.models, ["local/fake"]);
     // The chain a chat starts with when it has not saved one of its own.
     assert.deepEqual(body.fallbackModels, []);
+    // Single-operator: no control plane, so no plan to read and nothing taken
+    // away — the person running it keeps the picker, and the free pool is only
+    // what an automatic turn would use.
+    assert.equal(body.plan, "operator");
+    assert.equal(body.paid, true);
+    assert.equal(body.modelSelection, "manual");
+    assert.deepEqual(body.freeModels, ["fake/model"]);
+    assert.deepEqual(body.autoModels, ["fake/model"]);
   });
 
   await t.test("lists the models the gateway advertises", async () => {

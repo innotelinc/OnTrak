@@ -76,7 +76,14 @@
           <div class="topbar-right">
             <span id="gateway-badge" class="badge offline hidden" role="status"></span>
             <span id="approval-badge" class="badge hidden"></span>
-            <label class="field" for="model">
+            <!--
+              The model this deployment is serving, when the account does not
+              choose one. Shown instead of the picker rather than beside it: the
+              answer to "which model am I on?" should not be a menu the person
+              cannot use.
+            -->
+            <span id="model-auto" class="badge hidden" role="status"></span>
+            <label class="field" for="model" id="model-field">
               <span class="muted">model</span>
               <select id="model" class="select" aria-label="Model"></select>
             </label>

@@ -15,6 +15,14 @@ const state = {
   limits: { minSteps: 1, maxSteps: 200, defaultSteps: 30 },
   /** Fallback chain the server would use for a new chat; null until health answers. */
   fallbackDefault: null,
+  /**
+   * Whether this account chooses a model ("manual") or is served one ("auto").
+   * Set from `/api/health`; auto hides the picker and the chain box, because a
+   * control whose setting the server ignores is worse than no control at all.
+   */
+  modelSelection: "manual",
+  /** The chain an automatic turn would use, strongest available first. */
+  autoModels: [],
   /** The chain in play for this chat, so the sweep report can mark it. */
   chainModels: [],
   lastFocus: null,
@@ -1229,6 +1237,16 @@ function sweptWhen(finishedAt) {
  * part of a sweep that was still manual.
  */
 function sweepUseButton(model) {
+  // An automatic account cannot pin a model to the chat, so the sweep's "use"
+  // affordance is replaced by the reason rather than offered and then ignored.
+  if (state.modelSelection === "auto") {
+    const note = document.createElement("span");
+    note.className = "muted sweep-use-note";
+    note.textContent = "auto";
+    note.title =
+      "This account is served the model automatically, so a sweep cannot pin one to the chat. The result is still a useful check of the gateway.";
+    return note;
+  }
   const button = document.createElement("button");
   button.className = "btn-ghost sweep-use";
   button.textContent = "use";
@@ -1510,12 +1528,44 @@ function setGatewayBadge(mode, model, url) {
   badge.title = `${model} via ${url ?? "the offline gateway"} — everything on the main gateway failed, so the local model took over.`;
 }
 
+/**
+ * Say which model an automatic turn is on, and why it is not a choice.
+ *
+ * The badge exists so the model is still *visible* when it is not selectable: a
+ * person debugging a bad answer needs to know what answered, and "auto" on its
+ * own would make a deployment with a stale health check look like a black box.
+ * The chain is in the tooltip, because a fallback that happens mid-turn is worth
+ * being able to predict.
+ */
+function setAutoBadge(models) {
+  const badge = $("#model-auto");
+  if (state.modelSelection !== "auto") {
+    badge.classList.add("hidden");
+    return;
+  }
+  const chain = (Array.isArray(models) ? models : state.autoModels).filter(
+    (entry) => typeof entry === "string" && entry !== "",
+  );
+  badge.classList.remove("hidden");
+  badge.textContent = chain.length === 0 ? "auto" : `auto / ${chain[0]}`;
+  badge.title =
+    chain.length > 1
+      ? `Chosen automatically from the free pool, least-throttled first:\n${chain.join("\n")}`
+      : chain.length === 1
+        ? `${chain[0]} - chosen automatically from the free pool.`
+        : "Chosen automatically from the free pool.";
+}
+
 async function sendMessage(text) {
   if (state.streaming || text.trim() === "") return;
 
-  const model = currentModel();
+  // In automatic mode the server picks the chain, so nothing about a model is
+  // sent: sending the hidden picker's value would be asking the server to hold an
+  // opinion it has already said it decides itself.
+  const auto = state.modelSelection === "auto";
+  const model = auto ? undefined : currentModel();
   const maxSteps = currentSteps();
-  const fallbacks = currentFallbacks();
+  const fallbacks = auto ? undefined : currentFallbacks();
   const useOffline = currentUseOffline();
   addUserMessage(text);
   $("#input").value = "";
@@ -1534,6 +1584,9 @@ async function sendMessage(text) {
         state.sessionId = event.id;
         $("#chat-title").textContent = event.title;
         showModelChain(event.models);
+        // The server names the chain it actually chose, which in auto mode is
+        // this turn's answer rather than a stored preference.
+        setAutoBadge(event.models);
         void loadSessions();
         break;
       }
@@ -1851,6 +1904,9 @@ function applySessionSettings(session) {
 
 async function persistSettings() {
   if (state.sessionId === null) return;
+  // Nothing to save: the server ignores a model for an automatic account, so a
+  // write here would be a setting that is stored and never read.
+  if (state.modelSelection === "auto") return;
   const fallbacks = currentFallbacks();
   try {
     await api(`/api/sessions/${encodeURIComponent(state.sessionId)}`, {
@@ -2265,6 +2321,22 @@ async function loadHealth() {
       // Only seed a chat that has not already chosen a chain of its own.
       if (state.sessionId === null) setFallbacks(state.fallbackDefault);
     }
+
+    /*
+     * Who chooses the model. `auto` is an account without a paid plan (or a
+     * deployment with AGENT_FORCE_AUTO_MODEL): the picker and the chain box are
+     * hidden rather than disabled, because a greyed-out control still invites the
+     * question "how do I unlock this?" and this one cannot be unlocked from here.
+     */
+    if (health.modelSelection === "auto" || health.modelSelection === "manual") {
+      state.modelSelection = health.modelSelection;
+    }
+    if (Array.isArray(health.autoModels)) state.autoModels = health.autoModels;
+    const auto = state.modelSelection === "auto";
+    $("#model-field").classList.toggle("hidden", auto);
+    $("#chat-settings").classList.toggle("hidden", auto);
+    if (auto) toggleSettings(false);
+    setAutoBadge(state.autoModels);
 
     renderModelHealth(health.modelHealth);
 

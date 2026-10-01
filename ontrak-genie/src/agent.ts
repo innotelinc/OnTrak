@@ -15,6 +15,7 @@ import {
   type ChatResult,
 } from "./omniroute.js";
 import { modelHealth } from "./modelHealth.js";
+import { autoFreeChain } from "./modelSelect.js";
 import { deriveTitle, saveSession, type Session } from "./store.js";
 import { lanAddress } from "./network.js";
 import { previewTool, runTool, toolSchemas, tools, type ToolOutcome } from "./tools.js";
@@ -149,6 +150,14 @@ export interface RunAgentOptions {
   model?: string;
   /** Overrides the session's saved model chain for this turn only. */
   fallbackModels?: string[];
+  /**
+   * Serve this turn from the automatic free pool, ignoring any chosen model.
+   *
+   * Set by the server for an account without a paid plan (see `modelSelect.ts`).
+   * The chain is still walked and still falls back, so this changes *which* models
+   * are tried, not whether anything is retried.
+   */
+  autoFree?: boolean;
   /** Overrides the session's saved offline setting for this turn only. */
   useOffline?: boolean;
   /** Overrides the session's saved step budget for this turn only. */
@@ -311,6 +320,12 @@ interface ModelTarget {
 export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentEvent> {
   const { session } = options;
 
+  // Automatic mode: the chain is chosen here, per turn, from the free pool and the
+  // live health probe — so a chosen model is not consulted, and nothing is written
+  // back to the session. A selection that expires with the next check is not a
+  // preference, and saving it would outlive what made it correct.
+  const autoFree = options.autoFree === true;
+
   // A per-request choice wins, then the session's saved preference, then the
   // server default. Both are remembered so reopening the chat restores them.
   const requestedModel = options.model ?? session.model;
@@ -322,17 +337,26 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
   // Opting out of the offline gateway is per chat, for work where a local 7B
   // answer would be worse than an honest failure.
   const useOffline = options.useOffline ?? session.useOffline ?? true;
-  if (requestedModel !== undefined) session.model = requestedModel;
-  if (options.fallbackModels !== undefined) session.fallbackModels = options.fallbackModels;
+  if (!autoFree) {
+    if (requestedModel !== undefined) session.model = requestedModel;
+    if (options.fallbackModels !== undefined) session.fallbackModels = options.fallbackModels;
+  }
   if (options.useOffline !== undefined) session.useOffline = options.useOffline;
   if (options.maxSteps !== undefined) session.maxSteps = options.maxSteps;
 
   // Fallbacks are tried in order when a provider throttles, errors, or answers
   // with nothing at all - routine on free tiers. Deduplicated so a fallback that
   // repeats the chosen model is not attempted twice.
+  //
+  // Automatic mode replaces the chain with the free pool ordered by the last
+  // health check, so the turn opens on a model that answered it rather than on
+  // whichever id happens to be first in a file.
+  const ordered = autoFree
+    ? autoFreeChain()
+    : [requestedModel ?? config.model, ...fallbackModels];
   const chain: ModelTarget[] = [];
   const seen = new Set<string>();
-  for (const model of [requestedModel ?? config.model, ...fallbackModels]) {
+  for (const model of ordered) {
     if (seen.has(model)) continue;
     seen.add(model);
     chain.push({ model, apiKey: options.apiKey });
@@ -538,8 +562,15 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
       if (next !== undefined && temporary && emitted === 0 && !isAbortError(failure)) {
         const reason = failure === null ? "returned an empty response" : firstLine(failure.message);
         failures.push(`${candidate} ${reason}`);
-        const where = next.baseUrl === undefined ? "" : " on the offline gateway";
-        yield { type: "notice", text: `${candidate} ${reason}; retrying with ${next.model}${where}.` };
+        // In automatic mode the chain is ours rather than the person's: which model
+        // throttled and which one took over is our problem to solve, and a
+        // "cooling down … retrying with …" line per candidate is what made a busy
+        // free pool look like a broken console. The failure is still recorded in
+        // `failures`, and the health check still reports it.
+        if (!autoFree) {
+          const where = next.baseUrl === undefined ? "" : " on the offline gateway";
+          yield { type: "notice", text: `${candidate} ${reason}; retrying with ${next.model}${where}.` };
+        }
         continue;
       }
 

@@ -116,6 +116,53 @@ function list(name: string): string[] {
     .filter((entry) => entry !== "");
 }
 
+/** Like `list`, but an unset or blank variable means the shipped default. */
+function listOrDefault(name: string, fallback: readonly string[]): string[] {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return [...fallback];
+  const parsed = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
+  return parsed.length > 0 ? parsed : [...fallback];
+}
+
+/**
+ * The free coding models Genie picks from when the account has no paid plan.
+ *
+ * Ordered by **reliability, not strength**, which is the lesson
+ * `docs/operations.md` § *Picking a model* records from a full sweep of this
+ * gateway: a stronger model that is cooling down cannot answer at all, so the one
+ * that is always up leads. `modelSelect.ts` filters this list by the live
+ * tool-call health probe before a turn, so an entry that is throttled today is
+ * skipped rather than producing the `429 … retrying with …` notices.
+ *
+ * The first three are the shipped chain in `.env.example`, and the rest are the
+ * fallbacks behind it — the same models, read as one pool rather than as a
+ * preference. A deployment may override it (`AGENT_FREE_MODELS`); the default is
+ * deliberately a *curated* list rather than the whole catalog, because a
+ * 578-model catalog is not a menu and most of it cannot call a tool.
+ */
+export const DEFAULT_FREE_MODELS = [
+  "openrouter/free",
+  "openrouter/cohere/north-mini-code:free",
+  "gemini/gemini-3.1-flash-lite",
+  "openrouter/qwen/qwen3.8-27b:free",
+  "gemini/gemini-2.5-flash",
+  "gemini/gemini-3-flash-preview",
+] as const;
+
+/**
+ * Plan names that count as *free*, and so get the automatic model and no picker.
+ *
+ * Matched case-insensitively. Everything else — including a plan the control
+ * plane has never heard of — is treated as paid, because the control plane's own
+ * default for an account with no plan is the string `"free"` (see `parseQuota`
+ * in `controlplane.ts`), and a plan an operator invented is more likely a real
+ * subscription than a typo.
+ */
+export const DEFAULT_FREE_PLANS = ["free", "trial", "community"] as const;
+
 export const config = {
   port: int("PORT", 3400),
   host: str("HOST", "127.0.0.1"),
@@ -144,6 +191,20 @@ export const config = {
    * nothing. Only safe before any text has reached the client.
    */
   fallbackModels: list("AGENT_FALLBACK_MODELS"),
+
+  /**
+   * The curated free pool an account without a paid plan is served from, and
+   * whether the model picker is offered at all. See `modelSelect.ts` for how a
+   * turn is placed in it, and `tenancy.ts` for how a plan is read.
+   */
+  freeModels: listOrDefault("AGENT_FREE_MODELS", DEFAULT_FREE_MODELS),
+  freePlans: listOrDefault("AGENT_FREE_PLANS", DEFAULT_FREE_PLANS),
+  /**
+   * When true, **every** account gets the automatic model and no picker, paid or
+   * not — the switch for a deployment that does not want the choice offered at
+   * all. Default false: paid accounts keep the picker.
+   */
+  forceAutoModel: bool("AGENT_FORCE_AUTO_MODEL", false),
 
   /**
    * A second gateway, tried only after every model on the primary one has

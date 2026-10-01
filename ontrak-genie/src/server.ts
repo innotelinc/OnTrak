@@ -18,6 +18,7 @@ import { config } from "./config.js";
 import { controlPlaneEnabled, readControlPlaneConfig, reportControlPlaneOutage } from "./controlplane.js";
 import { buildFileDiff } from "./diff.js";
 import { modelHealth, startModelHealthLoop } from "./modelHealth.js";
+import { autoFreeChain } from "./modelSelect.js";
 import {
   abandonLogin,
   beginLogin,
@@ -56,10 +57,12 @@ import {
   saveSession,
 } from "./store.js";
 import {
+  accessForCaller,
   accountUsage,
   beginTurn,
   countUsage,
   finishTurn,
+  modelAccessFor,
   resetCallerCache,
   scopeFor,
   type TurnUsage,
@@ -537,6 +540,8 @@ async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): 
   const started = await beginTurn(sessionFrom(req));
   if (!started.ok) throw new HttpError(started.status, started.message);
   const { turn } = started;
+  // The same plan the gate just read, so the model and the key agree on who pays.
+  const autoFree = accessForCaller(turn.caller).auto;
 
   let usage: TurnUsage = { tokensIn: 0, tokensOut: 0, requests: 0 };
 
@@ -568,8 +573,15 @@ async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): 
     for await (const event of runAgent({
       session,
       userMessage: message,
-      model,
-      fallbackModels,
+      // An account without a paid plan is served the automatic free pool (see
+      // `modelSelect.ts`), so a model it sent is ignored rather than refused: the
+      // picker is hidden for exactly this caller, and a page that was open before
+      // the plan changed could still be holding one. The choice is made from the
+      // plan the turn gate already read, so the picker and the chain cannot
+      // disagree about who is allowed to choose.
+      model: autoFree ? undefined : model,
+      fallbackModels: autoFree ? undefined : fallbackModels,
+      autoFree,
       useOffline,
       maxSteps,
       // The account's own key when a control plane resolved one; otherwise
@@ -621,9 +633,20 @@ async function handleApi(
   if (pathname === "/api/health" && method === "GET") {
     const health = await gatewayHealth();
     const sandbox = await sandboxInfo();
+    // Whether this caller chooses a model, from the plan the control plane holds.
+    // Never throws: an unreachable plane reads as free/auto, which is the safe
+    // direction (see `modelAccessFor`).
+    const access = await modelAccessFor(sessionFrom(req));
     return sendJson(res, 200, {
       ...health,
       model: config.model,
+      /** The account's plan, and what it means for choosing a model. */
+      plan: access.plan,
+      paid: access.paid,
+      modelSelection: access.auto ? "auto" : "manual",
+      /** The curated free pool, and the chain an automatic turn would use now. */
+      freeModels: config.freeModels,
+      autoModels: autoFreeChain(),
       // The caller's own root, which is the deployment's when tenancy is off.
       workspace: workspaceRoot(),
       /** The sandbox the chosen directory lives inside; shown by the picker. */
@@ -743,9 +766,18 @@ async function handleApi(
         if (archived) session.archivedAt = new Date().toISOString();
         else delete session.archivedAt;
       }
-      if (typeof payload.model === "string" && payload.model !== "") session.model = payload.model;
-      const fallbacks = normalizeModelList(payload.fallbackModels);
-      if (fallbacks !== undefined) session.fallbackModels = fallbacks;
+      // An account on the automatic model has no choice to save: its model and
+      // chain are chosen per turn, so a stored one would be written and then
+      // ignored. The write is skipped rather than refused — the response still
+      // reports the settings in force, and the UI hides the controls for exactly
+      // this caller (`/api/health` says so), so a request reaching here is a stale
+      // page rather than a person being told no.
+      const access = await modelAccessFor(sessionFrom(req));
+      if (!access.auto) {
+        if (typeof payload.model === "string" && payload.model !== "") session.model = payload.model;
+        const fallbacks = normalizeModelList(payload.fallbackModels);
+        if (fallbacks !== undefined) session.fallbackModels = fallbacks;
+      }
       const offline = normalizeFlag(payload.useOffline);
       if (offline !== undefined) session.useOffline = offline;
       const steps = normalizeMaxSteps(payload.maxSteps);
