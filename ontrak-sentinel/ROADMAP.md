@@ -743,14 +743,34 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
     the evidence spine would have to go out of its way. Covered by
     `tests/sentinel-enforcement.test.ts` (31 checks, each rail driven with the
     inputs that must pass and the ones just short of it).
-  - What is **not** here, and is the rest of this milestone: the wire. Nothing
-    applies a block, lifts one, stores a policy, or renders a page yet — there is
-    no enforcement model in `prisma/schema.prisma`, no service method, and no
-    console surface, and `canApproveEnforcement` was the only thing in the tree
-    before this. The decision module is what those will call, so the next step is
-    the service (`applyEnforcement`/`liftEnforcement` driving the returned audit
-    intent through the chain) and the stored policy behind the page that shows what
-    each number means.
+  - `[x]` **The path the decision is taken through** (`src/lib/enforcement-service.ts`,
+    `enforcement-store-prisma.ts`, and two tables in `prisma/schema.prisma`):
+    propose → approve → apply → expire → lift, with every step in the audit chain.
+    An action is a **record with a life**, not a call — `PENDING`, `ACTIVE`,
+    `LIFTED`, `REFUSED` — because prevention is state that outlives the request
+    that created it, and "what is blocked right now" is the first question in an
+    incident. Three properties are the milestone's promises made mechanical.
+    **The rails are re-run at the approval**, so a policy tightened while a
+    proposal waited takes effect and an old proposal is not a way past a new rail
+    (the requester's role is stored *as it was when they asked*, because the
+    approval re-decides the whole request). **The TTL is real**: `expire` lifts
+    what its own deadline has reached, idempotently, so an operator who is asleep
+    does not have to be the one who undoes it. And **a refusal is recorded rather
+    than discarded** — an action turned down at the approval is stored `REFUSED`
+    with the rail that refused it, because somebody asked and the answer is worth
+    keeping. Covered by `tests/sentinel-enforcement-service.test.ts` (21 checks:
+    the waiting proposal, the second approver, the tightened safe-list, the hourly
+    window, expiry by its own clock, a hand lift, and a policy that will not
+    work).
+  - What is **not** here, and is the rest of this milestone: the **console
+    surface** (the page that shows what is in force, proposes an action, approves
+    one and lifts one — one-click rollback is a button nobody has drawn yet),
+    wiring `expire` to the deployment's scheduler, and the **enforcement plane**
+    itself: nothing here pushes a block to a firewall, an agent or a proxy, and
+    that is deliberate — `EnforcementTarget` is the whole contract a plane needs,
+    and an IPS that wrote its own packet filter would be a detection platform
+    pretending to be a firewall. Until an operator can reach this from the
+    console, prevention is a service somebody has to drive by hand.
 - Reversible-by-default, rate-limited, blast-radius caps; every action audited.
 - **Exit:** a threat is blocked within a defined latency; the block is approved,
   logged, reversible, and cannot be applied to a protected target.
@@ -888,11 +908,15 @@ missing rather than as a task name:
    (`src/lib/enforcement-rules.ts`): the safe-list that refuses even an
    administrator, the blast-radius cap that refuses rather than truncates, the
    rolling hour, the second-approver rule, and the inverse computed at the
-   moment of the decision so every action is reversible by construction. What is
-   still missing is the wire — nothing applies a block, lifts one, stores the
-   policy, or draws the page — so what stands between today and 1.0 here is an
-   enforcement action a person can take and undo, on rails that already say what
-   it may touch.
+   moment of the decision so every action is reversible by construction. The
+   **path** has landed too (`src/lib/enforcement-service.ts`, `enforcement-store-prisma.ts`
+   and its two tables): propose, approve, apply, expire, lift, each step in the
+   chain, with the rails re-run at the approval and the TTL actually lifting what
+   it promised. What is still missing is everything a person touches — the console
+   page that proposes, approves and lifts, the scheduler that calls `expire`, and
+   the plane that turns an active record into a filtered packet — so what stands
+   between today and 1.0 here is an enforcement action an *operator* can take and
+   undo, not a service somebody has to drive by hand.
 
 S5 and S6 sit behind all five. A 1.0 that arrives with an IdP, a detector, a
 working listener and a reversible action, all on one evidence chain, is the

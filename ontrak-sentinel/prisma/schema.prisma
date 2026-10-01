@@ -68,6 +68,11 @@ model Organization {
   // somebody has published as worth watching.
   alerts     Alert[]
   indicators Indicator[]
+  // Guard (S4): what the deployment then *did* about it. An action is state that outlives
+  // the request that created it — a block stands until something lifts it — so it is a row
+  // rather than a return value, and the policy it was judged against is a row beside it.
+  enforcementActions  EnforcementAction[]
+  enforcementPolicies EnforcementPolicy[]
 
   // The OIDC surface (S1): who we issue identity to, and the grants in flight.
   oidcClients  OidcClient[]
@@ -76,6 +81,78 @@ model Organization {
   // The SAML surface (S1): the same question — who receives identity — asked
   // with a different protocol.
   samlServiceProviders SamlServiceProvider[]
+}
+
+/// One enforcement action (S4), and its life: proposed, applied, lifted or refused.
+///
+/// The interesting columns are the ones that make an action *answerable* afterwards.
+///
+///   * `state` is one of `PENDING` | `ACTIVE` | `LIFTED` | `REFUSED`, narrowed on read.
+///     `REFUSED` is a state rather than an error because a refused attempt is evidence:
+///     somebody asked to block something and a rail stopped them.
+///   * `rollback` is the inverse, computed when the decision was made and stored *with*
+///     the action. Recomputing it later would mean recomputing it from a policy that has
+///     since been edited, and the inverse of an action is a fact about the action.
+///   * `expiresAt` is the deadline the action lifts itself at, or null when it stands until
+///     lifted by hand. It is read by the expiry sweep, which is what makes
+///     "reversible by default" a mechanism rather than a promise.
+///   * `refusedCode` / `refusedReason` keep the rail that refused, so a review can tell
+///     "the safe-list stopped it" from "it needed a second approver that never came".
+///
+/// `appliedAt` is indexed on its own because the rate limit is a question about time —
+/// `recentAppliedAt` asks for the actions applied since an hour ago — and the rate limit is
+/// the rail that has to be cheap to check.
+model EnforcementAction {
+  id             String  @id @default(cuid())
+  organizationId String
+  /// `BLOCK` | `QUARANTINE` | `RATE_LIMIT`, narrowed on read.
+  action         String
+  state          String  @default("PENDING")
+  /// The targets, as the decision took them: kind, value and a label for the audit row.
+  targets        Json
+  /// The alert this answers. An enforcement action with no detection behind it is not one.
+  alertId        String
+  reason         String
+  requestedById  String
+  requestedByLabel String
+  /// The requester's role when they asked, not at approval time — the approval re-decides
+  /// the whole request, and "was prevention theirs to take" is part of that decision.
+  requestedByRole String
+  approvedById   String?
+  approvedByLabel String?
+  appliedAt      DateTime?
+  expiresAt      DateTime?
+  liftedAt       DateTime?
+  liftedById     String?
+  liftedByLabel  String?
+  liftReason     String?
+  refusedCode    String?
+  refusedReason  String?
+  /// The inverse of this action, stored rather than derived (see the note above).
+  rollback       Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, state])
+  @@index([organizationId, appliedAt])
+  @@index([organizationId, alertId])
+}
+
+/// The rails an organization's enforcement is judged against (S4).
+///
+/// One row per organization, because a policy is what the *deployment* enforces with —
+/// rules are code, and this is the part that has to be configurable without a release.
+/// The whole policy is one `Json` column rather than a column per rail: it is read whole, on
+/// every decision, and a half-applied policy would be a set of rails nobody can reason about.
+model EnforcementPolicy {
+  organizationId String   @id
+  policy         Json
+  updatedById    String?
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
 
 /// A human, service or machine identity.

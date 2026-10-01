@@ -49,10 +49,12 @@ What is in it, and what it is therefore claiming:
 | The whole stack runs together | `.github/workflows/ci.yml` — the **Family stack** job brings up all six containers with `make all-up` |
 
 **Not in it:** Sentinel identities are recorded but a group decides nothing yet (the
-remaining half of the SCIM group sync); Sentinel Guard *detects and does not yet
+remaining half of the SCIM group sync); Sentinel Guard *decides but does not yet
 act* — the syslog listener, the normalizer, triage and the compliance export are
-shipped, and what S4 still owes is the enforcement action itself (applying a
-block, lifting it, storing the policy, and the page behind it); Tix's connector
+shipped, and so is S4's enforcement path (the rails, the stored policy, the
+action's life, and its reversal), but nothing reaches an operator or a network:
+the console page, the expiry sweep on a timer, and the plane that turns an active
+block into a filtered packet are what S4 still owes; Tix's connector
 marketplace and enterprise controls are still open; Training has no LMS/LTI and
 its public API and webhooks are not started; and no Genesis launch has been
 carried end to end against the live line.
@@ -129,7 +131,7 @@ parallel, and a family release is how their slices are named together:
 | --- | --- |
 | **Training** | v1.3 — finish identity & integrations (LTI 1.3, public API and webhooks for attempt/grading events), then v1.5's proof-of-training packets. |
 | **Tix** | the rest of M6 — the connector marketplace pattern and the enterprise controls (granular roles, audit-evidence export, retention/legal hold), then M7. |
-| **Sentinel** | S4 — prevention: the parts the decision rules do not cover. Applying a block, quarantine or rate limit and lifting it again, the stored policy behind the page that explains each number, the console surface, and the enforcement rows in the schema — on the rails `src/lib/enforcement-rules.ts` already decides. |
+| **Sentinel** | S4 — prevention, once an operator can reach it: the console surface (propose, approve, lift, and see what is in force), `expire` on the deployment's scheduler, and the enforcement plane that turns an active action into a filtered packet. The rails and the path behind them are in (`src/lib/enforcement-rules.ts`, `src/lib/enforcement-service.ts`). |
 
 Sequencing is deliberate: Tix proves the identity and telemetry integrations that
 Sentinel later generalises; Training proves the evidence-record format that both
