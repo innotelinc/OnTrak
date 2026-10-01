@@ -311,3 +311,82 @@ export async function recordAudit(
     // See reportTurnUsage.
   }
 }
+
+/**
+ * The outage this process lived through and has not yet been able to report.
+ *
+ * A control plane that is unreachable cannot be told about its own outage while
+ * it is happening: the caller is the only witness and it is the one that cannot
+ * get through. Left alone, that window leaves no trace on either side — the user
+ * sees a refused turn and the operator sees nothing. So it is recorded here and
+ * reported to the plane on the next call that succeeds, or by the timer
+ * `server.ts` arms whenever tenancy is on.
+ */
+export type PendingOutage = {
+  /** First failed call, and last — the window the operator should read. */
+  since: number;
+  until: number;
+  /** How many calls failed in the window, so one alert stands for all of them. */
+  failedCalls: number;
+  /** The last failure's own words, which name the actual fault. */
+  detail: string;
+};
+
+let pendingOutage: PendingOutage | null = null;
+
+/** Record a failed call. Repeated failures extend one window rather than piling up. */
+export function noteControlPlaneOutage(detail: string, now: number = Date.now()): void {
+  if (pendingOutage === null) {
+    pendingOutage = { since: now, until: now, failedCalls: 1, detail };
+    return;
+  }
+  pendingOutage.until = now;
+  pendingOutage.failedCalls += 1;
+  pendingOutage.detail = detail;
+}
+
+/** The recorded window, or null. Exported so a caller can log or test it. */
+export function pendingControlPlaneOutage(): PendingOutage | null {
+  return pendingOutage;
+}
+
+/** Only for tests: a pending outage would leak between cases. */
+export function resetControlPlaneOutage(): void {
+  pendingOutage = null;
+}
+
+/**
+ * Report a recorded outage to the operator, best-effort.
+ *
+ * Called after any successful call and on a timer; both are cheap because there
+ * is usually nothing pending. Delivery is *not* retried past the next attempt and
+ * is cleared only on success, so an outage is reported once — the plane's own
+ * cooldown (`CONTROL_ALERT_COOLDOWN_MS`) is what keeps a burst to one alert, not
+ * a queue here that outlives the fault.
+ */
+export async function reportControlPlaneOutage(plane: ControlPlaneConfig): Promise<void> {
+  if (pendingOutage === null) return;
+  const outage = pendingOutage;
+  try {
+    await call(plane, "/api/internal/alert", {
+      method: "POST",
+      headers: { "x-control-internal-token": plane.token },
+      body: {
+        event: "controlplane.unreachable",
+        title: "Genie could not reach the tenancy service",
+        message:
+          `${outage.failedCalls} tenancy call(s) failed between ${new Date(outage.since).toISOString()} ` +
+          `and ${new Date(outage.until).toISOString()}; the last said: ${outage.detail}`,
+        meta: {
+          since: new Date(outage.since).toISOString(),
+          until: new Date(outage.until).toISOString(),
+          failedCalls: outage.failedCalls,
+        },
+      },
+    });
+    pendingOutage = null;
+  } catch {
+    // Still unreachable, or the report itself was refused — keep the window for
+    // the next attempt rather than dropping the only record of the outage.
+  }
+}

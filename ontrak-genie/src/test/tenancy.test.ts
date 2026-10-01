@@ -62,7 +62,7 @@ process.env.CONTROL_PLANE_INTERNAL_URL = "";
 process.env.CONTROL_INTERNAL_TOKEN = "";
 process.env.OMNIROUTE_API_KEY = "";
 
-const { readControlPlaneConfig, controlPlaneEnabled, provisionIdentity, checkTurnQuota, reportTurnUsage, recordAudit, ControlPlaneError } =
+const { readControlPlaneConfig, controlPlaneEnabled, provisionIdentity, checkTurnQuota, reportTurnUsage, recordAudit, ControlPlaneError, resetControlPlaneOutage } =
   await import("../controlplane.js");
 const { beginTurn, checkQuota, countUsage, finishTurn, resetCallerCache, resolveCaller } = await import(
   "../tenancy.js"
@@ -130,6 +130,9 @@ test("beginTurn with a control plane configured", async (t) => {
     planeCalls.length = 0;
     planeQueue.length = 0;
     resetCallerCache();
+    // The recorded-outage window is process-global too, and an earlier case's
+    // outage would otherwise be flushed by this one's first successful call.
+    resetControlPlaneOutage();
   });
 
   await t.test("a turn with no sign-in is refused rather than put on the operator's key", async () => {
@@ -249,6 +252,7 @@ test("accounting and audit", async (t) => {
   t.beforeEach(() => {
     planeCalls.length = 0;
     planeQueue.length = 0;
+    resetControlPlaneOutage();
   });
 
   await t.test("a finished turn reports usage under the account's key", async () => {
@@ -327,6 +331,7 @@ test("the control-plane client", async (t) => {
   t.beforeEach(() => {
     planeCalls.length = 0;
     planeQueue.length = 0;
+    resetControlPlaneOutage();
   });
 
   await t.test("an identity without a gateway key is refused, not trusted", async () => {

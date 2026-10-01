@@ -263,6 +263,15 @@ export const config = {
    */
   controlPlaneUrl: str("CONTROL_PLANE_INTERNAL_URL", ""),
   controlToken: str("CONTROL_INTERNAL_TOKEN", ""),
+
+  /**
+   * How often (ms) an outage this console lived through is retried to the
+   * control plane, which pages the operator. The next *successful* call reports
+   * it too; this timer is for the case where that call never comes — a console
+   * nobody is using is exactly when the outage would otherwise go unmentioned.
+   * Zero disables the timer and leaves reporting to the next successful call.
+   */
+  controlPlaneOutageReportIntervalMs: nonNegativeInt("CONTROL_PLANE_OUTAGE_REPORT_INTERVAL_MS", 60_000),
 } as const;
 
 /**

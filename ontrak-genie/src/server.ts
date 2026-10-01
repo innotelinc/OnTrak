@@ -15,7 +15,7 @@ import {
   stopPreview,
 } from "./preview.js";
 import { config } from "./config.js";
-import { controlPlaneEnabled } from "./controlplane.js";
+import { controlPlaneEnabled, readControlPlaneConfig, reportControlPlaneOutage } from "./controlplane.js";
 import { buildFileDiff } from "./diff.js";
 import { modelHealth, startModelHealthLoop } from "./modelHealth.js";
 import {
@@ -1081,6 +1081,21 @@ if (isEntrypoint) {
   // Check the chain on a timer, so a model that has quietly stopped working is
   // visible in the UI before it costs a turn.
   startModelHealthLoop();
+
+  // A control-plane outage is reported on the next call that succeeds, but a
+  // console nobody is using makes no such call — and that is precisely when the
+  // window would go unmentioned. The timer retries a recorded outage until the
+  // plane accepts it; there is usually nothing pending, so it does nothing.
+  if (controlPlaneEnabled() && config.controlPlaneOutageReportIntervalMs > 0) {
+    const plane = readControlPlaneConfig();
+    if (plane !== null) {
+      setInterval(
+        () => void reportControlPlaneOutage(plane),
+        config.controlPlaneOutageReportIntervalMs,
+      ).unref();
+    }
+  }
+
   const server = createServer();
 
   server.listen(config.port, config.host, () => {

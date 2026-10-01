@@ -3,8 +3,10 @@ import {
   ControlPlaneError,
   checkTurnQuota,
   controlPlaneEnabled,
+  noteControlPlaneOutage,
   provisionIdentity,
   readControlPlaneConfig,
+  reportControlPlaneOutage,
   reportTurnUsage,
   type ControlPlaneConfig,
 } from "./controlplane.js";
@@ -162,17 +164,21 @@ async function identify(
   try {
     const caller = await resolveCaller(session, plane);
     if (caller === null) return { ok: false, status: 401, message: messages.noAccount };
+    // The plane answered, so anything we failed to report while it was down can
+    // go now — this is the one path that knows the outage is over.
+    void reportControlPlaneOutage(plane);
     return { ok: true, caller };
   } catch (error) {
     const detail = error instanceof Error ? error.message : "unknown error";
+    // A 4xx from the plane is a real answer about this person; anything else is
+    // the plane being unavailable, which is an outage rather than a verdict —
+    // and an outage nobody is told about is exactly what this records.
+    const answered =
+      error instanceof ControlPlaneError && error.status >= 400 && error.status < 500;
+    if (!answered) noteControlPlaneOutage(detail);
     return {
       ok: false,
-      // A 4xx from the plane is a real answer about this person; anything else
-      // is the plane being unavailable, which is an outage rather than a verdict.
-      status:
-        error instanceof ControlPlaneError && error.status >= 400 && error.status < 500
-          ? error.status
-          : 503,
+      status: answered ? (error as ControlPlaneError).status : 503,
       message: messages.unreachable(detail),
     };
   }
