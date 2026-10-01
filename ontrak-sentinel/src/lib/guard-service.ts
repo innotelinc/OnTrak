@@ -27,7 +27,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import type { IdentityStore, ServiceResult } from "./identity-service";
 import type { DetectionService } from "./detection-service";
-import type { DetectionRule } from "./detection-rules";
+import { rulebookVersion, type DetectionRule } from "./detection-rules";
 import type { GuardEndpoints } from "./guard-http";
 
 /** A rule as the rulebook endpoint reports it — no matchers, just what a reader needs. */
@@ -77,6 +77,14 @@ export class GuardService implements GuardEndpoints {
   /** Whether this deployment accepts telemetry at all. */
   enabled(): boolean {
     return this.config.token !== null && this.config.token.length > 0;
+  }
+
+  /**
+   * The rule set's own id, reported beside the rules so a sensor platform is reconciled
+   * against a *corpus* and not only a list of rules.
+   */
+  rulebookVersion(): string {
+    return rulebookVersion(this.detection.rulebook());
   }
 
   rulebook(): RulebookEntry[] {

@@ -49,6 +49,11 @@ export interface GuardEndpoints {
   }): Promise<ServiceResult<{ accepted: number; rejected: { reason: string }[]; alerts: { id: string; ruleId: string; severity: string; created: boolean }[] }>>;
   /** The rules this deployment runs, so a sensor platform can be reconciled against them. */
   rulebook(): RulebookEntry[];
+  /**
+   * The rule set's own id, so an alert read later can name the *corpus* it was judged by
+   * and not only the rule that fired. See `rulebookVersion` in `detection-rules.ts`.
+   */
+  rulebookVersion(): string;
 }
 
 function json(status: number, value: unknown): HttpResponse {
@@ -97,7 +102,11 @@ export async function routeGuard(request: HttpRequest, endpoints: GuardEndpoints
     if (method !== "GET") return json(405, { error: "method_not_allowed", allow: "GET" });
     // Public on purpose: a detection rule is not a secret, and a sensor platform that can
     // read the rulebook can be reconciled against it. Nothing here is telemetry.
-    return json(200, { rules: endpoints.rulebook() });
+    //
+    // The version comes first because it is what a reconciliation is *about*: two rules at
+    // the same version in two different corpora is the case a per-rule version cannot
+    // describe, and the one this field exists for.
+    return json(200, { rulebookVersion: endpoints.rulebookVersion(), rules: endpoints.rulebook() });
   }
 
   if (path !== GUARD_PATHS.events) return NOT_FOUND;

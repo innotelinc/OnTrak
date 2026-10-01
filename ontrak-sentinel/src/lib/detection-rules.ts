@@ -32,6 +32,7 @@
  *    cannot both be looking at a rotating log buffer.
  */
 
+import { sha256Hex } from "./hash";
 import {
   dedupeKey,
   deviceOf,
@@ -270,6 +271,38 @@ export const DETECTION_RULES: readonly DetectionRule[] = [
   SCAN_RULE,
   CREDENTIAL_STUFFING_RULE,
 ];
+
+/**
+ * A name for the **rule set as a whole**, and therefore for the code that judged a batch.
+ *
+ * A per-rule `version` answers "which version of *this* rule fired" and is already on every
+ * alert. What it does not answer is the other half of "why did this fire last Tuesday":
+ * *which corpus was running?* Two rules can both be at version 1 while the set around them
+ * changed — a rule added, a rule removed, a window widened — and an alert read six weeks
+ * later has no way to say which of those happened.
+ *
+ * So the set gets its own id: a digest over each rule's id, version, severity and detection
+ * shape. Three properties are the point. **It is order-independent** (the list's order is
+ * not meaningful and a reordering is not a change), so the digest moves only when the
+ * corpus really does. **It digests the *shape*, not just the declared version** — so a
+ * matcher edited without bumping `version` still moves the id, which is exactly the silent
+ * change the per-rule version cannot catch by itself; a rule that changes *must* bump its
+ * version, and this makes forgetting visible rather than invisible. And **it is short and
+ * derived**, so a deployment can report it, a test can pin it, and nothing has to be stored
+ * to compute it.
+ *
+ * What it is not: a signature. It is a fingerprint of what ran, not a tamper-proof seal — a
+ * deployment that needs the latter has the hash-chained evidence log.
+ */
+export function rulebookVersion(rules: readonly DetectionRule[] = DETECTION_RULES): string {
+  const lines = rules
+    .map(
+      (rule) =>
+        `${rule.id}@${rule.version}|${rule.severity}|${rule.detection.kind}|${JSON.stringify(rule.detection.match)}`,
+    )
+    .sort();
+  return sha256Hex(lines.join("\n")).slice(0, 12);
+}
 
 /* -------------------------------------------------------------------------- */
 /*  Evaluation                                                                */

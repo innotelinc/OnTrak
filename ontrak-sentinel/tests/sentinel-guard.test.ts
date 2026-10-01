@@ -36,6 +36,7 @@ import {
   SUSPICIOUS_SERVICE_RULE,
   evaluateRules,
   inCidr,
+  rulebookVersion,
   type DetectionRule,
 } from "../src/lib/detection-rules";
 import { GUARD_PATHS, routeGuard } from "../src/lib/guard-http";
@@ -511,9 +512,17 @@ test("guard http: a token is required, the tenant is looked up, and the rest is 
   // The rulebook is readable, and carries no matchers.
   const rules = await routeGuard({ method: "GET", url: `https://id.sentinel.test${GUARD_PATHS.rules}`, headers: {} }, guard);
   assert.equal(rules.status, 200);
-  const rulebook = JSON.parse(rules.body) as { rules: { id: string; version: number; kind: string }[] };
+  const rulebook = JSON.parse(rules.body) as {
+    rulebookVersion: string;
+    rules: { id: string; version: number; kind: string }[];
+  };
   assert.equal(rulebook.rules.length, DETECTION_RULES.length);
   assert.ok(rulebook.rules.every((entry) => entry.id && entry.version && entry.kind));
+  // ...and the *corpus* has its own id beside them, so a reconciliation is against a rule
+  // set rather than a list: two rules at the same version in two different corpora is the
+  // case a per-rule version cannot describe.
+  assert.match(rulebook.rulebookVersion, /^[0-9a-f]{12}$/);
+  assert.equal(rulebook.rulebookVersion, rulebookVersion());
 
   // Somewhere else is a 404, so the OIDC/SAML/SCIM/console routers behind it are still asked.
   assert.equal(
