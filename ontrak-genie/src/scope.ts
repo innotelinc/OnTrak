@@ -32,6 +32,11 @@ import { config } from "./config.js";
  * is no account to key on, `defaultScope()` applies, and every path resolves
  * exactly as it did before this module existed — the shipped default of a
  * laptop with one workspace and no sign-in.
+ *
+ * The chosen working directory is part of the slice for the same reason the
+ * chats are: it is where *this* account's work lives, and a deployment-wide
+ * choice would let one person move another's tools out from under them. See
+ * `selectedWorkspace` below.
  */
 
 export type Scope = {
@@ -55,52 +60,84 @@ export type Scope = {
 };
 
 /**
- * The chosen working directory, as a path relative to the sandbox root.
+ * The chosen working directory, per account, as a path relative to the sandbox.
  *
- * Empty means "the sandbox itself", which is where a fresh deployment starts
- * and what every existing install keeps getting until somebody picks a folder.
- * It is deployment-wide rather than per-account because the browser window that
- * picks it is the operator's, and a second person signing in to the same console
- * should land where the operator put the work, not back at the sandbox root.
+ * Empty means "the sandbox itself", which is where a fresh deployment starts and
+ * what every existing install keeps getting until somebody picks a folder.
+ *
+ * This was deployment-wide while a deployment was one operator, on the reasoning
+ * that the browser window picking it *was* the operator's. Tenancy makes that
+ * wrong: with an account's own sandbox, one person choosing `project-a` would
+ * move everybody's working directory — including an account that had chosen
+ * `project-b` and would silently find its tools resolving elsewhere. The choice
+ * now travels with the account, keyed exactly as the scope is, and the
+ * single-operator key (`""`) keeps the old behaviour byte for byte.
  */
-let selected = "";
+const selections = new Map<string, string>();
 
-/** The chosen directory as it is stored: relative, forward-slashed, or "". */
+/** The account, or the single-operator slot, a preference belongs to. */
+function selectionKey(userId: string | null): string {
+  return userId ?? "";
+}
+
+/** The active slice's chosen directory: relative, forward-slashed, or "". */
 export function selectedWorkspace(): string {
-  return selected;
+  return selections.get(selectionKey(currentScope().userId)) ?? "";
 }
 
 const SELECTION_FILE = (): string => path.join(config.dataDir, "workspace.json");
 
 /**
- * Read the saved choice, if there is one.
+ * Read the saved choices, if there are any.
  *
  * A missing or unreadable file is not an error: it is the state every install
  * starts in, and refusing to boot because a preference could not be read would
- * trade a working console for a nicer error message.
+ * trade a working console for a nicer error message. `dir` is read beside
+ * `accounts` so a file written before the choice was per-account still applies —
+ * to the deployment it was written for, which is the single-operator slot.
  */
 export async function loadSelectedWorkspace(): Promise<void> {
+  selections.clear();
   try {
-    const raw = JSON.parse(await fs.readFile(SELECTION_FILE(), "utf8")) as { dir?: unknown };
-    selected = typeof raw.dir === "string" ? raw.dir : "";
+    const raw = JSON.parse(await fs.readFile(SELECTION_FILE(), "utf8")) as {
+      dir?: unknown;
+      accounts?: unknown;
+    };
+    if (typeof raw.dir === "string") selections.set("", raw.dir);
+    if (typeof raw.accounts === "object" && raw.accounts !== null) {
+      for (const [key, value] of Object.entries(raw.accounts as Record<string, unknown>)) {
+        if (typeof value === "string") selections.set(key, value);
+      }
+    }
   } catch {
-    selected = "";
+    // No saved preference: every scope starts at its own sandbox root.
   }
 }
 
 /**
- * Remember the chosen directory. The caller validates it against the sandbox
- * first (`resolveInBase`), so this only has to store what it was handed.
+ * Remember the active scope's chosen directory. The caller validates it against
+ * the sandbox first (`resolveInBase`), so this only stores what it was handed.
  */
 export async function setSelectedWorkspace(rel: string): Promise<void> {
-  selected = rel;
+  selections.set(selectionKey(currentScope().userId), rel);
+
+  const accounts: Record<string, string> = {};
+  for (const [key, value] of selections) {
+    if (key !== "" && value !== "") accounts[key] = value;
+  }
+
   await fs.mkdir(path.dirname(SELECTION_FILE()), { recursive: true });
-  await fs.writeFile(SELECTION_FILE(), `${JSON.stringify({ dir: rel }, null, 2)}\n`, "utf8");
+  await fs.writeFile(
+    SELECTION_FILE(),
+    `${JSON.stringify({ dir: selections.get("") ?? "", accounts }, null, 2)}\n`,
+    "utf8",
+  );
 }
 
-/** Where a chosen directory is joined onto the sandbox it must stay inside. */
-function rootUnder(base: string): string {
-  return selected === "" ? base : path.join(base, selected);
+/** Where a slice's chosen directory is joined onto the sandbox it must stay inside. */
+function rootUnder(base: string, userId: string | null): string {
+  const rel = selections.get(selectionKey(userId)) ?? "";
+  return rel === "" ? base : path.join(base, rel);
 }
 
 /** The single-operator slice: the configured workspace, shared by everyone. */
@@ -109,7 +146,7 @@ export function defaultScope(): Scope {
   return {
     userId: null,
     base,
-    root: rootUnder(base),
+    root: rootUnder(base, null),
     sessions: path.join(config.dataDir, "sessions"),
     snapshots: path.join(config.dataDir, "snapshots"),
   };
@@ -157,7 +194,7 @@ export function accountScope(userId: string): Scope {
   return {
     userId,
     base,
-    root: rootUnder(base),
+    root: rootUnder(base, userId),
     sessions: path.join(config.dataDir, ACCOUNTS, name, "sessions"),
     snapshots: path.join(config.dataDir, ACCOUNTS, name, "snapshots"),
   };

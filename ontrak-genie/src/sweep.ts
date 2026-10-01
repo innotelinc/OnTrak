@@ -4,6 +4,7 @@ import path from "node:path";
 import { config } from "./config.js";
 import { probeToolCall } from "./modelHealth.js";
 import { listModels } from "./omniroute.js";
+import { accountDirName, currentScope } from "./scope.js";
 
 /**
  * A catalog sweep, run from the browser rather than a terminal.
@@ -20,9 +21,19 @@ import { listModels } from "./omniroute.js";
  *     agent's own judgement cannot drift apart;
  *   - it is bounded by a timeout per model, and it never runs twice at once.
  *
- * The last finished report is written to `AGENT_DATA_DIR/sweep.json` and read
- * back on startup, so a restart - or a container being rebuilt - does not make the
- * catalog look unexplored again.
+ * The last finished report is written beside the account that asked for it and
+ * read back on the next request, so a restart - or a container being rebuilt -
+ * does not make the catalog look unexplored again.
+ *
+ * **The report is the asking account's own (v0.3).** The catalog it probes is
+ * shared, but the report is not a fact about the catalog that one person is
+ * entitled to overwrite for everyone - it is what *this* account last measured,
+ * and the console shows it to that account. So the state is keyed the same way
+ * the workspace is (`scope.ts`): `AGENT_DATA_DIR/sweep.json` in single-operator
+ * mode, which is the file it has always been, and
+ * `AGENT_DATA_DIR/accounts/<account>/sweep.json` once tenancy is on. Loading it
+ * lazily per key is what lets one process hold several accounts' reports without
+ * a scope existing at module load.
  */
 
 export type SweepVerdict = "works" | "broken" | "throttled" | "slow";
@@ -71,10 +82,34 @@ const EMPTY: SweepState = {
   results: [],
 };
 
-let state: SweepState = { ...EMPTY };
+/**
+ * One report per account, made when that account first looks.
+ *
+ * The key is the scope's account id (or `""` for single-operator), which is
+ * also what names the file, so two accounts can never read or overwrite each
+ * other's report — and an account that has never swept simply has none, rather
+ * than inheriting the previous person's verdicts.
+ */
+const states = new Map<string, SweepState>();
 
-function sweepFile(): string {
-  return path.join(config.dataDir, "sweep.json");
+function sweepKey(): string {
+  return currentScope().userId ?? "";
+}
+
+function sweepFile(key: string): string {
+  if (key === "") return path.join(config.dataDir, "sweep.json");
+  // The same directory the account's sessions and snapshots live in, so one
+  // account is one directory on disk and nothing has to be looked up twice.
+  return path.join(config.dataDir, "accounts", accountDirName(key), "sweep.json");
+}
+
+/** The account's state, read off disk the first time it is asked for. */
+function stateFor(key: string): SweepState {
+  const held = states.get(key);
+  if (held !== undefined) return held;
+  const loaded = readSweepFile(key);
+  states.set(key, loaded);
+  return loaded;
 }
 
 const VERDICTS: readonly SweepVerdict[] = ["works", "broken", "throttled", "slow"];
@@ -106,14 +141,14 @@ function readResult(value: unknown): SweepResult | null {
  * is exactly how the test for this behaves.
  */
 export function loadSweep(): SweepState {
-  state = readSweepFile();
+  states.set(sweepKey(), readSweepFile(sweepKey()));
   return sweepState();
 }
 
-function readSweepFile(): SweepState {
+function readSweepFile(key: string): SweepState {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(fs.readFileSync(sweepFile(), "utf8"));
+    parsed = JSON.parse(fs.readFileSync(sweepFile(key), "utf8"));
   } catch {
     return { ...EMPTY };
   }
@@ -138,23 +173,22 @@ function readSweepFile(): SweepState {
 }
 
 /** Persist the finished report. Best effort: a read-only volume is not fatal. */
-function saveSweep(): void {
+function saveSweep(key: string, state: SweepState): void {
   try {
-    fs.mkdirSync(config.dataDir, { recursive: true });
-    fs.writeFileSync(sweepFile(), JSON.stringify(state, null, 2), "utf8");
+    const file = sweepFile(key);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(state, null, 2), "utf8");
   } catch {
     // The report still lives in memory; the next restart just has nothing to show.
   }
 }
 
-// Hydrate before the first request, so a page load right after a restart sees it.
-state = readSweepFile();
-
 /**
- * The current state. A shallow copy, so a caller iterating `results` while the
- * sweep pushes onto it cannot see the array change under a `for..of`.
+ * This account's current state. A shallow copy, so a caller iterating `results`
+ * while the sweep pushes onto it cannot see the array change under a `for..of`.
  */
 export function sweepState(): SweepState {
+  const state = stateFor(sweepKey());
   return { ...state, results: [...state.results] };
 }
 
@@ -171,6 +205,7 @@ export const SWEEP_STALE_MS = 24 * 60 * 60 * 1000;
 
 /** True when the last finished report is old enough to be worth re-running. */
 export function sweepStale(now = Date.now()): boolean {
+  const state = stateFor(sweepKey());
   if (state.finishedAt === null) return false;
   const finished = Date.parse(state.finishedAt);
   if (!Number.isFinite(finished)) return false;
@@ -213,7 +248,11 @@ const SAMPLE_SIZE = 24;
 
 /** Kick off a sweep. Returns the state immediately; poll `sweepState()` for progress. */
 export async function startSweep(all: boolean): Promise<SweepState> {
-  if (state.running) return state;
+  // Whose report this run will be. Captured here rather than read again inside
+  // the worker, because the worker outlives the request that started it.
+  const key = sweepKey();
+  let state = stateFor(key);
+  if (state.running) return { ...state, results: [...state.results] };
 
   const previous = state;
 
@@ -230,6 +269,7 @@ export async function startSweep(all: boolean): Promise<SweepState> {
     done: 0,
     results: [],
   };
+  states.set(key, state);
 
   let catalog: string[];
   try {
@@ -238,14 +278,15 @@ export async function startSweep(all: boolean): Promise<SweepState> {
     // Nothing was measured, so keep the last report instead of replacing it with
     // an empty one - and give the slot back, or one failure would disable sweeps
     // until a restart.
-    state = { ...previous, running: false };
+    states.set(key, { ...previous, running: false });
     throw new Error(`Could not read the model list: ${(error as Error).message.split("\n")[0]}`);
   }
 
   // Only ids that claim tool calling are worth asking: the rest can never drive
   // the agent, so probing them would burn rate limit for no answer.
   const candidates = all ? catalog : spread(catalog, SAMPLE_SIZE);
-  state = { ...state, total: candidates.length };
+  state.total = candidates.length;
+  states.set(key, state);
 
   // Deliberately not awaited: the caller wants the state back, and progress is
   // observed by polling. Errors are recorded as results, not thrown.
@@ -279,9 +320,9 @@ export async function startSweep(all: boolean): Promise<SweepState> {
       // Finished either way, so the UI never shows a sweep stuck at 90%.
       state.running = false;
       state.finishedAt = new Date().toISOString();
-      saveSweep();
+      saveSweep(key, state);
     }
   })();
 
-  return state;
+  return { ...state, results: [...state.results] };
 }

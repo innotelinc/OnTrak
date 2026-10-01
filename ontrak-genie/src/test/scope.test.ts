@@ -38,8 +38,11 @@ const {
   accountScope,
   currentScope,
   defaultScope,
+  loadSelectedWorkspace,
   resetScopeCache,
   runInScope,
+  selectedWorkspace,
+  setSelectedWorkspace,
   workspaceRoot,
 } = await import("../scope.js");
 const { resolveInWorkspace, WorkspaceError } = await import("../workspace.js");
@@ -237,5 +240,66 @@ test("a signed-in request opens that account's workspace", async (t) => {
       assert.equal(started.status, 503);
       assert.match(started.message, /no workspace was opened/);
     }
+  });
+});
+
+/* ------------------------------------------------- a directory per account - */
+
+/*
+ * Which directory the agent works in is part of the slice, not a property of the
+ * deployment.
+ *
+ * It was deployment-wide while a deployment was one operator, and that is exactly
+ * what tenancy breaks: with an account's own sandbox, one person choosing
+ * `project-a` would move everybody's tools — including an account that had chosen
+ * `project-b` and would find its files resolving elsewhere without being told.
+ * The cases below pin the two halves of the fix, and the compatibility that has
+ * to survive it: an install that never signs in still reads the one choice it
+ * wrote, in the one slot it wrote it to.
+ */
+test("the working directory is chosen per account", async (t) => {
+  // Built per call, exactly as `scopeFor` builds one per request: a scope's root
+  // is fixed when it is made, which is what keeps one request from having its
+  // working directory move under it halfway through.
+  const alice = () => accountScope("workspace-alice");
+  const bob = () => accountScope("workspace-bob");
+
+  await t.test("two accounts choosing differently do not move each other", async () => {
+    await runInScope(alice(), async () => {
+      assert.equal(selectedWorkspace(), "", "a fresh account starts at its sandbox root");
+      await setSelectedWorkspace("project-a");
+    });
+    await runInScope(bob(), async () => {
+      assert.equal(selectedWorkspace(), "", "and so does the next one");
+      await setSelectedWorkspace("project-b");
+    });
+
+    assert.equal(await runInScope(alice(), async () => selectedWorkspace()), "project-a");
+    assert.equal(await runInScope(bob(), async () => selectedWorkspace()), "project-b");
+
+    // The choice is what the tools actually resolve through, not just a label.
+    assert.equal(
+      await runInScope(alice(), async () => workspaceRoot()),
+      path.join(alice().base, "project-a"),
+    );
+    assert.equal(
+      await runInScope(bob(), async () => workspaceRoot()),
+      path.join(bob().base, "project-b"),
+    );
+  });
+
+  await t.test("the choice survives a reload, and the single-operator slot is its own", async () => {
+    await loadSelectedWorkspace();
+    assert.equal(await runInScope(alice(), async () => selectedWorkspace()), "project-a");
+
+    // No account: the deployment's own slot, untouched by either account's choice.
+    assert.equal(selectedWorkspace(), "");
+    await setSelectedWorkspace("solo");
+    assert.equal(selectedWorkspace(), "solo");
+    assert.equal(await runInScope(alice(), async () => selectedWorkspace()), "project-a");
+
+    await loadSelectedWorkspace();
+    assert.equal(selectedWorkspace(), "solo");
+    assert.equal(await runInScope(bob(), async () => selectedWorkspace()), "project-b");
   });
 });

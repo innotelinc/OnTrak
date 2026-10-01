@@ -27,6 +27,18 @@ export interface SessionSummary {
   useOffline?: boolean;
   /** Step budget the user last picked for this chat, if any. */
   maxSteps?: number;
+  /**
+   * Set when the owner has put this chat away (v0.3).
+   *
+   * Archiving is not deleting and deliberately not a third store: the chat, its
+   * transcript and its file history all stay exactly where they are, and the flag
+   * only says the *list* may fold it out of the way. That is what makes it
+   * reversible by somebody who is not an administrator, and what keeps a chat
+   * that is being cited in a review from disappearing because it looked finished.
+   */
+  archived?: boolean;
+  /** When it was put away, so an archive can be read as history rather than a flag. */
+  archivedAt?: string;
 }
 
 export interface Session extends SessionSummary {
@@ -111,7 +123,24 @@ function summarize(session: Session): SessionSummary {
     ...(session.fallbackModels !== undefined ? { fallbackModels: session.fallbackModels } : {}),
     ...(session.useOffline !== undefined ? { useOffline: session.useOffline } : {}),
     ...(session.maxSteps !== undefined ? { maxSteps: session.maxSteps } : {}),
+    ...(session.archived !== undefined ? { archived: session.archived } : {}),
+    ...(session.archivedAt !== undefined ? { archivedAt: session.archivedAt } : {}),
   };
+}
+
+/**
+ * Clean a caller-supplied chat title, or return undefined when they said nothing.
+ *
+ * Flattened to one line and cut to the same length `deriveTitle` produces, so a
+ * name the owner typed and a name the console derived are the same kind of thing
+ * — a title that could carry a newline would break the list it is rendered in,
+ * and an unbounded one would push everything else out of it.
+ */
+export function normalizeTitle(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const flat = value.replace(/\s+/g, " ").trim();
+  if (flat === "") return undefined;
+  return flat.length > 64 ? flat.slice(0, 64) : flat;
 }
 
 export function deriveTitle(text: string): string {
@@ -169,6 +198,23 @@ export async function listSessions(): Promise<SessionSummary[]> {
 
   sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return sessions;
+}
+
+/**
+ * Put a chat away, or bring it back. Returns the updated chat, or null.
+ *
+ * The transcript is not touched: an archive is a place in the list, not a place
+ * on disk. Un-archiving clears the timestamp as well, so `archivedAt` always
+ * describes the archive that is actually in force.
+ */
+export async function setSessionArchived(id: string, archived: boolean): Promise<Session | null> {
+  const session = await getSession(id);
+  if (session === null) return null;
+  session.archived = archived;
+  if (archived) session.archivedAt = new Date().toISOString();
+  else delete session.archivedAt;
+  await saveSession(session);
+  return session;
 }
 
 export async function deleteSession(id: string): Promise<boolean> {

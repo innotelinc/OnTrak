@@ -16,15 +16,18 @@ full developer reference.
 > **Status.** **0.1 shipped** — the console is complete: the agent loop streamed
 > over SSE, the workspace jail, the tool set, the approval gate, live draft and
 > live diff, per-file snapshots, the model-resilience chain, and a browser UI
-> with no build step. **0.2 is in progress** and is entirely about stack
-> citizenship: sign-in is **on** at both edge names, secrets are read from
-> **Cerulean Vault** through path-scoped `vault://` references, tenancy is **on**
-> through Distro's control plane, and the image is published with a pull-only
-> overlay beside the product compose. **0.2 is complete.** **0.3 is in progress**
-> — resilience and reach: making the console honest about what the gateway
-> actually streams, giving the approval gate a channel besides the browser, giving
-> the workspace a real toolchain, and showing the app itself rather than only the
-> code that builds it.
+> with no build step. **0.2 shipped** — stack citizenship: sign-in is **on** at
+> both edge names, secrets are read from **Cerulean Vault** through path-scoped
+> `vault://` references, tenancy is **on** through Distro's control plane, and the
+> image is published with a pull-only overlay beside the product compose. **0.3
+> is complete** — resilience and reach: the console is honest about what the
+> gateway actually streams, the approval gate has a channel besides the browser,
+> the workspace has a real toolchain, the app itself is shown rather than only the
+> code that builds it, and a chat can now be named, put away and deleted beside a
+> workspace chosen per account. **1.0 is in progress** — the CodeOps surface:
+> isolated workspaces per account with a ceiling Genie enforces itself, an audit
+> trail an operator can read, and a deployment posture that is written down rather
+> than assumed ([threat-model.md](threat-model.md), [runbook.md](runbook.md)).
 
 ## 1. Vision
 
@@ -165,7 +168,7 @@ turn spends that account's own gateway key and is refused when it may not spend,
 secrets are read from Vault, and the name is a Cerulean-registered route — not a
 hand-written DNS record and an NPM host someone clicked.
 
-### v0.3 — Resilience and reach `[ ]`
+### v0.3 — Resilience and reach `[x]`
 
 **Goal:** the console stays useful when the gateway, the plane or the model does
 not.
@@ -185,9 +188,28 @@ not.
   headless driver a CI job uses. Every decision — from either channel, including a
   timeout or a cancelled stream — is appended to `<AGENT_DATA_DIR>/approvals.jsonl`
   with the actor, so unattended running still leaves a record of who let what run.
-- `[ ]` **Session and workspace management.** Listing, naming, archiving and
-  deleting chats and workspaces from the UI, with the sweep report and the
-  workspace choice per account rather than per deployment.
+- `[x]` **Session and workspace management.** Listing was the whole of this while
+  a deployment was one operator with one pile of chats; the missing half was the
+  ordinary housekeeping, and all of it is on the row itself rather than behind an
+  admin screen, because the person who owns a chat is the person who knows which
+  of them it needs. **Naming** flattens and bounds the title (`normalizeTitle`),
+  because it is drawn into a one-line list; **archiving** is a flag on the chat
+  and nothing else — the transcript, its file history and its directory are
+  untouched, which is what makes it reversible by the owner rather than by an
+  administrator, and the list folds archived chats behind a count rather than
+  hiding that they exist; **deleting** is armed in two clicks for the same reason
+  deleting a file is, and deleting the chat you are looking at leaves you in a
+  fresh one instead of in a transcript whose record is gone. The **workspace
+  choice is per account**, keyed exactly as the scope is — it was deployment-wide
+  on the reasoning that the window picking it *was* the operator's, which tenancy
+  turns into a bug: one person choosing `project-a` would have moved everybody's
+  tools, including an account that had chosen `project-b`. The **sweep report**
+  followed for the same reason: the catalog is shared but the report is what
+  *this* account last measured, so it is written beside the account
+  (`accounts/<account>/sweep.json`) and loaded lazily per key. An install that
+  never signs in reads the one choice it wrote, in the one slot it wrote it to.
+  Pinned by `src/test/session-management.test.ts` and the per-account cases in
+  `src/test/scope.test.ts`.
 - `[x]` **Per-account usage visible in the console.** The ledger is written and
   the account can now read it back: `GET /api/account/usage` resolves the caller
   exactly as a turn does and returns the plane's own answer — today's requests,
@@ -239,25 +261,53 @@ becoming the bottleneck.
 - `[ ]` **ONYX** is explicitly *not* this: Genie owns no storage; a shared artifact
   that outlives a workspace is ONYX's to hold.
 
-### v1.0 — The CodeOps surface `[ ]`
+### v1.0 — The CodeOps surface `[~]`
 
 **Goal:** the counterpart, in a browser, of a terminal agent session — with the
 gate the terminal does not have.
 
-- `[ ]` **Multi-tenant by account, with isolated workspaces and an audit trail.**
-  The tenancy half is already there — an account's disk, chats and file history
+- `[x]` **Multi-tenant by account, with isolated workspaces and an audit trail.**
+  The tenancy half was already there — an account's disk, chats and file history
   are its own, and Distro bills each turn to that account's own gateway key. What
-  1.0 adds is the record an operator can read afterwards.
-- `[ ]` **A ceiling per account, not a price list.** The family runs on unlimited
+  1.0 added is the record an operator can read afterwards, and where to read it:
+  `approvals.jsonl` (every decision, including a timeout, with its actor), the
+  account's transcripts and file snapshots, and Distro's ledger by account — the
+  three are listed as one backup set and one incident order in
+  [runbook.md](runbook.md) §9–§10, because an audit trail nobody can find is not
+  one.
+- `[x]` **A ceiling per account, not a price list.** The family runs on unlimited
   usage, so a quota here is not a bill: it is attribution plus a bound on a
-  runaway loop. Every turn is already reported to Distro's ledger with the model
-  and the tokens it spent, so what 1.0 owes is the number *Genie* enforces — the
-  operator's own cap, named as a ceiling rather than as a cost.
-- `[ ]` Deployment posture: retained audit, an operator runbook, and a
-  documented threat model for exposing a shell-capable agent at a name.
+  runaway loop, and the plan cannot supply the second because it never refuses
+  anyone. `AGENT_ACCOUNT_CEILING_REQUESTS` is the number **Genie** enforces, and
+  three decisions make it a stop rather than a licence: it is counted in
+  `beginTurn` — the gate that spends, after the plane has allowed the turn — so
+  nothing reaches the model around it; the day is UTC and the reset is a
+  comparison rather than a timer; and the count is held **in the process** on
+  purpose, so a restart forgives it, because a durable counter is a billing
+  mechanism wearing a safety belt. `0` disables it. The account reads the number,
+  the turns used against it and its `allowed` verdict at `GET /api/account/usage`
+  (`docs/roadmap.md` → `src/ceiling.ts`, `src/test/ceiling.test.ts`).
+- `[x]` Deployment posture: retained audit, an operator runbook, and a
+  documented threat model for exposing a shell-capable agent at a name. The
+  posture is now two documents rather than a paragraph:
+  [threat-model.md](threat-model.md) names the four trust boundaries, the five
+  adversaries and — the part that matters — the **residual** exposure behind each
+  control, with the largest one stated plainly (the code the agent reads is sent
+  to whichever provider answers, which is a property of using a hosted model at
+  all, and the reason the offline gateway exists);
+  [runbook.md](runbook.md) is what an operator does with it — deploy (and read
+  the fail-fast Vault resolver as a feature), add a name (which needs an Authentik
+  redirect URI, not only DNS), tell four refusals apart, read the two
+  outage alerts as opposite things, act on a runaway loop, off-board an account
+  without destroying its work, and the incident order to follow when an agent at a
+  public name runs unattended. Retention is stated where it is practised:
+  `approvals.jsonl` is append-only and pruned on a defended schedule, transcripts
+  and snapshots are the backup set.
 - **Exit:** two accounts run isolated workspaces under one deployment with a
   gate on every destructive call and an auditable record of what each account
-  did — with usage explained rather than charged.
+  did — with usage explained rather than charged. The tenanted deployment has
+  both accounts isolated and both records; what is left open below is the
+  *shared* half of running more than one operator (`v0.4`), not the isolation.
 
 ## 5. Safety and autonomy ladder
 
@@ -356,3 +406,12 @@ loosens the second, never the first.
    that version, and `ontrak-genie/docker-compose.prod.yml` with
    `make genie-prod-up` is the pull-only deploy path the other products already
    had.
+5. ~~Write the threat model and the operator runbook (v1.0).~~ **Done** —
+   [threat-model.md](threat-model.md) (boundaries, adversaries, and the residual
+   behind each control) and [runbook.md](runbook.md) (deploy, sign-in, the four
+   refusals, the two outage alerts, a runaway loop, off-boarding, the incident
+   order). What 1.0's exit still owes is a *deployment* fact rather than a code
+   fact: two accounts isolated on the running console, each with its own key,
+   workspace and record — the tenancy half is wired and the ceiling that bounds
+   each of them is live, so this is a two-account sign-in away from being
+   closed rather than a feature away.

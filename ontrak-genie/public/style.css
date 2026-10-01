@@ -126,6 +126,52 @@ html, body {
 .session-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .session-meta { display: block; font-size: 11px; color: var(--text-dim); margin-top: 3px; }
 
+/* A chat and what may be done to it: the row opacifies its controls on hover or
+   keyboard focus, so the list reads as titles until you reach for one. */
+.session-row { display: flex; align-items: stretch; gap: 2px; border-radius: 8px; margin-bottom: 4px; }
+.session-row .session { margin-bottom: 0; }
+.session-row.archived { opacity: 0.72; }
+.session-actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding-right: 4px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.session-row:hover .session-actions,
+.session-row:focus-within .session-actions { opacity: 1; }
+.session-action {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 5px;
+  cursor: pointer;
+}
+.session-action:hover { background: var(--bg-hover); color: var(--text); }
+.session-action.danger:hover,
+.session-action.armed { color: var(--bad); border-color: currentColor; }
+.session-archived-toggle {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  margin-top: 6px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.session-archived-toggle:hover { color: var(--text); background: var(--bg-hover); }
+
 .sidebar-foot { padding: 12px 14px; border-top: 1px solid var(--border); font-size: 12px; }
 /* The family's switch (`.ot-theme`, styled by unity-theme.css) sits under the status
    rows in the sidebar foot. */

@@ -52,6 +52,7 @@ import {
   normalizeFlag,
   normalizeMaxSteps,
   normalizeModelList,
+  normalizeTitle,
   saveSession,
 } from "./store.js";
 import {
@@ -668,6 +669,12 @@ async function handleApi(
       reasons: usage.usage.reasons,
       quota: usage.usage.quota,
       usageToday: usage.usage.usageToday,
+      /**
+       * The bound *Genie* enforces, beside the plane's plan (v1.0). `limit: 0`
+       * means this deployment enforces none, which the console says rather than
+       * implying a ceiling that is not there.
+       */
+      ceiling: usage.ceiling,
     });
   }
 
@@ -721,10 +728,21 @@ async function handleApi(
       return sendJson(res, 200, { session });
     }
     if (method === "PATCH") {
-      // Remembers the per-chat model and step budget without starting a turn.
+      // Remembers the per-chat model, name and step budget without starting a
+      // turn. Naming and archiving are here rather than on routes of their own
+      // because they are edits to the same record the settings already edit, and
+      // one endpoint means one read-modify-write instead of a race between two.
       const session = await getSession(id);
       if (session === null) throw new HttpError(404, "session not found");
       const payload = await readJson(req);
+      const title = normalizeTitle(payload.title);
+      if (title !== undefined) session.title = title;
+      const archived = normalizeFlag(payload.archived);
+      if (archived !== undefined) {
+        session.archived = archived;
+        if (archived) session.archivedAt = new Date().toISOString();
+        else delete session.archivedAt;
+      }
       if (typeof payload.model === "string" && payload.model !== "") session.model = payload.model;
       const fallbacks = normalizeModelList(payload.fallbackModels);
       if (fallbacks !== undefined) session.fallbackModels = fallbacks;
@@ -736,6 +754,9 @@ async function handleApi(
       return sendJson(res, 200, {
         session: {
           id: session.id,
+          title: session.title,
+          ...(session.archived !== undefined ? { archived: session.archived } : {}),
+          ...(session.archivedAt !== undefined ? { archivedAt: session.archivedAt } : {}),
           model: session.model,
           fallbackModels: session.fallbackModels,
           useOffline: session.useOffline,

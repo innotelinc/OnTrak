@@ -906,7 +906,7 @@ session store, the snapshot store, the ripgrep root, the container mount for
 in the server, before routing — so the tree, a file read, a diff and a delete all
 agree, and none of them can be talked back into the shared root.
 
-Two details that are deliberate:
+Four details that are deliberate:
 
 - **A file read is not quota-gated.** Someone at their daily cap can still read
   what they already wrote; refusing that turns a spend limit into a lockout from
@@ -915,6 +915,41 @@ Two details that are deliberate:
   answers *"Genie cannot tell which account this belongs to"* rather than serving
   the shared workspace — the same posture as the turn gate, and the reason
   three sign-in variables are not optional once tenancy is on.
+- **The chosen working directory is the account's, not the deployment's.**
+  `<AGENT_DATA_DIR>/workspace.json` stores `{ dir, accounts: { <id>: … } }`: `dir`
+  is the single-operator slot (and the file a pre-tenancy install already has, so
+  it keeps working), and `accounts` is one entry per account. A deployment-wide
+  choice would have let one person's `project-a` move everybody's tools, including
+  an account that had chosen `project-b`. The chosen directory is part of the
+  `Scope`, so it is read once per request and cannot move mid-request.
+- **The sweep report is the account's too.** The catalog is shared, but what
+  *this* account last measured is written to
+  `<AGENT_DATA_DIR>/accounts/<account>/sweep.json` and loaded per key, so one
+  person's report is not shown to the next as if it were their own.
+
+### The ceiling Genie enforces itself
+
+The plane's quota is a *plan*: the family runs on unlimited usage, so it never
+refuses a turn. The bound on a runaway loop is therefore Genie's own, and it is a
+separate number from anything the plane knows:
+
+```bash
+AGENT_ACCOUNT_CEILING_REQUESTS=200   # turns per account per UTC day; 0 = none
+```
+
+`src/ceiling.ts` holds it, and three decisions make it a safety stop rather than a
+bill. It is counted **in `beginTurn`** — the same place that refuses and spends,
+so nothing reaches the model around it, and a turn refused for another reason does
+not consume the allowance. The day is **UTC and the reset is a comparison**, so no
+timer exists and a restart cannot leak a count. And the count lives **in this
+process**, so a restart forgives it: a durable counter would be a billing
+mechanism wearing a safety belt, and this is not one. The console shows the number
+and the turns used against it beside the account's spend, and the refusal names
+itself (*"this deployment's ceiling is N per day"*) so an operator is not left
+guessing whether the plane or Genie said no.
+
+`GET /api/account/usage` returns it as `ceiling: { limit, used, remaining, allowed }`
+— `limit: 0` meaning this deployment enforces none.
 
 With no plane configured there is no account to key on, and every path resolves to
 the single configured workspace exactly as it did before: `AGENT_WORKSPACE` and

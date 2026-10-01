@@ -265,6 +265,18 @@ export const config = {
   controlToken: str("CONTROL_INTERNAL_TOKEN", ""),
 
   /**
+   * The ceiling *Genie* enforces on an account's turns per day, independent of
+   * the control plane's quota.
+   *
+   * The plane is the billing authority and the family runs on unlimited usage,
+   * so its cap never refuses anyone; this is the bound on a runaway loop that
+   * the plan cannot provide. Counted in-process and cleared at midnight UTC, so
+   * it is a stop rather than a licence — see `src/ceiling.ts`. `0` (the default)
+   * means Genie enforces none and the plane's verdict is the only gate.
+   */
+  accountCeilingRequests: nonNegativeInt("AGENT_ACCOUNT_CEILING_REQUESTS", 0),
+
+  /**
    * How often (ms) an outage this console lived through is retried to the
    * control plane, which pages the operator. The next *successful* call reports
    * it too; this timer is for the case where that call never comes — a console

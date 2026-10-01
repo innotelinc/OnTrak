@@ -97,6 +97,8 @@ gitignored.
 | [docs/operations.md](docs/operations.md) | The full developer reference: HTTP API, SSE events, every environment variable, the check commands, the Docker and sandbox setup. |
 | [docs/stack.md](docs/stack.md) | Genie's role in the Innotel Platform Stack — what it owns, provides and consumes, and the service map. |
 | [docs/roadmap.md](docs/roadmap.md) | What is shipped, what is open, and what comes next — the milestones from the console to stack citizenship. |
+| [docs/threat-model.md](docs/threat-model.md) | What Genie is defending: the four trust boundaries, the adversaries, and the residual risk behind each control. |
+| [docs/runbook.md](docs/runbook.md) | The operator's runbook: deploy, sign-in, telling the refusals and alerts apart, off-boarding, and the incident order. |
 
 ## Repository layout
 

@@ -12,6 +12,7 @@ import {
   type AccountUsage,
   type ControlPlaneConfig,
 } from "./controlplane.js";
+import { ceilingFor, ceilingMessage, noteTurn, type Ceiling } from "./ceiling.js";
 import type { Session } from "./oidc.js";
 import { accountScope, defaultScope, type Scope } from "./scope.js";
 
@@ -39,6 +40,12 @@ import { accountScope, defaultScope, type Scope } from "./scope.js";
  *     backstop (the same posture Studio takes).
  *   * **Accounting is best-effort.** A turn that has already been paid for must
  *     not fail because the ledger write did.
+ *   * **The ceiling is strict, and it is Genie's own.** The plane rents nothing
+ *     here — the family runs on unlimited usage — so the only bound on a runaway
+ *     loop is the one this console keeps itself (`AGENT_ACCOUNT_CEILING_REQUESTS`,
+ *     `src/ceiling.ts`). It is counted in the gate that spends, so nothing reaches
+ *     the model without passing it, and it is deliberate that a restart clears it:
+ *     a durable count would be a bill in disguise.
  *
  * With no control plane configured, none of this applies and Genie is the
  * single-operator tool it has been — see `readControlPlaneConfig`. That includes
@@ -220,6 +227,15 @@ export async function beginTurn(
     return { ok: false, status: 429, message: `Your account cannot start another turn right now — ${reasons}.` };
   }
 
+  // Genie's own ceiling, checked *and* counted here — after the plane has said
+  // this account may spend, and before anything does. Counting in the same
+  // place that refuses is what makes it impossible to reach the model around.
+  const ceiling = ceilingFor(who.caller.userId);
+  if (!ceiling.allowed) {
+    return { ok: false, status: 429, message: ceilingMessage(ceiling.limit, ceiling.used) };
+  }
+  noteTurn(who.caller.userId);
+
   return { ok: true, turn: { apiKey: who.caller.gatewayKey, caller: who.caller } };
 }
 
@@ -303,7 +319,7 @@ export async function finishTurn(turn: Turn, usage: TurnUsage): Promise<void> {
 }
 
 export type AccountUsageRead =
-  | { ok: true; email: string; usage: AccountUsage }
+  | { ok: true; email: string; usage: AccountUsage; ceiling: Ceiling }
   | { ok: false; status: number; message: string };
 
 /**
@@ -328,7 +344,10 @@ export async function accountUsage(
   if (!who.ok) return who;
 
   const usage = await readAccountUsage(plane, who.caller.gatewayKey);
-  return { ok: true, email: who.caller.email, usage };
+  // The plane's number and Genie's own ceiling, read together: the console shows
+  // the spend beside the thing that will actually stop it, and a deployment that
+  // enforces none says `limit: 0` rather than inventing a bound.
+  return { ok: true, email: who.caller.email, usage, ceiling: ceilingFor(who.caller.userId) };
 }
 
 /** Whether this deployment resolves and gates turns through the control plane. */

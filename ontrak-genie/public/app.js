@@ -1470,15 +1470,25 @@ function renderAccountUsage(usage) {
   const today = usage.usageToday;
   const tokens = (today.tokensIn ?? 0) + (today.tokensOut ?? 0);
   const cap = usage.quota?.requestsPerDay ?? null;
-  dot.className = `status-dot ${usage.allowed ? "ok" : "warn"}`;
+  // The ceiling Genie enforces itself (v1.0). It is shown beside the plan rather
+  // than merged into it, because the two are not the same kind of number: the
+  // plan is what the account may spend, and this is the bound that stops a loop.
+  const ceiling = usage.ceiling?.limit > 0 ? usage.ceiling : null;
+  dot.className = `status-dot ${usage.allowed && (ceiling === null || ceiling.allowed) ? "ok" : "warn"}`;
   label.textContent =
-    `today ${today.requests ?? 0} req / ${tokens} tok` + (cap === null ? " · uncapped" : ` / ${cap} req`);
+    `today ${today.requests ?? 0} req / ${tokens} tok` +
+    (cap === null ? " · uncapped" : ` / ${cap} req`) +
+    (ceiling === null ? "" : ` · stop at ${ceiling.limit}`);
   label.title =
     `Signed in as ${usage.email}.\n` +
     `Today: ${today.requests ?? 0} requests, ${tokens} tokens, $${Number(today.costUsd ?? 0).toFixed(4)}.\n` +
     (cap === null
       ? "No daily request ceiling on this plan."
       : `${usage.allowed ? "Within" : "Over"} the ${cap} request/day ceiling.`) +
+    (ceiling === null
+      ? "\nThis deployment's own turn ceiling is off."
+      : `\nGenie's own ceiling: ${ceiling.used} of ${ceiling.limit} turns started today ` +
+        `(${ceiling.remaining} left). It resets at midnight UTC.`) +
     (usage.reasons?.length ? `\n${usage.reasons.join(", ")}` : "");
 }
 
@@ -1633,6 +1643,22 @@ async function streamChat(payload, onEvent, signal) {
 
 /* ------------------------------------------------------------ session list */
 
+/**
+ * The chat list, and what may be done to a chat from it.
+ *
+ * Listing was the whole of this while a deployment was one operator with one
+ * pile of chats; what it was missing is the ordinary housekeeping — a name that
+ * is yours, putting a finished chat away, and deleting one. All three are on the
+ * row itself rather than behind an admin screen, because the person who owns the
+ * chat is the person who knows which of them it needs.
+ *
+ * Archiving folds rather than hides: the count stays visible and the folder
+ * opens in place, so a chat that was put away is never something you have to
+ * remember the existence of. The server keeps the transcript either way; this
+ * only decides what the list draws.
+ */
+let showArchived = false;
+
 async function loadSessions() {
   let sessions = [];
   try {
@@ -1644,23 +1670,162 @@ async function loadSessions() {
   const nav = $("#sessions");
   nav.replaceChildren();
 
+  const archived = sessions.filter((session) => session.archived === true);
   for (const session of sessions) {
-    const button = document.createElement("button");
-    button.className = `session${session.id === state.sessionId ? " active" : ""}`;
-    button.setAttribute("aria-current", session.id === state.sessionId ? "true" : "false");
-
-    const title = document.createElement("span");
-    title.className = "session-title";
-    title.textContent = session.title;
-
-    const meta = document.createElement("span");
-    meta.className = "session-meta";
-    meta.textContent = `${session.messageCount} messages${session.model ? ` · ${session.model}` : ""}`;
-
-    button.append(title, meta);
-    button.addEventListener("click", () => void openSession(session.id));
-    nav.append(button);
+    if (session.archived !== true) nav.append(sessionRow(session));
   }
+
+  if (archived.length > 0) {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "session-archived-toggle";
+    toggle.setAttribute("aria-expanded", showArchived ? "true" : "false");
+    toggle.textContent = showArchived
+      ? `hide archived (${archived.length})`
+      : `archived (${archived.length})`;
+    toggle.addEventListener("click", () => {
+      showArchived = !showArchived;
+      void loadSessions();
+    });
+    nav.append(toggle);
+    if (showArchived) {
+      for (const session of archived) nav.append(sessionRow(session, true));
+    }
+  }
+}
+
+/** One chat: open it, or rename, archive or delete it. */
+function sessionRow(session, isArchived = false) {
+  const row = document.createElement("div");
+  row.className = `session-row${session.id === state.sessionId ? " active" : ""}${
+    isArchived ? " archived" : ""
+  }`;
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "session";
+  button.setAttribute("aria-current", session.id === state.sessionId ? "true" : "false");
+
+  const title = document.createElement("span");
+  title.className = "session-title";
+  title.textContent = session.title;
+
+  const meta = document.createElement("span");
+  meta.className = "session-meta";
+  meta.textContent = `${session.messageCount} messages${session.model ? ` · ${session.model}` : ""}`;
+
+  button.append(title, meta);
+  button.addEventListener("click", () => void openSession(session.id));
+
+  const actions = document.createElement("span");
+  actions.className = "session-actions";
+  actions.append(
+    sessionAction(isArchived ? "restore" : "archive", session, async () => {
+      await patchSession(session.id, { archived: !isArchived });
+    }),
+    sessionAction("rename", session, async () => {
+      const next = window.prompt("Name this chat", session.title);
+      if (next === null || next.trim() === "") return;
+      await patchSession(session.id, { title: next.trim() });
+      if (session.id === state.sessionId) $("#chat-title").textContent = next.trim();
+    }),
+    sessionAction("delete", session, async () => {
+      const gone = await deleteSession(session.id);
+      if (!gone) return;
+      // Deleting the chat you are looking at has to leave the console somewhere:
+      // a fresh chat, not a transcript whose record no longer exists. That path
+      // redraws the list itself; the row's own reload covers the other case.
+      if (session.id === state.sessionId) startNewChat();
+    }),
+  );
+
+  row.append(button, actions);
+  return row;
+}
+
+/**
+ * One row control.
+ *
+ * Delete is armed in two clicks for the same reason deleting a file is: a
+ * one-click destroy sitting beside "rename" is a trap, and a native `confirm()`
+ * is neither testable nor usable headlessly.
+ */
+function sessionAction(name, session, run) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `session-action${name === "delete" ? " danger" : ""}`;
+  button.textContent = name;
+  button.title = `${name} “${session.title}”`;
+  button.setAttribute("aria-label", `${name} the chat “${session.title}”`);
+
+  if (name !== "delete") {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      try {
+        await run();
+      } catch (error) {
+        addErrorMessage(error.message);
+      }
+      await loadSessions();
+    });
+    return button;
+  }
+
+  let timer = null;
+  const disarm = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    button.textContent = "delete";
+    button.classList.remove("armed");
+  };
+  button.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    if (timer === null) {
+      button.textContent = "sure?";
+      button.classList.add("armed");
+      timer = setTimeout(disarm, 4000);
+      return;
+    }
+    disarm();
+    try {
+      await run();
+    } catch (error) {
+      addErrorMessage(error.message);
+    }
+    await loadSessions();
+  });
+  return button;
+}
+
+/** Save one edit to a chat — its name, or whether it is put away. */
+async function patchSession(id, body) {
+  await api(`/api/sessions/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function deleteSession(id) {
+  const result = await api(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+  return result?.removed === true;
+}
+
+/** A fresh chat, and the callers that need one (the button, and a delete). */
+function startNewChat() {
+  if (state.streaming) return;
+  state.sessionId = null;
+  state.toolCards.clear();
+  state.approvals.clear();
+  resetPreview();
+  $("#chat-title").textContent = "New chat";
+  seedFallbacks();
+  setUseOffline(true);
+  setGatewayBadge("primary");
+  $("#messages").innerHTML =
+    '<div class="empty" id="empty"><h2>What are we building?</h2><p class="muted">This agent reads, edits and runs code inside the workspace. Model access is routed through your OmniRoute gateway.</p></div>';
+  void loadSessions();
+  $("#input").focus();
 }
 
 /** Apply a session's saved model and step budget to the toolbar. */
@@ -2220,21 +2385,7 @@ function wire() {
 
   $("#stop").addEventListener("click", () => state.controller?.abort());
 
-  $("#new-chat").addEventListener("click", () => {
-    if (state.streaming) return;
-    state.sessionId = null;
-    state.toolCards.clear();
-    state.approvals.clear();
-    resetPreview();
-    $("#chat-title").textContent = "New chat";
-    seedFallbacks();
-    setUseOffline(true);
-    setGatewayBadge("primary");
-    $("#messages").innerHTML =
-      '<div class="empty" id="empty"><h2>What are we building?</h2><p class="muted">This agent reads, edits and runs code inside the workspace. Model access is routed through your OmniRoute gateway.</p></div>';
-    void loadSessions();
-    $("#input").focus();
-  });
+  $("#new-chat").addEventListener("click", () => startNewChat());
 
   $("#viewer-close").addEventListener("click", closeViewer);
   $("#viewer-delete").addEventListener("click", () => armDelete());
