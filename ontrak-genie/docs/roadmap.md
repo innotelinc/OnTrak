@@ -24,10 +24,14 @@ full developer reference.
 > gateway actually streams, the approval gate has a channel besides the browser,
 > the workspace has a real toolchain, the app itself is shown rather than only the
 > code that builds it, and a chat can now be named, put away and deleted beside a
-> workspace chosen per account. **1.0 is in progress** — the CodeOps surface:
-> isolated workspaces per account with a ceiling Genie enforces itself, an audit
-> trail an operator can read, and a deployment posture that is written down rather
-> than assumed ([threat-model.md](threat-model.md), [runbook.md](runbook.md)).
+> workspace chosen per account. **1.0 shipped (2026-10-01)** — the CodeOps
+> surface: isolated workspaces per account with a ceiling Genie enforces itself, an
+> audit trail an operator can read, a deployment posture that is written down
+> rather than assumed ([threat-model.md](threat-model.md), [runbook.md](runbook.md)),
+> and — the last of the exit — two accounts proven isolated on a running console by
+> a check rather than by a description (`scripts/verify-tenancy.mjs`). What is
+> **in progress** is the milestone after it, v0.4: the shared half of more than one
+> operator.
 
 ## 1. Vision
 
@@ -104,7 +108,7 @@ flowchart LR
 The feature set in §2. Exit met: a task can be stated, watched while it is worked,
 approved or denied at the gate, and the session resumed after a restart.
 
-### v0.2 — Stack citizenship `[~]`
+### v0.2 — Stack citizenship `[x]`
 
 **Goal:** make Genie a first-class member of the stack rather than a console that
 happens to be in the repo.
@@ -155,14 +159,16 @@ happens to be in the repo.
   `genie-app` entry names the same version, so a deploy is a pull rather than a
   build.
 - `[x]` **Model-chain health on the deployment.** The chain is pinned in the
-  deployment's environment rather than left on `auto/*`:
-  `AGENT_MODEL=openrouter/free` with
-  `AGENT_FALLBACK_MODELS=openrouter/cohere/north-mini-code:free,gemini/gemini-3.1-flash-lite`,
-  every entry an explicit id checked for a real tool call. The chain leads with
-  OpenRouter's free router because a free Gemini tier exhausts its daily quota
-  and a Gemini-only chain then dies on the first turn; the Gemini model stays
-  last so a deployment whose quota has reset still reaches it. The chain-health
-  row and `model-health` remain the guards.
+  deployment's environment rather than left on `auto/*`, every entry an explicit
+  id checked for a real tool call, and the chain-health row plus `model-health`
+  are the guards. The pin moved when the pool did (v1.0): the deployment now
+  leads with the explicit Gemini id that answered (`AGENT_MODEL=gemini/gemini-3.1-flash-lite`,
+  `AGENT_FALLBACK_MODELS=gemini/gemini-3-flash-preview,gemini/gemini-2.5-flash`)
+  and a free account is served the automatic pool in health order rather than
+  choosing (`AGENT_FREE_MODELS`, `src/modelSelect.ts`) — the free-tier daily
+  quota is why the pool spans providers rather than resting on one. What v0.2
+  established is what still holds: an explicit, measured chain, never a combo
+  whose real target depends on the gateway's mood.
 
 **Exit:** reaching `genie.innotel.us` requires an Authentik sign-in, a signed-in
 turn spends that account's own gateway key and is refused when it may not spend,
