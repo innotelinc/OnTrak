@@ -190,6 +190,41 @@ The `.env` files are **not** in the repository and each one is load-bearing:
 `ontrak-portal/.env` (the session signing secret). Back them up before a redeploy —
 a deployment that regenerates the API token silently breaks anything already using it.
 
+### Sentinel is the family's, not a second stack
+
+Sentinel is the one product with two ways to run and one set of host ports
+(`:8787` for HTTP, `:5434` for Postgres, `:5514` for Guard's syslog listener), so
+only one of them may serve at a time. The family stack's `sentinel-app` is that
+one. Its database and signing key live on the family volumes, and they are **not**
+interchangeable with the standalone stack's: starting the family copy against the
+volumes it creates for itself mints a **new signing key** and opens an **empty
+directory**, which logs every existing user out for good and invalidates every
+token already issued — a rotating-secret incident, not a no-op.
+
+The migration is scripted, repeatable and verified:
+
+```bash
+ontrak-sentinel/scripts/consolidate-to-family.sh --check   # what it would do
+ontrak-sentinel/scripts/consolidate-to-family.sh           # cut over
+ontrak-sentinel/scripts/consolidate-to-family.sh --retire  # once the new one answers
+```
+
+It stops the standalone stack, copies its Postgres data directory and its
+`signing-key.pem` into `ontrak-family_ontrak-family-sentinel-{db,keys}`, starts the
+family Sentinel, then verifies the key hash and the identity count. The standalone
+volumes are deliberately kept as the rollback. `make sentinel-up` still runs
+Sentinel on its own for a laptop or a test box, but it *refuses* while the family
+stack is serving it — the ports are the same, so the two are never meant to run
+together on one host.
+
+One composition detail worth knowing: `sentinel-app` in `docker-compose.all.yml`
+does **not** set `SENTINEL_ISSUER` or `SENTINEL_ADMIN_EMAIL` in its `environment:`
+block. They come from `ontrak-sentinel/.env` through `env_file:`. `environment:`
+beats `env_file:`, and the family block is interpolated against the repo root
+`.env` — which does not carry them — so setting them there would shadow the real
+issuer with `http://127.0.0.1:8787` and every ID token would name an origin no
+client can reach.
+
 ### After the first start of OnTrak Sync
 
 The service creates **one administrator** on an empty database, because otherwise

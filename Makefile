@@ -75,8 +75,22 @@ tix-down: ## Stop the Tix stack (keeps its volumes)
 tix-logs: ## Tail the Tix stack's logs
 	cd $(TIX_DIR) && docker compose logs -f
 
+# Sentinel is the one product whose two stacks contend for the *same* ports —
+# :8787, :5434 and Guard's :5514 — unlike Genie, which the family serves on
+# :3400 and this target on :3410. So starting the standalone stack while the
+# family is serving Sentinel is refused here, by name, rather than left to the
+# kernel as a restart loop on EADDRINUSE. See docs/family-operations.md →
+# "Sentinel is the family's, not a second stack".
+FAMILY_SENTINEL_SERVICE := sentinel-app
 .PHONY: sentinel-up
-sentinel-up: ## Build and start Sentinel + Postgres, serving on :8787
+sentinel-up: ## Build and start Sentinel's own stack on :8787 (refuses while the family stack serves it)
+	@if docker compose -f docker-compose.all.yml ps --status running --services 2>/dev/null | grep -qx '$(FAMILY_SENTINEL_SERVICE)'; then \
+		echo "make sentinel-up: the family stack is already serving Sentinel as '$(FAMILY_SENTINEL_SERVICE)' on :8787."; \
+		echo "  It is the same ports (:8787, :5434, :5514), so both cannot run: this target is the"; \
+		echo "  single-product path for a laptop. On the family host, use what is already serving,"; \
+		echo "  or 'make all-down' to stop it first."; \
+		exit 1; \
+	fi
 	cd $(SENTINEL_DIR) && docker compose up -d --build
 
 .PHONY: sentinel-down

@@ -338,10 +338,17 @@ services:
       SENTINEL_GUARD_SYSLOG_TRANSPORT: ${SENTINEL_GUARD_SYSLOG_TRANSPORT:-both}
       SENTINEL_SIGNING_KEY_FILE: /run/sentinel/signing-key.pem
       NODE_ENV: production
-      # What every advertised endpoint and every ID token's `iss` is prefixed
-      # with, so it must be the address a *client* reaches.
-      SENTINEL_ISSUER: ${SENTINEL_ISSUER:-http://127.0.0.1:8787}
-      SENTINEL_ADMIN_EMAIL: ${SENTINEL_ADMIN_EMAIL:-admin@demo.test}
+      # The issuer, the WebAuthn origin and the seeded admin are **not** set
+      # here: they come from `ontrak-sentinel/.env` (the env_file above).
+      #
+      # `environment:` beats `env_file:`, and this block is interpolated against
+      # the *family* project's `.env` — the repo root's — which does not carry
+      # them (`the standalone stack can pin a loopback default because its
+      # project `.env` *is* `ontrak-sentinel/.env`; the family stack's is not).
+      # Setting them here would therefore shadow the real values and make the
+      # provider advertise `http://127.0.0.1:8787` as its issuer, so every ID
+      # token it minted would name an origin no client can reach. Leave them to
+      # the file; the image has a working default when the file is absent.
       # Register a public OIDC client for each product, so the family stack has two
       # client ids to hand out instead of one. Both are loopback by default, which
       # is the only plain-HTTP redirect URI the provider will register.
