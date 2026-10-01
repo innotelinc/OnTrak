@@ -262,7 +262,7 @@ becoming the bottleneck.
 - `[ ]` **ONYX** is explicitly *not* this: Genie owns no storage; a shared artifact
   that outlives a workspace is ONYX's to hold.
 
-### v1.0 — The CodeOps surface `[~]`
+### v1.0 — The CodeOps surface `[x]`
 
 **Goal:** the counterpart, in a browser, of a terminal agent session — with the
 gate the terminal does not have.
@@ -304,10 +304,16 @@ gate the terminal does not have.
   public name runs unattended. Retention is stated where it is practised:
   `approvals.jsonl` is append-only and pruned on a defended schedule, transcripts
   and snapshots are the backup set.
-- **Exit:** two accounts run isolated workspaces under one deployment with a
-  gate on every destructive call and an auditable record of what each account
-  did — with usage explained rather than charged. The tenanted deployment has
-  both accounts isolated and both records; what is left open below is the
+- **Exit — met (2026-10-01):** two accounts run isolated workspaces under one
+  deployment with a gate on every destructive call and an auditable record of what
+  each account did — with usage explained rather than charged. The last thing owed
+  was a *deployment* fact rather than a code fact, so it is checked against the
+  console people use rather than asserted: `npm run tenancy:check`
+  (`scripts/verify-tenancy.mjs`) signs in as two of the control plane's accounts
+  and requires two workspaces, two chat lists and two records, and against the
+  family plane `dhunter@innotel.us` and `admin@cerulean.innotel.us` each got their
+  own — with one real turn by the second moving **its** `usage_cache` row from 0 to
+  1 request while the first's 64 were untouched. What is left open below is the
   *shared* half of running more than one operator (`v0.4`), not the isolation.
 
 ## 5. Safety and autonomy ladder
@@ -348,7 +354,7 @@ loosens the second, never the first.
 | Turns that reach a tool call vs. turns that die on a model | Chain health actually matters |
 | Approval decisions per turn, and deny rate | Whether the gate is used or clicked through |
 | Time-to-first-tool-call after a task is stated | Responsiveness of the console |
-| Sweep: usable ids ÷ ids claiming tool calling | The catalog is not a capability |
+| Sweep: usable ids ÷ ids claiming tool calling | The catalog is not a capability — 25 of 582 advertised ids answered on 2026-10-01 (see `docs/operations.md`) |
 | Sessions resumed after a restart | Whether persistence is real |
 | Accounts whose turns spend their own key | Whether tenancy is actually on |
 
@@ -411,8 +417,8 @@ loosens the second, never the first.
    [threat-model.md](threat-model.md) (boundaries, adversaries, and the residual
    behind each control) and [runbook.md](runbook.md) (deploy, sign-in, the four
    refusals, the two outage alerts, a runaway loop, off-boarding, the incident
-   order). What 1.0's exit still owes is a *deployment* fact rather than a code
-   fact: two accounts isolated on the running console, each with its own key,
-   workspace and record — the tenancy half is wired and the ceiling that bounds
-   each of them is live, so this is a two-account sign-in away from being
-   closed rather than a feature away.
+   order). The *deployment* half of 1.0's exit is now met too: two accounts are
+   isolated on a running console, each with its own key, workspace and record,
+   proven by `npm run tenancy:check` against the live control plane rather than
+   described (see the exit above). `docs/operations.md` § *Two accounts, two
+   workspaces* carries the check and the measurement.

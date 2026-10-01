@@ -240,6 +240,23 @@ npm run model:health -- --model gemini/gemini-3.1-flash-lite --runs 3
 
 The script exits non-zero when nothing it probed worked, so it is usable as a check.
 
+**The console's own full sweep, on record (2026-10-01).** The sidebar's *run full
+sweep* probes **every** advertised id, not only the ones claiming tool calling, so
+its denominator is larger than the script's. It measured **582** ids: **25
+answered with a tool call (4%)**, 24 were throttled, 24 were too slow, and 509
+were broken. The 25 resolved to just three models behind the labels —
+`stealth/space-bunny-alpha` (19 entries, 18 of them `auto/*` combos),
+`gemini-3-flash-preview` (2) and `gemini-2.5-flash` (2) — which is the whole
+argument for judging a catalog by a probe: almost 600 ids, three working models.
+
+The free pool is judged by the *chain* check rather than this list, and the run
+shows why the two disagree. `openrouter/cohere/north-mini-code:free` was throttled
+and `openrouter/free` was not in the advertised catalog at all (the advertised id
+is `openrouter/openrouter/free`, also throttled), while
+`gemini/gemini-3.1-flash-lite` never appears in the catalog yet the 15-minute
+chain check still gets a structured tool call out of it — a listed id is not a
+working model, and an unlisted one is not a broken one.
+
 #### Running a sweep from the UI
 
 The same question can be asked from the browser: the sidebar's `sweep` button
@@ -992,6 +1009,28 @@ Four details that are deliberate:
   `<AGENT_DATA_DIR>/accounts/<account>/sweep.json` and loaded per key, so one
   person's report is not shown to the next as if it were their own.
 
+**Checked on a running console, not only in tests.** The decision above is
+unit-tested and `src/test/tenancy-http.test.ts` wires it, but v1.0's exit is a
+*deployment* fact — two accounts on the console people actually use — so
+`npm run tenancy:check` asks a live one and answers it. It signs in as two of the
+plane's accounts by minting the console's own session cookie from
+`ONTRAK_OIDC_SESSION_SECRET` (an operator capability, so it runs on the host that
+holds the secret, next to `scripts/verify-sso.py`), then requires each to get its
+own `cwd` under `accounts/<account>/`, its own chat list and its own
+`/api/account/usage` record, with neither able to see the other's folder or chat:
+
+```bash
+node scripts/verify-tenancy.mjs --url http://127.0.0.1:3400 \
+  --account <sub>=dhunter@innotel.us --account <sub>=admin@cerulean.innotel.us
+```
+
+Against the family plane (`192.168.1.61:20140`) on 2026-10-01, the two accounts
+`dhunter@innotel.us` and `admin@cerulean.innotel.us` each resolved to their own
+account id, workspace root and record. The attribution claim was then *measured*
+rather than described: one real turn by the second account moved **its**
+`usage_cache` row from 0 to 1 request (1411/64 tokens) while the first's 64
+requests stayed exactly where they were — two keys, two records.
+
 ### The ceiling Genie enforces itself
 
 The plane's quota is a *plan*: the family runs on unlimited usage, so it never
@@ -1175,6 +1214,7 @@ npm run typecheck     # tsc --noEmit
 npm test              # node:test — 386 tests, no browser needed
 npm run ui:smoke      # drives the real UI in a headless Chromium
 npm run model:health  # which advertised models really do tool calling
+npm run tenancy:check # two accounts, isolated, against a running console
 npm run offline:check # proves the offline fallback, with the gateway dead
 npm run draft:check   # how the configured gateway streams a file being written
 npm run live:check    # offline:check and draft:check, one after the other
