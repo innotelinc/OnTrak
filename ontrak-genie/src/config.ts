@@ -42,6 +42,25 @@ function sandboxPreference(name: string, fallback: SandboxPreference): SandboxPr
   return raw === "docker" || raw === "host" || raw === "auto" ? raw : fallback;
 }
 
+type SandboxNetwork = "none" | "bridge";
+
+/**
+ * Whether a sandboxed command may reach the network.
+ *
+ * `none` (the default) is the promise the sandbox makes: a build script cannot
+ * exfiltrate the workspace and a model that has been talked into something
+ * unwise cannot reach out. But it also cannot install anything, and an agent
+ * asked to build a real project needs `curl`, a `pip install`, or a package it
+ * does not have yet. So this is a deliberate choice rather than a constant: an
+ * operator who wants the agent to fetch its own dependencies sets `bridge`, and
+ * one who wants the lockdown keeps the default. The host backend is unaffected —
+ * commands there already have whatever network the process has.
+ */
+function sandboxNetwork(name: string, fallback: SandboxNetwork): SandboxNetwork {
+  const raw = str(name, fallback).toLowerCase();
+  return raw === "bridge" || raw === "none" ? raw : fallback;
+}
+
 /**
  * Values `.env.example` ships that must never be read as a real credential.
  *
@@ -170,6 +189,7 @@ export const config = {
   approvalTimeoutMs: int("AGENT_APPROVAL_TIMEOUT_MS", 300_000),
 
   sandbox: sandboxPreference("AGENT_SANDBOX", "auto"),
+  sandboxNetwork: sandboxNetwork("AGENT_SANDBOX_NETWORK", "none"),
   sandboxImage: str("AGENT_SANDBOX_IMAGE", "coding-agent-sandbox:latest"),
   sandboxMemory: str("AGENT_SANDBOX_MEMORY", "2g"),
   sandboxCpus: str("AGENT_SANDBOX_CPUS", "2"),

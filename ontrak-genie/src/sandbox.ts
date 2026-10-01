@@ -126,7 +126,11 @@ export async function sandboxInfo(): Promise<SandboxInfo> {
     image: config.sandboxImage,
     dockerInstalled: true,
     imageReady: true,
-    detail: `Commands run in a locked-down ${config.sandboxImage} container with no network access.`,
+    detail:
+      `Commands run in a locked-down ${config.sandboxImage} container ` +
+      (config.sandboxNetwork === "bridge"
+        ? "with network access, so the agent can install its own dependencies."
+        : "with no network access."),
   };
 }
 
@@ -160,9 +164,12 @@ export function sandboxInvocation(
     // Named so a command that outlives its CLI process can still be killed.
     "--name",
     containerName,
-    // No network at all: no data exfiltration, no downloads at run time.
+    // No network by default: no data exfiltration, no downloads at run time. An
+    // operator who wants the agent to install its own dependencies sets
+    // AGENT_SANDBOX_NETWORK=bridge (see config.ts), which trades that promise
+    // for a working one - and is why it is named out loud rather than assumed.
     "--network",
-    "none",
+    config.sandboxNetwork === "bridge" ? "bridge" : "none",
     // Immutable root filesystem. /tmp is the only writable scratch space.
     "--read-only",
     "--tmpfs",

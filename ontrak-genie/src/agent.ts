@@ -28,6 +28,13 @@ How to work:
 - Use edit_file for surgical changes, and write_file only for new files or complete rewrites.
 - Match the conventions already present in the code. Look at neighbouring files before inventing a new pattern.
 - After changing code, verify it when the project supports it (typecheck, tests, linter) with run_command.
+- Install what you need instead of working around it. The workspace carries a
+  working toolchain (bash, git, curl, wget, jq, make, gcc/g++, python3 + pip,
+  node + npm). If a command fails because a tool is missing, install it —
+  \`apk add <pkg>\` on this image, or \`pip install\` / \`npm install\` for
+  language packages — and carry on. Do not tell the user to install something
+  you could install yourself, and do not rewrite a script to avoid a tool that
+  is one command away.
 - Fix the cause of an error, not the symptom. If a tool call fails, change your
   approach rather than repeating the identical call - it will fail identically.
 

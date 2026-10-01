@@ -7,8 +7,10 @@
 #   --security-opt no-new-privileges --memory 2g --cpus 2 --pids-limit 512
 #   -v <workspace>:/workspace
 #
-# so it needs a shell, git and the usual language toolchains, but nothing that
-# talks to the network at run time.
+# so it needs a shell, git and the usual language toolchains. Whether it may talk
+# to the network at run time is the deployment's decision (`AGENT_SANDBOX_NETWORK`,
+# default `none`): an agent that installs its own dependencies needs it, and an
+# agent that only builds and tests does not.
 
 FROM node:22-bookworm-slim
 
@@ -18,13 +20,19 @@ RUN apt-get update \
         build-essential \
         ca-certificates \
         curl \
+        wget \
         git \
         jq \
         make \
+        openssl \
         python3 \
+        python3-dev \
         python3-pip \
         python3-venv \
         ripgrep \
+        tar \
+        unzip \
+        xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Commands run as the agent's own uid, so HOME has to be somewhere writable that
