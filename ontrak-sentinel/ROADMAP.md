@@ -543,8 +543,20 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
 ### S3 — Sentinel Guard v1 (detection) `[~]`
 **Goal:** see what is happening.
 
-- `[~]` Telemetry ingest (syslog, NetFlow/IPFIX, host agent, OTel) into the
-  normalizer. The **normalizer** is built (`telemetry-rules.ts`): a source-neutral
+- `[x]` Telemetry ingest (syslog, NetFlow/IPFIX, host agent, OTel) into the
+  normalizer, **and a listener that stays open**: `guard-syslog.ts` binds UDP and
+  TCP, frames what arrives, parses it with the same normalizer a relay's POST
+  uses, and hands each event to the same `GuardService.ingest` — one door into
+  detection rather than a second, weaker one. Four things about it are decisions
+  rather than details: the tenant is configuration (`SENTINEL_GUARD_ORGANIZATION`,
+  and the listener **refuses to start** without it, because a syslog frame cannot
+  name its own tenant); the bind address is the access control (default
+  `127.0.0.1`, because syslog has no authentication to offer); a line past
+  `maxLineBytes` is dropped and counted rather than buffered, so an endless TCP
+  line costs a statistic and not the process; and nothing throws out of a socket
+  handler, so a malformed frame or a vanishing peer is a counter. NetFlow/IPFIX
+  and the OTel receiver remain declared vocabulary rather than readers. The
+  **normalizer** is built (`telemetry-rules.ts`): a source-neutral
   `ObservedEvent` with kind (`NETWORK`/`HOST`/`HTTP`/`AUTH`), addresses and ports,
   direction, protocol, bytes and a free-form detail bag; `toObservedEvent` validates
   and narrows a JSON payload, `toObservedEventFromSyslog` reads the RFC 3164 shape,
@@ -822,11 +834,12 @@ logins with no notion of behaviour. Together they produce signals neither can:
 In the order they have to happen, and each one stated as the thing that is
 missing rather than as a task name:
 
-1. **Guard can only read what it is handed.** S3 detects, but nothing listens:
-   there is no streaming protocol listener (syslog, NetFlow, a pcap reader), so
-   the normalizer and the rules run against events something else has to feed
-   them. 1.0 needs at least one listener, because a detector nobody can point at
-   the network is a library.
+1. ~~**Guard can only read what it is handed.**~~ **Closed (2026-10-01):**
+   `guard-syslog.ts` listens — syslog over UDP and TCP, into the same ingest path
+   — so a detector can be pointed at a network rather than at something else's
+   feed. What is still true: it is *one* protocol. NetFlow/IPFIX and an OTel
+   receiver are the next listeners, and a pcap reader after them, so 1.0 has a
+   listener rather than a taxonomy.
 2. **A rule change is not a version.** Detection rules are code, and the corpus
    they are judged against is not tracked, so "why did this fire last Tuesday"
    has no answer. Versioning the rule set — and recording which version an alert

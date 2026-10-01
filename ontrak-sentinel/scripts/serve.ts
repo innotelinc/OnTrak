@@ -47,6 +47,11 @@ import {
 } from "../src/lib/detection-service";
 import { GUARD_PATHS } from "../src/lib/guard-http";
 import { GuardService } from "../src/lib/guard-service";
+import {
+  guardSyslogConfigFromEnv,
+  startGuardSyslog,
+  type GuardSyslogHandle,
+} from "../src/lib/guard-syslog";
 import { createHttpDirectoryReader } from "../src/lib/directory-client";
 import { DirectoryService, MemoryDirectoryStore, type DirectoryReader } from "../src/lib/directory-service";
 import type { DirectorySource } from "../src/lib/directory-rules";
@@ -479,6 +484,35 @@ async function main(): Promise<void> {
   // a surface somebody eventually finds a way to write to.
   const guard = guardService.enabled() ? guardService : null;
 
+  // The listener on the network side (S3): the part that makes Guard something you can
+  // point at a network rather than a library something else has to feed. Two decisions are
+  // worth reading here. It is fed through `guardService.ingest` — the same call a relay's
+  // POST makes, with this deployment's own token — so there is one door into detection and
+  // the listener is not a second, weaker one; and its tenant is the configured one, because
+  // a syslog frame has nowhere to put an organization slug (`guardSyslogConfigFromEnv`
+  // refuses to start without it). Only mounted alongside the ingest surface: a listener on
+  // a deployment that does not accept telemetry is a socket that wastes its input.
+  let syslog: GuardSyslogHandle | null = null;
+  if (guard !== null) {
+    const syslogConfig = guardSyslogConfigFromEnv(process.env);
+    if (syslogConfig !== null) {
+      syslog = await startGuardSyslog(syslogConfig, {
+        sink: {
+          accept: async (payload, at) => {
+            const result = await guardService.ingest({
+              authorization: `Bearer ${process.env.SENTINEL_GUARD_TOKEN ?? ""}`,
+              organization: syslogConfig.organizationSlug,
+              payload,
+              at,
+            });
+            return result.ok ? { ok: true } : { ok: false, error: result.error };
+          },
+        },
+        log: (message) => console.warn(`[sentinel] syslog: ${message}`),
+      });
+    }
+  }
+
   const { actor, session, totp } = await bootstrap(spine, identities, mfa);
 
   /**
@@ -601,6 +635,11 @@ async function main(): Promise<void> {
     guard
       ? `[sentinel] Guard ingest: POST ${url}${GUARD_PATHS.events} (rulebook: GET ${url}${GUARD_PATHS.rules})`
       : `[sentinel] Guard ingest: off (set SENTINEL_GUARD_TOKEN to accept telemetry)`,
+  );
+  console.log(
+    syslog === null
+      ? `[sentinel] Guard syslog: off (set SENTINEL_GUARD_SYSLOG_PORT and SENTINEL_GUARD_ORGANIZATION to listen)`
+      : `[sentinel] Guard syslog: ${syslog.config.transport} on ${syslog.config.host}:${syslog.config.port} as “${syslog.config.organizationSlug}”`,
   );
   // Deliberately no token is minted or printed here: a provisioning credential belongs
   // to a person acting in the console (`${CONSOLE_PATHS.provisioning}`), is shown once,

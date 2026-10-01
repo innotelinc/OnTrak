@@ -313,6 +313,15 @@ services:
         condition: service_completed_successfully
     ports:
       - "${ONTRAK_SENTINEL_HTTP_PORT:-8787}:8787"
+      # Guard's syslog listener (S3): the one port here that is not HTTP, and the
+      # only one that is deliberately unauthenticated — syslog has no
+      # authentication to offer, so the bind address is the access control. It is
+      # published so a firewall or a kernel on another host can send to it; the
+      # listener itself is off unless SENTINEL_GUARD_SYSLOG_PORT is set, and a
+      # published UDP port with nothing behind it discards quietly, so a
+      # deployment that is not listening should not map it (see docs).
+      - "${SENTINEL_GUARD_SYSLOG_PORT:-5514}:${SENTINEL_GUARD_SYSLOG_PORT:-5514}/udp"
+      - "${SENTINEL_GUARD_SYSLOG_PORT:-5514}:${SENTINEL_GUARD_SYSLOG_PORT:-5514}/tcp"
     env_file:
       - path: ontrak-sentinel/.env
         required: false
@@ -320,6 +329,13 @@ services:
       DATABASE_URL: postgresql://ontrak:ontrak@sentinel-db:5432/sentinel
       SENTINEL_HOST: 0.0.0.0
       SENTINEL_PORT: "8787"
+      # The ingest token and the tenant are NOT set here: they come from
+      # `ontrak-sentinel/.env` (the env_file above), so a `vault://` reference is
+      # resolved by the image's entrypoint rather than shadowed by an empty
+      # interpolation from the root .env. Only the switches are here.
+      SENTINEL_GUARD_SYSLOG_PORT: ${SENTINEL_GUARD_SYSLOG_PORT:-}
+      SENTINEL_GUARD_SYSLOG_HOST: ${SENTINEL_GUARD_SYSLOG_HOST:-127.0.0.1}
+      SENTINEL_GUARD_SYSLOG_TRANSPORT: ${SENTINEL_GUARD_SYSLOG_TRANSPORT:-both}
       SENTINEL_SIGNING_KEY_FILE: /run/sentinel/signing-key.pem
       NODE_ENV: production
       # What every advertised endpoint and every ID token's `iss` is prefixed
