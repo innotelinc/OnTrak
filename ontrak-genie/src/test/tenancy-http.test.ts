@@ -126,6 +126,13 @@ process.env.AGENT_FALLBACK_MODELS = "";
 // changes, and what is under test is that the pool is used *instead of* a chosen
 // model, not which models happen to be in it.
 process.env.AGENT_FREE_MODELS = "free/alpha,free/beta";
+// The posture this suite describes, pinned rather than inherited: it runs from a
+// directory that may hold the deployment's `.env` (`config.ts` reads it), and both
+// of these decide what the tests below are asserting — `AGENT_FORCE_AUTO_MODEL`
+// would take the picker from the paid account, and a deployment that named its own
+// free plans would make "pro" one of them.
+process.env.AGENT_FORCE_AUTO_MODEL = "false";
+process.env.AGENT_FREE_PLANS = "free";
 process.env.AGENT_OFFLINE_URL = "";
 process.env.AGENT_HEALTH_INTERVAL_MS = "0";
 // One re-walk and no waiting: the "everything failed" path is real and worth

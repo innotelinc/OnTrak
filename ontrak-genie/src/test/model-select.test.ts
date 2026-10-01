@@ -23,6 +23,9 @@ process.env.AGENT_MODEL = "paid/primary";
 process.env.AGENT_FALLBACK_MODELS = "paid/backup";
 process.env.AGENT_FREE_MODELS = "free/a,free/b,free/c";
 process.env.AGENT_FREE_PLANS = "free";
+// The default, stated: a deployment that serves the pool to everybody would
+// otherwise make the paid cases below read as free ones.
+process.env.AGENT_FORCE_AUTO_MODEL = "false";
 
 const { config } = await import("../config.js");
 const { autoFreeChain, autoSelection, isFreePlan, selectionMode } = await import("../modelSelect.js");

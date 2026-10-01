@@ -1172,7 +1172,7 @@ so far), `text`, `tool_call`, `tool_result` (with an optional `diff`), `notice`,
 ```bash
 npm run dev           # tsx watch (reload on change)
 npm run typecheck     # tsc --noEmit
-npm test              # node:test — 329 tests, no browser needed
+npm test              # node:test — 386 tests, no browser needed
 npm run ui:smoke      # drives the real UI in a headless Chromium
 npm run model:health  # which advertised models really do tool calling
 npm run offline:check # proves the offline fallback, with the gateway dead
@@ -1182,11 +1182,21 @@ npm run sandbox:build # rebuild the run_command container image
 ```
 
 `npm run check` runs the whole gate in the order that makes sense: `typecheck`,
-`build`, `test`, `ui:smoke`. The build comes before the tests because the suite
-runs the compiled `dist/test/*.test.js`, not the TypeScript, and `ui:smoke` comes
-last because it needs a server to drive — start one first (or use the compose
-container, which is already on `ONTRAK_GENIE_PORT` — 3410 by default, since the
-family stack owns :3400).
+`build`, `copy:check`, `test`, `ui:smoke`. The build comes before the tests because
+the suite runs the compiled `dist/test/*.test.js`, not the TypeScript, and
+`ui:smoke` comes last because it needs a server to drive — start one first (or use
+the compose container, which is already on `ONTRAK_GENIE_PORT`).
+
+**`test` reads the deployment's `.env` when the gate is run from a directory that
+has one**, because `config.ts` loads it at import time. It cannot override a
+variable the process already has, which is why every suite *states* the posture it
+describes — `AGENT_MODEL`, `AGENT_FALLBACK_MODELS`, `AGENT_FREE_MODELS`,
+`AGENT_FREE_PLANS`, `AGENT_FORCE_AUTO_MODEL`, `AGENT_APPROVAL`, the workspace… A
+knob only some suites depend on therefore has to be pinned in each of them: run
+inside a deployment whose `.env` sets `AGENT_FORCE_AUTO_MODEL=true`, the per-chat
+chain tests went red, not because anything was broken but because the process
+described one deployment while the assertions described another. Pin the knob when
+you add it.
 
 `npm run offline:check` is the one check that cannot be a unit test, because the
 fallback it covers only happens when every main model has already failed. It starts

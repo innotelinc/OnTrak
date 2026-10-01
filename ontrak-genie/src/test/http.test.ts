@@ -243,6 +243,12 @@ process.env.AGENT_MODEL = "fake/model";
 // about *this* deployment's entries meaningless. It also dedupes against the
 // chain entry, so this suite still probes two models.
 process.env.AGENT_FREE_MODELS = "fake/model";
+// This suite describes an operator deployment, where a chat's own chain is the one
+// that runs. Pinned rather than inherited: a test process reads the deployment's
+// `.env` if the suite is run from a directory that has one (`config.ts`), and a
+// deployment that serves every account from the free pool would otherwise turn
+// "the chain saved on the chat is used" into a failure about a different posture.
+process.env.AGENT_FORCE_AUTO_MODEL = "false";
 // One retry, and no waiting: the cooldown path is real and worth exercising, but
 // the default 20 s backoff would make this file take minutes.
 process.env.AGENT_RETRY_ATTEMPTS = "1";
