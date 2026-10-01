@@ -720,8 +720,37 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
     PDF rendering for readers who will not take JSON, and any S4 enforcement action at
     all — the first three because the packet is the artefact the family agreed on, and
     the last because it is the rest of S4.
-- Policy-gated enforcement actions (block, quarantine, rate-limit) with
+- `[~]` **Policy-gated enforcement actions** (block, quarantine, rate-limit) with
   approvals, safe-lists for critical infrastructure, and one-click rollback.
+  - `[x]` **The decision** (`src/lib/enforcement-rules.ts`): what may be enforced
+    against, and on whose authority, computed before anything touches a packet —
+    because the safety rails are the part that has to exist *first*. The order of
+    the checks is the design. **The safe-list is checked first and is absolute**
+    (an address inside a protected CIDR, or a named identity or device, is refused
+    for an administrator with a second approval on file — a rail you could reach by
+    exhausting the other rails would not be one). **Blast radius refuses rather
+    than truncates**, since a silently smaller action is a different action from
+    the one somebody described. **The rate limit is a rolling hour**, taken as the
+    times of recent actions so the rule stays pure and the deployment owns the
+    clock. **Authority comes last**, because every check above is a reason to refuse
+    an administrator too — prevention is an administrator's action, and where the
+    policy asks for a second approver it has to be a *different* administrator
+    (the requester's own approval is not a second pair of eyes). Two properties are
+    part of the answer rather than the caller's problem: every allowed action
+    carries **its own inverse** (`LIFT` for a block or a rate limit, `RELEASE` for a
+    quarantine) with a TTL, and **its own audit intent** — actor, approver, alert,
+    targets, and the policy as it was judged — so an enforcement path that skipped
+    the evidence spine would have to go out of its way. Covered by
+    `tests/sentinel-enforcement.test.ts` (31 checks, each rail driven with the
+    inputs that must pass and the ones just short of it).
+  - What is **not** here, and is the rest of this milestone: the wire. Nothing
+    applies a block, lifts one, stores a policy, or renders a page yet — there is
+    no enforcement model in `prisma/schema.prisma`, no service method, and no
+    console surface, and `canApproveEnforcement` was the only thing in the tree
+    before this. The decision module is what those will call, so the next step is
+    the service (`applyEnforcement`/`liftEnforcement` driving the returned audit
+    intent through the chain) and the stored policy behind the page that shows what
+    each number means.
 - Reversible-by-default, rate-limited, blast-radius caps; every action audited.
 - **Exit:** a threat is blocked within a defined latency; the block is approved,
   logged, reversible, and cannot be applied to a protected target.
@@ -854,7 +883,16 @@ missing rather than as a task name:
    small and is the whole point of the product.
 5. **Prevention is the rest of S4** — block, quarantine, rate-limit, with
    approvals, safe-lists and one-click rollback. This is last on purpose: an
-   action nobody can undo is not the thing to build first.
+   action nobody can undo is not the thing to build first, and the order inside
+   it follows the same rule. The **decision** has landed
+   (`src/lib/enforcement-rules.ts`): the safe-list that refuses even an
+   administrator, the blast-radius cap that refuses rather than truncates, the
+   rolling hour, the second-approver rule, and the inverse computed at the
+   moment of the decision so every action is reversible by construction. What is
+   still missing is the wire — nothing applies a block, lifts one, stores the
+   policy, or draws the page — so what stands between today and 1.0 here is an
+   enforcement action a person can take and undo, on rails that already say what
+   it may touch.
 
 S5 and S6 sit behind all five. A 1.0 that arrives with an IdP, a detector, a
 working listener and a reversible action, all on one evidence chain, is the

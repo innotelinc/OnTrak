@@ -12,7 +12,11 @@
 >
 > **OnTrak family release 2026.09** ([portfolio](../INNOTEL-LABS.md)): this
 > product's slice of it is **v1.2 — real drivers**, shipped; the others are
-> **OnTrak Tix M6** and **OnTrak Sentinel S3**.
+> **OnTrak Tix M6**, and **OnTrak Sentinel**, whose detection milestone (S3)
+> shipped and whose prevention milestone (S4) is the last one before 1.0 — its
+> safety rails (safe-lists, blast radius, rate limit, authority, and the
+> computed rollback) have landed and the enforcement action itself is what
+> remains.
 
 ---
 

@@ -16,10 +16,10 @@ are read together.
 | --- | --- | --- | --- | --- |
 | **OnTrak IT Support Training** | Browser-based, automatically-graded IT support training (Linux, Windows, Office). | **2026.09** | v1.0 shipped; v1.2 (sandboxed real shells) shipped | [ROADMAP.md](ROADMAP.md) |
 | **OnTrak Tix** | Enterprise ticketing & service management for IT desks and MSPs, with incident response and insurance-grade evidence. | **2026.09** | M0–M5 shipped; M6 (platform & integrations) largely shipped | [ontrak-tix/ROADMAP.md](ontrak-tix/ROADMAP.md) |
-| **OnTrak Sentinel** | Identity (IdP) and intrusion prevention (IDS/IPS) platform. | **2026.09** | S0–S2 shipped (OIDC/SAML, MFA, SCIM, directory sync); S3 (Guard detection) started | [ontrak-sentinel/ROADMAP.md](ontrak-sentinel/ROADMAP.md) |
+| **OnTrak Sentinel** | Identity (IdP) and intrusion prevention (IDS/IPS) platform. | **2026.09** | S0–S3 shipped (OIDC/SAML, MFA, SCIM, directory sync, and Guard detection: the syslog listener, the normalizer and rules, triage, the compliance report and the family's assurance packet). **S4 — prevention — is the last 1.0 milestone**, and its safety rules have landed: what may be enforced against, by whom, with what blast radius, and how it is undone | [ontrak-sentinel/ROADMAP.md](ontrak-sentinel/ROADMAP.md) |
 | **OnTrak Sync** | Network-wide package and container update monitoring and, on approval, updating. Also owns the family's **local** account table. | **2026.09** | Deployed | [ontrak-sync/README.md](ontrak-sync/README.md) |
 | **OnTrak Portal** | The centralized dashboard: one sign-in, then the product(s) a role belongs in. Holds no database. | **2026.09** | Deployed | [ontrak-portal/README.md](ontrak-portal/README.md) |
-| **OnTrak Genie** | The browser console for a coding agent: it reads, edits and runs code in a workspace it cannot leave, and shows each call — and the file being written — as it happens. | **2026.09** | v0.1.0; conformed, with its own published landing | [ontrak-genie/README.md](ontrak-genie/README.md) |
+| **OnTrak Genie** | The browser console for a coding agent: it reads, edits and runs code in a workspace it cannot leave, and shows each call — and the file being written — as it happens. | **2026.09** | 0.2 published and deployed (sign-in, Vault-resolved secrets, tenancy through Distro); **0.3 complete** — the running app beside the code, a real toolchain, the approval gate's second channel, and chats and workspaces the account manages. **1.0 in progress**: a per-account ceiling Genie enforces itself, and the threat model and operator runbook written down | [ontrak-genie/README.md](ontrak-genie/README.md) |
 
 > Product names in the OnTrak family are provisional and easy to change; the
 > architecture and scope are the durable parts. OnTrak Sync and OnTrak Portal are
@@ -49,9 +49,13 @@ What is in it, and what it is therefore claiming:
 | The whole stack runs together | `.github/workflows/ci.yml` — the **Family stack** job brings up all six containers with `make all-up` |
 
 **Not in it:** Sentinel identities are recorded but a group decides nothing yet (the
-remaining half of the SCIM group sync); Sentinel Guard has no streaming listener and no
-triage UI; Tix's connector marketplace and enterprise controls are still open; Training
-has no LMS/LTI and its public API and webhooks are not started.
+remaining half of the SCIM group sync); Sentinel Guard *detects and does not yet
+act* — the syslog listener, the normalizer, triage and the compliance export are
+shipped, and what S4 still owes is the enforcement action itself (applying a
+block, lifting it, storing the policy, and the page behind it); Tix's connector
+marketplace and enterprise controls are still open; Training has no LMS/LTI and
+its public API and webhooks are not started; and no Genesis launch has been
+carried end to end against the live line.
 
 ## How they fit together
 
@@ -125,7 +129,7 @@ parallel, and a family release is how their slices are named together:
 | --- | --- |
 | **Training** | v1.3 — finish identity & integrations (LTI 1.3, public API and webhooks for attempt/grading events), then v1.5's proof-of-training packets. |
 | **Tix** | the rest of M6 — the connector marketplace pattern and the enterprise controls (granular roles, audit-evidence export, retention/legal hold), then M7. |
-| **Sentinel** | the rest of S3 — a streaming listener per protocol, rule versioning, triage UI and the detection-coverage map — then S4, enforcement. |
+| **Sentinel** | S4 — prevention: the parts the decision rules do not cover. Applying a block, quarantine or rate limit and lifting it again, the stored policy behind the page that explains each number, the console surface, and the enforcement rows in the schema — on the rails `src/lib/enforcement-rules.ts` already decides. |
 
 Sequencing is deliberate: Tix proves the identity and telemetry integrations that
 Sentinel later generalises; Training proves the evidence-record format that both
