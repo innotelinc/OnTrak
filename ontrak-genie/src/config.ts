@@ -137,19 +137,35 @@ function listOrDefault(name: string, fallback: readonly string[]): string[] {
  * tool-call health probe before a turn, so an entry that is throttled today is
  * skipped rather than producing the `429 … retrying with …` notices.
  *
- * The first three are the shipped chain in `.env.example`, and the rest are the
- * fallbacks behind it — the same models, read as one pool rather than as a
- * preference. A deployment may override it (`AGENT_FREE_MODELS`); the default is
- * deliberately a *curated* list rather than the whole catalog, because a
- * 578-model catalog is not a menu and most of it cannot call a tool.
+ * The order below matters most at **boot**, before the first health check has
+ * run: `autoFreeChain()` returns the pool in this order until it has a report, so
+ * whatever leads here is what the first turn after a restart opens on. Re-probed
+ * 2026-10-01 against this gateway, one model at a time and `--runs 3`: only
+ * `gemini/gemini-3.1-flash-lite` answered (67 ms); the rest were all `429 …
+ * cooling down`, and the catalog sweep that preceded the check is itself part of
+ * why. They are **throttled, not broken** — every failure was a cooldown, none was
+ * a `402 credits exhausted`, a `400 not in the live catalog`, or a model that
+ * cannot call a tool — so the pool is kept rather than shrunk to the one entry
+ * that answered, which is the shape that dies whenever that credential cools down.
+ *
+ * Two changes came out of that measurement. The provider that answers leads (the
+ * Gemini free tier's daily quota had reset; on 2026-09-29 the reverse was true and
+ * `openrouter/free` led). And `openrouter/qwen/qwen3.8-27b:free` is dropped: 20.5 s
+ * in the only measurement that ever produced a call, cooling down in every check
+ * since, and its `openrouter` prefix is already represented by an entry that
+ * measured faster. What is left spans two providers, so an outage on one does not
+ * take the whole pool.
+ *
+ * A deployment may override it (`AGENT_FREE_MODELS`); the default is deliberately
+ * a *curated* list rather than the whole catalog, because a 572-model catalog is
+ * not a menu and most of it cannot call a tool.
  */
 export const DEFAULT_FREE_MODELS = [
-  "openrouter/free",
-  "openrouter/cohere/north-mini-code:free",
   "gemini/gemini-3.1-flash-lite",
-  "openrouter/qwen/qwen3.8-27b:free",
-  "gemini/gemini-2.5-flash",
   "gemini/gemini-3-flash-preview",
+  "gemini/gemini-2.5-flash",
+  "openrouter/cohere/north-mini-code:free",
+  "openrouter/free",
 ] as const;
 
 /**

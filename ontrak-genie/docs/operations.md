@@ -380,9 +380,19 @@ as long as it takes to find one that answers.
 tool call, and a turn is placed in it per turn:
 
 ```ini
-AGENT_FREE_MODELS=openrouter/free,openrouter/cohere/north-mini-code:free,gemini/gemini-3.1-flash-lite
+AGENT_FREE_MODELS=gemini/gemini-3.1-flash-lite,gemini/gemini-3-flash-preview,gemini/gemini-2.5-flash,openrouter/cohere/north-mini-code:free,openrouter/free
 AGENT_FREE_PLANS=free,trial,community
 ```
+
+**The configured order is what the first turn after a restart opens on**, because
+the pool is returned in it until a health check has run — so it is worth
+re-measuring rather than copying. Re-probed 2026-10-01, one model at a time with
+`--runs 3`: `gemini/gemini-3.1-flash-lite` answered in 67 ms and everything else
+was `429 … cooling down` — including the entries a full *catalog* sweep had just
+cooled down by probing them. Every failure was a cooldown, none was `402 credits
+exhausted`, `400 not in the live catalog`, or an answer with no tool call, so the
+pool keeps its breadth instead of shrinking to the single entry that answered:
+a one-model pool is the shape that dies the moment that credential cools down.
 
 Two things make it a *selection* rather than another list:
 

@@ -52,6 +52,58 @@ missing secret, a missing key or an unreachable store is fatal by design
 reference, not the value — and fix the reference rather than making the resolver
 lenient.
 
+### Deploy from the repository, not from a copy
+
+A host that builds its own image has to build it from the tree the repository
+actually holds. A directory that has drifted — an older copy with its own
+history, or a checkout nobody has pulled — is a deploy that succeeds and ships
+the wrong code, and nothing in the console says so, because the console cannot
+tell the difference between "the feature is off" and "the feature is not in
+this build". Before `up`, `git rev-parse --short HEAD` in that directory should
+be a commit you can find in the repository.
+
+### Rolling back
+
+Two shapes, and the difference is whether the host builds or pulls.
+
+**Built on the host** — `docker compose` in the source directory that owns the
+compose file:
+
+```bash
+cd <stack>/ontrak-genie        # the directory that owns docker-compose.yml
+git log --oneline -5           # pick the commit to return to
+git checkout <commit>
+docker compose up -d --build   # rebuilds the image from *that* tree
+```
+
+`--build` is not optional. The running service is an image, and `up -d` alone
+would recreate the container from the image the *previous* commit built — the
+rollback would look like it worked while the newer code stayed live. Confirm it
+took by reading a field the rollback introduces or removes in `/api/health`
+(`modelSelection`, say, which only the free-plan build reports), rather than
+trusting the exit code.
+
+**Pulled** — the family stack, which takes a tag:
+
+```bash
+ONTRAK_GENIE_IMAGE_TAG=<previous-tag> make genie-prod-up
+```
+
+A rollback does **not** touch three things, and each of them is a reason not to
+reach for one:
+
+- **The data volume** (`<AGENT_DATA_DIR>`, the `agent-data` volume). Transcripts,
+snapshots, `approvals.jsonl` and the workspace survive it. Rolling back is not a
+way to clear state; §9 covers what to back up if that is what you want.
+- **`.env`.** A setting added by the newer code stays behind, and one that only
+the *newer* code knows about is ignored rather than rejected — so if the reason
+you are rolling back is a setting, change the setting. Rolling the code back
+instead leaves the two out of step in the opposite direction.
+- **The port.** `ONTRAK_GENIE_PORT` in `.env` is what keeps the console where it
+is (the compose default is 3410). If `docker compose config | grep PORT` shows a
+different number than the one you expect, fix that before `up -d` — "the console
+is gone" and "the console moved" look identical from a browser.
+
 ## 3. Sign-in
 
 Both names — `genie.ontrak.innotel.us` and `genie.innotel.us` — are registered in
