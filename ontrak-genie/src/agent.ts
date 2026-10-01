@@ -255,7 +255,7 @@ const MAX_RETRY_DELAY_MS = 60_000;
  * actually use are considered, so a chat that has opted out of the offline
  * gateway is not told it is fine because the local model happens to work.
  */
-function readinessWarning(useOffline: boolean): string | null {
+function readinessWarning(useOffline: boolean, autoFree: boolean): string | null {
   const report = modelHealth();
   if (report.checkedAt === null || report.entries.length === 0) return null;
 
@@ -268,9 +268,26 @@ function readinessWarning(useOffline: boolean): string | null {
     .filter((reason): reason is string => reason !== null)
     .slice(0, 2)
     .join("; ");
+  const detail = reasons === "" ? "" : ` Most recent: ${reasons}.`;
+
+  /*
+   * An automatic account did not pick this pool and cannot change it, so the
+   * operator's version of this warning sends them somewhere they cannot go: "the
+   * chain" is a thing they never built, and "a sweep" is behind a model picker
+   * their console hides. The honest sentence is that the pool is busy, which is
+   * still worth saying — it is the difference between a slow first token and a
+   * bug.
+   */
+  if (autoFree) {
+    return (
+      `Heads up: the last check could not get a tool call out of any model in the free pool ` +
+      `(${names}).${detail} This turn may be slow or fail; it will still try the pool in order.`
+    );
+  }
+
   return (
     `Heads up: the last model check could not get a tool call out of anything in the chain ` +
-    `(${names}).${reasons === "" ? "" : ` Most recent: ${reasons}.`} ` +
+    `(${names}).${detail} ` +
     "This turn may fail or be slow; the sidebar has the detail and a sweep."
   );
 }
@@ -401,7 +418,7 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
 
   // A warning costs nothing and saves a turn: if the last check could not get a
   // tool call out of anything, the user should know before the agent tries again.
-  const unready = readinessWarning(useOffline);
+  const unready = readinessWarning(useOffline, autoFree);
   if (unready !== null) yield { type: "notice", text: unready };
 
   for (let step = 0; step < maxSteps; step += 1) {
@@ -586,9 +603,11 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
         repeats += 1;
         yield {
           type: "notice",
-          text:
-            "Everything in the chain was throttled or silent; retrying in " +
-            `${Math.round(waitMs / 1000)}s (attempt ${repeats} of ${config.retryAttempts}).`,
+          text: autoFree
+            ? `Every model in the free pool is busy or silent; retrying in ` +
+              `${Math.round(waitMs / 1000)}s (attempt ${repeats} of ${config.retryAttempts}).`
+            : "Everything in the chain was throttled or silent; retrying in " +
+              `${Math.round(waitMs / 1000)}s (attempt ${repeats} of ${config.retryAttempts}).`,
         };
         await sleep(waitMs, options.signal);
         // Stopping mid-wait is the user's decision, not a failure to report.
@@ -640,15 +659,27 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
       if (failure !== null) failures.push(`${usedModel} ${firstLine(failure.message)}`);
       const lead =
         failure !== null
-          ? "Every model in the chain failed to answer."
+          ? autoFree
+            ? "Every model in the free pool failed to answer."
+            : "Every model in the chain failed to answer."
           : toolsRan
             ? "The models returned an empty response and the turn stopped early. Changes already made are on disk."
             : "The models returned an empty response, so nothing was changed.";
       const tried = failures.length > 0 ? ` Tried: ${failures.join("; ")}.` : "";
-      const message =
-        `${lead}${tried} This normally means none of the configured models is usable right now - ` +
-        "free tiers rate-limit often. Connect another provider at " +
-        `${gatewayConsoleUrl()}, pick a different model above, and ask me to continue.`;
+      /*
+       * The advice has to be something the reader can do. "Connect another provider"
+       * and "pick a different model above" are both operator actions — the second is
+       * behind a picker a free account's console has hidden (`modelSelect.ts`), so
+       * telling them to use it is worse than saying nothing. What is left is the true
+       * part: a free pool throttles, and the answer is to ask again shortly.
+       */
+      const advice = autoFree
+        ? "This normally means the free pool is rate-limited right now - free tiers throttle often. " +
+          "Try again in a moment."
+        : "This normally means none of the configured models is usable right now - " +
+          "free tiers rate-limit often. Connect another provider at " +
+          `${gatewayConsoleUrl()}, pick a different model above, and ask me to continue.`;
+      const message = `${lead}${tried} ${advice}`;
       session.messages.push({ role: "assistant", content: `[gateway error] ${message}` });
       await saveSession(session);
       yield { type: "error", message };
@@ -670,10 +701,15 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
       const salvaged = salvageToolCalls(result.content, toolNames);
       if (salvaged.length > 0) {
         toolCalls = salvaged;
-        yield {
-          type: "notice",
-          text: "The model wrote its tool call as text rather than using the structured channel; interpreted it as a tool call.",
-        };
+        // Only the operator is told. Salvaging a text-mode call is the agent
+        // handling a weak model correctly, and an automatic account cannot act on
+        // "this model is weak" — it chose no model and the console offers it none.
+        if (!autoFree) {
+          yield {
+            type: "notice",
+            text: "The model wrote its tool call as text rather than using the structured channel; interpreted it as a tool call.",
+          };
+        }
       }
     }
 

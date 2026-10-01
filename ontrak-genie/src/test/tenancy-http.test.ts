@@ -58,6 +58,12 @@ const gatewayModels: string[] = [];
  * moves a turn when a candidate answers with it.
  */
 const gatewayFailStatuses: number[] = [];
+/**
+ * Make *every* model call fail with this status, without being consumed — the "the
+ * pool has nothing to give" case, which is the one that produces the turn-level
+ * messages rather than the per-candidate ones.
+ */
+let gatewayFailAll: number | null = null;
 
 const gateway = http.createServer((req, res) => {
   const chunks: Buffer[] = [];
@@ -77,8 +83,8 @@ const gateway = http.createServer((req, res) => {
     }
     gatewayModels.push(String(parsed.model ?? ""));
 
-    const failStatus = gatewayFailStatuses.shift();
-    if (failStatus !== undefined) {
+    const failStatus = gatewayFailAll ?? gatewayFailStatuses.shift();
+    if (failStatus !== null && failStatus !== undefined) {
       res.writeHead(failStatus, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify({ error: { message: "All credentials for this model are cooling down" } }),
@@ -122,6 +128,10 @@ process.env.AGENT_FALLBACK_MODELS = "";
 process.env.AGENT_FREE_MODELS = "free/alpha,free/beta";
 process.env.AGENT_OFFLINE_URL = "";
 process.env.AGENT_HEALTH_INTERVAL_MS = "0";
+// One re-walk and no waiting: the "everything failed" path is real and worth
+// exercising, but the default 20 s backoff would make this file take minutes.
+process.env.AGENT_RETRY_ATTEMPTS = "1";
+process.env.AGENT_RETRY_DELAY_MS = "0";
 process.env.OMNIROUTE_URL = `http://127.0.0.1:${gatewayPort}/v1`;
 // The one gateway key this deployment holds: it must be *unused* by a turn once a
 // control plane is configured, which is the whole posture being tested.
@@ -146,6 +156,9 @@ const { accountScope } = await import("../scope.js");
 // answer has to forget the previous one, or its reply is served from the cache and
 // the next queued answer is consumed by the wrong call.
 const { resetCallerCache } = await import("../tenancy.js");
+// Used by the one test that needs a health report where nothing works; the loop
+// itself is off in this file (AGENT_HEALTH_INTERVAL_MS=0).
+const { refreshModelHealth } = await import("../modelHealth.js");
 
 await ensureWorkspace();
 const server = createServer();
@@ -551,4 +564,78 @@ test("a free account cannot store a model on its chat, because nothing would rea
   // placed by the pool regardless.
   assert.notEqual(session.model, "chosen/by/hand");
   assert.notDeepEqual(session.fallbackModels, ["also/mine"]);
+});
+
+test("an automatic turn says the pool is busy, not that a chain it cannot see is wrong", async () => {
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeCalls.length = 0;
+  planeQueue.push(identityReply("sk-free-4", "u-free4", "sub-free4", "free"), {
+    status: 200,
+    body: { allowed: true },
+  });
+  // Nothing in the pool can answer, so this is the worst case a person ever sees.
+  gatewayFailAll = 429;
+  const free = cookieFor("sub-free4", "free4@innotel.us");
+  const reportsBefore = usageReports();
+  const response = await post("/api/chat", { message: "hello" }, { cookie: free });
+  assert.equal(response.status, 200);
+  const events = await drain(response);
+
+  const notices = events
+    .filter((event) => event.type === "notice")
+    .map((event) => String(event.text));
+  // Still no per-candidate chatter, and the wait is explained in the pool's terms
+  // rather than as "the chain", which is something this person never built.
+  assert.ok(!notices.some((text) => /retrying with/.test(text)), JSON.stringify(notices));
+  assert.ok(
+    notices.some((text) => /Every model in the free pool is busy or silent; retrying in/.test(text)),
+    `expected the pool's own retry wording, got ${JSON.stringify(notices)}`,
+  );
+
+  const error = String(
+    events.find((event) => event.type === "error")?.message ?? "",
+  );
+  assert.match(error, /Every model in the free pool failed to answer/);
+  // Both instructions in the operator's version are impossible for this account:
+  // there is no provider for them to connect and no picker for them to change, so
+  // telling them to do either is worse than saying nothing.
+  assert.ok(!/Connect another provider/.test(error), error);
+  assert.ok(!/pick a different model/.test(error), error);
+
+  gatewayFailAll = null;
+  await waitFor(() => usageReports() > reportsBefore, "the failed turn's usage report");
+});
+
+test("before an automatic turn, the warning names the pool rather than a sweep", async () => {
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeCalls.length = 0;
+
+  // The one state that produces the pre-turn warning: a finished check where
+  // nothing could make a tool call.
+  gatewayFailAll = 429;
+  const report = await refreshModelHealth();
+  assert.equal(report.working, 0, "this test needs a report where nothing works");
+
+  // ...and then let the turn itself answer, so the warning is what is under test.
+  gatewayFailAll = null;
+  planeQueue.push(identityReply("sk-free-5", "u-free5", "sub-free5", "free"), {
+    status: 200,
+    body: { allowed: true },
+  });
+  const free = cookieFor("sub-free5", "free5@innotel.us");
+  const reportsBefore = usageReports();
+  const response = await post("/api/chat", { message: "hello" }, { cookie: free });
+  const events = await drain(response);
+
+  const warning = String(
+    events.find((event) => event.type === "notice")?.text ?? "",
+  );
+  assert.match(warning, /free pool/);
+  // "a sweep" is behind a model picker this account's console hides, so the
+  // operator's pointer is a dead end here.
+  assert.ok(!/a sweep/.test(warning), warning);
+
+  await waitFor(() => usageReports() > reportsBefore, "the warned turn's usage report");
 });

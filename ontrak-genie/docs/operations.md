@@ -413,6 +413,16 @@ control at all, and a greyed-out menu still asks "how do I unlock this?" when th
 answer is "subscribe". The model that actually answered stays visible, because
 somebody debugging a bad answer needs to know what replied.
 
+**The messages change with the mode, deliberately.** The operator's wording points
+at things an operator can do: the pre-turn warning ends "the sidebar has the detail
+and a sweep", and a turn where everything failed says to connect another provider
+and *pick a different model above*. An automatic account has no sidebar sweep it
+can act on and no picker at all, so it gets the same facts without the dead ends —
+the warning says the *free pool* is unready, the retry says the pool is busy, and
+the failure says a free pool throttles and to ask again shortly. The self-healed
+text-mode-tool-call notice is dropped too: it reports that a weak model was
+handled correctly, which is nothing a person who chose no model can act on.
+
 ### Offline fallback
 
 The chain above still assumes the gateway is up and the internet is reachable.
