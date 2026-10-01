@@ -282,6 +282,21 @@ test("the preview, end to end", async (t) => {
     assert.match(String(status.error), /exited immediately/);
   });
 
+  await t.test("a project in a chosen directory is found where it lives", async () => {
+    await write("smoketest/index.html", "<html><body><h1>in a folder</h1></body></html>\n");
+    const status = await startPreview({ cwd: "smoketest" });
+    assert.equal(status.running, true, status.error ?? "the static site should have started");
+    assert.equal(status.cwd, "smoketest");
+    assert.equal(status.detected, true, "nothing named this command; it was worked out");
+    assert.match(String(status.command), /http\.server/);
+
+    // And it is that directory's page being served, not the workspace root's.
+    const response = await fetch(`${base}/preview/?token=${TOKEN}`);
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /in a folder/);
+    await stopPreview();
+  });
+
   await t.test("nothing to run is a message, not a stack trace", async () => {
     const empty = path.join(workspace, "empty-project");
     await fs.mkdir(empty, { recursive: true });

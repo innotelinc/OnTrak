@@ -1018,7 +1018,7 @@ so far), `text`, `tool_call`, `tool_result` (with an optional `diff`), `notice`,
 ```bash
 npm run dev           # tsx watch (reload on change)
 npm run typecheck     # tsc --noEmit
-npm test              # node:test — 325 tests, no browser needed
+npm test              # node:test — 326 tests, no browser needed
 npm run ui:smoke      # drives the real UI in a headless Chromium
 npm run model:health  # which advertised models really do tool calling
 npm run offline:check # proves the offline fallback, with the gateway dead

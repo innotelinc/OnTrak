@@ -294,11 +294,16 @@ export async function startPreview(options: {
   port?: number;
 }): Promise<PreviewStatus> {
   const root = workspaceRoot();
+  const relCwd = (options.cwd ?? "").trim();
+  // What is inspected is where the command will run, not the workspace root: a
+  // project in `smoketest/` is a project, and looking for its package.json at the
+  // top of the tree would report it as nothing to run.
+  const searchRoot = relCwd === "" ? root : resolveInWorkspace(relCwd);
   const named = (options.command ?? config.previewCommand).trim();
   // A named command wins; otherwise work out what this project is. The guess is
   // reported in the status either way, so the pane can say what it is running
   // rather than leave the user guessing where the app came from.
-  const suggestion = named === "" ? detectPreviewCommand(root) : null;
+  const suggestion = named === "" ? detectPreviewCommand(searchRoot) : null;
   const command = named !== "" ? named : (suggestion?.command ?? "");
   if (command === "") {
     return {
@@ -313,8 +318,11 @@ export async function startPreview(options: {
   // same files, and the operator asked for "the app", singular.
   await stopPreview();
 
-  const relCwd = (options.cwd ?? suggestion?.cwd ?? ".").trim() || ".";
-  const absCwd = resolveInWorkspace(relCwd);
+  // The detection's own directory is relative to the one it searched, so a static
+  // site found inside a chosen directory has to carry that directory with it.
+  const detectedCwd = suggestion === null || suggestion.cwd === "." ? "" : suggestion.cwd;
+  const runCwd = [relCwd, detectedCwd].filter((part) => part !== "").join("/") || ".";
+  const absCwd = resolveInWorkspace(runCwd);
   const port = await findFreePort(options.port ?? config.previewPort);
 
   // What is already listening, before this start. Only a port that was silent
@@ -343,7 +351,7 @@ export async function startPreview(options: {
   const entry: PreviewProcess = {
     child,
     command,
-    cwd: relCwd,
+    cwd: runCwd,
     port,
     startedAt: new Date().toISOString(),
     exitCode: null,
