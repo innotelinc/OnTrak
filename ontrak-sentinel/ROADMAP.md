@@ -720,7 +720,7 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
     PDF rendering for readers who will not take JSON, and any S4 enforcement action at
     all — the first three because the packet is the artefact the family agreed on, and
     the last because it is the rest of S4.
-- `[~]` **Policy-gated enforcement actions** (block, quarantine, rate-limit) with
+- `[x]` **Policy-gated enforcement actions** (block, quarantine, rate-limit) with
   approvals, safe-lists for critical infrastructure, and one-click rollback.
   - `[x]` **The decision** (`src/lib/enforcement-rules.ts`): what may be enforced
     against, and on whose authority, computed before anything touches a packet —
@@ -790,13 +790,42 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
     approval, a safe-list refusal that stores nothing, a hand lift with and without
     a note, a policy written through the page with an invalid one refused by name,
     the sweep by its own clock, and the scheduler's own loop).
-  - What is **not** here: the **enforcement plane** — nothing in this build pushes a
-    block to a firewall, an agent or a proxy. That is deliberate and it is the only
-    thing left in S4: `EnforcementTarget` is the whole contract a plane needs, and an
-    IPS that wrote its own packet filter would be a detection platform pretending to
-    be a firewall. Every action is now one an operator can take and undo from a
-    browser; what an `ACTIVE` record does beyond *saying* a block is in force is the
-    plane's work, on a seam that is already the right shape.
+  - `[x]` **The enforcement plane, as a seam rather than a packet filter**
+    (`src/lib/enforcement-plane.ts`, `planeFromEnv`, and the fourth `EnforcementService`
+    argument): the last thing S4 owed, and deliberately an **interface plus two
+    adapters** rather than a filter of our own — an IPS that shipped its own packet
+    filter would be a detection platform pretending to be a firewall, and a deployment
+    that has a firewall already has a way to talk to it. Three properties are the
+    interface's, not an implementation's. **Nothing is told before it is true:** the
+    plane is called when the record becomes `ACTIVE` (immediately, or at the second
+    approver's approval) and never for a proposal that is still waiting, so a rail
+    cannot be ridden around by leaving a proposal sitting there. **A lift is told too**,
+    from the record's *stored* rollback plan, so a hand lift and the expiry sweep
+    release exactly the targets that were blocked rather than a recomputation a policy
+    change could have moved — a TTL that only existed on paper would leave the block
+    standing at the firewall while the register said it was over. And **a plane cannot
+    undo an approval:** an unreachable firewall, a refusing plane and an adapter whose
+    implementation throws all leave the action `ACTIVE` with an
+    `enforcement.plane.failed` row naming the plane, the operation and its own words;
+    the block is what was decided and approved, and a plane that did not answer is a
+    fact about the plane. `HttpEnforcementPlane` is one `POST` per operation
+    (`{ op, action, plan? }`, optional bearer token, a timeout) that answers with an
+    outcome instead of throwing; `RecordingEnforcementPlane` is what a deployment runs
+    to exercise the seam with no firewall at all, and what the tests drive.
+    **No plane is a real configuration** — unset is the shipped default, behaves exactly
+    as it did before this existed, and is said out loud once at startup, because "the
+    block is approved" and "the block reached something that can drop a packet" are
+    different claims. Covered by `tests/sentinel-enforcement-plane.test.ts` (10 checks:
+    the waiting proposal, the record handed to the plane, the hand lift and the sweep,
+    a plane that refuses and one that throws, the HTTP body and token, and the unset
+    environment).
+  - What is **not** here, and is deliberately a deployment's own: **vendor adapters**.
+    The seam is a JSON `POST`, so an EDR, a switch ACL, a proxy or a firewall is a
+    small adapter of the operator's — the same shape every telemetry source already
+    uses — and the *contract* a plane needs is `EnforcementTarget` and nothing more.
+    What is also still open, and is the one claim in S4's exit this does not make on
+    its own: a **measured** time-to-prevent. The path exists end to end; nothing in
+    this build times it.
 - Reversible-by-default, rate-limited, blast-radius caps; every action audited.
 - **Exit:** a threat is blocked within a defined latency; the block is approved,
   logged, reversible, and cannot be applied to a protected target.
@@ -948,10 +977,22 @@ missing rather than as a task name:
    `/console/enforcement` is the register, the forms and the policy page, and
    `enforcement-scheduler.ts` runs the expiry sweep on a timer that is on by
    default — so an operator can now take and undo an action from a browser without
-   a shell. What remains is the **enforcement plane** alone: turning an active
-   record into a filtered packet at a firewall, an agent or a proxy, on the
-   `EnforcementTarget` seam that is already the whole contract that needs.
+   a shell. The **enforcement plane** has landed too (`enforcement-plane.ts`): an
+   `ACTIVE` record is pushed to a configured plane as one JSON `POST`, released from
+   its own stored plan, and a plane that refuses or is unreachable is recorded
+   without undoing the approval. What remains of S4 is the smaller half of its exit
+   — a **measured** time-to-prevent, and the vendor adapter each deployment writes
+   for its own firewall, agent or proxy on the `EnforcementTarget` seam.
 
 S5 and S6 sit behind all five. A 1.0 that arrives with an IdP, a detector, a
 working listener and a reversible action, all on one evidence chain, is the
 product this roadmap describes; everything above that line is scale.
+
+**Where that leaves S4 (2026-10-01).** All five are closed except the parts of 2
+and 3 that are named there: the enforcement **plane** landed as a seam with an HTTP
+adapter, so an `ACTIVE` record now reaches something that can drop a packet on a
+deployment that configures one, is released from its own stored plan, and cannot be
+undone by a plane that refuses or is unreachable. What S4 still owes before it is a
+`[x]` is the smaller half of its own exit: a **measured** time-to-prevent (nothing
+here times the path) and the vendor adapters each deployment writes for its own
+firewall, agent or proxy.

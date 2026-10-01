@@ -648,6 +648,18 @@ missing, because a green tick with a footnote is what a review is for catching.
 The operator's side of it — the paths, the two POST bodies, and what each action needs to
 be permitted — is in [docs/alert-triage.md](./docs/alert-triage.md).
 
+**Prevention reaches a plane, and the plane is a seam rather than a filter.** An action
+that becomes `ACTIVE` — immediately, or when a second administrator approves it — is pushed
+to whatever `SENTINEL_ENFORCEMENT_PLANE_URL` names, and released from its own stored plan
+when it is lifted by hand or by its TTL. A plane answers with an outcome rather than an
+exception, so an unreachable firewall cannot undo an approval: the action stays `ACTIVE` and
+the refusal is an `enforcement.plane.failed` row naming the plane and its own words. Unset is
+a deployment with no plane — the shipped default, said out loud once at startup, where every
+action is still an operator's to take and undo and nothing claims a packet was filtered.
+The contract is one JSON `POST` per operation; the operator's side of it, including the
+example adapter a deployment writes for its own firewall, is in
+[docs/enforcement-plane.md](./docs/enforcement-plane.md).
+
 ## Containers
 
 All three products ship the same shape: a `Dockerfile` and a `docker-compose.yml`,

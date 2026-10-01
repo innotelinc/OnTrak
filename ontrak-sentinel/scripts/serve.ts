@@ -74,6 +74,7 @@ import {
   type EnforcementStore,
 } from "../src/lib/enforcement-service";
 import { PrismaEnforcementStore, type EnforcementPrismaClient } from "../src/lib/enforcement-store-prisma";
+import { planeFromEnv } from "../src/lib/enforcement-plane";
 import { enforcementSweepIntervalMs, startEnforcementScheduler } from "../src/lib/enforcement-scheduler";
 import { PrismaIndicatorStore, type IndicatorPrismaClient } from "../src/lib/threat-intel-store-prisma";
 import {
@@ -456,7 +457,24 @@ async function main(): Promise<void> {
   // organization and little else, and a prevention action is its own record with its own
   // lifetime — a block outlives the alert that led to it. The audit trail is passed so every
   // proposal, approval, refusal and lift lands on the organization's evidence chain.
-  const enforcement = new EnforcementService(enforcementStore, audit, systemEnforcementIds());
+  // The enforcement **plane** (S4's last piece): where an `ACTIVE` record is actually pushed.
+  // Unset is a deployment with no plane, which is the shipped default and behaves exactly
+  // as it did before the seam existed — every action still an operator's to take and undo,
+  // and nothing claiming a packet was filtered when none was. Which plane this deployment
+  // has (or that it has none) is said out loud once, because "the block is approved" and
+  // "the block reached something that can drop a packet" are different claims.
+  const enforcementPlane = planeFromEnv(process.env);
+  console.log(
+    enforcementPlane === null
+      ? "[sentinel] enforcement plane: none configured — actions are recorded and reversible, but nothing filters packets"
+      : `[sentinel] enforcement plane: ${enforcementPlane.name}`,
+  );
+  const enforcement = new EnforcementService(
+    enforcementStore,
+    audit,
+    systemEnforcementIds(),
+    enforcementPlane,
+  );
 
   // The sign-in service and the directory reader are both optional, and independent:
   // a deployment can serve a login with no directories, or read directories with no

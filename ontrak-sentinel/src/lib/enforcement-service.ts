@@ -23,11 +23,18 @@
  *     does not have to be the one who undoes it. Nothing here schedules that call — it is
  *     the deployment's clock that does, as the audit sweep already is (`scheduler`).
  *
- * What this module does **not** do is touch the network. A block that is `ACTIVE` here is a
- * record that says a block is in force; pushing it to a firewall, agent or proxy is the
- * enforcement *plane*, and this is deliberately the part that can be tested without one.
- * The seam is `EnforcementTarget` — an address, an identity or a device — which is what a
- * plane needs and all it needs.
+ * What this module does **not** do is touch the network itself. A block that is `ACTIVE`
+ * here is a record that says a block is in force; pushing it to a firewall, agent or proxy
+ * is the *enforcement plane* (`enforcement-plane.ts`), which this service is given rather
+ * than builds. The seam is `EnforcementTarget` — an address, an identity or a device — and
+ * the plane is told the record, so its own log can be joined back to the decision.
+ *
+ * The plane is **optional and never fatal**: with none configured nothing changes, and a
+ * plane that refuses or cannot be reached leaves the action `ACTIVE` with an
+ * `enforcement.plane.failed` row on the chain. The action is what was decided and
+ * approved; a plane that did not answer is a fact about the plane, not a reason for the
+ * approval to evaporate. Told on the way in *and* on the way out, from the record's own
+ * stored rollback plan, so a TTL is not a promise made on paper only.
  */
 
 import { randomUUID } from "node:crypto";
@@ -45,6 +52,7 @@ import {
   type RollbackPlan,
 } from "./enforcement-rules";
 import type { AuditSink } from "./audit-chain";
+import type { EnforcementPlane, PlaneOutcome } from "./enforcement-plane";
 import type { IdentityRole } from "./identity-rules";
 import type { ServiceResult } from "./identity-service";
 
@@ -165,6 +173,15 @@ export interface AppliedEnforcement {
   gate: "IMMEDIATE" | "APPROVAL_REQUIRED";
   /** The audit row that was written, so a caller can point at it. */
   auditEventId: string;
+  /**
+   * What the enforcement plane answered, or `null` when no plane is configured.
+   *
+   * Reported rather than swallowed, because "the block is approved" and "the block
+   * reached something that can drop a packet" are different claims and an operator
+   * is entitled to know which one is true. A refusal here does not undo the action;
+   * it is on the chain as `enforcement.plane.failed` and the record stays `ACTIVE`.
+   */
+  plane: PlaneOutcome | null;
 }
 
 export class EnforcementService {
@@ -172,6 +189,12 @@ export class EnforcementService {
     private readonly store: EnforcementStore,
     private readonly audit: AuditSink | null = null,
     private readonly ids: EnforcementIds = systemEnforcementIds(),
+    /**
+     * Where an `ACTIVE` action is pushed, or `null` for a deployment with no plane —
+     * which is every deployment until one is configured, and behaves exactly as it did
+     * before this parameter existed.
+     */
+    private readonly plane: EnforcementPlane | null = null,
   ) {}
 
   /* ---------------------------------------------------------------- policy - */
@@ -313,11 +336,19 @@ export class EnforcementService {
 
     // The decision's own intent is the audit row — the same object the rules module built,
     // so the chain cannot describe something other than what was decided.
+    let plane: PlaneOutcome | null = null;
     if (gate === "IMMEDIATE") {
       await this.append({
         ...decision.audit,
         detail: { ...decision.audit.detail, organizationId: input.organizationId },
       });
+      // Told only once the action is `ACTIVE` and on the chain: a plane is never asked to
+      // enforce something the record does not yet say is in force.
+      plane = await this.pushToPlane(
+        "apply",
+        record,
+        record.approvedById ?? record.requestedById,
+      );
     } else {
       await this.append({
         id: auditEventId,
@@ -336,7 +367,7 @@ export class EnforcementService {
       });
     }
 
-    return { ok: true, value: { action: record, gate, auditEventId } };
+    return { ok: true, value: { action: record, gate, auditEventId, plane } };
   }
 
   /**
@@ -445,8 +476,14 @@ export class EnforcementService {
         actionId: applied.id,
       },
     });
+    // The waiting proposal becomes in force here, which is the moment the plane is told.
+    const plane = await this.pushToPlane(
+      "apply",
+      applied,
+      applied.approvedById ?? applied.requestedById,
+    );
 
-    return { ok: true, value: { action: applied, gate: "IMMEDIATE", auditEventId } };
+    return { ok: true, value: { action: applied, gate: "IMMEDIATE", auditEventId, plane } };
   }
 
   /* ------------------------------------------------------------- lift/expire */
@@ -498,6 +535,9 @@ export class EnforcementService {
       // follow it back to the block it released.
       detail: { ...intent.detail, organizationId: input.organizationId, actionId: record.id, automatic: auto },
     });
+    // Told from the *stored* plan, so a hand lift and the expiry sweep release exactly the
+    // targets that were enforced against — not a recomputation that could differ.
+    await this.pushToPlane("lift", lifted, input.by.identityId, plan);
 
     return { ok: true, value: lifted };
   }
@@ -584,6 +624,64 @@ export class EnforcementService {
     if (!this.audit) return;
     await this.audit.append(input);
   }
+
+  /**
+   * Tell the enforcement plane, and put its answer on the chain.
+   *
+   * Never throws and never refuses the action. The block was decided and approved; a plane
+   * that could not be told is recorded as `enforcement.plane.failed` and the record stays
+   * `ACTIVE`, because a firewall being unreachable must not turn an operator's approval
+   * into nothing. A plane whose implementation throws is held to the same answer as one
+   * that refuses: the interface says it answers with an outcome, and a broken adapter does
+   * not get to take the decision down with it.
+   */
+  private async pushToPlane(
+    op: "apply" | "lift",
+    record: EnforcementActionRecord,
+    actor: string,
+    plan?: RollbackPlan,
+  ): Promise<PlaneOutcome | null> {
+    if (this.plane === null) return null;
+
+    let outcome: PlaneOutcome;
+    try {
+      outcome =
+        op === "apply"
+          ? await this.plane.apply(record)
+          : await this.plane.lift(record, plan ?? fallbackRollback(record));
+    } catch (error) {
+      outcome = { ok: false, error: error instanceof Error ? error.message : "the plane threw" };
+    }
+
+    await this.append({
+      id: this.ids.id(),
+      at: this.ids.now(),
+      actor,
+      action: outcome.ok ? `enforcement.plane.${op}` : "enforcement.plane.failed",
+      targetType: "Enforcement",
+      targetId: record.id,
+      detail: {
+        organizationId: record.organizationId,
+        op,
+        plane: this.plane.name,
+        action: record.action,
+        targets: record.targets,
+        ...(outcome.ok ? { detail: outcome.detail } : { error: outcome.error }),
+      },
+    });
+    return outcome;
+  }
+}
+
+/** The inverse of a record with no stored plan — a record written before plans were stored. */
+function fallbackRollback(record: EnforcementActionRecord): RollbackPlan {
+  return {
+    kind: record.action === "QUARANTINE" ? "RELEASE" : "LIFT",
+    action: record.action,
+    targets: record.targets,
+    at: record.expiresAt,
+    label: `lift this ${record.action.toLowerCase()}`,
+  };
 }
 
 /**
