@@ -646,3 +646,208 @@ test("before an automatic turn, the warning names the pool rather than a sweep",
 
   await waitFor(() => usageReports() > reportsBefore, "the warned turn's usage report");
 });
+
+/* --------------------------------------------------- shared transcripts (v0.4) */
+
+/** One turn by the paid owner account, returning the chat it created. */
+async function ownerTurn(message: string): Promise<string> {
+  resetCallerCache();
+  planeQueue.length = 0;
+  const reportsBefore = usageReports();
+  planeQueue.push(identityReply("sk-tenant-1", "u-1", "sub-1"), {
+    status: 200,
+    body: { allowed: true },
+  });
+  const response = await post("/api/chat", { message }, { cookie });
+  const events = await drain(response);
+  // The ledger write happens *after* the response. Without waiting for this
+  // turn's own report, it would consume the identity reply the *next* request
+  // queues, and the failure would surface as a puzzling 503 a test later.
+  await waitFor(() => usageReports() > reportsBefore, "the owner turn's usage report");
+  return String(events.find((event) => event.type === "session")?.id ?? "");
+}
+
+test("a transcript shared with a colleague is read by them, and by nobody else", async () => {
+  const id = await ownerTurn("the audit finding");
+  assert.ok(id !== "", "the owner's turn should have created a chat");
+
+  // Share it by address — the console knows the person it is sharing with as an
+  // address, and the recipient's own sign-in already carries one, so no lookup
+  // (and no second, weaker permission) is needed in between.
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-1", "u-1", "sub-1"));
+  const shared = await post(
+    `/api/sessions/${encodeURIComponent(id)}/share`,
+    { email: "other@innotel.us" },
+    { cookie },
+  );
+  assert.equal(shared.status, 201);
+  const share = ((await shared.json()) as { share: { id: string; recipientEmail: string } }).share;
+  assert.equal(share.recipientEmail, "other@innotel.us");
+
+  // The colleague's list names it, with the owner and the transcript's shape.
+  const other = cookieFor("sub-2", "other@innotel.us");
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-2", "u-2", "sub-2"));
+  const list = await get("/api/shares", { cookie: other });
+  assert.equal(list.status, 200);
+  const sharedWithMe = ((await list.json()) as {
+    sharedWithMe: Array<{ id: string; ownerEmail: string; title: string; messageCount: number }>;
+    sharedByMe: unknown[];
+  }).sharedWithMe;
+  // Found by id rather than by count: the recipient's list is their own and may
+  // already hold other chats this file shared with them.
+  const mine = sharedWithMe.find((entry) => entry.id === share.id);
+  assert.ok(mine, "the share this test made is in the recipient's list");
+  assert.equal(mine.ownerEmail, "dev@innotel.us");
+  assert.equal(mine.messageCount, 2, "the transcript travels, not a pointer");
+  assert.deepEqual(
+    ((await (await get("/api/shares", { cookie: other })).json()) as { sharedByMe: unknown[] }).sharedByMe,
+    [],
+    "the recipient has shared nothing of their own",
+  );
+
+  // ...and the read itself is the owner's transcript, marked read-only.
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-2", "u-2", "sub-2"));
+  const read = await get(`/api/shares/${encodeURIComponent(share.id)}`, { cookie: other });
+  assert.equal(read.status, 200);
+  const payload = (await read.json()) as {
+    readOnly: boolean;
+    session: { messages: Array<{ role: string; content?: string }> };
+  };
+  assert.equal(payload.readOnly, true);
+  assert.ok(payload.session.messages.some((message) => message.content === "the audit finding"));
+
+  // A third account — not the owner, not the address — gets nothing, and the
+  // answer is the same one an id that never existed gets.
+  const stranger = cookieFor("sub-3", "stranger@innotel.us");
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-3", "u-3", "sub-3"));
+  const denied = await get(`/api/shares/${encodeURIComponent(share.id)}`, { cookie: stranger });
+  assert.equal(denied.status, 404);
+});
+
+test("a shared chat cannot be continued: the recipient has no session to turn", async () => {
+  const id = await ownerTurn("shared but not handed over");
+  const other = cookieFor("sub-2", "other@innotel.us");
+
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-1", "u-1", "sub-1"));
+  const shared = await post(
+    `/api/sessions/${encodeURIComponent(id)}/share`,
+    { email: "other@innotel.us" },
+    { cookie },
+  );
+  assert.equal(shared.status, 201);
+
+  // Visibility is not ownership: the id is simply absent from the recipient's own
+  // store, so both a read of it and a turn against it are refused there. This is
+  // the property that makes a share a read rather than a second operator — and it
+  // needs no special case in the chat route, which knows nothing about shares.
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-2", "u-2", "sub-2"));
+  const read = await get(`/api/sessions/${encodeURIComponent(id)}`, { cookie: other });
+  assert.equal(read.status, 404, "a shared id must not be in the recipient's store");
+});
+
+test("revoking a share, and deleting the chat behind it, both end the read", async () => {
+  const id = await ownerTurn("revoked shortly");
+  const other = cookieFor("sub-2", "other@innotel.us");
+
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-1", "u-1", "sub-1"));
+  const created = await post(
+    `/api/sessions/${encodeURIComponent(id)}/share`,
+    { email: "other@innotel.us" },
+    { cookie },
+  );
+  const shareId = ((await created.json()) as { share: { id: string } }).share.id;
+
+  // The owner withdraws it. The read stops, because the store keeps a reference
+  // and never a second copy of the transcript.
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-1", "u-1", "sub-1"));
+  const revoked = await fetch(`${base}/api/shares/${encodeURIComponent(shareId)}`, {
+    method: "DELETE",
+    headers: { cookie },
+  });
+  assert.equal(revoked.status, 200);
+
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-2", "u-2", "sub-2"));
+  assert.equal((await get(`/api/shares/${encodeURIComponent(shareId)}`, { cookie: other })).status, 404);
+
+  // A second share, then the owner deletes the chat itself: the list reports it
+  // as removed rather than dropping it, so a share never becomes a mystery.
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-1", "u-1", "sub-1"));
+  const again = await post(
+    `/api/sessions/${encodeURIComponent(id)}/share`,
+    { email: "other@innotel.us" },
+    { cookie },
+  );
+  const againId = ((await again.json()) as { share: { id: string } }).share.id;
+
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-1", "u-1", "sub-1"));
+  const removed = await fetch(`${base}/api/sessions/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { cookie },
+  });
+  assert.equal(removed.status, 200);
+
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-2", "u-2", "sub-2"));
+  const list = await get("/api/shares", { cookie: other });
+  const entries = ((await list.json()) as {
+    sharedWithMe: Array<{ id: string; missing?: boolean; title: string }>;
+  }).sharedWithMe;
+  const after = entries.find((entry) => entry.id === againId);
+  assert.ok(after, "the share is still listed after the chat behind it is gone");
+  assert.equal(after.missing, true, "a deleted chat is reported, not silently dropped");
+
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-2", "u-2", "sub-2"));
+  assert.equal((await get(`/api/shares/${encodeURIComponent(againId)}`, { cookie: other })).status, 404);
+});
+
+test("a share is refused for your own address, and for a chat that is not yours", async () => {
+  const id = await ownerTurn("mine alone");
+
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-1", "u-1", "sub-1"));
+  const self = await post(
+    `/api/sessions/${encodeURIComponent(id)}/share`,
+    { email: "dev@innotel.us" },
+    { cookie },
+  );
+  assert.equal(self.status, 400, "sharing with yourself is a typo, not a share");
+
+  resetCallerCache();
+  planeQueue.length = 0;
+  planeQueue.push(identityReply("sk-tenant-2", "u-2", "sub-2"));
+  const other = cookieFor("sub-2", "other@innotel.us");
+  // The recipient naming somebody else's chat: absent from *their* store, so there
+  // is nothing to hand over. The refusal is the 404 every unknown chat gets.
+  const notMine = await post(
+    `/api/sessions/${encodeURIComponent(id)}/share`,
+    { email: "third@innotel.us" },
+    { cookie: other },
+  );
+  assert.equal(notMine.status, 404);
+});

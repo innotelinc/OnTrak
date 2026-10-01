@@ -25,6 +25,12 @@ const state = {
   autoModels: [],
   /** The chain in play for this chat, so the sweep report can mark it. */
   chainModels: [],
+  /**
+   * The share this console is reading, when the transcript on screen is
+   * somebody else's (v0.4). Non-null means read-only: there is no session of
+   * your own behind it to continue, and the composer says so.
+   */
+  shareOf: null,
   lastFocus: null,
   viewer: { path: null, mode: "file", diff: null },
   /**
@@ -1557,7 +1563,10 @@ function setAutoBadge(models) {
 }
 
 async function sendMessage(text) {
-  if (state.streaming || text.trim() === "") return;
+  // A shared chat is a read. Refusing here is a courtesy rather than the control
+  // — the server resolves sessions against your own store, so a turn against
+  // somebody else's id is refused there too.
+  if (state.streaming || state.shareOf !== null || text.trim() === "") return;
 
   // In automatic mode the server picks the chain, so nothing about a model is
   // sent: sending the hidden picker's value would be asking the server to hold an
@@ -1745,6 +1754,70 @@ async function loadSessions() {
       for (const session of archived) nav.append(sessionRow(session, true));
     }
   }
+
+  // Chats a colleague handed to you (v0.4). Listed apart from your own, because
+  // they are not yours: you can read one and put it away, and nothing here
+  // renames, archives or deletes somebody else's chat.
+  let sharedWithMe = [];
+  try {
+    ({ sharedWithMe } = await api("/api/shares"));
+  } catch {
+    sharedWithMe = [];
+  }
+  if (sharedWithMe.length > 0) {
+    const heading = document.createElement("div");
+    heading.className = "session-group";
+    heading.textContent = `shared with you (${sharedWithMe.length})`;
+    nav.append(heading);
+    for (const share of sharedWithMe) nav.append(sharedRow(share));
+  }
+}
+
+/** One chat somebody shared with you: open it read-only, or put it away. */
+function sharedRow(share) {
+  const active = state.shareOf !== null && state.shareOf.id === share.id;
+  const row = document.createElement("div");
+  row.className = `session-row shared${active ? " active" : ""}`;
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "session";
+  button.setAttribute("aria-current", active ? "true" : "false");
+
+  const title = document.createElement("span");
+  title.className = "session-title";
+  title.textContent = share.title;
+
+  const meta = document.createElement("span");
+  meta.className = "session-meta";
+  meta.textContent = share.missing
+    ? "removed by its owner"
+    : `from ${share.ownerEmail} · ${share.messageCount} messages`;
+
+  button.append(title, meta);
+  if (!share.missing) button.addEventListener("click", () => void openShared(share.id));
+
+  const actions = document.createElement("span");
+  actions.className = "session-actions";
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "session-action";
+  remove.textContent = "remove";
+  remove.title = `remove the shared chat “${share.title}” from your list`;
+  remove.setAttribute("aria-label", `Remove the shared chat “${share.title}”`);
+  remove.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    try {
+      await api(`/api/shares/${encodeURIComponent(share.id)}`, { method: "DELETE" });
+    } catch (error) {
+      addErrorMessage(error.message);
+    }
+    await loadSessions();
+  });
+  actions.append(remove);
+
+  row.append(button, actions);
+  return row;
 }
 
 /** One chat: open it, or rename, archive or delete it. */
@@ -1775,6 +1848,23 @@ function sessionRow(session, isArchived = false) {
   actions.append(
     sessionAction(isArchived ? "restore" : "archive", session, async () => {
       await patchSession(session.id, { archived: !isArchived });
+    }),
+    sessionAction("share", session, async () => {
+      const email = window.prompt(`Share “${session.title}” read-only with which address?`);
+      if (email === null || email.trim() === "") return;
+      const { share, existing } = await api(
+        `/api/sessions/${encodeURIComponent(session.id)}/share`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: email.trim() }),
+        },
+      );
+      addNotice(
+        existing
+          ? `Already shared with ${share.recipientEmail}.`
+          : `Shared read-only with ${share.recipientEmail}.`,
+      );
     }),
     sessionAction("rename", session, async () => {
       const next = window.prompt("Name this chat", session.title);
@@ -1868,6 +1958,7 @@ async function deleteSession(id) {
 function startNewChat() {
   if (state.streaming) return;
   state.sessionId = null;
+  setSharedView(null);
   state.toolCards.clear();
   state.approvals.clear();
   resetPreview();
@@ -1935,10 +2026,74 @@ async function openSession(id) {
   }
 
   state.sessionId = session.id;
+  setSharedView(null);
+  $("#chat-title").textContent = session.title;
+  renderTranscript(session);
+
+  applySessionSettings(session);
+  scrollToBottom(true);
+  await loadSessions();
+}
+
+/**
+ * Open a chat somebody shared with you, read-only (v0.4).
+ *
+ * The transcript is drawn exactly as the owner's own console draws it — the
+ * record is the same record — and the only difference is stated where it can be
+ * seen: the composer is off and the top bar says whose chat this is. There is no
+ * "continue as them": the model route resolves sessions against your own store,
+ * so the id is not there and a turn against it is refused, which is why turning
+ * the composer off is honesty rather than the control.
+ */
+async function openShared(shareId) {
+  if (state.streaming) return;
+  let payload;
+  try {
+    payload = await api(`/api/shares/${encodeURIComponent(shareId)}`);
+  } catch (error) {
+    addErrorMessage(error.message);
+    return;
+  }
+
+  // Deliberately not `state.sessionId`: that id belongs to somebody else's
+  // store, and every route that reads it would 404. A shared view has no
+  // session of your own, which is the whole point.
+  state.sessionId = null;
+  setSharedView(payload.share);
+  $("#chat-title").textContent = `${payload.share.ownerEmail} — shared with you`;
+  renderTranscript(payload.session);
+  scrollToBottom(true);
+  await loadSessions();
+}
+
+/**
+ * Whether the console is showing somebody else's chat, and the composer's state.
+ * `null` is your own chat (or a fresh one), where the composer is live again.
+ */
+function setSharedView(share) {
+  state.shareOf = share;
+  const badge = $("#share-badge");
+  const readOnly = share !== null;
+  badge.classList.toggle("hidden", !readOnly);
+  badge.textContent = readOnly ? `read-only — shared by ${share.ownerEmail}` : "";
+  $("#input").disabled = readOnly;
+  $("#send").disabled = readOnly;
+  $("#input").placeholder = readOnly
+    ? "This chat was shared with you read-only."
+    : "Describe a change, ask a question, or paste an error...";
+}
+
+/**
+ * Draw a transcript into the message pane.
+ *
+ * Shared between a chat you can continue and one that was handed to you, because
+ * the record is the same record; what differs is only whether the composer is
+ * live, which `setSharedView` owns.
+ */
+function renderTranscript(session) {
   state.toolCards.clear();
   state.approvals.clear();
   resetPreview();
-  $("#chat-title").textContent = session.title;
   const box = $("#messages");
   box.replaceChildren();
 
@@ -1991,10 +2146,6 @@ async function openSession(id) {
 
   if (lastWrite === null) resetPreview();
   else showRestoredFile(lastWrite);
-
-  applySessionSettings(session);
-  scrollToBottom(true);
-  await loadSessions();
 }
 
 /* ---------------------------------------------------------------- workspace */

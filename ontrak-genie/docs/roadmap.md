@@ -31,7 +31,8 @@ full developer reference.
 > and — the last of the exit — two accounts proven isolated on a running console by
 > a check rather than by a description (`scripts/verify-tenancy.mjs`). What is
 > **in progress** is the milestone after it, v0.4: the shared half of more than one
-> operator.
+> operator — and its first bullet, **shared sessions**, has landed (hand one chat's
+> transcript to a colleague, read-only, still gated per turn).
 
 ## 1. Vision
 
@@ -253,13 +254,30 @@ not.
   an upstream, applied to a preview. `AGENT_SANDBOX_NETWORK=host` is the same
   answer for a sandboxed command that starts the app itself.
 
-### v0.4 — Beyond a single operator `[ ]`
+### v0.4 — Beyond a single operator `[~]`
 
 **Goal:** more than one person, more than one workspace, without the operator
 becoming the bottleneck.
 
-- `[ ]` **Shared sessions.** Hand a transcript to a colleague with the same
-  visibility, still gated per turn.
+- `[x]` **Shared sessions.** Hand a transcript to a colleague with the same
+  visibility, still gated per turn. A share names **one chat and one address**
+  (`src/sharing.ts`, `shares.json` beside the sessions), it is **read from the
+  owner's own slice** through the same `accountScope` every other path uses, and
+  it is **read-only by construction**: the model route resolves sessions against
+  the recipient's own store, so a shared id is simply absent there and a turn
+  against it is refused by the same code that refuses an unknown chat — no
+  special case in the chat route, and no way to run a turn as somebody else. The
+  owner can withdraw a share and the recipient can put one away (`DELETE
+  /api/shares/:id`; either side may, because a share is not a grant that only one
+  person can end), and a chat whose owner deletes it is reported as **removed by
+  its owner** rather than silently dropped from the list. A share is addressed to
+  an address rather than an account id, because the console knows the signed-in
+  person's address and does not ask the control plane to resolve anybody else's;
+  the honest limit is that an address that changes stops matching, which is a
+  permission that lapses rather than one that follows the wrong person. Single-
+  operator mode (no accounts to share with) returns empty lists instead of a
+  second, weaker permission. Covered by the four sharing cases in
+  `src/test/tenancy-http.test.ts`.
 - `[ ]` **Repository-aware workspaces.** Gitea/Atlas as the source of a workspace
   — clone, branch and open a PR from the console — with the same jail and gate.
 - `[ ]` **Diff review before write, not only during.** The live diff already

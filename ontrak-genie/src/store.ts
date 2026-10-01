@@ -168,15 +168,27 @@ export async function saveSession(session: Session): Promise<void> {
   await fs.writeFile(sessionPath(session.id), JSON.stringify(session, null, 2), "utf8");
 }
 
-export async function getSession(id: string): Promise<Session | null> {
+/**
+ * Read one transcript from an explicit directory.
+ *
+ * Split out of `getSession` so a shared chat can be read from its **owner's**
+ * slice without a second reader with its own idea of the file naming (v0.4's
+ * sharing). Malformed or hand-edited files are absent rather than an error, which
+ * is the same answer the caller's own store gives.
+ */
+export async function readSessionIn(directory: string, id: string): Promise<Session | null> {
   try {
-    const raw = await fs.readFile(sessionPath(id), "utf8");
+    const raw = await fs.readFile(path.join(directory, `${id}.json`), "utf8");
     const parsed = JSON.parse(raw) as Session;
     if (!Array.isArray(parsed.messages)) return null;
     return parsed;
   } catch {
     return null;
   }
+}
+
+export async function getSession(id: string): Promise<Session | null> {
+  return readSessionIn(sessionsDir(), id);
 }
 
 export async function listSessions(): Promise<SessionSummary[]> {

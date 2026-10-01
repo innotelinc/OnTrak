@@ -1031,6 +1031,54 @@ rather than described: one real turn by the second account moved **its**
 `usage_cache` row from 0 to 1 request (1411/64 tokens) while the first's 64
 requests stayed exactly where they were — two keys, two records.
 
+### Handing a chat to a colleague (shared sessions)
+
+A chat is one person's, and sometimes it needs to be somebody else's to *read*.
+v0.4's first bullet is exactly that and no more:
+
+```bash
+# Share one chat, by the colleague's address
+curl -X POST localhost:3400/api/sessions/<id>/share \
+  -H 'Content-Type: application/json' -H "Cookie: $GENIE_SESSION" \
+  -d '{"email":"colleague@innotel.us"}'
+
+# What was shared with you, and what you shared
+curl -H "Cookie: $GENIE_SESSION" localhost:3400/api/shares
+
+# One shared transcript (read-only — `readOnly: true` in the reply)
+curl -H "Cookie: $GENIE_SESSION" localhost:3400/api/shares/<shareId>
+
+# Withdraw one: either side may (owner stops it, recipient puts it away)
+curl -X DELETE -H "Cookie: $GENIE_SESSION" localhost:3400/api/shares/<shareId>
+```
+
+The console does the same thing: a **share** action on any chat row asks for an
+address, and a **shared with you** group in the sidebar lists what was handed over
+and opens it with the composer off and a *read-only — shared by …* badge in the
+top bar.
+
+Four properties are the design rather than the plumbing. **It is one transcript,
+by name** — a share opens no workspace, no other chat, no file history and no key.
+**It is read from the owner's own slice** (`accountScope(ownerId).sessions`), so
+the store keeps a reference and never a copy: withdrawing a share, or the owner
+deleting the chat, cannot leave a stale transcript behind — a chat whose owner
+deleted it is reported as *removed by its owner* rather than silently dropped.
+**It is read-only by construction** — the model route resolves sessions against
+the recipient's own store, so the shared id is simply absent there and a turn
+against it is refused by the same code that refuses an unknown chat; there is no
+special case in the chat route, which is why there is nothing to get wrong there.
+And **a share is addressed to an address**, not an account id: the console knows
+the signed-in person's address and does not ask the plane to resolve anybody
+else's, so sharing cannot create an account. The honest limit: an address that
+changes stops matching, which is a permission that lapses rather than one that
+follows the wrong person.
+
+A deployment with no accounts has nobody to share with, so `/api/shares` returns
+empty lists and creating a share is refused by name — a single-operator install
+gets no second, weaker permission. There is deliberately nothing here for an
+administrator to read: a chat is its owner's, and there is no administrator of
+somebody else's chats.
+
 ### The ceiling Genie enforces itself
 
 The plane's quota is a *plan*: the family runs on unlimited usage, so it never
@@ -1185,6 +1233,10 @@ All optional — see `.env.example`.
 | `GET`    | `/api/sessions/:id`   | Full transcript                      |
 | `PATCH`  | `/api/sessions/:id`   | Save the session's model / chain / step budget |
 | `DELETE` | `/api/sessions/:id`   | Delete a session                     |
+| `POST`   | `/api/sessions/:id/share` | Share one of your chats read-only with an address (`{ email }`); idempotent |
+| `GET`    | `/api/shares`         | `sharedWithMe` (with title, owner and message count) and `sharedByMe` |
+| `GET`    | `/api/shares/:id`     | One shared transcript, `readOnly: true`; `404` for anyone but the owner and the address |
+| `DELETE` | `/api/shares/:id`     | Withdraw a share (owner or recipient) |
 | `GET`    | `/api/approvals`      | Pending approval prompts (id, tool, summary, deadline) |
 | `POST`   | `/api/approvals/:id`  | Answer a pending approval (`approve`/`deny`) |
 | `GET`    | `/api/files?path=`    | List a directory, with `changed` flags |

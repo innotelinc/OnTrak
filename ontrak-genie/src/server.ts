@@ -35,12 +35,22 @@ import {
 import { gatewayHealth, listModels } from "./omniroute.js";
 import { sandboxInfo } from "./sandbox.js";
 import {
+  currentScope,
   runInScope,
   sandboxRoot,
   selectedWorkspace,
   setSelectedWorkspace,
   workspaceRoot,
 } from "./scope.js";
+import {
+  readShared,
+  revokeShare,
+  shareReadableBy,
+  shareSession,
+  sharesByOwner,
+  sharesForRecipient,
+  summarizeShare,
+} from "./sharing.js";
 import { dropSnapshot, listSnapshots, readSnapshot } from "./snapshots.js";
 import { startSweep, sweepStale, sweepState } from "./sweep.js";
 import {
@@ -402,6 +412,20 @@ function approvalActor(req: http.IncomingMessage): string {
 }
 
 /**
+ * Who is asking, as sharing needs to know them.
+ *
+ * The account id comes from the request's slice (what tenancy resolved) and the
+ * address from the session, and the two answer different questions: the id says
+ * which *disk* a share reads from, the address says which human it was made for.
+ * In single-operator mode there is no id, which is exactly why sharing degrades to
+ * "nothing to share with" rather than to a second, weaker permission.
+ */
+function viewerOf(req: http.IncomingMessage): { userId: string | null; email: string } {
+  const session = sessionFrom(req);
+  return { userId: currentScope().userId, email: session?.email ?? "" };
+}
+
+/**
  * Who may call the API.
  *
  * In order: a valid session cookie when sign-in is configured, then the shared
@@ -740,6 +764,72 @@ async function handleApi(
     const session = createSession();
     await saveSession(session);
     return sendJson(res, 201, { session });
+  }
+
+  /*
+   * Shared transcripts (v0.4). Sharing is one chat's record handed to a
+   * colleague: the routes below create it, list it from both sides, read it
+   * read-only, and withdraw it. The chat route above deliberately knows nothing
+   * about shares — a shared id is not in the recipient's own store, so a turn
+   * against one is refused by the same code that refuses an unknown chat, which
+   * is what keeps a share from becoming a way to run as somebody else.
+   */
+  const shareCreateMatch = /^\/api\/sessions\/([^/]+)\/share$/.exec(pathname);
+  if (shareCreateMatch && method === "POST") {
+    const id = decodeURIComponent(shareCreateMatch[1] ?? "");
+    const viewer = viewerOf(req);
+    if (viewer.userId === null) {
+      throw new HttpError(400, "this deployment has no accounts to share with");
+    }
+    const payload = await readJson(req);
+    const outcome = await shareSession({
+      sessionId: id,
+      ownerId: viewer.userId,
+      ownerEmail: viewer.email,
+      recipientEmail: typeof payload.email === "string" ? payload.email : "",
+      // Ownership is the *recipient-visible* question here: a session that is not
+      // in this account's own store is not this account's to share, and a share
+      // is created from what is.
+      owned: (await getSession(id)) !== null,
+    });
+    if (!outcome.ok) throw new HttpError(outcome.status, outcome.message);
+    return sendJson(res, outcome.existing ? 200 : 201, {
+      share: outcome.share,
+      existing: outcome.existing,
+    });
+  }
+
+  if (pathname === "/api/shares" && method === "GET") {
+    const viewer = viewerOf(req);
+    // Both sides in one answer: the person who shared wants to see what they
+    // handed over as much as the person who received it. Empty rather than a
+    // refusal in single-operator mode, where there is nobody to share with.
+    const sharedWithMe = await Promise.all(
+      (await sharesForRecipient(viewer.email)).map(summarizeShare),
+    );
+    const sharedByMe =
+      viewer.userId === null ? [] : await sharesByOwner(viewer.userId);
+    return sendJson(res, 200, { sharedWithMe, sharedByMe });
+  }
+
+  const shareMatch = /^\/api\/shares\/([^/]+)$/.exec(pathname);
+  if (shareMatch) {
+    const id = decodeURIComponent(shareMatch[1] ?? "");
+    const viewer = viewerOf(req);
+    if (method === "GET") {
+      const share = await shareReadableBy(id, viewer);
+      if (share === null) throw new HttpError(404, "share not found");
+      const session = await readShared(share);
+      if (session === null) throw new HttpError(404, "the owner has removed this chat");
+      // Read-only, and said so in the shape: the transcript travels, the
+      // recipient's own store does not gain a session to continue.
+      return sendJson(res, 200, { share, session, readOnly: true });
+    }
+    if (method === "DELETE") {
+      const removed = await revokeShare(id, viewer);
+      if (removed === null) throw new HttpError(404, "share not found");
+      return sendJson(res, 200, { removed: true });
+    }
   }
 
   const sessionMatch = /^\/api\/sessions\/([^/]+)$/.exec(pathname);
