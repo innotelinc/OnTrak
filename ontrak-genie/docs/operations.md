@@ -930,6 +930,22 @@ else in `.env`; the entrypoint resolves it before the server boots, so the
 deployment never holds the value itself. The family deployment carries it as
 `CONTROL_INTERNAL_TOKEN=vault://cerulean/ontrak#CONTROL_INTERNAL_TOKEN`.
 
+On a plane that has the scoped bridge, the value is a **scoped service
+credential** the plane issues for this surface, not an account-wide token: this
+console holds `identity:resolve`, `audit:write` and `alert:report`, with a TTL.
+Issue or rotate it on the plane and put the printed token at that Vault key:
+
+```bash
+docker compose exec control-plane node bin/control.mjs service-credential \
+  issue --surface genie --scopes identity:resolve,audit:write,alert:report \
+  --ttl-days 90 --label genie-live
+```
+
+Then restart this container so the entrypoint resolves the new value, and
+`service-credential revoke <old id>` the credential it replaced. The env
+variable name is unchanged — it is just the header value (`x-control-internal-token`)
+that the plane now maps to a surface and a scope set.
+
 The URL is the plane's **origin**: this console calls `/api/internal/identity`,
 `/api/internal/quota-check`, `/api/internal/usage-report` and
 `/api/internal/audit` under it. The contract is Distro's — the same endpoints and
@@ -1196,7 +1212,7 @@ All optional — see `.env.example`.
 | `AGENT_TOOL_RESULT_LIMIT`                   | `60000`                  | Cap on a single tool result              |
 | `WEB_TOKEN`                                 | *(empty)*                | Require this bearer token on `/api/*`    |
 | `CONTROL_PLANE_INTERNAL_URL`                | *(empty)*                | Distro control-plane origin. With the token below, every turn is attributed and quota-gated — see *Tenancy* |
-| `CONTROL_INTERNAL_TOKEN`                    | *(empty)*                | Control-plane service token (`x-control-internal-token`); empty or a placeholder means tenancy is off. May be a `vault://` reference — see *Secrets (Cerulean Vault)* |
+| `CONTROL_INTERNAL_TOKEN`                    | *(empty)*                | Control-plane service credential (`x-control-internal-token`), ideally the **scoped** one the plane issues for `surface=genie`; empty or a placeholder means tenancy is off. May be a `vault://` reference — see *Tenancy* and *Secrets (Cerulean Vault)* |
 | `ONTRAK_OIDC_ISSUER`                        | *(empty)*                | Authentik issuer. With the two below, require sign-in on `/api/*` |
 | `ONTRAK_OIDC_CLIENT_ID`                     | *(empty)*                | OIDC client id registered with the provider |
 | `ONTRAK_OIDC_CLIENT_SECRET`                 | *(empty)*                | Only for a confidential client; omit it with PKCE. May be a `vault://` reference |
