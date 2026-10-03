@@ -49,3 +49,12 @@ test-results/
 # tix evidence artifacts stored under object lock (local/single-node); the
 # lock itself lives in the database, the bytes do not belong in git
 .ontrak-tix-evidence/
+
+# Pre-Vault `.env` backups (written during the resolver bring-up) carry the
+# plaintext values that were moved into Cerulean Vault. Local migration
+# artifacts, never source.
+.env.pre-vault.*
+
+# The platform Cerulean Vault token directory and other runtime state under
+# it. Root-anchored so a product that tracks its own data/ is unaffected.
+/data/
