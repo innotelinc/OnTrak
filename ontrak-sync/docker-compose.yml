@@ -37,6 +37,17 @@ services:
       # credential: the worst a compromise can do with it is pin a host the service
       # is already authorised to run commands on.
       - ${ONTRAK_SSH_KNOWN_HOSTS:-/root/.ssh/known_hosts}:/root/.ssh/known_hosts
+      # This stack's Cerulean Vault token, narrowed to cerulean/data/ontrak. The
+      # entrypoint reads it from VAULT_TOKEN_FILE (set in `.env`) and resolves
+      # every `vault://` value before uvicorn boots, so a secret can move out of
+      # `.env` without the application changing. Read-only, and the platform's own
+      # token directory is the source — never the mount-wide cerulean.token.
+      #
+      # The host path is overridable because this file is run from two layouts:
+      # the repo (`ontrak-sync/`, where `../data` is the platform's token dir) and
+      # a deployment checkout that keeps its own copy. A `vault://`-free `.env`
+      # never reads it, so the mount is inert until Vault is switched on.
+      - ${VAULT_TOKEN_HOST_FILE:-../data/vault/token/ontrak.token}:/vault/token/ontrak.token:ro
     ports:
       - "${ONTRAK_API_BIND:-192.168.1.21}:8420:8420"
     healthcheck:
