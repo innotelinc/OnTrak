@@ -34,5 +34,12 @@ ENV HOSTNAME=0.0.0.0
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
+# Cerulean Vault (SecretOps): the resolver and the entrypoint that runs it before
+# the server boots, so `vault://` values in .env are plain values by the time
+# Node reads them. `scripts/` is otherwise copied only where needed.
+COPY scripts/vault-env.mjs ./scripts/vault-env.mjs
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
 EXPOSE 3300
+ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["node", "server.js"]

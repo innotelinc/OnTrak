@@ -75,6 +75,12 @@ RUN addgroup --system --gid 1001 nodejs \
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Cerulean Vault (SecretOps): the resolver and the entrypoint that runs it before
+# the server boots. The entrypoint runs as root (the image drops to `nextjs` after
+# resolving) because this stack's Vault token is only readable by root.
+COPY scripts/vault-env.mjs ./scripts/vault-env.mjs
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
 
 # Attachment bytes and incident evidence. Both are written at run time, and the
 # evidence directory sits under object-lock retention, so compose mounts a
@@ -84,7 +90,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 RUN mkdir -p .ontrak-tix-blobs .ontrak-tix-evidence \
  && chown -R nextjs:nodejs .ontrak-tix-blobs .ontrak-tix-evidence
 
-USER nextjs
+# The entrypoint runs as root so it can read the root-only Vault token, resolves
+# `vault://` values, then drops to `nextjs` (uid 1001) before serving.
+ENV VAULT_DROP_UID=1001
 EXPOSE 3000
-
+ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["node", "server.js"]

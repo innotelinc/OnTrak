@@ -82,6 +82,12 @@ COPY --from=builder --chown=sentinel:sentinel /app/scripts ./scripts
 # the startup log — the CSS copy under `src/theme/` is in the image either way, which
 # is exactly what makes the omission easy to miss.
 COPY --from=builder --chown=sentinel:sentinel /app/public ./public
+# Cerulean Vault (SecretOps): the resolver and the entrypoint that runs it before
+# the server boots. The entrypoint runs as root (the image drops to `sentinel`
+# after resolving) because this stack's Vault token is only readable by root.
+COPY --from=builder --chown=sentinel:sentinel /app/scripts/vault-env.mjs ./scripts/vault-env.mjs
+COPY --from=builder --chown=sentinel:sentinel /app/docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
 
 # `prisma/` is deliberately not copied: migrations are applied by the `migrate`
 # service, which runs in the builder stage, and the generated client needs
@@ -93,9 +99,11 @@ COPY --from=builder --chown=sentinel:sentinel /app/public ./public
 # create their blob and evidence directories.
 RUN mkdir -p /run/sentinel && chown sentinel:sentinel /run/sentinel
 
-USER sentinel
+# The entrypoint runs as root so it can read the root-only Vault token, resolves
+# `vault://` values, then drops to `sentinel` (uid 1001) before serving.
+ENV VAULT_DROP_UID=1001
 EXPOSE 8787
-
+ENTRYPOINT ["./docker-entrypoint.sh"]
 # `--import tsx` is the loader form, so this does not depend on the shape of the
 # `tsx` bin shim that npm happens to generate.
 CMD ["node", "--import", "tsx", "scripts/serve.ts"]

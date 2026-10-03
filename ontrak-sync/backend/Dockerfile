@@ -25,6 +25,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ontrak ./ontrak
 COPY tests ./tests
+# Cerulean Vault (SecretOps): the resolver and the entrypoint that runs it before
+# uvicorn boots, so `vault://` values in .env are plain values by then.
+COPY scripts/vault_env.py ./scripts/vault_env.py
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
 
 # The test suite ships with the image on purpose: `docker run --rm <image> python
 # tests/run-all.py` is how the deployed artefact is verified, rather than trusting
@@ -41,4 +46,5 @@ EXPOSE 8420
 
 # The app refuses to start without ONTRAK_API_TOKEN, which is intentional — see
 # ontrak/config.py. Nothing permissive is baked in here.
+ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["uvicorn", "ontrak.api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8420"]

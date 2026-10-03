@@ -85,6 +85,12 @@ RUN addgroup --system --gid 1001 nodejs \
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Cerulean Vault (SecretOps): the resolver and the entrypoint that runs it before
+# the server boots. The entrypoint runs as root (the image drops to `nextjs`
+# after resolving) because this stack's Vault token is only readable by root.
+COPY scripts/vault-env.mjs ./scripts/vault-env.mjs
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
 
 # Uploaded software packages and image bundles. Compose mounts a named volume
 # over `storage/` so a rebuild never discards what a deployment has uploaded;
@@ -92,7 +98,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 RUN mkdir -p storage/packages storage/uploads \
  && chown -R nextjs:nodejs storage
 
-USER nextjs
+# The entrypoint runs as root so it can read the root-only Vault token, resolves
+# `vault://` values, then drops to `nextjs` (uid 1001) before serving.
+ENV VAULT_DROP_UID=1001
 EXPOSE 3000
-
+ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["node", "server.js"]
