@@ -2550,15 +2550,42 @@ function showModelChain(models) {
       : `${models[0]} (no fallbacks configured)`;
 }
 
+/**
+ * Routes we would rather use, best first. `auto/best-coding` is the gateway's
+ * own "best" combo; the rest are progressively more general fallbacks every
+ * OmniRoute deployment offers. A route only leads if the catalog actually
+ * carries it, so this never puts a model the gateway cannot serve in front.
+ */
+const PREFERRED_MODELS = ["auto/best-coding", "auto/best", "auto/best-free", "auto"];
+
+/** The best route the catalog offers, else the deployment's own default. */
+function pickBestModel(available, serverDefault) {
+  for (const id of PREFERRED_MODELS) {
+    if (available.includes(id)) return id;
+  }
+  if (typeof serverDefault === "string" && available.includes(serverDefault)) return serverDefault;
+  return available[0] ?? serverDefault;
+}
+
 async function loadModels() {
   const select = $("#model");
   let models = defaults();
   let current = "auto/coding";
   try {
     const payload = await api("/api/models");
-    current = payload.model || current;
-    if (Array.isArray(payload.models) && payload.models.length > 0) {
-      models = [current, ...payload.models.filter((id) => id !== current)];
+    const available = Array.isArray(payload.models)
+      ? payload.models.filter((id) => typeof id === "string" && id !== "")
+      : [];
+    if (available.length > 0) {
+      // Offer exactly what the gateway serves: a model disabled upstream drops
+      // out of the catalog, and the old code re-injected the deployment's
+      // default even when the catalog no longer carried it, so a disabled
+      // model stayed in the list. Lead with the best available route and keep
+      // every other one selectable.
+      current = pickBestModel(available, payload.model);
+      models = [current, ...available.filter((id) => id !== current)];
+    } else if (typeof payload.model === "string" && payload.model !== "") {
+      current = payload.model;
     }
   } catch {
     /* keep the defaults */
