@@ -35,10 +35,15 @@ CONTAINER="${ONTRAK_CONTAINER:-ontrak}"
 ADDRESS="${ONTRAK_ADDRESS:-192.168.1.21}"
 KEY_PATH="${ONTRAK_SSH_KEY:-$HOME/.ssh/id_ed25519}"
 # Hosts to authorise the key on, `address` only — the container reaches them as root.
-# Kept in step with ONTRAK_HOSTS in .env by hand; the script prints the mismatch if
-# they disagree, because a host that is scanned but not reachable reads as
-# "unreachable" rather than as a configuration mistake.
-NETWORK_HOSTS="${NETWORK_HOSTS:-192.168.1.51 192.168.1.52 192.168.1.53}"
+# Kept in step with ONTRAK_HOSTS in .env by hand: a host that is scanned but missing
+# here reads as "unreachable" rather than as a configuration mistake, so update both
+# lists together when the Network changes.
+#
+# The Proxmox nodes (pm3, pm4) are listed as machines in their own right — a scan
+# reaches them over SSH for their own packages, not for their guests — so their
+# keys are authorised here exactly like the incus hosts'. i4 is the spare bare-metal
+# host added on 2026-10-01.
+NETWORK_HOSTS="${NETWORK_HOSTS:-192.168.1.51 192.168.1.52 192.168.1.53 192.168.1.54 192.168.1.3 192.168.1.4}"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # The password may live in .env instead of the environment. Read that one key

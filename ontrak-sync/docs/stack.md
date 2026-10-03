@@ -81,7 +81,7 @@ and explicitly does not own.
   other machine, which is why it runs in its own container (`docs/placement.md`) and
   why the SSH key is mounted read-only: it may install packages through the key, it may
   not rewrite the key.
-- **This repo → the platforms.** A stack that reads "0 pending" while three hosts have
+- **This repo → the platforms.** A stack that reads "0 pending" while several hosts have
   been unreachable for a month is the failure this exists to remove, so the dashboard
   counts *Unknown* next to *Pending* rather than underneath it.
 

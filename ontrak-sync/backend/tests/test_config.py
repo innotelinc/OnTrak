@@ -24,6 +24,7 @@ The two things pinned here:
 from __future__ import annotations
 
 import os
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -33,12 +34,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ontrak import db, scheduler  # noqa: E402
 from ontrak.config import (  # noqa: E402
+    DEFAULT_HOSTS,
     Host,
     Settings,
     _env,
     _env_bool,
     _env_int,
     _parse_hosts,
+    WORKLOAD_KINDS,
 )
 from ontrak.policy import Policy  # noqa: E402
 
@@ -107,11 +110,52 @@ class Hosts(unittest.TestCase):
     def test_an_unset_list_falls_back_to_the_network(self):
         # Unset means "the Network this ships for", not "scan nothing": a service
         # that scans nothing looks identical to a Network that is fully patched.
-        self.assertEqual(3, len(_parse_hosts("")))
+        hosts = _parse_hosts("")
+        self.assertEqual(("i1", "i2", "i3", "i4", "pm3", "pm4"),
+                         tuple(h.name for h in hosts))
+
+    def test_the_hypervisors_are_scanned_as_machines(self):
+        # pm3/pm4 carry their own Proxmox packages and are NOT workload kinds, so
+        # `scan.py` reaches them over SSH as machines rather than asking them for
+        # `incus list` (which they would answer with nothing).
+        proxmox = [h for h in _parse_hosts("") if h.kind == "proxmox"]
+        self.assertEqual({"pm3", "pm4"}, {h.name for h in proxmox})
+        for host in proxmox:
+            self.assertNotIn(host.kind, WORKLOAD_KINDS)
 
     def test_a_malformed_entry_is_an_error_not_a_dropped_host(self):
         with self.assertRaises(ValueError):
             _parse_hosts("i1,i2=192.168.1.52")
+
+
+class SetupScript(unittest.TestCase):
+    """`scripts/setup.sh` must authorise the key on exactly the hosts config scans.
+
+    The two lists are kept in step by hand, and the way they drift is silent: a
+    host that is scanned but never authorised reads as "unreachable" in the
+    dashboard rather than as the configuration mistake it is, and the one host
+    that would have explained it is the one that cannot connect. This is the check
+    that notices, so the list is a fact with a test rather than a comment asking
+    somebody to remember.
+
+    It skips inside the backend image, which ships `ontrak` and `tests` only:
+    setup.sh is a repo script that never runs there, so its absence is not a failure.
+    """
+
+    def _default_addresses(self) -> list[str]:
+        script = Path(__file__).resolve().parents[2] / "scripts" / "setup.sh"
+        if not script.exists():
+            self.skipTest("scripts/setup.sh ships with the repo, not the image")
+        match = re.search(
+            r'^NETWORK_HOSTS="\$\{NETWORK_HOSTS:-([^}]*)\}"',
+            script.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(match, "setup.sh must define a NETWORK_HOSTS default")
+        return match.group(1).split()
+
+    def test_it_authorises_the_same_hosts_the_config_scans(self):
+        self.assertEqual([h.address for h in DEFAULT_HOSTS], self._default_addresses())
 
 
 class Defaults(unittest.TestCase):

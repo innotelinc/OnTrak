@@ -122,10 +122,24 @@ class Host:
     notes: str = ""
 
 
+#
+# THE HYPERVISORS AND THE SPARE HOST ARE MACHINES TOO.
+#
+# i2 and i3 are not bare metal: each is a KVM guest on a Proxmox VE node, and
+# those nodes (pm3, pm4) run their own packages — a Proxmox security update lands
+# on the node, not on the guest. A list of only the incus hosts reported the two
+# nodes as if they did not exist, so `pve-manager`/kernel drift on them was
+# invisible. They are listed with kind `proxmox` so they are scanned as machines
+# in their own right; their guests (i2, i3) already have their own entries.
+#
+# i4 (192.168.1.54) is the Network's spare bare-metal Incus host, added 2026-10-01.
 DEFAULT_HOSTS: tuple[Host, ...] = (
-    Host("i1", "192.168.1.51", "both", notes="bare metal; proxy/edge, vault, monarch"),
-    Host("i2", "192.168.1.52", "both", notes="KVM; capstone, atlas, rizzaura, voice"),
-    Host("i3", "192.168.1.53", "both", notes="KVM; olympus, distro, onyx, patchmon"),
+    Host("i1", "192.168.1.51", "both", notes="bare metal; proxy/edge, vault, monarch, ontrak"),
+    Host("i2", "192.168.1.52", "both", notes="KVM guest on pm3 (VM 200); capstone, atlas, rizzaura, genesis, terminal, vault, www"),
+    Host("i3", "192.168.1.53", "both", notes="KVM guest on pm4 (VM 200); distro, magnate, mail, onyx, pi, signara, subscribe, vpn"),
+    Host("i4", "192.168.1.54", "both", notes="bare metal; spare Incus host (rebalance target)"),
+    Host("pm3", "192.168.1.3", "proxmox", notes="Proxmox VE node; hosts the i2 KVM guest (VM 200)"),
+    Host("pm4", "192.168.1.4", "proxmox", notes="Proxmox VE node; hosts the i3 KVM guest (VM 200)"),
 )
 
 

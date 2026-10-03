@@ -8,31 +8,60 @@
  * then the states that are NOT "fine" — unreachable hosts, targets that were never
  * inspected, and machines that are waiting for a reboot. Those sit in the same row
  * of cards as the pending count deliberately: a Network that reads "0 pending"
- * while three hosts are unreachable is the failure this tool exists to prevent, and
+ * while several hosts are unreachable is the failure this tool exists to prevent, and
  * a number in a small grey font under a table is not enough to prevent it. So is a
  * Network that reads "0 pending" on a host whose kernel update is installed and not
  * yet running — which is why the reboot card appears only when it is non-zero:
  * every other number here is wrong at the same moment.
  *
- * The three actions on this page are the whole manual workflow: scan, approve,
- * apply. Everything they do is also available per-item on the Findings page; these
- * are the bulk versions, and each reports what it did rather than just refreshing.
+ * ONE STEP, AND WHAT IT DID
+ * -------------------------
+ * Updating used to be two decisions in the header — approve, then apply — and the
+ * operator had to know that the second button would not act until the first had.
+ * The manual path is now one action, **Update everything**, which approves every
+ * pending finding and applies them, and reports progress while it runs. The approval
+ * is still recorded (the API is what writes it, and the audit trail is unchanged);
+ * it is simply no longer a separate click. The timer's own policy is untouched: a
+ * deployment in `detect` mode still does nothing until a person acts, and that person
+ * acting here is the action.
+ *
+ * A FAILURE IS A WORKLIST, NOT A FOOTNOTE
+ * ---------------------------------------
+ * An apply that fails does not leave the failed findings as one more `Failed` card
+ * counting itself. They are grouped by target below, with their reasons in full, and
+ * **Retry all** re-approves and re-applies exactly that set. The alternative — a
+ * number, and a log nobody opens — is how a failed update stays failed for a month
+ * behind a green dashboard.
  */
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { Empty, LoadError, ReachablePill, RebootPill, When } from "@/components/bits";
+import { Empty, LoadError, ManagerTag, ReachablePill, RebootPill, When } from "@/components/bits";
 import { api } from "@/lib/api";
-import type { ApplyResult, Host, Run, ScanResult, Summary } from "@/lib/types";
+import type { ApplyResult, Finding, Host, Run, ScanResult, Summary } from "@/lib/types";
 import { useAsync } from "@/lib/useAsync";
+
+/** The two phases of an update, so the progress bar can say which one is running. */
+interface Progress {
+  label: string;
+  step: number;
+  total: number;
+}
 
 export default function DashboardPage() {
   const summary = useAsync<Summary>(() => api.summary());
   const hosts = useAsync<{ hosts: Host[] }>(() => api.hosts());
   const runs = useAsync<{ runs: Run[] }>(() => api.runs(6));
+  // Loaded on mount as well as after an apply: a failure that is already on record
+  // is the first thing a returning operator needs to see, not only the ones this
+  // session produced.
+  const failed = useAsync<{ findings: Finding[]; count: number }>(
+    () => api.findings({ status: "failed", limit: 5000 }),
+  );
 
   const [busy, setBusy] = useState<string | null>(null);
+  const [progress, setProgress] = useState<Progress | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +74,7 @@ export default function DashboardPage() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
+      setProgress(null);
       setBusy(null);
     }
   }
@@ -53,10 +83,54 @@ export default function DashboardPage() {
     summary.reload();
     hosts.reload();
     runs.reload();
+    failed.reload();
   }
 
   const data = summary.data;
   const hostRows = hosts.data?.hosts ?? [];
+  const failedRows = failed.data?.findings ?? [];
+
+  /** One action: approve every pending finding, then apply everything approved. */
+  async function updateEverything() {
+    const pending = data?.pending ?? 0;
+    const approved = data?.approved ?? 0;
+    await run("update", async () => {
+      setApplyResult(null);
+      setScanResult(null);
+      if (pending > 0) {
+        setProgress({ label: `Approving ${pending} pending update${pending === 1 ? "" : "s"}…`, step: 1, total: 2 });
+        await api.approve({ all_pending: true });
+      }
+      if (pending > 0 || approved > 0) {
+        setProgress({ label: "Applying approved updates…", step: 2, total: 2 });
+        setApplyResult(await api.apply({ all_approved: true }));
+      }
+      refresh();
+    });
+  }
+
+  /** Re-approve and re-apply exactly the findings that failed. */
+  async function retryFailed() {
+    const ids = failedRows.map((finding) => finding.id);
+    if (ids.length === 0) return;
+    await run("retry", async () => {
+      setApplyResult(null);
+      setProgress({ label: `Re-approving ${ids.length} failed update${ids.length === 1 ? "" : "s"}…`, step: 1, total: 2 });
+      await api.approve({ ids });
+      setProgress({ label: `Retrying ${ids.length} update${ids.length === 1 ? "" : "s"}…`, step: 2, total: 2 });
+      setApplyResult(await api.apply({ ids }));
+      refresh();
+    });
+  }
+
+  const pending = data?.pending ?? 0;
+  const approved = data?.approved ?? 0;
+  const canUpdate = busy === null && (pending > 0 || approved > 0);
+  const updateLabel = busy === "update"
+    ? "Updating…"
+    : pending > 0
+      ? `Update everything (${pending} pending)`
+      : `Apply ${approved} approved`;
 
   return (
     <>
@@ -83,39 +157,14 @@ export default function DashboardPage() {
           >
             {busy === "scan" ? "Scanning…" : "Scan now"}
           </button>
-          {data && data.security > 0 ? (
-            <button
-              disabled={busy !== null}
-              onClick={() =>
-                run("approve", async () => {
-                  await api.approve({ all_pending: true, security_only: true });
-                  refresh();
-                })
-              }
-            >
-              {busy === "approve" ? "Approving…" : `Approve all ${data.security} security`}
-            </button>
-          ) : null}
-          {data && data.approved > 0 ? (
-            <button
-              className="primary"
-              disabled={busy !== null}
-              onClick={() =>
-                run("apply", async () => {
-                  const result = await api.apply({ all_approved: true });
-                  setApplyResult(result);
-                  setScanResult(null);
-                  refresh();
-                })
-              }
-            >
-              {busy === "apply" ? "Applying…" : `Apply ${data.approved} approved`}
-            </button>
-          ) : null}
+          <button className="primary" disabled={!canUpdate} onClick={updateEverything}>
+            {updateLabel}
+          </button>
         </div>
       </div>
 
       {error ? <div className="note note--bad">{error}</div> : null}
+      {progress ? <ProgressBar progress={progress} /> : null}
 
       <div className="cards">
         <div className={`card ${data && data.security > 0 ? "card--security" : ""}`}>
@@ -163,6 +212,10 @@ export default function DashboardPage() {
 
       {scanResult ? <ScanReport result={scanResult} onDismiss={() => setScanResult(null)} /> : null}
       {applyResult ? <ApplyReport result={applyResult} onDismiss={() => setApplyResult(null)} /> : null}
+
+      {failedRows.length > 0 ? (
+        <FailedPanel rows={failedRows} busy={busy} onRetry={retryFailed} />
+      ) : null}
 
       <section className="panel">
         <header>
@@ -260,6 +313,126 @@ export default function DashboardPage() {
   );
 }
 
+/**
+ * The progress of one update, for as long as it runs.
+ *
+ * The API answers in one response, so there is no per-package percentage to draw;
+ * what is honest here is the *phase* — approving or applying — and that the work is
+ * still going. The bar fills to where the phase sits in the two-step flow and
+ * animates while it is live, and the elapsed seconds count so a long apt run looks
+ * like work rather than a hang.
+ */
+function ProgressBar({ progress }: { progress: Progress }) {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    const started = Date.now();
+    const id = setInterval(() => setSeconds(Math.round((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [progress.label, progress.step]);
+
+  const pct = Math.max(10, Math.min(95, Math.round(((progress.step - 0.5) / progress.total) * 100)));
+
+  return (
+    <div className="note note--warn" role="status" aria-live="polite">
+      <div className="row-inline" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+        <span>{progress.label}</span>
+        <span className="faint">step {progress.step} of {progress.total} · {seconds}s</span>
+      </div>
+      <div className="progress" aria-hidden="true">
+        <div className="progress__fill" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Every failed finding, grouped by the target it belongs to, with one Retry all.
+ *
+ * Grouping is by host *and* target because that is the unit an apply is grouped in
+ * on the server: one apt transaction per target, so a target whose transaction was
+ * held back reads as one fact rather than as forty rows of the same complaint.
+ */
+function FailedPanel({ rows, busy, onRetry }: {
+  rows: Finding[];
+  busy: string | null;
+  onRetry: () => void;
+}) {
+  const groups = useMemo(() => {
+    const byKey = new Map<string, { host: string; target: string; items: Finding[] }>();
+    for (const row of rows) {
+      const key = `${row.host}\u0000${row.target}`;
+      let group = byKey.get(key);
+      if (!group) {
+        group = { host: row.host, target: row.target, items: [] };
+        byKey.set(key, group);
+      }
+      group.items.push(row);
+    }
+    return [...byKey.values()].sort(
+      (a, b) => a.host.localeCompare(b.host) || a.target.localeCompare(b.target),
+    );
+  }, [rows]);
+
+  return (
+    <section className="panel panel--failed">
+      <header>
+        <h2>Failed updates</h2>
+        <div className="actions">
+          <span className="faint">
+            {rows.length} finding{rows.length === 1 ? "" : "s"} across {groups.length} target{groups.length === 1 ? "" : "s"}
+          </span>
+          <button className="primary" disabled={busy !== null} onClick={onRetry}>
+            {busy === "retry" ? "Retrying…" : `Retry all ${rows.length}`}
+          </button>
+        </div>
+      </header>
+      <div className="body">
+        <p className="dim" style={{ marginTop: 0 }}>
+          These were approved and the apply did not complete. Retrying re-approves them
+          and runs the apply again for exactly this set.
+        </p>
+        {groups.map((group) => (
+          <div className="failed-group" key={`${group.host}\u0000${group.target}`}>
+            <div className="failed-group__head">
+              <div>
+                <Link href={`/hosts/${encodeURIComponent(group.host)}`}>{group.host}</Link>
+                <span className="faint mono"> {group.target}</span>
+              </div>
+              <span className="pill pill--failed">{group.items.length} failed</span>
+            </div>
+            <div className="scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Manager</th>
+                    <th>Package</th>
+                    <th>From → to</th>
+                    <th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.items.map((finding) => (
+                    <tr key={finding.id}>
+                      <td><ManagerTag manager={finding.manager} /></td>
+                      <td className="mono">{finding.package}</td>
+                      <td className="mono dim">
+                        {finding.current || <span className="faint">—</span>} → {finding.candidate || "?"}
+                      </td>
+                      <td className="dim" style={{ maxWidth: 420 }}>
+                        {finding.detail ?? finding.target_error ?? "no reason recorded"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ScanReport({ result, onDismiss }: { result: ScanResult; onDismiss: () => void }) {
   const problems = result.hosts.filter((host) => !host.scanned || host.errors.length > 0);
   return (
@@ -305,6 +478,12 @@ function ApplyReport({ result, onDismiss }: { result: ApplyResult; onDismiss: ()
       </header>
       <div className="body">
         <div className={`note ${result.failed ? "note--warn" : "note--ok"}`}>{result.summary}</div>
+        {result.failed ? (
+          <p className="dim" style={{ marginBottom: 4 }}>
+            The failures are grouped in <strong>Failed updates</strong> above, where{" "}
+            <strong>Retry all</strong> re-approves and re-applies them.
+          </p>
+        ) : null}
         {result.manual.length > 0 ? (
           <>
             <p className="dim" style={{ marginBottom: 4 }}>

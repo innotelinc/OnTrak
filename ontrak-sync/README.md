@@ -19,7 +19,7 @@
 
 | Problem | Ontrak Sync answer |
 | --- | --- |
-| “0 updates pending” on a fleet where three hosts have been unreachable for a month | An unreachable host is recorded **unreachable** and counted as **Unknown**, shown *next to* the pending count, never underneath it |
+| “0 updates pending” on a fleet where several hosts have been unreachable for a month | An unreachable host is recorded **unreachable** and counted as **Unknown**, shown *next to* the pending count, never underneath it |
 | “No updates” and “I could not look” read identically in every updater | Four distinct answers per target: findings, none, tool-not-installed, could-not-look — only the first two mark a target scanned |
 | An update tool becomes the outage | No `dist-upgrade`, no installs, no removals, no config-file replacement, no blind container recreate — not configurable, because each one is how a patch becomes an incident |
 | The registry budget is shared with every image pull | Digests are cached for `ONTRAK_DIGEST_TTL` (six hours); the comparison is redone every scan, and a failed lookup is never cached |
@@ -66,7 +66,7 @@ This is the design, and everything else follows from it.
 Cases 3 and 4 must never be confused with case 2, and **none** of them may erase findings already
 on record. The dashboard counts case 3 and 4 together as **Unknown** and shows it next to the
 pending count rather than underneath the table — because the failure this tool exists to remove is
-a fleet that reads "0 pending" while three hosts have not been reachable for a month.
+a fleet that reads "0 pending" while several hosts have not been reachable for a month.
 
 Concretely, in the code:
 
@@ -179,7 +179,7 @@ writes to it.
 ## Tests
 
 ```bash
-make test        # 301 tests, no Network required
+make test        # 303 tests, no Network required
 ```
 
 The suite covers the parsers, the cron arithmetic, the finding lifecycle, the scan engine (against
