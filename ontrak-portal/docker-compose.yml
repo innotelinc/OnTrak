@@ -41,6 +41,18 @@ services:
       ONTRAK_SYNC_INTERNAL_URL: ${ONTRAK_SYNC_INTERNAL_URL:-}
     ports:
       - "${ONTRAK_PORTAL_BIND:-192.168.1.21}:3300:3300"
+    volumes:
+      # This stack's Cerulean Vault token, narrowed to cerulean/data/ontrak. The
+      # entrypoint reads it from VAULT_TOKEN_FILE (set in `.env`) and resolves
+      # every `vault://` value before the server boots, so a secret can move out
+      # of `.env` without the application changing. Read-only, and the platform's
+      # own token directory is the source — never the mount-wide cerulean.token.
+      #
+      # The host path is overridable because this file is run from two layouts:
+      # the repo (`ontrak-portal/`, where `../data` is the platform's token dir)
+      # and a deployment checkout that keeps its own copy. A `vault://`-free
+      # `.env` never reads it, so the mount is inert until Vault is switched on.
+      - ${VAULT_TOKEN_HOST_FILE:-../data/vault/token/ontrak.token}:/vault/token/ontrak.token:ro
     healthcheck:
       # `/login` answers without a session, which is the point: a healthcheck
       # should never need a credential, and a portal that redirects everything to

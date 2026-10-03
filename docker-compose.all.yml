@@ -356,6 +356,14 @@ services:
       SENTINEL_TRAINING_CALLBACK: ${SENTINEL_TRAINING_CALLBACK:-http://127.0.0.1:3000/api/sso/callback}
     volumes:
       - ontrak-family-sentinel-keys:/run/sentinel:ro
+      # This stack's Cerulean Vault token, narrowed to cerulean/data/ontrak. The
+      # entrypoint reads it from VAULT_TOKEN_FILE (set in ontrak-sentinel/.env)
+      # and resolves every `vault://` value before the provider boots, so a
+      # secret can move out of `.env` without the application changing. Read-only,
+      # and the platform's own token directory is the source — never the
+      # mount-wide cerulean.token. The entrypoint starts as root (the token is
+      # root-only) and drops to the `sentinel` user before serving.
+      - ./data/vault/token/ontrak.token:/vault/token/ontrak.token:ro
     healthcheck:
       test:
         - CMD
