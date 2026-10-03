@@ -51,8 +51,10 @@ managers what is behind:
 | `snap`   | `snap refresh --list`.                                                          |
 | `docker` | Local image digest vs the registry's, per platform.                             |
 
-Findings land in SQLite with a status, and the dashboard shows them. An **apply** installs what
-has been approved.
+Findings land in SQLite with a status, and the dashboard shows them. **Approving installs** —
+the Approve buttons record the decision and run the apply in one call, because a person clicking
+"do the updates" means both — and **apply** re-runs whatever is already approved (after a failed
+run, or an approval recorded elsewhere). Both are the same code path.
 
 ### The four answers a target can give
 

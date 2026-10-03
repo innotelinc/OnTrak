@@ -15,7 +15,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { Empty, LoadError, ManagerTag, ReachablePill, RebootPill, ScanPill, SecurityPill, StatusPill, When } from "@/components/bits";
-import { api } from "@/lib/api";
+import { api, asApplyResult } from "@/lib/api";
 import type { Finding, Host, Target } from "@/lib/types";
 import { useAsync } from "@/lib/useAsync";
 
@@ -140,8 +140,14 @@ export function HostDetail({ name }: { name: string }) {
                       disabled={busy !== null}
                       onClick={() =>
                         act("approve", async () => {
-                          const result = await api.approve({ ids: pending.map((finding) => finding.id) });
-                          return `${result.approved} finding(s) approved — apply them from the Findings page or head of this panel.`;
+                          // One click: record the decision and install it, rather than
+                          // approving and waiting for a second click on this panel.
+                          const result = await api.approve({
+                            ids: pending.map((finding) => finding.id),
+                            apply: true,
+                          });
+                          return asApplyResult(result)?.summary
+                            ?? `${result.approved} finding(s) approved.`;
                         })
                       }
                     >

@@ -330,6 +330,45 @@ export const config = {
   toolResultLimit: int("AGENT_TOOL_RESULT_LIMIT", 60_000),
 
   /**
+   * Preview hosting — a temporary public address for a server running in a
+   * workspace. Off by default: a preview is a development server exposed to the
+   * network, so it is an operator's decision rather than something the shipped
+   * default does. When on, one Cerulean-registered wildcard
+   * (`*.PREVIEW_DOMAIN`) points here and every subdomain is routed to a loopback
+   * port — `p4001.PREVIEW_DOMAIN` serves whatever listens on 4001 — so previews
+   * are bounded by the port range, not by how many DNS or edge entries someone
+   * is willing to create. See `src/preview.ts` and
+   * `scripts/cerulean-genie-previews.py`.
+   */
+  previewEnabled: bool("PREVIEW_ENABLED", false),
+  /** The Cerulean-registered wildcard's suffix, e.g. "genie.innotel.us". */
+  previewDomain: str("PREVIEW_DOMAIN", "genie.innotel.us"),
+  /** Public URL scheme for a preview address. */
+  previewScheme: str("PREVIEW_SCHEME", "https"),
+  /** Loopback address a preview server is reached at. */
+  previewBackendHost: str("PREVIEW_BACKEND_HOST", "127.0.0.1"),
+  /** The inclusive port range previews are allocated from. */
+  previewPortStart: int("PREVIEW_PORT_START", 4000),
+  previewPortEnd: int("PREVIEW_PORT_END", 4999),
+  /** How long a preview address lives; 0 means it never expires. */
+  previewTtlMs: nonNegativeInt("PREVIEW_TTL_MS", 86_400_000),
+  /**
+   * The bearer Magnate holds to claim a subscriber's custom name
+   * (`POST /api/previews/claim`). Empty means no server-to-server claim is
+   * possible, and the route falls back to the console's own authorization.
+   */
+  previewClaimToken: str("PREVIEW_CLAIM_TOKEN", ""),
+  /**
+   * Magnate's entitlement API, consulted before a *named* address is granted.
+   * `MAGNATE_ENTITLEMENTS_URL` is the endpoint (`…/api/entitlements`), the plan
+   * is the slug sold for this product, and the token is the value Magnate holds
+   * in `ENTITLEMENTS_API_TOKEN`. All three are required for custom names.
+   */
+  magnateEntitlementsUrl: str("MAGNATE_ENTITLEMENTS_URL", ""),
+  magnateEntitlementsToken: str("ENTITLEMENTS_API_TOKEN", ""),
+  magnatePlan: str("MAGNATE_GENIE_PLAN", "genie"),
+
+  /**
    * Distro's control plane, for per-identity accounts, quota and accounting.
    *
    * Both are required for it to be on, and a placeholder token counts as unset

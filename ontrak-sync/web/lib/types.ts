@@ -252,3 +252,18 @@ export interface ApplyResult {
   messages: string[];
   summary: string;
 }
+
+/**
+ * The result of approving. An approval on its own carries only `approved`; when it
+ * also applied (`apply: true`, which is what the buttons send), the apply fields are
+ * present and `summary` is set — see `asApplyResult`.
+ */
+export interface ApproveResult {
+  approved: number;
+  applied?: number;
+  failed?: number;
+  manual?: string[];
+  messages?: string[];
+  summary?: string;
+  run_id?: number | null;
+}

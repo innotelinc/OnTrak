@@ -26,9 +26,25 @@
  */
 
 import type {
-  ApplyResult, AppUser, Event, Identity, Finding, Host, Meta, Policy, Run, ScanResult,
-  SignInResult, Summary, Target, UserSession,
+  ApplyResult, ApproveResult, AppUser, Event, Identity, Finding, Host, Meta, Policy, Run,
+  ScanResult, SignInResult, Summary, Target, UserSession,
 } from "./types";
+
+/**
+ * The apply half of an approve response, or null when the call only recorded the
+ * decision. The pages render it with the same panel as a standalone apply.
+ */
+export function asApplyResult(result: ApproveResult): ApplyResult | null {
+  if (result.summary === undefined) return null;
+  return {
+    run_id: result.run_id ?? null,
+    applied: result.applied ?? 0,
+    failed: result.failed ?? 0,
+    manual: result.manual ?? [],
+    messages: result.messages ?? [],
+    summary: result.summary,
+  };
+}
 
 /** Empty means "this origin" — see the header. */
 export const API_BASE = (process.env.NEXT_PUBLIC_ONTRAK_API || "").replace(/\/$/, "");
@@ -212,8 +228,11 @@ export const api = {
   runs: (limit = 40) => request<{ runs: Run[] }>(`/api/runs?limit=${limit}`),
   events: (limit = 200) => request<{ events: Event[] }>(`/api/events?limit=${limit}`),
 
-  approve: (body: { ids?: number[]; all_pending?: boolean; security_only?: boolean }) =>
-    post<{ approved: number }>("/api/findings/approve", body),
+  // `apply: true` records the decision and installs it in one call — the buttons
+  // send it, so "Approve" is the whole action rather than half of one.
+  approve: (body: {
+    ids?: number[]; all_pending?: boolean; security_only?: boolean; apply?: boolean;
+  }) => post<ApproveResult>("/api/findings/approve", body),
   skip: (body: { ids?: number[]; all_pending?: boolean; security_only?: boolean }) =>
     post<{ skipped: number }>("/api/findings/skip", body),
 

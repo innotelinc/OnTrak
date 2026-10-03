@@ -23,7 +23,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { Empty, LoadError, ManagerTag, SecurityPill, StatusPill, When } from "@/components/bits";
-import { api } from "@/lib/api";
+import { api, asApplyResult } from "@/lib/api";
 import type { ApplyResult, Finding } from "@/lib/types";
 import { useAsync } from "@/lib/useAsync";
 
@@ -96,8 +96,13 @@ export default function FindingsPage() {
             disabled={busy !== null || ids.length === 0}
             onClick={() =>
               act("approve", async () => {
-                await api.approve({ ids });
+                // Approve and install in the same call — the button says "install
+                // it", and the list is filtered to pending, so the approved rows
+                // vanish and a separate Apply step would be out of reach.
+                const result = await api.approve({ ids, apply: true });
                 setSelected(new Set());
+                const applied = asApplyResult(result);
+                if (applied) setApplied(applied);
               })
             }
           >

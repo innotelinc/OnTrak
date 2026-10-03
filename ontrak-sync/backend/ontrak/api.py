@@ -41,7 +41,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from . import __version__, db, identity, oidc
-from .applier import apply_findings
+from .applier import apply_findings, approve_and_apply
 from .config import Settings
 from .policy import Cron, CronError, Policy, describe, next_runs
 from .scan import host_admin_summary, scan_network
@@ -83,6 +83,11 @@ class ApproveRequest(BaseModel):
     ids: list[int] = Field(default_factory=list)
     all_pending: bool = False
     security_only: bool = False
+    # Record the decision AND install it in one call. The UI's Approve buttons set
+    # this: a person clicking "Approve" means "do the update", and leaving the
+    # install to a second click is how an approval sits recorded and unapplied.
+    # Default False so the bare API still only records the decision.
+    apply: bool = False
 
 
 class ScanRequest(BaseModel):
@@ -733,19 +738,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ── workflow ─────────────────────────────────────────────────────────────
     @app.post("/api/findings/approve")
     def approve(body: ApproveRequest, actor: Actor = requires("sync:approve")):
-        """Mark findings approved. This is what detect-only mode waits for."""
+        """Mark findings approved, and — when asked — install them in the same call.
+
+        Marking a finding approved is what detect-only mode waits for; on its own it
+        changes no machine. `apply=True` is the button: one click records the
+        decision and runs it, so an approval cannot sit recorded and unapplied
+        because a second button was missed. It installs packages, so it needs
+        `sync:apply` as well as `sync:approve`, and it is refused for an actor who
+        holds only the latter.
+        """
         ids = list(body.ids)
         if body.all_pending:
             pending = db.list_findings(conn, status="pending", security_only=body.security_only)
             ids = [row["id"] for row in pending]
+        if body.apply and not actor.may("sync:apply"):
+            raise HTTPException(status_code=403,
+                                detail="approving and applying installs packages, which needs sync:apply")
         if not ids:
             return {"approved": 0}
-        changed = db.set_status(conn, ids, "approved")
-        db.log(conn, f"{changed} finding(s) approved", actor=actor.name)
-        identity.audit(conn, "findings.approve", f"approved {changed} finding(s)",
+        if not body.apply:
+            changed = db.set_status(conn, ids, "approved")
+            db.log(conn, f"{changed} finding(s) approved", actor=actor.name)
+            identity.audit(conn, "findings.approve", f"approved {changed} finding(s)",
+                           actor=actor.name)
+            conn.commit()
+            return {"approved": changed}
+        # The install is the same path as `/api/apply`, under the same lock, so an
+        # approval-triggered apply cannot run alongside a scan or another apply. The
+        # intent is audited before the write, so a refused or failed apply still
+        # leaves who asked for it on record.
+        identity.audit(conn, "findings.approve", f"approved {len(ids)} finding(s) to apply",
                        actor=actor.name)
         conn.commit()
-        return {"approved": changed}
+        if not RUN_LOCK.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="a scan or apply is already running")
+        try:
+            changed, outcome = approve_and_apply(
+                conn, settings, load_policy(conn, settings), finding_ids=ids,
+                actor=actor.name, apply=True, trigger=f"approve:{actor.name}")
+        finally:
+            RUN_LOCK.release()
+        return {"approved": changed, **(outcome or {})}
 
     @app.post("/api/findings/skip")
     def skip(body: ApproveRequest, actor: Actor = requires("sync:approve")):

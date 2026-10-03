@@ -514,3 +514,29 @@ def apply_findings(conn, settings: Settings, policy: Policy, *, finding_ids: lis
     conn.commit()
     return {"run_id": run_id, "applied": totals["applied"], "failed": totals["failed"],
             "manual": manual, "messages": messages, "summary": summary}
+
+
+def approve_and_apply(conn, settings: Settings, policy: Policy, *, finding_ids: list[int],
+                      actor: str, apply: bool = True,
+                      trigger: str = "approve") -> tuple[int, dict | None]:
+    """Record the approval and, when asked, install it — the one-click path.
+
+    Approving changes no machine; this is the half that does. A person clicking one
+    button means both, so the decision is written and the same `apply_findings` run
+    (same code, same verification, same run log) follows it in a single call. The
+    alternative — approve here, install from a second button — is how an approval
+    sits recorded and unapplied, because the list an operator approved from is
+    filtered to pending and the approved rows leave it on the next reload.
+
+    Returns (how many findings were approved, the apply outcome) — the outcome is
+    None when `apply` is false or there was nothing to approve. Kept here rather
+    than in the HTTP layer so it is exercised by the same tests as the apply.
+    """
+    changed = db.set_status(conn, finding_ids, "approved")
+    db.log(conn, f"{changed} finding(s) approved", actor=actor)
+    conn.commit()
+    if not (apply and changed):
+        return changed, None
+    outcome = apply_findings(conn, settings, policy, finding_ids=finding_ids,
+                             trigger=trigger)
+    return changed, outcome

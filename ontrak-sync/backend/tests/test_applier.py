@@ -597,6 +597,45 @@ class DockerApply(ApplierCase):
         self.assertIn("verify by hand", self.status_of(manager="docker", package=self.IMAGE)["detail"])
 
 
+class ApproveThenApply(ApplierCase):
+    """The one-click path: approving must install, not only record a decision.
+
+    The Findings page is filtered to pending, so the rows an operator approves
+    leave the list on the next load. An approval that waited for a second button
+    was one the operator could no longer reach — the update stayed on the machine
+    and the record said it had been decided.
+    """
+
+    def test_approving_and_applying_installs_it(self):
+        finding = self.finding(package="nginx", status="pending")
+        changed, outcome = applier.approve_and_apply(
+            self.conn, self.settings, self.policy, finding_ids=[finding], actor="alice")
+        self.assertEqual(1, changed)
+        self.assertIsNotNone(outcome)
+        self.assertEqual(1, outcome["applied"])
+        self.assertEqual("applied", self.status_of()["status"])
+        # The install actually ran: an approval that reports success without
+        # touching the machine is the bug this path exists to remove.
+        self.assertTrue(any(call[0] == "apt-install" for call in self.fake.calls))
+
+    def test_approving_without_applying_changes_no_machine(self):
+        finding = self.finding(package="nginx", status="pending")
+        changed, outcome = applier.approve_and_apply(
+            self.conn, self.settings, self.policy, finding_ids=[finding], actor="alice",
+            apply=False)
+        self.assertEqual(1, changed)
+        self.assertIsNone(outcome)
+        self.assertEqual("approved", self.status_of()["status"])
+        self.assertEqual([], self.fake.calls)
+
+    def test_nothing_to_approve_is_not_an_apply_run(self):
+        changed, outcome = applier.approve_and_apply(
+            self.conn, self.settings, self.policy, finding_ids=[], actor="alice")
+        self.assertEqual(0, changed)
+        self.assertIsNone(outcome)
+        self.assertEqual([], self.fake.calls)
+
+
 class RunBookkeeping(ApplierCase):
     def test_the_run_records_what_happened(self):
         self.finding(package="nginx")

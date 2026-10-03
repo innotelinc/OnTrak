@@ -33,6 +33,20 @@ import {
   sessionFrom,
 } from "./oidc.js";
 import { gatewayHealth, listModels } from "./omniroute.js";
+import {
+  createPreview,
+  getPreview,
+  listPreviews,
+  previewEnabled,
+  previewForHost,
+  previewLabelFromHost,
+  previewPublic,
+  proxyPreview as proxyHostingPreview,
+  proxyUpgrade,
+  removePreview,
+  stopPreview as stopHostingPreview,
+  sweepPreviews,
+} from "./preview-hosting.js";
 import { sandboxInfo } from "./sandbox.js";
 import {
   currentScope,
@@ -539,6 +553,39 @@ async function handleAuthRoutes(
   }
 
   return false;
+}
+
+// --- preview claims (server-to-server) --------------------------------------
+
+/**
+ * A paid subscriber's custom preview name, claimed by Magnate after checkout.
+ *
+ * This route is authorized by its own bearer (`PREVIEW_CLAIM_TOKEN`) rather than
+ * the console's session or `WEB_TOKEN`, because the caller is another service
+ * and not a person at a browser. When no token is configured the function
+ * declines and the request falls through to the ordinary authorization, so an
+ * unconfigured deployment is not left with a route that answers to anyone.
+ */
+async function handlePreviewClaim(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<boolean> {
+  const token = config.previewClaimToken;
+  if (token === "" || req.headers.authorization !== `Bearer ${token}`) return false;
+  if (!previewEnabled()) throw new HttpError(404, "preview hosting is not enabled");
+
+  const payload = await readJson(req);
+  const name = typeof payload.name === "string" ? payload.name : "";
+  const user = typeof payload.user === "string" ? payload.user : "";
+  const command = typeof payload.command === "string" ? payload.command : undefined;
+  const cwd = typeof payload.cwd === "string" && payload.cwd !== "" ? payload.cwd : undefined;
+  try {
+    const preview = await createPreview({ name, user, command, cwd });
+    sendJson(res, 201, { preview: previewPublic(preview) });
+  } catch (error) {
+    sendJson(res, 400, { error: (error as Error).message });
+  }
+  return true;
 }
 
 // --- chat (SSE) -------------------------------------------------------------
@@ -1098,6 +1145,59 @@ async function handleApi(
     return sendJson(res, resolved ? 200 : 404, { resolved });
   }
 
+  if (pathname === "/api/previews" && method === "GET") {
+    return sendJson(res, 200, {
+      enabled: previewEnabled(),
+      domain: config.previewDomain,
+      scheme: config.previewScheme,
+      portStart: config.previewPortStart,
+      portEnd: config.previewPortEnd,
+      previews: (await listPreviews()).map(previewPublic),
+    });
+  }
+
+  if (pathname === "/api/previews" && method === "POST") {
+    if (!previewEnabled()) throw new HttpError(404, "preview hosting is not enabled");
+    const payload = await readJson(req);
+    const name = typeof payload.name === "string" ? payload.name : undefined;
+    const command = typeof payload.command === "string" && payload.command !== "" ? payload.command : undefined;
+    const cwd = typeof payload.cwd === "string" && payload.cwd !== "" ? payload.cwd : workspaceRoot();
+    const port = typeof payload.port === "number" ? payload.port : undefined;
+    try {
+      const preview = await createPreview({
+        name,
+        port,
+        command,
+        cwd,
+        account: currentScope().userId ?? "",
+      });
+      return sendJson(res, 201, { preview: previewPublic(preview) });
+    } catch (error) {
+      throw new HttpError(400, (error as Error).message);
+    }
+  }
+
+  const previewMatch = /^\/api\/previews\/([^/]+)$/.exec(pathname);
+  if (previewMatch) {
+    const name = decodeURIComponent(previewMatch[1] ?? "");
+    if (method === "GET") {
+      const preview = await getPreview(name);
+      if (preview === null) throw new HttpError(404, "preview not found");
+      return sendJson(res, 200, { preview: previewPublic(preview) });
+    }
+    if (method === "DELETE") {
+      const removed = await removePreview(name);
+      return sendJson(res, removed ? 200 : 404, { removed });
+    }
+  }
+
+  const previewStopMatch = /^\/api\/previews\/([^/]+)\/stop$/.exec(pathname);
+  if (previewStopMatch && method === "POST") {
+    const name = decodeURIComponent(previewStopMatch[1] ?? "");
+    const stopped = await stopHostingPreview(name);
+    return sendJson(res, stopped ? 200 : 404, { stopped });
+  }
+
   if (pathname === "/api/chat" && method === "POST") {
     return await handleChat(req, res);
   }
@@ -1125,6 +1225,26 @@ export function createServer(): http.Server {
     void (async () => {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       try {
+        /*
+         * Preview routing comes first, before liveness and before the API gate:
+         * on a preview host every path — `/`, `/api/...`, an asset URL — belongs
+         * to the preview server, and the Host is what says which. Reaching the
+         * console's own routes on a preview address would be wrong in a way the
+         * browser cannot see, so an address with no registration says so instead
+         * of falling through to this console.
+         */
+        if (previewEnabled()) {
+          const preview = await previewForHost(req.headers.host);
+          if (preview !== null) {
+            proxyHostingPreview(req, res, preview);
+            return;
+          }
+          if (previewLabelFromHost(req.headers.host) !== null) {
+            sendJson(res, 404, { error: "no preview is registered at this address" });
+            return;
+          }
+        }
+
         // Liveness, answered before the API gate: it takes no session, no bearer
         // and no gateway, so a gateway that is down cannot make the console look
         // like it is.
@@ -1140,6 +1260,9 @@ export function createServer(): http.Server {
         }
         if (url.pathname.startsWith("/api/")) {
           if (await handleAuthRoutes(req, res, url)) return;
+          if (url.pathname === "/api/previews/claim" && req.method === "POST") {
+            if (await handlePreviewClaim(req, res)) return;
+          }
           if (!isAuthorized(req, url)) throw new HttpError(401, "unauthorized");
           /*
            * Whose workspace this request is, decided before routing so that every
@@ -1204,34 +1327,57 @@ export function createServer(): http.Server {
   });
 
   /*
-   * Websockets belong to the app. The console has none of its own, so with a
-   * preview running every upgrade is the development server's hot-reload socket
-   * — and the request carries the same cookie or token as the page that opened
-   * it, so it is authorized the same way.
+   * Two previews share this one socket, and the Host decides which owns it.
+   *
+   * A Genie preview-hosting address (`p<port>.genie.innotel.us`, or a claimed
+   * name) is routed straight to the port it names. `upgrade` never reaches the
+   * request handler, so the same Host-to-port decision has to be made here —
+   * otherwise a dev server's HMR connects to this console instead of to the
+   * server it belongs to. Everything else is the console's own live preview: the
+   * request carries the same cookie or token as the page that opened it, so it is
+   * authorized the same way.
    */
   server.on("upgrade", (req, socket, head) => {
     const duplex = socket as net.Socket;
-    void (async () => {
-      const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-      try {
-        if (previewPort() === null || url.pathname.startsWith("/api/")) {
+
+    // The console's own live preview (see `AGENT_PREVIEW_*`): a single dev
+    // server proxied under `/preview/`. Reached when no preview-hosting address
+    // matches the Host.
+    const appUpgrade = (): void => {
+      void (async () => {
+        const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+        try {
+          if (previewPort() === null || url.pathname.startsWith("/api/")) {
+            duplex.destroy();
+            return;
+          }
+          if (!isAuthorized(req, url)) {
+            duplex.destroy();
+            return;
+          }
+          const scope = await scopeFor(sessionFrom(req));
+          if (!scope.ok) {
+            duplex.destroy();
+            return;
+          }
+          await runInScope(scope.scope, async () => proxyAppUpgrade(req, duplex, head, url));
+        } catch {
           duplex.destroy();
+        }
+      })();
+    };
+
+    if (previewEnabled()) {
+      void previewForHost(req.headers.host).then((preview) => {
+        if (preview === null) {
+          appUpgrade();
           return;
         }
-        if (!isAuthorized(req, url)) {
-          duplex.destroy();
-          return;
-        }
-        const scope = await scopeFor(sessionFrom(req));
-        if (!scope.ok) {
-          duplex.destroy();
-          return;
-        }
-        await runInScope(scope.scope, async () => proxyAppUpgrade(req, duplex, head, url));
-      } catch {
-        duplex.destroy();
-      }
-    })();
+        proxyUpgrade(req, socket, head, preview);
+      });
+      return;
+    }
+    appUpgrade();
   });
 
   return server;
@@ -1275,6 +1421,16 @@ if (isEntrypoint) {
     }
     if (config.webToken !== "") console.log("  auth      bearer token required");
     if (oidcEnabled()) console.log(`  auth      sign-in via ${config.oidcIssuer} -> ${redirectUri()}`);
+    if (previewEnabled()) {
+      console.log(
+        `  previews  https://*.${config.previewDomain} -> ${config.previewBackendHost}:${config.previewPortStart}-${config.previewPortEnd}`,
+      );
+      // Drop anything that outlived its TTL while the process was down. A
+      // preview is deliberately temporary, so a restart is when that is enforced.
+      void sweepPreviews().then((removed) => {
+        if (removed > 0) console.log(`  previews  swept ${removed} expired address(es)`);
+      });
+    }
     console.log(
       config.healthIntervalMs > 0
         ? `  health    checking the chain every ${Math.round(config.healthIntervalMs / 60_000)} min`

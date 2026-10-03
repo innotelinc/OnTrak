@@ -1176,6 +1176,51 @@ the entrypoint resolves them before `node dist/server.js` runs. Rotating a secre
 is a write to Vault (or a re-run of the command above) plus a restart — `.env`
 never holds the value again.
 
+## Previews
+
+A preview is a temporary public address for a server running in a workspace. It is
+what makes "run it and look at it" possible from a phone or another machine without
+a tunnel per port.
+
+One wildcard does all of it. `*.genie.innotel.us` is registered **once** in
+Cerulean — a DNS record, an edge proxy host forwarding to this server, and a
+wildcard certificate — by `scripts/cerulean-genie-previews.py`. Every subdomain
+then arrives here, and Genie maps the left-most label to a loopback port:
+
+```
+p4001.genie.innotel.us   →   http(s)://127.0.0.1:4001
+acme.genie.innotel.us    →   the port a paying subscriber's preview runs on
+```
+
+That is why an auto address is `p<port>`: the port *is* the label, so a preview
+costs no DNS write and no edge change, and the number of live previews is bounded
+only by `PREVIEW_PORT_START`–`PREVIEW_PORT_END` rather than by how many proxy hosts
+somebody is willing to create. Register a preview with:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:3400/api/previews \
+  -H "Authorization: Bearer $WEB_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"command":"npm run dev -- --host 0.0.0.0 --port $PORT"}'
+```
+
+`$PORT` and `PREVIEW_URL` are handed to the command, and the reply names the
+address. `DELETE /api/previews/<name>` stops the process group and drops the
+address; the TTL (`PREVIEW_TTL_MS`) does the same on its own, and what expired
+while the process was down is swept at boot.
+
+**A preview is not the sandbox.** `run_command` runs with no network and no
+published port, which is exactly why a command Genie starts for a preview runs
+**outside** it. Turn the feature on deliberately (`PREVIEW_ENABLED=true`) on a host
+that is meant to answer on the wildcard, and treat a preview as a development
+server on the network rather than as something isolated.
+
+**A custom name is sold, not granted.** `acme.genie.innotel.us` is the Magnate
+`genie` plan ($5). After checkout Magnate calls `POST /api/previews/claim` with its
+`PREVIEW_CLAIM_TOKEN`, presenting the subscriber it is billing; Genie asks
+`MAGNATE_ENTITLEMENTS_URL` whether that subscriber is active before it registers
+the name. An unreachable Magnate is an error, not a silent "no" — a lapse and an
+outage are not the same answer.
+
 ## Configuration
 
 All optional — see `.env.example`.
@@ -1210,6 +1255,16 @@ All optional — see `.env.example`.
 | `AGENT_REQUEST_TIMEOUT_MS`                  | `300000`                 | Per-model-request timeout                |
 | `AGENT_STREAM`                              | `true`                   | Set `false` if a provider mishandles SSE |
 | `AGENT_TOOL_RESULT_LIMIT`                   | `60000`                  | Cap on a single tool result              |
+| `PREVIEW_ENABLED`                           | `false`                  | Serve temporary preview addresses — see *Previews* |
+| `PREVIEW_DOMAIN`                            | `genie.innotel.us`       | The Cerulean-registered wildcard's suffix |
+| `PREVIEW_SCHEME`                            | `https`                  | Scheme of a preview URL                   |
+| `PREVIEW_BACKEND_HOST`                      | `127.0.0.1`              | Where a preview server is reached         |
+| `PREVIEW_PORT_START` / `PREVIEW_PORT_END`   | `4000` / `4999`          | Port range previews are allocated from    |
+| `PREVIEW_TTL_MS`                            | `86400000`               | How long a preview address lives; `0` never expires |
+| `PREVIEW_CLAIM_TOKEN`                       | *(empty)*                | Bearer Magnate holds for `POST /api/previews/claim`; empty disables the route |
+| `MAGNATE_ENTITLEMENTS_URL`                  | *(empty)*                | Magnate's entitlement endpoint, consulted before a custom name is granted |
+| `ENTITLEMENTS_API_TOKEN`                    | *(empty)*                | The token Magnate expects on that endpoint |
+| `MAGNATE_GENIE_PLAN`                        | `genie`                  | The plan slug that entitles a custom preview name |
 | `WEB_TOKEN`                                 | *(empty)*                | Require this bearer token on `/api/*`    |
 | `CONTROL_PLANE_INTERNAL_URL`                | *(empty)*                | Distro control-plane origin. With the token below, every turn is attributed and quota-gated — see *Tenancy* |
 | `CONTROL_INTERNAL_TOKEN`                    | *(empty)*                | Control-plane service credential (`x-control-internal-token`), ideally the **scoped** one the plane issues for `surface=genie`; empty or a placeholder means tenancy is off. May be a `vault://` reference — see *Tenancy* and *Secrets (Cerulean Vault)* |
@@ -1240,6 +1295,12 @@ All optional — see `.env.example`.
 | Method   | Path                  | Purpose                              |
 | -------- | --------------------- | ------------------------------------ |
 | `POST`   | `/api/chat`           | Run a turn; SSE stream of `AgentEvent`. Accepts `model`, `fallbackModels`, `maxSteps` |
+| `GET`    | `/api/previews`       | Registered previews, plus the wildcard and port range |
+| `POST`   | `/api/previews`       | Register (and optionally start) a preview. Body: `name?`, `port?`, `command?`, `cwd?` |
+| `GET`    | `/api/previews/<name>` | One preview                           |
+| `DELETE` | `/api/previews/<name>` | Stop the process and drop the address |
+| `POST`   | `/api/previews/<name>/stop` | Stop the process, keep the address |
+| `POST`   | `/api/previews/claim` | Magnate-only: claim a subscriber's custom name. Authorized by `PREVIEW_CLAIM_TOKEN`, not the session |
 | `GET`    | `/api/health`         | Server + gateway reachability, sandbox, approval, offline fallback, `tenancy` |
 | `GET`    | `/api/models`         | Model ids from the gateway           |
 | `GET`    | `/api/models/sweep`   | Last catalog sweep: running, progress, per-model verdicts, `stale` |
