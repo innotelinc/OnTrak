@@ -11,6 +11,7 @@ import {
   previewEvents,
   previewPort,
   previewStatus,
+  recheckPreview,
   startPreview,
   stopPreview,
 } from "./preview.js";
@@ -1071,6 +1072,10 @@ async function handleApi(
    * API — they are whatever the project serves.
    */
   if (pathname === "/api/preview" && method === "GET") {
+    // A start that found the server still building answered `pending`; asking the
+    // port once per read is what turns that into the app, or into the failure it
+    // really was. The pane polls this, so the whole thing costs one connect.
+    await recheckPreview();
     return sendJson(res, 200, previewStatus());
   }
 

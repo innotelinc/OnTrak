@@ -741,7 +741,37 @@ const previewApp = {
   reloadTimer: null,
 };
 
+/** The pane's "nothing is running" hint, kept so "starting" can borrow and restore it. */
+const PREVIEW_EMPTY_HTML = $("#preview-app-empty").innerHTML;
+
+/*
+ * A dev server that is still building is asked about again rather than written off.
+ *
+ * The server answers `pending` when the process is up but has not bound its port
+ * yet — a debug reloader starting, a bundler's first pass. The frame cannot load
+ * an app that is not listening, so the pane polls the status on a short backoff
+ * and loads the frame the moment `pending` clears. Bounded, because a project that
+ * never binds is a fact the user has to see, not a spinner.
+ */
+const PREVIEW_PENDING_DELAYS = [400, 800, 1400, 2200, 3200, 4600, 6500];
 const PREVIEW_RELOAD_DELAY_MS = 400;
+let previewPendingTimer = null;
+let previewPendingTries = 0;
+
+function cancelPreviewPending() {
+  if (previewPendingTimer !== null) clearTimeout(previewPendingTimer);
+  previewPendingTimer = null;
+  previewPendingTries = 0;
+}
+
+function schedulePreviewPending() {
+  if (previewPendingTimer !== null || previewPendingTries >= PREVIEW_PENDING_DELAYS.length) return;
+  const delay = PREVIEW_PENDING_DELAYS[previewPendingTries++];
+  previewPendingTimer = setTimeout(() => {
+    previewPendingTimer = null;
+    if (previewAppRunning()) void refreshPreviewApp();
+  }, delay);
+}
 
 function previewAppRunning() {
   return previewApp.status !== null && previewApp.status.running === true;
@@ -774,6 +804,9 @@ function unloadPreviewFrame() {
 function applyPreviewApp(status) {
   previewApp.status = status;
   const running = status.running === true;
+  // Up but not answering yet. Not "down": the app is on its way, and showing it
+  // as stopped is what made a first click look like a preview that does not work.
+  const pending = running && status.pending === true;
 
   $("#preview-app-dot").className = `preview-dot ${running ? "up" : "down"}`;
   /*
@@ -786,15 +819,21 @@ function applyPreviewApp(status) {
   const appUrl = $("#preview-app-url");
   appUrl.textContent = !running
     ? "no app running"
-    : (status.address ?? `/preview/ · port ${status.port}`);
+    : pending
+      ? "starting…"
+      : (status.address ?? `/preview/ · port ${status.port}`);
   appUrl.title = !running
     ? ""
     : status.address
       ? "Reachable on the network at this address"
       : "Reachable in this console only; set AGENT_LAN_IP and AGENT_PREVIEW_PUBLISH to publish it";
-  $("#preview-app-empty").classList.toggle("hidden", running);
+  // Borrow the hint for "starting", and put it back once it means what it says.
+  const empty = $("#preview-app-empty");
+  if (pending) empty.textContent = `Starting ${status.command ?? "the project"}… this can take a moment.`;
+  else if (empty.innerHTML !== PREVIEW_EMPTY_HTML) empty.innerHTML = PREVIEW_EMPTY_HTML;
+  empty.classList.toggle("hidden", running && !pending);
 
-  $("#preview-frame").classList.toggle("hidden", !running);
+  $("#preview-frame").classList.toggle("hidden", !running || pending);
   $("#preview-app-start").classList.toggle("hidden", running);
   $("#preview-app-stop").classList.toggle("hidden", !running);
   $("#preview-app-reload").classList.toggle("hidden", !running);
@@ -816,6 +855,7 @@ function applyPreviewApp(status) {
   const note = $("#preview-app-note");
   let note_ = "";
   if (status.error) note_ = status.error;
+  else if (pending) note_ = `starting: ${status.command ?? "the project"} — it may still be building`;
   else if (running && status.command) {
     note_ = `${status.detected ? "detected" : "running"}: ${status.command}`;
     if (status.address) note_ += ` · served on the network at ${status.address}`;
@@ -827,7 +867,9 @@ function applyPreviewApp(status) {
   note.textContent = note_;
   note.classList.toggle("hidden", note_ === "");
 
-  if (running && $("#preview-frame").dataset.loaded !== "1") loadPreviewFrame();
+  // The frame waits for an app that is actually listening; the retry loop below
+  // is what loads it once this stops saying `pending`.
+  if (running && !pending && $("#preview-frame").dataset.loaded !== "1") loadPreviewFrame();
   if (!running) unloadPreviewFrame();
 }
 
@@ -835,6 +877,8 @@ function applyPreviewApp(status) {
 async function refreshPreviewApp() {
   try {
     applyPreviewApp(await api("/api/preview"));
+    if (previewApp.status !== null && previewApp.status.pending === true) schedulePreviewPending();
+    else cancelPreviewPending();
   } catch {
     /* the pane keeps whatever it last knew rather than blanking on a hiccup */
   }
@@ -847,13 +891,14 @@ async function startPreviewApp() {
   try {
     // No command: the server picks this project's own, which is the whole point
     // of the button. Anything it could not work out is in `error`, on screen.
-    applyPreviewApp(
-      await api("/api/preview/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      }),
-    );
+    const status = await api("/api/preview/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    applyPreviewApp(status);
+    if (status.pending === true) schedulePreviewPending();
+    else cancelPreviewPending();
   } catch (error) {
     $("#preview-app-note").textContent = error.message;
     $("#preview-app-note").classList.remove("hidden");
@@ -864,6 +909,7 @@ async function startPreviewApp() {
 }
 
 async function stopPreviewApp() {
+  cancelPreviewPending();
   try {
     applyPreviewApp(await api("/api/preview/stop", { method: "POST" }));
   } catch {
@@ -902,6 +948,7 @@ function watchPreviewChanges() {
 }
 
 function unwatchPreviewChanges() {
+  cancelPreviewPending();
   if (previewApp.reloadTimer !== null) clearTimeout(previewApp.reloadTimer);
   previewApp.reloadTimer = null;
   if (previewApp.stream !== null) previewApp.stream.close();

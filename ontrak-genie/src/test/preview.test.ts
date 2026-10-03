@@ -372,6 +372,32 @@ test("the preview, end to end", async (t) => {
     assert.match(String(status.error), /exited immediately/);
   });
 
+  await t.test("a server still coming up is starting, not already broken", async () => {
+    // The port is left unbound past the start grace, the way a framework's first
+    // build does. Reporting that as an error is what put a "preview is not
+    // reachable" page in front of an app that was a moment from working.
+    const status = await startPreview({ command: "sleep 1.4; exec node server.js" });
+    assert.equal(status.running, true, "it is up; it just has nothing to answer with yet");
+    assert.equal(status.pending, true);
+    assert.equal(status.error, null, "still building is not a failure");
+
+    // The pane polls the status; once the app binds, the same read stops saying
+    // `pending`, which is what lets the frame load the app it was waiting for.
+    await sleep(1600);
+    const settled = (await fetch(`${base}/api/preview?token=${TOKEN}`).then((r) => r.json())) as {
+      running: boolean;
+      pending?: boolean;
+      error: string | null;
+    };
+    assert.equal(settled.running, true);
+    assert.equal(settled.pending, undefined, "answering clears the starting flag");
+    assert.equal(settled.error, null);
+
+    const page = await fetch(`${base}/preview/?token=${TOKEN}`);
+    assert.equal(page.status, 200, "and now the frame has somewhere to point");
+    await stopPreview();
+  });
+
   await t.test("a project in a chosen directory is found where it lives", async () => {
     await write("smoketest/index.html", "<html><body><h1>in a folder</h1></body></html>\n");
     const status = await startPreview({ cwd: "smoketest" });

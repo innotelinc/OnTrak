@@ -68,6 +68,15 @@ export interface PreviewStatus {
   /** The tail of its output, for "why is the preview blank?". */
   log: string;
   /**
+   * True while the process is up but nothing has answered on its port yet — a
+   * framework still building, a debug reloader still starting. It is deliberately
+   * not `error`: the app is about to prove the report wrong, and a pane that
+   * painted "not reachable" over a server that was merely slow is the one thing
+   * the person watching cannot tell from a real failure. The pane shows "starting"
+   * and the status is asked again until this clears.
+   */
+  pending?: boolean;
+  /**
    * True when `command` was worked out from the project rather than named by
    * anyone. The pane says so, because a guess the user did not make is one they
    * should be able to correct.
@@ -83,6 +92,8 @@ interface PreviewProcess {
   startedAt: string;
   exitCode: number | null;
   error: string | null;
+  /** Set while the process is up but has not answered on its port yet. */
+  pending: boolean;
   log: string;
 }
 
@@ -132,7 +143,7 @@ export function previewStatus(): PreviewStatus {
       : { ...emptyStatus(suggestion.command, suggestion.cwd), detected: true };
   }
   const live = entry.exitCode === null;
-  return {
+  const status: PreviewStatus = {
     running: live,
     command: entry.command,
     cwd: entry.cwd,
@@ -144,6 +155,26 @@ export function previewStatus(): PreviewStatus {
     error: entry.error,
     log: entry.log,
   };
+  // Only when it is true: a stopped preview has no "still starting", and leaving
+  // the key off keeps `pending` a fact about a running app rather than a field
+  // every answer has to carry.
+  if (live && entry.pending) status.pending = true;
+  return status;
+}
+
+/**
+ * Take the "still starting" flag down once the app answers.
+ *
+ * `startPreview` reports a process that had not bound yet as `pending`, but that
+ * answer is a snapshot. A framework that needs two seconds to build is not going
+ * to say so again, so the caller — the pane, asking the status on a timer — checks
+ * the port once more here. Clearing the flag is what lets the frame load the app
+ * it was told to wait for.
+ */
+export async function recheckPreview(): Promise<void> {
+  const entry = running.get(keyFor(workspaceRoot()));
+  if (entry === undefined || entry.exitCode !== null || !entry.pending) return;
+  if (await portAnswers(entry.port, 500)) entry.pending = false;
 }
 
 /**
@@ -410,6 +441,7 @@ export async function startPreview(options: {
     startedAt: new Date().toISOString(),
     exitCode: null,
     error: null,
+    pending: false,
     log: "",
   };
   running.set(keyFor(root), entry);
@@ -444,8 +476,11 @@ export async function startPreview(options: {
     status.error =
       status.error ??
       `The command exited immediately (code ${status.exitCode ?? "unknown"}). Its output is below.`;
-  } else if (!(await portAnswers(port))) {
-    status.error = `Started, but nothing is answering on port ${port} yet. It may still be building.`;
+  } else if (!(await portAnswers(entry.port))) {
+    // Up, but not listening yet. Not a failure: mark it as starting so the pane
+    // waits for the app instead of showing the 503 the proxy would answer with.
+    entry.pending = true;
+    status.pending = true;
   }
   if (named === "") status.detected = true;
   return status;
