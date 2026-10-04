@@ -238,6 +238,10 @@ jobs:
   sentinel:
     name: OnTrak Sentinel
     runs-on: ubuntu-latest
+    # A test that leaks a handle does not fail, it hangs, and a hung job holds the
+    # runner until GitHub's six-hour ceiling. The suite itself closes its sockets now;
+    # this is the guard that turns a future regression into a five-minute failure.
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16

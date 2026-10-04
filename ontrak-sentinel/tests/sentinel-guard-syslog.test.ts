@@ -149,9 +149,9 @@ test("syslog listener: a line past the ceiling is dropped, not buffered", () => 
 test("syslog listener: a datagram becomes events, and a bad line is a counter", async () => {
   const collected = collector();
   const listener = await startGuardSyslog(config({ transport: "udp" }), { sink: collected.sink });
+  const udp: UdpSocket = createUdpSocket("udp4");
 
   try {
-    const udp: UdpSocket = createUdpSocket("udp4");
     const send = (payload: string): Promise<void> =>
       new Promise((resolve) => udp.send(Buffer.from(payload, "utf8"), PORT, "127.0.0.1", () => resolve()));
 
@@ -178,8 +178,10 @@ test("syslog listener: a datagram becomes events, and a bad line is a counter", 
     assert.equal(stats.accepted, 4);
     assert.equal(stats.rejected, 1);
     assert.match(stats.lastError ?? "", /structured payload/);
-    udp.close();
   } finally {
+    // Close the sender on the way out, pass or fail: a socket left open on an
+    // assertion keeps the test runner's event loop alive and hangs CI.
+    udp.close();
     await listener.close();
   }
 });
@@ -187,9 +189,9 @@ test("syslog listener: a datagram becomes events, and a bad line is a counter", 
 test("syslog listener: a refused event is counted rather than throwing", async () => {
   const collected = collector();
   const listener = await startGuardSyslog(config({ transport: "udp" }), { sink: collected.sink });
+  const udp: UdpSocket = createUdpSocket("udp4");
 
   try {
-    const udp = createUdpSocket("udp4");
     const send = (payload: string): Promise<void> =>
       new Promise((resolve) => udp.send(Buffer.from(payload, "utf8"), PORT, "127.0.0.1", () => resolve()));
 
@@ -201,8 +203,8 @@ test("syslog listener: a refused event is counted rather than throwing", async (
     assert.equal(stats.accepted, 0);
     assert.equal(stats.rejected, 1);
     assert.match(stats.lastError ?? "", /refused/);
-    udp.close();
   } finally {
+    udp.close();
     await listener.close();
   }
 });
@@ -211,8 +213,8 @@ test("syslog listener: a TCP stream is reassembled across reads", async () => {
   const collected = collector();
   const listener = await startGuardSyslog(config({ transport: "tcp" }), { sink: collected.sink });
 
+  const socket: Socket = connectTcp(PORT, "127.0.0.1");
   try {
-    const socket: Socket = connectTcp(PORT, "127.0.0.1");
     await new Promise<void>((resolve, reject) => {
       socket.once("connect", () => resolve());
       socket.once("error", reject);
@@ -229,8 +231,8 @@ test("syslog listener: a TCP stream is reassembled across reads", async () => {
 
     assert.equal(collected.events.length, 2);
     assert.equal(listener.stats().accepted, 2);
-    socket.destroy();
   } finally {
+    socket.destroy();
     await listener.close();
   }
 });
@@ -254,8 +256,8 @@ test("syslog listener: an event with no clock of its own is stamped with the lis
     now: () => AT,
   });
 
+  const udp = createUdpSocket("udp4");
   try {
-    const udp = createUdpSocket("udp4");
     // A frame that names no time: the listener's clock is the only one there is,
     // and using it is what keeps an incident's timeline ordered.
     await new Promise<void>((resolve) =>
@@ -271,8 +273,8 @@ test("syslog listener: an event with no clock of its own is stamped with the lis
     );
     await waitFor(() => collected.events.length >= 1);
     assert.equal(collected.events[0]?.at, AT);
-    udp.close();
   } finally {
+    udp.close();
     await listener.close();
   }
 });

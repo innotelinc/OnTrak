@@ -218,6 +218,21 @@ export function toObservedEvent(
   };
 }
 
+/**
+ * The device a frame names for itself, from an RFC 5424 header.
+ *
+ * The header is `<PRI>VERSION SP TIMESTAMP SP HOSTNAME SP APP-NAME …`, so the host
+ * name is the third token. `null` when the header is not RFC 5424 (a BSD-format
+ * relay, say) or carries the NILVALUE: the deployment's `sensor` is the honest
+ * answer then, and a header that is not one must not be read as a device.
+ */
+function syslogHeaderHostname(header: string): string | null {
+  const [version, , hostname] = header.trim().split(/\s+/);
+  if (!version || !/^\d{1,2}$/.test(version)) return null;
+  if (!hostname || hostname === "-") return null;
+  return hostname;
+}
+
 /** A syslog line, as a relay hands it over: `<priority>…` or free text with a JSON tail. */
 export function toObservedEventFromSyslog(line: string, context: { sensor: string; at: number }): TelemetryResult {
   const trimmed = line.trim().replace(/^<\d+>\s*/, "");
@@ -225,8 +240,12 @@ export function toObservedEventFromSyslog(line: string, context: { sensor: strin
   if (brace === -1) {
     return { ok: false, issues: [{ field: "payload", message: "the syslog line carries no structured payload" }] };
   }
+  // The frame's own host name wins over the relay's default, exactly as a sensor key
+  // in the structured payload would: one relay forwards many devices, and attributing
+  // them all to the relay is how an incident names the wrong machine.
+  const attribution = { ...context, sensor: syslogHeaderHostname(trimmed.slice(0, brace)) ?? context.sensor };
   try {
-    return toObservedEvent("SYSLOG", JSON.parse(trimmed.slice(brace)), context);
+    return toObservedEvent("SYSLOG", JSON.parse(trimmed.slice(brace)), attribution);
   } catch {
     return { ok: false, issues: [{ field: "payload", message: "the structured part of the syslog line is not JSON" }] };
   }
