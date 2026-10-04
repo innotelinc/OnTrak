@@ -4,9 +4,9 @@ import { config } from "./config.js";
 import { detectPreviewCommand } from "./preview.js";
 import {
   createPreview,
+  hostingEnabled,
   listPreviews,
   magnateEntitled,
-  previewEnabled,
   previewPublic,
   PreviewError,
   removePreview,
@@ -163,7 +163,7 @@ async function entitlement(user: string): Promise<{ entitled: boolean | null; re
 
 /** Everything the hosting panel needs, in one round trip. */
 export async function hostingInfo(user: string): Promise<HostingInfo> {
-  const enabled = previewEnabled();
+  const enabled = hostingEnabled();
   const [plan, entitlementResult, previews] = await Promise.all([
     hostingPlan(),
     enabled ? entitlement(user) : Promise.resolve({ entitled: null, reason: "" }),
@@ -209,7 +209,7 @@ export interface PublishOptions {
  * `createPreview`; an auto one is free and needs no entitlement.
  */
 export async function publish(options: PublishOptions = {}): Promise<PublishResult> {
-  if (!previewEnabled()) throw new PreviewError("preview hosting is not enabled");
+  if (!hostingEnabled()) throw new PreviewError("preview hosting is not enabled");
 
   const requested = (options.name ?? "").trim();
   const suggestion = detectPreviewCommand(workspaceRoot());

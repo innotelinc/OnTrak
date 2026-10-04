@@ -1238,6 +1238,30 @@ server on the network rather than as something isolated.
 the name. An unreachable Magnate is an error, not a silent "no" — a lapse and an
 outage are not the same answer.
 
+**Previews run in their own container, and the console is their client.** The
+running app, the port registry, the TTL sweep and the wildcard routing are all
+things a project can crash into a loop, and a console is a person's session. Run
+them in one process and a runaway preview OOMs the console; run them in one
+container and the preview competes with the console for the same memory. So a
+deployment gives hosting its own incus container (`docker-compose.preview.yml`,
+service `genie-preview`) and points the console at it:
+
+```
+GENIE_HOSTING_URL=http://<preview-host>:3400
+GENIE_HOSTING_TOKEN=<the preview host's WEB_TOKEN>
+PREVIEW_ENABLED=false          # on the *console* — it must not also route the wildcard
+```
+
+With `GENIE_HOSTING_URL` set, every route that used to start a process locally
+(`GET`/`POST /api/previews`, `DELETE /api/previews/<name>`, `/api/previews/claim`)
+forwards to the hosting server instead, carrying the subscriber's identity for a
+custom name. `GET /api/hosting` still reports hosting as enabled — it asks the
+server, not its own `PREVIEW_ENABLED`. The two share one workspace directory
+mounted at the same path (`/workspace`) in both containers, which is what lets the
+`cwd` the console computes be valid where the process actually runs. Empty
+`GENIE_HOSTING_URL` keeps everything in one process, which is what a single-host
+checkout has always done.
+
 ## Configuration
 
 All optional — see `.env.example`.
@@ -1272,7 +1296,9 @@ All optional — see `.env.example`.
 | `AGENT_REQUEST_TIMEOUT_MS`                  | `300000`                 | Per-model-request timeout                |
 | `AGENT_STREAM`                              | `true`                   | Set `false` if a provider mishandles SSE |
 | `AGENT_TOOL_RESULT_LIMIT`                   | `60000`                  | Cap on a single tool result              |
-| `PREVIEW_ENABLED`                           | `false`                  | Serve temporary preview addresses — see *Previews* |
+| `PREVIEW_ENABLED`                           | `false`                  | Serve temporary preview addresses *in this process* — see *Previews*. Leave `false` on the console when `GENIE_HOSTING_URL` is set |
+| `GENIE_HOSTING_URL`                         | *(empty)*                | Origin of the preview hosting server. Set, this process becomes its client and starts no preview processes itself |
+| `GENIE_HOSTING_TOKEN`                       | *(empty)*                | Bearer presented to that server, matching its `WEB_TOKEN` |
 | `PREVIEW_DOMAIN`                            | `genie.innotel.us`       | The Cerulean-registered wildcard's suffix |
 | `PREVIEW_SCHEME`                            | `https`                  | Scheme of a preview URL                   |
 | `PREVIEW_BACKEND_HOST`                      | `127.0.0.1`              | Where a preview server is reached         |

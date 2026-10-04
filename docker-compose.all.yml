@@ -533,7 +533,14 @@ services:
       ONTRAK_OIDC_CLIENT_ID: ${ONTRAK_OIDC_CLIENT_ID:-}
       ONTRAK_OIDC_REDIRECT_URL: ${ONTRAK_OIDC_REDIRECT_URL:-}
     volumes:
-      - ontrak-family-genie-workspace:/workspace
+      # The workspace is a *host directory* shared with the preview host
+      # (`docker-compose.preview.yml`), because a preview is the project the agent
+      # is editing: both containers have to see the same files at the same path,
+      # and a docker named volume is private to one daemon. The incus device maps
+      # the host's /srv/genie-workspace into this container; compose binds it to
+      # /workspace. The console delegates the preview processes themselves (see
+      # GENIE_HOSTING_URL in ontrak-genie/.env) rather than starting them here.
+      - ${ONTRAK_GENIE_WORKSPACE:-/srv/genie-workspace}:/workspace
       - ontrak-family-genie-data:/data
       # This stack's Cerulean Vault token, narrowed to cerulean/data/ontrak. The
       # entrypoint reads it from VAULT_TOKEN_FILE (set in ontrak-genie/.env) and
@@ -615,5 +622,4 @@ volumes:
   ontrak-family-sentinel-db:
   ontrak-family-sentinel-keys:
   ontrak-family-sync-data:
-  ontrak-family-genie-workspace:
   ontrak-family-genie-data:

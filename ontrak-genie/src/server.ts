@@ -43,6 +43,7 @@ import {
 import {
   createPreview,
   getPreview,
+  hostingEnabled,
   listPreviews,
   previewEnabled,
   previewForHost,
@@ -590,7 +591,7 @@ async function handlePreviewClaim(
 ): Promise<boolean> {
   const token = config.previewClaimToken;
   if (token === "" || req.headers.authorization !== `Bearer ${token}`) return false;
-  if (!previewEnabled()) throw new HttpError(404, "preview hosting is not enabled");
+  if (!hostingEnabled()) throw new HttpError(404, "preview hosting is not enabled");
 
   const payload = await readJson(req);
   const name = typeof payload.name === "string" ? payload.name : "";
@@ -1299,7 +1300,7 @@ async function handleApi(
 
   if (pathname === "/api/previews" && method === "GET") {
     return sendJson(res, 200, {
-      enabled: previewEnabled(),
+      enabled: hostingEnabled(),
       domain: config.previewDomain,
       scheme: config.previewScheme,
       portStart: config.previewPortStart,
@@ -1309,19 +1310,25 @@ async function handleApi(
   }
 
   if (pathname === "/api/previews" && method === "POST") {
-    if (!previewEnabled()) throw new HttpError(404, "preview hosting is not enabled");
+    if (!hostingEnabled()) throw new HttpError(404, "preview hosting is not enabled");
     const payload = await readJson(req);
     const name = typeof payload.name === "string" ? payload.name : undefined;
     const command = typeof payload.command === "string" && payload.command !== "" ? payload.command : undefined;
     const cwd = typeof payload.cwd === "string" && payload.cwd !== "" ? payload.cwd : workspaceRoot();
     const port = typeof payload.port === "number" ? payload.port : undefined;
+    // A custom name is a paid entitlement, so a caller that names one carries the
+    // identity it is checked against — the same field `POST /api/previews/claim`
+    // supplies. An auto `p<port>` address needs no identity and ignores it.
+    const user = typeof payload.user === "string" ? payload.user : "";
+    const account = typeof payload.account === "string" && payload.account !== "" ? payload.account : (currentScope().userId ?? "");
     try {
       const preview = await createPreview({
         name,
         port,
         command,
         cwd,
-        account: currentScope().userId ?? "",
+        account,
+        ...(user === "" ? {} : { user }),
       });
       return sendJson(res, 201, { preview: previewPublic(preview) });
     } catch (error) {

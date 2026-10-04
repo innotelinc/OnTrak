@@ -341,6 +341,28 @@ export const config = {
    * `scripts/cerulean-genie-previews.py`.
    */
   previewEnabled: bool("PREVIEW_ENABLED", false),
+  /**
+   * Where preview *hosting* actually runs, when it is not this process.
+   *
+   * Hosting (`src/preview-hosting.ts`) starts the project's own dev server and
+   * serves it under the preview wildcard. Running those processes inside the
+   * console means a runaway preview competes with the console for the same memory
+   * and CPU — and, because one address is a `p<port>` label, that competition is
+   * with every other preview too. So the processes are given their own container
+   * and the console becomes a *client* of the server that runs them: this is that
+   * server's origin (`GENIE_HOSTING_URL`), and `previewEnabled()` stays false here
+   * so the console does not also try to route the wildcard itself.
+   *
+   * Empty (the default) keeps everything in-process, which is what a single-host
+   * checkout has always done.
+   */
+  hostingUrl: str("GENIE_HOSTING_URL", "").replace(/\/+$/, ""),
+  /**
+   * The bearer the console presents to the hosting server, matching that server's
+   * `WEB_TOKEN`. Empty means no server-to-server hosting is possible and the
+   * console falls back to running previews itself.
+   */
+  hostingToken: str("GENIE_HOSTING_TOKEN", ""),
   /** The Cerulean-registered wildcard's suffix, e.g. "genie.innotel.us". */
   previewDomain: str("PREVIEW_DOMAIN", "genie.innotel.us"),
   /** Public URL scheme for a preview address. */

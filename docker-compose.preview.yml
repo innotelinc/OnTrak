@@ -1,0 +1,117 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Genie preview host — the second Genie that owns `*.genie.innotel.us`.
+#
+#   docker compose -f docker-compose.preview.yml up -d --build
+#
+# One thing lives here: the process that starts a project's dev server and serves
+# it under the preview wildcard. It is a *separate* Genie from the console by
+# design, because the two jobs disagree about what a failure is allowed to cost.
+# The console is a person's session — a turn, an editor, a chat history — and a
+# preview is a long-running development server that a project can crash into a
+# loop. Run them in one process and a runaway preview OOMs the console; run them
+# in one container and it competes with the console for the same 6 GiB. So the
+# previews get their own incus container, their own memory limit and their own
+# restart, and the console becomes a *client* of this one.
+#
+# ## What the console needs to know
+#
+# The console (`docker-compose.all.yml`, service `genie-app`) is pointed here with
+# two values in `ontrak-genie/.env`:
+#
+#   GENIE_HOSTING_URL=http://<this container's address>:3400
+#   GENIE_HOSTING_TOKEN=<the same value as PREVIEW_HOST_TOKEN below>
+#
+# and it keeps `PREVIEW_ENABLED=false`: the console must **not** also try to route
+# the wildcard, or the two would race for the same address. `GET /api/hosting`
+# still reports hosting as enabled, because the console asks this server rather
+# than its own config.
+#
+# ## Why the workspace is a host directory
+#
+# A preview is the project the agent is editing, so both containers have to see
+# the *same* files. A docker named volume is private to the daemon inside one
+# container and cannot be shared with a sibling incus container, so the workspace
+# is a host directory (`/srv/genie-workspace` on the incus host) mapped into both
+# containers at the same path. The absolute path inside the container matters: the
+# console tells this server where to run (`cwd`), and the two only agree because
+# both mount the tree at `/workspace`.
+#
+# ## One wildcard, no per-preview edge changes
+#
+# Cerulean registers `*.genie.innotel.us` **once**, pointing here (see
+# `ontrak-genie/scripts/cerulean-genie-previews.py --forward-host <this address>`).
+# The left-most label *is* the loopback port — `p4001.genie.innotel.us` is whatever
+# listens on 4001 — so a preview costs no DNS write and no proxy host.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: ontrak-preview
+
+services:
+  genie-preview:
+    build:
+      context: ontrak-genie
+    image: innotel/ontrak-genie:0.2.0
+    restart: unless-stopped
+    # The console's own `.env`, reused for the two things this server genuinely
+    # needs: the Cerulean Vault token file path (so `vault://` values resolve the
+    # same way) and Magnate's entitlements endpoint. Nothing here runs a turn, so
+    # the gateway keys it also carries go unused.
+    env_file:
+      - path: ontrak-genie/.env
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3400"
+      # The shared tree, mounted at the same path the console sees it at, so the
+      # `cwd` the console computes is valid here.
+      AGENT_WORKSPACE: /workspace
+      AGENT_DATA_DIR: /data
+      # This container is the boundary — a preview command is meant to be a
+      # development server, not a sandboxed build — so commands run unisolated
+      # inside it rather than trying to nest another sandbox.
+      AGENT_SANDBOX: host
+      # Hosting on, and this is the process that routes the wildcard.
+      PREVIEW_ENABLED: "true"
+      PREVIEW_DOMAIN: ${PREVIEW_DOMAIN:-genie.innotel.us}
+      PREVIEW_SCHEME: ${PREVIEW_SCHEME:-https}
+      PREVIEW_BACKEND_HOST: 127.0.0.1
+      PREVIEW_PORT_START: "4000"
+      PREVIEW_PORT_END: "4999"
+      # A named (paid) address lives a day; a free `p<port>` one lives 30 minutes
+      # and is then stopped and removed, so its port comes back.
+      PREVIEW_TTL_MS: "86400000"
+      PREVIEW_FREE_TTL_MS: "1800000"
+      # The bearer the console presents (`GENIE_HOSTING_TOKEN`), and the only thing
+      # standing between this server and the LAN. It is read from the deployment's
+      # `.env` so the two services are handed the same secret once.
+      WEB_TOKEN: ${PREVIEW_HOST_TOKEN:-}
+      # Where a custom name is checked. The console forwards the subscriber's
+      # identity; this server asks Magnate before it registers the name.
+      MAGNATE_ENTITLEMENTS_URL: ${MAGNATE_ENTITLEMENTS_URL:-}
+      MAGNATE_GENIE_PLAN: ${MAGNATE_GENIE_PLAN:-genie}
+    volumes:
+      # The shared workspace. `/srv/genie-workspace` is a host directory on the
+      # incus host, mapped into this container by an incus disk device; compose
+      # binds it to the path the app expects.
+      - ${ONTRAK_GENIE_WORKSPACE:-/srv/genie-workspace}:/workspace
+      # Its own registry, accounts and preview logs — separate from the console's.
+      - ontrak-preview-data:/data
+      # The same Cerulean Vault token the family stack uses, read-only. The
+      # entrypoint resolves `vault://` values (here: the Magnate entitlements
+      # token) before the server boots.
+      - ./data/vault/token/ontrak.token:/vault/token/ontrak.token:ro
+    ports:
+      - "${PREVIEW_HOST_PORT:-3400}:3400"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3400/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  ontrak-preview-data:

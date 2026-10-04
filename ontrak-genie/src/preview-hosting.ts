@@ -55,6 +55,12 @@ export interface Preview {
   updatedAt: string;
   /** Epoch ms after which the address is swept. 0 means it never expires. */
   expiresAt: number;
+  /**
+   * Whether the server behind this address is up, when this record came from a
+   * remote hosting server rather than this process. `undefined` means "work it
+   * out from the local children", which is the in-process case.
+   */
+  running?: boolean;
 }
 
 export class PreviewError extends Error {}
@@ -84,6 +90,89 @@ const NAME_RULE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export function previewEnabled(): boolean {
   return config.previewEnabled;
+}
+
+/**
+ * Whether *hosting* is available — here or on a separate hosting server.
+ *
+ * `previewEnabled()` is about this process: it decides whether the console routes
+ * the preview wildcard, and a console that delegates must not. This is the wider
+ * question the hosting UI asks, and the answer stays true when the processes were
+ * moved to their own container (`GENIE_HOSTING_URL`).
+ */
+export function hostingEnabled(): boolean {
+  return config.previewEnabled || hostingRemote();
+}
+
+/** Whether hosting runs somewhere else and this process is only its client. */
+function hostingRemote(): boolean {
+  return config.hostingUrl !== "";
+}
+
+/** The projection of a preview the hosting server returns over the wire. */
+interface RemotePreviewRow {
+  name?: unknown;
+  port?: unknown;
+  custom?: unknown;
+  command?: unknown;
+  running?: unknown;
+  createdAt?: unknown;
+  expiresAt?: unknown;
+}
+
+/**
+ * Rebuild an internal record from the hosting server's public projection.
+ *
+ * The projection is deliberately thin — it drops the loopback port's host, the
+ * absolute cwd and the pid — because none of those are the client's business. What
+ * it keeps is what the console renders, and `running` is carried across so the UI
+ * says the same thing about a remote preview as it would about a local one.
+ */
+function previewFromRow(row: RemotePreviewRow): Preview {
+  const createdAt = typeof row.createdAt === "string" ? row.createdAt : new Date().toISOString();
+  const running = row.running === true;
+  return {
+    name: String(row.name ?? ""),
+    port: typeof row.port === "number" ? row.port : 0,
+    host: config.previewBackendHost,
+    cwd: "",
+    account: "",
+    custom: row.custom === true,
+    command: typeof row.command === "string" ? row.command : "",
+    pid: running ? 1 : null,
+    createdAt,
+    updatedAt: createdAt,
+    expiresAt: typeof row.expiresAt === "number" ? row.expiresAt : 0,
+    running,
+  };
+}
+
+/**
+ * One call to the hosting server.
+ *
+ * A failure is surfaced as a `PreviewError` the routes already turn into a 400, so
+ * an unreachable hosting server reads as "preview hosting is not answering" rather
+ * than as a stack trace — the same way an unreachable Magnate is reported.
+ */
+async function remoteRequest(
+  pathname: string,
+  init: RequestInit = {},
+): Promise<{ status: number; body: unknown }> {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (init.body !== undefined) headers["Content-Type"] = "application/json";
+  if (config.hostingToken !== "") headers.Authorization = `Bearer ${config.hostingToken}`;
+  let response: Response;
+  try {
+    response = await fetch(`${config.hostingUrl}${pathname}`, {
+      ...init,
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (error) {
+    throw new PreviewError(`the preview hosting server is unreachable: ${(error as Error).message}`);
+  }
+  const body = (await response.json().catch(() => ({}))) as unknown;
+  return { status: response.status, body };
 }
 
 /** Normalize a requested label, or throw with the reason it cannot be used. */
@@ -195,12 +284,26 @@ export function resetPreviewCache(): void {
 
 /** Every registered preview, after expired ones have been swept. */
 export async function listPreviews(): Promise<Preview[]> {
+  if (hostingRemote()) {
+    const { status, body } = await remoteRequest("/api/previews");
+    if (status !== 200) return [];
+    const rows = (body as { previews?: unknown[] }).previews ?? [];
+    return rows
+      .map((row) => previewFromRow(row as RemotePreviewRow))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
   const rows = await readRegistry();
   await sweepPreviews(rows);
   return [...rows].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function getPreview(name: string): Promise<Preview | null> {
+  if (hostingRemote()) {
+    const { status, body } = await remoteRequest(`/api/previews/${encodeURIComponent(name)}`);
+    if (status !== 200) return null;
+    const row = (body as { preview?: unknown }).preview;
+    return row === undefined ? null : previewFromRow(row as RemotePreviewRow);
+  }
   const rows = await readRegistry();
   const found = rows.find((row) => row.name === name) ?? null;
   if (found !== null && isExpired(found)) {
@@ -310,6 +413,20 @@ function ttlFor(ttlMs: number | undefined, custom: boolean): number {
  * registered returns the existing record rather than leaking a duplicate address.
  */
 export async function createPreview(options: CreatePreviewOptions = {}): Promise<Preview> {
+  if (hostingRemote()) {
+    const { status, body } = await remoteRequest("/api/previews", {
+      method: "POST",
+      body: JSON.stringify({ ...options }),
+    });
+    if (status !== 201 && status !== 200) {
+      throw new PreviewError(
+        (body as { error?: string }).error ?? `the preview hosting server returned HTTP ${status}`,
+      );
+    }
+    const row = (body as { preview?: unknown }).preview;
+    if (row === undefined) throw new PreviewError("the preview hosting server returned no preview");
+    return previewFromRow(row as RemotePreviewRow);
+  }
   const rows = await readRegistry();
   await sweepPreviews(rows);
 
@@ -417,6 +534,12 @@ function killPreviewProcess(name: string): void {
 
 /** Stop a preview's process and drop its address. */
 export async function removePreview(name: string): Promise<boolean> {
+  if (hostingRemote()) {
+    const { status, body } = await remoteRequest(`/api/previews/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    });
+    return status === 200 && (body as { removed?: boolean }).removed === true;
+  }
   const rows = await readRegistry();
   const found = rows.find((row) => row.name === name);
   if (found === undefined) return false;
@@ -427,6 +550,13 @@ export async function removePreview(name: string): Promise<boolean> {
 
 /** Stop a preview's process but keep its address registered. */
 export async function stopPreview(name: string): Promise<boolean> {
+  if (hostingRemote()) {
+    const { status, body } = await remoteRequest(
+      `/api/previews/${encodeURIComponent(name)}/stop`,
+      { method: "POST" },
+    );
+    return status === 200 && (body as { stopped?: boolean }).stopped === true;
+  }
   const rows = await readRegistry();
   const found = rows.find((row) => row.name === name);
   if (found === undefined) return false;
@@ -624,7 +754,7 @@ export function previewPublic(preview: Preview): Record<string, unknown> {
     port: preview.port,
     custom: preview.custom,
     command: preview.command,
-    running: children.has(preview.name) || preview.pid !== null,
+    running: preview.running ?? (children.has(preview.name) || preview.pid !== null),
     createdAt: preview.createdAt,
     expiresAt: preview.expiresAt,
   };
