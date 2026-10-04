@@ -30,7 +30,14 @@ WORKDIR /app
 # Prisma's query engine links against OpenSSL, which Alpine does not ship by
 # default. Without this the client fails at import with a missing-libssl error
 # rather than a useful message.
-RUN apk add --no-cache openssl
+#
+# `setpriv` is the util-linux one, deliberately shadowing BusyBox's applet of the
+# same name: the entrypoint drops from root to `VAULT_DROP_UID` with
+# `setpriv --reuid= --regid= --init-groups`, and BusyBox's setpriv has no uid/gid
+# options at all (capabilities only), so it exits 1 with
+# `unrecognized option: reuid=1001` and every container fails to start. The
+# package is named `setpriv`, not `util-linux-misc`.
+RUN apk add --no-cache openssl setpriv
 
 # ── Dependencies ────────────────────────────────────────────────────────────
 # Copied alone so the layer only rebuilds when the lockfile actually changes.
