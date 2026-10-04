@@ -75,3 +75,43 @@ export async function listSnapshots(): Promise<Map<string, string>> {
 export async function dropSnapshot(rel: string): Promise<void> {
   await fs.unlink(snapshotFile(rel)).catch(() => {});
 }
+
+/**
+ * Forget the history of a path and everything below it, returning how many were
+ * dropped.
+ *
+ * A snapshot is the *before* half of a diff, so once a directory is emptied the
+ * baseline is a lie: a file that is gone and a baseline from before the clear
+ * would render as the agent having just deleted a pile of work. `rel` is
+ * workspace-relative and forward-slashed; `"."` (the working directory itself)
+ * clears all of them, which is the whole history of a workspace being started
+ * over.
+ */
+export async function dropSnapshotsUnder(rel: string): Promise<number> {
+  const within = rel === "." || rel === "" ? null : rel.replace(/\/+$/, "");
+
+  let names: string[];
+  try {
+    names = await fs.readdir(snapshotsDir());
+  } catch {
+    return 0;
+  }
+
+  let dropped = 0;
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const file = path.join(snapshotsDir(), name);
+    try {
+      const parsed = JSON.parse(await fs.readFile(file, "utf8")) as Snapshot;
+      if (typeof parsed.path !== "string") continue;
+      if (within !== null && parsed.path !== within && !parsed.path.startsWith(`${within}/`)) {
+        continue;
+      }
+      await fs.unlink(file);
+      dropped += 1;
+    } catch {
+      // An unreadable snapshot is not worth failing a clear over.
+    }
+  }
+  return dropped;
+}

@@ -83,7 +83,7 @@ import {
   sharesForRecipient,
   summarizeShare,
 } from "./sharing.js";
-import { dropSnapshot, listSnapshots, readSnapshot } from "./snapshots.js";
+import { dropSnapshot, dropSnapshotsUnder, listSnapshots, readSnapshot } from "./snapshots.js";
 import { startSweep, sweepStale, sweepState } from "./sweep.js";
 import {
   createSession,
@@ -111,6 +111,7 @@ import {
   type TurnUsage,
 } from "./tenancy.js";
 import {
+  clearDirectory,
   deleteWorkspaceEntry,
   ensureWorkspace,
   isDirectory,
@@ -120,6 +121,7 @@ import {
   readTextFile,
   resolveInBase,
   resolveInWorkspace,
+  toRel,
   toRelFromBase,
   WorkspaceError,
 } from "./workspace.js";
@@ -1024,6 +1026,29 @@ async function handleApi(
     if (await pathExists(abs)) throw new HttpError(409, "something with that name is already there");
     await fs.mkdir(abs, { recursive: true });
     return sendJson(res, 201, { name, dirs: await listWorkspaceDirs() });
+  }
+
+  /*
+   * Start the working directory over: empty it, keep the directory.
+   *
+   * Deliberately not the same as deleting a project. A project and its files are
+   * each optional, but the directory the agent is working in is not — every tool,
+   * the preview and the project list point at it — so this removes its contents
+   * rather than the directory itself. Dot-entries stay (`.git`, `.env`, `.agent`),
+   * and the file history below it goes with the files, so the tree does not show
+   * changes against content that is gone.
+   */
+  if (pathname === "/api/workspace/clear" && method === "POST") {
+    const root = workspaceRoot();
+    const result = await clearDirectory(root);
+    const snapshots = await dropSnapshotsUnder(toRel(root));
+    return sendJson(res, 200, {
+      removed: result.removed,
+      kept: result.kept,
+      snapshots,
+      cwd: root,
+      dirs: await listWorkspaceDirs(),
+    });
   }
 
   /*

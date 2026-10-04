@@ -213,6 +213,48 @@ export async function deleteWorkspaceEntry(abs: string): Promise<number> {
   return stat.size;
 }
 
+export type ClearResult = { removed: number; kept: string[] };
+
+/**
+ * Empty a directory inside the workspace, keeping the directory itself.
+ *
+ * "Start this folder over" is not "delete this folder". The folder is the thing a
+ * project, a running preview and the agent's working directory all point at, so
+ * removing it would leave every one of them naming something that is gone; what a
+ * person means is that the *contents* go, and this does exactly that.
+ *
+ * Dot-entries are kept on purpose. `.git`, `.env`, `.agent` — the entries that
+ * carry identity and configuration rather than work — are what a fresh start most
+ * often means to preserve, and the rule is stated as "keep anything whose name
+ * starts with a dot" rather than a list, so a tool the deployment has never heard
+ * of is kept for the same reason `.git` is.
+ *
+ * The fence is the workspace root: `abs` must be the root or inside it, which is
+ * the same fence every tool call passes through, so clearing can never reach
+ * further than the agent could.
+ */
+export async function clearDirectory(abs: string): Promise<ClearResult> {
+  const root = workspaceRoot();
+  const fence = root.endsWith(path.sep) ? root : root + path.sep;
+  if (abs !== root && !abs.startsWith(fence)) {
+    throw new WorkspaceError(`path escapes the workspace: ${abs}`);
+  }
+  if (!(await isDirectory(abs))) throw new WorkspaceError("that is not a directory");
+
+  const dirents = await fs.readdir(abs, { withFileTypes: true });
+  const kept: string[] = [];
+  let removed = 0;
+  for (const dirent of dirents) {
+    if (dirent.name.startsWith(".")) {
+      kept.push(dirent.name);
+      continue;
+    }
+    await fs.rm(path.join(abs, dirent.name), { recursive: true, force: true });
+    removed += 1;
+  }
+  return { removed, kept };
+}
+
 export async function pathExists(abs: string): Promise<boolean> {
   try {
     await fs.access(abs);

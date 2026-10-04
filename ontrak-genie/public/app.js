@@ -2527,6 +2527,72 @@ async function newWorkspaceFolder() {
   await loadWorkspace();
 }
 
+/*
+ * Empty the working directory, in two clicks.
+ *
+ * The same reasoning as deleting a file: a one-click wipe of the whole workspace
+ * sitting in the panel's header is a trap, and a native confirm() cannot be
+ * answered in a headless browser, so the first click arms the button and says so
+ * and a second click within a few seconds clears the folder. Dot-entries (`.git`,
+ * `.env`) are kept by the server, which is why this is "clear" and not "delete".
+ */
+let clearArmed = null;
+
+function disarmClear() {
+  if (clearArmed === null) return;
+  clearTimeout(clearArmed.timer);
+  clearArmed = null;
+  const button = $("#files-clear");
+  button.textContent = "clear";
+  button.classList.remove("armed");
+  button.setAttribute("aria-label", "Clear this workspace folder");
+}
+
+function armClear() {
+  if (clearArmed !== null) {
+    disarmClear();
+    void clearWorkspaceFolder();
+    return;
+  }
+
+  disarmClear();
+  const button = $("#files-clear");
+  button.textContent = "confirm clear";
+  button.classList.add("armed");
+  button.setAttribute("aria-label", "Confirm clearing this workspace folder");
+  clearArmed = { timer: setTimeout(disarmClear, 6000) };
+}
+
+async function clearWorkspaceFolder() {
+  let payload;
+  try {
+    payload = await api("/api/workspace/clear", { method: "POST" });
+  } catch (error) {
+    addErrorMessage(error.message);
+    return;
+  }
+
+  const kept = Array.isArray(payload.kept) ? payload.kept : [];
+  const removed = Number(payload.removed ?? 0);
+  const dropped = Number(payload.snapshots ?? 0);
+  addNotice(
+    `Workspace cleared — ${removed} ${removed === 1 ? "entry" : "entries"} removed` +
+      (kept.length > 0 ? `, kept ${kept.join(", ")}` : "") +
+      (dropped > 0
+        ? `; ${dropped} file-history ${dropped === 1 ? "entry" : "entries"} dropped`
+        : "") +
+      ".",
+  );
+
+  // The viewer and the tree were showing files that no longer exist, and the
+  // folder's shape is what the picker re-reads.
+  closeViewer();
+  resetPreview();
+  await loadFiles(".");
+  await loadWorkspace();
+  await loadProjects();
+}
+
 /* ---------------------------------------------------------------- projects */
 
 /*
@@ -3430,6 +3496,7 @@ function wire() {
   $("#toggle-files").addEventListener("click", () => toggleFilesPanel());
   $("#files-close").addEventListener("click", () => toggleFilesPanel(false));
   $("#files-new").addEventListener("click", () => void newWorkspaceFolder());
+  $("#files-clear").addEventListener("click", () => armClear());
   $("#project-new").addEventListener("click", () => void createProject());
 
   $("#terminal-open").addEventListener("click", () => toggleTerminal());

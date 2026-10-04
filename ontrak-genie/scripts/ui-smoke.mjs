@@ -708,6 +708,7 @@ try {
         ['#chat-settings[aria-controls="settings"]', 'settings toggle bound to its dialog'],
         ['#toggle-files[aria-controls="files-panel"]', 'workspace toggle bound to its panel'],
         ['#workspace-pick[aria-label]', 'labelled workspace picker'],
+        ['#files-clear[title]', 'labelled clear-workspace button'],
         ['#sweep[role="dialog"][aria-modal="true"]', 'sweep dialog'],
         ['#sweep-open[title]', 'labelled sweep button'],
         ['#preview[aria-label]', 'labelled preview pane'],
@@ -1015,6 +1016,36 @@ try {
     if (second !== 404) throw new Error(`a second delete returned ${second}, not 404`);
 
     return `${rows} change rows shown, then deleted in two clicks`;
+  });
+
+  /**
+   * The clear-workspace button's two-click guard.
+   *
+   * Several checks above depend on the workspace tree, so this must not actually
+   * clear it: what is checked is the guard itself — one click arms the button and
+   * says so, and it falls back to `clear` on its own a few seconds later, so the
+   * folder cannot be wiped by brushing the button. The clear endpoint's own
+   * behaviour (keep dot-entries, drop the file history) is covered by the server
+   * tests, which can drive the filesystem directly.
+   */
+  await check("the clear-workspace button arms and disarms without clearing", async () => {
+    const present = await session.evaluate(`return document.querySelector('#files-clear') !== null;`);
+    if (!present) throw new Error("the clear button is missing from the file tree header");
+
+    const armed = await session.evaluate(`
+      const button = document.querySelector('#files-clear');
+      button.click();
+      return { armed: button.classList.contains('armed'), text: button.textContent.trim() };`);
+    if (!armed.armed) throw new Error("one click did not arm the clear button");
+    if (!/confirm/i.test(armed.text)) throw new Error(`the armed button says "${armed.text}"`);
+
+    const reset = await session.waitFor(
+      `document.querySelector('#files-clear').textContent.trim() === 'clear' &&
+       !document.querySelector('#files-clear').classList.contains('armed')`,
+      10_000,
+    );
+    if (!reset) throw new Error("the armed clear button never fell back to rest");
+    return "one click arms, and it disarms on its own";
   });
 
   /**
