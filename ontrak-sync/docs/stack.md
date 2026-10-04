@@ -66,10 +66,11 @@ and explicitly does not own.
 
 - **Trust → this repo.** Cerulean issues the public name and its certificate and creates
   the NPM proxy host when the dashboard leaves the LAN; nothing here calls the NPM API.
-- **Secrets → this repo.** Cerulean Vault is the only secrets posture. This repo has no
-  resolver of its own, so `.env` must hold the resolved value — a `vault://` reference
-  left in place would reach the container as a literal string, which is a deployment
-  error, never a fallback.
+- **Secrets → this repo.** Cerulean Vault is the only secrets posture, referenced as
+  `vault://<mount>/<path>#<key>`. The image's entrypoint resolves every reference at
+  boot (reading its token from `VAULT_TOKEN_FILE`) before the server starts; a reference
+  that cannot be resolved ABORTS the container rather than reaching the app as a literal
+  string, which is a deployment error, never a fallback.
 - **Identity → the family's directory, and a local table.** Sign-in is Cerulean SSO, with
   no password field on the primary screen; the local account table is reached through a
   break-glass path at an unlinked URL, because using it is a decision rather than a
