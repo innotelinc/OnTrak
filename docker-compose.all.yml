@@ -499,6 +499,13 @@ services:
       AGENT_PREVIEW_HOST: ${AGENT_PREVIEW_HOST:-loopback}
       AGENT_PREVIEW_PORT: ${ONTRAK_GENIE_PREVIEW_PORT:-5173}
       AGENT_PREVIEW_PUBLISH: ${AGENT_PREVIEW_PUBLISH:-false}
+      # Hosting, when it runs in its own container (`docker-compose.preview.yml`).
+      # Set only in the deployment's root `.env`, deliberately *not* in
+      # `ontrak-genie/.env`: that file is the preview host's env_file too, and a
+      # hosting URL there would make the host a client of itself. These override
+      # the env_file, so the console delegates even if the file says otherwise.
+      GENIE_HOSTING_URL: ${GENIE_HOSTING_URL:-}
+      GENIE_HOSTING_TOKEN: ${GENIE_HOSTING_TOKEN:-}
       # The sandbox's network, so the *other* half of "the app and its sandbox hold
       # the LAN address" is provided too: with the docker backend a command runs
       # with `--network host` and holds this deployment's own address, instead of
