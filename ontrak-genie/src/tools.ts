@@ -1,11 +1,11 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 
 import { config } from "./config.js";
 import { buildFileDiff, type FileDiff } from "./diff.js";
-import { removeContainer, sandboxInfo, sandboxInvocation } from "./sandbox.js";
 import { workspaceRoot } from "./scope.js";
+import { backendLabel, effectiveTimeoutMs, runShellCommand } from "./shell.js";
 import { saveSnapshot } from "./snapshots.js";
 import {
   isIgnoredDir,
@@ -420,27 +420,6 @@ const searchCodeTool: ToolDefinition = {
 
 // --- run_command ------------------------------------------------------------
 
-/**
- * Patterns the agent is not allowed to run. The agent is a coding assistant,
- * not a system administrator: it never needs root, and an unattended model
- * should not be able to reformat a disk or wipe a home directory by accident
- * (or because something it read told it to).
- */
-const BLOCKED_COMMANDS: { pattern: RegExp; reason: string }[] = [
-  { pattern: /\bsudo\b|\bdoas\b|\bsu\s+-/, reason: "privilege escalation is not available to the agent" },
-  { pattern: /\bmkfs(\.[a-z0-9]+)?\b/, reason: "formatting filesystems is destructive" },
-  { pattern: /\bdd\b[^\n]*\bof=\/dev\//, reason: "writing to block devices is destructive" },
-  { pattern: /:\s*\(\s*\)\s*\{.*\}\s*;\s*:/, reason: "fork bomb" },
-  { pattern: /(^|[;&|]\s*)\b(shutdown|reboot|halt|poweroff|init\s+0)\b/, reason: "shutting down the host" },
-  { pattern: /\brm\s+(-[a-zA-Z]+\s+)*-[a-zA-Z]*[rR][a-zA-Z]*f|rm\s+-[a-zA-Z]*f[a-zA-Z]*[rR]/, reason: "recursive forced delete" },
-  { pattern: /\brm\s+[^\n]*\s(\/|\/\*|~|\$HOME|\$\{HOME\})\s*$/, reason: "deleting outside the workspace" },
-  { pattern: />\s*\/dev\/(sd|nvme|hd)[a-z0-9]*/, reason: "raw block device writes" },
-  { pattern: /\b(userdel|groupdel|passwd)\b/, reason: "modifying host accounts" },
-  { pattern: /\bchown\b|\bchmod\s+-R\b/, reason: "changing ownership or permissions recursively" },
-  { pattern: /\b(crontab|systemctl|service)\b/, reason: "changing host services or schedules" },
-  { pattern: /\b(curl|wget)\b[^\n|]*\|\s*(ba|z|k)?sh\b/, reason: "piping a download straight into a shell" },
-];
-
 const runCommandTool: ToolDefinition = {
   name: "run_command",
   description:
@@ -463,93 +442,21 @@ const runCommandTool: ToolDefinition = {
     const command = argString(args, "command");
     const relCwd = argString(args, "cwd", true) || ".";
     const cwd = resolveInWorkspace(relCwd);
-    const timeoutMs = Math.max(
-      1000,
-      Math.min(argNumber(args, "timeoutMs") ?? config.commandTimeoutMs, 600_000),
-    );
+    const requested = argNumber(args, "timeoutMs");
 
-    for (const rule of BLOCKED_COMMANDS) {
-      if (rule.pattern.test(command)) {
-        return {
-          ok: false,
-          content: `Refused to run this command: ${rule.reason}. The agent is restricted to the workspace and has no host privileges.`,
-        };
-      }
-    }
+    // One executor, shared with the console's terminal (`src/shell.ts`): the
+    // guard list, the sandbox decision and the process-group kill are the same
+    // for the model and for a person, so they cannot drift apart.
+    const result = await runShellCommand({ command, cwd, timeoutMs: requested });
+    if (result.refused !== undefined) return { ok: false, content: result.refused };
 
-    // Commands run in a throwaway container by default. This is the second lock,
-    // after the command guard above: even something the guard misses stays inside
-    // a namespaced, network-less container instead of running on the host.
-    const sandbox = await sandboxInfo();
-    if (sandbox.backend === "host" && config.sandbox === "docker") {
-      return {
-        ok: false,
-        content:
-          "Refused to run this command: run_command is configured to execute only inside a container " +
-          `(AGENT_SANDBOX=docker), but no sandbox is available. ${sandbox.detail}`,
-      };
-    }
-
-    const containerName =
-      sandbox.backend === "docker"
-        ? `agent-cmd-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-        : "";
-    const invocation =
-      sandbox.backend === "docker"
-        ? sandboxInvocation(command, cwd, containerName)
-        : { command: "bash", args: ["-lc", command], backend: "host" as const };
-
-    const result = await new Promise<{ code: number | null; output: string; timedOut: boolean }>(
-      (resolve) => {
-        const child = spawn(invocation.command, invocation.args, {
-          cwd: sandbox.backend === "docker" ? workspaceRoot() : cwd,
-          env: { ...process.env, AGENT_WORKSPACE: workspaceRoot() },
-          detached: process.platform !== "win32",
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-
-        let output = "";
-        const append = (chunk: Buffer): void => {
-          if (output.length < 200_000) output += chunk.toString("utf8");
-        };
-        child.stdout?.on("data", append);
-        child.stderr?.on("data", append);
-
-        let timedOut = false;
-        const timer = setTimeout(() => {
-          timedOut = true;
-          try {
-            if (child.pid !== undefined && process.platform !== "win32") {
-              process.kill(-child.pid, "SIGKILL");
-            } else {
-              child.kill("SIGKILL");
-            }
-          } catch {
-            child.kill("SIGKILL");
-          }
-          // Killing the CLI does not stop the container it started.
-          if (containerName !== "") removeContainer(containerName);
-        }, timeoutMs);
-
-        child.on("error", (error) => {
-          clearTimeout(timer);
-          resolve({ code: null, output: `${output}\n${error.message}`, timedOut });
-        });
-
-        child.on("close", (code) => {
-          clearTimeout(timer);
-          resolve({ code, output, timedOut });
-        });
-      },
-    );
-
-    const where = sandbox.backend === "docker" ? `container ${config.sandboxImage}` : "this host";
+    const where = backendLabel(result.backend);
     const header = result.timedOut
-      ? `Timed out after ${timeoutMs}ms (process killed) [ran in ${where}]. Output so far:\n`
-      : `Exit code: ${result.code ?? "unknown"} [ran in ${where}]\n`;
+      ? `Timed out after ${effectiveTimeoutMs(requested)}ms (process killed) [ran in ${where}]. Output so far:\n`
+      : `Exit code: ${result.exitCode ?? "unknown"} [ran in ${where}]\n`;
     const body = result.output.trim() === "" ? "(no output)" : result.output.trim();
 
-    return { ok: result.code === 0 && !result.timedOut, content: clamp(header + body) };
+    return { ok: result.ok, content: clamp(header + body) };
   },
 };
 

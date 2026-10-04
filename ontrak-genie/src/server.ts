@@ -51,6 +51,7 @@ import {
   proxyPreview as proxyHostingPreview,
   proxyUpgrade,
   removePreview,
+  startPreviewSweepLoop,
   stopPreview as stopHostingPreview,
   sweepPreviews,
 } from "./preview-hosting.js";
@@ -63,6 +64,7 @@ import {
   updateProject as updateWorkspaceProject,
 } from "./projects.js";
 import { sandboxInfo } from "./sandbox.js";
+import { backendLabel, runShellCommand } from "./shell.js";
 import {
   currentScope,
   runInScope,
@@ -1094,6 +1096,47 @@ async function handleApi(
     });
   }
 
+  /*
+   * The console's terminal.
+   *
+   * It runs through the *same* executor as the agent's `run_command`
+   * (`src/shell.ts`), which is the whole design: the command guard, the sandbox
+   * decision and the process-group kill are not re-implemented here, so a person
+   * typing into the console cannot reach anywhere the model could not, and the
+   * two can never drift apart. What it is not is an interactive shell — one
+   * command in, its combined output out — and it says so rather than pretending
+   * to be a PTY it cannot be over one HTTP request.
+   *
+   * It sits behind the same authorization gate as every other /api route, and the
+   * cwd is resolved through `resolveInWorkspace`, so the fence around the account's
+   * workspace applies to it exactly as it does to the agent.
+   */
+  if (pathname === "/api/terminal" && method === "POST") {
+    const payload = await readJson(req, 64_000);
+    const command = typeof payload.command === "string" ? payload.command.trim() : "";
+    if (command === "") throw new HttpError(400, "a command is required");
+    if (command.length > 8_000) throw new HttpError(400, "that command is too long to run");
+
+    const relCwd = typeof payload.cwd === "string" && payload.cwd.trim() !== "" ? payload.cwd : ".";
+    const cwd = resolveInWorkspace(relCwd);
+    const timeoutMs = typeof payload.timeoutMs === "number" ? payload.timeoutMs : undefined;
+
+    const result = await runShellCommand({ command, cwd, timeoutMs });
+    // A refusal is the caller's problem, not a server fault: 400, with the reason
+    // in the same field the UI already prints errors from.
+    const status = result.refused === undefined ? 200 : 400;
+    return sendJson(res, status, {
+      command,
+      cwd: relCwd,
+      ok: result.ok,
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      where: backendLabel(result.backend),
+      output: result.output,
+      ...(result.refused === undefined ? {} : { error: result.refused }),
+    });
+  }
+
   if (pathname === "/api/files" && method === "GET") {
     const rel = url.searchParams.get("path") ?? ".";
     const entries = await listDirectory(resolveInWorkspace(rel));
@@ -1578,11 +1621,19 @@ if (isEntrypoint) {
       console.log(
         `  previews  https://*.${config.previewDomain} -> ${config.previewBackendHost}:${config.previewPortStart}-${config.previewPortEnd}`,
       );
-      // Drop anything that outlived its TTL while the process was down. A
-      // preview is deliberately temporary, so a restart is when that is enforced.
+      console.log(
+        config.previewFreeTtlMs > 0
+          ? `  previews  free addresses expire after ${Math.round(config.previewFreeTtlMs / 60_000)} min`
+          : "  previews  free addresses do not expire",
+      );
+      // First, whatever outlived its TTL while the process was down: the timer
+      // below only runs from here on, and a restart must not grant an amnesty.
       void sweepPreviews().then((removed) => {
         if (removed > 0) console.log(`  previews  swept ${removed} expired address(es)`);
       });
+      // And keep enforcing it while the process is up, so a free address's port
+      // comes back on time rather than at the next restart.
+      startPreviewSweepLoop();
     }
     console.log(
       config.healthIntervalMs > 0

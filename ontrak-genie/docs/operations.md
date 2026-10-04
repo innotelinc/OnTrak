@@ -1214,8 +1214,16 @@ curl -fsS -X POST http://127.0.0.1:3400/api/previews \
 
 `$PORT` and `PREVIEW_URL` are handed to the command, and the reply names the
 address. `DELETE /api/previews/<name>` stops the process group and drops the
-address; the TTL (`PREVIEW_TTL_MS`) does the same on its own, and what expired
-while the process was down is swept at boot.
+address; the TTL does the same on its own, and what expired while the process was
+down is swept at boot.
+
+**A free address expires sooner than a paid one.** A named address is the thing
+the plan sells, so it keeps `PREVIEW_TTL_MS`; a free `p<port>` address gets
+`PREVIEW_FREE_TTL_MS` (30 minutes by default), because free addresses are
+allocated from one bounded port range and every abandoned one is a port nobody
+else can publish on. Expiry is enforced by a timer (`PREVIEW_SWEEP_INTERVAL_MS`,
+a minute by default) as well as by every registry read, so a free address stops
+and is removed after its thirty minutes even if nobody is looking at it.
 
 **A preview is not the sandbox.** `run_command` runs with no network and no
 published port, which is exactly why a command Genie starts for a preview runs
@@ -1269,7 +1277,9 @@ All optional — see `.env.example`.
 | `PREVIEW_SCHEME`                            | `https`                  | Scheme of a preview URL                   |
 | `PREVIEW_BACKEND_HOST`                      | `127.0.0.1`              | Where a preview server is reached         |
 | `PREVIEW_PORT_START` / `PREVIEW_PORT_END`   | `4000` / `4999`          | Port range previews are allocated from    |
-| `PREVIEW_TTL_MS`                            | `86400000`               | How long a preview address lives; `0` never expires |
+| `PREVIEW_TTL_MS`                            | `86400000`               | How long a *named* preview address lives; `0` never expires |
+| `PREVIEW_FREE_TTL_MS`                       | `1800000`                | How long a free `p<port>` address lives (30 min); `0` never expires |
+| `PREVIEW_SWEEP_INTERVAL_MS`                 | `60000`                  | How often expired addresses are swept; `0` disables the timer |
 | `PREVIEW_CLAIM_TOKEN`                       | *(empty)*                | Bearer Magnate holds for `POST /api/previews/claim`; empty disables the route |
 | `MAGNATE_ENTITLEMENTS_URL`                  | *(empty)*                | Magnate's entitlement endpoint, consulted before a custom name is granted |
 | `ENTITLEMENTS_API_TOKEN`                    | *(empty)*                | The token Magnate expects on that endpoint |

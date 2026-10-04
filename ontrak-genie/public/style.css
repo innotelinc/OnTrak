@@ -529,6 +529,121 @@ pre.code {
 .viewer-note { padding: 14px 16px; margin: 0; }
 .diff-inline { border-bottom: none; }
 
+/* --- terminal --- */
+
+/*
+ * Docked to the bottom of the conversation column, like a terminal in an editor:
+ * the transcript is what you read, the shell is what you run, and they share the
+ * column rather than fighting for the right-hand side that the preview owns.
+ * Capped at 45vh so a wall of output can never push the composer off screen —
+ * the chat input is still the primary way to use this console.
+ */
+.terminal {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  max-height: 45vh;
+  min-height: 160px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.terminal.hidden { display: none; }
+.terminal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.terminal-head .brand { font-size: 12px; }
+#terminal-where { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.terminal-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
+
+.terminal-output {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 10px 14px;
+  overflow: auto;
+  background: var(--surface-sunken);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.terminal-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+}
+.terminal-prompt { color: var(--text-dim); flex: none; }
+.terminal-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+.terminal-input:focus { outline: none; border-color: var(--accent-dim); }
+.terminal-busy { flex: none; font-size: 11px; color: var(--warn); }
+.terminal-busy.hidden { display: none; }
+
+@media (max-width: 1080px) {
+  .terminal { max-height: 38vh; }
+}
+
+/* --- turn progress --- */
+
+/*
+ * Sits between the transcript and the composer, at the full width of the column
+ * the conversation lives in. Not in the top bar: that row is a toolbar of things
+ * you *act* on, and a live indicator whose length changes every few seconds would
+ * make the controls beside it jump. Here it reads as the bottom edge of the
+ * conversation, which is what it measures.
+ */
+.turn-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 0 20px 8px;
+  width: 100%;
+}
+.turn-progress.hidden { display: none; }
+.turn-progress-track {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  border-radius: 3px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+/*
+ * No transition on the width: each step is a discrete jump of one unit, and
+ * animating it would draw a glide through the space between two steps that the
+ * agent never occupied. It is a counter, not a loading shimmer.
+ */
+.turn-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.turn-progress-label {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 /* --- composer --- */
 
 .composer {
@@ -722,24 +837,107 @@ pre.code {
   display: none;
   flex-direction: column;
   flex: none;
+  position: relative;
   width: min(560px, 46vw);
-  min-width: 320px;
+  min-width: 280px;
+  max-width: 85vw;
   min-height: 0;
   border-left: 1px solid var(--border);
   background: var(--bg-panel);
 }
 .preview.open { display: flex; }
 
+/*
+ * The drag grip, straddling the rail's inner border. It overhangs into the
+ * conversation by a few pixels so the pointer does not have to land exactly on a
+ * one-pixel border to grab it — the cost is a 4px strip of the transcript that is
+ * a resize handle rather than text, which is the usual trade for a split view.
+ */
+.preview-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 9px;
+  cursor: col-resize;
+  z-index: 6;
+  background: transparent;
+  touch-action: none;
+}
+.preview-resize::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 4px;
+  width: 3px;
+  height: 44px;
+  margin-top: -22px;
+  border-radius: 2px;
+  background: var(--border);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.preview-resize:hover::after,
+.preview-resize:focus-visible::after,
+.preview-resize.dragging::after { opacity: 1; }
+.preview-resize:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* While the width is being dragged the pointer must stay a resize cursor
+   wherever it goes, and text must not select underneath it. */
+body.preview-resizing { cursor: col-resize; user-select: none; }
+body.preview-resizing * { cursor: col-resize !important; }
+
 .preview-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  /* A narrow rail wraps its actions rather than clipping them: every control
+     here is a real one, and a button pushed off the edge is a feature the user
+     cannot reach — which is what "all the buttons, visible" has to mean. */
+  flex-wrap: wrap;
+  gap: 10px 8px;
   padding: 8px 14px;
   border-bottom: 1px solid var(--border);
 }
 .preview-head .brand { font-size: 12px; }
 #preview-title { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.preview-actions { margin-left: auto; display: flex; align-items: center; gap: 7px; }
+.preview-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+/*
+ * The collapsed rail's handle: a slim tab on the right edge, always on screen.
+ * Below the workspace overlay's z-index, so opening the file tree covers it the
+ * way it covers the rest of the page rather than floating over it.
+ */
+.preview-expand {
+  position: fixed;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 6px;
+  border: 1px solid var(--border);
+  border-right: none;
+  border-radius: 10px 0 0 10px;
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  box-shadow: var(--shadow-pop);
+}
+.preview-expand:hover { color: var(--text); background: var(--bg-hover); }
+.preview-expand.hidden { display: none; }
+.preview-expand-glyph { font-size: 14px; line-height: 1; }
+.preview-expand-text { writing-mode: vertical-rl; letter-spacing: 0.04em; }
 
 .preview-content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .preview-diff { overflow: auto; max-height: 55%; border-bottom: 1px solid var(--border); }

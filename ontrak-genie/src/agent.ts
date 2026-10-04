@@ -85,7 +85,16 @@ Style:
 
 export type AgentEvent =
   | { type: "session"; id: string; title: string; models: string[] }
-  | { type: "step"; index: number }
+  /**
+   * One assistant turn of the loop starting.
+   *
+   * `of` is the budget this index is counted against, sent with the index rather
+   * than left for the client to assume: the server resolves the budget from the
+   * per-chat override, then the saved chat, then the deployment default, and only
+   * it knows which one won. A progress bar with its own idea of the denominator
+   * would disagree with the notice the agent prints when it runs out of budget.
+   */
+  | { type: "step"; index: number; of: number }
   | { type: "text"; text: string }
   | { type: "tool_call"; id: string; name: string; args: unknown }
   | {
@@ -423,7 +432,7 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
 
   for (let step = 0; step < maxSteps; step += 1) {
     steps = step + 1;
-    yield { type: "step", index: steps };
+    yield { type: "step", index: steps, of: maxSteps };
 
     // `targets` starts as the chain and grows if the whole thing fails for a
     // reason that might pass: walking it again after a wait is what turns a

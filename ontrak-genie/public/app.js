@@ -70,6 +70,14 @@ const state = {
   projectId: null,
   /** Every saved project by id, so a chat row can name its own project. */
   projectsById: new Map(),
+  /**
+   * The step the turn in flight is on, and the budget it is counted against.
+   * `of === 0` means no turn is running, which is what hides the bar.
+   */
+  turn: { step: 0, of: 0 },
+  /** The terminal: what has been run, where the history cursor is, and whether
+   * a command is in flight (one at a time — there is no PTY to multiplex). */
+  terminal: { history: [], index: 0, busy: false },
 };
 
 /** Maximum diff rows to build in the DOM; the server already caps what it sends. */
@@ -343,10 +351,138 @@ function storedPreviewOpen() {
   }
 }
 
+/*
+ * How wide the rail is, and how a person changes that.
+ *
+ * The width is kept for the tab, like the open state, because it is a layout
+ * choice somebody made with a drag and does not expect to re-make on every
+ * reload. It is applied as an inline width only in the docked layout: below the
+ * breakpoint the rail is a fixed overlay with its own width, and pinning pixels
+ * there would beat the stylesheet with a number chosen for a different shape.
+ */
+const PREVIEW_WIDTH_KEY = "coding-agent-preview-width";
+const PREVIEW_MIN_WIDTH = 280;
+/** Must match the docked/overlay breakpoint in `style.css`. */
+const PREVIEW_DOCK_MIN = 1080;
+
+function storedPreviewWidth() {
+  try {
+    const raw = sessionStorage.getItem(PREVIEW_WIDTH_KEY);
+    const px = raw === null ? Number.NaN : Number.parseInt(raw, 10);
+    return Number.isFinite(px) ? px : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberPreviewWidth(px) {
+  try {
+    sessionStorage.setItem(PREVIEW_WIDTH_KEY, String(Math.round(px)));
+  } catch {
+    /* private mode: the width just does not outlive the page */
+  }
+}
+
+function previewMaxWidth() {
+  return Math.max(PREVIEW_MIN_WIDTH, Math.round(window.innerWidth * 0.7));
+}
+
+/** Apply a width, or `null` to hand the rail back to the stylesheet's default. */
+function applyPreviewWidth(px) {
+  const rail = $("#preview");
+  const handle = $("#preview-resize");
+
+  if (px === null || window.innerWidth <= PREVIEW_DOCK_MIN) {
+    rail.style.width = "";
+    rail.style.minWidth = "";
+  } else {
+    const width = Math.min(previewMaxWidth(), Math.max(PREVIEW_MIN_WIDTH, Math.round(px)));
+    rail.style.width = `${width}px`;
+    rail.style.minWidth = `${PREVIEW_MIN_WIDTH}px`;
+  }
+
+  // A separator is a range control, so it reports its own range — the arrow keys
+  // are only a real alternative to the drag if the value is announced.
+  const current = Math.round(rail.getBoundingClientRect().width);
+  handle.setAttribute("aria-valuemin", String(PREVIEW_MIN_WIDTH));
+  handle.setAttribute("aria-valuemax", String(previewMaxWidth()));
+  handle.setAttribute("aria-valuenow", String(current));
+  handle.title = `Preview width: ${current}px. Drag, or use the arrow keys; double-click to reset.`;
+}
+
+/**
+ * The rail's edge grip: drag to trade width with the conversation.
+ *
+ * The rail is on the right, so dragging the grip to the *left* makes it wider —
+ * hence the inverted delta. No pointer events while the rail is an overlay, where
+ * its width is the viewport's decision rather than the user's.
+ */
+function initPreviewResize() {
+  const handle = $("#preview-resize");
+  let dragging = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  const move = (event) => {
+    if (!dragging) return;
+    applyPreviewWidth(startWidth + (startX - event.clientX));
+  };
+  const stop = () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove("dragging");
+    document.body.classList.remove("preview-resizing");
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", stop);
+    document.removeEventListener("pointercancel", stop);
+    rememberPreviewWidth($("#preview").getBoundingClientRect().width);
+  };
+
+  handle.addEventListener("pointerdown", (event) => {
+    if (window.innerWidth <= PREVIEW_DOCK_MIN) return;
+    event.preventDefault();
+    dragging = true;
+    startX = event.clientX;
+    startWidth = $("#preview").getBoundingClientRect().width;
+    handle.classList.add("dragging");
+    document.body.classList.add("preview-resizing");
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", stop);
+    document.addEventListener("pointercancel", stop);
+  });
+
+  handle.addEventListener("dblclick", () => {
+    try {
+      sessionStorage.removeItem(PREVIEW_WIDTH_KEY);
+    } catch {
+      /* nothing to forget */
+    }
+    applyPreviewWidth(null);
+  });
+
+  handle.addEventListener("keydown", (event) => {
+    const step = event.shiftKey ? 48 : 16;
+    const current = $("#preview").getBoundingClientRect().width;
+    // Left widens, matching the drag, so the keyboard is the same gesture.
+    if (event.key === "ArrowLeft") applyPreviewWidth(current + step);
+    else if (event.key === "ArrowRight") applyPreviewWidth(current - step);
+    else if (event.key === "Home") applyPreviewWidth(null);
+    else return;
+    event.preventDefault();
+    rememberPreviewWidth($("#preview").getBoundingClientRect().width);
+  });
+}
+
 function togglePreview(force) {
   const open = force === undefined ? !previewIsOpen() : force;
   $("#preview").classList.toggle("open", open);
   $("#toggle-preview").setAttribute("aria-expanded", open ? "true" : "false");
+  // Collapse and expand are one control in two states, and exactly one of them
+  // is on screen at all times: the edge tab is only hidden while the rail it
+  // stands for is already open.
+  $("#preview-expand").classList.toggle("hidden", open);
+  $("#preview-collapse").setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) applyPreviewWidth(storedPreviewWidth());
   // Closing it is a preference: a draft later in the turn must not reopen it.
   if (!open) {
     state.preview.dismissed = true;
@@ -1192,6 +1328,44 @@ function setStreaming(streaming) {
   $("#stop").classList.toggle("hidden", !streaming);
   $("#messages").setAttribute("aria-busy", streaming ? "true" : "false");
   $("#input").disabled = false;
+  // A turn is starting or over, and the bar measures a turn. Reset rather than
+  // hide-and-keep, so the first step of the next one is not drawn against the
+  // last one's count.
+  resetTurnProgress();
+}
+
+/* ---------------------------------------------------------- turn progress */
+
+/*
+ * How far into its step budget the message in flight is.
+ *
+ * The budget comes from the server with every step (`AGENT_MAX_STEPS`, then the
+ * chat's own, then the deployment default — only the server knows which won), so
+ * the bar cannot drift from the count the agent itself reports when it runs out.
+ * It is drawn only while a turn is running: an idle bar at 100% would be a claim
+ * about a turn that has already finished.
+ */
+function renderTurnProgress() {
+  const bar = $("#turn-progress");
+  const { step, of } = state.turn;
+  if (of <= 0) {
+    bar.classList.add("hidden");
+    return;
+  }
+  bar.classList.remove("hidden");
+  const percent = Math.max(0, Math.min(100, Math.round((step / of) * 100)));
+  $("#turn-progress-fill").style.width = `${percent}%`;
+  $("#turn-progress-label").textContent = `step ${step} of ${of}`;
+  bar.setAttribute("aria-valuenow", String(step));
+  bar.setAttribute("aria-valuemax", String(of));
+  bar.title = `This message has used ${step} of its ${of} steps.`;
+}
+
+function resetTurnProgress() {
+  state.turn = { step: 0, of: 0 };
+  $("#turn-progress").classList.add("hidden");
+  $("#turn-progress-fill").style.width = "0%";
+  $("#turn-progress-label").textContent = "";
 }
 
 /* -------------------------------------------------------------------- chat */
@@ -1662,6 +1836,10 @@ async function sendMessage(text) {
         break;
       case "gateway":
         setGatewayBadge(event.mode, event.model, event.url);
+        break;
+      case "step":
+        state.turn = { step: event.index, of: event.of };
+        renderTurnProgress();
         break;
       case "text": {
         buffer += event.text;
@@ -2830,6 +3008,124 @@ function toggleFilesPanel(force) {
   $("#toggle-files").setAttribute("aria-expanded", open ? "true" : "false");
 }
 
+/* ---------------------------------------------------------------- terminal */
+
+/*
+ * A shell for the workspace.
+ *
+ * It posts one command at a time to `/api/terminal`, which runs it through the
+ * same executor the agent's `run_command` uses — same guard list, same sandbox,
+ * same fence — so what a person can reach here is exactly what the model can, and
+ * neither can reach further than the workspace. It is deliberately not an
+ * interactive shell: there is no PTY behind one HTTP request, and a terminal that
+ * silently cannot run `vi` is worse than one that says so.
+ *
+ * Output is appended, not replaced, so a build's log stays on screen while the
+ * next command runs. That is also why `clear` exists: the scrollback is the
+ * terminal's memory, and the user decides when it is done with it.
+ */
+const TERMINAL_OPEN_KEY = "coding-agent-terminal-open";
+
+function terminalIsOpen() {
+  return !$("#terminal").classList.contains("hidden");
+}
+
+function rememberTerminalOpen(open) {
+  try {
+    sessionStorage.setItem(TERMINAL_OPEN_KEY, open ? "1" : "0");
+  } catch {
+    /* private mode: the choice just does not outlive the page */
+  }
+}
+
+function storedTerminalOpen() {
+  try {
+    return sessionStorage.getItem(TERMINAL_OPEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Show or hide the panel. `focus` is false when the page is only restoring it. */
+function toggleTerminal(force, focus = true) {
+  const open = force === undefined ? !terminalIsOpen() : force;
+  $("#terminal").classList.toggle("hidden", !open);
+  $("#terminal-open").setAttribute("aria-expanded", open ? "true" : "false");
+  $("#terminal-close").setAttribute("aria-label", "Close the terminal");
+  if (open) {
+    // Say where a command will run before it runs, not after: the workspace a
+    // terminal is pointed at is the one thing about it that is not obvious.
+    const where = $("#workspace-note").textContent;
+    $("#terminal-where").textContent = where;
+    $("#terminal-where").title = where;
+    if (focus) $("#terminal-input").focus();
+  }
+  rememberTerminalOpen(open);
+}
+
+/** Append a line. Text, never HTML: command output is data, not markup. */
+function terminalPrint(line) {
+  const out = $("#terminal-output");
+  out.textContent = out.textContent === "" ? line : `${out.textContent}\n${line}`;
+  out.scrollTop = out.scrollHeight;
+}
+
+async function runTerminalCommand(raw) {
+  const command = String(raw ?? "").trim();
+  if (command === "" || state.terminal.busy) return;
+
+  state.terminal.busy = true;
+  $("#terminal-busy").classList.remove("hidden");
+  $("#terminal-run").disabled = true;
+
+  // Remember it before running, so a command that hangs is still in the history
+  // to recall and fix. Consecutive repeats are collapsed.
+  if (state.terminal.history.at(-1) !== command) state.terminal.history.push(command);
+  state.terminal.index = state.terminal.history.length;
+
+  terminalPrint(`$ ${command}`);
+  try {
+    const result = await api("/api/terminal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command }),
+    });
+    const output = String(result.output ?? "").replace(/\s+$/, "");
+    if (output !== "") terminalPrint(output);
+    if (result.error !== undefined) terminalPrint(result.error);
+    else if (result.timedOut === true) terminalPrint("[killed: the command ran too long]");
+    else if (result.exitCode !== 0) terminalPrint(`[exit ${result.exitCode}]`);
+  } catch (error) {
+    terminalPrint(error.message);
+  } finally {
+    state.terminal.busy = false;
+    $("#terminal-busy").classList.add("hidden");
+    $("#terminal-run").disabled = false;
+    $("#terminal-input").value = "";
+    $("#terminal-input").focus();
+  }
+
+  // A command can add, change or remove files, so the tree is re-read rather
+  // than left describing the workspace as it was before the command ran.
+  await loadFiles(state.filePath);
+  await loadWorkspace();
+}
+
+/**
+ * Recall a command. `delta` is -1 for older, +1 for newer, and the position past
+ * the end is the empty line you were typing before you started browsing.
+ */
+function recallTerminalCommand(delta) {
+  const input = $("#terminal-input");
+  const history = state.terminal.history;
+  if (history.length === 0) return;
+  const next = Math.min(history.length, Math.max(0, state.terminal.index + delta));
+  state.terminal.index = next;
+  input.value = next === history.length ? "" : (history[next] ?? "");
+  // Put the caret at the end so the recalled line can be edited straight away.
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
 /* --------------------------------------------------------- publish & host */
 
 /*
@@ -3081,6 +3377,20 @@ function wire() {
     togglePreview(false);
     unwatchPreviewChanges();
   });
+  // Collapse is the same act as close, from the rail's own header; the edge tab
+  // is how it comes back, and it opens the app view the way the toolbar does.
+  $("#preview-collapse").addEventListener("click", () => {
+    togglePreview(false);
+    unwatchPreviewChanges();
+  });
+  $("#preview-expand").addEventListener("click", () => {
+    togglePreview(true);
+    void showPreviewApp();
+  });
+  initPreviewResize();
+  // A resize can cross the docked/overlay breakpoint, so the width is re-applied
+  // rather than left as pixels that no longer describe this layout.
+  window.addEventListener("resize", () => applyPreviewWidth(storedPreviewWidth()));
   $("#preview-run").addEventListener("click", () => {
     if (state.preview.mode === "app") {
       setPreviewMode("code");
@@ -3121,6 +3431,25 @@ function wire() {
   $("#files-close").addEventListener("click", () => toggleFilesPanel(false));
   $("#files-new").addEventListener("click", () => void newWorkspaceFolder());
   $("#project-new").addEventListener("click", () => void createProject());
+
+  $("#terminal-open").addEventListener("click", () => toggleTerminal());
+  $("#terminal-close").addEventListener("click", () => toggleTerminal(false));
+  $("#terminal-clear").addEventListener("click", () => {
+    $("#terminal-output").textContent = "";
+  });
+  $("#terminal-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    void runTerminalCommand($("#terminal-input").value);
+  });
+  $("#terminal-input").addEventListener("keydown", (event) => {
+    if (event.key === "ArrowUp" && !event.shiftKey) {
+      event.preventDefault();
+      recallTerminalCommand(-1);
+    } else if (event.key === "ArrowDown" && !event.shiftKey) {
+      event.preventDefault();
+      recallTerminalCommand(1);
+    }
+  });
 
   $("#hosting-open").addEventListener("click", () => openHosting());
   $("#hosting-close").addEventListener("click", () => closeHosting());
@@ -3175,6 +3504,12 @@ if (storedPreviewOpen() === "1") {
   // Reopened, not started: reloading the console is not a request to run the app.
   void showPreviewApp(false);
 } else if (storedPreviewOpen() === "0") state.preview.dismissed = true;
+// The width is restored whether or not the rail is open, so collapsing and
+// expanding does not quietly reset a drag the user made earlier.
+applyPreviewWidth(storedPreviewWidth());
+// Same for the terminal: it lives in session storage, so a reload keeps it on
+// screen without making the shell a preference that outlives the tab.
+if (storedTerminalOpen() === "1") toggleTerminal(true, false);
 // Before anything is fetched: if this deployment signs people in, go there.
 void signInIfRequired();
 void loadModels();

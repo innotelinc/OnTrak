@@ -129,10 +129,41 @@
             >
               publish
             </button>
+            <button
+              id="terminal-open"
+              class="btn-ghost"
+              title="Run a shell command in this workspace"
+              aria-controls="terminal"
+              aria-expanded="false"
+            >
+              terminal
+            </button>
           </div>
         </header>
 
         <div id="messages" class="messages" role="log" aria-label="Conversation"></div>
+
+        <!--
+          How far into the step budget this message is. The agent works in a
+          bounded loop, so a long task has a shape the user can *see* rather than
+          only infer from the tool cards piling up. Hidden until the first step
+          arrives, and hidden again when the turn ends: it reports a turn, not a
+          chat, and an idle bar would be a claim about nothing.
+        -->
+        <div
+          id="turn-progress"
+          class="turn-progress hidden"
+          role="progressbar"
+          aria-label="Steps this message has used"
+          aria-valuemin="0"
+          aria-valuemax="30"
+          aria-valuenow="0"
+        >
+          <div class="turn-progress-track">
+            <div id="turn-progress-fill" class="turn-progress-fill"></div>
+          </div>
+          <span id="turn-progress-label" class="turn-progress-label mono"></span>
+        </div>
 
         <form id="composer" class="composer" aria-label="Send a message">
           <textarea
@@ -144,6 +175,44 @@
           <button type="submit" id="send" class="btn-primary">Send</button>
           <button type="button" id="stop" class="btn-danger hidden">Stop</button>
         </form>
+
+        <!--
+          The terminal, docked to the bottom of the column the conversation
+          lives in. Not an interactive shell: one command in, its combined output
+          out, through the same executor the agent's `run_command` uses. It says
+          so in the header rather than letting somebody discover it by trying to
+          run `vi`.
+        -->
+        <section id="terminal" class="terminal hidden" aria-label="Workspace terminal">
+          <div class="terminal-head">
+            <span class="brand">Terminal</span>
+            <span id="terminal-where" class="mono muted"></span>
+            <div class="terminal-actions">
+              <button id="terminal-clear" class="btn-ghost mini" title="Clear the output">
+                clear
+              </button>
+              <button id="terminal-close" class="btn-ghost mini" aria-label="Close the terminal">
+                close
+              </button>
+            </div>
+          </div>
+          <pre id="terminal-output" class="terminal-output mono" tabindex="0"></pre>
+          <form id="terminal-form" class="terminal-form">
+            <span class="terminal-prompt mono" aria-hidden="true">$</span>
+            <input
+              id="terminal-input"
+              class="terminal-input mono"
+              type="text"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              aria-label="Command to run in the workspace"
+              placeholder="npm test  ·  git status  ·  ls -la"
+            />
+            <button type="submit" id="terminal-run" class="btn-ghost mini">run</button>
+            <span id="terminal-busy" class="terminal-busy mono hidden" role="status">running…</span>
+          </form>
+        </section>
       </main>
 
       <!--
@@ -153,6 +222,21 @@
         top bar) rather than being a fixed height the conversation has to pay for.
       -->
       <aside id="preview" class="preview" aria-label="The app and the code being generated">
+        <!--
+          The grip on the rail's inner edge. Drag it to trade width between the
+          conversation and the preview; ArrowLeft/ArrowRight do the same from the
+          keyboard, which is why it is a focusable separator rather than a bare
+          div. It is the one part of the rail that also has to exist *while*
+          collapsed, so its collapsed twin below is this control's other half.
+        -->
+        <div
+          id="preview-resize"
+          class="preview-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize the preview pane"
+          tabindex="0"
+        ></div>
         <div class="preview-head">
           <span class="brand">Preview</span>
           <span id="preview-title" class="mono muted">nothing generated yet</span>
@@ -180,6 +264,15 @@
               title="Open this file in the workspace viewer"
             >
               open file
+            </button>
+            <button
+              id="preview-collapse"
+              class="btn-ghost"
+              title="Collapse the preview pane — the header stays one click away"
+              aria-controls="preview"
+              aria-expanded="true"
+            >
+              collapse
             </button>
             <button id="preview-close" class="btn-ghost" aria-label="Close the preview pane">
               close
@@ -236,6 +329,24 @@
           <pre id="preview-body" class="preview-body mono" tabindex="0"></pre>
         </div>
       </aside>
+
+      <!--
+        The rail, collapsed to an edge tab. Without it "collapsed" and "gone"
+        look the same: the only way back would be a button in a toolbar the user
+        has to find again, and the pane they just closed would read as one this
+        build does not have. So the control is always on screen, in the same
+        place, in both states.
+      -->
+      <button
+        id="preview-expand"
+        class="preview-expand hidden"
+        title="Open the preview pane"
+        aria-controls="preview"
+        aria-expanded="false"
+      >
+        <span class="preview-expand-glyph" aria-hidden="true">‹</span>
+        <span class="preview-expand-text">preview</span>
+      </button>
 
       <aside class="files" id="files-panel" aria-label="Workspace files">
         <div class="files-head">

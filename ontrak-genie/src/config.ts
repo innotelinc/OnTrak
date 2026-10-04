@@ -350,8 +350,30 @@ export const config = {
   /** The inclusive port range previews are allocated from. */
   previewPortStart: int("PREVIEW_PORT_START", 4000),
   previewPortEnd: int("PREVIEW_PORT_END", 4999),
-  /** How long a preview address lives; 0 means it never expires. */
+  /**
+   * How long a *named* (paid) preview address lives; 0 means it never expires.
+   *
+   * A name is what the `genie` plan sells, so it has to outlive an afternoon of
+   * work — this is the TTL for the address somebody is paying to hold.
+   */
   previewTtlMs: nonNegativeInt("PREVIEW_TTL_MS", 86_400_000),
+  /**
+   * How long a *free* (auto `p<port>`) preview address lives.
+   *
+   * Free addresses are the shared resource: they are allocated from one bounded
+   * port range, so every abandoned `p4001` is a port nobody else can publish on.
+   * Thirty minutes is enough to look at a build and hand the URL to somebody for a
+   * minute, and short enough that a tab left open on Friday does not hold a port
+   * until Monday. When it runs out the address is **stopped and removed** — the
+   * process is killed and the registry entry dropped — by the sweep below.
+   */
+  previewFreeTtlMs: nonNegativeInt("PREVIEW_FREE_TTL_MS", 1_800_000),
+  /**
+   * How often expired previews are swept, so a TTL is enforced while the console
+   * is running rather than only at the next restart or the next read. 0 disables
+   * the timer, and expiry then only takes effect when the registry is read.
+   */
+  previewSweepIntervalMs: nonNegativeInt("PREVIEW_SWEEP_INTERVAL_MS", 60_000),
   /**
    * The bearer Magnate holds to claim a subscriber's custom name
    * (`POST /api/previews/claim`). Empty means no server-to-server claim is

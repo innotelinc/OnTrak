@@ -289,8 +289,17 @@ export interface CreatePreviewOptions {
   ttlMs?: number;
 }
 
-function ttlFor(ttlMs: number | undefined): number {
-  const ttl = ttlMs ?? config.previewTtlMs;
+/**
+ * When this preview expires.
+ *
+ * A named address gets the long TTL — it is the thing the plan sells, and it has
+ * to still be there after lunch. A free `p<port>` address gets the short one,
+ * because free addresses are allocated from one bounded port range: every
+ * abandoned one is a port nobody else can publish on. An explicit `ttlMs` from
+ * the caller always wins, so a test (or an operator script) can pin either.
+ */
+function ttlFor(ttlMs: number | undefined, custom: boolean): number {
+  const ttl = ttlMs ?? (custom ? config.previewTtlMs : config.previewFreeTtlMs);
   return ttl > 0 ? Date.now() + ttl : 0;
 }
 
@@ -349,7 +358,7 @@ export async function createPreview(options: CreatePreviewOptions = {}): Promise
     pid: null,
     createdAt: now,
     updatedAt: now,
-    expiresAt: ttlFor(options.ttlMs),
+    expiresAt: ttlFor(options.ttlMs, custom),
   };
 
   if (preview.command !== "") startPreviewProcess(preview);
@@ -569,6 +578,39 @@ export function proxyUpgrade(
   });
   upstream.on("error", () => socket.destroy());
   socket.on("error", () => upstream.destroy());
+}
+
+// --- the clock --------------------------------------------------------------
+
+let sweepTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Sweep on a timer, so a TTL is a deadline rather than a hope.
+ *
+ * Expiry used to be enforced only when the registry was *read* — at boot, or by
+ * a request that lists previews — which means a free address nobody is looking at
+ * keeps its port **and its process** well past the thirty minutes it was given.
+ * That defeats the point of a short free TTL, which is that the port comes back.
+ * So the clock is enforced by this process rather than by somebody's next visit.
+ *
+ * Unref'd, like the health loop: a sweep must never be the reason this process
+ * stays alive, and `stopModelHealthLoop`'s counterpart here exists for tests.
+ */
+export function startPreviewSweepLoop(): void {
+  if (config.previewSweepIntervalMs <= 0 || sweepTimer !== null) return;
+  sweepTimer = setInterval(() => {
+    void sweepPreviews().catch(() => {
+      // An unreadable registry is reported by the routes that need it; a timer
+      // that threw once a minute would be noise rather than information.
+    });
+  }, config.previewSweepIntervalMs);
+  sweepTimer.unref();
+}
+
+/** Stop the timer. Only used by tests. */
+export function stopPreviewSweepLoop(): void {
+  if (sweepTimer !== null) clearInterval(sweepTimer);
+  sweepTimer = null;
 }
 
 // --- public projection ------------------------------------------------------
