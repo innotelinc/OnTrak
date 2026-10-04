@@ -36,11 +36,14 @@ from ontrak import db, scheduler  # noqa: E402
 from ontrak.config import (  # noqa: E402
     DEFAULT_HOSTS,
     Host,
+    RegistryCredential,
     Settings,
     _env,
     _env_bool,
     _env_int,
     _parse_hosts,
+    _parse_registry_credentials,
+    normalize_registry,
     WORKLOAD_KINDS,
 )
 from ontrak.policy import Policy  # noqa: E402
@@ -126,6 +129,68 @@ class Hosts(unittest.TestCase):
     def test_a_malformed_entry_is_an_error_not_a_dropped_host(self):
         with self.assertRaises(ValueError):
             _parse_hosts("i1,i2=192.168.1.52")
+
+
+class RegistryCredentials(unittest.TestCase):
+    """`ONTRAK_REGISTRY_CREDENTIALS` — the fix for Docker Hub's shared budget.
+
+    Docker Hub answers anonymous pulls out of the same small per-address budget the
+    scans spend, which is why an update fails with `429` on a Network whose scanning
+    side is already careful. A configured credential is the other half, so the two
+    things worth pinning are that a credential is filed under a *canonical* registry
+    name (or a Hub alias would never match a bare ref), and that a malformed entry is
+    dropped rather than half-parsed into a credential that authenticates as nobody.
+    """
+
+    def test_every_docker_hub_spelling_folds_together(self):
+        for alias in ("docker.io", "index.docker.io", "registry-1.docker.io",
+                      "registry.hub.docker.com", "DOCKER.IO"):
+            self.assertEqual("docker.io", normalize_registry(alias))
+
+    def test_a_scheme_and_trailing_slash_are_tolerated(self):
+        self.assertEqual("ghcr.io", normalize_registry("https://ghcr.io/"))
+        self.assertEqual("ghcr.io", normalize_registry("  ghcr.io  "))
+
+    def test_the_documented_shape_parses(self):
+        creds = _parse_registry_credentials("docker.io dhunter dckr_pat_x")
+        self.assertEqual((RegistryCredential("docker.io", "dhunter", "dckr_pat_x"),), creds)
+
+    def test_a_token_may_contain_equals_and_colons(self):
+        # A real registry token does, which is why the fields are whitespace-separated
+        # rather than split on `=` or `:` — either of those would truncate the secret.
+        creds = _parse_registry_credentials("docker.io dhunter dckr_pat_a=b:c")
+        self.assertEqual("dckr_pat_a=b:c", creds[0].password)
+
+    def test_newlines_commas_and_comments_are_tolerated(self):
+        creds = _parse_registry_credentials(
+            "# a comment\ndocker.io dhunter a=b, ghcr.io alice ghp_x\n\n")
+        self.assertEqual(("docker.io", "ghcr.io"), tuple(c.registry for c in creds))
+
+    def test_a_malformed_entry_is_dropped(self):
+        self.assertEqual((), _parse_registry_credentials("docker.io dhunter"))
+        self.assertEqual((), _parse_registry_credentials("docker.io d h extra"))
+
+    def test_the_password_never_appears_in_the_repr(self):
+        # A credential is a field of `Settings`, so any `repr(settings)` (a log line, a
+        # traceback) would otherwise print the token.
+        credential = RegistryCredential("docker.io", "dhunter", "dckr_pat_secret")
+        self.assertNotIn("dckr_pat_secret", repr(credential))
+        self.assertIn("dhunter", repr(credential))
+
+    def test_a_credential_is_found_by_its_canonical_name(self):
+        settings = Settings(hosts=(Host("i1", "192.168.1.51", "both"),),
+                            registry_credentials=(RegistryCredential("docker.io", "a", "b"),))
+        self.assertIsNotNone(settings.credential_for("index.docker.io"))
+        self.assertIsNone(settings.credential_for("ghcr.io"))
+
+    def test_it_is_read_from_the_environment(self):
+        with mock.patch.dict(os.environ, {"ONTRAK_REGISTRY_CREDENTIALS": "ghcr.io alice ghp_x"}):
+            settings = Settings.from_env()
+        self.assertEqual("alice", settings.credential_for("ghcr.io").username)
+
+    def test_absent_means_anonymous(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual((), Settings.from_env().registry_credentials)
 
 
 class SetupScript(unittest.TestCase):

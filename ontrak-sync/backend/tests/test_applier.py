@@ -25,7 +25,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ontrak import applier, db  # noqa: E402
-from ontrak.config import Host, Settings  # noqa: E402
+from ontrak.config import Host, RegistryCredential, Settings  # noqa: E402
 from ontrak.policy import Policy  # noqa: E402
 from ontrak.remote import Result  # noqa: E402
 
@@ -45,6 +45,11 @@ class FakeRemote:
         self.still_pending: dict[str | None, set[str]] = {}
         self.snap_rc = 0
         self.pull_rc = 0
+        self.login_rc = 0
+        # Every `docker login`, in call order: the argv, the container, and the stdin
+        # payload. The payload is the point — the password must travel there and not
+        # as an argument.
+        self.logins: list[dict] = []
         # The clock each docker command was given, in call order. A list because the
         # pull is the only one that should differ from the generic ceiling.
         self.docker_timeouts: list[int] = []
@@ -100,15 +105,21 @@ class FakeRemote:
                           "" if self.snap_rc == 0 else "error: snap is busy")
         return Result(command, 0, "", "")
 
-    def ssh(self, host, remote_argv, timeout):
+    def ssh(self, host, remote_argv, timeout, stdin_text=None):
         return self._pkg(None, remote_argv[-1], timeout)
 
-    def incus_exec(self, host, container, command, timeout):
+    def incus_exec(self, host, container, command, timeout, stdin_text=None):
         return self._pkg(container, command[-1], timeout)
 
-    def docker_in_container(self, host, container, args, timeout):
+    def docker_in_container(self, host, container, args, timeout, stdin_text=None):
         self.calls.append(("docker", tuple(args)))
         self.docker_timeouts.append(timeout)
+        if args[0] == "login":
+            self.logins.append({"container": container, "args": tuple(args),
+                                "stdin": stdin_text})
+            return Result("docker login", self.login_rc, "",
+                          "" if self.login_rc == 0
+                          else "unauthorized: incorrect username or password")
         if args[0] == "pull":
             return Result("docker pull", self.pull_rc, "", "" if self.pull_rc == 0 else "denied")
         if args[0] == "ps":
@@ -595,6 +606,116 @@ class DockerApply(ApplierCase):
         result = self.apply()
         self.assertEqual(1, result["failed"])
         self.assertIn("verify by hand", self.status_of(manager="docker", package=self.IMAGE)["detail"])
+
+
+class DockerRegistryLogin(ApplierCase):
+    """Pulling through Docker Hub's rate limit: the credential is actually used.
+
+    Docker Hub answers anonymous pulls — and the digest checks a scan makes — out of
+    one small per-address budget, and a Network that spends it sees every update fail
+    with `429 Too Many Requests`. Authenticating the pull is the half of that fix that
+    lives here, so these cases pin that a configured credential is used, that the
+    secret travels on stdin rather than the command line, that a registry with no
+    credential stays anonymous, and that one login covers every image from it.
+    """
+
+    IMAGE = "nickfedor/watchtower:latest"   # a Hub ref: the registry is implicit
+
+    def with_credential(self, registry="docker.io", user="dhunter",
+                        password="dckr_pat_secret"):
+        self.settings = Settings(
+            hosts=(self.host,),
+            registry_credentials=(RegistryCredential(registry, user, password),),
+        )
+
+    def test_a_configured_registry_is_logged_into_before_the_pull(self):
+        self.with_credential()
+        self.fake.containers = []
+        self.finding(manager="docker", package=self.IMAGE)
+        self.apply()
+        self.assertEqual(1, len(self.fake.logins))
+        login = self.fake.logins[0]
+        # Docker Hub takes no server argument.
+        self.assertEqual(("login", "--username", "dhunter", "--password-stdin"),
+                         login["args"])
+        # The password is the stdin payload, never an argument.
+        self.assertEqual("dckr_pat_secret", login["stdin"])
+        self.assertNotIn("dckr_pat_secret", " ".join(login["args"]))
+        # And it runs BEFORE the pull it is meant to authorise.
+        calls = self.fake.calls
+        login_at = next(i for i, c in enumerate(calls)
+                        if c[0] == "docker" and c[1][0] == "login")
+        pull_at = next(i for i, c in enumerate(calls)
+                       if c == ("docker", ("pull", "--quiet", self.IMAGE)))
+        self.assertLess(login_at, pull_at)
+
+    def test_a_non_hub_registry_names_itself_on_the_login(self):
+        self.with_credential(registry="ghcr.io")
+        self.fake.containers = []
+        self.finding(manager="docker", package="ghcr.io/innotelinc/monarch/watchtower:latest")
+        self.apply()
+        self.assertEqual(("login", "--username", "dhunter", "--password-stdin", "ghcr.io"),
+                         self.fake.logins[0]["args"])
+
+    def test_a_hub_alias_still_finds_the_hub_credential(self):
+        # `index.docker.io` is the Hub under another name; a credential written that
+        # way must meet a ref that names no registry at all.
+        self.with_credential(registry="index.docker.io")
+        self.fake.containers = []
+        self.finding(manager="docker", package=self.IMAGE)
+        self.apply()
+        self.assertEqual(1, len(self.fake.logins))
+        self.assertEqual("login", self.fake.logins[0]["args"][0])
+
+    def test_a_registry_with_no_credential_is_pulled_anonymously(self):
+        self.fake.containers = []
+        self.finding(manager="docker", package="ghcr.io/innotelinc/monarch/watchtower:latest")
+        self.apply()
+        self.assertEqual([], self.fake.logins)
+
+    def test_the_login_happens_once_per_registry_not_per_image(self):
+        self.with_credential()
+        self.fake.containers = []
+        self.finding(manager="docker", package="nickfedor/watchtower:latest")
+        self.finding(manager="docker", package="jc21/nginx-proxy-manager:latest")
+        self.apply()
+        self.assertEqual(1, len(self.fake.logins))
+
+    def test_a_failed_login_does_not_stop_the_pull_but_is_explained(self):
+        self.with_credential()
+        self.fake.login_rc = 1
+        self.fake.containers = []
+        self.finding(manager="docker", package=self.IMAGE)
+        result = self.apply()
+        # The pull still ran: a bad token is a reason to try anonymously, not a
+        # reason to leave the image un-updated.
+        self.assertIn(("docker", ("pull", "--quiet", self.IMAGE)), self.fake.calls)
+        # And the refusal is in the run log rather than only implied by a later 429.
+        self.assertTrue(any("login to docker.io failed" in m for m in result["messages"]),
+                        result["messages"])
+
+    def test_the_password_never_leaks_into_a_message_a_detail_or_the_log(self):
+        # A login that FAILS is the path that puts the registry's words into a message,
+        # so it is the one worth checking: the token travels on stdin, so nothing that
+        # records the command (or its output) may carry it.
+        secret = "dckr_pat_do_not_log_me"
+        self.with_credential(password=secret)
+        self.fake.login_rc = 1
+        self.fake.containers = []
+        self.finding(manager="docker", package=self.IMAGE)
+        result = self.apply()
+        self.assertNotIn(secret, " ".join(result["messages"]))
+        self.assertNotIn(secret, " ".join(result["manual"]))
+        # Nor in the finding's own reason, nor in anything the run recorded.
+        detail = self.status_of(manager="docker", package=self.IMAGE)["detail"] or ""
+        self.assertNotIn(secret, detail)
+        events = [row["message"] for row in
+                  self.conn.execute("SELECT message FROM events").fetchall()]
+        self.assertFalse(any(secret in message for message in events), events)
+        # And it is not in any docker argv that was run.
+        for call in self.fake.calls:
+            if call[0] == "docker":
+                self.assertNotIn(secret, " ".join(call[1]))
 
 
 class ApproveThenApply(ApplierCase):

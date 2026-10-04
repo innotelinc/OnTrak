@@ -122,6 +122,46 @@ class Host:
     notes: str = ""
 
 
+# The names Docker Hub answers to. A ref that names none of these resolves to the
+# Hub, and `docker login` takes no server for it — so every alias is folded to one
+# spelling and the credential lookup below is a plain equality rather than a set.
+HUB_REGISTRY = "docker.io"
+_HUB_ALIASES = frozenset({
+    "docker.io", "index.docker.io", "registry-1.docker.io", "registry.hub.docker.com",
+})
+
+
+def normalize_registry(host: str) -> str:
+    """Fold a registry name to the canonical spelling used for credential lookup.
+
+    Tolerates a scheme and a trailing slash because an operator types a registry
+    the way a browser accepts it (`https://ghcr.io/`), while the thing being
+    compared against comes out of a bare image ref.
+    """
+    cleaned = host.strip().lower()
+    if "://" in cleaned:
+        cleaned = cleaned.split("://", 1)[1]
+    cleaned = cleaned.rstrip("/")
+    return HUB_REGISTRY if cleaned in _HUB_ALIASES else cleaned
+
+
+@dataclass(frozen=True)
+class RegistryCredential:
+    """A username/password to `docker login` a registry with before pulling from it.
+
+    `registry` is always the canonical spelling (see `normalize_registry`), so a
+    credential written as `index.docker.io` and a ref that means the Hub meet.
+    """
+
+    registry: str
+    username: str
+    # `repr=False` so an accidental `print(credential)` (or a `Settings` dump, since
+    # this object is a field of it) shows who the credential is FOR without spilling
+    # the secret. The value still takes part in equality and hashing, so two
+    # credentials with different tokens are still different objects.
+    password: str = field(repr=False)
+
+
 #
 # THE HYPERVISORS AND THE SPARE HOST ARE MACHINES TOO.
 #
@@ -205,6 +245,30 @@ def _parse_list(raw: str) -> tuple[str, ...]:
     return tuple(item.strip().lower() for item in (raw or "").split(",") if item.strip())
 
 
+def _parse_registry_credentials(raw: str) -> tuple[RegistryCredential, ...]:
+    """Parse `ONTRAK_REGISTRY_CREDENTIALS`.
+
+    One entry per registry, `registry username password`, separated by newlines or
+    commas. Whitespace between the three fields (rather than `=` or `:`) because a
+    registry token routinely contains both of those, and a format that splits on
+    either would silently truncate the secret to something that authenticates as
+    nobody. A malformed line is dropped rather than guessed at: half a credential is
+    not a credential, and the anonymous pull that follows it fails with the
+    registry's own words instead of a mystery 401.
+    """
+    credentials: list[RegistryCredential] = []
+    for chunk in (raw or "").replace(",", "\n").splitlines():
+        chunk = chunk.strip()
+        if not chunk or chunk.startswith("#"):
+            continue
+        parts = chunk.split()
+        if len(parts) != 3:
+            continue
+        registry, username, password = parts
+        credentials.append(RegistryCredential(normalize_registry(registry), username, password))
+    return tuple(credentials)
+
+
 @dataclass(frozen=True)
 class Settings:
     hosts: tuple[Host, ...] = field(default_factory=lambda: DEFAULT_HOSTS)
@@ -240,6 +304,20 @@ class Settings:
     # not need the re-read that apt's verdict does, because `docker pull` either
     # finished or did not; the number only decides how long the wait may be.
     pull_timeout: int = 900
+    # ── registry credentials ────────────────────────────────────────────────
+    # Docker Hub answers an anonymous pull out of roughly a hundred requests per six
+    # hours *per address*, and the Network's scans draw from the same budget — which
+    # is why an update can fail with `429 Too Many Requests` even though the scanning
+    # side is made cheap (see `digest_ttl_seconds`). Authenticating the pull raises
+    # the budget (100 -> 200 on a free account, unlimited on a paid one) and, more to
+    # the point, takes it out of the share the anonymous digest checks are spending.
+    #
+    # One line per registry: `registry username password`, whitespace-separated (a
+    # token often contains `=` and `:`, so neither can be the separator). The
+    # password is a credential, so in a deployment the whole value is a Cerulean Vault
+    # reference resolved by the image's entrypoint before this process starts. Empty
+    # means anonymous, exactly as before.
+    registry_credentials: tuple[RegistryCredential, ...] = ()
     # The scheduler is in-process (see policy.py for the cron arithmetic and the
     # apply policy). Disabling it leaves the API and the manual scan/apply paths
     # working, which is what you want while debugging a schedule that fires at the
@@ -288,6 +366,24 @@ class Settings:
     # which is already required and already random.
     session_secret: str = ""
 
+    def credential_for(self, registry: str) -> RegistryCredential | None:
+        """The credential to log in with for `registry`, or None to stay anonymous.
+
+        A lookup, not a default: a registry this deployment has no credential for is
+        pulled anonymously (which is correct — most of the Network's registries are
+        not rate-limited), while a credential that is configured is actually used
+        rather than merely stored.
+        """
+        wanted = normalize_registry(registry)
+        for credential in self.registry_credentials:
+            # Both sides normalised. The parser already stores a canonical name, but
+            # a credential built directly (a test, a future caller) may not, and an
+            # alias that silently fails to match would read as "no credential" — the
+            # one answer that looks identical to "nothing configured".
+            if normalize_registry(credential.registry) == wanted:
+                return credential
+        return None
+
     @property
     def sso_configured(self) -> bool:
         return bool(self.oidc_issuer and self.oidc_client_id)
@@ -321,6 +417,7 @@ class Settings:
             command_timeout=_env_int("ONTRAK_COMMAND_TIMEOUT", 300),
             apt_timeout=_env_int("ONTRAK_APT_TIMEOUT", 900),
             pull_timeout=_env_int("ONTRAK_PULL_TIMEOUT", 900),
+            registry_credentials=_parse_registry_credentials(_env("ONTRAK_REGISTRY_CREDENTIALS")),
             scheduler_enabled=_env_bool("ONTRAK_SCHEDULER", True),
             scheduler_tick_seconds=_env_int("ONTRAK_SCHEDULER_TICK", 30),
             default_schedule=_env("ONTRAK_DEFAULT_SCHEDULE", "0 4 * * 0"),

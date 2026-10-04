@@ -4,12 +4,16 @@ One place where every command Ontrak Sync runs is built, so the answer to "what
 does this thing actually execute?" is one file. Three rules live here, and each
 one is a bug that was already paid for somewhere in this Network:
 
-1. **`stdin` is always `/dev/null`.**
+1. **`stdin` is `/dev/null` unless a credential is being handed over.**
    `incus exec <c> -- docker …` *consumes* stdin. A caller that pipes a heredoc
    into a script which then shells out to `incus exec` has that heredoc eaten by
    the inner command — the outer script stops halfway and the symptom is a command
    that "did not run" with no error. Closing stdin on every call makes that
    impossible rather than memorable.
+   The ONE exception is `stdin_text`, and only the applier uses it: a registry
+   password for `docker login --password-stdin`. It is deliberate, and it is a
+   pipe rather than an argument so the secret never lands in the remote host's
+   process table — see `_exec`.
 
 2. **Arguments are never string-concatenated on this side.**
    Every remote invocation is a list, quoted with `shlex.quote` exactly once, at
@@ -70,16 +74,32 @@ class Probe:
     argv: list[str] = field(default_factory=list)
 
 
-def _exec(argv: list[str], timeout: int) -> Result:
+def _exec(argv: list[str], timeout: int, stdin_text: str | None = None) -> Result:
+    """Run one command, closing stdin — unless `stdin_text` is a credential to feed.
+
+    `stdin_text` is the single, deliberate exception to rule 1 above, and it exists
+    for exactly one caller: `docker login --password-stdin`. The password goes
+    through a pipe, never an argument, so it cannot be read out of the remote host's
+    `ps` output or its shell history. Every other call still gets `/dev/null`.
+    """
     shown = " ".join(shlex.quote(a) for a in argv)
     try:
-        proc = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            stdin=subprocess.DEVNULL,  # rule 1
-        )
+        if stdin_text is None:
+            proc = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                stdin=subprocess.DEVNULL,  # rule 1
+            )
+        else:
+            proc = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                input=stdin_text,
+            )
     except subprocess.TimeoutExpired:
         return Result(shown, returncode=-1, timed_out=True,
                       error=f"timed out after {timeout}s")
@@ -90,7 +110,8 @@ def _exec(argv: list[str], timeout: int) -> Result:
     return Result(shown, proc.returncode, proc.stdout, proc.stderr)
 
 
-def ssh(host: Host, remote_argv: list[str], timeout: int) -> Result:
+def ssh(host: Host, remote_argv: list[str], timeout: int,
+        stdin_text: str | None = None) -> Result:
     """Run one command on `host` over SSH.
 
     `BatchMode=yes` so a missing key fails immediately instead of blocking on a
@@ -107,35 +128,39 @@ def ssh(host: Host, remote_argv: list[str], timeout: int) -> Result:
         f"{host.ssh_user}@{host.address}",
         " ".join(shlex.quote(part) for part in remote_argv),  # rule 2, once
     ]
-    return _exec(argv, timeout)
+    return _exec(argv, timeout, stdin_text)
 
 
-def local(argv: list[str], timeout: int) -> Result:
-    return _exec(argv, timeout)
+def local(argv: list[str], timeout: int, stdin_text: str | None = None) -> Result:
+    return _exec(argv, timeout, stdin_text)
 
 
-def incus(host: Host, args: list[str], timeout: int) -> Result:
+def incus(host: Host, args: list[str], timeout: int,
+          stdin_text: str | None = None) -> Result:
     """An `incus …` command on an incus host."""
-    return ssh(host, ["incus", *args], timeout)
+    return ssh(host, ["incus", *args], timeout, stdin_text)
 
 
-def incus_exec(host: Host, container: str, command: list[str], timeout: int) -> Result:
+def incus_exec(host: Host, container: str, command: list[str], timeout: int,
+               stdin_text: str | None = None) -> Result:
     """Run `command` inside one incus container, as root.
 
     `--` then the command; `incus exec` with no `--` would try to interpret the
     container's argv itself, which silently drops flags it recognises.
     """
-    return ssh(host, ["incus", "exec", container, "--", *command], timeout)
+    return ssh(host, ["incus", "exec", container, "--", *command], timeout, stdin_text)
 
 
-def docker_on_host(host: Host, args: list[str], timeout: int) -> Result:
+def docker_on_host(host: Host, args: list[str], timeout: int,
+                   stdin_text: str | None = None) -> Result:
     """A `docker …` command on a host that runs Docker directly."""
-    return ssh(host, ["docker", *args], timeout)
+    return ssh(host, ["docker", *args], timeout, stdin_text)
 
 
-def docker_in_container(host: Host, container: str, args: list[str], timeout: int) -> Result:
+def docker_in_container(host: Host, container: str, args: list[str], timeout: int,
+                        stdin_text: str | None = None) -> Result:
     """A `docker …` command inside an incus container that runs Docker."""
-    return incus_exec(host, container, ["docker", *args], timeout)
+    return incus_exec(host, container, ["docker", *args], timeout, stdin_text)
 
 
 # ── the probes every scan needs ──────────────────────────────────────────────

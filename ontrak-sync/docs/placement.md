@@ -42,7 +42,7 @@ service itself does not care which address it has: `ONTRAK_API_BIND` and
 |---|---|
 | SSH to each Network host as root (key only, `BatchMode=yes`) | the only way in; there is no agent to install |
 | `incus` on those hosts | to enumerate containers and to run commands inside them |
-| Outbound HTTPS to registries | docker digest comparison; a registry that refuses is reported as unjudged |
+| Outbound HTTPS to registries | docker digest comparison; a registry that refuses is reported as unjudged. A configured `ONTRAK_REGISTRY_CREDENTIALS` is used to `docker login` before a pull, so the pull (and later scans) draw the registry account's allowance rather than the anonymous one |
 | Nothing else | no Docker socket, no privileged mode, no incus binary in the container |
 
 ## Access boundaries

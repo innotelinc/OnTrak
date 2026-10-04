@@ -29,6 +29,18 @@ A finding only becomes `applied` after the applier re-reads the machine and
 confirms the candidate is gone. Trusting the exit code would be cheaper and would
 make the dashboard lie whenever apt exited 0 while dpkg held a package back —
 which it does, routinely, and without failing.
+
+WHY IT LOGS IN TO A REGISTRY
+----------------------------
+Docker Hub answers an anonymous pull out of roughly a hundred requests per six
+hours *per address*, and the Network's own scans spend from that same budget. A
+scan that is careful about it (see `digest_ttl_seconds`) still leaves the pulls
+sharing the anonymous allowance, which is the other half of why an update fails
+with `429 Too Many Requests` even when the digest checks were cheap. So a pull for
+a registry this deployment holds a credential for (`Settings.registry_credentials`)
+is preceded by a `docker login`, and the pull — and every scan after it, because the
+daemon keeps the credential — spends the authenticated budget instead. See
+`_docker_login` for why the password goes over stdin and stays in place.
 """
 
 from __future__ import annotations
@@ -39,7 +51,7 @@ import shlex
 from dataclasses import dataclass, field
 
 from . import db, scanners
-from .config import Host, Settings
+from .config import HUB_REGISTRY, Host, RegistryCredential, Settings, normalize_registry
 from .policy import Policy
 from .remote import Result, docker_in_container, incus_exec, ssh
 
@@ -75,14 +87,17 @@ def _remote(host: Host, container: str | None, argv: list[str], settings: Settin
 
 
 def _docker(host: Host, container: str, args: list[str], settings: Settings,
-            timeout: int | None = None) -> Result:
+            timeout: int | None = None, stdin_text: str | None = None) -> Result:
     """A docker command, on the generic clock unless the caller names another.
 
     Only the pull needs one: a probe answers in seconds or not at all, while an
     image download is bounded by the uplink (see `Settings.pull_timeout`).
+    `stdin_text` exists for one caller — `docker login --password-stdin` — and is
+    threaded to `remote` so the password never becomes an argument.
     """
     return docker_in_container(host, container, args,
-                               settings.command_timeout if timeout is None else timeout)
+                               settings.command_timeout if timeout is None else timeout,
+                               stdin_text)
 
 
 # ── apt ──────────────────────────────────────────────────────────────────────
@@ -264,8 +279,43 @@ def _running_project_services(host: Host, container: str, project: str, settings
     return [line.strip() for line in result.lines() if line.strip()]
 
 
+def _registry_of(ref: str) -> str:
+    """The registry host a docker ref pulls from.
+
+    `ghcr.io/innotelinc/monarch/watchtower` names its registry explicitly;
+    `nickfedor/watchtower` does not, and means Docker Hub. Docker's own rule is that
+    the first path component is a registry only when it contains a dot or a colon, or
+    is `localhost`; anything else is a Hub namespace. Folding every Hub spelling to
+    one string is what lets `Settings.credential_for` find the credential by a single
+    equality.
+    """
+    first, _, rest = ref.partition("/")
+    if rest and ("." in first or ":" in first or first == "localhost"):
+        return normalize_registry(first)
+    return HUB_REGISTRY
+
+
+def _docker_login(host: Host, container: str, registry: str,
+                  credential: RegistryCredential, settings: Settings) -> Result:
+    """`docker login` the host's daemon into `registry` before pulling from it.
+
+    The password goes over **stdin** (`--password-stdin`), never the command line, so
+    it cannot be read out of the remote host's process table or shell history. Docker
+    Hub takes no server argument; every other registry is named.
+
+    The login is left in place afterwards, on purpose. The daemon keeps it in its own
+    config, and that is what lets the *next scan's* digest checks spend the
+    authenticated budget instead of the anonymous one — which is half the point of
+    logging in at all.
+    """
+    args = ["login", "--username", credential.username, "--password-stdin"]
+    if registry != HUB_REGISTRY:
+        args.append(registry)
+    return _docker(host, container, args, settings, stdin_text=credential.password)
+
+
 def _docker_recreate(host: Host, container: str, ref: str, settings: Settings,
-                     outcome: Outcome) -> None:
+                     outcome: Outcome, logged_in: set[tuple[str, str]]) -> None:
     """Pull `ref` and recreate the containers running it, or explain why not.
 
     THE CHECK THAT MATTERS: a compose project is recreated with the compose files
@@ -290,6 +340,22 @@ def _docker_recreate(host: Host, container: str, ref: str, settings: Settings,
     one in particular, because composing a stack's path without it addresses a
     different project and then looks successful from here.
     """
+    # An authenticated pull draws from the account's allowance rather than the
+    # anonymous one the scans already spend, so a credential configured for this
+    # registry is used before the pull. Once per container and registry per run: a
+    # login is itself a registry request, and repeating it would spend the budget the
+    # pull needs.
+    registry = _registry_of(ref)
+    credential = settings.credential_for(registry)
+    if credential is not None and (container, registry) not in logged_in:
+        logged_in.add((container, registry))
+        login = _docker_login(host, container, registry, credential, settings)
+        if not login.ok:
+            # Not fatal on its own — the pull behind it may still succeed on the
+            # anonymous budget — but reported, so a rotated token shows up as itself
+            # instead of only as the 429 it causes.
+            outcome.note(f"docker login to {registry} failed: {login.message}")
+
     # A pull is a download, not a probe: it gets `pull_timeout` for the same reason
     # apt does, because sizing it like a command is what failed the PBX image.
     pulled = _docker(host, container, ["pull", "--quiet", ref], settings,
@@ -402,6 +468,9 @@ def apply_findings(conn, settings: Settings, policy: Policy, *, finding_ids: lis
     totals = {"applied": 0, "failed": 0}
     messages: list[str] = []
     manual: list[str] = []
+    # (container, registry) pairs already logged in during THIS run, so a stack with
+    # several images from one registry logs in once rather than per image.
+    logged_in: set[tuple[str, str]] = set()
 
     for (host_name, target_name), managers in grouped.items():
         host = by_host.get(host_name)
@@ -474,7 +543,8 @@ def apply_findings(conn, settings: Settings, policy: Policy, *, finding_ids: lis
                 continue
             for row in managers["docker"]:
                 image_outcome = Outcome(ok=True)
-                _docker_recreate(host, container, row["package"], settings, image_outcome)
+                _docker_recreate(host, container, row["package"], settings, image_outcome,
+                                 logged_in)
                 if image_outcome.applied:
                     detail = (f"image now {row['candidate']}" if row["candidate"]
                               else "image already current")

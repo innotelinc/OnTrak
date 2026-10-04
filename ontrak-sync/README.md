@@ -22,7 +22,7 @@
 | “0 updates pending” on a fleet where several hosts have been unreachable for a month | An unreachable host is recorded **unreachable** and counted as **Unknown**, shown *next to* the pending count, never underneath it |
 | “No updates” and “I could not look” read identically in every updater | Four distinct answers per target: findings, none, tool-not-installed, could-not-look — only the first two mark a target scanned |
 | An update tool becomes the outage | No `dist-upgrade`, no installs, no removals, no config-file replacement, no blind container recreate — not configurable, because each one is how a patch becomes an incident |
-| The registry budget is shared with every image pull | Digests are cached for `ONTRAK_DIGEST_TTL` (six hours); the comparison is redone every scan, and a failed lookup is never cached |
+| The registry budget is shared with every image pull | Digests are cached for `ONTRAK_DIGEST_TTL` (six hours), and a configured `ONTRAK_REGISTRY_CREDENTIALS` puts every pull on the authenticated budget instead of the anonymous one the scans share |
 | Approval arrives as a shell session nobody can audit | Findings carry a status, the timer is a setting in the database, and applying is an explicit API call — one code path changes a machine |
 
 > **About Ontrak Sync** — Network-wide package and container update *monitoring* and, on
@@ -228,6 +228,14 @@ being re-requested when it has not changed:
 In this Network that took a repeat scan from about 210 s to about 72 s, and the second scan made no
 registry requests at all. A failed lookup is never cached: a rate limit is not a statement about
 the image, and caching one would report a Network as up to date for as long as the row lived.
+
+The pulls are the other half, and thrift on the scanning side does not help them: a pull draws on
+the *same* anonymous allowance, so a Network that checks carefully can still 429 the moment it
+tries to install. `ONTRAK_REGISTRY_CREDENTIALS` closes that: before pulling from a registry it
+holds a credential for, the applier runs `docker login` on the host (the password over stdin, never
+an argument), and the pull — and every scan after it, because the daemon keeps the credential —
+spends the account's budget rather than the anonymous one. Anonymous is still the default: a
+registry with no credential is pulled exactly as before.
 
 ## License
 
