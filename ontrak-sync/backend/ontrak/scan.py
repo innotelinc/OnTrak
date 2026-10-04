@@ -37,9 +37,10 @@ from __future__ import annotations
 import concurrent.futures as futures
 import json
 import logging
+import threading
 from dataclasses import dataclass, field
 
-from . import db, scanners
+from . import db, reconcile, scanners
 from .config import WORKLOAD_KINDS, Host, Settings
 from .policy import Policy
 from .registry import docker_login, registry_of
@@ -419,6 +420,12 @@ def scan_network(conn, settings: Settings, policy: Policy, *, trigger: str = "ma
     db.log(conn, f"scan started ({trigger}) for {len(hosts)} host(s)", run_id=run_id)
 
     reports: list[TargetReport] = []
+    # Host name -> the target names its prune dropped. Collected under a lock
+    # because the hosts are scanned concurrently, and handed to the reconcile
+    # report at the end, which is the only place they are still knowable: the rows
+    # themselves are gone by then.
+    vanished: dict[str, list[str]] = {}
+    vanished_lock = threading.Lock()
 
     def work(host: Host) -> list[TargetReport]:
         def record_reboot() -> None:
@@ -504,6 +511,8 @@ def scan_network(conn, settings: Settings, policy: Policy, *, trigger: str = "ma
                 removed = db.prune_targets(conn, host=host.name, kind="container",
                                            present={name for name, _ in instances})
                 if removed:
+                    with vanished_lock:
+                        vanished[host.name] = removed
                     shown = ", ".join(sorted(removed)[:8])
                     more = "" if len(removed) <= 8 else f" (+{len(removed) - 8} more)"
                     db.log(conn,
@@ -540,6 +549,10 @@ def scan_network(conn, settings: Settings, policy: Policy, *, trigger: str = "ma
     summary = _run_summary(reports)
     db.finish_run(conn, run_id, status=status, findings=total, summary=summary)
     db.log(conn, f"scan finished: {summary}", run_id=run_id)
+    # The reconcile runs inside the scan so the scheduled timer carries it, and so
+    # "what vanished" is reported in the same breath as the scan that discovered it.
+    # It is read-and-record only — it never applies, expires or deletes anything.
+    reconciliation = reconcile.reconcile(conn, settings, vanished=vanished, trigger=trigger)
     conn.commit()
     return {
         "run_id": run_id,
@@ -548,6 +561,7 @@ def scan_network(conn, settings: Settings, policy: Policy, *, trigger: str = "ma
         "findings": total,
         "status": status,
         "summary": summary,
+        "reconcile": reconciliation,
         "hosts": [
             {"host": r.host, "target": r.name, "kind": r.kind, "findings": r.findings,
              "scanned": r.scanned, "managers": r.manager_status, "errors": r.errors}
@@ -556,7 +570,7 @@ def scan_network(conn, settings: Settings, policy: Policy, *, trigger: str = "ma
     }
 
 
-def host_admin_summary(conn) -> dict:
+def host_admin_summary(conn, *, stale_failure_seconds: int | None = None) -> dict:
     """Counts for the dashboard header. `unknown` is first-class, not folded in.
 
     `unknown` answers "we could not look", and it has two sources: a host that did
@@ -595,4 +609,11 @@ def host_admin_summary(conn) -> dict:
     ).fetchone()
     data = dict(row)
     data["unknown"] = int(data["unscanned"]) + max(0, int(data["hosts"]) - int(data["reachable"]))
+    # The header's `failed` is "red right now"; this is "red long enough to be a
+    # decision". Only counted when the caller names a threshold, so a caller that has
+    # no Settings (and the existing tests) sees exactly the row it always did. See
+    # `reconcile.py` for what the number is for.
+    if stale_failure_seconds is not None:
+        data["stale_failures"] = len(
+            db.stale_failures(conn, older_than_seconds=stale_failure_seconds))
     return data

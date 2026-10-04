@@ -326,6 +326,13 @@ class Settings:
     # apply, which authenticates unconditionally. 0 disables the reuse, logging in on
     # every scan as before.
     login_ttl_seconds: int = 7 * 24 * 3600
+    # How long a `failed` finding may sit unresolved before the reconcile report
+    # names it as stale. A failure that survives one apply is a retry — it may be a
+    # slow pull or a transient 429 — but one still red a day or two later is a
+    # *decision* nobody has made: recreate the manual container by hand, or record
+    # that it stays as it is. The report exists so that decision is asked out loud
+    # instead of by a red number nobody can explain. See `reconcile.py`.
+    stale_failure_seconds: int = 48 * 3600
     # The scheduler is in-process (see policy.py for the cron arithmetic and the
     # apply policy). Disabling it leaves the API and the manual scan/apply paths
     # working, which is what you want while debugging a schedule that fires at the
@@ -427,6 +434,7 @@ class Settings:
             pull_timeout=_env_int("ONTRAK_PULL_TIMEOUT", 900),
             registry_credentials=_parse_registry_credentials(_env("ONTRAK_REGISTRY_CREDENTIALS")),
             login_ttl_seconds=_env_int("ONTRAK_LOGIN_TTL", 7 * 24 * 3600),
+            stale_failure_seconds=_env_int("ONTRAK_STALE_FAILURE_HOURS", 48) * 3600,
             scheduler_enabled=_env_bool("ONTRAK_SCHEDULER", True),
             scheduler_tick_seconds=_env_int("ONTRAK_SCHEDULER_TICK", 30),
             default_schedule=_env("ONTRAK_DEFAULT_SCHEDULE", "0 4 * * 0"),

@@ -40,7 +40,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import __version__, db, identity, oidc
+from . import __version__, db, identity, oidc, reconcile
 from .applier import apply_findings, approve_and_apply
 from .config import Settings
 from .policy import Cron, CronError, Policy, describe, next_runs
@@ -688,7 +688,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ── Network ───────────────────────────────────────────────────────────────
     @app.get("/api/summary", dependencies=[requires("sync:view")])
     def summary():
-        return host_admin_summary(conn)
+        return host_admin_summary(conn, stale_failure_seconds=settings.stale_failure_seconds)
 
     @app.get("/api/hosts", dependencies=[requires("sync:view")])
     def hosts():
@@ -730,6 +730,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/runs", dependencies=[requires("sync:view")])
     def runs(limit: int = Query(default=40, le=500)):
         return {"runs": db.list_runs(conn, limit=limit)}
+
+    @app.get("/api/reconcile", dependencies=[requires("sync:view")])
+    def reconcile_report():
+        """What vanished on the last scan, and what is failing long enough to decide.
+
+        Read-only, and safe to call on a dashboard refresh: the stale check is
+        recomputed against the clock, while the vanished names come back from the
+        report the last scan stored. The scan itself records a `reconcile` run when
+        it finds anything, which is what the Runs page shows.
+        """
+        current = reconcile.current(conn, settings)
+        return {**current, "stored": reconcile.stored(conn)}
 
     @app.get("/api/events", dependencies=[requires("sync:view")])
     def events(limit: int = Query(default=200, le=2000)):

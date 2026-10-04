@@ -509,6 +509,37 @@ def expire_findings(conn, target_ids: list[int], seen: set[tuple[int, str, str]]
     return removed
 
 
+def stale_failures(conn, *, older_than_seconds: int, now: float | None = None) -> list[dict]:
+    """Failed findings that have been red for longer than the threshold.
+
+    The clock runs from `first_seen`, which is the honest answer to "how long has
+    this been broken": `last_seen` is refreshed by every scan, so a failure that is
+    happily re-detected each run would never look old, and `failed_at` does not
+    exist (the failure may have been recorded several times). A failure that is
+    still here after the threshold is not a transient retry, and this is the query
+    that lets the reconcile report say so without a person trawling the Findings
+    page — see `reconcile.py`.
+
+    The join to `targets` is not decoration: the report names *where* the failure
+    is, and a manual container on a far host is exactly the case this exists to
+    surface.
+    """
+    moment = time.time() if now is None else now
+    cutoff = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(moment - older_than_seconds))
+    rows = conn.execute(
+        """
+        SELECT f.id, f.manager, f.package, f.current, f.candidate, f.detail,
+               f.first_seen, f.last_seen,
+               t.id AS target_id, t.host, t.kind, t.name AS target
+          FROM findings f JOIN targets t ON t.id = f.target_id
+         WHERE f.status='failed' AND f.first_seen <= ?
+         ORDER BY f.first_seen, t.host, t.name
+        """,
+        (cutoff,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def set_status(conn, finding_ids: list[int], status: str, detail: str | None = None) -> int:
     if not finding_ids:
         return 0

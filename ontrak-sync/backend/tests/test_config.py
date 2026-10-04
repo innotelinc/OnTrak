@@ -274,6 +274,15 @@ class Defaults(unittest.TestCase):
         with mock.patch.dict(os.environ, {"ONTRAK_PULL_TIMEOUT": "2400"}):
             self.assertEqual(2400, Settings.from_env().pull_timeout)
 
+    def test_a_failure_is_stale_after_the_configured_number_of_hours(self):
+        # The reconcile report's clock, and the one place its unit is decided: the
+        # variable is in hours (what an operator thinks in), the setting is seconds
+        # (what the query needs), and the default is two days.
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(48 * 3600, Settings.from_env().stale_failure_seconds)
+        with mock.patch.dict(os.environ, {"ONTRAK_STALE_FAILURE_HOURS": "6"}):
+            self.assertEqual(6 * 3600, Settings.from_env().stale_failure_seconds)
+
 
 class FirstPolicy(unittest.TestCase):
     """Seeding the policy that exists before the form has ever been saved."""

@@ -722,6 +722,21 @@ class VanishedTargets(ScanCase):
         self.scan()
         self.assertIn("ghost", self.target_names())
 
+    def test_the_scan_report_names_what_vanished(self):
+        # The prune deletes the rows, so the names only survive in the run's own
+        # reconcile block — this is the assertion that they reach it.
+        db.ensure_target(self.conn, host="i1", kind="container", name="ghost")
+        result = self.scan()
+        self.assertIn("ghost", result["reconcile"]["vanished"]["i1"])
+
+    def test_a_quiet_scan_records_no_reconcile_run(self):
+        # The report is a signal, not a heartbeat: nothing wrong means no row on the
+        # Runs page.
+        self.scan()
+        rows = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM runs WHERE kind='reconcile'").fetchone()["n"]
+        self.assertEqual(0, rows)
+
 
 class ScanBookkeeping(ScanCase):
     def test_the_run_is_recorded_in_the_runs_table(self):
