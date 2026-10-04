@@ -238,6 +238,25 @@ export async function portAnswers(port: number, timeoutMs = 1_500): Promise<bool
   });
 }
 
+/**
+ * Wait for a port to stop answering, so the next start can take it back.
+ *
+ * `stopPreview` signals the group and waits a moment, but the OS does not have to
+ * have released the socket by the time it returns — a listening server closes
+ * asynchronously, and a just-killed one can still accept for a beat. Probing
+ * immediately then reports the port as taken and the restart lands on a *new*
+ * one, which is exactly the "the replacement took the same port back" promise the
+ * preview makes. Bounded, because a port somebody else owns should be left alone
+ * rather than waited on.
+ */
+async function waitForPortFree(port: number, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await portAnswers(port, 150))) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 /** A free port, preferring the configured one so a project's usual URL keeps working. */
 export async function findFreePort(preferred: number): Promise<number> {
   const free = async (port: number): Promise<boolean> =>
@@ -399,15 +418,19 @@ export async function startPreview(options: {
   }
 
   // Replace, never accumulate: a second server on one tree is a race over the
-  // same files, and the operator asked for "the app", singular.
+  // same files, and the operator asked for "the app", singular. The port the
+  // outgoing preview held is remembered so the replacement can take it back
+  // rather than landing somewhere new on every restart.
+  const previous = previewPort();
   await stopPreview();
+  if (previous !== null) await waitForPortFree(previous);
 
   // The detection's own directory is relative to the one it searched, so a static
   // site found inside a chosen directory has to carry that directory with it.
   const detectedCwd = suggestion === null || suggestion.cwd === "." ? "" : suggestion.cwd;
   const runCwd = [relCwd, detectedCwd].filter((part) => part !== "").join("/") || ".";
   const absCwd = resolveInWorkspace(runCwd);
-  const port = await findFreePort(options.port ?? config.previewPort);
+  const port = await findFreePort(options.port ?? previous ?? config.previewPort);
 
   // What is already listening, before this start. Only a port that was silent
   // and then answers can be this command's — a port that answered all along
