@@ -24,7 +24,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ontrak import applier, db  # noqa: E402
+from ontrak import applier, db, registry  # noqa: E402
 from ontrak.config import Host, RegistryCredential, Settings  # noqa: E402
 from ontrak.policy import Policy  # noqa: E402
 from ontrak.remote import Result  # noqa: E402
@@ -179,6 +179,9 @@ class ApplierCase(unittest.TestCase):
         self.host = Host("i1", "192.168.1.51", "both")
         self.settings = Settings(hosts=(self.host,))
         self.policy = Policy(mode="auto")
+        # `registry.docker_login` is what the applier now calls for a login, and it
+        # reaches the transport through its own module, so it is patched alongside
+        # `applier` — patching only the latter would let a real `docker login` run.
         patcher = mock.patch.multiple(
             applier,
             ssh=self.fake.ssh,
@@ -187,6 +190,12 @@ class ApplierCase(unittest.TestCase):
         )
         patcher.start()
         self.addCleanup(patcher.stop)
+        reg_patcher = mock.patch.multiple(
+            registry,
+            docker_in_container=self.fake.docker_in_container,
+        )
+        reg_patcher.start()
+        self.addCleanup(reg_patcher.stop)
 
     def finding(self, manager="apt", package="nginx", target="monarch", status="approved"):
         target_id = db.ensure_target(self.conn, host="i1",

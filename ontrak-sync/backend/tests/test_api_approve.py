@@ -42,7 +42,7 @@ except ImportError as exc:  # pragma: no cover — the CI runner has no FastAPI
         f"backend image has (see requirements.txt) — skipping ({exc})"
     )
 
-from ontrak import api, applier, db, identity  # noqa: E402
+from ontrak import api, applier, db, identity, registry  # noqa: E402
 from ontrak.config import Host, Settings  # noqa: E402
 from test_applier import FakeRemote  # noqa: E402
 
@@ -138,6 +138,14 @@ class ApproveApiCase(unittest.TestCase):
         )
         patcher.start()
         self.addCleanup(patcher.stop)
+        # A login goes through `registry`, which holds its own transport reference,
+        # so it is doubled too (see the same note in test_applier).
+        reg_patcher = mock.patch.multiple(
+            registry,
+            docker_in_container=self.fake.docker_in_container,
+        )
+        reg_patcher.start()
+        self.addCleanup(reg_patcher.stop)
 
     def finding(self, package: str = "nginx", status: str = "pending") -> int:
         target_id = db.ensure_target(self.conn, host="i1", kind="container", name="monarch")

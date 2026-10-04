@@ -51,8 +51,9 @@ import shlex
 from dataclasses import dataclass, field
 
 from . import db, scanners
-from .config import HUB_REGISTRY, Host, RegistryCredential, Settings, normalize_registry
+from .config import Host, Settings
 from .policy import Policy
+from .registry import docker_login as _docker_login, registry_of as _registry_of
 from .remote import Result, docker_in_container, incus_exec, ssh
 
 log = logging.getLogger("ontrak.apply")
@@ -87,17 +88,16 @@ def _remote(host: Host, container: str | None, argv: list[str], settings: Settin
 
 
 def _docker(host: Host, container: str, args: list[str], settings: Settings,
-            timeout: int | None = None, stdin_text: str | None = None) -> Result:
+            timeout: int | None = None) -> Result:
     """A docker command, on the generic clock unless the caller names another.
 
     Only the pull needs one: a probe answers in seconds or not at all, while an
-    image download is bounded by the uplink (see `Settings.pull_timeout`).
-    `stdin_text` exists for one caller — `docker login --password-stdin` — and is
-    threaded to `remote` so the password never becomes an argument.
+    image download is bounded by the uplink (see `Settings.pull_timeout`). The
+    login that goes over stdin lives in `registry.docker_login`, next to the rule
+    that decides which registry it applies to.
     """
     return docker_in_container(host, container, args,
-                               settings.command_timeout if timeout is None else timeout,
-                               stdin_text)
+                               settings.command_timeout if timeout is None else timeout)
 
 
 # ── apt ──────────────────────────────────────────────────────────────────────
@@ -277,41 +277,6 @@ def _running_project_services(host: Host, container: str, project: str, settings
         settings,
     )
     return [line.strip() for line in result.lines() if line.strip()]
-
-
-def _registry_of(ref: str) -> str:
-    """The registry host a docker ref pulls from.
-
-    `ghcr.io/innotelinc/monarch/watchtower` names its registry explicitly;
-    `nickfedor/watchtower` does not, and means Docker Hub. Docker's own rule is that
-    the first path component is a registry only when it contains a dot or a colon, or
-    is `localhost`; anything else is a Hub namespace. Folding every Hub spelling to
-    one string is what lets `Settings.credential_for` find the credential by a single
-    equality.
-    """
-    first, _, rest = ref.partition("/")
-    if rest and ("." in first or ":" in first or first == "localhost"):
-        return normalize_registry(first)
-    return HUB_REGISTRY
-
-
-def _docker_login(host: Host, container: str, registry: str,
-                  credential: RegistryCredential, settings: Settings) -> Result:
-    """`docker login` the host's daemon into `registry` before pulling from it.
-
-    The password goes over **stdin** (`--password-stdin`), never the command line, so
-    it cannot be read out of the remote host's process table or shell history. Docker
-    Hub takes no server argument; every other registry is named.
-
-    The login is left in place afterwards, on purpose. The daemon keeps it in its own
-    config, and that is what lets the *next scan's* digest checks spend the
-    authenticated budget instead of the anonymous one — which is half the point of
-    logging in at all.
-    """
-    args = ["login", "--username", credential.username, "--password-stdin"]
-    if registry != HUB_REGISTRY:
-        args.append(registry)
-    return _docker(host, container, args, settings, stdin_text=credential.password)
 
 
 def _docker_recreate(host: Host, container: str, ref: str, settings: Settings,

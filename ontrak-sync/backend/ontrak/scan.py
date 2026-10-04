@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from . import db, scanners
 from .config import WORKLOAD_KINDS, Host, Settings
 from .policy import Policy
+from .registry import docker_login, registry_of
 from .remote import Result, docker_in_container, incus, incus_exec, reboot_probe, ssh
 
 log = logging.getLogger("ontrak.scan")
@@ -212,6 +213,14 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
     Both matter because the budget for asking Docker Hub anonymously is about a
     hundred requests per six hours, shared with every image pull in the Network: a
     scan that spends it makes the *updates* fail.
+
+    AND WHEN IT IS ASKED, IT IS ASKED AUTHENTICATED. A deployment that holds a
+    credential for the ref's registry (`Settings.registry_credentials`) logs in
+    before the first digest request of the run, so this scan spends the account's
+    allowance rather than the anonymous one the pulls are competing for. The login
+    is per container and registry and only happens when a request is actually
+    about to be made — a scan answered entirely from the digest cache logs in not
+    at all.
     """
     if container is None:
         # Docker runs inside the incus containers here, not on the bare hosts.
@@ -240,6 +249,10 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
 
     seen: set[tuple[str, str]] = set()
     unjudged = 0
+    # (container, registry) pairs already logged in during this call. The daemon
+    # keeps the credential, so one login covers every later request on the same
+    # host and target; doing it per request would spend the budget the request needs.
+    logged_in: set[tuple[str, str]] = set()
     for row in images:
         repo = str(row.get("Repository") or "")
         tag = str(row.get("Tag") or "")
@@ -259,6 +272,19 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
             continue
         remote_digest = db.get_digest(conn, ref, ttl_seconds=settings.digest_ttl_seconds)
         if remote_digest is None:
+            # Authenticate before the registry is asked, if this deployment holds a
+            # credential for it, so the request is answered from the account's
+            # allowance instead of the anonymous budget the pulls share. A failure
+            # is not fatal — the manifest is still attempted, because an
+            # unauthenticated read may yet succeed — but it is reported, so a
+            # rotated token shows up as itself.
+            registry = registry_of(ref)
+            credential = settings.credential_for(registry)
+            if credential is not None and (container, registry) not in logged_in:
+                logged_in.add((container, registry))
+                login = docker_login(host, container, registry, credential, settings)
+                if not login.ok:
+                    report.errors.append(f"docker login to {registry} failed: {login.message}")
             manifest = docker_in_container(
                 host, container, ["manifest", "inspect", "--verbose", ref], settings.command_timeout
             )

@@ -33,8 +33,8 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ontrak import config, db, scan, scanners  # noqa: E402
-from ontrak.config import Host, Settings  # noqa: E402
+from ontrak import config, db, registry, scan, scanners  # noqa: E402
+from ontrak.config import Host, RegistryCredential, Settings  # noqa: E402
 from ontrak.policy import Policy  # noqa: E402
 from ontrak.remote import Result  # noqa: E402
 
@@ -91,6 +91,8 @@ class FakeNetwork:
         self.images: dict[str, list[dict]] = {}
         self.manifests: dict[str, tuple[bool, str]] = {}
         self.calls: list[tuple] = []
+        self.logins: list[dict] = []
+        self.login_rc = 0
 
     def _pkg(self, container, command: str) -> Result:
         if "apt-get -s" in command or "apt list --upgradable" in command:
@@ -139,8 +141,14 @@ class FakeNetwork:
             return self.docker_in_container(host, container, command.split()[1:], timeout)
         return self._pkg(container, command)
 
-    def docker_in_container(self, host, container, args, timeout):
+    def docker_in_container(self, host, container, args, timeout, stdin_text=None):
         self.calls.append(("docker", host.name, container, tuple(args)))
+        if args and args[0] == "login":
+            self.logins.append({"container": container, "args": tuple(args),
+                                "stdin": stdin_text})
+            return Result("docker login", self.login_rc, "",
+                          "" if self.login_rc == 0
+                          else "unauthorized: incorrect username or password")
         has_docker = container in self.images
         if args and args[0] == "image" and len(args) > 1 and args[1] == "ls":
             if not has_docker:
@@ -172,6 +180,14 @@ class ScanCase(unittest.TestCase):
         )
         patcher.start()
         self.addCleanup(patcher.stop)
+        # A scan-time login runs through `registry`, which holds its own transport
+        # reference, so the fake is installed there too.
+        reg_patcher = mock.patch.multiple(
+            registry,
+            docker_in_container=self.fake.docker_in_container,
+        )
+        reg_patcher.start()
+        self.addCleanup(reg_patcher.stop)
 
     def scan(self, **kwargs):
         return scan.scan_network(self.conn, self.settings, self.policy, **kwargs)
@@ -533,6 +549,112 @@ class DockerScan(ScanCase):
         self.with_images({"Repository": "redis", "Tag": "7.4", "Digest": remote})
         self.scan()
         self.assertEqual({}, self.findings())
+
+
+class DockerScanLogin(ScanCase):
+    """The scan authenticates before it spends Docker Hub's anonymous budget.
+
+    A pull is not the only thing that draws on that budget. The digest checks this
+    scan makes draw on the same per-address allowance, and on a host that has never
+    had an update applied there is no login for them to inherit — so the scan logs
+    in itself, once, right before the first request it is about to make. These cases
+    pin that it happens only when a credential applies, only when a request is
+    actually needed, and never more than once per registry.
+    """
+
+    def with_credential(self, registry="docker.io", user="innotel",
+                        password="dckr_pat_secret"):
+        self.settings = Settings(
+            hosts=(Host("i1", "192.168.1.51", "both"),),
+            registry_credentials=(RegistryCredential(registry, user, password),),
+        )
+
+    def with_image(self, repository="redis", tag="7.4", digest="sha256:olddigest0000000"):
+        self.fake.images["monarch"] = [
+            {"Repository": repository, "Tag": tag, "Digest": digest}
+        ]
+
+    def login_calls(self) -> int:
+        return len(self.fake.logins)
+
+    def test_a_scan_logs_in_before_asking_the_registry(self):
+        self.with_credential()
+        self.with_image()
+        self.fake.manifests["redis:7.4"] = (
+            True, json.dumps({"Descriptor": {"digest": "sha256:newdigest0000000"}}))
+        self.scan()
+        self.assertEqual(1, self.login_calls())
+        login = self.fake.logins[0]
+        # Docker Hub takes no server argument, and the secret is the stdin payload.
+        self.assertEqual(("login", "--username", "innotel", "--password-stdin"),
+                         login["args"])
+        self.assertEqual("dckr_pat_secret", login["stdin"])
+        self.assertNotIn("dckr_pat_secret", " ".join(login["args"]))
+        # And it runs BEFORE the manifest request it is meant to authorise.
+        calls = self.fake.calls
+        login_at = next(i for i, c in enumerate(calls)
+                        if c[0] == "docker" and c[3][:1] == ("login",))
+        manifest_at = next(i for i, c in enumerate(calls)
+                           if c[0] == "docker" and c[3][:1] == ("manifest",))
+        self.assertLess(login_at, manifest_at)
+
+    def test_a_non_hub_registry_names_itself_on_the_login(self):
+        self.with_credential(registry="ghcr.io")
+        self.with_image(repository="ghcr.io/innotelinc/monarch/watchtower", tag="latest")
+        self.fake.manifests["ghcr.io/innotelinc/monarch/watchtower:latest"] = (
+            True, json.dumps({"Descriptor": {"digest": "sha256:newdigest0000000"}}))
+        self.scan()
+        self.assertEqual(("login", "--username", "innotel", "--password-stdin", "ghcr.io"),
+                         self.fake.logins[0]["args"])
+
+    def test_without_a_credential_the_registry_is_asked_anonymously(self):
+        self.with_image()
+        self.fake.manifests["redis:7.4"] = (
+            True, json.dumps({"Descriptor": {"digest": "sha256:newdigest0000000"}}))
+        self.scan()
+        self.assertEqual(0, self.login_calls())
+
+    def test_the_login_happens_once_per_registry_not_per_image(self):
+        self.with_credential()
+        self.fake.images["monarch"] = [
+            {"Repository": "redis", "Tag": "7.4", "Digest": "sha256:olddigest0000000"},
+            {"Repository": "nickfedor/watchtower", "Tag": "latest", "Digest": "sha256:olddigest1111111"},
+        ]
+        self.fake.manifests["redis:7.4"] = (
+            True, json.dumps({"Descriptor": {"digest": "sha256:newdigest0000000"}}))
+        self.fake.manifests["nickfedor/watchtower:latest"] = (
+            True, json.dumps({"Descriptor": {"digest": "sha256:newdigest1111111"}}))
+        self.scan()
+        self.assertEqual(2, self.manifest_calls())
+        self.assertEqual(1, self.login_calls())
+
+    def test_a_scan_answered_from_the_cache_does_not_log_in(self):
+        # Logging in is itself a request. When every digest is cached there is
+        # nothing to authenticate, so the second scan of a stable target makes no
+        # registry call at all — login included.
+        self.with_credential()
+        self.with_image()
+        self.fake.manifests["redis:7.4"] = (
+            True, json.dumps({"Descriptor": {"digest": "sha256:newdigest0000000"}}))
+        self.scan()
+        self.assertEqual(1, self.login_calls())
+        self.fake.logins = []
+        self.scan()
+        self.assertEqual(0, self.login_calls())
+        self.assertEqual(1, self.manifest_calls())
+
+    def test_a_failed_login_still_asks_the_registry_and_says_so(self):
+        # A rotated token is not a reason to skip the check: the manifest is still
+        # attempted, and the refusal is recorded rather than only implied by a 429.
+        self.with_credential()
+        self.fake.login_rc = 1
+        self.with_image()
+        self.fake.manifests["redis:7.4"] = (
+            True, json.dumps({"Descriptor": {"digest": "sha256:newdigest0000000"}}))
+        result = self.scan()
+        self.assertEqual(1, self.manifest_calls())
+        host = self.report(result, "monarch")
+        self.assertTrue(any("login to docker.io failed" in e for e in host["errors"]))
 
 
 class ScanBookkeeping(ScanCase):
