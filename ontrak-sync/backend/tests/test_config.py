@@ -192,6 +192,17 @@ class RegistryCredentials(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertEqual((), Settings.from_env().registry_credentials)
 
+    def test_the_login_reuse_ttl_defaults_to_a_week(self):
+        # The daemon keeps the credential, so the default is long enough to skip the
+        # scheduled scans yet short enough to pick up a rotated token soon after the
+        # next apply — which authenticates unconditionally.
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(7 * 24 * 3600, Settings.from_env().login_ttl_seconds)
+
+    def test_the_login_reuse_ttl_is_read_from_the_environment(self):
+        with mock.patch.dict(os.environ, {"ONTRAK_LOGIN_TTL": "3600"}):
+            self.assertEqual(3600, Settings.from_env().login_ttl_seconds)
+
 
 class SetupScript(unittest.TestCase):
     """`scripts/setup.sh` must authorise the key on exactly the hosts config scans.

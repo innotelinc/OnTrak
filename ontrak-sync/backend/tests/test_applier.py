@@ -676,6 +676,18 @@ class DockerRegistryLogin(ApplierCase):
         self.assertEqual(1, len(self.fake.logins))
         self.assertEqual("login", self.fake.logins[0]["args"][0])
 
+    def test_a_successful_login_is_remembered_for_the_scans_to_reuse(self):
+        # The credential lives in the daemon's own config, so once the apply has
+        # authenticated, a scan within the TTL can skip the login — one request
+        # instead of one per scan. See `db.registry_login_is_fresh`.
+        self.with_credential()
+        self.fake.containers = []
+        self.finding(manager="docker", package=self.IMAGE)
+        self.apply()
+        self.assertTrue(db.registry_login_is_fresh(
+            self.conn, host="i1", container="monarch", registry="docker.io",
+            ttl_seconds=self.settings.login_ttl_seconds))
+
     def test_a_registry_with_no_credential_is_pulled_anonymously(self):
         self.fake.containers = []
         self.finding(manager="docker", package="ghcr.io/innotelinc/monarch/watchtower:latest")

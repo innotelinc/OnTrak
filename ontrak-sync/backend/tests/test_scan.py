@@ -656,6 +656,72 @@ class DockerScanLogin(ScanCase):
         host = self.report(result, "monarch")
         self.assertTrue(any("login to docker.io failed" in e for e in host["errors"]))
 
+    def test_a_recent_login_is_reused_instead_of_repeated(self):
+        # The daemon keeps the credential, so a scan within the TTL must not spend a
+        # request re-establishing it — that is the whole point of the record.
+        self.with_credential()
+        self.with_image()
+        self.fake.manifests["redis:7.4"] = (
+            True, json.dumps({"Descriptor": {"digest": "sha256:newdigest0000000"}}))
+        db.record_registry_login(self.conn, host="i1", container="monarch",
+                                 registry="docker.io")
+        self.scan()
+        self.assertEqual(1, self.manifest_calls())
+        self.assertEqual(0, self.login_calls())
+
+    def test_a_successful_login_is_remembered_for_the_next_scan(self):
+        self.with_credential()
+        self.with_image()
+        self.fake.manifests["redis:7.4"] = (
+            True, json.dumps({"Descriptor": {"digest": "sha256:newdigest0000000"}}))
+        self.scan()
+        self.assertEqual(1, self.login_calls())
+        self.assertTrue(db.registry_login_is_fresh(
+            self.conn, host="i1", container="monarch", registry="docker.io",
+            ttl_seconds=self.settings.login_ttl_seconds))
+
+
+class VanishedTargets(ScanCase):
+    """Containers that are gone do not leave findings behind.
+
+    A scan only visits what `incus list` reports, so a removed container's target
+    and findings would sit red forever — unapplicable and unexpirable. The cleanup
+    must be conservative in the other direction too: a stopped instance is still in
+    the listing and must be kept, and a listing that failed must prune nothing,
+    because "I could not ask" is not "it is gone".
+    """
+
+    def target_names(self, host="i1"):
+        return {row["name"] for row in self.conn.execute(
+            "SELECT name FROM targets WHERE host=?", (host,)).fetchall()}
+
+    def test_a_removed_container_is_dropped_with_its_findings(self):
+        ghost = db.ensure_target(self.conn, host="i1", kind="container", name="ghost")
+        db.record_finding(self.conn, target_id=ghost, manager="docker",
+                          package="redis:7.4", current="sha256:a", candidate="sha256:b")
+        self.scan()
+        names = self.target_names()
+        self.assertNotIn("ghost", names)
+        self.assertIn("monarch", names)
+        left = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM findings WHERE package='redis:7.4'").fetchone()["n"]
+        self.assertEqual(0, left)
+
+    def test_a_stopped_instance_is_kept(self):
+        # Out of service is not the same as gone: it is still in the listing.
+        self.fake.containers = ["monarch", "mail"]
+        self.fake.states["mail"] = "STOPPED"
+        db.ensure_target(self.conn, host="i1", kind="container", name="mail")
+        self.scan()
+        self.assertIn("mail", self.target_names())
+
+    def test_a_failed_container_listing_prunes_nothing(self):
+        # We could not ask what runs there, so nothing may be assumed removed.
+        self.fake.incus_list_ok = False
+        db.ensure_target(self.conn, host="i1", kind="container", name="ghost")
+        self.scan()
+        self.assertIn("ghost", self.target_names())
+
 
 class ScanBookkeeping(ScanCase):
     def test_the_run_is_recorded_in_the_runs_table(self):

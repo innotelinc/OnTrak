@@ -318,6 +318,14 @@ class Settings:
     # reference resolved by the image's entrypoint before this process starts. Empty
     # means anonymous, exactly as before.
     registry_credentials: tuple[RegistryCredential, ...] = ()
+    # How long a `docker login` already made on a host is trusted before a *scan*
+    # repeats it. The daemon keeps the credential in its own config until a logout or
+    # a reset, so authenticating on every scan is a request spent re-establishing
+    # something that is still there — see `db.registry_login_is_fresh`. A week skips
+    # the scheduled scans while still picking up a rotated token soon after the next
+    # apply, which authenticates unconditionally. 0 disables the reuse, logging in on
+    # every scan as before.
+    login_ttl_seconds: int = 7 * 24 * 3600
     # The scheduler is in-process (see policy.py for the cron arithmetic and the
     # apply policy). Disabling it leaves the API and the manual scan/apply paths
     # working, which is what you want while debugging a schedule that fires at the
@@ -418,6 +426,7 @@ class Settings:
             apt_timeout=_env_int("ONTRAK_APT_TIMEOUT", 900),
             pull_timeout=_env_int("ONTRAK_PULL_TIMEOUT", 900),
             registry_credentials=_parse_registry_credentials(_env("ONTRAK_REGISTRY_CREDENTIALS")),
+            login_ttl_seconds=_env_int("ONTRAK_LOGIN_TTL", 7 * 24 * 3600),
             scheduler_enabled=_env_bool("ONTRAK_SCHEDULER", True),
             scheduler_tick_seconds=_env_int("ONTRAK_SCHEDULER_TICK", 30),
             default_schedule=_env("ONTRAK_DEFAULT_SCHEDULE", "0 4 * * 0"),

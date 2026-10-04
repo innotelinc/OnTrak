@@ -221,6 +221,13 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
     is per container and registry and only happens when a request is actually
     about to be made — a scan answered entirely from the digest cache logs in not
     at all.
+
+    AND ONLY WHEN THE DAEMON IS NOT ALREADY AUTHENTICATED. A login is itself a
+    request the registry counts, and the daemon keeps the credential in its own
+    config, so a scan within `Settings.login_ttl_seconds` of the last one skips it
+    (`db.registry_login_is_fresh`). The pull path authenticates unconditionally, so
+    a rotated token is still caught where it matters and this side only inherits the
+    result.
     """
     if container is None:
         # Docker runs inside the incus containers here, not on the bare hosts.
@@ -277,14 +284,22 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
             # allowance instead of the anonymous budget the pulls share. A failure
             # is not fatal — the manifest is still attempted, because an
             # unauthenticated read may yet succeed — but it is reported, so a
-            # rotated token shows up as itself.
+            # rotated token shows up as itself. Skipped when the daemon was logged
+            # into recently, because the credential is still in place and the login
+            # is itself a request the registry counts.
             registry = registry_of(ref)
             credential = settings.credential_for(registry)
             if credential is not None and (container, registry) not in logged_in:
                 logged_in.add((container, registry))
-                login = docker_login(host, container, registry, credential, settings)
-                if not login.ok:
-                    report.errors.append(f"docker login to {registry} failed: {login.message}")
+                if not db.registry_login_is_fresh(
+                        conn, host=host.name, container=container, registry=registry,
+                        ttl_seconds=settings.login_ttl_seconds):
+                    login = docker_login(host, container, registry, credential, settings)
+                    if login.ok:
+                        db.record_registry_login(
+                            conn, host=host.name, container=container, registry=registry)
+                    else:
+                        report.errors.append(f"docker login to {registry} failed: {login.message}")
             manifest = docker_in_container(
                 host, container, ["manifest", "inspect", "--verbose", ref], settings.command_timeout
             )
@@ -478,6 +493,22 @@ def scan_network(conn, settings: Settings, policy: Policy, *, trigger: str = "ma
             record_reboot()
             db.log(conn, f"{host.name} up: {os_name.strip()} ({len(instances)} container(s))",
                    run_id=run_id)
+
+            # A container the list no longer names has been removed, and its findings
+            # can never be re-detected, applied or expired — so they would sit red for
+            # a machine that is not there, and the host would keep counting it. Only
+            # done with a real listing in hand: a failed `incus list` returned above,
+            # so reaching here means the list is authoritative and a missing name
+            # really was removed rather than merely unasked.
+            if host.kind in WORKLOAD_KINDS:
+                removed = db.prune_targets(conn, host=host.name, kind="container",
+                                           present={name for name, _ in instances})
+                if removed:
+                    shown = ", ".join(sorted(removed)[:8])
+                    more = "" if len(removed) <= 8 else f" (+{len(removed) - 8} more)"
+                    db.log(conn,
+                           f"{host.name}: dropped {len(removed)} target(s) no longer "
+                           f"present: {shown}{more}", level="warning", run_id=run_id)
 
             out = [scan_target(conn, host=host, name=host.name, kind="host", container=None,
                                settings=settings, policy=policy)]

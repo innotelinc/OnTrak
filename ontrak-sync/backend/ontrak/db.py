@@ -219,6 +219,22 @@ CREATE TABLE IF NOT EXISTS digests (
     digest     TEXT NOT NULL,
     checked_at INTEGER NOT NULL
 );
+
+-- A `docker login` already made on a host's Docker daemon. The login is itself a
+-- request against the registry, and the daemon keeps the credential in its own
+-- config until a logout or a reset — so re-authenticating on every scan spends a
+-- request to re-establish something that is still in place. This remembers when it
+-- was last done, so a scan can skip it until the record is old (see
+-- `registry_login_is_fresh`). Keyed per container because each incus container runs
+-- its own daemon, and like `digests` the timestamp is epoch seconds because the only
+-- question asked of it is an age comparison.
+CREATE TABLE IF NOT EXISTS registry_logins (
+    host         TEXT NOT NULL,
+    container    TEXT NOT NULL,
+    registry     TEXT NOT NULL,
+    logged_in_at INTEGER NOT NULL,
+    PRIMARY KEY (host, container, registry)
+);
 """
 
 
@@ -354,6 +370,32 @@ def ensure_target(conn, *, host, kind, name, ref=None, meta=None) -> int:
         "SELECT id FROM targets WHERE host=? AND kind=? AND name=?", (host, kind, name)
     ).fetchone()
     return int(row["id"])
+
+
+def prune_targets(conn, *, host: str, kind: str, present: set[str]) -> list[str]:
+    """Delete `kind` targets on `host` whose name is not in `present`.
+
+    A container that has been removed leaves a target row — and its findings —
+    behind forever, because a scan only ever visits what `incus list` still reports.
+    Those findings can never be re-detected, applied or expired, so they sit red for
+    a machine that is not there: the dashboard counts a host that no longer exists
+    as one that is out of date. This drops them and returns the names removed, for
+    the run log.
+
+    Findings are deleted explicitly rather than left to `ON DELETE CASCADE`, so the
+    cleanup does not depend on the connection having foreign keys enabled.
+    """
+    rows = conn.execute(
+        "SELECT id, name FROM targets WHERE host=? AND kind=?", (host, kind)
+    ).fetchall()
+    removed: list[str] = []
+    for row in rows:
+        if row["name"] in present:
+            continue
+        conn.execute("DELETE FROM findings WHERE target_id=?", (row["id"],))
+        conn.execute("DELETE FROM targets WHERE id=?", (row["id"],))
+        removed.append(row["name"])
+    return removed
 
 
 def touch_target(conn, target_id: int, *, error: str | None = None,
@@ -576,6 +618,50 @@ def set_digest(conn, key: str, digest: str, *, now: float | None = None) -> None
         ON CONFLICT(key) DO UPDATE SET digest=excluded.digest, checked_at=excluded.checked_at
         """,
         (key, digest, time.time() if now is None else now),
+    )
+
+
+# ── the registry-login record ────────────────────────────────────────────────
+# WHY THIS EXISTS. Authenticating a registry is the other half of not sharing
+# Docker Hub's anonymous budget (see `digests` above for the cache half). But a
+# login is *itself* a request against the registry, and the daemon keeps the
+# credential in its own config — so a scan that logs in on every pass spends a
+# request to establish what is already established. This records when each
+# (host, container, registry) was last logged into, and the scan skips the login
+# while that record is fresh. The apply path authenticates unconditionally, so a
+# rotated token is still caught the moment a pull needs it, and its success is
+# recorded here for the scans that follow.
+def registry_login_is_fresh(conn, *, host: str, container: str, registry: str,
+                            ttl_seconds: int, now: float | None = None) -> bool:
+    """True when this (host, container, registry) was logged into within the TTL.
+
+    A TTL of 0 (or less) means "never fresh", which restores the old behaviour of
+    logging in on every scan — the same off switch `get_digest` has.
+    """
+    if ttl_seconds <= 0:
+        return False
+    row = conn.execute(
+        "SELECT logged_in_at FROM registry_logins"
+        " WHERE host=? AND container=? AND registry=?",
+        (host, container, registry),
+    ).fetchone()
+    if row is None:
+        return False
+    moment = time.time() if now is None else now
+    return moment - row["logged_in_at"] <= ttl_seconds
+
+
+def record_registry_login(conn, *, host: str, container: str, registry: str,
+                          now: float | None = None) -> None:
+    """Note that this (host, container, registry) is authenticated as of now."""
+    conn.execute(
+        """
+        INSERT INTO registry_logins (host, container, registry, logged_in_at)
+        VALUES (?,?,?,?)
+        ON CONFLICT(host, container, registry)
+        DO UPDATE SET logged_in_at=excluded.logged_in_at
+        """,
+        (host, container, registry, time.time() if now is None else now),
     )
 
 

@@ -279,7 +279,7 @@ def _running_project_services(host: Host, container: str, project: str, settings
     return [line.strip() for line in result.lines() if line.strip()]
 
 
-def _docker_recreate(host: Host, container: str, ref: str, settings: Settings,
+def _docker_recreate(conn, host: Host, container: str, ref: str, settings: Settings,
                      outcome: Outcome, logged_in: set[tuple[str, str]]) -> None:
     """Pull `ref` and recreate the containers running it, or explain why not.
 
@@ -315,7 +315,13 @@ def _docker_recreate(host: Host, container: str, ref: str, settings: Settings,
     if credential is not None and (container, registry) not in logged_in:
         logged_in.add((container, registry))
         login = _docker_login(host, container, registry, credential, settings)
-        if not login.ok:
+        if login.ok:
+            # Leave a note for the scans that follow: the daemon keeps the credential,
+            # so a scan within the TTL can skip the login rather than spend a request
+            # re-establishing it (`db.registry_login_is_fresh`).
+            db.record_registry_login(conn, host=host.name, container=container,
+                                     registry=registry)
+        else:
             # Not fatal on its own — the pull behind it may still succeed on the
             # anonymous budget — but reported, so a rotated token shows up as itself
             # instead of only as the 429 it causes.
@@ -508,8 +514,8 @@ def apply_findings(conn, settings: Settings, policy: Policy, *, finding_ids: lis
                 continue
             for row in managers["docker"]:
                 image_outcome = Outcome(ok=True)
-                _docker_recreate(host, container, row["package"], settings, image_outcome,
-                                 logged_in)
+                _docker_recreate(conn, host, container, row["package"], settings,
+                                 image_outcome, logged_in)
                 if image_outcome.applied:
                     detail = (f"image now {row['candidate']}" if row["candidate"]
                               else "image already current")

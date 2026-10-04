@@ -449,5 +449,113 @@ class DigestCache(unittest.TestCase):
         self.assertEqual("sha256:abc", db.get_digest(self.conn, "nginx:latest", now=1000.0))
 
 
+class RegistryLoginRecord(unittest.TestCase):
+    """The remembered registry logins.
+
+    A login is itself a request against the registry, and the daemon keeps the
+    credential in its own config — so a scan re-authenticating on every pass spends
+    a request to establish what is already established. What makes this correct
+    rather than merely cheaper is the off switch: a TTL of zero must fall back to
+    logging in every time, so an operator whose token rotates oftener than the TTL
+    has a way back.
+    """
+
+    def setUp(self):
+        self.conn = db.connect(":memory:")
+        db.init(self.conn)
+
+    def fresh(self, *args, **kwargs):
+        return db.registry_login_is_fresh(self.conn, host="i1", container="monarch",
+                                          registry="docker.io", *args, **kwargs)
+
+    def test_an_unrecorded_login_is_not_fresh(self):
+        self.assertFalse(self.fresh(ttl_seconds=3600, now=1000.0))
+
+    def test_a_recent_login_is_fresh(self):
+        db.record_registry_login(self.conn, host="i1", container="monarch",
+                                 registry="docker.io", now=1000.0)
+        self.assertTrue(self.fresh(ttl_seconds=3600, now=1000.0 + 60))
+
+    def test_the_boundary_is_still_fresh(self):
+        db.record_registry_login(self.conn, host="i1", container="monarch",
+                                 registry="docker.io", now=1000.0)
+        self.assertTrue(self.fresh(ttl_seconds=3600, now=1000.0 + 3600))
+
+    def test_a_login_older_than_the_ttl_is_not_fresh(self):
+        db.record_registry_login(self.conn, host="i1", container="monarch",
+                                 registry="docker.io", now=1000.0)
+        self.assertFalse(self.fresh(ttl_seconds=3600, now=1000.0 + 3601))
+
+    def test_a_ttl_of_zero_never_reuses_the_login(self):
+        db.record_registry_login(self.conn, host="i1", container="monarch",
+                                 registry="docker.io", now=1000.0)
+        self.assertFalse(self.fresh(ttl_seconds=0, now=1000.0))
+
+    def test_the_key_is_per_container_and_registry(self):
+        # Each incus container runs its own daemon, so a login on one says nothing
+        # about another — and a Hub login says nothing about ghcr.
+        db.record_registry_login(self.conn, host="i1", container="monarch",
+                                 registry="docker.io", now=1000.0)
+        self.assertFalse(db.registry_login_is_fresh(
+            self.conn, host="i1", container="atheniq", registry="docker.io",
+            ttl_seconds=3600, now=1000.0))
+        self.assertFalse(db.registry_login_is_fresh(
+            self.conn, host="i1", container="monarch", registry="ghcr.io",
+            ttl_seconds=3600, now=1000.0))
+
+    def test_recording_again_moves_the_timestamp(self):
+        db.record_registry_login(self.conn, host="i1", container="monarch",
+                                 registry="docker.io", now=1000.0)
+        db.record_registry_login(self.conn, host="i1", container="monarch",
+                                 registry="docker.io", now=5000.0)
+        self.assertTrue(self.fresh(ttl_seconds=3600, now=5000.0 + 10))
+
+
+class PruneTargets(unittest.TestCase):
+    """Dropping the targets of containers that are gone.
+
+    A removed container leaves a target and its findings behind, because a scan only
+    visits what `incus list` still reports — so the findings can never be applied or
+    expired, and the host keeps counting a machine that is not there.
+    """
+
+    def setUp(self):
+        self.conn = db.connect(":memory:")
+        db.init(self.conn)
+
+    def target_names(self, host="i1", kind="container"):
+        return {row["name"] for row in self.conn.execute(
+            "SELECT name FROM targets WHERE host=? AND kind=?", (host, kind)).fetchall()}
+
+    def test_a_target_not_in_the_listing_is_removed(self):
+        db.ensure_target(self.conn, host="i1", kind="container", name="gone")
+        db.ensure_target(self.conn, host="i1", kind="container", name="stays")
+        removed = db.prune_targets(self.conn, host="i1", kind="container", present={"stays"})
+        self.assertEqual(["gone"], removed)
+        self.assertEqual({"stays"}, self.target_names())
+
+    def test_the_findings_of_a_removed_target_go_with_it(self):
+        target = db.ensure_target(self.conn, host="i1", kind="container", name="gone")
+        db.record_finding(self.conn, target_id=target, manager="docker", package="redis:7.4",
+                          current="a", candidate="b")
+        db.prune_targets(self.conn, host="i1", kind="container", present=set())
+        count = self.conn.execute("SELECT COUNT(*) AS n FROM findings").fetchone()["n"]
+        self.assertEqual(0, count)
+
+    def test_nothing_is_removed_when_everything_is_present(self):
+        db.ensure_target(self.conn, host="i1", kind="container", name="a")
+        db.ensure_target(self.conn, host="i1", kind="container", name="b")
+        self.assertEqual([], db.prune_targets(self.conn, host="i1", kind="container",
+                                              present={"a", "b"}))
+
+    def test_another_host_and_kind_are_left_alone(self):
+        db.ensure_target(self.conn, host="i1", kind="container", name="gone")
+        db.ensure_target(self.conn, host="i2", kind="container", name="gone")
+        db.ensure_target(self.conn, host="i1", kind="host", name="i1")
+        db.prune_targets(self.conn, host="i1", kind="container", present=set())
+        self.assertEqual({"gone"}, self.target_names(host="i2"))
+        self.assertEqual({"i1"}, self.target_names(host="i1", kind="host"))
+
+
 if __name__ == "__main__":
     unittest.main()
