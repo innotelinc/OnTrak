@@ -35,6 +35,12 @@ import {
 } from "./oidc.js";
 import { gatewayHealth, listModels } from "./omniroute.js";
 import {
+  hostingInfo,
+  publish as publishWorkspace,
+  stopHosting,
+  unpublish as unpublishWorkspace,
+} from "./hosting.js";
+import {
   createPreview,
   getPreview,
   listPreviews,
@@ -48,6 +54,14 @@ import {
   stopPreview as stopHostingPreview,
   sweepPreviews,
 } from "./preview-hosting.js";
+import {
+  createProject as createWorkspaceProject,
+  deleteProject as deleteWorkspaceProject,
+  listProjects,
+  openProject as openWorkspaceProject,
+  ProjectError,
+  updateProject as updateWorkspaceProject,
+} from "./projects.js";
 import { sandboxInfo } from "./sandbox.js";
 import {
   currentScope,
@@ -78,6 +92,7 @@ import {
   normalizeFlag,
   normalizeMaxSteps,
   normalizeModelList,
+  normalizeProjectId,
   normalizeTitle,
   saveSession,
 } from "./store.js";
@@ -617,9 +632,15 @@ async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): 
 
   let usage: TurnUsage = { tokensIn: 0, tokensOut: 0, requests: 0 };
 
+  // A chat started while a project is open is tagged with it, so the project can
+  // list the work done against it. Only applied when the chat is *created* —
+  // reopening an existing chat must not move it to whichever project is on
+  // screen, which would rewrite history as you browse.
+  const projectId = normalizeProjectId(body.projectId);
   let session = sessionId === "" ? null : await getSession(sessionId);
   if (session === null) {
     session = createSession();
+    if (projectId !== undefined && projectId !== null) session.projectId = projectId;
     await saveSession(session);
   }
 
@@ -810,6 +831,13 @@ async function handleApi(
 
   if (pathname === "/api/sessions" && method === "POST") {
     const session = createSession();
+    // A chat started from a project carries that tag so the project can list its
+    // work; one started anywhere else simply has none.
+    const payload: Record<string, unknown> = await readJson(req).catch(
+      () => ({}) as Record<string, unknown>,
+    );
+    const projectId = normalizeProjectId(payload.projectId);
+    if (projectId !== undefined && projectId !== null) session.projectId = projectId;
     await saveSession(session);
     return sendJson(res, 201, { session });
   }
@@ -920,6 +948,10 @@ async function handleApi(
       if (offline !== undefined) session.useOffline = offline;
       const steps = normalizeMaxSteps(payload.maxSteps);
       if (steps !== undefined) session.maxSteps = steps;
+      // `null` clears the tag; an absent key leaves it as it is.
+      const projectId = normalizeProjectId(payload.projectId);
+      if (projectId === null) delete session.projectId;
+      else if (projectId !== undefined) session.projectId = projectId;
       await saveSession(session);
       return sendJson(res, 200, {
         session: {
@@ -927,6 +959,7 @@ async function handleApi(
           title: session.title,
           ...(session.archived !== undefined ? { archived: session.archived } : {}),
           ...(session.archivedAt !== undefined ? { archivedAt: session.archivedAt } : {}),
+          ...(session.projectId !== undefined ? { projectId: session.projectId } : {}),
           model: session.model,
           fallbackModels: session.fallbackModels,
           useOffline: session.useOffline,
@@ -988,6 +1021,77 @@ async function handleApi(
     if (await pathExists(abs)) throw new HttpError(409, "something with that name is already there");
     await fs.mkdir(abs, { recursive: true });
     return sendJson(res, 201, { name, dirs: await listWorkspaceDirs() });
+  }
+
+  /*
+   * Saved workspace projects (`src/projects.ts`).
+   *
+   * A project is a named, kept directory: creating one makes the directory and
+   * remembers it, opening one makes it the account's working directory through
+   * the *same* mechanism the folder picker uses, and deleting one can keep the
+   * files or remove them, because "stop listing this" and "throw this away" are
+   * different decisions. Every path goes through `projects.ts`, which fences it
+   * to the sandbox, so a name can never become a path.
+   */
+  if (pathname === "/api/projects" && method === "GET") {
+    return sendJson(res, 200, {
+      base: sandboxRoot(),
+      active: selectedWorkspace(),
+      projects: await listProjects(selectedWorkspace()),
+    });
+  }
+
+  if (pathname === "/api/projects" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      const project = await createWorkspaceProject({
+        name: payload.name,
+        description: typeof payload.description === "string" ? payload.description : undefined,
+        open: payload.open === true || payload.open === "true",
+      });
+      return sendJson(res, 201, { project, dirs: await listWorkspaceDirs() });
+    } catch (error) {
+      if (error instanceof ProjectError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  const projectMatch = /^\/api\/projects\/([^/]+)$/.exec(pathname);
+  if (projectMatch) {
+    const id = decodeURIComponent(projectMatch[1] ?? "");
+    if (method === "PATCH") {
+      const payload = await readJson(req);
+      try {
+        const project = await updateWorkspaceProject(id, {
+          name: typeof payload.name === "string" ? payload.name : undefined,
+          description: typeof payload.description === "string" ? payload.description : undefined,
+        });
+        if (project === null) throw new HttpError(404, "project not found");
+        return sendJson(res, 200, { project });
+      } catch (error) {
+        if (error instanceof ProjectError) throw new HttpError(400, error.message);
+        throw error;
+      }
+    }
+    if (method === "DELETE") {
+      const removeDirectory =
+        url.searchParams.get("files") === "delete" || url.searchParams.get("files") === "1";
+      const removed = await deleteWorkspaceProject(id, removeDirectory);
+      return sendJson(res, removed ? 200 : 404, { removed, files: removeDirectory });
+    }
+  }
+
+  const projectOpenMatch = /^\/api\/projects\/([^/]+)\/open$/.exec(pathname);
+  if (projectOpenMatch && method === "POST") {
+    const id = decodeURIComponent(projectOpenMatch[1] ?? "");
+    const project = await openWorkspaceProject(id);
+    if (project === null) throw new HttpError(404, "project not found");
+    return sendJson(res, 200, {
+      project,
+      rel: selectedWorkspace(),
+      cwd: workspaceRoot(),
+      dirs: await listWorkspaceDirs(),
+    });
   }
 
   if (pathname === "/api/files" && method === "GET") {
@@ -1201,6 +1305,50 @@ async function handleApi(
     const name = decodeURIComponent(previewStopMatch[1] ?? "");
     const stopped = await stopHostingPreview(name);
     return sendJson(res, stopped ? 200 : 404, { stopped });
+  }
+
+  /*
+   * Publish & host — the console's view of the registry above.
+   *
+   * `/api/previews` is the registry; this is the *bargain* around it: what
+   * publishing costs, whether this caller may hold a name, where to buy the plan,
+   * and the one call that starts an address. The identity an entitlement is
+   * checked against is the signed-in account's email, because that is the key
+   * Magnate's subscription is stored under.
+   */
+  if (pathname === "/api/hosting" && method === "GET") {
+    const viewer = viewerOf(req);
+    return sendJson(res, 200, await hostingInfo(viewer.email !== "" ? viewer.email : (viewer.userId ?? "")));
+  }
+
+  if (pathname === "/api/hosting" && method === "POST") {
+    const payload = await readJson(req);
+    const viewer = viewerOf(req);
+    try {
+      const result = await publishWorkspace({
+        name: typeof payload.name === "string" ? payload.name : undefined,
+        command: typeof payload.command === "string" ? payload.command : undefined,
+        account: currentScope().userId ?? "",
+        user: viewer.email !== "" ? viewer.email : (viewer.userId ?? ""),
+      });
+      return sendJson(res, 201, result);
+    } catch (error) {
+      throw new HttpError(400, (error as Error).message);
+    }
+  }
+
+  const hostingStopMatch = /^\/api\/hosting\/([^/]+)\/stop$/.exec(pathname);
+  if (hostingStopMatch && method === "POST") {
+    const name = decodeURIComponent(hostingStopMatch[1] ?? "");
+    const stopped = await stopHosting(name);
+    return sendJson(res, stopped ? 200 : 404, { stopped });
+  }
+
+  const hostingMatch = /^\/api\/hosting\/([^/]+)$/.exec(pathname);
+  if (hostingMatch && method === "DELETE") {
+    const name = decodeURIComponent(hostingMatch[1] ?? "");
+    const removed = await unpublishWorkspace(name);
+    return sendJson(res, removed ? 200 : 404, { removed });
   }
 
   if (pathname === "/api/chat" && method === "POST") {

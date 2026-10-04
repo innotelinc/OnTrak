@@ -178,14 +178,16 @@ one it cannot satisfy. Reliability comes first, because a model that is cooling
 down cannot answer however strong it is. That is why the *weaker* model leads
 here, with the stronger ones behind it in the chain.
 
-**The default moved after this sweep.** Later the same day the Gemini free tier
-exhausted its daily quota and a Gemini-only chain died on the first turn, taking
-every fallback with it — the sweep's measurement was accurate, but "always up"
-was not durable. The default is now `openrouter/free` (OpenRouter's free router)
-with `openrouter/cohere/north-mini-code:free` behind it and
-`gemini/gemini-3.1-flash-lite` last, so a deployment whose quota has reset still
-reaches it. Each entry was checked for a real tool call before being written into
-`.env.example`.
+**The default is the gateway's `auto/*` routes, not a pinned provider.** The
+default moved twice after this sweep: first to `openrouter/free`, when the Gemini
+free tier exhausted its daily quota — and then, after *both* Gemini and OpenRouter
+went dark together and the sidebar read `models 0/5 ready`, to the `auto/*` routes
+(`auto/coding` first, `auto/thrifty` last). A curated list of pinned ids is only
+as available as the credentials behind those ids, and when the two providers a
+list is drawn from are both offline the whole list fails at once. `auto/*` is
+resolved per request across whatever credentials are live, which is the property
+that puts a working model behind a fixed entry. Probed 2026-10-04 with one real
+tool call each: all five answered and `/api/health` reported **5/5 ready**.
 
 #### Checking instead of guessing
 
@@ -356,8 +358,8 @@ is cooling down. Either way a turn used to die mid-task.
 model throttles, errors, or answers with nothing:
 
 ```ini
-AGENT_MODEL=openrouter/free
-AGENT_FALLBACK_MODELS=openrouter/cohere/north-mini-code:free,gemini/gemini-3.1-flash-lite
+AGENT_MODEL=auto/coding
+AGENT_FALLBACK_MODELS=auto/best-coding,auto/best-chat,auto/thrifty
 ```
 
 A retry is only attempted while **nothing has reached the browser**, so a reply is
@@ -397,19 +399,26 @@ as long as it takes to find one that answers.
 tool call, and a turn is placed in it per turn:
 
 ```ini
-AGENT_FREE_MODELS=gemini/gemini-3.1-flash-lite,gemini/gemini-3-flash-preview,gemini/gemini-2.5-flash,openrouter/cohere/north-mini-code:free,openrouter/free
+AGENT_FREE_MODELS=auto/coding,auto/best-coding,auto/best-chat,auto/cheap,auto/thrifty
 AGENT_FREE_PLANS=free,trial,community
 ```
 
 **The configured order is what the first turn after a restart opens on**, because
 the pool is returned in it until a health check has run — so it is worth
-re-measuring rather than copying. Re-probed 2026-10-01, one model at a time with
-`--runs 3`: `gemini/gemini-3.1-flash-lite` answered in 67 ms and everything else
-was `429 … cooling down` — including the entries a full *catalog* sweep had just
-cooled down by probing them. Every failure was a cooldown, none was `402 credits
-exhausted`, `400 not in the live catalog`, or an answer with no tool call, so the
-pool keeps its breadth instead of shrinking to the single entry that answered:
-a one-model pool is the shape that dies the moment that credential cools down.
+re-measuring rather than copying.
+
+The pool is the gateway's own **`auto/*` routes**, not pinned model ids, and that
+is the fix for the failure this section used to describe: five pinned ids across
+`gemini/*` and `openrouter/*` all failed their probe at once when Gemini was
+disabled at the gateway and OpenRouter ran out of its daily free allowance, and
+the sidebar read `models 0/5 ready`. `auto/*` is resolved per request across
+whatever credentials are live, so the pool survives a provider being switched off.
+Probed 2026-10-04 with one real tool call each: `auto/coding`, `auto/best-coding`,
+`auto/best-chat`, `auto/cheap` and `auto/thrifty` all answered (1.8–3.1 s), and
+`/api/health` then reported **5/5 ready**. (`auto/best-free` and `auto/coding:free`
+were tried too and returned `503` — every free-tier target skipped by the
+gateway's pre-dispatch filters — which is why the free pool uses the general
+`auto/*` routes rather than the `:free` variants.)
 
 Two things make it a *selection* rather than another list:
 

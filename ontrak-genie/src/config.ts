@@ -137,35 +137,35 @@ function listOrDefault(name: string, fallback: readonly string[]): string[] {
  * tool-call health probe before a turn, so an entry that is throttled today is
  * skipped rather than producing the `429 … retrying with …` notices.
  *
+ * The pool is the gateway's own **`auto/*` routes** rather than pinned model ids.
+ *
+ * That is the fix for a deployment that reported `models 0/5 ready`: the five
+ * entries were pinned at two providers (`gemini/*` and `openrouter/*`), and when
+ * both went dark — Gemini disabled at the gateway, OpenRouter out of its daily
+ * free allowance — *every* entry of the pool failed its probe at once. A curated
+ * list of model ids is only as available as the credentials behind those ids, and
+ * this gateway already answers that question better than a file can: `auto/*` is
+ * resolved per request across whatever credentials are live, so the pool keeps
+ * working when a provider is switched off. Probed 2026-10-04 with one real tool
+ * call each: `auto/coding`, `auto/best-coding`, `auto/best-chat`, `auto/cheap`
+ * and `auto/thrifty` all answered (1.8–3.1 s), as the live `/api/health` then
+ * reported **5/5 ready**.
+ *
  * The order below matters most at **boot**, before the first health check has
  * run: `autoFreeChain()` returns the pool in this order until it has a report, so
- * whatever leads here is what the first turn after a restart opens on. Re-probed
- * 2026-10-01 against this gateway, one model at a time and `--runs 3`: only
- * `gemini/gemini-3.1-flash-lite` answered (67 ms); the rest were all `429 …
- * cooling down`, and the catalog sweep that preceded the check is itself part of
- * why. They are **throttled, not broken** — every failure was a cooldown, none was
- * a `402 credits exhausted`, a `400 not in the live catalog`, or a model that
- * cannot call a tool — so the pool is kept rather than shrunk to the one entry
- * that answered, which is the shape that dies whenever that credential cools down.
+ * whatever leads here is what the first turn after a restart opens on. `coding`
+ * leads because it is the route for this product's job; `thrifty` trails because
+ * it trades quality for cost and should only be reached as a last resort.
  *
- * Two changes came out of that measurement. The provider that answers leads (the
- * Gemini free tier's daily quota had reset; on 2026-09-29 the reverse was true and
- * `openrouter/free` led). And `openrouter/qwen/qwen3.8-27b:free` is dropped: 20.5 s
- * in the only measurement that ever produced a call, cooling down in every check
- * since, and its `openrouter` prefix is already represented by an entry that
- * measured faster. What is left spans two providers, so an outage on one does not
- * take the whole pool.
- *
- * A deployment may override it (`AGENT_FREE_MODELS`); the default is deliberately
- * a *curated* list rather than the whole catalog, because a 572-model catalog is
- * not a menu and most of it cannot call a tool.
+ * A deployment may override it (`AGENT_FREE_MODELS`). Each entry is either an
+ * `auto/*` route (preferred) or a pinned model id.
  */
 export const DEFAULT_FREE_MODELS = [
-  "gemini/gemini-3.1-flash-lite",
-  "gemini/gemini-3-flash-preview",
-  "gemini/gemini-2.5-flash",
-  "openrouter/cohere/north-mini-code:free",
-  "openrouter/free",
+  "auto/coding",
+  "auto/best-coding",
+  "auto/best-chat",
+  "auto/cheap",
+  "auto/thrifty",
 ] as const;
 
 /**

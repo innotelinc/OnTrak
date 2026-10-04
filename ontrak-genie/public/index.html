@@ -120,95 +120,19 @@
             >
               preview
             </button>
+            <button
+              id="hosting-open"
+              class="btn-ghost"
+              title="Put this workspace on the network under *.DOMAIN — free on a port address, $5/mo or $50/yr for your own name"
+              aria-controls="hosting"
+              aria-expanded="false"
+            >
+              publish
+            </button>
           </div>
         </header>
 
         <div id="messages" class="messages" role="log" aria-label="Conversation"></div>
-
-        <aside id="preview" class="preview" aria-label="The app and the code being generated">
-          <div class="preview-head">
-            <span class="brand">Preview</span>
-            <span id="preview-title" class="mono muted">nothing generated yet</span>
-            <span id="preview-status" class="badge hidden" role="status"></span>
-            <div class="preview-actions">
-              <button
-                id="preview-run"
-                class="btn-ghost"
-                aria-pressed="true"
-                title="Switch between the running app and the code the agent is writing"
-              >
-                show app
-              </button>
-              <button
-                id="preview-toggle"
-                class="btn-ghost hidden"
-                aria-pressed="false"
-                title="Switch between the code and the change it made"
-              >
-                show change
-              </button>
-              <button
-                id="preview-open"
-                class="btn-ghost hidden"
-                title="Open this file in the workspace viewer"
-              >
-                open file
-              </button>
-              <button id="preview-close" class="btn-ghost" aria-label="Close the preview pane">
-                close
-              </button>
-            </div>
-          </div>
-          <div class="preview-content">
-            <div id="preview-app" class="preview-app hidden">
-              <div class="preview-app-bar">
-                <span id="preview-app-dot" class="preview-dot" aria-hidden="true"></span>
-                <span id="preview-app-url" class="mono muted">no app running</span>
-                <span id="preview-app-note" class="preview-app-note muted"></span>
-                <div class="preview-app-actions">
-                  <button id="preview-app-start" class="btn-ghost" title="Run the project and show it here">
-                    run
-                  </button>
-                  <button
-                    id="preview-app-stop"
-                    class="btn-ghost hidden"
-                    title="Stop the running app"
-                  >
-                    stop
-                  </button>
-                  <button
-                    id="preview-app-reload"
-                    class="btn-ghost hidden"
-                    title="Reload the app in this pane"
-                  >
-                    reload
-                  </button>
-                  <button
-                    id="preview-app-log-toggle"
-                    class="btn-ghost hidden"
-                    aria-expanded="false"
-                    title="Show the app's own output"
-                  >
-                    output
-                  </button>
-                </div>
-              </div>
-              <pre id="preview-app-log" class="preview-app-log mono hidden" tabindex="0"></pre>
-              <iframe
-                id="preview-frame"
-                class="preview-frame hidden"
-                title="The app, running"
-                sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals allow-downloads"
-              ></iframe>
-              <p id="preview-app-empty" class="preview-app-empty muted">
-                Nothing is running yet. Use <span class="mono">run</span> to start this project,
-                or ask the agent to start it.
-              </p>
-            </div>
-            <div id="preview-diff" class="preview-diff hidden"></div>
-            <pre id="preview-body" class="preview-body mono" tabindex="0"></pre>
-          </div>
-        </aside>
 
         <form id="composer" class="composer" aria-label="Send a message">
           <textarea
@@ -221,6 +145,97 @@
           <button type="button" id="stop" class="btn-danger hidden">Stop</button>
         </form>
       </main>
+
+      <!--
+        The preview is a right-hand rail, not a strip under the conversation:
+        the code and the app it makes are read side by side with the transcript
+        that produced them, and the rail collapses to nothing (the toggle in the
+        top bar) rather than being a fixed height the conversation has to pay for.
+      -->
+      <aside id="preview" class="preview" aria-label="The app and the code being generated">
+        <div class="preview-head">
+          <span class="brand">Preview</span>
+          <span id="preview-title" class="mono muted">nothing generated yet</span>
+          <span id="preview-status" class="badge hidden" role="status"></span>
+          <div class="preview-actions">
+            <button
+              id="preview-run"
+              class="btn-ghost"
+              aria-pressed="true"
+              title="Switch between the running app and the code the agent is writing"
+            >
+              show app
+            </button>
+            <button
+              id="preview-toggle"
+              class="btn-ghost hidden"
+              aria-pressed="false"
+              title="Switch between the code and the change it made"
+            >
+              show change
+            </button>
+            <button
+              id="preview-open"
+              class="btn-ghost hidden"
+              title="Open this file in the workspace viewer"
+            >
+              open file
+            </button>
+            <button id="preview-close" class="btn-ghost" aria-label="Close the preview pane">
+              close
+            </button>
+          </div>
+        </div>
+        <div class="preview-content">
+          <div id="preview-app" class="preview-app hidden">
+            <div class="preview-app-bar">
+              <span id="preview-app-dot" class="preview-dot" aria-hidden="true"></span>
+              <span id="preview-app-url" class="mono muted">no app running</span>
+              <span id="preview-app-note" class="preview-app-note muted"></span>
+              <div class="preview-app-actions">
+                <button id="preview-app-start" class="btn-ghost" title="Run the project and show it here">
+                  run
+                </button>
+                <button
+                  id="preview-app-stop"
+                  class="btn-ghost hidden"
+                  title="Stop the running app"
+                >
+                  stop
+                </button>
+                <button
+                  id="preview-app-reload"
+                  class="btn-ghost hidden"
+                  title="Reload the app in this pane"
+                >
+                  reload
+                </button>
+                <button
+                  id="preview-app-log-toggle"
+                  class="btn-ghost hidden"
+                  aria-expanded="false"
+                  title="Show the app's own output"
+                >
+                  output
+                </button>
+              </div>
+            </div>
+            <pre id="preview-app-log" class="preview-app-log mono hidden" tabindex="0"></pre>
+            <iframe
+              id="preview-frame"
+              class="preview-frame hidden"
+              title="The app, running"
+              sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals allow-downloads"
+            ></iframe>
+            <p id="preview-app-empty" class="preview-app-empty muted">
+              Nothing is running yet. Use <span class="mono">run</span> to start this project,
+              or ask the agent to start it.
+            </p>
+          </div>
+          <div id="preview-diff" class="preview-diff hidden"></div>
+          <pre id="preview-body" class="preview-body mono" tabindex="0"></pre>
+        </div>
+      </aside>
 
       <aside class="files" id="files-panel" aria-label="Workspace files">
         <div class="files-head">
@@ -239,6 +254,21 @@
             <select id="workspace-pick" class="select" aria-label="The directory the agent works in"></select>
           </label>
           <p id="workspace-note" class="muted files-note"></p>
+        </div>
+        <!--
+          Saved projects: the named directories this account keeps. A project is
+          a *saved* choice of working directory, not a second kind of one —
+          opening it drives the picker above, so the agent, the tree and the
+          preview all follow without knowing this list exists.
+        -->
+        <div class="files-projects">
+          <div class="files-projects-head">
+            <span class="muted">projects</span>
+            <button id="project-new" class="btn-ghost mini" title="Create and open a new project">
+              new project
+            </button>
+          </div>
+          <div id="projects-list" class="projects-list" aria-label="Saved workspace projects"></div>
         </div>
         <div id="files-path" class="files-path mono">.</div>
         <div id="files-list" class="files-list"></div>
@@ -319,6 +349,44 @@
           />
         </label>
         <p id="settings-note" class="muted settings-note"></p>
+      </div>
+    </div>
+
+    <div
+      id="hosting"
+      class="viewer hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="hosting-title"
+    >
+      <div class="viewer-head">
+        <span id="hosting-title" class="mono">publish &amp; host</span>
+        <div class="viewer-actions">
+          <button id="hosting-close" class="btn-ghost" aria-label="Close publishing">close</button>
+        </div>
+      </div>
+      <div class="viewer-content settings-form">
+        <p id="hosting-status" class="muted settings-note"></p>
+        <div id="hosting-plan" class="hosting-plan"></div>
+        <label class="field wide" for="hosting-name">
+          <span class="muted">your own name — leave empty for a free address on a port</span>
+          <div class="hosting-name-row">
+            <input
+              id="hosting-name"
+              class="input-text"
+              type="text"
+              autocomplete="off"
+              placeholder="acme"
+              aria-label="Your preview subdomain"
+            />
+            <span id="hosting-suffix" class="mono muted"></span>
+          </div>
+        </label>
+        <div class="hosting-actions">
+          <button id="hosting-publish" class="btn-primary">publish</button>
+          <button id="hosting-buy" class="btn-ghost hidden">get your own name</button>
+        </div>
+        <div id="hosting-list" class="hosting-list"></div>
       </div>
     </div>
 

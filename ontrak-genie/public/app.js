@@ -62,6 +62,14 @@ const state = {
   },
   /** Ids the last sweep proved can call a tool; null until it has answered. */
   sweepUsable: null,
+  /**
+   * The saved project a new chat is tagged with, or null for none. Set when a
+   * project is created or opened; it is what `POST /api/chat` reads to stamp a
+   * chat that is being born, and never what an existing chat is re-tagged to.
+   */
+  projectId: null,
+  /** Every saved project by id, so a chat row can name its own project. */
+  projectsById: new Map(),
 };
 
 /** Maximum diff rows to build in the DOM; the server already caps what it sends. */
@@ -1692,6 +1700,9 @@ async function sendMessage(text) {
         ...(fallbacks === undefined ? {} : { fallbackModels: fallbacks }),
         useOffline,
         maxSteps,
+        // The project a *new* chat is born into. The server ignores it for a
+        // chat that already exists, so browsing sessions cannot re-tag them.
+        ...(state.projectId === null ? {} : { projectId: state.projectId }),
       },
       onEvent,
       state.controller.signal,
@@ -1885,7 +1896,12 @@ function sessionRow(session, isArchived = false) {
 
   const meta = document.createElement("span");
   meta.className = "session-meta";
-  meta.textContent = `${session.messageCount} messages${session.model ? ` · ${session.model}` : ""}`;
+  // A chat tagged to a project says so, which is what makes a project more than
+  // a folder: its list of chats is the work done against it.
+  const project = session.projectId ? state.projectsById.get(session.projectId) : null;
+  meta.textContent = `${session.messageCount} messages${project ? ` · ${project.name}` : ""}${
+    session.model ? ` · ${session.model}` : ""
+  }`;
 
   button.append(title, meta);
   button.addEventListener("click", () => void openSession(session.id));
@@ -2333,6 +2349,154 @@ async function newWorkspaceFolder() {
   await loadWorkspace();
 }
 
+/* ---------------------------------------------------------------- projects */
+
+/*
+ * Saved workspace projects.
+ *
+ * The list is the noun the folder picker never had: a workspace you can name and
+ * come back to. Opening one runs through the *same* `POST /api/workspace` the
+ * picker uses, so everything downstream — the file tree, the preview, the
+ * publish flow — follows without knowing projects exist. Creating one makes the
+ * directory and opens it, because a project you just named is one you meant to
+ * work in.
+ */
+async function loadProjects() {
+  let info;
+  try {
+    info = await api("/api/projects");
+  } catch {
+    return;
+  }
+
+  const projects = Array.isArray(info.projects) ? info.projects : [];
+  state.projectsById = new Map(projects.map((project) => [project.id, project]));
+  const active = projects.find((project) => project.active === true) ?? null;
+  state.projectId = active === null ? null : active.id;
+
+  const list = $("#projects-list");
+  list.replaceChildren();
+  for (const project of projects) list.append(projectRow(project));
+
+  // The chat list names each chat's project, so it is redrawn now that the names
+  // are known (the two requests are independent and either can land first).
+  void loadSessions();
+}
+
+/** One saved project: open it, rename it, or forget it. */
+function projectRow(project) {
+  const row = document.createElement("div");
+  row.className = `project${project.active ? " active" : ""}${project.exists ? "" : " missing"}`;
+
+  const open = document.createElement("button");
+  open.type = "button";
+  open.className = "project";
+  open.setAttribute("aria-current", project.active ? "true" : "false");
+  const name = document.createElement("span");
+  name.className = "project-name";
+  name.textContent = project.name;
+  open.append(name);
+  if (project.exists) {
+    const tag = document.createElement("span");
+    tag.className = "project-tag";
+    tag.textContent = project.active ? "open" : project.dir;
+    open.append(tag);
+  } else {
+    const gone = document.createElement("span");
+    gone.className = "project-gone";
+    gone.textContent = "folder is gone";
+    open.append(gone);
+  }
+  open.addEventListener("click", () => void openProjectById(project.id));
+
+  const rename = document.createElement("button");
+  rename.type = "button";
+  rename.className = "btn-ghost mini";
+  rename.textContent = "rename";
+  rename.title = `Rename “${project.name}” (the folder keeps its name)`;
+  rename.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    const next = window.prompt("Project name", project.name);
+    if (next === null || next.trim() === "") return;
+    try {
+      await api(`/api/projects/${encodeURIComponent(project.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: next.trim() }),
+      });
+    } catch (error) {
+      addErrorMessage(error.message);
+    }
+    await loadProjects();
+  });
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "btn-ghost mini";
+  remove.textContent = "remove";
+  remove.title = `Stop listing “${project.name}”. Its files stay in the workspace.`;
+  remove.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    const alsoFiles = window.confirm(
+      `Remove “${project.name}” from the project list?\n\nOK also deletes the folder and everything in it. Cancel keeps the files.`,
+    );
+    try {
+      const query = alsoFiles ? "?files=delete" : "";
+      await api(`/api/projects/${encodeURIComponent(project.id)}${query}`, { method: "DELETE" });
+      addNotice(
+        alsoFiles
+          ? `Project “${project.name}” and its folder were deleted.`
+          : `Project “${project.name}” is no longer listed; its files are untouched.`,
+      );
+    } catch (error) {
+      addErrorMessage(error.message);
+    }
+    await loadProjects();
+    await loadWorkspace();
+    await loadFiles(".");
+  });
+
+  row.append(open, rename, remove);
+  return row;
+}
+
+async function createProject() {
+  const name = window.prompt("Name this project", "my-project");
+  if (name === null || name.trim() === "") return;
+  let project;
+  try {
+    ({ project } = await api("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name.trim(), open: true }),
+    }));
+    addNotice(`Project “${project.name}” created — the agent now works in ${project.dir}.`);
+  } catch (error) {
+    addErrorMessage(error.message);
+    return;
+  }
+  await loadProjects();
+  await loadWorkspace();
+  await loadFiles(".");
+}
+
+async function openProjectById(id) {
+  try {
+    const payload = await api(`/api/projects/${encodeURIComponent(id)}/open`, { method: "POST" });
+    $("#workspace-note").textContent = payload.cwd;
+  } catch (error) {
+    addErrorMessage(error.message);
+    return;
+  }
+  // A different working directory is a different tree and a different app, so
+  // start both at the top rather than leaving them on the old one's paths.
+  unloadPreviewFrame();
+  await loadProjects();
+  await loadWorkspace();
+  await loadFiles(".");
+  await refreshPreviewApp();
+}
+
 /**
  * This chat's own controls: the fallback chain, the local fallback and the step
  * budget.
@@ -2666,6 +2830,199 @@ function toggleFilesPanel(force) {
   $("#toggle-files").setAttribute("aria-expanded", open ? "true" : "false");
 }
 
+/* --------------------------------------------------------- publish & host */
+
+/*
+ * Publishing the workspace to a public address.
+ *
+ * The console has always known how to *run* a project locally; this is the same
+ * thing exposed on the network. An auto address (`p<port>`) is free; a named one
+ * is what Magnate's `genie` plan ($5/mo, $50/yr) sells, and the price shown here
+ * is read back from Magnate so it cannot drift from what the checkout charges.
+ * The console never grants a name itself — it asks, and the server checks the
+ * subscription with Magnate before registering anything.
+ */
+
+let hostingInfoCache = null;
+
+function openHosting() {
+  $("#hosting").classList.remove("hidden");
+  $("#hosting-open").setAttribute("aria-expanded", "true");
+  void loadHosting();
+}
+
+function closeHosting() {
+  $("#hosting").classList.add("hidden");
+  $("#hosting-open").setAttribute("aria-expanded", "false");
+}
+
+function money(cents) {
+  const dollars = cents / 100;
+  return dollars % 1 === 0 ? `$${dollars.toFixed(0)}` : `$${dollars.toFixed(2)}`;
+}
+
+async function loadHosting() {
+  const status = $("#hosting-status");
+  let info;
+  try {
+    info = await api("/api/hosting");
+  } catch (error) {
+    status.textContent = error.message;
+    return;
+  }
+  hostingInfoCache = info;
+  renderHosting(info);
+}
+
+function renderHosting(info) {
+  const status = $("#hosting-status");
+  const plan = $("#hosting-plan");
+  const buy = $("#hosting-buy");
+  const publish = $("#hosting-publish");
+
+  $("#hosting-suffix").textContent = `.${info.domain}`;
+  plan.replaceChildren();
+
+  if (!info.enabled) {
+    status.textContent =
+      "Publishing is switched off on this deployment (PREVIEW_ENABLED). The preview pane still runs the project locally.";
+    publish.classList.add("hidden");
+    buy.classList.add("hidden");
+    $("#hosting-list").replaceChildren();
+    return;
+  }
+  publish.classList.remove("hidden");
+  publish.disabled = false;
+
+  const left = document.createElement("div");
+  const title = document.createElement("div");
+  title.textContent = info.plan.name || "Genie Subdomain";
+  const sub = document.createElement("div");
+  sub.className = "muted";
+  sub.textContent = "Your own name under this wildcard, routed to your workspace";
+  left.append(title, sub);
+  const price = document.createElement("div");
+  price.className = "hosting-price";
+  price.innerHTML = `${money(info.plan.priceMonthlyCents)}<span>/mo</span> · ${money(
+    info.plan.priceYearlyCents,
+  )}<span>/yr</span>`;
+  plan.append(left, price);
+
+  if (info.entitled === true) {
+    status.textContent = `You're subscribed — publish under a name of your own, or use a free port address.`;
+    buy.classList.add("hidden");
+  } else if (info.entitled === false) {
+    status.textContent =
+      "A free address is available now; your own name needs the plan. Subscribe and the name is claimed automatically.";
+    buy.classList.remove("hidden");
+  } else {
+    status.textContent = `A free address is available now. ${
+      info.entitlementReason || "Sign in to check your subscription for your own name."
+    }`;
+    buy.classList.remove("hidden");
+  }
+
+  const list = $("#hosting-list");
+  list.replaceChildren();
+  for (const preview of info.previews ?? []) list.append(hostingRow(preview));
+}
+
+function hostingRow(preview) {
+  const row = document.createElement("div");
+  row.className = "hosting-row";
+
+  const host = document.createElement("span");
+  host.className = "hosting-host";
+  host.textContent = preview.host;
+  host.title = preview.url;
+
+  const actions = document.createElement("span");
+  actions.className = "hosting-actions";
+
+  const open = document.createElement("a");
+  open.className = "btn-ghost mini";
+  open.href = preview.url;
+  open.target = "_blank";
+  open.rel = "noopener";
+  open.textContent = "open";
+
+  const stop = document.createElement("button");
+  stop.type = "button";
+  stop.className = "btn-ghost mini";
+  stop.textContent = "stop";
+  stop.title = "Stop the app but keep the address";
+  stop.addEventListener("click", async () => {
+    try {
+      await api(`/api/hosting/${encodeURIComponent(preview.name)}/stop`, { method: "POST" });
+    } catch (error) {
+      addErrorMessage(error.message);
+    }
+    await loadHosting();
+  });
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "btn-ghost mini";
+  remove.textContent = "unpublish";
+  remove.title = "Withdraw this address";
+  remove.addEventListener("click", async () => {
+    try {
+      await api(`/api/hosting/${encodeURIComponent(preview.name)}`, { method: "DELETE" });
+      addNotice(`${preview.host} is no longer published.`);
+    } catch (error) {
+      addErrorMessage(error.message);
+    }
+    await loadHosting();
+  });
+
+  actions.append(open, stop, remove);
+  row.append(host, actions);
+  return row;
+}
+
+async function publishHosting() {
+  const button = $("#hosting-publish");
+  const name = $("#hosting-name").value.trim().toLowerCase();
+  button.disabled = true;
+  button.textContent = "publishing…";
+  try {
+    const result = await api("/api/hosting", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(name === "" ? {} : { name }),
+    });
+    addNotice(`Published at ${result.url}`);
+    $("#hosting-name").value = "";
+  } catch (error) {
+    addErrorMessage(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "publish";
+  }
+  await loadHosting();
+}
+
+/**
+ * Send the buyer to Magnate's signup, carrying the name they typed.
+ *
+ * The claimed name is what the plan's whole deliverable is, so asking for it
+ * twice — once here, once after payment — is how a buyer ends up owning a name
+ * they did not choose. The signup page reads `subdomain` from the query string.
+ */
+function buyHosting() {
+  const info = hostingInfoCache;
+  if (info === null || !info.subscribeUrl) return;
+  let url;
+  try {
+    url = new URL(info.subscribeUrl);
+  } catch {
+    return;
+  }
+  const name = $("#hosting-name").value.trim().toLowerCase();
+  if (name !== "") url.searchParams.set("subdomain", name);
+  window.open(url.toString(), "_blank", "noopener");
+}
+
 function wire() {
   $("#composer").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -2763,6 +3120,16 @@ function wire() {
   $("#toggle-files").addEventListener("click", () => toggleFilesPanel());
   $("#files-close").addEventListener("click", () => toggleFilesPanel(false));
   $("#files-new").addEventListener("click", () => void newWorkspaceFolder());
+  $("#project-new").addEventListener("click", () => void createProject());
+
+  $("#hosting-open").addEventListener("click", () => openHosting());
+  $("#hosting-close").addEventListener("click", () => closeHosting());
+  $("#hosting-publish").addEventListener("click", () => void publishHosting());
+  $("#hosting-buy").addEventListener("click", () => buyHosting());
+  // Clicking the backdrop closes it; clicking inside does not.
+  $("#hosting").addEventListener("click", (event) => {
+    if (event.target === $("#hosting")) closeHosting();
+  });
   $("#workspace-pick").addEventListener("change", (event) => void chooseWorkspace(event.target.value));
 
   $("#chat-settings").addEventListener("click", () => toggleSettings());
@@ -2793,6 +3160,7 @@ function wire() {
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     if (!$("#sweep").classList.contains("hidden")) closeSweep();
+    else if (!$("#hosting").classList.contains("hidden")) closeHosting();
     else if (!$("#settings").classList.contains("hidden")) toggleSettings(false);
     else closeViewer();
   });
@@ -2814,6 +3182,7 @@ void loadModels();
 void refreshSweep();
 void loadHealth();
 void loadSessions();
+void loadProjects();
 void loadWorkspace();
 void loadFiles(".");
 $("#input").focus();

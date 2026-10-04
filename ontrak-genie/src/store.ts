@@ -28,6 +28,16 @@ export interface SessionSummary {
   /** Step budget the user last picked for this chat, if any. */
   maxSteps?: number;
   /**
+   * The workspace project this chat belongs to (`src/projects.ts`), if any.
+   *
+   * A chat and a project are otherwise independent — the chat is a transcript,
+   * the project is a directory — so this is a *tag*, not a container: deleting
+   * the project leaves the chat, and the chat keeps working in whatever
+   * directory is chosen. It exists so a project's list can show the work done
+   * against it, which is the thing a name alone cannot answer.
+   */
+  projectId?: string;
+  /**
    * Set when the owner has put this chat away (v0.3).
    *
    * Archiving is not deleting and deliberately not a third store: the chat, its
@@ -104,6 +114,23 @@ export function normalizeMaxSteps(value: unknown): number | undefined {
   return Math.min(MAX_STEPS, Math.max(MIN_STEPS, Math.trunc(parsed)));
 }
 
+/**
+ * Coerce a caller-supplied project tag.
+ *
+ * `null` (or an empty string) is a deliberate "no project", which is not the
+ * same as saying nothing: the former clears a tag, the latter leaves it. A
+ * non-empty value must look like an id, so a bogus one is dropped rather than
+ * stored and shown as a project that does not exist.
+ */
+export function normalizeProjectId(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== "string") return undefined;
+  const id = value.trim();
+  if (id === "") return null;
+  return ID_PATTERN.test(id) ? id : undefined;
+}
+
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function sessionPath(id: string): string {
@@ -123,6 +150,7 @@ function summarize(session: Session): SessionSummary {
     ...(session.fallbackModels !== undefined ? { fallbackModels: session.fallbackModels } : {}),
     ...(session.useOffline !== undefined ? { useOffline: session.useOffline } : {}),
     ...(session.maxSteps !== undefined ? { maxSteps: session.maxSteps } : {}),
+    ...(session.projectId !== undefined ? { projectId: session.projectId } : {}),
     ...(session.archived !== undefined ? { archived: session.archived } : {}),
     ...(session.archivedAt !== undefined ? { archivedAt: session.archivedAt } : {}),
   };
