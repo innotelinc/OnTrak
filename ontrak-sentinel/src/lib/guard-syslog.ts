@@ -66,7 +66,12 @@ export interface GuardSyslogStats {
   errors: number;
   /** When the last line arrived, ms since epoch, or null. */
   lastAt: number | null;
-  /** Why the last line was not accepted, for the operator reading the log. */
+  /**
+   * Why the most recent line that was **not** accepted was refused, for the
+   * operator reading the log. A later accepted line does not clear it: under steady
+   * good traffic, clearing it would blank the only record of the intermittent drops
+   * an operator is looking for.
+   */
   lastError: string | null;
 }
 
@@ -205,7 +210,6 @@ export async function startGuardSyslog(
     }
     if (answer.ok) {
       stats.accepted += 1;
-      stats.lastError = null;
       return;
     }
     stats.rejected += 1;
