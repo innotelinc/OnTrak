@@ -300,8 +300,11 @@ def _tag_miss_key(ref: str) -> str:
 # Matched on words rather than status codes: a message is full of digests, and a `404`
 # substring test would eventually match one.
 _RATE_LIMIT_WORDS = ("toomanyrequests", "too many requests", "rate limit", "rate-limit")
+# Docker Hub answers a 401 for a repository it will not confirm exists, so "refused"
+# means private *or* absent — the message says so rather than sending an operator after
+# a credential that was never the problem.
 _UNAUTHORIZED_WORDS = ("unauthorized", "authentication required", "denied",
-                      "pull access denied")
+                       "pull access denied")
 _NOT_FOUND_WORDS = ("no such manifest", "manifest unknown", "manifest_blob_unknown")
 # "not found" alone is the shell's missing-binary phrasing (`sh: 1: docker: not found`),
 # so a bare match is required to sit beside the word "manifest" before it counts.
@@ -317,7 +320,8 @@ _REFUSAL_SENTENCES = (
     ("rate-limited",
      "not compared — the registry rate-limited the request; a later scan retries"),
     ("unauthorized",
-     "not compared — the registry refused access; check this deployment's credential"),
+     "not compared — the registry refused access"
+     " (private, nonexistent, or the credential cannot read it)"),
     ("not-found",
      "the registry has no such tag — not compared; re-pull or stop tracking them"),
     ("", "the registry could not answer about — not compared"),

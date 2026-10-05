@@ -864,14 +864,20 @@ class DockerTagMissCache(ScanCase):
         self.fake.images["monarch"] = [
             {"Repository": "nginx", "Tag": "1", "Digest": "sha256:d1"},
             {"Repository": "redis", "Tag": "7", "Digest": "sha256:d2"},
+            {"Repository": "capstone-dashboard", "Tag": "local", "Digest": "sha256:d3"},
         ]
         self.fake.manifests["nginx:1"] = (
             False, "",
             "toomanyrequests: You have reached your unauthenticated pull rate limit.")
         self.fake.manifests["redis:7"] = (False, "no such manifest", "")
+        # Docker Hub answers a 401 for a repository it will not name, which is also a
+        # locally built image's name that was never on a registry.
+        self.fake.manifests["capstone-dashboard:local"] = (
+            False, "", "unauthorized: authentication required")
         report = self.report(self.scan(), "monarch")
         self.assertTrue(any("rate-limited" in e for e in report["errors"]), report["errors"])
         self.assertTrue(any("no such tag" in e for e in report["errors"]), report["errors"])
+        self.assertTrue(any("refused access" in e for e in report["errors"]), report["errors"])
 
 
 class DockerScanLogin(ScanCase):
