@@ -77,9 +77,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   } else if (analytics) {
     // Derived from the same trend and the same SLA report the `/reports` screen shows,
     // so the file and the screen cannot disagree about where the backlog is going or
-    // which tickets are about to breach.
-    const forecast = forecastVolume(ticketTrends(tickets, now, 30), { horizonDays: 14, basisDays: 7 });
-    csv = buildAnalyticsCsv(forecast, slaRisk(tickets, policies, now), { generatedAt: now });
+    // which tickets are about to breach. The trend rides along with the projection it
+    // feeds, so the figures can be checked against the days they came from.
+    const trends = ticketTrends(tickets, now, 30);
+    const forecast = forecastVolume(trends, { horizonDays: 14, basisDays: 7 });
+    csv = buildAnalyticsCsv(forecast, slaRisk(tickets, policies, now), trends, { generatedAt: now });
     filename = `forecast-sla-risk-${now.slice(0, 10)}.csv`;
   } else {
     csv = buildSlaCsv(buildSlaReport(tickets, policies, now), { generatedAt: now });

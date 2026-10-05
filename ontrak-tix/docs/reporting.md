@@ -138,12 +138,20 @@ as safe, and a ticket with no policy is counted in `withoutPolicy` rather than d
 ### Exporting the projection and the risk list
 
 `/reports/export?scope=analytics` returns both, as CSV
-(`buildAnalyticsCsv`): a forecast summary, the day-by-day projection, the band counts and
-one row per risk item in the page's own worst-first order. It re-derives the actor and the
-permission itself, like the other two exports, and it is built from the same trend and the
-same `buildSlaReport` the screen uses — so the file and the screen cannot disagree about
-where the backlog is going or which tickets are about to breach. Writing the projection
-down is the point: next week's file is the check on this week's.
+(`buildAnalyticsCsv`): the **volume trend** the projection was derived from, a forecast
+summary and its day-by-day projection, the band counts, and one row per risk item in the
+page's own worst-first order. It re-derives the actor and the permission itself, like the
+other two exports, and it is built from the same trend and the same `buildSlaReport` the
+screen uses — so the file and the screen cannot disagree about where the backlog is going
+or which tickets are about to breach.
+
+The trend travels in the file rather than staying on the screen on purpose: the projection
+is just the last `basisDays` of intake and closures held flat, so a reader who has only the
+projection cannot tell a rush that has already ended from one that is still building. The
+actual days it was averaged from — and the change against the window before — sit above the
+projection in the same file, which is what makes this week's number checkable against next
+week's. Writing the projection down is the point: next week's file is the check on this
+week's.
 
 ## Tests
 
@@ -166,6 +174,7 @@ nearest running clock chosen, a met response leaving the resolution clock, an
 accumulating desk, a paused clock flagged, and a resolved or policy-less ticket
 excluded and counted.
 
-`tix-m7-export.test.ts` covers the CSV's shape (summary block, day-by-day table, risk
-list), the worst-first row order, the quoting of a comma in a subject, and the
-empty-desk case.
+`tix-m7-export.test.ts` covers the CSV's shape (the actual-volume block, the projection
+table, the risk list), the trend printing before the projection it feeds, the worst-first
+row order, the quoting of a comma in a subject, and the empty-desk case — including the
+blank change figure a window with nothing before it produces.
