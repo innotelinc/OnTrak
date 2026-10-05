@@ -594,6 +594,30 @@ class RegistryRefusals(unittest.TestCase):
         self.assertEqual(0, summary["i1"]["rate_limited_runs"])
         self.assertEqual(1, summary["i2"]["rate_limited_runs"])
 
+    def test_the_summary_keeps_a_series_across_the_window(self):
+        # The window is the runs the table remembers as a whole, so a host absent from a
+        # scan reads as a zero bar and the bars keep their spacing.
+        db.record_registry_refusals(self.conn, run_id=1, host="i1",
+                                    counts={"rate-limited": 2})
+        db.record_registry_refusals(self.conn, run_id=2, host="i2", counts={"not-found": 3})
+        db.record_registry_refusals(self.conn, run_id=3, host="i1", counts={"not-found": 5})
+        series = db.registry_refusal_summary(self.conn)["i1"]["series"]
+        self.assertEqual(
+            [
+                {"run_id": 1, "total": 2, "rate_limited": 2},
+                {"run_id": 2, "total": 0, "rate_limited": 0},
+                {"run_id": 3, "total": 5, "rate_limited": 0},
+            ],
+            series,
+        )
+
+    def test_a_bar_carries_the_total_apart_from_the_throttle(self):
+        db.record_registry_refusals(self.conn, run_id=7, host="i1",
+                                    counts={"unauthorized": 4, "rate-limited": 1,
+                                            "not-found": 2})
+        point = db.registry_refusal_summary(self.conn)["i1"]["series"][0]
+        self.assertEqual({"run_id": 7, "total": 7, "rate_limited": 1}, point)
+
     def test_history_is_pruned_to_a_window(self):
         for run in range(1, 6):
             db.record_registry_refusals(self.conn, run_id=run, host="i1",

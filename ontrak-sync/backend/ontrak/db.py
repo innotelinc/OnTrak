@@ -851,13 +851,21 @@ def record_registry_refusals(conn, *, run_id: int, host: str, counts: dict[str, 
 
 
 def registry_refusal_summary(conn, *, runs: int = REGISTRY_REFUSAL_KEEP_RUNS) -> dict[str, dict]:
-    """Per host: what its newest scan could not judge, and how often that was a throttle.
+    """Per host: what its newest scan could not judge, and how that has moved.
 
     `latest` is the most recent scan that recorded anything for that host, keyed by
     cause. `rate_limited_runs` is how many scans inside the stored window saw at least
     one rate-limited image, which is the half a single scan cannot show: one refusal
     could be anything, but a host the registry throttles on every scan is a capacity
     problem, and only a window tells the two apart.
+
+    `series` is that window as a *shape* rather than a count — one point per stored run,
+    oldest first, each carrying the run's total refusals and how many of them were
+    throttles. It is aligned to the window of runs this table remembers as a whole, not
+    to the runs the host happens to appear in, so a scan that refused nothing for a host
+    reads as a zero rather than as a missing bar and the bars keep their spacing. A host
+    that was not scanned at all also reads as zero — the same word the dashboard already
+    uses for "nothing refused" — and the target rows are what say a host was skipped.
     """
     rows = conn.execute(
         "SELECT run_id, host, cause, count FROM registry_refusals ORDER BY run_id ASC"
@@ -865,19 +873,38 @@ def registry_refusal_summary(conn, *, runs: int = REGISTRY_REFUSAL_KEEP_RUNS) ->
     if not rows:
         return {}
     window = sorted({int(row["run_id"]) for row in rows})[-max(1, runs):]
+    in_window = set(window)
+    # (host, run) -> {total, rate_limited}, so `series` can be built run by run at the end.
+    per_run: dict[tuple[str, int], dict[str, int]] = {}
     summary: dict[str, dict] = {}
     for row in rows:
         host = str(row["host"])
         run = int(row["run_id"])
+        cause = str(row["cause"])
+        count = int(row["count"])
         entry = summary.setdefault(host, {
             "latest": {}, "latest_run": 0, "rate_limited_runs": 0, "window": len(window),
         })
         if run > entry["latest_run"]:
             entry["latest_run"] = run
             entry["latest"] = {}
-        entry["latest"][str(row["cause"])] = int(row["count"])
-        if str(row["cause"]) == "rate-limited":
+        entry["latest"][cause] = count
+        if cause == "rate-limited":
             entry["rate_limited_runs"] += 1
+        if run in in_window:
+            bucket = per_run.setdefault((host, run), {"total": 0, "rate_limited": 0})
+            bucket["total"] += count
+            if cause == "rate-limited":
+                bucket["rate_limited"] += count
+    for host, entry in summary.items():
+        entry["series"] = [
+            {
+                "run_id": run,
+                "total": per_run.get((host, run), {}).get("total", 0),
+                "rate_limited": per_run.get((host, run), {}).get("rate_limited", 0),
+            }
+            for run in window
+        ]
     return summary
 
 
