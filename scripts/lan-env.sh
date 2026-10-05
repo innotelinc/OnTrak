@@ -79,6 +79,24 @@ if [ "$print_only" = "1" ]; then
   exit 0
 fi
 
+# Also provision the Genie hosting URL so the preview console can
+# advertise a reachable address. `GENIE_HOSTING_URL` is only set here when
+# the file is a Genie `.env` (root or ontrak-genie/) and has no operator-set
+# value already — this is the one place a LAN address is *derived*, mirroring
+# how `stack_lib_agent_net_env` derives the preview address from the sandbox.
+# Detect whether this looks like the Genie root or ontrak-genie .env
+is_genie_env=0
+case "$ENV_FILE" in
+  .env|ontrak-genie/.env|*/genie/.env) is_genie_env=1 ;;
+esac
+if [ "$is_genie_env" = "1" ]; then
+  preview_port="${PREVIEW_HOST_PORT:-${ONTRAK_GENIE_PREVIEW_PORT:-5173}}"
+  existing_url="$(stack_lib_env_get "$ENV_FILE" "GENIE_HOSTING_URL")"
+  if [ -z "$existing_url" ]; then
+    stack_lib_env_set "$ENV_FILE" "GENIE_HOSTING_URL" "http://${lan}:${preview_port}"
+  fi
+fi
+
 for kv in "${pairs[@]}"; do
   key="${kv%%=*}"
   value="${kv#*=}"
