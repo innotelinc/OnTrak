@@ -634,6 +634,80 @@ class DockerMultiArch(ScanCase):
         self.assertEqual(first, self.manifest_calls())
 
 
+class DockerPinWarmup(ScanCase):
+    """Warming the pinned-index cache is spread over scans, not done in one burst.
+
+    A multi-arch tag costs one extra registry request the first time it is seen (see
+    `DockerMultiArch`), and a cold cache would spend every one of them in a single scan —
+    the burst that gets Docker Hub to answer 429 to the pulls that share the address.
+    These cases pin that a scan stops at its budget, leaves the rest unjudged rather than
+    guessing, and resolves them on a later scan.
+    """
+
+    NGINX_INDEX = "sha256:indexnginx00000"
+    REDIS_INDEX = "sha256:indexredis00000"
+
+    def setUp(self):
+        super().setUp()
+        self.settings = Settings(
+            hosts=(Host("i1", "192.168.1.51", "both"),), docker_pin_warm_budget=1)
+
+    def with_images(self):
+        # Two multi-arch images. nginx's amd64 image did not move; redis's did, so redis
+        # *would* be a finding — which is what makes the deferral worth asserting.
+        self.fake.images["monarch"] = [
+            {"Repository": "nginx", "Tag": "1.27.0", "Digest": self.NGINX_INDEX},
+            {"Repository": "redis", "Tag": "7", "Digest": self.REDIS_INDEX},
+        ]
+        self.fake.manifests["nginx:1.27.0"] = (True, manifest_list(amd64="sha256:nginxsame000000"))
+        self.fake.manifests[f"nginx@{self.NGINX_INDEX}"] = (True, manifest_list(amd64="sha256:nginxsame000000"))
+        self.fake.manifests["redis:7"] = (True, manifest_list(amd64="sha256:redisnew0000000"))
+        self.fake.manifests[f"redis@{self.REDIS_INDEX}"] = (True, manifest_list(amd64="sha256:redisold0000000"))
+
+    def pinned(self) -> list[str]:
+        """The `repo@<index>` references the scan actually asked the registry about."""
+        return [call[3][-1] for call in self.fake.calls
+                if call[0] == "docker" and call[3][:1] == ("manifest",)
+                and "@" in call[3][-1]]
+
+    def test_the_budget_stops_a_scan_resolving_more_than_it_is_allowed(self):
+        self.with_images()
+        result = self.scan()
+        # One resolution, not two: the second index was left for a later scan.
+        self.assertEqual(len(self.pinned()), 1)
+        # The deferred image would have been a finding; it is not one, and the image is
+        # protected rather than called current.
+        self.assertEqual(0, result["findings"])
+        report = self.report(result, "monarch")
+        self.assertEqual("partial", report["managers"]["docker"])
+        self.assertTrue(any("warms" in error for error in report["errors"]), report["errors"])
+
+    def test_a_later_scan_resolves_what_the_budget_deferred(self):
+        self.with_images()
+        self.scan()
+        result = self.scan()
+        # The cached first resolution cost nothing this time, so the budget went to redis,
+        # which really had moved and is judged at last.
+        self.assertEqual(len(self.pinned()), 2)
+        self.assertEqual(1, result["findings"])
+
+    def test_zero_means_no_cap(self):
+        self.settings = Settings(
+            hosts=(Host("i1", "192.168.1.51", "both"),), docker_pin_warm_budget=0)
+        self.with_images()
+        result = self.scan()
+        self.assertEqual(len(self.pinned()), 2)
+        self.assertEqual(1, result["findings"])
+
+    def test_a_cached_resolution_does_not_spend_the_budget(self):
+        self.with_images()
+        # nginx's index is already resolved, so it must not consume the single slot.
+        db.set_digest(self.conn, f"nginx@{self.NGINX_INDEX}", "sha256:nginxsame000000", now=time.time())
+        result = self.scan()
+        self.assertEqual([f"redis@{self.REDIS_INDEX}"], self.pinned())
+        self.assertEqual(1, result["findings"])
+
+
 class DockerScanLogin(ScanCase):
     """The scan authenticates before it spends Docker Hub's anonymous budget.
 

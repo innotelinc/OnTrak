@@ -326,6 +326,14 @@ class Settings:
     # apply, which authenticates unconditionally. 0 disables the reuse, logging in on
     # every scan as before.
     login_ttl_seconds: int = 7 * 24 * 3600
+    # How many *new* multi-arch pinned-index resolutions one scan may make while it
+    # warms its cache (see `scan.PinWarmBudget`). Resolving a local index digest to a
+    # platform digest costs one extra registry request per image version, and a first
+    # scan against a cold cache would spend them all at once — the burst that gets a
+    # scan answered with 429s and leaves the pulls sharing the same address short. The
+    # rest are left unjudged (protected, never called current) and resolved by later
+    # scans, so one burst becomes a trickle at no cost to correctness. 0 means no cap.
+    docker_pin_warm_budget: int = 48
     # How long a `failed` finding may sit unresolved before the reconcile report
     # names it as stale. A failure that survives one apply is a retry — it may be a
     # slow pull or a transient 429 — but one still red a day or two later is a
@@ -434,6 +442,7 @@ class Settings:
             pull_timeout=_env_int("ONTRAK_PULL_TIMEOUT", 900),
             registry_credentials=_parse_registry_credentials(_env("ONTRAK_REGISTRY_CREDENTIALS")),
             login_ttl_seconds=_env_int("ONTRAK_LOGIN_TTL", 7 * 24 * 3600),
+            docker_pin_warm_budget=_env_int("ONTRAK_DOCKER_PIN_WARM_BUDGET", 48),
             stale_failure_seconds=_env_int("ONTRAK_STALE_FAILURE_HOURS", 48) * 3600,
             scheduler_enabled=_env_bool("ONTRAK_SCHEDULER", True),
             scheduler_tick_seconds=_env_int("ONTRAK_SCHEDULER_TICK", 30),

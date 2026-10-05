@@ -203,6 +203,17 @@ class RegistryCredentials(unittest.TestCase):
         with mock.patch.dict(os.environ, {"ONTRAK_LOGIN_TTL": "3600"}):
             self.assertEqual(3600, Settings.from_env().login_ttl_seconds)
 
+    def test_the_pin_warm_budget_defaults_and_is_read_from_the_environment(self):
+        # A scan resolves new multi-arch indices up to this many per run, so the burst
+        # that warming the cache would otherwise make is bounded by default and tunable
+        # (and 0 means no cap at all).
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(48, Settings.from_env().docker_pin_warm_budget)
+        with mock.patch.dict(os.environ, {"ONTRAK_DOCKER_PIN_WARM_BUDGET": "5"}):
+            self.assertEqual(5, Settings.from_env().docker_pin_warm_budget)
+        with mock.patch.dict(os.environ, {"ONTRAK_DOCKER_PIN_WARM_BUDGET": "0"}):
+            self.assertEqual(0, Settings.from_env().docker_pin_warm_budget)
+
 
 class SetupScript(unittest.TestCase):
     """`scripts/setup.sh` must authorise the key on exactly the hosts config scans.

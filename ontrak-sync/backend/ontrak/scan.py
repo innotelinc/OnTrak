@@ -79,6 +79,41 @@ OS_RELEASE = ["sh", "-c", ". /etc/os-release 2>/dev/null && printf '%s|%s\\n' \"
 Seen = set  # of (manager, package)
 
 
+class PinWarmBudget:
+    """How many *new* manifest-list resolutions one scan may make.
+
+    Warming the pinned-index cache costs one extra registry request per multi-arch
+    image version: `repo@<index>` must be asked, once, for the platform digest the
+    local index resolves to (see `_resolve_local_platform`). Resolving it lazily already
+    dedupes across hosts and images within a run, but a first scan against a cold cache
+    would still spend every one of them at once — and the budget for asking Docker Hub
+    anonymously is roughly a hundred requests per six hours *per address*, shared with
+    the image pulls. That burst is what gets a scan answered with 429s and, worse, leaves
+    the pulls competing for an allowance the scan just spent.
+
+    So a scan resolves at most `limit` indices it has not seen before, shared across the
+    hosts it scans concurrently (hence the lock). The rest are left unjudged — protected,
+    not called current — and picked up by later scans, which turns one burst into a
+    trickle and never invents a finding. `limit = 0` means no cap, which is the behavior
+    before this existed and the right choice for a deployment with a registry of its own.
+    """
+
+    def __init__(self, limit: int = 0):
+        self._limit = max(0, int(limit))
+        self._taken = 0
+        self._lock = threading.Lock()
+
+    def take(self) -> bool:
+        """Claim one new resolution, or refuse when this scan has spent its budget."""
+        if self._limit == 0:
+            return True
+        with self._lock:
+            if self._taken >= self._limit:
+                return False
+            self._taken += 1
+            return True
+
+
 def _absent(result: Result) -> bool:
     """Did the command fail because the tool is not installed on this target?
 
@@ -216,7 +251,7 @@ def _kind_key(ref: str) -> str:
 
 def _resolve_local_platform(conn, host: Host, container: str, repo: str,
                             local_digest: str, settings: Settings,
-                            authenticate) -> str:
+                            authenticate, warm: PinWarmBudget) -> str | None:
     """A multi-arch image's platform digest, from the index digest it was pulled by.
 
     `local_digest` is the local `RepoDigest` of a manifest list: the *index* digest,
@@ -229,12 +264,21 @@ def _resolve_local_platform(conn, host: Host, container: str, repo: str,
     tag's answer (`PINNED_DIGEST_TTL_SECONDS`): the extra request costs one per image
     *version*, not one per scan. An empty result — the index was pruned, or the
     registry refused — is unjudged, not current.
+
+    Returns `None` when this scan has spent its warm-up budget (`warm`) and the answer
+    is not already cached. That is *deferred*, not *unresolvable*: the image is left
+    unjudged exactly as an empty answer would leave it, but the caller reports it as a
+    budget deferral rather than as a registry that could not resolve the index, because
+    the two mean different things to an operator — one clears on the next scan, the
+    other may not.
     """
     pinned_ref = f"{repo}@{local_digest}"
     ttl = PINNED_DIGEST_TTL_SECONDS if settings.digest_ttl_seconds > 0 else 0
     cached = db.get_digest(conn, pinned_ref, ttl_seconds=ttl)
     if cached is not None:
         return cached
+    if not warm.take():
+        return None
     authenticate(pinned_ref)
     manifest = docker_in_container(
         host, container, ["manifest", "inspect", "--verbose", pinned_ref],
@@ -246,7 +290,8 @@ def _resolve_local_platform(conn, host: Host, container: str, repo: str,
 
 
 def _record_docker(conn, target_id: int, host: Host, container: str | None,
-                   settings: Settings, report: TargetReport) -> Seen:
+                   settings: Settings, report: TargetReport,
+                   warm: PinWarmBudget) -> Seen:
     """Docker image findings for one target.
 
     Three-valued comparison all the way down (see `scanners.image_is_behind`): an
@@ -312,6 +357,10 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
 
     seen: set[tuple[str, str]] = set()
     unjudged = 0
+    # Multi-arch images left unjudged because this scan has spent its warm-up budget,
+    # counted apart from `unjudged` so the report can say which of the two it is: a
+    # deferral clears on the next scan, a registry that cannot resolve an index may not.
+    deferred = 0
     # (container, registry) pairs already logged in during this call. The daemon
     # keeps the credential, so one login covers every later request on the same
     # host and target; doing it per request would spend the budget the request needs.
@@ -383,7 +432,12 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
             # image's own index to this host's platform digest before comparing, or
             # every multi-arch tag reads as behind forever.
             local_platform = _resolve_local_platform(
-                conn, host, container, repo, local_digest, settings, authenticate)
+                conn, host, container, repo, local_digest, settings, authenticate, warm)
+            if local_platform is None:
+                # The warm-up budget is spent for this scan. Not a verdict either way.
+                deferred += 1
+                report.inconclusive.add(("docker", ref))
+                continue
             behind = scanners.image_is_behind(local_platform, remote_digest)
         else:
             behind = scanners.image_is_behind(local_digest, remote_digest)
@@ -407,9 +461,13 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
         # expired by the scan after it. Adding it here would strand that row as
         # pending forever, the same way the apt path would if it listed packages
         # that are no longer upgradable.
-    report.manager_status["docker"] = "ok" if not unjudged else "partial"
+    report.manager_status["docker"] = "ok" if not unjudged and not deferred else "partial"
     if unjudged:
         report.errors.append(f"docker: {unjudged} image(s) not in a registry — not compared")
+    if deferred:
+        report.errors.append(
+            f"docker: {deferred} multi-arch image(s) left unjudged while the "
+            f"pinned-index cache warms — they are re-checked on a later scan")
     return seen
 
 
@@ -431,7 +489,8 @@ def _parse_instances(listing) -> list[tuple[str, str]]:
 
 
 def scan_target(conn, *, host: Host, name: str, kind: str, container: str | None,
-                settings: Settings, policy: Policy, state: str | None = None) -> TargetReport:
+                settings: Settings, policy: Policy, state: str | None = None,
+                warm: PinWarmBudget | None = None) -> TargetReport:
     """Inspect one target and record its findings. Never raises."""
     report = TargetReport(host=host.name, name=name, kind=kind)
     try:
@@ -461,12 +520,21 @@ def scan_target(conn, *, host: Host, name: str, kind: str, container: str | None
                         looked=False)
         return report
 
+    # One warm-up budget per *run*, created by `scan_network` and shared by every target
+    # and thread below, so the cost of warming the pinned-index cache is bounded for the
+    # whole Network and not per host (a per-host budget would multiply the burst by the
+    # number of machines). A direct caller that passes none gets an uncapped one, which is
+    # exactly the behavior before the budget existed.
+    warm = warm or PinWarmBudget(0)
+
     seen: set[tuple[int, str, str]] = set()
     for manager, fn in (("apt", _record_apt), ("snap", _record_snap), ("docker", _record_docker)):
         if manager not in policy.scopes:
             continue
         try:
-            found = fn(conn, target_id, host, container, settings, report)
+            found = (fn(conn, target_id, host, container, settings, report, warm)
+                     if manager == "docker"
+                     else fn(conn, target_id, host, container, settings, report))
         except Exception as exc:  # one manager failing must not lose the others
             report.manager_status[manager] = "error"
             report.errors.append(f"{manager}: {exc}")
@@ -497,6 +565,10 @@ def scan_network(conn, settings: Settings, policy: Policy, *, trigger: str = "ma
     hosts = [h for h in settings.hosts if not host_names or h.name in host_names]
     run_id = db.start_run(conn, "scan", trigger)
     db.log(conn, f"scan started ({trigger}) for {len(hosts)} host(s)", run_id=run_id)
+    # One warm budget for the whole run: the pinned-index cache is a property of the
+    # Network, not of a host, so the extra registry requests it costs are bounded once
+    # rather than once per machine. See `PinWarmBudget`.
+    warm = PinWarmBudget(settings.docker_pin_warm_budget)
 
     reports: list[TargetReport] = []
     # Host name -> the target names its prune dropped. Collected under a lock
@@ -599,10 +671,10 @@ def scan_network(conn, settings: Settings, policy: Policy, *, trigger: str = "ma
                            f"present: {shown}{more}", level="warning", run_id=run_id)
 
             out = [scan_target(conn, host=host, name=host.name, kind="host", container=None,
-                               settings=settings, policy=policy)]
+                               settings=settings, policy=policy, warm=warm)]
             for name, state in instances:
                 out.append(scan_target(conn, host=host, name=name, kind="container", container=name,
-                                       settings=settings, policy=policy, state=state))
+                                       settings=settings, policy=policy, state=state, warm=warm))
             return out
         except Exception as exc:  # a host-level crash must not abort the run
             db.upsert_host(conn, name=host.name, address=host.address, kind=host.kind,

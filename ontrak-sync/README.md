@@ -216,7 +216,7 @@ Docker Hub that question is answered anonymously out of roughly a hundred reques
 per address — the same budget every image **pull** in the Network draws from, so a scan that is
 careless about it is what makes an update fail with `429 Too Many Requests`.
 
-Three things keep the scanning side cheap, all of them about the same insight, that the answer is
+Four things keep the scanning side cheap, all of them about the same insight, that the answer is
 being re-requested when it has not changed:
 
 - **A locally built image is never asked about.** It has no repository digest, so no registry can
@@ -229,6 +229,12 @@ being re-requested when it has not changed:
   so the scan first resolves the image's own index to its platform digest and compares that. The
   answer names one immutable list and is therefore cached for a year: the extra request is one per
   image *version*, not one per scan.
+- **Warming that cache is spread over scans, not done in one burst.** The first scan of a Network
+  against a cold cache would otherwise make one extra request per multi-arch image version all at
+  once, which is exactly the shape Docker Hub answers with `429`. A scan resolves at most
+  `ONTRAK_DOCKER_PIN_WARM_BUDGET` (48 by default; `0` means no cap) indices it has not seen before;
+  the rest are left *unjudged* — protected, never called current — and resolved by later scans. The
+  budget is one per run, not per host, because the cache is a property of the Network.
 
 In this Network that took a repeat scan from about 210 s to about 72 s, and the second scan made no
 registry requests at all. A failed lookup is never cached: a rate limit is not a statement about
