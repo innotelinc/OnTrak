@@ -79,11 +79,12 @@ if [ "$print_only" = "1" ]; then
   exit 0
 fi
 
-# Also provision the Genie hosting URL so the preview console can
-# advertise a reachable address. `GENIE_HOSTING_URL` is only set here when
-# the file is a Genie `.env` (root or ontrak-genie/) and has no operator-set
-# value already — this is the one place a LAN address is *derived*, mirroring
-# how `stack_lib_agent_net_env` derives the preview address from the sandbox.
+# Also provision the builder product's hosting URL so the preview
+# console can advertise a reachable address. `GENIE_HOSTING_URL` is only set
+# when the file is the Genie `.env` (root or ontrak-genie/) and has no
+# operator-set value already — this is the one place a LAN address is
+# *derived*, mirroring how `stack_lib_agent_net_env` derives the preview
+# address from the sandbox.
 # Detect whether this looks like the Genie root or ontrak-genie .env
 is_genie_env=0
 case "$ENV_FILE" in
@@ -94,6 +95,18 @@ if [ "$is_genie_env" = "1" ]; then
   existing_url="$(stack_lib_env_get "$ENV_FILE" "GENIE_HOSTING_URL")"
   if [ -z "$existing_url" ]; then
     stack_lib_env_set "$ENV_FILE" "GENIE_HOSTING_URL" "http://${lan}:${preview_port}"
+  fi
+fi
+
+# Provision ONTRAK_TIX_BASE_URL for the Tix .env too, so the desk can build
+# correct notification links and SSO redirects from this host's LAN address.
+case "$ENV_FILE" in
+  ontrak-tix/.env) is_tix_env=1 ;;
+esac
+if [ "${is_tix_env:-0}" = "1" ]; then
+  existing_url="$(stack_lib_env_get "$ENV_FILE" "ONTRAK_TIX_BASE_URL")"
+  if [ -z "$existing_url" ]; then
+    stack_lib_env_set "$ENV_FILE" "ONTRAK_TIX_BASE_URL" "http://${lan}:3001"
   fi
 fi
 
