@@ -34,6 +34,8 @@ import {
   DEFAULT_ENFORCEMENT_POLICY,
   isProtectedTarget,
   protectedTargets,
+  timeToPreventMs,
+  timeToPreventSummary,
   type EnforcementContext,
   type EnforcementPolicy,
   type EnforcementProposal,
@@ -420,5 +422,49 @@ test("lifting an action is as auditable as applying it", async (t) => {
     assert.equal(DEFAULT_ENFORCEMENT_POLICY.maxActionsPerHour, 10);
     assert.equal(DEFAULT_ENFORCEMENT_POLICY.allowPermanent, false);
     assert.equal(DEFAULT_ENFORCEMENT_POLICY.requireSecondApprover, true);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/*  How long prevention took                                                  */
+/* -------------------------------------------------------------------------- */
+
+test("time-to-prevent is measured from the records, and says so when it cannot be", async (t) => {
+  await t.test("the interval is the gap between the detection and the application", () => {
+    assert.equal(
+      timeToPreventMs("2026-10-01T12:00:00.000Z", "2026-10-01T12:04:30.000Z"),
+      270_000,
+    );
+    // Instant is a measurement, not a missing one: a block applied in the same millisecond the
+    // alert was seen is a real, very fast response.
+    assert.equal(timeToPreventMs(NOW, NOW), 0);
+  });
+
+  await t.test("nothing to measure is null, never zero", () => {
+    // A proposal waiting on approval has not prevented anything.
+    assert.equal(timeToPreventMs(NOW, null), null);
+    assert.equal(timeToPreventMs(null, NOW), null);
+    assert.equal(timeToPreventMs(undefined, undefined), null);
+    assert.equal(timeToPreventMs("not a date", NOW), null);
+    // A clock that puts the prevention *before* the detection measures nothing at all, and a
+    // negative number would let a skewed sensor read as an impossibly fast response.
+    assert.equal(timeToPreventMs("2026-10-01T12:05:00.000Z", "2026-10-01T12:00:00.000Z"), null);
+  });
+
+  await t.test("the summary is a median, and drops what was never measured", () => {
+    const summary = timeToPreventSummary([1000, 3000, 2000, null, undefined]);
+    assert.equal(summary.measured, 3, "only the measured intervals count");
+    assert.equal(summary.medianMs, 2000);
+    assert.equal(summary.fastestMs, 1000);
+    assert.equal(summary.slowestMs, 3000);
+
+    // An even count halves the middle rather than picking a side.
+    assert.equal(timeToPreventSummary([1000, 3000]).medianMs, 2000);
+
+    // The property a mean would not have: one slow approval cannot describe the whole set.
+    assert.equal(timeToPreventSummary([1000, 1000, 1000, 10 * 60 * 60 * 1000]).medianMs, 1000);
+
+    const empty = timeToPreventSummary([]);
+    assert.deepEqual(empty, { measured: 0, medianMs: null, fastestMs: null, slowestMs: null });
   });
 });

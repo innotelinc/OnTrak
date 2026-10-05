@@ -50,6 +50,8 @@ export interface EnforcementActionRow {
   approvedByLabel: string | null;
   appliedAt: Date | null;
   expiresAt: Date | null;
+  detectedAt: Date | null;
+  timeToPreventMs: number | null;
   liftedAt: Date | null;
   liftedById: string | null;
   liftedByLabel: string | null;
@@ -186,6 +188,8 @@ export function toEnforcementAction(row: EnforcementActionRow): EnforcementActio
     approvedByLabel: row.approvedByLabel ?? null,
     appliedAt: toIso(row.appliedAt),
     expiresAt: toIso(row.expiresAt),
+    detectedAt: toIso(row.detectedAt),
+    timeToPreventMs: row.timeToPreventMs ?? null,
     liftedAt: toIso(row.liftedAt),
     liftedById: row.liftedById ?? null,
     liftedByLabel: row.liftedByLabel ?? null,
@@ -214,6 +218,8 @@ export function toEnforcementActionRow(record: EnforcementActionRecord) {
     approvedByLabel: record.approvedByLabel,
     appliedAt: record.appliedAt === null ? null : new Date(record.appliedAt),
     expiresAt: record.expiresAt === null ? null : new Date(record.expiresAt),
+    detectedAt: record.detectedAt === null ? null : new Date(record.detectedAt),
+    timeToPreventMs: record.timeToPreventMs,
     liftedAt: record.liftedAt === null ? null : new Date(record.liftedAt),
     liftedById: record.liftedById,
     liftedByLabel: record.liftedByLabel,

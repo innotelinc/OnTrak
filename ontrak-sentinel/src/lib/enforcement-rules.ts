@@ -499,3 +499,82 @@ export function decideRollback(
     },
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/*  How long prevention took                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The interval from the detection behind an action to the moment it was applied.
+ *
+ * S4's exit is a **measured** time-to-prevent, so the number has to come from the
+ * records rather than from a dashboard's arithmetic on them. Both ends are instants
+ * already kept: the detection (the alert's own first sighting) and the application
+ * (`appliedAt`). This is the one place the subtraction happens, so the register, an
+ * export and a reviewer all read the same figure.
+ *
+ * It answers `null` — not zero, not a guess — whenever there is nothing to measure. An
+ * action that was never applied (a proposal still waiting, a refusal) has no
+ * time-to-prevent, and a clock that puts the prevention *before* the detection measures
+ * nothing at all: that is a skewed sensor or a mis-set clock, and the honest answer to
+ * "how fast?" is that the deployment did not measure it.
+ */
+export function timeToPreventMs(
+  detectedAt: string | null | undefined,
+  appliedAt: string | null | undefined,
+): number | null {
+  if (!detectedAt || !appliedAt) return null;
+  const from = Date.parse(detectedAt);
+  const to = Date.parse(appliedAt);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+  const elapsed = to - from;
+  return elapsed < 0 ? null : elapsed;
+}
+
+/**
+ * What a set of measured intervals says, as the register's headline figure.
+ *
+ * A **median**, not a mean, and that is the point of summarising rather than averaging: the
+ * promptness of a desk is a fact about its typical response, and one action approved the
+ * next morning must not be able to describe the whole deployment through a mean. The fastest
+ * and slowest travel beside it so a reader can see the spread a middle hides, and the count
+ * travels with all three so "median 4m" reads differently at `measured: 1` and at
+ * `measured: 50`.
+ *
+ * Unmeasured actions are dropped rather than counted as zero: a proposal nobody approved is
+ * not a fast response, and folding it in as `0 ms` would make a desk look *faster* the longer
+ * its queue of unapproved blocks grew.
+ */
+export interface TimeToPreventSummary {
+  /** How many actions carry a measurement — the denominator behind the middle. */
+  measured: number;
+  /** The middle of the measured intervals, or `null` when nothing was measured. */
+  medianMs: number | null;
+  fastestMs: number | null;
+  slowestMs: number | null;
+}
+
+export function timeToPreventSummary(
+  samples: readonly (number | null | undefined)[],
+): TimeToPreventSummary {
+  const values = samples
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+    .sort((a, b) => a - b);
+
+  if (values.length === 0) {
+    return { measured: 0, medianMs: null, fastestMs: null, slowestMs: null };
+  }
+
+  const middle = Math.floor(values.length / 2);
+  const medianMs =
+    values.length % 2 === 1
+      ? values[middle]!
+      : Math.round((values[middle - 1]! + values[middle]!) / 2);
+
+  return {
+    measured: values.length,
+    medianMs,
+    fastestMs: values[0]!,
+    slowestMs: values[values.length - 1]!,
+  };
+}

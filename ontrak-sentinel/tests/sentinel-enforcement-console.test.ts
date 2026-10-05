@@ -28,7 +28,11 @@ import type { HashFn } from "../src/lib/audit-chain";
 import { CONSOLE_PATHS, CONSOLE_SESSION_COOKIE } from "../src/lib/console-rules";
 import { ConsoleService } from "../src/lib/console-service";
 import { routeConsole } from "../src/lib/console-http";
-import { EnforcementService, MemoryEnforcementStore } from "../src/lib/enforcement-service";
+import {
+  EnforcementService,
+  MemoryEnforcementStore,
+  type EnforcementActionRecord,
+} from "../src/lib/enforcement-service";
 import { parseTargetLines } from "../src/lib/enforcement-rules";
 import {
   DEFAULT_ENFORCEMENT_SWEEP_INTERVAL_MS,
@@ -522,6 +526,58 @@ test("enforcement: a sweep lifts what its own deadline reached, and the interval
     enforcementSweepIntervalMs({ SENTINEL_ENFORCEMENT_SWEEP_INTERVAL_MINUTES: "0.001" }),
     MIN_ENFORCEMENT_SWEEP_INTERVAL_MS,
   );
+});
+
+test("enforcement: the register states the measured time-to-prevent, and says when it has none", async () => {
+  const h = harness();
+  const { actor, sessionId } = await h.organization("acme");
+
+  // Nothing has been prevented, so the page says so rather than printing 0 ms — an absent
+  // measurement and an instant one are different facts and must not read alike.
+  const empty = await routeConsole(request("GET", CONSOLE_PATHS.enforcement, { sessionId }), h.service);
+  assert.equal(empty.status, 200);
+  assert.match(empty.body, /No action carries a measured time-to-prevent yet/);
+
+  // Seed one settled action the way the service writes it — the interval measured at the
+  // moment it went in force. The store is written directly because this suite wires no
+  // detection pipeline to propose from; the measurement itself is the service's own test.
+  const at = new Date(h.nowMs()).toISOString();
+  const action: EnforcementActionRecord = {
+    id: "enf-tttp",
+    organizationId: actor.organizationId,
+    action: "BLOCK",
+    state: "ACTIVE",
+    targets: [{ kind: "ADDRESS", value: "203.0.113.9", label: "the C2 host" }],
+    alertId: "alert-tttp",
+    reason: "Beaconing to a known C2 address.",
+    requestedById: actor.id,
+    requestedByLabel: "Admin acme",
+    requestedByRole: "ADMIN",
+    approvedById: actor.id,
+    approvedByLabel: "Admin acme",
+    appliedAt: at,
+    expiresAt: null,
+    detectedAt: new Date(h.nowMs() - 90_000).toISOString(),
+    timeToPreventMs: 90_000,
+    liftedAt: null,
+    liftedById: null,
+    liftedByLabel: null,
+    liftReason: null,
+    refusedCode: null,
+    refusedReason: null,
+    rollback: null,
+    createdAt: at,
+    updatedAt: at,
+  };
+  await h.store.saveAction(action);
+
+  const page = await routeConsole(request("GET", CONSOLE_PATHS.enforcement, { sessionId }), h.service);
+  assert.equal(page.status, 200);
+  // The headline figure S4's exit is judged on, and the row it came from beside it.
+  assert.match(page.body, /Measured time-to-prevent: <strong>1m 30s<\/strong>/);
+  assert.match(page.body, /median of 1; fastest 1m 30s, slowest 1m 30s/);
+  assert.match(page.body, /prevented in 1m 30s/);
+  assert.doesNotMatch(page.body, /No action carries a measured time-to-prevent yet/);
 });
 
 test("enforcement: the scheduler runs its sweep, reports failures, and stops cleanly", async () => {

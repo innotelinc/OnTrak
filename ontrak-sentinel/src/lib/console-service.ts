@@ -58,7 +58,12 @@ import type { AlertRecord, DetectionService } from "./detection-service";
 // Guard's prevention service (S4): the console's half of it. Imported as a type for the
 // collaborator and as functions for the two things the page owns — reading the target box
 // and validating the action a form submitted.
-import { ENFORCEMENT_ACTION_KINDS, parseTargetLines, type EnforcementActionKind } from "./enforcement-rules";
+import {
+  ENFORCEMENT_ACTION_KINDS,
+  parseTargetLines,
+  timeToPreventSummary,
+  type EnforcementActionKind,
+} from "./enforcement-rules";
 import type { EnforcementActionRecord, EnforcementService } from "./enforcement-service";
 import type { MfaService, MfaStatus } from "./mfa-service";
 import type { OidcStore } from "./oidc-service";
@@ -1132,6 +1137,10 @@ export class ConsoleService implements ConsoleEndpoints {
         protectedTargets: policy.protectedTargets,
         candidates,
         actions: actions.map((action) => toConsoleEnforcementAction(action, ruleNames)),
+        // The measured time-to-prevent (S4's exit): the middle of what these actions took,
+        // with the count behind it, so the register states the figure the milestone is judged
+        // on rather than leaving it to be recomputed off the page.
+        prevention: timeToPreventSummary(actions.map((action) => action.timeToPreventMs)),
       },
     };
   }
@@ -1169,12 +1178,20 @@ export class ConsoleService implements ConsoleEndpoints {
     const session = await this.spine.resolveOwnSession(context.value.sessionId);
     if (!session.ok) return session;
 
+    const alertId = input.alertId.trim();
+    // The detection instant the measurement is taken from: the alert's own first sighting,
+    // read from the same queue this form drew its options from. When it cannot be read the
+    // action is still proposed — it is recorded unmeasured, which is the honest answer rather
+    // than a refused block.
+    const detectedAt = await this.detectionFirstSeen(context.value.actor, alertId);
+
     const applied = await this.prevention.apply({
       organizationId: context.value.organizationId,
+      detectedAt,
       proposal: {
         action: action as EnforcementActionKind,
         targets,
-        alertId: input.alertId.trim(),
+        alertId,
         reason: input.reason,
         requestedBy: {
           identityId: context.value.identityId,
@@ -1324,6 +1341,21 @@ export class ConsoleService implements ConsoleEndpoints {
     return canApproveEnforcement(role)
       ? { ok: true, value: undefined as never }
       : { ok: false, error: "Enforcement is an administrator's surface." };
+  }
+
+  /**
+   * When the named alert was first seen, or `null` when this deployment cannot say.
+   *
+   * Read through the detection service's own permitted read rather than around it, so the
+   * measurement cannot become a way to see an alert the actor could not. A deployment with no
+   * detection pipeline, an unknown id, or a read this actor is refused all answer `null`: the
+   * action is recorded, it just carries no interval.
+   */
+  private async detectionFirstSeen(actor: IdentityActor, alertId: string): Promise<string | null> {
+    if (this.detection === null || alertId === "") return null;
+    const queue = await this.detection.alerts(actor);
+    if (!queue.ok) return null;
+    return queue.value.find((alert) => alert.id === alertId)?.firstSeenAt ?? null;
   }
 
   /* --------------------------------------------------------------- policies */
@@ -1857,6 +1889,7 @@ function toConsoleEnforcementAction(
     approvedByLabel: action.approvedByLabel,
     appliedAt: action.appliedAt,
     expiresAt: action.expiresAt,
+    timeToPreventMs: action.timeToPreventMs,
     liftedAt: action.liftedAt,
     liftedByLabel: action.liftedByLabel,
     liftReason: action.liftReason,

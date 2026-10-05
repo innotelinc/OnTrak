@@ -758,10 +758,11 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
     does not have to be the one who undoes it. And **a refusal is recorded rather
     than discarded** — an action turned down at the approval is stored `REFUSED`
     with the rail that refused it, because somebody asked and the answer is worth
-    keeping. Covered by `tests/sentinel-enforcement-service.test.ts` (21 checks:
+    keeping. Covered by `tests/sentinel-enforcement-service.test.ts` (26 checks:
     the waiting proposal, the second approver, the tightened safe-list, the hourly
-    window, expiry by its own clock, a hand lift, and a policy that will not
-    work).
+    window, expiry by its own clock, a hand lift, a policy that will not work, and
+    the measured time-to-prevent — taken on an immediate apply, taken at approval
+    across the wait, and left unmeasured with no detection or a skewed clock).
   - `[x]` **The surface a person reaches, and the clock that ends an action**
     (`console-rules.ts` → `renderEnforcement`, the `CONSOLE_PATHS.enforcement*`
     routes, `ConsoleService.enforcement`/`proposeEnforcement`/`approveEnforcement`/
@@ -784,12 +785,14 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
     list of tenants, and it is idempotent because `lift` is. Wired at startup in
     `scripts/serve.ts`, alongside the enforcement store the deployment now builds
     (Postgres where there is a database, memory otherwise). Covered by
-    `tests/sentinel-enforcement-console.test.ts` (9 checks: the page behind an
+    `tests/sentinel-enforcement-console.test.ts` (10 checks: the page behind an
     administrator and a refusal for everybody else, an immediate apply against a
     relaxed policy, a proposal that waits and the requester refused their own
     approval, a safe-list refusal that stores nothing, a hand lift with and without
     a note, a policy written through the page with an invalid one refused by name,
-    the sweep by its own clock, and the scheduler's own loop).
+    the sweep by its own clock, the scheduler's own loop, and the register's
+    measured time-to-prevent — its median, its per-row interval, and the sentence
+    for having none).
   - `[x]` **The enforcement plane, as a seam rather than a packet filter**
     (`src/lib/enforcement-plane.ts`, `planeFromEnv`, and the fourth `EnforcementService`
     argument): the last thing S4 owed, and deliberately an **interface plus two
@@ -819,13 +822,33 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
     the waiting proposal, the record handed to the plane, the hand lift and the sweep,
     a plane that refuses and one that throws, the HTTP body and token, and the unset
     environment).
+  - `[x]` **The measured time-to-prevent** (`timeToPreventMs`/`timeToPreventSummary` in
+    `enforcement-rules.ts`, the `detectedAt`/`timeToPreventMs` columns on
+    `EnforcementAction`, and the figure the register states): S4's exit is a *measured*
+    time, so the number comes from the records rather than from a dashboard's arithmetic
+    on them. Both ends were already kept — the alert's own first sighting and the
+    action's `appliedAt` — and `detectedAt` is now carried onto the action at proposal so
+    the interval survives the alert leaving the queue it was chosen from. It is measured
+    **when the action goes in force**, not at proposal: a proposal waiting on a second
+    administrator has prevented nothing, and the wait is part of how long prevention
+    took (it is the part a slow approval owns). The register states a **median** — with
+    the fastest, the slowest and the count beside it — because one action approved the
+    next morning must not be able to describe the deployment through a mean, and
+    unmeasured actions are dropped rather than counted as zero, so a growing queue of
+    unapproved blocks cannot make a desk look faster. A clock that puts the prevention
+    before the detection measures nothing (`null`), never a negative interval. Covered by
+    `tests/sentinel-enforcement.test.ts` (the interval, the nulls, and the median against
+    an outlier), `sentinel-enforcement-service.test.ts` (measured on an immediate apply,
+    measured at approval across the wait, applied unmeasured with no detection, and a
+    skew recorded as unmeasured) and `sentinel-enforcement-console.test.ts` (the
+    register's figure and per-row interval, and the "nothing measured yet" sentence).
   - What is **not** here, and is deliberately a deployment's own: **vendor adapters**.
     The seam is a JSON `POST`, so an EDR, a switch ACL, a proxy or a firewall is a
     small adapter of the operator's — the same shape every telemetry source already
     uses — and the *contract* a plane needs is `EnforcementTarget` and nothing more.
-    What is also still open, and is the one claim in S4's exit this does not make on
-    its own: a **measured** time-to-prevent. The path exists end to end; nothing in
-    this build times it.
+    The one claim in S4's exit this bullet could not make on its own — a **measured**
+    time-to-prevent — landed beside it (the bullet above): the interval is taken from
+    the records, stored on the action, and stated on the register.
 - Reversible-by-default, rate-limited, blast-radius caps; every action audited.
 - **Exit:** a threat is blocked within a defined latency; the block is approved,
   logged, reversible, and cannot be applied to a protected target.
@@ -980,19 +1003,22 @@ missing rather than as a task name:
    a shell. The **enforcement plane** has landed too (`enforcement-plane.ts`): an
    `ACTIVE` record is pushed to a configured plane as one JSON `POST`, released from
    its own stored plan, and a plane that refuses or is unreachable is recorded
-   without undoing the approval. What remains of S4 is the smaller half of its exit
-   — a **measured** time-to-prevent, and the vendor adapter each deployment writes
-   for its own firewall, agent or proxy on the `EnforcementTarget` seam.
+   without undoing the approval. The **measured** time-to-prevent has landed too
+   (`timeToPreventMs` on each action, its median on the register), so what remains of
+   S4 is the vendor adapter each deployment writes for its own firewall, agent or proxy
+   on the `EnforcementTarget` seam.
 
 S5 and S6 sit behind all five. A 1.0 that arrives with an IdP, a detector, a
 working listener and a reversible action, all on one evidence chain, is the
 product this roadmap describes; everything above that line is scale.
 
-**Where that leaves S4 (2026-10-01).** All five are closed except the parts of 2
+**Where that leaves S4 (2026-10-05).** All five are closed except the parts of 2
 and 3 that are named there: the enforcement **plane** landed as a seam with an HTTP
 adapter, so an `ACTIVE` record now reaches something that can drop a packet on a
 deployment that configures one, is released from its own stored plan, and cannot be
-undone by a plane that refuses or is unreachable. What S4 still owes before it is a
-`[x]` is the smaller half of its own exit: a **measured** time-to-prevent (nothing
-here times the path) and the vendor adapters each deployment writes for its own
-firewall, agent or proxy.
+undone by a plane that refuses or is unreachable. The **measured time-to-prevent**
+has landed too — the interval is taken from the records, stored on the action and
+stated as a median on the register — so what S4 still owes before it is a `[x]` is the
+vendor adapters each deployment writes for its own firewall, agent or proxy. That is
+work a deployment owns by design rather than this build, so the measurement was the
+last of S4's own exit criteria.

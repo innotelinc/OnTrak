@@ -43,6 +43,7 @@ import {
   decideEnforcement,
   decideRollback,
   auditActionFor,
+  timeToPreventMs,
   DEFAULT_ENFORCEMENT_POLICY,
   type EnforcementActionKind,
   type EnforcementApproval,
@@ -96,6 +97,22 @@ export interface EnforcementActionRecord {
   appliedAt: string | null;
   /** When it lifts itself, or null when it stands until lifted by hand. */
   expiresAt: string | null;
+  /**
+   * When the detection this answers was first seen, carried from the alert at proposal time.
+   *
+   * Stored on the action rather than joined from the alert when the figure is read, for the
+   * same reason the evidence and the rollback are: an alert is closed, and a queue is read
+   * with the window an operator is looking at. Time-to-prevent is a fact about *this* action,
+   * and it has to survive the alert leaving the queue that produced it.
+   */
+  detectedAt: string | null;
+  /**
+   * How long prevention took — `appliedAt − detectedAt` — or `null` when it was not measured.
+   *
+   * Set at the moment the action goes `ACTIVE`, not at proposal: a waiting proposal has not
+   * prevented anything yet, and a time recorded then would count a decision nobody had made.
+   */
+  timeToPreventMs: number | null;
   /** Set when it is lifted, and by whom. */
   liftedAt: string | null;
   liftedById: string | null;
@@ -270,6 +287,14 @@ export class EnforcementService {
     proposal: EnforcementProposal;
     /** Approvals already on record for this proposal. */
     approvals?: EnforcementApproval[];
+    /**
+     * When the alert behind this was first seen, so a measured time-to-prevent can be taken.
+     *
+     * Supplied by the caller because the alert is the caller's to read — the console already
+     * holds the queue it chose from — and optional so a proposal made without a detection
+     * instant is recorded with no measurement rather than a fabricated one.
+     */
+    detectedAt?: string | null;
   }): Promise<ServiceResult<AppliedEnforcement>> {
     const at = this.ids.now();
     const policy = await this.policy(input.organizationId);
@@ -321,6 +346,11 @@ export class EnforcementService {
       approvedByLabel: null,
       appliedAt: gate === "IMMEDIATE" ? at : null,
       expiresAt: decision.rollback.at,
+      detectedAt: input.detectedAt ?? null,
+      // Measured only if this action is in force now: a `PENDING` proposal has prevented
+      // nothing, and its interval is taken when the approval applies it.
+      timeToPreventMs:
+        gate === "IMMEDIATE" ? timeToPreventMs(input.detectedAt ?? null, at) : null,
       liftedAt: null,
       liftedById: null,
       liftedByLabel: null,
@@ -463,6 +493,10 @@ export class EnforcementService {
       approvedByLabel: input.approver.label,
       appliedAt: at,
       expiresAt: decision.rollback.at,
+      // The interval is measured here, against the detection instant the proposal carried, so
+      // the time-to-prevent spans the wait for a second administrator. That wait is part of
+      // how long prevention took, and it is the part a slow approval is responsible for.
+      timeToPreventMs: timeToPreventMs(record.detectedAt, at),
       rollback: decision.rollback,
       updatedAt: at,
     };

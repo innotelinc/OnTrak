@@ -434,6 +434,78 @@ test("the policy is stored, audited, and validated", async (t) => {
   });
 });
 
+test("time-to-prevent is measured when an action goes in force", async (t) => {
+  await t.test("an immediate action carries the interval from the detection", async () => {
+    const h = harness({ requireSecondApprover: false });
+    const applied = await h.service.apply({
+      organizationId: ORG,
+      detectedAt: "2026-10-01T11:58:00.000Z",
+      proposal: proposal(),
+    });
+
+    assert.equal(applied.ok, true);
+    if (!applied.ok) return;
+    assert.equal(applied.value.action.detectedAt, "2026-10-01T11:58:00.000Z");
+    assert.equal(applied.value.action.timeToPreventMs, 120_000);
+  });
+
+  await t.test("a waiting proposal is measured at approval, so the wait is part of it", async () => {
+    const h = harness();
+    const proposed = await h.service.apply({
+      organizationId: ORG,
+      detectedAt: "2026-10-01T11:59:00.000Z",
+      proposal: proposal(),
+    });
+    assert.equal(proposed.ok, true);
+    if (!proposed.ok) return;
+
+    // Nothing is in force, so nothing has been prevented: the detection is recorded and the
+    // interval is deliberately not. A time written here would count a decision nobody made.
+    assert.equal(proposed.value.action.state, "PENDING");
+    assert.equal(proposed.value.action.detectedAt, "2026-10-01T11:59:00.000Z");
+    assert.equal(proposed.value.action.timeToPreventMs, null);
+
+    // Two minutes pass waiting for the second administrator.
+    h.ids.advance(120_000);
+    const approved = await h.service.approve({
+      organizationId: ORG,
+      actionId: proposed.value.action.id,
+      approver: { identityId: "id_admin2", label: "Bea", role: "ADMIN" },
+    });
+
+    assert.equal(approved.ok, true);
+    if (!approved.ok) return;
+    assert.equal(approved.value.action.timeToPreventMs, 180_000);
+  });
+
+  await t.test("a proposal with no detection instant is applied unmeasured", async () => {
+    const h = harness({ requireSecondApprover: false });
+    const applied = await h.service.apply({ organizationId: ORG, proposal: proposal() });
+
+    assert.equal(applied.ok, true);
+    if (!applied.ok) return;
+    assert.equal(applied.value.action.detectedAt, null);
+    assert.equal(applied.value.action.timeToPreventMs, null);
+    // Unmeasured is not un-applied: the block is in force either way.
+    assert.equal((await h.service.inForce(ORG)).length, 1);
+  });
+
+  await t.test("a detection after the application measures nothing", async () => {
+    const h = harness({ requireSecondApprover: false });
+    const applied = await h.service.apply({
+      organizationId: ORG,
+      // Later than now: a skewed sensor or a mis-set clock, recorded as unmeasured rather
+      // than as an impossibly fast response.
+      detectedAt: "2026-10-01T12:30:00.000Z",
+      proposal: proposal(),
+    });
+
+    assert.equal(applied.ok, true);
+    if (!applied.ok) return;
+    assert.equal(applied.value.action.timeToPreventMs, null);
+  });
+});
+
 test("what is in force is a question the store can answer", async () => {
   const h = harness({ requireSecondApprover: false, maxActionsPerHour: 10 });
 

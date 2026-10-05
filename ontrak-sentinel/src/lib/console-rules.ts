@@ -64,6 +64,7 @@ import {
   type EnforcementActionKind,
   type EnforcementPolicy,
   type EnforcementTarget,
+  type TimeToPreventSummary,
 } from "./enforcement-rules";
 import type { EnforcementState } from "./enforcement-service";
 import { UPSTREAM_PATHS } from "./upstream-rules";
@@ -1927,6 +1928,8 @@ export interface ConsoleEnforcementActionView {
   approvedByLabel: string | null;
   appliedAt: string | null;
   expiresAt: string | null;
+  /** `appliedAt − detectedAt` in milliseconds, or `null` when it was not measured (S4). */
+  timeToPreventMs: number | null;
   liftedAt: string | null;
   liftedByLabel: string | null;
   liftReason: string | null;
@@ -1953,6 +1956,8 @@ export interface ConsoleEnforcementView {
   /** False until somebody writes one: the built-in default, shown as inherited. */
   policyStored: boolean;
   actions: ConsoleEnforcementActionView[];
+  /** The measured time-to-prevent across the register — S4's own exit figure. */
+  prevention: TimeToPreventSummary;
   /** The open alerts an action may be proposed against — loudest first. */
   candidates: { id: string; ruleName: string; severity: Severity }[];
   /** The targets the policy refuses to enforce against. */
@@ -1979,6 +1984,21 @@ export function renderEnforcement(
   const source = (action: ConsoleEnforcementActionView): string =>
     `<span class="muted">answers ${escapeHtml(action.alertRuleName ?? action.alertId)}</span>`;
 
+  // How long this action took to prevent, on the row where it was taken: the figure the
+  // milestone is measured by is only useful if it sits beside the action it describes.
+  const took = (action: ConsoleEnforcementActionView): string =>
+    action.timeToPreventMs === null
+      ? ""
+      : ` · <span class="muted">prevented in ${escapeHtml(formatElapsed(action.timeToPreventMs))}</span>`;
+
+  const prevention =
+    view.prevention.medianMs === null
+      ? `<p class="muted">No action carries a measured time-to-prevent yet — it is taken the ` +
+        `moment an action goes in force, from the alert's own first sighting.</p>`
+      : `<p class="muted">Measured time-to-prevent: <strong>${escapeHtml(formatElapsed(view.prevention.medianMs))}</strong> ` +
+        `(median of ${view.prevention.measured}; fastest ${escapeHtml(formatElapsed(view.prevention.fastestMs ?? 0))}, ` +
+        `slowest ${escapeHtml(formatElapsed(view.prevention.slowestMs ?? 0))}).</p>`;
+
   const inForce = view.actions.filter((action) => action.state === "ACTIVE");
   const pending = view.actions.filter((action) => action.state === "PENDING");
   const history = view.actions.filter((action) => action.state === "LIFTED" || action.state === "REFUSED");
@@ -1990,7 +2010,7 @@ export function renderEnforcement(
             `<tr><td><strong class="sev">${escapeHtml(action.action)}</strong><br>` +
             `<span class="muted">${escapeHtml(targetList(action.targets))}</span></td>` +
             `<td>${escapeHtml(action.reason)}<br>${source(action)}</td>` +
-            `<td>${escapeHtml(action.requestedByLabel)}<br><span class="muted">in force since ${escapeHtml(action.appliedAt ?? action.createdAt)}</span></td>` +
+            `<td>${escapeHtml(action.requestedByLabel)}<br><span class="muted">in force since ${escapeHtml(action.appliedAt ?? action.createdAt)}</span>${took(action)}</td>` +
             `<td class="muted">${escapeHtml(action.approvedByLabel ?? action.requestedByLabel)}</td>` +
             `<td class="muted">${action.expiresAt ? `lifts itself ${escapeHtml(action.expiresAt)}` : "until lifted by hand"}</td>` +
             `<td><form method="post" action="${CONSOLE_PATHS.enforcementLift}">` +
@@ -2030,7 +2050,7 @@ export function renderEnforcement(
             `<span class="muted">${escapeHtml(targetList(action.targets))}</span></td>` +
             `<td>${escapeHtml(action.reason)}<br>${source(action)}</td>` +
             `<td>${escapeHtml(action.requestedByLabel)}</td>` +
-            `<td>${escapeHtml(action.state)}<br>${ending}</td></tr>`
+            `<td>${escapeHtml(action.state)}<br>${ending}${took(action)}</td></tr>`
           );
         })
         .join("")
@@ -2082,6 +2102,7 @@ export function renderEnforcement(
     `<p class="muted">Prevention is an administrator's action, and this is where it is taken and undone. ` +
     `Every proposal is judged against the policy below — the safe-list first and absolutely — and an ` +
     `action that is in force is a record here, not merely a call that was made.</p>` +
+    prevention +
     `<h2>In force</h2>` +
     `<div class="card"><table><thead><tr><th>Action</th><th>Reason</th><th>Requested by</th><th>Approved by</th><th>Ends</th><th></th></tr></thead>` +
     `<tbody>${inForceRows}</tbody></table></div>` +
@@ -2118,6 +2139,23 @@ export function renderEnforcement(
  * from "a rule reads it but is quiet". Nothing here is written by hand — the rulebook is the
  * input — which is what lets the page be trusted as a statement about the running build.
  */
+/**
+ * A measured interval, in milliseconds, as something a person reads.
+ *
+ * Coarse on purpose: a time-to-prevent is reviewed in minutes, and a figure to the
+ * millisecond would read as precision the detection never had. Under a minute it is seconds,
+ * under an hour minutes and seconds, and beyond that hours and minutes — a shape nobody has
+ * to decode to compare two of them.
+ */
+function formatElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
 export function renderCoverage(view: ConsoleCoverageView, flash?: string | null, error?: string | null): string {
   const report = view.report;
 

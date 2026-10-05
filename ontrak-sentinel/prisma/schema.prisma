@@ -122,6 +122,13 @@ model EnforcementAction {
   approvedByLabel String?
   appliedAt      DateTime?
   expiresAt      DateTime?
+  /// When the alert this answers was first seen, carried from it so the interval below
+  /// survives the alert leaving the queue. `null` when the proposal named no detection.
+  detectedAt     DateTime?
+  /// `appliedAt − detectedAt` in milliseconds, measured when the action went ACTIVE (S4's
+  /// "measured time-to-prevent"). `null` until it is in force, and for a clock that puts the
+  /// prevention before the detection — a figure that cannot be measured is not stored as one.
+  timeToPreventMs Int?
   liftedAt       DateTime?
   liftedById     String?
   liftedByLabel  String?
