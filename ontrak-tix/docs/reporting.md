@@ -135,6 +135,16 @@ worth seeing while there is still time to answer it. The list is built on
 whose clocks are both met contributes nothing, a paused clock is flagged rather than read
 as safe, and a ticket with no policy is counted in `withoutPolicy` rather than dropped.
 
+### Exporting the projection and the risk list
+
+`/reports/export?scope=analytics` returns both, as CSV
+(`buildAnalyticsCsv`): a forecast summary, the day-by-day projection, the band counts and
+one row per risk item in the page's own worst-first order. It re-derives the actor and the
+permission itself, like the other two exports, and it is built from the same trend and the
+same `buildSlaReport` the screen uses â€” so the file and the screen cannot disagree about
+where the backlog is going or which tickets are about to breach. Writing the projection
+down is the point: next week's file is the check on this week's.
+
 ## Tests
 
 ```bash
@@ -155,3 +165,7 @@ order), the projection's arithmetic and its four outlooks, and the risk bands â€
 nearest running clock chosen, a met response leaving the resolution clock, an
 accumulating desk, a paused clock flagged, and a resolved or policy-less ticket
 excluded and counted.
+
+`tix-m7-export.test.ts` covers the CSV's shape (summary block, day-by-day table, risk
+list), the worst-first row order, the quoting of a comma in a subject, and the
+empty-desk case.

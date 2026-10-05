@@ -607,6 +607,12 @@ export default async function ReportsPage() {
             {risk.projectedBreaches} ticket{risk.projectedBreaches === 1 ? "" : "s"} expected to breach inside{" "}
             {Math.round(risk.horizonMinutes / 60)} business hours
           </span>
+          <a
+            href="/reports/export?scope=analytics"
+            className="rounded-full bg-surface-muted px-2.5 py-1 text-[11px] font-semibold text-ink-soft hover:text-brand"
+          >
+            Download CSV
+          </a>
         </div>
         <p className="text-xs text-ink-faint">
           Forward-looking, unlike the lists above: each open ticket is placed on the running clock nearest its deadline, so
@@ -665,7 +671,15 @@ export default async function ReportsPage() {
       </section>
 
       <section aria-label="Trends" className="rounded-xl2 border border-line bg-surface p-5">
-        <h2 className="font-display text-sm font-semibold text-ink">Trends</h2>
+        <div className="flex flex-wrap items-baseline gap-2">
+          <h2 className="font-display text-sm font-semibold text-ink">Trends</h2>
+          <a
+            href="/reports/export?scope=analytics"
+            className="ml-auto rounded-full bg-surface-muted px-2.5 py-1 text-[11px] font-semibold text-ink-soft hover:text-brand"
+          >
+            Download CSV
+          </a>
+        </div>
         <p className="text-xs text-ink-faint">
           Ticket volume over the last thirty days and the backlog it left. A flat backlog with rising intake is the quiet
           warning; the change figure compares this window with the one before it.

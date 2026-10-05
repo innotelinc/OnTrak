@@ -19,7 +19,8 @@ import {
 } from "../../../../lib/db";
 import { actorHasPermission } from "../../../../lib/access-rules";
 import { buildSlaReport, clientScorecards, type ReportSurvey } from "../../../../lib/report-rules";
-import { buildClientCsv, buildSlaCsv } from "../../../../lib/report-csv";
+import { forecastVolume, slaRisk, ticketTrends } from "../../../../lib/analytics-rules";
+import { buildAnalyticsCsv, buildClientCsv, buildSlaCsv } from "../../../../lib/report-csv";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -38,10 +39,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     slaPolicyStoreFor().listForTenant(actor.tenantId),
   ]);
 
-  // Two exports off one screen: the ticket-level report, and the per-client one
-  // that an account manager forwards.
+  // Three exports off one screen: the ticket-level report; the per-client one an
+  // account manager forwards; and the forward-looking pair (the forecast and the
+  // SLA-risk list) that a lead takes to a review.
   const scope = request.nextUrl.searchParams.get("scope");
   const perClient = scope === "clients";
+  const analytics = scope === "analytics";
 
   let csv: string;
   let filename: string;
@@ -71,6 +74,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       { generatedAt: now },
     );
     filename = `client-report-${now.slice(0, 10)}.csv`;
+  } else if (analytics) {
+    // Derived from the same trend and the same SLA report the `/reports` screen shows,
+    // so the file and the screen cannot disagree about where the backlog is going or
+    // which tickets are about to breach.
+    const forecast = forecastVolume(ticketTrends(tickets, now, 30), { horizonDays: 14, basisDays: 7 });
+    csv = buildAnalyticsCsv(forecast, slaRisk(tickets, policies, now), { generatedAt: now });
+    filename = `forecast-sla-risk-${now.slice(0, 10)}.csv`;
   } else {
     csv = buildSlaCsv(buildSlaReport(tickets, policies, now), { generatedAt: now });
     filename = `sla-report-${now.slice(0, 10)}.csv`;

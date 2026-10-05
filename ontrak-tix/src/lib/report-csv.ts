@@ -9,6 +9,7 @@
  */
 
 import { formatMinutes, type ClientScorecard, type SlaReport, type TicketSlaStatus } from "./report-rules";
+import type { ForecastReport, SlaRiskReport } from "./analytics-rules";
 
 /** Quote a cell only when it needs it; `null`/`undefined` export as empty. */
 export function csvEscape(value: unknown): string {
@@ -144,5 +145,78 @@ export function buildSlaCsv(report: SlaReport, { generatedAt, appName = "OnTrak 
   ];
 
   for (const row of report.tickets) lines.push(ticketRow(row));
+  return `${lines.join("\r\n")}\r\n`;
+}
+
+/**
+ * The forecast and the SLA-risk list as CSV (M7), in the order the page shows them.
+ *
+ * These are the two figures a lead takes to a review — "where is the backlog going, and
+ * what is about to breach" — and both are forward-looking, which is exactly why they
+ * are worth writing down: next week's file is the check on this week's projection. The
+ * risk rows keep the report's own worst-first order so the export and the screen agree.
+ */
+export function buildAnalyticsCsv(
+  forecast: ForecastReport,
+  risk: SlaRiskReport,
+  { generatedAt, appName = "OnTrak Tix" }: CsvOptions,
+): string {
+  const lines: string[] = [
+    csvRow([`${appName} forecast and SLA risk`]),
+    csvRow(["Generated", generatedAt]),
+    "",
+    csvRow(["Forecast", `${forecast.horizonDays} days, from the last ${forecast.basisDays}`]),
+    csvRow(["Outlook", forecast.outlook]),
+    csvRow(["Intake rate per day", forecast.dailyCreated]),
+    csvRow(["Close rate per day", forecast.dailyClosed]),
+    csvRow(["Projected backlog", forecast.projectedBacklog]),
+    csvRow(["Projected change in backlog", forecast.projectedBacklogDelta]),
+    "",
+    csvRow(["Day", "Projected opened", "Projected closed", "Projected backlog"]),
+  ];
+  for (const point of forecast.points) {
+    lines.push(csvRow([point.day, point.created, point.closed, point.backlog]));
+  }
+
+  lines.push(
+    "",
+    csvRow(["SLA risk", `horizon ${risk.horizonMinutes} business minutes`]),
+    csvRow(["Critical", risk.counts.critical]),
+    csvRow(["High", risk.counts.high]),
+    csvRow(["Medium", risk.counts.medium]),
+    csvRow(["Low", risk.counts.low]),
+    csvRow(["Expected to breach inside the horizon", risk.projectedBreaches]),
+    csvRow(["Open tickets with no SLA policy", risk.withoutPolicy]),
+    "",
+    csvRow([
+      "Ref",
+      "Subject",
+      "Priority",
+      "Assignee",
+      "Clock",
+      "Band",
+      "Business minutes left",
+      "Due",
+      "Paused",
+      "Why",
+    ]),
+  );
+  for (const item of risk.items) {
+    lines.push(
+      csvRow([
+        item.ref,
+        item.subject,
+        item.priority,
+        item.assigneeId ?? "unassigned",
+        item.clock,
+        item.band,
+        Math.round(item.remainingMinutes),
+        item.dueAt,
+        item.paused ? "yes" : "no",
+        item.reason,
+      ]),
+    );
+  }
+
   return `${lines.join("\r\n")}\r\n`;
 }
