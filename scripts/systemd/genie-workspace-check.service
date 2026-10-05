@@ -1,0 +1,7 @@
+[Unit]
+Description=Check Genie workspace directory writability
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /usr/src/ontrak/scripts/ensure-genie-workspace.sh

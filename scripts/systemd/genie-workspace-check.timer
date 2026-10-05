@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily check: ensure Genie workspace directory is writable
+Requires=genie-workspace-check.service
+
+[Timer]
+# Run at boot (catch the device-mount case immediately)
+OnBootSec=1min
+# And re-check daily as a safety net
+OnUnitActiveSec=1d
+# Catch up if we missed a run (e.g. during reboot)
+Persistent=true
+
+[Install]
+WantedBy=timers.target

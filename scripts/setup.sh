@@ -22,6 +22,21 @@ cd "$ROOT"
 # See scripts/ensure-genie-workspace.sh and the entrypoint safety net.
 bash "$ROOT/scripts/ensure-genie-workspace.sh" || true
 
+# Install the systemd units that keep the workspace fix permanent: the init
+# service runs before Docker starts (catches device re-mounts on reboot), and
+# the daily timer is a backstop for any case the boot-time check misses.
+SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
+if command -v systemctl >/dev/null 2>&1 && [ -d "$SYSTEMD_DIR" ]; then
+  for unit in genie-workspace-init.service genie-workspace-check.service genie-workspace-check.timer; do
+    src="$ROOT/scripts/systemd/$unit"
+    if [ -f "$src" ]; then
+      cp "$src" "$SYSTEMD_DIR/" 2>/dev/null || true
+      systemctl daemon-reload 2>/dev/null || true
+      systemctl enable "$unit" 2>/dev/null && echo "  enabled $unit"
+    fi
+  done
+fi
+
 echo "==> OnTrak bootstrap"
 
 echo "--> guard hooks"
