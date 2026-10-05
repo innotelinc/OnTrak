@@ -57,6 +57,14 @@ for dir in . ontrak-tix; do
 done
 
 echo "--> dependencies"
+# Install build/runtime tools needed by the project and its Makefile.
+# `make` is used by the bootstrap targets; `curl` and `jq` are required by
+# the platform stack library for LAN detection and health checks.
+if command -v apt-get >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq 2>/dev/null && \
+    apt-get install -y -qq make curl jq ca-certificates 2>/dev/null || true
+fi
 npm install
 
 cat <<'DONE'
