@@ -696,9 +696,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         The refusal counts ride along rather than sitting behind a second call: the
         hosts page is where an operator asks why a scan read `partial`, and a metric
-        that needs its own request is one the page will not make. `None` means nothing
-        was refused on that host's newest scan — not that nobody looked, which the
-        scan's own row already says.
+        that needs its own request is one the page will not make. They come with the
+        stored window as a `series` of per-run counts, so the page can draw the history
+        instead of only the newest scan. `None` means nothing was refused on that host's
+        newest scan — not that nobody looked, which the scan's own row already says.
         """
         refusals = db.registry_refusal_summary(conn)
         return {"hosts": [

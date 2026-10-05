@@ -9,7 +9,7 @@
  */
 
 import { formatMinutes, type ClientScorecard, type SlaReport, type TicketSlaStatus } from "./report-rules";
-import type { ForecastReport, SlaRiskReport } from "./analytics-rules";
+import type { ForecastReport, SlaRiskReport, TrendReport } from "./analytics-rules";
 
 /** Quote a cell only when it needs it; `null`/`undefined` export as empty. */
 export function csvEscape(value: unknown): string {
@@ -149,21 +149,42 @@ export function buildSlaCsv(report: SlaReport, { generatedAt, appName = "OnTrak 
 }
 
 /**
- * The forecast and the SLA-risk list as CSV (M7), in the order the page shows them.
+ * The volume trend, the forecast and the SLA-risk list as CSV (M7), in the order the page
+ * shows them.
  *
- * These are the two figures a lead takes to a review — "where is the backlog going, and
- * what is about to breach" — and both are forward-looking, which is exactly why they
- * are worth writing down: next week's file is the check on this week's projection. The
- * risk rows keep the report's own worst-first order so the export and the screen agree.
+ * These are the three figures a lead takes to a review — "what has the desk been doing,
+ * where is the backlog going, and what is about to breach" — and the last two are
+ * forward-looking, which is exactly why writing them down is worth it: next week's file is
+ * the check on this week's projection. The trend travels with them rather than being left
+ * on the screen, because the projection is the recent intake and closures carried forward:
+ * the days it was averaged from have to be in the same file, or the number cannot be
+ * checked against the data it came from. The risk rows keep the report's own worst-first
+ * order so the export and the screen agree.
  */
 export function buildAnalyticsCsv(
   forecast: ForecastReport,
   risk: SlaRiskReport,
+  trend: TrendReport,
   { generatedAt, appName = "OnTrak Tix" }: CsvOptions,
 ): string {
+  const percent = (value: number | null): string | number => (value === null ? "" : value);
   const lines: string[] = [
     csvRow([`${appName} forecast and SLA risk`]),
     csvRow(["Generated", generatedAt]),
+    "",
+    csvRow(["Actual volume", `${trend.days} days by UTC day`]),
+    csvRow(["Created in window", trend.createdTotal]),
+    csvRow(["Closed in window", trend.closedTotal]),
+    csvRow(["Backlog now", trend.backlogNow]),
+    csvRow(["Change in intake vs the window before %", percent(trend.createdChangePercent)]),
+    csvRow(["Change in closures vs the window before %", percent(trend.closedChangePercent)]),
+    csvRow(["Day", "Opened", "Closed", "Backlog"]),
+  ];
+  for (const point of trend.points) {
+    lines.push(csvRow([point.day, point.created, point.closed, point.backlog]));
+  }
+
+  lines.push(
     "",
     csvRow(["Forecast", `${forecast.horizonDays} days, from the last ${forecast.basisDays}`]),
     csvRow(["Outlook", forecast.outlook]),
@@ -173,7 +194,7 @@ export function buildAnalyticsCsv(
     csvRow(["Projected change in backlog", forecast.projectedBacklogDelta]),
     "",
     csvRow(["Day", "Projected opened", "Projected closed", "Projected backlog"]),
-  ];
+  );
   for (const point of forecast.points) {
     lines.push(csvRow([point.day, point.created, point.closed, point.backlog]));
   }

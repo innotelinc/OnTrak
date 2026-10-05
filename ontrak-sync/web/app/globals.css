@@ -206,6 +206,13 @@ td.tight { white-space: nowrap; }
 .pill--partial { background: var(--attention-soft); color: var(--attention); border-color: var(--attention); }
 .pill--absent { background: var(--surface-sunken); color: var(--text-faint); border-color: var(--line-strong); }
 
+/*
+ * The registry-refusal history: the pill is the newest scan, the bars are the window
+ * behind it. Kept as one inline row so a host header does not reflow when it appears.
+ */
+.registry-refusals { display: inline-flex; align-items: center; gap: 6px; }
+.spark { display: block; overflow: visible; }
+
 tr.row--security td:first-child { box-shadow: inset 3px 0 0 var(--security); }
 
 /* ── forms, buttons ────────────────────────────────────────────────────── */

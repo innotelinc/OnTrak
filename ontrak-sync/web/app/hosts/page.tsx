@@ -20,7 +20,7 @@ import Link from "next/link";
 import { Empty, LoadError, ReachablePill, RebootPill, ScanPill, When } from "@/components/bits";
 import { api } from "@/lib/api";
 import { machineKindLabel } from "@/lib/machine-kinds";
-import type { Host, Target } from "@/lib/types";
+import type { Host, RegistryRefusalPoint, Target } from "@/lib/types";
 import { useAsync } from "@/lib/useAsync";
 
 export default function HostsPage() {
@@ -45,7 +45,9 @@ export default function HostsPage() {
             container inside one, or the Docker images those containers run. Coverage is
             how many of a host&apos;s targets have answered at least once — and a host
             that is waiting for a reboot says so in its header, because every target on
-            it reports as current the moment the new kernel is merely installed.
+            it reports as current the moment the new kernel is merely installed. A host
+            whose images the registry would not judge says that too: the count is the
+            newest scan, and the bars beside it are the scans before it.
           </p>
         </div>
         <Link href="/">← dashboard</Link>
@@ -133,14 +135,15 @@ export default function HostsPage() {
 }
 
 /**
- * What the registry would not judge on this host's newest scan, and how often that was a
- * throttle.
+ * What the registry would not judge on this host's newest scan, and the history behind it.
  *
- * Two facts in one pill because they are read together. A refusal is ordinary noise on a
- * host that runs locally built images — Docker Hub answers a 401 for a name it will not
+ * Two facts in one control because they are read together. A refusal is ordinary noise on
+ * a host that runs locally built images — Docker Hub answers a 401 for a name it will not
  * confirm exists — while a *rate limit* recurring scan after scan is a capacity problem.
- * One scan cannot tell the two apart; the stored window can, so it is what the tooltip
- * reports when there is one.
+ * One scan cannot tell the two apart; the stored window can, so the count is what the
+ * tooltip reports and the sparkline is what shows the shape. The pill alone read "registry
+ * 13 not judged" the same whether that was a steady background of locally built names or a
+ * fresh throttle, which is exactly the difference worth acting on.
  */
 function RegistryPill({ refusals }: { refusals: Host["registry_refusals"] }) {
   if (!refusals || Object.keys(refusals.latest).length === 0) return null;
@@ -156,9 +159,71 @@ function RegistryPill({ refusals }: { refusals: Host["registry_refusals"] }) {
     .filter(Boolean)
     .join(" \u00b7 ");
   return (
-    <span className={`pill ${throttled ? "pill--partial" : "pill--absent"}`} title={detail}>
-      registry {total} not judged
+    <span className="registry-refusals">
+      <span className={`pill ${throttled ? "pill--partial" : "pill--absent"}`} title={detail}>
+        registry {total} not judged
+      </span>
+      <RefusalSparkline series={refusals.series} />
     </span>
+  );
+}
+
+/**
+ * The window of past scans as bars: one per stored run, oldest on the left.
+ *
+ * Height is how many images that scan could not judge; a bar with any rate limit in it is
+ * drawn in the attention colour, and a scan that refused nothing keeps a hairline of the
+ * border colour so the run is still counted. This is the one place the difference between
+ * "refused the same thirteen images every scan" and "was throttled this scan" is visible
+ * at a glance — the heights look alike, the colour does not.
+ *
+ * A single bar is not a history, so a host with one stored scan draws nothing rather than
+ * a stub that would read as a trend.
+ */
+function RefusalSparkline({ series }: { series: RegistryRefusalPoint[] }) {
+  if (!series || series.length < 2) return null;
+  const barWidth = 3;
+  const gap = 1;
+  const height = 16;
+  const peak = Math.max(1, ...series.map((point) => point.total));
+  const label = series
+    .map((point) =>
+      `run ${point.run_id}: ${point.total} not judged` +
+      (point.rate_limited > 0 ? `, ${point.rate_limited} rate-limited` : ""),
+    )
+    .join(" · ");
+  return (
+    <svg
+      className="spark"
+      width={series.length * (barWidth + gap) - gap}
+      height={height}
+      role="img"
+      aria-label={`registry refusals over the last ${series.length} scans`}
+    >
+      <title>{label}</title>
+      {series.map((point, index) => {
+        // A zero-day keeps a 1px tick, so an empty scan reads as "seen, nothing refused"
+        // and not as a hole in the history.
+        const barHeight = point.total === 0
+          ? 1
+          : Math.max(2, Math.round((point.total / peak) * (height - 2)));
+        const fill = point.rate_limited > 0
+          ? "var(--attention)"
+          : point.total === 0
+            ? "var(--line-strong)"
+            : "var(--unknown)";
+        return (
+          <rect
+            key={point.run_id}
+            x={index * (barWidth + gap)}
+            y={height - barHeight}
+            width={barWidth}
+            height={barHeight}
+            fill={fill}
+          />
+        );
+      })}
+    </svg>
   );
 }
 

@@ -277,6 +277,12 @@ the two apart. Deliberately keyed by host and not by target, because the host's 
 shares the registry's per-address allowance, however the affected images are spread over the
 containers on it.
 
+The response carries that window as a `series` — one point per stored run — and the hosts page
+draws it beside the pill as a small bar chart, oldest on the left. Height is how many images the
+scan could not judge and colour is whether the registry was throttling, so "the same thirteen
+locally built names every scan" and "newly rate-limited this scan" stop looking alike; a flat row
+of grey bars is the Network's baseline, an amber bar is the thing to fix.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Copyright © 2026 Innotel Inc. The repo is all original material: it

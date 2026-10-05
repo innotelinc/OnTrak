@@ -1,11 +1,11 @@
 /**
  * OnTrak Tix M7 tests: the forecast and SLA-risk CSV.
  *
- * The export exists so the two forward-looking figures can leave the screen — and the
- * point of writing them down is that next week's file is the check on this week's
- * projection. So the cases below pin the shape (a summary block, a day-by-day table, the
- * risk list), the order (worst band first, as on the page) and the escaping, rather than
- * the arithmetic — that lives in `tix-m7-analytics.test.ts`.
+ * The export exists so the forward-looking figures can leave the screen — and the point of
+ * writing them down is that next week's file is the check on this week's projection. So the
+ * cases below pin the shape (the actual-volume block the projection was averaged from, the
+ * forecast, the risk list), the order (the trend before the projection, worst band first)
+ * and the escaping, rather than the arithmetic — that lives in `tix-m7-analytics.test.ts`.
  *
  *   npx tsx --tsconfig tests/tsconfig.json --test tests/tix-m7-export.test.ts
  */
@@ -61,14 +61,23 @@ test("csv: the analytics export carries the forecast and the risk list", () => {
     // a comma, which is what makes the row force quoting rather than being unescaped.
     reportTicket({ id: "b", ref: "TIX-000002", subject: "Mail, down", createdAt: "2026-09-21T02:00:00.000Z" }),
   ];
-  const forecast = forecastVolume(ticketTrends(tickets, NOW, 5), { horizonDays: 3, basisDays: 5 });
+  const trends = ticketTrends(tickets, NOW, 5);
+  const forecast = forecastVolume(trends, { horizonDays: 3, basisDays: 5 });
   const risk = slaRisk(tickets, [policy], NOW);
-  const csv = buildAnalyticsCsv(forecast, risk, { generatedAt: NOW });
+  const csv = buildAnalyticsCsv(forecast, risk, trends, { generatedAt: NOW });
 
   assert.match(csv, /OnTrak Tix forecast and SLA risk/);
   assert.match(csv, /Generated,2026-09-21T12:00:00.000Z/);
+  // The actuals the projection was averaged from, then the projection itself.
+  assert.match(csv, /Actual volume,5 days by UTC day/);
+  assert.match(csv, /Day,Opened,Closed,Backlog/);
+  assert.match(csv, /2026-09-20,1,1,\d+/);
   assert.match(csv, /Outlook,\w+/);
   assert.match(csv, /Day,Projected opened,Projected closed,Projected backlog/);
+  assert.ok(
+    csv.indexOf("Actual volume") < csv.indexOf("Forecast,"),
+    "the trend prints before the projection it feeds",
+  );
   assert.match(csv, /SLA risk,horizon 240 business minutes/);
   assert.match(csv, /Expected to breach inside the horizon,1/);
   assert.match(csv, /Ref,Subject,Priority,Assignee,Clock,Band,Business minutes left,Due,Paused,Why/);
@@ -81,9 +90,11 @@ test("csv: the risk rows come out worst-first, carrying the clock and the reason
     reportTicket({ id: "soon", ref: "TIX-000010", subject: "Answer me", createdAt: "2026-09-21T11:00:00.000Z" }),
     reportTicket({ id: "gone", ref: "TIX-000011", subject: "Too late", createdAt: "2026-09-21T02:00:00.000Z" }),
   ];
+  const trends = ticketTrends(tickets, NOW, 3);
   const csv = buildAnalyticsCsv(
-    forecastVolume(ticketTrends(tickets, NOW, 3), { horizonDays: 1, basisDays: 3 }),
+    forecastVolume(trends, { horizonDays: 1, basisDays: 3 }),
     slaRisk(tickets, [policy], NOW),
+    trends,
     { generatedAt: NOW },
   );
 
@@ -96,11 +107,18 @@ test("csv: the risk rows come out worst-first, carrying the clock and the reason
 });
 
 test("csv: an empty desk still exports a well-formed file", () => {
+  const trends = ticketTrends([], NOW, 3);
   const csv = buildAnalyticsCsv(
-    forecastVolume(ticketTrends([], NOW, 3), { horizonDays: 2, basisDays: 3 }),
+    forecastVolume(trends, { horizonDays: 2, basisDays: 3 }),
     slaRisk([], [policy], NOW),
+    trends,
     { generatedAt: NOW },
   );
+  assert.match(csv, /Actual volume,3 days by UTC day/);
+  assert.match(csv, /Created in window,0/);
+  // An empty desk has no previous window to compare against, so the change is blank
+  // rather than a misleading zero.
+  assert.match(csv, /Change in intake vs the window before %,\r\n/);
   assert.match(csv, /Outlook,stable/);
   assert.match(csv, /Critical,0/);
   assert.match(csv, /Ref,Subject,Priority/);

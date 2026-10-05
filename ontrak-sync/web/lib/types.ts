@@ -175,17 +175,34 @@ export interface Host {
   security: number;
   failed: number;
   /**
-   * What the registry would not judge on this host's newest scan, by cause, plus how
-   * often a rate limit appeared inside the stored window. `null` when that scan
-   * refused nothing — which is not the same as the host not having been scanned, and
-   * the target rows already say which of the two it was.
+   * What the registry would not judge on this host's newest scan, by cause, plus the
+   * history behind it. `null` when that scan refused nothing — which is not the same as
+   * the host not having been scanned, and the target rows already say which of the two
+   * it was.
    */
-  registry_refusals: {
-    latest: Record<string, number>;
-    latest_run: number;
-    rate_limited_runs: number;
-    window: number;
-  } | null;
+  registry_refusals: RegistryRefusals | null;
+}
+
+/**
+ * One stored scan's refusals for a host: how many images went unjudged, and how many of
+ * those were the registry throttling rather than refusing.
+ */
+export interface RegistryRefusalPoint {
+  run_id: number;
+  total: number;
+  rate_limited: number;
+}
+
+export interface RegistryRefusals {
+  /** The newest scan that recorded anything, by cause. */
+  latest: Record<string, number>;
+  latest_run: number;
+  /** Scans in the window that saw at least one rate-limited image. */
+  rate_limited_runs: number;
+  /** How many stored runs the history spans. */
+  window: number;
+  /** The window, oldest first — the shape behind `latest`, for the sparkline. */
+  series: RegistryRefusalPoint[];
 }
 
 export interface Target {
