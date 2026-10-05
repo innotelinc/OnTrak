@@ -2,11 +2,12 @@
  * Assist panel (M7): what the assistant proposed, and what the agent thinks of it.
  *
  * Presentational. It renders four suggestions, a pair of buttons that record a decision on
- * each, and — on the classification only — a button that applies it to the ticket. It has
- * no control that sends a reply, reassigns or resolves: those stay the desk's own controls,
- * which re-check every permission server-side. The "use the draft" affordance lives in the
- * reply composer, where the textarea is, so filling it is a client-side edit that the agent
- * still has to send.
+ * each, and — on the classification only — a button that applies it to the ticket. Below
+ * them is the ticket's own decision history, so what was already accepted or dismissed is
+ * visible as evidence. It has no control that sends a reply, reassigns or resolves: those
+ * stay the desk's own controls, which re-check every permission server-side. The "use the
+ * draft" affordance lives in the reply composer, where the textarea is, so filling it is a
+ * client-side edit that the agent still has to send.
  *
  * The decision buttons are opt-in by permission: a reader who cannot update the ticket is
  * shown the panel without the accept/dismiss pair, because recording a decision needs to be
@@ -15,7 +16,7 @@
  */
 
 import type { AssistResult } from "../lib/assist-rules";
-import type { AssistKind } from "../lib/assist-service";
+import type { AssistDecisionRecord, AssistKind } from "../lib/assist-service";
 
 export function AssistPanel({
   ticketId,
@@ -23,14 +24,18 @@ export function AssistPanel({
   canDecide,
   decisionAction,
   applyAction,
+  history = [],
 }: {
   ticketId: string;
   result: AssistResult;
   canDecide: boolean;
   decisionAction?: (formData: FormData) => Promise<void>;
   applyAction?: (formData: FormData) => Promise<void>;
+  /** What the desk has already done with this ticket's suggestions, newest first. */
+  history?: AssistDecisionRecord[];
 }) {
   const { classification } = result;
+  const dismissed = history.filter((record) => !record.accepted).length;
 
   return (
     <section aria-label="Assistant suggestions" className="rounded-xl2 border border-line bg-surface">
@@ -126,6 +131,42 @@ export function AssistPanel({
             </ul>
           </Block>
         ) : null}
+
+        {/*
+          The record of what was already decided, so a dismissal is evidence and not a
+          forgotten click. It is read from the ticket's own audit chain, and a decision
+          that was also an applied classification says so.
+        */}
+        <div className="border-t border-line pt-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-xs font-semibold tracking-wide text-ink-faint uppercase">Decisions</h3>
+            {dismissed > 0 ? (
+              <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] font-semibold text-ink-soft">
+                {dismissed} dismissed
+              </span>
+            ) : null}
+          </div>
+          {history.length === 0 ? (
+            <p className="mt-1 text-xs text-ink-faint">Nothing has been accepted or dismissed on this ticket yet.</p>
+          ) : (
+            <ul className="mt-1 space-y-0.5 text-xs text-ink-soft">
+              {history.map((record, index) => (
+                <li key={`${record.at}-${index}`} className="flex flex-wrap items-baseline gap-2">
+                  <span className={record.accepted ? "font-semibold text-ok" : "font-semibold text-ink-faint"}>
+                    {record.accepted ? (record.applied ? "applied" : "accepted") : "dismissed"}
+                  </span>
+                  <span>{record.kind.toLowerCase().replace("_", " ")}</span>
+                  <span className="text-ink-faint">
+                    ({record.source === "model" ? "the model" : "the rules"})
+                  </span>
+                  <time className="ml-auto text-[11px] text-ink-faint" dateTime={record.at}>
+                    {record.at.slice(0, 16).replace("T", " ")}
+                  </time>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </section>
   );

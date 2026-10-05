@@ -1293,10 +1293,11 @@ up to an adjuster or auditor.
 > agent — the deterministic path is the guaranteed answer and not a fallback nobody
 > sees. Every suggestion can be accepted or dismissed, and that decision lands on the
 > same per-tenant hash chain as the ticket it was about, so the milestone's
-> "measurable and reversible" is a query rather than a promise. The one thing that
-> changes the ticket is an accepted classification, and it goes through the ticket
-> service's own `reclassify`: same permission check, same audit event, and only the
-> type, the priority and a queue this desk actually has. A model may improve the prose
+> "measurable and reversible" is a query rather than a promise — and the panel reads
+> those decisions back, so what a desk turned down is evidence rather than a forgotten
+> click. The one thing that changes the ticket is an accepted classification, and it
+> goes through the ticket service's own `reclassify`: same permission check, same audit
+> event, and only the type, the priority and a queue this desk actually has. A model may improve the prose
 > but may never supply the hit list: similarity is a fact about this desk, and an
 > assistant must not be able to point an agent at a ticket that does not exist.
 

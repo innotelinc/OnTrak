@@ -799,6 +799,9 @@ export function assistServicesFor(): AssistService {
     assist: (request) => assistTicket(request),
     audit: ticketServices().audit,
     enabledFor: (tenantId) => assistSettingsServicesFor().isEnabled(tenantId),
+    // The same reader the assurance packet uses, so what a ticket's panel shows about
+    // its own decisions is exactly what the chain holds.
+    history: new PrismaAuditReader(prisma as unknown as TicketPrismaClient),
   });
   return assist;
 }

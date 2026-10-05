@@ -13,6 +13,7 @@ import {
   assistServicesFor,
 } from "../../../../lib/db";
 import type { AssistResult } from "../../../../lib/assist-rules";
+import type { AssistDecisionRecord } from "../../../../lib/assist-service";
 import { scopeByClient, scopeRefusal } from "../../../../lib/client-rules";
 import { slaStatusFor } from "../../../../lib/report-rules";
 import {
@@ -84,10 +85,15 @@ export default async function TicketPage({
   const canDecide = canUpdateTicket(actor, ticket);
   let assistResult: AssistResult | undefined;
   let assistError: string | undefined;
+  let assistHistory: AssistDecisionRecord[] = [];
   if (assistantOn && assistAsked === "1") {
     const suggestion = await assistant.suggest(actor, ticket.id);
     if (suggestion.ok) assistResult = suggestion.value;
     else assistError = suggestion.error;
+    // What the desk already decided about this ticket's suggestions, read back off the
+    // tenant's audit chain so a dismissal is visible as evidence, not forgotten.
+    const prior = await assistant.history(actor, ticket.id);
+    if (prior.ok) assistHistory = prior.value;
   }
   // The links and the picker are the same question asked twice: relating work to
   // a ticket you may not open would leak its reference and subject just as the
@@ -170,6 +176,7 @@ export default async function TicketPage({
                 canDecide,
                 decisionAction: recordAssistDecisionAction,
                 applyAction: applyAssistClassificationAction,
+                history: assistHistory,
               },
             }
           : {})}

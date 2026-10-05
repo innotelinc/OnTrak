@@ -13,6 +13,7 @@ import type { TicketSlaStatus } from "../lib/report-rules";
 import type { CannedResponse } from "../lib/canned-rules";
 import type { TicketLinkKind } from "../lib/link-rules";
 import type { AssistResult } from "../lib/assist-rules";
+import type { AssistDecisionRecord } from "../lib/assist-service";
 import { MessageKindBadge, TicketPriorityBadge, TicketStatusBadge, TicketTypeBadge } from "./TicketBadges";
 import { SlaBadge } from "./SlaBadge";
 import { ReplyComposer } from "./ReplyComposer";
@@ -92,6 +93,8 @@ export function TicketDetail({
     decisionAction?: (formData: FormData) => Promise<void>;
     /** Apply an accepted classification, through the ticket service's own write path. */
     applyAction?: (formData: FormData) => Promise<void>;
+    /** What the desk already decided on this ticket, newest first. */
+    history?: AssistDecisionRecord[];
   };
 }) {
   const suggestedReply = assist?.result.draftReply;
@@ -120,6 +123,7 @@ export function TicketDetail({
             canDecide={assist.canDecide}
             {...(assist.decisionAction ? { decisionAction: assist.decisionAction } : {})}
             {...(assist.applyAction ? { applyAction: assist.applyAction } : {})}
+            {...(assist.history ? { history: assist.history } : {})}
           />
         </div>
       ) : null}

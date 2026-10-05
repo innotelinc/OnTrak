@@ -10,9 +10,10 @@
  * a ticket, and it changes exactly three fields — type, priority and queue — by
  * delegating to the ticket service's own `reclassify`, which runs the permission
  * check, the validation and the audit event the desk already trusts for every other
- * edit. There is still no method here that replies, reassigns or resolves, so
- * "never auto-send" remains a property of the shape of this class rather than a rule
- * somebody has to remember.
+ * edit. `history` reads those decisions back, so what a desk turned down is evidence
+ * rather than a forgotten click. There is still no method here that replies, reassigns
+ * or resolves, so "never auto-send" remains a property of the shape of this class
+ * rather than a rule somebody has to remember.
  *
  * WHY THE DECISION IS WORTH RECORDING
  * -----------------------------------
@@ -41,7 +42,7 @@ import { randomUUID } from "node:crypto";
 
 import { actorHasPermission, canUpdateTicket, type Actor } from "./access-rules";
 import { TICKET_PRIORITIES, TICKET_TYPES, type TicketPriority, type TicketType } from "./ticket-rules";
-import type { AuditSink } from "./audit-chain";
+import type { AuditChain, AuditRecord, AuditSink } from "./audit-chain";
 import type { ServiceResult, TicketRecord, TicketReclassification } from "./ticket-service";
 import type { AssistCandidate, AssistQueue, AssistRequest, AssistResult, AssistTicket } from "./assist-rules";
 
@@ -80,8 +81,27 @@ export interface AssistPorts {
   ids?: AssistIds;
   /** Whether *this tenant* asked for suggestions at all. */
   enabledFor: (tenantId: string) => Promise<boolean>;
+  /** Reads the tenant's decision history back. Absent means "no history to show". */
+  history?: AssistAuditReader;
   /** How many recent tickets are considered for similar-ticket retrieval. */
   historyLimit?: number;
+}
+
+/** Reads a tenant's persisted audit chain. The same reader the assurance packet uses. */
+export interface AssistAuditReader {
+  read(tenantId: string): Promise<AuditChain>;
+}
+
+/** One recorded decision about a suggestion, as a ticket's history shows it. */
+export interface AssistDecisionRecord {
+  at: string;
+  actor: string;
+  accepted: boolean;
+  /** The suggestion it was about. A free string because it is read back, not trusted. */
+  kind: string;
+  source: AssistResult["source"];
+  /** Whether the acceptance also changed the ticket (an applied classification). */
+  applied: boolean;
 }
 
 export interface AssistDecision {
@@ -225,6 +245,63 @@ export class AssistService {
     });
     return { ok: true, value: applied.value };
   }
+
+  /**
+   * A ticket's recorded decisions, newest first.
+   *
+   * The milestone's point was that a suggestion is *reversible and measurable*, and
+   * that is only true if what the desk turned down can be seen afterwards. This reads
+   * the tenant's own hash chain back — the same chain `decide` and `applyClassification`
+   * wrote to — and narrows it to the events about this ticket, so "we dismissed an
+   * urgent classification twice, and it was right both times" is a question with an
+   * answer rather than a memory.
+   *
+   * Reading needs only `ticket:read:any`: there is nothing in a decision that is not
+   * already implied by the ticket being on the desk's screen, and the *actor* on each
+   * event is already visible on the chain to anybody with `audit:read`. A deployment
+   * with no reader wired reports an empty history rather than inventing one.
+   */
+  async history(actor: Actor, ticketId: string): Promise<ServiceResult<AssistDecisionRecord[]>> {
+    if (!actorHasPermission(actor, "ticket:read:any")) {
+      return { ok: false, error: "You do not have permission to read the assistant's history." };
+    }
+    const ticket = await this.ports.tickets.findTicket(actor.tenantId, ticketId);
+    if (!ticket) return { ok: false, error: "Ticket not found." };
+    if (!this.ports.history) return { ok: true, value: [] };
+
+    const chain = await this.ports.history.read(actor.tenantId);
+    const decisions = chain.events
+      .filter(isAssistDecision)
+      .filter((event) => event.targetId === ticketId)
+      .map(toDecisionRecord)
+      .reverse();
+    return { ok: true, value: decisions };
+  }
+}
+
+/** Whether a chain event is a decision this service wrote about a suggestion. */
+function isAssistDecision(event: AuditRecord): boolean {
+  return event.action === "assist.accept" || event.action === "assist.dismiss";
+}
+
+/**
+ * Read one stored event back into a decision.
+ *
+ * Every field is re-derived from the stored event rather than trusted from the event's
+ * name: the detail is `unknown` by the time it comes off the chain, so a malformed or
+ * older entry degrades to a sensible value (a dismissal with no kind reads as one) and
+ * never throws on a page.
+ */
+function toDecisionRecord(event: AuditRecord): AssistDecisionRecord {
+  const detail = (event.detail ?? {}) as Record<string, unknown>;
+  return {
+    at: event.at,
+    actor: event.actor,
+    accepted: event.action === "assist.accept",
+    kind: typeof detail.kind === "string" ? detail.kind : "UNKNOWN",
+    source: detail.source === "model" ? "model" : "rules",
+    applied: detail.applied === true,
+  };
 }
 
 /**

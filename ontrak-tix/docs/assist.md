@@ -88,6 +88,12 @@ values that were applied (`applied: true`, the type, the priority and the queue)
 accept rate therefore counts an applied classification once, and the change is readable
 from the decision alone rather than by cross-referencing `ticket.reclassify`.
 
+A ticket's own decisions are read back off the chain onto its assistant panel, newest
+first, so **what the desk turned down is evidence rather than a forgotten click**: "we
+dismissed an urgent classification twice, and it was right both times" is a question
+with an answer. Reading needs only `ticket:read:any`, and a decision that was also an
+applied classification says so.
+
 ## Where it is used
 
 On a ticket, staff see an **Ask the assistant** control. The first press is the one
@@ -98,7 +104,7 @@ suggestions and their buttons; nothing is generated until somebody wants it.
 ## What comes next
 
 Summaries and draft replies are still prose only — nothing writes them anywhere, and
-neither can be sent from this module. The next slice is presenting a suggestion the desk
-turned down as evidence (what did we dismiss, and was that right?), which the audit chain
-already answers. The assistant's job is to make the judgement cheap and keep the person
-in the loop.
+neither can be sent from this module. The remaining M7 work is scale and analytics, not
+the assistant: the judgement is cheap, the person is in the loop, and every decision is
+on the record. A model may improve the prose, but the assistant's only write is a
+classification through the ticket service.
