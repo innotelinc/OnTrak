@@ -22,6 +22,10 @@ model Tenant {
   name      String
   slug      String   @unique
   createdAt DateTime @default(now())
+  /// The M7 AI-assist opt-in. Off unless this desk turned it on, so a tenant that
+  /// has never been to the integrations screen has no assistant in front of its
+  /// agents. Read per request; written only by `AssistSettingsService`.
+  assistEnabled Boolean @default(false)
 
   users                 User[]
   clients               Client[]

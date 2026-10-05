@@ -1274,11 +1274,12 @@ up to an adjuster or auditor.
 **Goal:** enterprise hardening and assistance.
 
 - AI assist (opt-in): classification/routing suggestions, thread summarisation,
-  draft replies, similar-ticket retrieval — always human-approved. **In progress:**
-  the suggestion engine and the ticket panel are shipped (classification, summary,
-  draft reply and similar tickets), and the outcome author already turns solved
-  tickets into articles and scenarios. What remains is applying an accepted
-  classification, and a per-tenant opt-in in place of the deployment switch.
+  draft replies, similar-ticket retrieval — always human-approved. **Shipped:** the
+  suggestion engine and the ticket panel (classification, summary, draft reply and
+  similar tickets); an accepted classification is applied through the ticket
+  service's own `reclassify`; the opt-in is per tenant, not a deployment switch; and
+  the outcome author turns solved tickets into articles and scenarios. Analytics below
+  remain.
 - Analytics: trends, forecasting, agent/queue scorecards, SLA risk modelling.
 - Performance/multi-region hardening, backup/DR runbooks, SOC 2-ready controls.
 
@@ -1286,20 +1287,23 @@ up to an adjuster or auditor.
 > assistant that proposes a classification, a one-paragraph summary, a draft reply
 > and the tickets that look most like it — and proposes *only*: the service that
 > answers has no method that could send, apply or reassign, so "never auto-send" is a
-> property of its shape rather than a rule to be remembered. It is opt-in twice over:
-> a desk has to ask for it, and a deployment has to offer a model, and with neither
-> the suggestions still appear, computed from the ticket in front of the agent — the
-> deterministic path is the guaranteed answer and not a fallback nobody sees. Every
-> suggestion can be accepted or dismissed, and that decision lands on the same
-> per-tenant hash chain as the ticket it was about, so the milestone's "measurable and
-> reversible" is a query rather than a promise. A model may improve the prose but may
-> never supply the hit list: similarity is a fact about this desk, and an assistant
-> must not be able to point an agent at a ticket that does not exist.
+> property of its shape rather than a rule to be remembered. It is opt-in per *desk*
+> — a tenant turns it on for itself — and a deployment has to offer a model, and with
+> neither the suggestions still appear, computed from the ticket in front of the
+> agent — the deterministic path is the guaranteed answer and not a fallback nobody
+> sees. Every suggestion can be accepted or dismissed, and that decision lands on the
+> same per-tenant hash chain as the ticket it was about, so the milestone's
+> "measurable and reversible" is a query rather than a promise. The one thing that
+> changes the ticket is an accepted classification, and it goes through the ticket
+> service's own `reclassify`: same permission check, same audit event, and only the
+> type, the priority and a queue this desk actually has. A model may improve the prose
+> but may never supply the hit list: similarity is a fact about this desk, and an
+> assistant must not be able to point an agent at a ticket that does not exist.
 
 - **Exit:** documented scale targets met under load test; AI suggestions are
   measurable, reversible and never auto-send (**done** for the assist — a decision is
-  recorded on the audit chain and the service has no write path; see
-  [docs/assist.md](./docs/assist.md)).
+  recorded on the audit chain and the only write is a classification through the
+  ticket service; see [docs/assist.md](./docs/assist.md)).
 
 ## 9. Backlog by area (prioritized, unassigned to milestones yet)
 

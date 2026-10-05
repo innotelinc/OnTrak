@@ -1,16 +1,17 @@
 /**
  * Assist panel (M7): what the assistant proposed, and what the agent thinks of it.
  *
- * Presentational, and deliberately inert. It renders four suggestions and, for each, a
- * pair of buttons that record a decision. It has no control that sends a reply, moves a
- * ticket or changes a queue: a suggestion is read here and acted on through the desk's own
- * controls, which re-check every permission server-side. The "use the draft" affordance
- * lives in the reply composer, where the textarea is, so filling it is a client-side edit
- * that the agent still has to send.
+ * Presentational. It renders four suggestions, a pair of buttons that record a decision on
+ * each, and — on the classification only — a button that applies it to the ticket. It has
+ * no control that sends a reply, reassigns or resolves: those stay the desk's own controls,
+ * which re-check every permission server-side. The "use the draft" affordance lives in the
+ * reply composer, where the textarea is, so filling it is a client-side edit that the agent
+ * still has to send.
  *
  * The decision buttons are opt-in by permission: a reader who cannot update the ticket is
  * shown the panel without the accept/dismiss pair, because recording a decision needs to be
- * able to act, not merely to read.
+ * able to act, not merely to read. The Apply button is the same: it is shown only where the
+ * caller could have edited those three fields by hand, and the server checks again.
  */
 
 import type { AssistResult } from "../lib/assist-rules";
@@ -21,11 +22,13 @@ export function AssistPanel({
   result,
   canDecide,
   decisionAction,
+  applyAction,
 }: {
   ticketId: string;
   result: AssistResult;
   canDecide: boolean;
   decisionAction?: (formData: FormData) => Promise<void>;
+  applyAction?: (formData: FormData) => Promise<void>;
 }) {
   const { classification } = result;
 
@@ -49,7 +52,8 @@ export function AssistPanel({
 
       <div className="space-y-4 px-5 py-4">
         <p className="text-xs text-ink-faint">
-          Suggestions only. Nothing here has been applied or sent — accept what is useful and carry on.
+          Suggestions only. Nothing here has been sent — apply the classification if it is right, accept what is
+          useful and carry on.
         </p>
 
         <Block
@@ -59,6 +63,11 @@ export function AssistPanel({
           source={result.source}
           canDecide={canDecide}
           decisionAction={decisionAction}
+          extra={
+            canDecide && applyAction ? (
+              <ApplyForm ticketId={ticketId} result={result} action={applyAction} />
+            ) : null
+          }
         >
           <div className="flex flex-wrap items-center gap-2 text-sm text-ink">
             <Chip label="Type" value={classification.type} />
@@ -149,6 +158,7 @@ function Block({
   source,
   canDecide,
   decisionAction,
+  extra,
   children,
 }: {
   title: string;
@@ -157,6 +167,8 @@ function Block({
   source: AssistResult["source"];
   canDecide: boolean;
   decisionAction?: (formData: FormData) => Promise<void>;
+  /** A control that belongs to this suggestion specifically, beside the decision pair. */
+  extra?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -169,9 +181,44 @@ function Block({
             <Decision ticketId={ticketId} kind={kind} source={source} accepted={false} action={decisionAction} />
           </div>
         ) : null}
+        {extra}
       </div>
       <div className="mt-1">{children}</div>
     </div>
+  );
+}
+
+/**
+ * The Apply control, on the classification only.
+ *
+ * It posts the three fields the panel is showing. Those are the only values it can carry:
+ * the service refuses a type or priority outside its closed sets and a queue that is not
+ * this desk's, and the ticket service checks `ticket:update` before writing anything.
+ */
+function ApplyForm({
+  ticketId,
+  result,
+  action,
+}: {
+  ticketId: string;
+  result: AssistResult;
+  action: (formData: FormData) => Promise<void>;
+}) {
+  const { classification } = result;
+  return (
+    <form action={action} className="ml-auto">
+      <input type="hidden" name="ticketId" value={ticketId} />
+      <input type="hidden" name="type" value={classification.type} />
+      <input type="hidden" name="priority" value={classification.priority} />
+      <input type="hidden" name="queueId" value={classification.queueId ?? ""} />
+      <input type="hidden" name="source" value={result.source} />
+      <button
+        type="submit"
+        className="rounded-full bg-brand/12 px-2 py-0.5 text-[11px] font-semibold text-brand hover:bg-brand/20"
+      >
+        Apply to ticket
+      </button>
+    </form>
   );
 }
 

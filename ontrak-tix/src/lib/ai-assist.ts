@@ -1,15 +1,14 @@
 /**
  * The AI assist (M7): the model-aware half of the suggestions.
  *
- * ONE SWITCH, AND IT IS OFF
- * -------------------------
- * Assist is opt-in twice over, and the two switches do different jobs. The *feature*
- * switch — `ONTRAK_TIX_ASSIST_ENABLED` — decides whether this desk shows suggestions at
- * all, and it defaults to off, because a desk that did not ask for an assistant should
- * not have one appear in its ticket view. The *gateway* switch is the one the outcome
- * author already honours: if the deployment has a model configured, the prose is the
- * model's; if it has not, the deterministic assistant answers and nobody is any worse
- * off, because every suggestion here has a rules answer that stands on its own.
+ * TWO LAYERS, AND NEITHER IS REQUIRED
+ * -----------------------------------
+ * Whether a desk has an assistant at all is a *tenant's* own opt-in
+ * (`assist-settings-service.ts`), and it is off until somebody asks for it. Given a
+ * desk that did opt in, this file decides the other question: if the deployment has a
+ * model configured, the prose is the model's; if it has not, the deterministic
+ * assistant answers and nobody is any worse off, because every suggestion here has a
+ * rules answer that stands on its own.
  *
  * It never throws and it never silences a failure. A configured gateway that is down
  * still leaves a usable suggestion in front of the agent — the draft, the classification
@@ -28,30 +27,13 @@ import {
   type AssistResult,
 } from "./assist-rules";
 
-/** The feature switch. Off unless a desk has deliberately turned it on. */
-export const ASSIST_ENABLED_ENV = "ONTRAK_TIX_ASSIST_ENABLED";
-
-export interface AssistConfig {
-  enabled: boolean;
-}
-
-/**
- * Read whether this desk wants suggestions.
- *
- * Deliberately a plain `1`, not a truthy string: an operator setting this has to mean
- * it, and `ONTRAK_TIX_ASSIST_ENABLED=yes` quietly doing nothing is better than a typo
- * switching an assistant on.
- */
-export function assistConfig(env: Record<string, string | undefined> = process.env): AssistConfig {
-  return { enabled: (env[ASSIST_ENABLED_ENV] ?? "").trim() === "1" };
-}
-
 export interface AssistDeps {
   /** Injected so tests never touch the network. */
   fetchImpl?: typeof fetch;
   /** The gateway settings. Defaults to the shared AI configuration. */
   gateway?: AuthorConfig;
 }
+
 
 /**
  * Propose the classification, the summary, the draft reply and the similar tickets.

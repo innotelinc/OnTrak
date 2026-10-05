@@ -33,12 +33,17 @@ import {
   type AssistResult,
   type AssistTicket,
 } from "../src/lib/assist-rules";
-import { assistConfig, assistTicket, ASSIST_ENABLED_ENV } from "../src/lib/ai-assist";
+import { assistTicket } from "../src/lib/ai-assist";
 import { authorConfig } from "../src/lib/ai-author";
 import { ASSIST_HISTORY_LIMIT, AssistService, recentCandidates } from "../src/lib/assist-service";
+import {
+  AssistSettingsService,
+  MemoryAssistSettingsStore,
+} from "../src/lib/assist-settings-service";
+import { MemoryTicketStore, TicketService, planReclassification } from "../src/lib/ticket-service";
 import type { AuditEventInput } from "../src/lib/audit-chain";
 import type { Actor } from "../src/lib/access-rules";
-import type { TicketMessage, TicketRecord } from "../src/lib/ticket-service";
+import type { ServiceResult, TicketMessage, TicketRecord, TicketReclassification } from "../src/lib/ticket-service";
 
 /* -------------------------------------------------------------------------- */
 /*  Fixtures                                                                  */
@@ -377,14 +382,69 @@ test("merge: changing the queue carries the name with it", () => {
 /*  The switch, and the gateway                                               */
 /* -------------------------------------------------------------------------- */
 
-test("assist config: opt-in, and only a deliberate 1 turns it on", () => {
-  assert.equal(ASSIST_ENABLED_ENV, "ONTRAK_TIX_ASSIST_ENABLED");
-  assert.equal(assistConfig({}).enabled, false);
-  assert.equal(assistConfig({ ONTRAK_TIX_ASSIST_ENABLED: "1" }).enabled, true);
-  // A typo is not consent: yes/true/on leave the assistant off.
-  assert.equal(assistConfig({ ONTRAK_TIX_ASSIST_ENABLED: "yes" }).enabled, false);
-  assert.equal(assistConfig({ ONTRAK_TIX_ASSIST_ENABLED: "true" }).enabled, false);
-  assert.equal(assistConfig({ ONTRAK_TIX_ASSIST_ENABLED: " 1 " }).enabled, true);
+/* -------------------------------------------------------------------------- */
+/*  The per-tenant opt-in                                                     */
+/* -------------------------------------------------------------------------- */
+
+function settings(tenantId = "t1"): {
+  service: AssistSettingsService;
+  store: MemoryAssistSettingsStore;
+  sink: ReturnType<typeof auditSink>;
+  actor: Actor;
+} {
+  const sink = auditSink();
+  const store = new MemoryAssistSettingsStore();
+  const service = new AssistSettingsService({
+    store,
+    audit: sink,
+    ids: { eventId: () => "e-settings", now: () => "2026-01-03T00:00:00.000Z" },
+  });
+  return { service, store, sink, actor: { id: "u1", tenantId, role: "ADMIN" } };
+}
+
+test("assist settings: silence is off, and the answer is per tenant", async () => {
+  const { service } = settings();
+  assert.equal(await service.isEnabled("t1"), false);
+  // One desk opting in must not turn an assistant on for another.
+  const result = await service.setEnabled({ id: "u1", tenantId: "t1", role: "ADMIN" }, true);
+  assert.equal(result.ok, true);
+  assert.equal(await service.isEnabled("t1"), true);
+  assert.equal(await service.isEnabled("t2"), false);
+});
+
+test("assist settings: switching it on and off is audited with the state it was left in", async () => {
+  const { service, sink, actor } = settings();
+  await service.setEnabled(actor, true);
+  await service.setEnabled(actor, false);
+  assert.equal(sink.events.length, 2);
+  assert.equal(sink.events[0].action, "assist.settings");
+  assert.deepEqual(sink.events[0].detail, { enabled: true });
+  assert.deepEqual(sink.events[1].detail, { enabled: false });
+  assert.equal(sink.events[0].targetType, "tenant");
+});
+
+test("assist settings: only somebody who administers the desk may change it", async () => {
+  const { service, sink, store } = settings();
+  const agent: Actor = { id: "u2", tenantId: "t1", role: "AGENT" };
+  const refused = await service.setEnabled(agent, true);
+  assert.equal(refused.ok, false);
+  if (!refused.ok) assert.match(refused.error, /administer/);
+  assert.equal(sink.events.length, 0);
+  assert.equal(await store.get("t1"), false);
+});
+
+test("assist settings: a store that cannot answer reads as off, not as an error", async () => {
+  const service = new AssistSettingsService({
+    store: {
+      get: async () => {
+        throw new Error("database is on fire");
+      },
+      set: async () => {},
+    },
+    audit: auditSink(),
+    ids: { eventId: () => "e", now: () => "2026-01-03T00:00:00.000Z" },
+  });
+  assert.equal(await service.isEnabled("t1"), false);
 });
 
 test("assist: no gateway configured leaves the rules answer, with no apology", async () => {
@@ -470,18 +530,28 @@ function auditSink(): { events: AuditEventInput[]; append(event: AuditEventInput
   };
 }
 
+interface ServiceHarness {
+  service: AssistService;
+  sink: ReturnType<typeof auditSink>;
+  seen: AssistRequest[];
+  reclassify: Array<{ actor: Actor; ticketId: string; change: TicketReclassification }>;
+}
+
 function service(
   overrides: {
     enabled?: boolean;
+    enabledFor?: (tenantId: string) => Promise<boolean>;
     tickets?: TicketRecord[];
     detail?: TicketRecord | null;
     queues?: AssistQueue[];
     sink?: ReturnType<typeof auditSink>;
     assist?: (request: AssistRequest) => Promise<AssistResult>;
+    reclassify?: (actor: Actor, ticketId: string, change: TicketReclassification) => Promise<ServiceResult<TicketRecord>>;
   } = {},
-): { service: AssistService; sink: ReturnType<typeof auditSink>; seen: AssistRequest[] } {
+): ServiceHarness {
   const sink = overrides.sink ?? auditSink();
   const seen: AssistRequest[] = [];
+  const reclassify: ServiceHarness["reclassify"] = [];
   const detail =
     overrides.detail !== undefined ? overrides.detail : (overrides.tickets ?? [record()]).find((t) => t.id === "t-1") ?? record();
 
@@ -490,18 +560,28 @@ function service(
     return deterministicAssist(request);
   });
 
+  const reclassifyImpl =
+    overrides.reclassify ??
+    (async (actor: Actor, ticketId: string, change: TicketReclassification) => {
+      if (!detail || detail.id !== ticketId) return { ok: false as const, error: "Ticket not found." };
+      reclassify.push({ actor, ticketId, change });
+      return { ok: true as const, value: { ...detail, ...change } };
+    });
+
   return {
     sink,
     seen,
+    reclassify,
     service: new AssistService({
       tickets: {
         findTicket: async (_tenantId, ticketId) => (detail && detail.id === ticketId ? detail : null),
         listTickets: async () => overrides.tickets ?? [record()],
+        reclassify: reclassifyImpl,
       },
       queues: { listQueues: async () => overrides.queues ?? QUEUES },
       assist,
       audit: sink,
-      enabled: overrides.enabled ?? true,
+      enabledFor: overrides.enabledFor ?? (async () => overrides.enabled ?? true),
       ids: { eventId: () => "e-1", now: () => "2026-01-03T00:00:00.000Z" },
     }),
   };
@@ -509,9 +589,10 @@ function service(
 
 test("service: it has no method that could send anything", () => {
   const methods = Object.getOwnPropertyNames(AssistService.prototype).sort();
-  // Three verbs: read the switch, propose, record a decision. There is no fourth, and
-  // that is the enforcement of "never auto-send".
-  assert.deepEqual(methods, ["constructor", "decide", "enabled", "suggest"]);
+  // Four verbs: read this tenant's switch, propose, record a decision, and apply the one
+  // suggestion that is a change to the ticket. There is no method that replies, reassigns
+  // or resolves, and that is the enforcement of "never auto-send".
+  assert.deepEqual(methods, ["applyClassification", "constructor", "decide", "enabledFor", "suggest"]);
 });
 
 test("service: a desk that did not opt in is refused, in words", async () => {
@@ -519,6 +600,17 @@ test("service: a desk that did not opt in is refused, in words", async () => {
   const result = await assist.suggest(ACTOR, "t-1");
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.error, /switched off/);
+});
+
+test("service: the switch is asked per tenant, so one desk is not another's", async () => {
+  const { service: assist } = service({ enabledFor: async (tenantId) => tenantId === "t1" });
+  assert.equal(await assist.enabledFor("t1"), true);
+  assert.equal(await assist.enabledFor("t2"), false);
+  assert.equal((await assist.suggest(ACTOR, "t-1")).ok, true);
+  const other: Actor = { ...ACTOR, tenantId: "t2" };
+  const refused = await assist.suggest(other, "t-1");
+  assert.equal(refused.ok, false);
+  if (!refused.ok) assert.match(refused.error, /switched off/);
 });
 
 test("service: asking is reading, so a reader who cannot update may still ask", async () => {
@@ -586,7 +678,151 @@ test("service: a decision from somebody who cannot act is refused and not writte
   assert.equal(sink.events.length, 0);
 });
 
-test("service: the switch is readable, so the console can hide what is pointless", () => {
-  assert.equal(service({ enabled: true }).service.enabled, true);
-  assert.equal(service({ enabled: false }).service.enabled, false);
+test("service: the switch is readable, so the console can hide what is pointless", async () => {
+  assert.equal(await service({ enabled: true }).service.enabledFor("t1"), true);
+  assert.equal(await service({ enabled: false }).service.enabledFor("t1"), false);
+});
+
+/* -------------------------------------------------------------------------- */
+/*  Applying an accepted classification                                       */
+/* -------------------------------------------------------------------------- */
+
+test("service: applying a classification writes through the ticket port and records the acceptance", async () => {
+  const { service: assist, sink, reclassify } = service();
+  const result = await assist.applyClassification(ACTOR, "t-1", {
+    type: "REQUEST",
+    priority: "HIGH",
+    queueId: "q-network",
+    source: "model",
+  });
+
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.value.type, "REQUEST");
+    assert.equal(result.value.priority, "HIGH");
+    assert.equal(result.value.queueId, "q-network");
+  }
+  // The write went to the ticket port, which is the ticket service's own reclassify.
+  assert.equal(reclassify.length, 1);
+  assert.deepEqual(reclassify[0].change, { type: "REQUEST", priority: "HIGH", queueId: "q-network" });
+  // And the acceptance is on the chain, with what was applied.
+  assert.equal(sink.events.length, 1);
+  assert.equal(sink.events[0].action, "assist.accept");
+  assert.deepEqual(sink.events[0].detail, {
+    kind: "CLASSIFICATION",
+    source: "model",
+    applied: true,
+    type: "REQUEST",
+    priority: "HIGH",
+    queueId: "q-network",
+  });
+});
+
+test("service: applying refuses a desk that did not opt in, before anything is written", async () => {
+  const { service: assist, sink, reclassify } = service({ enabled: false });
+  const result = await assist.applyClassification(ACTOR, "t-1", {
+    type: "REQUEST",
+    priority: "HIGH",
+    queueId: null,
+    source: "rules",
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /switched off/);
+  assert.equal(reclassify.length, 0);
+  assert.equal(sink.events.length, 0);
+});
+
+test("service: applying needs the ticket permission, and a reader is refused", async () => {
+  const { service: assist, sink, reclassify } = service();
+  const refused = await assist.applyClassification(READER, "t-1", {
+    type: "INCIDENT",
+    priority: "NORMAL",
+    queueId: null,
+    source: "rules",
+  });
+  assert.equal(refused.ok, false);
+  if (!refused.ok) assert.match(refused.error, /permission/);
+  assert.equal(reclassify.length, 0);
+  assert.equal(sink.events.length, 0);
+});
+
+test("service: applying refuses a type or priority outside the closed sets", async () => {
+  const { service: assist, sink } = service();
+  const badType = await assist.applyClassification(ACTOR, "t-1", {
+    type: "COMPLAINT" as TicketRecord["type"],
+    priority: "HIGH",
+    queueId: null,
+    source: "rules",
+  });
+  const badPriority = await assist.applyClassification(ACTOR, "t-1", {
+    type: "REQUEST",
+    priority: "SUPER-URGENT" as TicketRecord["priority"],
+    queueId: null,
+    source: "rules",
+  });
+  assert.equal(badType.ok, false);
+  assert.equal(badPriority.ok, false);
+  assert.equal(sink.events.length, 0);
+});
+
+test("service: applying refuses a queue that is not one of this desk's", async () => {
+  const { service: assist, sink } = service();
+  const refused = await assist.applyClassification(ACTOR, "t-1", {
+    type: "REQUEST",
+    priority: "HIGH",
+    queueId: "q-someone-elses",
+    source: "rules",
+  });
+  assert.equal(refused.ok, false);
+  if (!refused.ok) assert.match(refused.error, /queue/);
+  assert.equal(sink.events.length, 0);
+});
+
+/* -------------------------------------------------------------------------- */
+/*  The ticket service's own write path                                       */
+/* -------------------------------------------------------------------------- */
+
+test("ticket reclassify: the plan checks the permission and the closed sets", () => {
+  const ids = { ticketId: () => "t-1", messageId: () => "m-1", now: () => "2026-01-04T00:00:00.000Z" };
+  const refused = planReclassification(READER, record(), { type: "REQUEST", priority: "HIGH", queueId: null }, ids);
+  assert.equal(refused.ok, false);
+
+  const badType = planReclassification(ACTOR, record(), {
+    type: "COMPLAINT" as TicketRecord["type"],
+    priority: "HIGH",
+    queueId: null,
+  }, ids);
+  assert.equal(badType.ok, false);
+
+  const plan = planReclassification(ACTOR, record(), { type: "REQUEST", priority: "URGENT", queueId: "q-network" }, ids);
+  assert.equal(plan.ok, true);
+  if (!plan.ok) return;
+  assert.equal(plan.value.ticket.type, "REQUEST");
+  assert.equal(plan.value.ticket.priority, "URGENT");
+  assert.equal(plan.value.ticket.queueId, "q-network");
+  assert.equal(plan.value.audit.action, "ticket.reclassify");
+  assert.deepEqual(plan.value.audit.detail, {
+    type: { from: "INCIDENT", to: "REQUEST" },
+    priority: { from: "NORMAL", to: "URGENT" },
+    queueId: { from: null, to: "q-network" },
+  });
+});
+
+test("ticket reclassify: the service writes, audits and moves updatedAt", async () => {
+  const store = new MemoryTicketStore();
+  await store.insertTicket(record());
+  const sink = auditSink();
+  const ids = { ticketId: () => "t-2", messageId: () => "m-2", now: () => "2026-01-04T00:00:00.000Z" };
+  const tickets = new TicketService(store, sink, ids);
+
+  const result = await tickets.reclassify(ACTOR, "t-1", { type: "REQUEST", priority: "HIGH", queueId: "q-network" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.updatedAt, "2026-01-04T00:00:00.000Z");
+  assert.equal(sink.events.length, 1);
+  assert.equal(sink.events[0].action, "ticket.reclassify");
+  // The row really moved, not just the returned copy.
+  const stored = await store.findTicket("t1", "t-1");
+  assert.equal(stored?.priority, "HIGH");
+  assert.equal(stored?.queueId, "q-network");
 });

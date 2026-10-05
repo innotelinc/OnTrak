@@ -26,7 +26,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { actorHasPermission, type Actor } from "../../lib/access-rules";
-import { apiTokenServicesFor, chatNotifyServicesFor, webhookServicesFor } from "../../lib/db";
+import { apiTokenServicesFor, assistSettingsServicesFor, chatNotifyServicesFor, webhookServicesFor } from "../../lib/db";
 import {
   REVEAL_PATH,
   REVEAL_TTL_SECONDS,
@@ -245,4 +245,23 @@ export async function sweepChatNotifyAction(): Promise<void> {
   done(
     `Swept ${swept.considered}: ${swept.delivered} delivered, ${swept.retrying} retrying, ${swept.exhausted} exhausted`,
   );
+}
+
+/* ------------------------------------------------------------- AI assist */
+
+/**
+ * Turn the M7 assistant on or off for *this desk*.
+ *
+ * The opt-in is per tenant rather than a deployment-wide environment variable, so one
+ * desk asking for an assistant does not put one in front of another's agents. It is
+ * `tenant:manage`, like every other tenant-wide setting, and the change is recorded on
+ * the desk's own hash chain by the service.
+ */
+export async function setAssistEnabledAction(formData: FormData): Promise<void> {
+  const actor = await requireIntegrationsAdmin();
+  const enabled = text(formData, "enabled") === "true";
+
+  const result = await assistSettingsServicesFor().setEnabled(actor, enabled);
+  if (!result.ok) fail(result.error);
+  done(enabled ? "AI assist switched on for this desk" : "AI assist switched off for this desk");
 }

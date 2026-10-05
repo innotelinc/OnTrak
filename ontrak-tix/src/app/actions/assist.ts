@@ -3,12 +3,14 @@
 /**
  * Assist server actions (M7).
  *
- * There is exactly one action here, and that is the point: the assistant *proposes*, and
- * the only thing the desk can do through this module is say what it thought of a
- * proposal. There is no action that sends a draft, changes a priority or moves a queue —
- * those remain the ticket actions' jobs, with the ticket service's own permission checks
- * in front of them. Keeping the send path out of the assistant's own module is how
- * "never auto-send" is enforced by shape rather than by discipline.
+ * Two actions, and both keep the person in the loop. One records what an agent thought
+ * of a suggestion; the other applies the one suggestion that is a change to the ticket —
+ * the classification — and it does so by handing the values to the assistant service,
+ * which passes them to the ticket service's own `reclassify`. Neither action sends a
+ * draft, reassigns or resolves: those remain the ticket actions' jobs, with the ticket
+ * service's permission checks in front of them. Keeping the send path out of the
+ * assistant's own module is how "never auto-send" is enforced by shape rather than by
+ * discipline.
  */
 
 import { redirect } from "next/navigation";
@@ -17,6 +19,7 @@ import { revalidatePath } from "next/cache";
 import { requireActor } from "../../lib/session";
 import { assistServicesFor } from "../../lib/db";
 import { ASSIST_KINDS, type AssistKind } from "../../lib/assist-service";
+import { TICKET_PRIORITIES, TICKET_TYPES, type TicketPriority, type TicketType } from "../../lib/ticket-rules";
 
 function text(formData: FormData, field: string): string {
   return String(formData.get(field) ?? "").trim();
@@ -56,4 +59,42 @@ export async function recordAssistDecisionAction(formData: FormData): Promise<vo
   revalidatePath(`${home}/${ticketId}`);
   const note = accepted ? "Suggestion accepted" : "Suggestion dismissed";
   redirect(`${home}/${ticketId}?assist=1&flash=${encodeURIComponent(note)}`);
+}
+
+/**
+ * Apply the accepted classification to the ticket.
+ *
+ * The form carries the type, priority and queue the panel showed; the assistant service
+ * checks them against its closed sets and this desk's queues and then writes through the
+ * ticket service, so a forged form can do no more than an agent editing the three fields
+ * by hand. The queue is posted as an empty string when no queue was suggested, and turned
+ * back into `null` here — the one piece of marshalling this layer owns.
+ */
+export async function applyAssistClassificationAction(formData: FormData): Promise<void> {
+  const actor = await requireActor();
+  const home = homePath(actor.role);
+  const ticketId = text(formData, "ticketId");
+  const rawType = text(formData, "type").toUpperCase();
+  const rawPriority = text(formData, "priority").toUpperCase();
+  const queue = text(formData, "queueId");
+  const source = text(formData, "source") === "model" ? "model" : "rules";
+
+  const type = (TICKET_TYPES as readonly string[]).includes(rawType) ? (rawType as TicketType) : null;
+  const priority = (TICKET_PRIORITIES as readonly string[]).includes(rawPriority) ? (rawPriority as TicketPriority) : null;
+  if (!ticketId || !type || !priority) {
+    redirect(`${home}?error=${encodeURIComponent("Unknown classification.")}`);
+  }
+
+  const result = await assistServicesFor().applyClassification(actor, ticketId, {
+    type,
+    priority,
+    queueId: queue || null,
+    source,
+  });
+  if (!result.ok) {
+    redirect(`${home}/${ticketId}?assist=1&error=${encodeURIComponent(result.error)}`);
+  }
+
+  revalidatePath(`${home}/${ticketId}`);
+  redirect(`${home}/${ticketId}?assist=1&flash=${encodeURIComponent("Classification applied")}`);
 }

@@ -3,7 +3,13 @@ import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../../lib/session";
 import { actorHasPermission } from "../../../../lib/access-rules";
-import { apiTokenServicesFor, chatNotifyServicesFor, rmmServicesFor, webhookServicesFor } from "../../../../lib/db";
+import {
+  apiTokenServicesFor,
+  assistSettingsServicesFor,
+  chatNotifyServicesFor,
+  rmmServicesFor,
+  webhookServicesFor,
+} from "../../../../lib/db";
 import { allApiScopes, API_PREFIX, API_VERSION } from "../../../../lib/public-api-rules";
 import {
   CHAT_EVENTS,
@@ -29,6 +35,7 @@ import {
   rotateWebhookSecretAction,
   setChatChannelEnabledAction,
   setWebhookEnabledAction,
+  setAssistEnabledAction,
   sweepChatNotifyAction,
   sweepWebhooksAction,
   testChatChannelAction,
@@ -102,6 +109,10 @@ export default async function IntegrationsPage({
     (!chatChannels.ok && chatChannels.error) ||
     (!chatDeliveries.ok && chatDeliveries.error) ||
     null;
+
+  // The M7 opt-in, read from this tenant's own setting. It defaults to off, so a desk
+  // that has never been to this screen has no assistant in front of its agents.
+  const assistOn = await assistSettingsServicesFor().isEnabled(actor.tenantId);
 
   // The cookie read is this file's; what the value means is the pure module's.
   const jar = await cookies();
@@ -532,6 +543,42 @@ export default async function IntegrationsPage({
             ))}
           </ul>
         )}
+      </section>
+
+      {/* ------------------------------------------------------------ AI assist */}
+      <section aria-labelledby="ai-assist" className="space-y-3">
+        <div>
+          <h2 id="ai-assist" className="font-display text-base font-semibold text-ink">
+            AI assist
+          </h2>
+          <p className="text-xs text-ink-faint">
+            The assistant on a ticket proposes a classification, a summary, a draft reply and similar tickets. It never
+            sends anything, and applying a classification goes through the ticket service&rsquo;s own permission check. It
+            is opt-in per desk and off by default; the model, if the deployment has one, is configured with{" "}
+            <code className="text-ink">ONTRAK_AI_*</code>.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 rounded-xl2 border border-line bg-surface px-4 py-3">
+          <span
+            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+              assistOn ? "bg-ok/10 text-ok" : "bg-surface-muted text-ink-faint"
+            }`}
+          >
+            {assistOn ? "on" : "off"}
+          </span>
+          <span className="text-sm text-ink-soft">
+            {assistOn
+              ? "Suggestions are offered on a ticket when an agent asks for them."
+              : "No assistant appears in the ticket view."}
+          </span>
+          <form action={setAssistEnabledAction} className="ml-auto">
+            <input type="hidden" name="enabled" value={assistOn ? "false" : "true"} />
+            <button type="submit" className="rounded-full bg-brand/12 px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/20">
+              {assistOn ? "Switch off" : "Switch on"}
+            </button>
+          </form>
+        </div>
       </section>
 
       {/* ----------------------------------------------------------- monitoring */}

@@ -90,6 +90,8 @@ export function TicketDetail({
     /** Whether this caller may record what they do with a suggestion. */
     canDecide: boolean;
     decisionAction?: (formData: FormData) => Promise<void>;
+    /** Apply an accepted classification, through the ticket service's own write path. */
+    applyAction?: (formData: FormData) => Promise<void>;
   };
 }) {
   const suggestedReply = assist?.result.draftReply;
@@ -117,6 +119,7 @@ export function TicketDetail({
             result={assist.result}
             canDecide={assist.canDecide}
             {...(assist.decisionAction ? { decisionAction: assist.decisionAction } : {})}
+            {...(assist.applyAction ? { applyAction: assist.applyAction } : {})}
           />
         </div>
       ) : null}

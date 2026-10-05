@@ -19,20 +19,28 @@ model, when there is one), and
 [`../src/lib/assist-service.ts`](../src/lib/assist-service.ts) (the read paths and
 the decision audit).
 
-## Opt-in, and off by default
+## Opt-in per desk, and off by default
 
-Two switches, doing different jobs:
+Two layers, doing different jobs:
 
 | Switch | Effect |
 | --- | --- |
-| `ONTRAK_TIX_ASSIST_ENABLED=1` | this desk shows suggestions at all |
+| the tenant's **AI assist** setting (Integrations → AI assist) | this desk shows suggestions at all |
 | `ONTRAK_AI_ENABLED` / `ONTRAK_AI_API_KEY` / `ONTRAK_AI_BASE_URL` | the shared gateway decides whether the *prose* is a model's |
 
-Only a deliberate `1` turns the feature on — `yes` and `true` are ignored, because a
-typo should not put an assistant in front of a desk. With the feature on and **no
-gateway configured**, every suggestion still appears: it is computed from the ticket
-in front of it, which is what makes this usable on an air-gapped deployment rather
-than a demo of somebody else's API.
+The feature opt-in is **per tenant**, not a deployment-wide environment variable:
+on a deployment serving several desks, one desk asking for an assistant must not put
+one in front of another's agents. It defaults to **off** — a tenant that has never
+been to the screen has not opted in, and the safest reading of silence is the one
+that puts no assistant in front of an agent. Turning it on is `tenant:manage`, the
+same weight as configuring the desk's identity provider, and the change is recorded
+on the per-tenant hash chain as `assist.settings`. The setting lives on the tenant
+row (`Tenant.assistEnabled`) and is read per request, so switching it off takes
+effect on the next page rather than at the next deploy.
+
+With the feature on and **no gateway configured**, every suggestion still appears: it
+is computed from the ticket in front of it, which is what makes this usable on an
+air-gapped deployment rather than a demo of somebody else's API.
 
 The gateway itself is the same one the M7 outcome author uses
 ([`../src/lib/ai-gateway.ts`](../src/lib/ai-gateway.ts)): a vendor-neutral
@@ -43,17 +51,22 @@ account and no key.
 
 The guarantee is structural, not procedural:
 
-- `AssistService` has three verbs — read the switch, `suggest`, `decide`. There is no
-  method that replies, reassigns, resolves or moves a queue, so there is nothing to
-  disable.
+- `AssistService` has four verbs — ask whether this desk has an assistant (`enabledFor`),
+  `suggest`, `decide`, and `applyClassification`. There is no method that replies,
+  reassigns, resolves or moves a ticket between agents, so there is nothing to disable.
+- `applyClassification` is the only write, and it applies exactly three fields — the
+  ticket's type, its priority and its queue — by delegating to the ticket service's own
+  `reclassify`. That runs `ticket:update` on the ticket and writes a `ticket.reclassify`
+  event, so an accepted suggestion can never be broader than an agent editing the same
+  three fields by hand. A queue that is not one of this desk's is refused, not written.
 - The draft is offered in the reply composer the same way a canned response is: a
   button that **fills the textarea**. The agent still edits and presses Send.
 - A model may not supply the similar-ticket list. Similarity is a fact about this
   desk — these are the other tickets, and this is how much their text overlaps — so it
   is computed locally every time. A model can be wrong about the words; it must not be
   able to point an agent at a ticket that does not exist.
-- The console states it in words, on the panel: *"Nothing here has been applied or
-  sent."*
+- The console states it in words, on the panel: *"Nothing here has been sent — apply
+  the classification if it is right, accept what is useful and carry on."*
 
 ## Measurable and reversible
 
@@ -70,6 +83,11 @@ read it: "I accepted the queue suggestion" is only meaningful from somebody who 
 have changed the queue. Asking for a suggestion needs only `ticket:read:any`, because
 there is nothing in a suggestion that is not already on the ticket.
 
+Applying the classification records the same `assist.accept` event, extended with the
+values that were applied (`applied: true`, the type, the priority and the queue). The
+accept rate therefore counts an applied classification once, and the change is readable
+from the decision alone rather than by cross-referencing `ticket.reclassify`.
+
 ## Where it is used
 
 On a ticket, staff see an **Ask the assistant** control. The first press is the one
@@ -79,6 +97,8 @@ suggestions and their buttons; nothing is generated until somebody wants it.
 
 ## What comes next
 
-Applying an accepted classification on the agent's behalf is a later M7 slice, and it
-will go through the ticket service's own permission checks like every other write. The
-assistant's job now is to make the judgement cheap and keep the person in the loop.
+Summaries and draft replies are still prose only — nothing writes them anywhere, and
+neither can be sent from this module. The next slice is presenting a suggestion the desk
+turned down as evidence (what did we dismiss, and was that right?), which the audit chain
+already answers. The assistant's job is to make the judgement cheap and keep the person
+in the loop.

@@ -31,7 +31,7 @@ import {
   setStatusAction,
 } from "../../../actions/tickets";
 import { logTimeAction, removeTimeAction } from "../../../actions/time";
-import { recordAssistDecisionAction } from "../../../actions/assist";
+import { applyAssistClassificationAction, recordAssistDecisionAction } from "../../../actions/assist";
 
 export const metadata = { title: "Ticket" };
 
@@ -73,15 +73,18 @@ export default async function TicketPage({
   const all = scopeByClient(scope, everything);
   const sla = slaStatusFor(ticket, policies, new Date().toISOString());
 
-  // The M7 assistant (opt-in). Suggestions are produced only when somebody asked for
-  // them, so an ordinary page view costs nothing — no gateway call, no query — and the
+  // The M7 assistant (per-tenant opt-in). Suggestions are produced only when somebody
+  // asked for them, so an ordinary page view costs nothing — no gateway call, and the
   // panel is a deliberate act rather than something that appears on every ticket the
-  // desk opens. A suggestion that cannot be produced says why rather than vanishing.
+  // desk opens. Whether this desk has an assistant at all is the tenant's own setting,
+  // read per request so switching it off takes effect on the next page. A suggestion
+  // that cannot be produced says why rather than vanishing.
   const assistant = assistServicesFor();
+  const assistantOn = await assistant.enabledFor(actor.tenantId);
   const canDecide = canUpdateTicket(actor, ticket);
   let assistResult: AssistResult | undefined;
   let assistError: string | undefined;
-  if (assistant.enabled && assistAsked === "1") {
+  if (assistantOn && assistAsked === "1") {
     const suggestion = await assistant.suggest(actor, ticket.id);
     if (suggestion.ok) assistResult = suggestion.value;
     else assistError = suggestion.error;
@@ -127,7 +130,7 @@ export default async function TicketPage({
           {error}
         </p>
       ) : null}
-      {assistant.enabled ? (
+      {assistantOn ? (
         <div className="flex items-center justify-between rounded-xl2 border border-line bg-surface px-4 py-2">
           <span className="text-xs text-ink-faint">
             The assistant proposes a classification, a summary, a draft reply and similar tickets. It never sends
@@ -161,7 +164,14 @@ export default async function TicketPage({
         linkOptions={linkOptions}
         macros={macros}
         {...(assistResult
-          ? { assist: { result: assistResult, canDecide, decisionAction: recordAssistDecisionAction } }
+          ? {
+              assist: {
+                result: assistResult,
+                canDecide,
+                decisionAction: recordAssistDecisionAction,
+                applyAction: applyAssistClassificationAction,
+              },
+            }
           : {})}
       />
       <TicketTime

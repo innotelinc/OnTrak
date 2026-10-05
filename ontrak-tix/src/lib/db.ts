@@ -95,8 +95,10 @@ import { PrismaRoleStore, type RolePrismaClient } from "./role-store-prisma";
 import { ConnectorService } from "./connector-service";
 import { ConnectorRegistry } from "./connector-rules";
 import { PrismaConnectorStore, type ConnectorPrismaClient } from "./connector-store-prisma";
-import { AssistService } from "./assist-service";
-import { assistConfig, assistTicket } from "./ai-assist";
+import { AssistService, systemAssistIds } from "./assist-service";
+import { AssistSettingsService } from "./assist-settings-service";
+import { PrismaAssistSettingsStore, type AssistSettingsPrismaClient } from "./assist-settings-store-prisma";
+import { assistTicket } from "./ai-assist";
 
 /**
  * The OnTrak Tix database client and service bootstrap.
@@ -216,6 +218,7 @@ let forms: FormService | null = null;
 let roles: RoleService | null = null;
 let connectors: ConnectorService | null = null;
 let assist: AssistService | null = null;
+let assistSettings: AssistSettingsService | null = null;
 
 function csat(): CsatService {
   satisfaction ??= new CsatService(new PrismaCsatStore(prisma as unknown as CsatPrismaClient));
@@ -738,14 +741,37 @@ export function connectorServicesFor(): ConnectorService {
 }
 
 /**
+ * The configured per-tenant assist opt-in (M7).
+ *
+ * The setting lives on the tenant row, and changing it is `tenant:manage`, recorded on
+ * the same per-tenant hash chain as everything else the desk does. Reading it is a point
+ * lookup a ticket page makes once, and a read that fails is answered as "off" rather than
+ * as an error (see `AssistSettingsService.isEnabled`).
+ */
+export function assistSettingsServicesFor(): AssistSettingsService {
+  assistSettings ??= new AssistSettingsService({
+    store: new PrismaAssistSettingsStore(prisma as unknown as AssistSettingsPrismaClient),
+    audit: ticketServices().audit,
+    ids: systemAssistIds(),
+  });
+  return assistSettings;
+}
+
+/**
  * The configured AI assist (M7).
  *
  * It shares the ticket stack's audit sink, so accepting or leaving a suggestion joins the
  * same per-tenant hash chain as the ticket it was about — which is what makes the
  * milestone's "measurable and reversible" a query rather than a promise. The assistant
  * itself is `assistTicket`: the shared gateway when the deployment has one, and the
- * deterministic rules when it does not. Whether this desk wants suggestions at all is read
- * once here, from `ONTRAK_TIX_ASSIST_ENABLED`.
+ * deterministic rules when it does not. Whether *this desk* wants suggestions is asked of
+ * the tenant's own setting per call, so one desk opting in does not put an assistant in
+ * front of another.
+ *
+ * Applying an accepted classification is delegated to the ticket stack's own
+ * `reclassify`, so it runs the same permission check and audit as any other edit — this
+ * wiring is the only place the assistant is given a way to write, and it is the ticket
+ * service that writes.
  *
  * The queues are read with only their name and slug because that is all a queue has —
  * routing lives in the rules engine — and the candidate list is the ticket store's own
@@ -767,11 +793,12 @@ export function assistServicesFor(): AssistService {
     tickets: {
       findTicket: (tenantId, ticketId) => ticketServices().store.findTicket(tenantId, ticketId),
       listTickets: (tenantId) => ticketServices().store.listTickets(tenantId),
+      reclassify: (actor, ticketId, change) => ticketServices().service.reclassify(actor, ticketId, change),
     },
     queues: assistQueueLookup,
     assist: (request) => assistTicket(request),
     audit: ticketServices().audit,
-    enabled: assistConfig().enabled,
+    enabledFor: (tenantId) => assistSettingsServicesFor().isEnabled(tenantId),
   });
   return assist;
 }

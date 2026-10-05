@@ -16,6 +16,8 @@ import { randomUUID } from "node:crypto";
 
 import { canAssignTicket, canReplyToTicket, canUpdateTicket, actorHasPermission, type Actor } from "./access-rules";
 import {
+  TICKET_PRIORITIES,
+  TICKET_TYPES,
   ticketRef,
   transition,
   validateTicketInput,
@@ -324,6 +326,70 @@ export function planAssignment(
   return { ok: true, value: { ticket: next, audit: audit(actor, "ticket.assign", ticket, at, { assigneeId }) } };
 }
 
+/**
+ * The sighting a reclassification is: the type and priority the desk settled on,
+ * and the queue the work now belongs to.
+ *
+ * All three travel together because they are one *answer* — a ticket is a report of
+ * something broken, and it is urgent, and it is the Network queue. The queue is
+ * checked by the caller that knows the desk's queues (the assist service holds them
+ * already); this plan validates the two closed sets because those it can know on its
+ * own.
+ */
+export interface TicketReclassification {
+  type: TicketType;
+  priority: TicketPriority;
+  queueId: string | null;
+}
+
+/**
+ * Change what a ticket *is*: its type, its priority and the queue it belongs to.
+ *
+ * A reclassification is a staff write like any other — it needs `ticket:update` on
+ * the ticket and moves `updatedAt` — and it is on the chain as `ticket.reclassify`,
+ * carrying the old and new value of each field it touched so the change is readable
+ * without replaying the row. Only the closed-set fields it understands are accepted:
+ * an unknown type or priority is refused rather than written, because a ticket whose
+ * type is not one of the two the product knows is a ticket every later reader has to
+ * special-case.
+ */
+export function planReclassification(
+  actor: Actor,
+  ticket: TicketRecord,
+  change: TicketReclassification,
+  ids: IdSource,
+): ServiceResult<{ ticket: TicketRecord; audit: AuditEventInput }> {
+  if (!canUpdateTicket(actor, ticket)) {
+    return { ok: false, error: "You cannot update this ticket." };
+  }
+  if (!TICKET_TYPES.includes(change.type)) {
+    return { ok: false, error: `Unknown ticket type "${change.type}".` };
+  }
+  if (!TICKET_PRIORITIES.includes(change.priority)) {
+    return { ok: false, error: `Unknown priority "${change.priority}".` };
+  }
+
+  const at = ids.now();
+  const next: TicketRecord = {
+    ...ticket,
+    type: change.type,
+    priority: change.priority,
+    queueId: change.queueId,
+    updatedAt: at,
+  };
+  return {
+    ok: true,
+    value: {
+      ticket: next,
+      audit: audit(actor, "ticket.reclassify", ticket, at, {
+        type: { from: ticket.type, to: change.type },
+        priority: { from: ticket.priority, to: change.priority },
+        ...(ticket.queueId !== change.queueId ? { queueId: { from: ticket.queueId, to: change.queueId } } : {}),
+      }),
+    },
+  };
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Wiring                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -441,6 +507,29 @@ export class TicketService {
     const ticket = await this.load(actor.tenantId, ticketId);
     if (!ticket) return { ok: false, error: "Ticket not found." };
     const plan = planAssignment(actor, ticket, assigneeId, this.ids);
+    if (!plan.ok) return plan;
+
+    const applied = await this.runRules(plan.value.ticket, "ticket.updated");
+    const next = applied?.ticket ?? plan.value.ticket;
+    await this.store.updateTicket(next);
+    await this.audit.append(plan.value.audit);
+    await this.settle(applied);
+    return { ok: true, value: next };
+  }
+
+  /**
+   * Change a ticket's type, priority and queue (M7).
+   *
+   * The write an accepted classification becomes. It is deliberately a first-class
+   * method here rather than something the assistant does for itself: the permission
+   * check, the validation and the audit event are the ticket stack's, so applying a
+   * suggestion cannot be broader than an agent editing the same three fields by hand.
+   * The `ticket.updated` rules run, because this *is* the ticket being updated.
+   */
+  async reclassify(actor: Actor, ticketId: string, change: TicketReclassification): Promise<ServiceResult<TicketRecord>> {
+    const ticket = await this.load(actor.tenantId, ticketId);
+    if (!ticket) return { ok: false, error: "Ticket not found." };
+    const plan = planReclassification(actor, ticket, change, this.ids);
     if (!plan.ok) return plan;
 
     const applied = await this.runRules(plan.value.ticket, "ticket.updated");
