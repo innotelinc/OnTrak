@@ -237,8 +237,13 @@ being re-requested when it has not changed:
   budget is one per run, not per host, because the cache is a property of the Network.
 
 In this Network that took a repeat scan from about 210 s to about 72 s, and the second scan made no
-registry requests at all. A failed lookup is never cached: a rate limit is not a statement about
-the image, and caching one would report a Network as up to date for as long as the row lived.
+registry requests at all. A failed lookup is never cached *as an answer*: a rate limit is not a
+statement about the image, and caching one as up to date would report a Network as current for as
+long as the row lived. A pinned index the registry will not resolve — a pruned manifest, a reference
+that is not a list — is the one failure that *is* remembered, for six hours
+(`PINNED_MISS_TTL_SECONDS`), because otherwise a handful of gone indices spend a warm-up slot and a
+request on every scan and starve the ones that can be resolved. It records a miss, never a digest,
+so the image stays unjudged rather than being called current.
 
 The pulls are the other half, and thrift on the scanning side does not help them: a pull draws on
 the *same* anonymous allowance, so a Network that checks carefully can still 429 the moment it

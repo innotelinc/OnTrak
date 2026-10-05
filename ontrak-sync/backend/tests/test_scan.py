@@ -731,6 +731,62 @@ class DockerPinWarmup(ScanCase):
         self.assertEqual(1, result["findings"])
 
 
+class DockerPinMissCache(ScanCase):
+    """An index the registry will not resolve is remembered briefly, and costs nothing.
+
+    Without this, an image whose old index is gone re-spends a warm-up slot and a request
+    on every scan and is never resolved, so a few of them starve the indices that could be
+    resolved. The miss is remembered, not the *answer*: the image stays unjudged, so it can
+    never be reported as current.
+    """
+
+    GONE = "sha256:goneindex0000000"
+    GOOD = "sha256:goodindex0000000"
+
+    def setUp(self):
+        super().setUp()
+        self.settings = Settings(
+            hosts=(Host("i1", "192.168.1.51", "both"),), docker_pin_warm_budget=1)
+
+    def pinned(self) -> int:
+        return sum(1 for call in self.fake.calls
+                   if call[0] == "docker" and call[3][:1] == ("manifest",)
+                   and "@" in call[3][-1])
+
+    def test_an_unresolvable_index_is_asked_once_and_then_remembered(self):
+        self.fake.images["monarch"] = [
+            {"Repository": "nginx", "Tag": "1.27.0", "Digest": self.GONE}
+        ]
+        self.fake.manifests["nginx:1.27.0"] = (True, manifest_list(amd64="sha256:nginxsame000000"))
+        # No manifest for nginx@<gone> → the fake answers "no such manifest".
+        first = self.scan()
+        self.assertEqual(0, first["findings"])
+        self.assertEqual("partial", self.report(first, "monarch")["managers"]["docker"])
+        self.assertEqual(1, self.pinned())
+
+        second = self.scan()
+        self.assertEqual(0, second["findings"])
+        # Still just the one request: the miss was remembered, not re-asked.
+        self.assertEqual(1, self.pinned())
+
+    def test_a_remembered_miss_does_not_spend_the_warm_budget(self):
+        self.fake.images["monarch"] = [
+            {"Repository": "nginx", "Tag": "1.27.0", "Digest": self.GONE},
+            {"Repository": "redis", "Tag": "7", "Digest": self.GOOD},
+        ]
+        self.fake.manifests["nginx:1.27.0"] = (True, manifest_list(amd64="sha256:nginxsame000000"))
+        self.fake.manifests["redis:7"] = (True, manifest_list(amd64="sha256:redisnew0000000"))
+        self.fake.manifests[f"redis@{self.GOOD}"] = (True, manifest_list(amd64="sha256:redisold0000000"))
+
+        # First scan: nginx's gone index spends the single slot and fails to resolve, so
+        # redis is deferred.
+        self.assertEqual(0, self.scan()["findings"])
+        # Second scan: the remembered miss costs nothing, so the budget reaches redis —
+        # which really moved and is judged at last.
+        second = self.scan()
+        self.assertEqual(1, second["findings"])
+
+
 class DockerScanLogin(ScanCase):
     """The scan authenticates before it spends Docker Hub's anonymous budget.
 

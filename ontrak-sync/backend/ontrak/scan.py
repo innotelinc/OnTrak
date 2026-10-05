@@ -74,6 +74,14 @@ DOCKER_IMAGES = ["image", "ls", "--no-trunc", "--digests", "--format", "{{json .
 # can be repointed), which keeps the resolution to one extra request per image
 # *version* rather than one per scan.
 PINNED_DIGEST_TTL_SECONDS = 365 * 24 * 3600
+# A pinned index the registry will not resolve — a pruned manifest, a reference that is
+# not a list, a registry that refused — is remembered briefly instead of being asked
+# again on every scan. Without this, an image whose old index is gone re-consumes a
+# warm-up slot and a request on every pass and is *never* resolved, and a handful of them
+# would starve the indices that can be. It is short because an index missing today may be
+# published or unpruned tomorrow, and it deliberately does not record an *answer*: the
+# image stays unjudged, so this can never report a Network as up to date.
+PINNED_MISS_TTL_SECONDS = 6 * 3600
 OS_RELEASE = ["sh", "-c", ". /etc/os-release 2>/dev/null && printf '%s|%s\\n' \"$PRETTY_NAME\" \"$(uname -r)\""]
 
 Seen = set  # of (manager, package)
@@ -251,6 +259,15 @@ def _record_snap(conn, target_id: int, host: Host, container: str | None,
     return seen
 
 
+def _pin_miss_key(ref: str) -> str:
+    """Cache key for a pinned index the registry could not resolve (`PINNED_MISS_TTL_SECONDS`).
+
+    A separate namespace from the answer, so a miss is never mistaken for a digest and a
+    later success plainly overwrites nothing.
+    """
+    return f"pinmiss:{ref}"
+
+
 def _kind_key(ref: str) -> str:
     """Cache key for a tag's manifest kind (`list` or `single`).
 
@@ -287,9 +304,14 @@ def _resolve_local_platform(conn, host: Host, container: str, repo: str,
     """
     pinned_ref = f"{repo}@{local_digest}"
     ttl = PINNED_DIGEST_TTL_SECONDS if settings.digest_ttl_seconds > 0 else 0
+    miss_ttl = PINNED_MISS_TTL_SECONDS if settings.digest_ttl_seconds > 0 else 0
     cached = db.get_digest(conn, pinned_ref, ttl_seconds=ttl)
     if cached is not None:
         return cached
+    if db.get_digest(conn, _pin_miss_key(pinned_ref), ttl_seconds=miss_ttl) is not None:
+        # Known unresolvable recently: no request and, importantly, no warm-up slot — a
+        # budget that a gone index eats every scan is a budget the resolvable ones need.
+        return ""
     if not warm.take(pinned_ref):
         return None
     authenticate(pinned_ref)
@@ -299,7 +321,11 @@ def _resolve_local_platform(conn, host: Host, container: str, repo: str,
     platform = scanners.parse_manifest(manifest.stdout)[0] if manifest.ok else ""
     if platform:
         db.set_digest(conn, pinned_ref, platform)
-    return platform
+        return platform
+    # No platform digest came back. Remember the miss so the next scans skip it; the miss
+    # never records an answer, so the image is left unjudged rather than called current.
+    db.set_digest(conn, _pin_miss_key(pinned_ref), "1")
+    return ""
 
 
 def _record_docker(conn, target_id: int, host: Host, container: str | None,
@@ -369,10 +395,15 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
         return set()
 
     seen: set[tuple[str, str]] = set()
+    # Locally built images: no repository digest, so no registry can give a verdict.
     unjudged = 0
-    # Multi-arch images left unjudged because this scan has spent its warm-up budget,
-    # counted apart from `unjudged` so the report can say which of the two it is: a
-    # deferral clears on the next scan, a registry that cannot resolve an index may not.
+    # Images the registry could not answer about at all — a refused manifest, or a pinned
+    # index it will not resolve. Counted apart from `unjudged` because the sentence an
+    # operator needs is different, and percent-apart from `deferred` because this one may
+    # not clear on the next scan.
+    unresolved = 0
+    # Multi-arch images left unjudged because this scan has spent its warm-up budget (or
+    # another host claimed the same index first). A deferral clears on a later scan.
     deferred = 0
     # (container, registry) pairs already logged in during this call. The daemon
     # keeps the credential, so one login covers every later request on the same
@@ -458,7 +489,7 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
             # No verdict. The image is protected rather than confirmed: a finding
             # already on record for it stays (we could not check), and no new one is
             # invented. Note it is NOT added to `seen` — "seen" means judged.
-            unjudged += 1
+            unresolved += 1
             report.inconclusive.add(("docker", ref))
             continue
         if behind:
@@ -474,9 +505,11 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
         # expired by the scan after it. Adding it here would strand that row as
         # pending forever, the same way the apt path would if it listed packages
         # that are no longer upgradable.
-    report.manager_status["docker"] = "ok" if not unjudged and not deferred else "partial"
+    report.manager_status["docker"] = "ok" if not (unjudged or unresolved or deferred) else "partial"
     if unjudged:
         report.errors.append(f"docker: {unjudged} image(s) not in a registry — not compared")
+    if unresolved:
+        report.errors.append(f"docker: {unresolved} image(s) the registry could not answer about — not compared")
     if deferred:
         report.errors.append(
             f"docker: {deferred} multi-arch image(s) left unjudged while the "
