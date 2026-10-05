@@ -23,8 +23,13 @@ import {
 import { buildKnowledgeGapReport, type KnowledgeGapReport } from "../../../lib/knowledge-rules";
 import {
   agentScorecards,
+  forecastVolume,
   queueScorecards,
+  slaRisk,
   ticketTrends,
+  type ForecastReport,
+  type RiskBand,
+  type SlaRiskReport,
   type TrendReport,
   type WorkScorecard,
 } from "../../../lib/analytics-rules";
@@ -132,6 +137,78 @@ function TrendPanel({ report }: { report: TrendReport }) {
         end of each day.
       </p>
     </>
+  );
+}
+
+/**
+ * The projection (M7): the backlog if recent intake and closures both hold.
+ *
+ * A straight line from the recent average on purpose — see `forecastVolume`. The one
+ * thing worth reading off it is the direction, which `outlook` names outright.
+ */
+function ForecastPanel({ forecast }: { forecast: ForecastReport }) {
+  const outlook =
+    forecast.outlook === "accumulating"
+      ? "the backlog is projected to grow"
+      : forecast.outlook === "clearing"
+        ? "the backlog is projected to shrink"
+        : "the backlog is projected to hold";
+  const delta = forecast.projectedBacklogDelta;
+  return (
+    <>
+      <div className="mt-3 grid gap-4 sm:grid-cols-3">
+        <Stat
+          label={`Projected backlog (+${forecast.horizonDays}d)`}
+          value={String(forecast.projectedBacklog)}
+          hint={`${delta >= 0 ? "+" : ""}${delta} over the horizon`}
+        />
+        <Stat
+          label="Intake rate"
+          value={`${forecast.dailyCreated}/day`}
+          hint={`mean of the last ${forecast.basisDays} days`}
+        />
+        <Stat
+          label="Close rate"
+          value={`${forecast.dailyClosed}/day`}
+          hint={`mean of the last ${forecast.basisDays} days`}
+        />
+      </div>
+      <p className="mt-2 text-xs text-ink-faint">
+        A straight line from the last {forecast.basisDays} days — intake and closures held at their recent
+        average — so {outlook}. A warning, not a promise: one quiet week is not a trend.
+      </p>
+    </>
+  );
+}
+
+/** The forward-looking risk list: worst band first, then nearest deadline. */
+function SlaRiskTable({ report }: { report: SlaRiskReport }) {
+  if (report.items.length === 0) {
+    return <p className="mt-2 text-sm text-ink-faint">No open ticket is running a clock.</p>;
+  }
+  const tone: Record<RiskBand, string> = {
+    critical: "text-bad",
+    high: "text-attention",
+    medium: "text-ink-soft",
+    low: "text-ink-faint",
+  };
+  return (
+    <ul className="mt-2 divide-y divide-line">
+      {report.items.slice(0, 20).map((item) => (
+        <li key={item.ticketId} className="flex flex-wrap items-center gap-2 py-2">
+          <span className="font-mono text-[11px] font-semibold text-ink-faint">{item.ref}</span>
+          <a href={`/inbox/${item.ticketId}`} className="truncate text-sm text-ink hover:text-brand">
+            {item.subject}
+          </a>
+          <span className="text-[11px] text-ink-faint">{item.reason}</span>
+          <span className="ml-auto flex items-center gap-3">
+            {item.paused ? <span className="text-[11px] text-ink-faint">paused</span> : null}
+            <span className="text-[11px] text-ink-faint">{item.priority}</span>
+            <span className={`text-xs font-semibold ${tone[item.band]}`}>{item.band}</span>
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -411,6 +488,10 @@ export default async function ReportsPage() {
     now,
   );
   const queueCards = queueScorecards(tickets, policies, queues, now);
+  // The projection is drawn from the same trend the table above shows, and the risk list
+  // from the same SLA report — so neither can disagree with the numbers beside it.
+  const forecast = forecastVolume(trends, { horizonDays: 14, basisDays: 7 });
+  const risk = slaRisk(tickets, policies, now);
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -519,6 +600,27 @@ export default async function ReportsPage() {
         <StatusTable rows={report.atRisk} empty="Nothing is close to its deadline." />
       </section>
 
+      <section aria-label="SLA risk" className="rounded-xl2 border border-line bg-surface p-5">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <h2 className="font-display text-sm font-semibold text-ink">SLA risk</h2>
+          <span className="ml-auto text-[11px] text-ink-faint">
+            {risk.projectedBreaches} ticket{risk.projectedBreaches === 1 ? "" : "s"} expected to breach inside{" "}
+            {Math.round(risk.horizonMinutes / 60)} business hours
+          </span>
+        </div>
+        <p className="text-xs text-ink-faint">
+          Forward-looking, unlike the lists above: each open ticket is placed on the running clock nearest its deadline, so
+          work that is not yet in its warning window is still visible while there is time to act.
+        </p>
+        <div className="mt-3 grid gap-4 sm:grid-cols-4">
+          <Stat label="Critical" value={String(risk.counts.critical)} hint="past the target" />
+          <Stat label="High" value={String(risk.counts.high)} hint="a breach is inside the horizon" />
+          <Stat label="Medium" value={String(risk.counts.medium)} hint="inside the horizon" />
+          <Stat label="Low" value={String(risk.counts.low)} hint="beyond the horizon" />
+        </div>
+        <SlaRiskTable report={risk} />
+      </section>
+
       <section aria-label="By client" className="rounded-xl2 border border-line bg-surface p-5">
         <div className="flex flex-wrap items-baseline gap-2">
           <h2 className="font-display text-sm font-semibold text-ink">By client</h2>
@@ -569,6 +671,10 @@ export default async function ReportsPage() {
           warning; the change figure compares this window with the one before it.
         </p>
         <TrendPanel report={trends} />
+        <div className="mt-6 border-t border-line pt-4">
+          <h3 className="font-display text-xs font-semibold tracking-wide text-ink-soft uppercase">Forecast</h3>
+          <ForecastPanel forecast={forecast} />
+        </div>
       </section>
 
       <section aria-label="By agent" className="rounded-xl2 border border-line bg-surface p-5">

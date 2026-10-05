@@ -1281,10 +1281,11 @@ up to an adjuster or auditor.
   the outcome author turns solved tickets into articles and scenarios. Analytics below
   remain.
 - Analytics: trends, forecasting, agent/queue scorecards, SLA risk modelling.
-  **In progress:** the volume trend (opened/closed per day, with the backlog it left)
-  and the agent and queue scorecards are shipped on `/reports`
-  ([`analytics-rules.ts`](./src/lib/analytics-rules.ts)); forecasting and SLA risk
-  modelling remain.
+  **Shipped** on `/reports`, all from the one
+  [`analytics-rules.ts`](./src/lib/analytics-rules.ts): the volume trend (opened/closed
+  per day, with the backlog it left), a straight-line backlog forecast drawn from it,
+  the agent and queue scorecards, and a forward-looking SLA risk list that bands open
+  work by how soon its nearest running clock will lapse.
 - Performance/multi-region hardening, backup/DR runbooks, SOC 2-ready controls.
 
 > The desk's memory of its own work is usable now. A ticket can be read by an

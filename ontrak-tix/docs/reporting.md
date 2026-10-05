@@ -101,6 +101,40 @@ promise is at the top and a big-but-healthy backlog does not outrank a breach. A
 everywhere else, a bucket with no applicable SLA policy reports that count
 (`withoutPolicy`) rather than a flattering `100%`.
 
+### Forecasting the backlog (M7)
+
+`forecastVolume(trend, { horizonDays, basisDays })` projects the backlog forward from
+the trend above. It is deliberately a **straight line and not a model**: intake and
+closures are held at their mean over the last `basisDays` (seven by default) and poured
+into the backlog, and `outlook` names the result — `clearing`, `stable` or
+`accumulating`. The question worth answering is "at this rate, is the desk falling
+behind?", and a moving average answers it; a curve fitted to three weeks of a small
+desk's data would only look more certain than it is. The daily figures are rounded for
+reading, but the running backlog is carried at full precision, so fourteen days of
+rounding cannot drift into a wrong total.
+
+### SLA risk (M7)
+
+`buildSlaReport` says what **is** breached and what is already in its warning window;
+both are facts about the clocks as they stand. `slaRisk(tickets, policies, now,
+horizonMinutes)` answers the question a lead acts on instead — **what will breach if
+nobody touches it?** Every open ticket is placed on the running clock nearest its
+deadline (a met response leaves the resolution clock driving) and banded by how much of
+the horizon — `240` business minutes by default — is left:
+
+| Band | Meaning |
+| --- | --- |
+| `critical` | past the target already |
+| `high` | a breach is inside a quarter of the horizon |
+| `medium` | a breach is inside the horizon |
+| `low` | beyond the horizon |
+
+A ticket three hours from its target is on no at-risk list yet, and is exactly the one
+worth seeing while there is still time to answer it. The list is built on
+`buildSlaReport`, so it can never disagree with the breach tables beside it; a ticket
+whose clocks are both met contributes nothing, a paused clock is flagged rather than read
+as safe, and a ticket with no policy is counted in `withoutPolicy` rather than dropped.
+
 ## Tests
 
 ```bash
@@ -113,3 +147,11 @@ scale, comment filtering and ordering, the per-group response rate and the
 null-average-last order, the word split and clustering (transitivity, ordering
 and the repeat flag), the private-article rule, the empty-subject case and the
 empty-report case.
+
+`tix-m7-analytics.test.ts` covers the trend bucketing and backlog-at-day-end, the
+prior-window change and the null-it-from-zero case, the per-assignee and per-queue
+split (absent empty groups, removed queues kept, `withoutPolicy` surfaced, the sort
+order), the projection's arithmetic and its four outlooks, and the risk bands — the
+nearest running clock chosen, a met response leaving the resolution clock, an
+accumulating desk, a paused clock flagged, and a resolved or policy-less ticket
+excluded and counted.

@@ -10,9 +10,9 @@
  * decision here is testable without a database.
  */
 
-import { isOpen, type TicketStatus } from "./ticket-rules";
+import { isOpen, type TicketPriority, type TicketStatus } from "./ticket-rules";
 import { buildSlaReport, type ReportTicket, type TimingStats } from "./report-rules";
-import type { SlaPolicy } from "./sla-rules";
+import type { SlaClockKind, SlaClockView, SlaPolicy } from "./sla-rules";
 
 /* -------------------------------------------------------------------------- */
 /*  Trends                                                                    */
@@ -158,6 +158,104 @@ export function ticketTrends(tickets: readonly TrendTicket[], now: Date | string
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Forecast                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/** One projected day. `created`/`closed` are the recent daily averages; `backlog` is cumulative. */
+export interface ForecastPoint {
+  /** UTC calendar day, `YYYY-MM-DD`. */
+  day: string;
+  created: number;
+  closed: number;
+  /** Projected still open at the end of this day. */
+  backlog: number;
+}
+
+export type ForecastOutlook = "clearing" | "stable" | "accumulating";
+
+export interface ForecastReport {
+  horizonDays: number;
+  /** How many recent days the per-day averages are taken from. */
+  basisDays: number;
+  /** Recent average intake, per day. */
+  dailyCreated: number;
+  /** Recent average closures, per day. */
+  dailyClosed: number;
+  points: ForecastPoint[];
+  /** Projected backlog at the end of the horizon. */
+  projectedBacklog: number;
+  /** Change in backlog over the horizon: `projectedBacklog - backlogNow`. */
+  projectedBacklogDelta: number;
+  outlook: ForecastOutlook;
+}
+
+const DEFAULT_BASIS_DAYS = 7;
+const DEFAULT_HORIZON_DAYS = 14;
+/** Small enough to catch a real drift, wide enough not to flip on one day's rounding. */
+const OUTLOOK_TOLERANCE = 0.05;
+
+function mean(values: readonly number[]): number {
+  return values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+/**
+ * Project the backlog forward from the trend.
+ *
+ * Deliberately a straight line and not a model: intake and closures are held at their
+ * average over the last `basisDays`, and the two are poured into the backlog. The shape
+ * of the *question* is what matters — "at this rate, is the desk falling behind?" — and a
+ * moving average answers it, where a curve fitted to three weeks of a small desk's data
+ * would only look more certain than it is. `outlook` names the answer so the page need
+ * not re-derive it, and the delta stays readable when the backlog is going nowhere.
+ */
+export function forecastVolume(
+  report: TrendReport,
+  options: { horizonDays?: number; basisDays?: number } = {},
+): ForecastReport {
+  const horizon = Math.max(1, Math.floor(options.horizonDays ?? DEFAULT_HORIZON_DAYS));
+  const basis = Math.max(1, Math.floor(options.basisDays ?? DEFAULT_BASIS_DAYS));
+  const recent = report.points.slice(-basis);
+  const dailyCreated = mean(recent.map((point) => point.created));
+  const dailyClosed = mean(recent.map((point) => point.closed));
+
+  const lastDay = report.points.length > 0
+    ? report.points[report.points.length - 1].day
+    : dayOf(new Date().toISOString());
+  const lastMs = Date.parse(`${lastDay}T00:00:00.000Z`);
+  let backlog = report.backlogNow;
+  const points: ForecastPoint[] = [];
+  for (let offset = 1; offset <= horizon; offset++) {
+    backlog += dailyCreated - dailyClosed;
+    points.push({
+      day: new Date(lastMs + offset * DAY_MS).toISOString().slice(0, 10),
+      created: Math.round(dailyCreated),
+      closed: Math.round(dailyClosed),
+      backlog: Math.round(backlog),
+    });
+  }
+
+  const drift = dailyClosed - dailyCreated;
+  return {
+    horizonDays: horizon,
+    basisDays: Math.min(basis, recent.length) || basis,
+    dailyCreated: round1(dailyCreated),
+    dailyClosed: round1(dailyClosed),
+    points,
+    projectedBacklog: Math.round(backlog),
+    projectedBacklogDelta: Math.round(backlog - report.backlogNow),
+    outlook: drift > OUTLOOK_TOLERANCE
+      ? "clearing"
+      : drift < -OUTLOOK_TOLERANCE
+        ? "accumulating"
+        : "stable",
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Agent and queue scorecards                                                */
 /* -------------------------------------------------------------------------- */
 
@@ -267,6 +365,132 @@ function byWorkHealth(a: WorkScorecard, b: WorkScorecard): number {
     (a.resolution.attainmentPercent ?? 101) - (b.resolution.attainmentPercent ?? 101) ||
     a.name.localeCompare(b.name)
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  SLA risk                                                                  */
+/* -------------------------------------------------------------------------- */
+
+export type RiskBand = "critical" | "high" | "medium" | "low";
+
+/** Half a working day: near enough to act on, far enough ahead to warn. */
+export const RISK_HORIZON_MINUTES = 240;
+
+/** One open ticket, placed by how soon its nearest running clock will lapse. */
+export interface SlaRiskItem {
+  ticketId: string;
+  ref: string;
+  subject: string;
+  priority: TicketPriority;
+  assigneeId: string | null;
+  /** The running clock that is closest to its deadline. */
+  clock: SlaClockKind;
+  /** Business minutes left on that clock (`0` once past). */
+  remainingMinutes: number;
+  dueAt: string;
+  /** An open pause is holding the clock, so the risk is not moving. */
+  paused: boolean;
+  band: RiskBand;
+  /** A short sentence for the row, so the band is legible without a legend. */
+  reason: string;
+}
+
+export interface SlaRiskReport {
+  horizonMinutes: number;
+  items: SlaRiskItem[];
+  counts: Record<RiskBand, number>;
+  /** Critical plus high: the tickets expected to breach inside the horizon. */
+  projectedBreaches: number;
+  /** Open tickets with no policy, so no clock and therefore no risk to model. */
+  withoutPolicy: number;
+}
+
+const RISK_ORDER: Record<RiskBand, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
+function bandFor(remainingMinutes: number, horizonMinutes: number): RiskBand {
+  if (remainingMinutes <= 0) return "critical";
+  if (remainingMinutes <= horizonMinutes * 0.25) return "high";
+  if (remainingMinutes <= horizonMinutes) return "medium";
+  return "low";
+}
+
+function riskReason(band: RiskBand, clock: SlaClockKind, remainingMinutes: number): string {
+  if (band === "critical") return `past its ${clock} target`;
+  const minutes = `${Math.round(remainingMinutes)} business min`;
+  return band === "high"
+    ? `${minutes} left on ${clock} — a breach is inside the horizon`
+    : `${minutes} left on ${clock}`;
+}
+
+function byRisk(a: SlaRiskItem, b: SlaRiskItem): number {
+  return (
+    RISK_ORDER[a.band] - RISK_ORDER[b.band] ||
+    a.remainingMinutes - b.remainingMinutes ||
+    a.ref.localeCompare(b.ref)
+  );
+}
+
+/**
+ * Rank the open work by how soon it will breach, not by whether it already has.
+ *
+ * The report above answers "what is breached" and "what is in its warning window"; both
+ * are facts about the clocks as they stand. This answers the question a lead acts on —
+ * "what will breach if nobody touches it?" — by placing every open ticket on the running
+ * clock nearest its deadline and banding it by how much of the horizon is left. A ticket
+ * three hours from its target is on no at-risk list yet, and is exactly the one worth
+ * seeing while there is still time to answer it.
+ *
+ * Built on `buildSlaReport`, so it can never disagree with the breach lists beside it,
+ * and a ticket whose clocks are both met contributes nothing — there is nothing left to
+ * breach. A ticket with no policy has no clock and is counted, not silently dropped.
+ */
+export function slaRisk(
+  tickets: readonly ReportTicket[],
+  policies: readonly SlaPolicy[],
+  now: Date | string,
+  horizonMinutes = RISK_HORIZON_MINUTES,
+): SlaRiskReport {
+  const horizon = Math.max(1, horizonMinutes);
+  const report = buildSlaReport(tickets, policies, now);
+  const items: SlaRiskItem[] = [];
+
+  for (const row of report.tickets) {
+    if (!isOpen(row.status)) continue;
+    const running = [row.response, row.resolution].filter(
+      (clock): clock is SlaClockView => clock !== null && clock.metAt === null,
+    );
+    if (running.length === 0) continue; // both clocks met: nothing left to breach
+    const driving = running.reduce((soonest, clock) =>
+      clock.remainingMinutes < soonest.remainingMinutes ? clock : soonest,
+    );
+    const remainingMinutes = Math.max(0, driving.remainingMinutes);
+    const band = bandFor(remainingMinutes, horizon);
+    items.push({
+      ticketId: row.ticketId,
+      ref: row.ref,
+      subject: row.subject,
+      priority: row.priority,
+      assigneeId: row.assigneeId,
+      clock: driving.kind,
+      remainingMinutes,
+      dueAt: driving.dueAt.toISOString(),
+      paused: driving.paused,
+      band,
+      reason: riskReason(band, driving.kind, remainingMinutes),
+    });
+  }
+
+  items.sort(byRisk);
+  const counts: Record<RiskBand, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const item of items) counts[item.band] += 1;
+
+  return {
+    horizonMinutes: horizon,
+    items,
+    counts,
+    projectedBreaches: counts.critical + counts.high,
+    withoutPolicy: report.totals.withoutPolicy,
+  };
 }
 
 /* -------------------------------------------------------------------------- */

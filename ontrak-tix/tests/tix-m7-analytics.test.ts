@@ -15,9 +15,12 @@ import { ALWAYS_OPEN_CALENDAR, type SlaPolicy } from "../src/lib/sla-rules";
 import type { ReportTicket } from "../src/lib/report-rules";
 import {
   agentScorecards,
+  forecastVolume,
   queueScorecards,
+  slaRisk,
   ticketTrends,
   trendSnapshot,
+  type TrendReport,
   type TrendTicket,
 } from "../src/lib/analytics-rules";
 
@@ -233,4 +236,117 @@ test("scorecards: tickets with no applicable policy are surfaced, not counted as
   );
   assert.equal(cards[0].withoutPolicy, 1);
   assert.equal(cards[0].response.attainmentPercent, null);
+});
+
+/* -------------------------------------------------------------------------- */
+/*  Forecast                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/** A trend with one day's figures repeated, so the average is the figure. */
+function flatTrend(created: number, closed: number, backlogNow: number, days = 3): TrendReport {
+  const points = Array.from({ length: days }, (_, index) => ({
+    day: `2026-03-${String(8 + index).padStart(2, "0")}`,
+    created,
+    closed,
+    backlog: backlogNow,
+  }));
+  return {
+    days,
+    points,
+    createdTotal: created * days,
+    closedTotal: closed * days,
+    createdChangePercent: null,
+    closedChangePercent: null,
+    backlogNow,
+  };
+}
+
+test("forecast: intake above closures accumulates, and the days run forward from the last", () => {
+  const forecast = forecastVolume(flatTrend(5, 1, 12), { horizonDays: 3, basisDays: 3 });
+  assert.equal(forecast.dailyCreated, 5);
+  assert.equal(forecast.dailyClosed, 1);
+  assert.equal(forecast.outlook, "accumulating");
+  assert.equal(forecast.projectedBacklog, 24); // 12 + (5 - 1) * 3
+  assert.equal(forecast.projectedBacklogDelta, 12);
+  assert.deepEqual(
+    forecast.points.map((point) => point.day),
+    ["2026-03-11", "2026-03-12", "2026-03-13"],
+  );
+  assert.deepEqual(forecast.points.map((point) => point.backlog), [16, 20, 24]);
+});
+
+test("forecast: closures above intake clears the backlog", () => {
+  const forecast = forecastVolume(flatTrend(1, 4, 12), { horizonDays: 3, basisDays: 3 });
+  assert.equal(forecast.outlook, "clearing");
+  assert.equal(forecast.projectedBacklog, 3); // 12 - (4 - 1) * 3
+  assert.equal(forecast.projectedBacklogDelta, -9);
+});
+
+test("forecast: a balanced desk holds, and the basis never exceeds the history", () => {
+  const forecast = forecastVolume(flatTrend(3, 3, 7));
+  assert.equal(forecast.outlook, "stable");
+  assert.equal(forecast.projectedBacklog, 7);
+  assert.equal(forecast.basisDays, 3, "only three days of history to average");
+  assert.equal(forecast.points.length, 14, "the default horizon");
+});
+
+test("forecast: an empty desk projects nothing rather than dividing by zero", () => {
+  const forecast = forecastVolume(flatTrend(0, 0, 0, 0), { horizonDays: 2 });
+  assert.equal(forecast.dailyCreated, 0);
+  assert.equal(forecast.dailyClosed, 0);
+  assert.equal(forecast.outlook, "stable");
+  assert.equal(forecast.projectedBacklog, 0);
+  assert.equal(forecast.points.length, 2);
+});
+
+/* -------------------------------------------------------------------------- */
+/*  SLA risk                                                                  */
+/* -------------------------------------------------------------------------- */
+
+const RISK_AT = "2026-09-21T12:00:00.000Z";
+
+test("risk: open work is banded by the clock nearest its deadline, worst first", () => {
+  const tickets: ReportTicket[] = [
+    // Ten hours without a first reply: the response target is long gone.
+    reportTicket({ id: "critical", ref: "TIX-000001", createdAt: "2026-09-21T02:00:00.000Z" }),
+    // One hour of a two-hour target: sixty minutes left, a quarter of the horizon.
+    reportTicket({ id: "high", ref: "TIX-000002", createdAt: "2026-09-21T11:00:00.000Z" }),
+    // Half an hour in: ninety minutes left, inside the horizon but not the urgent band.
+    reportTicket({ id: "medium", ref: "TIX-000003", createdAt: "2026-09-21T11:30:00.000Z" }),
+    // Answered at once, so the response clock is met and the resolution clock drives.
+    reportTicket({ id: "low", ref: "TIX-000004", createdAt: "2026-09-21T11:55:00.000Z", firstResponseAt: "2026-09-21T11:55:00.000Z" }),
+  ];
+  const risk = slaRisk(tickets, [policy], RISK_AT);
+  assert.deepEqual(risk.items.map((item) => item.band), ["critical", "high", "medium", "low"]);
+  assert.deepEqual(risk.counts, { critical: 1, high: 1, medium: 1, low: 1 });
+  assert.equal(risk.projectedBreaches, 2, "critical plus high breach inside the horizon");
+  assert.equal(risk.items[0].clock, "response");
+  assert.equal(risk.items[0].remainingMinutes, 0, "a breach is not a negative runway");
+  assert.equal(risk.items[0].reason, "past its response target");
+  assert.equal(risk.items[3].clock, "resolution", "a met response leaves the resolution clock driving");
+});
+
+test("risk: a resolved ticket and one with no policy are not risk", () => {
+  const tickets: ReportTicket[] = [
+    reportTicket({ id: "done", status: "RESOLVED", firstResponseAt: "2026-09-21T09:10:00.000Z", resolvedAt: "2026-09-21T09:30:00.000Z" }),
+    // A LOW priority, and the only policy is scoped to NORMAL: no clock, no risk.
+    reportTicket({ id: "nopolicy", ref: "TIX-000002", priority: "LOW" }),
+    reportTicket({ id: "soon", ref: "TIX-000003", createdAt: "2026-09-21T11:00:00.000Z" }),
+  ];
+  const risk = slaRisk(tickets, [{ ...policy, priority: "NORMAL" }], RISK_AT);
+  assert.deepEqual(risk.items.map((item) => item.ticketId), ["soon"]);
+  assert.equal(risk.withoutPolicy, 1);
+});
+
+test("risk: a paused clock is flagged, so its frozen numbers are not read as safe", () => {
+  const tickets = [
+    reportTicket({
+      id: "paused",
+      createdAt: "2026-09-21T11:00:00.000Z",
+      pauses: [{ startedAt: "2026-09-21T11:30:00.000Z", endedAt: null }],
+    }),
+  ];
+  const risk = slaRisk(tickets, [policy], RISK_AT);
+  assert.equal(risk.items.length, 1);
+  assert.equal(risk.items[0].paused, true);
 });
