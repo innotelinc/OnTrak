@@ -48,7 +48,7 @@ flowchart LR
 | Admin control room: platform toggles, software inventory, keys, users, audit | `[x]` |
 | Student experience: timed attempts, autosave, results, personal bests | `[x]` |
 | PWA / mobile quick-keys / offline shell | `[x]` |
-| Test suite (208) + typecheck + production build green | `[x]` |
+| Test suite (316) + typecheck + production build green | `[x]` |
 | Pure, unit-tested form/rule modules; ownership-guarded actions | `[x]` |
 | Versioned migrations (`prisma/migrations`) applied identically by every environment | `[x]` |
 
@@ -287,12 +287,48 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
     hostnames, the role groups and the redirect URIs written down in
     [docs/family-operations.md](docs/family-operations.md).
 - LTI 1.3 so scenarios can be launched and graded from an LMS.
-- Public API + webhooks for attempt/grading events, and bulk CSV import/export of
-  rosters and results.
+- `[x]` **Public API + webhooks for attempt/grading events, and bulk CSV
+  import/export of rosters and results.**
+  - `[x]` **A grading is announced, not only stored.** `src/lib/webhook-rules.ts`
+    is pure and holds the whole contract: the event's `id` is derived from
+    `(event, attemptId, gradedAt)` so a retry is the same fact and a consumer can
+    dedupe on it, the body is canonical so the bytes signed are the bytes sent,
+    and the signature is `t=<unix>,sha256=<hmac of "t.body">` with a stated
+    tolerance — a valid signature is not valid forever. `webhook-client.ts` is
+    the transport (one POST, five seconds, and it answers with an outcome instead
+    of throwing, so a consumer that is down can never fail a grading), and
+    `webhook-delivery.ts` writes a row **before** the request so a delivery that
+    was interrupted or refused is a row an operator can see and resend rather
+    than a log line nobody read. `attempts` counts tries, not successes. Nothing
+    is retried on a timer: a person triggers the retry, so a person can stop it.
+    A re-grade publishes a *second* event and not a correction, and the
+    certificate published is read back off the attempt, so a re-grade that keeps
+    an issued record still carries the code the learner was handed.
+  - `[x]` **The read API mirrors it.** `GET /api/v1/results` (keyset-paged, not
+    offset — an offset over a table that is still being written skips records
+    silently) and `GET /api/v1/results/export` (the same page as CSV, header row
+    per page, `x-ontrak-next-cursor`) answer the same question with the same
+    object shape the webhook posts. `GET|POST /api/v1/roster` plus its CSV export
+    are the directory path: columns are read by name, unusable rows are refused
+    **line by line** while the rest import, a cohort name the file does not
+    recognise is reported rather than invented, `?dryRun=1` reports the same
+    counts and writes nothing, and a user created this way has **no local
+    password** — a roster says who exists, not what their secret is.
+    `GET|POST /api/v1/webhook-deliveries` lists outstanding deliveries and
+    resends them.
+    One shared `ONTRAK_API_TOKEN`, compared length-independently; unconfigured is
+    a 503 with a reason rather than a 401.
+  - Covered by `tests/webhook.test.ts` (12 checks: id stability, canonical bytes,
+    the refusals a signature check must make, the replay window, the pass rule,
+    the check-list cap, env configuration and a stubbed-fetch transport) and
+    `tests/csv-rules.test.ts` (10 checks: RFC 4180 writing and parsing, the
+    truncation refusal, roster defaults, duplicate and malformed rows named by
+    line, and a round trip through export and import).
 - **Exit:** an org signs in through its IdP, rosters sync over SCIM, and results
   flow to an LMS and a webhook consumer.
-  - Signing in through an IdP is done; the roster half of the exit criterion is the
-    directory sync above, and the LMS/webhook half is the bullets below.
+  - Signing in through an IdP is done, and results now flow to a webhook consumer
+    (or an API reader, or a spreadsheet) — the remaining halves are the directory
+    sync above and LTI 1.3 for an LMS to *launch* through.
 
 ### v1.4 — Authoring at scale `[ ]`
 **Goal:** a catalog a team can maintain.

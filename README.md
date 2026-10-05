@@ -374,6 +374,30 @@ OnTrak Sentinel **provisions** into Tix over SCIM 2.0, and Tix **pushes** its ow
 people back out to the provider so a person is added once. Both directions are
 documented in [ontrak-tix/docs/identity.md](ontrak-tix/docs/identity.md).
 
+### Downstream: results, and the people who own them
+
+Training evidence is only worth collecting if it can leave. Set
+`ONTRAK_API_TOKEN` and a deployment exposes a read API over the same rows the UI
+shows — `GET /api/v1/results` (paged by cursor, filtered by `since`, scenario,
+cohort or status), `GET /api/v1/roster`, and CSV exports of both. Set
+`ONTRAK_WEBHOOK_URL` and `ONTRAK_WEBHOOK_SECRET` as well and every new grading is
+posted to a consumer as it happens, HMAC-signed over a canonical body with the
+timestamp inside the signature.
+
+The design decisions are all about the fact that the consumer is *not here*.
+An event's id is derived from the grading rather than the delivery, so a retry is
+recognisably the same fact and cannot be applied twice; the body is canonical, so
+the bytes signed are the bytes sent; a refusal is an outcome rather than an
+exception, so a consumer that is down can never fail a grading; and every
+delivery — refusals included — is a row an operator can list and resend instead
+of a log line nobody read. A re-grade is a *second* event, not a correction.
+
+The same door opens inward: `POST /api/v1/roster` imports a class spreadsheet,
+reading columns by name, refusing rows line by line while importing the rest,
+and creating accounts with **no** local password — a roster says who exists, not
+what their secret is. [`docs/integrations.md`](docs/integrations.md) is the
+consumer's document: routes, signature verification, and what each refusal means.
+
 ---
 
 ## Commands
@@ -520,6 +544,7 @@ caught a scrollable region without keyboard access on the landing page.
 | [docs/stack.md](docs/stack.md) | OnTrak's role in the Innotel Platform Stack (TrainingOps) — what it owns, consumes and does not own |
 | [docs/scenario-authoring.md](docs/scenario-authoring.md) | How a scenario is written and how its objectives are graded |
 | [docs/training-evidence.md](docs/training-evidence.md) | Completion records, certificates and the signed export packet |
+| [docs/integrations.md](docs/integrations.md) | The public API and webhooks: routes, signature verification, roster import |
 | [INNOTEL-LABS.md](INNOTEL-LABS.md) | The Innotel Labs product family and how the five products fit together |
 | [docs/family-operations.md](docs/family-operations.md) | The family as deployed: the five hostnames, the Authentik role groups, and how to repair each sign-in path |
 | [ontrak-portal/README.md](ontrak-portal/README.md) | The centralized dashboard — one sign-in, then the products a role belongs in |

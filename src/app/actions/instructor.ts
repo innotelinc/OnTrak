@@ -14,6 +14,7 @@ import { attemptScopeFor } from "@/lib/attempt-scope";
 import { canRegrade, regradedStatus } from "@/lib/grading-rules";
 import { certificateAction, readStoredCertificate } from "@/lib/certificate-rules";
 import { attemptPassed, certificatePatchFor } from "@/lib/certificates";
+import { announceGraded, checksFor, storedCertificateOf } from "@/lib/graded-events";
 import type { ScenarioDefinition } from "@/lib/sim/types";
 
 async function requireStaff() {
@@ -440,7 +441,11 @@ export async function regradeAttempt(formData: FormData): Promise<void> {
   const scope = await attemptScopeFor(instructor);
   const attempt = await prisma.attempt.findFirst({
     where: { id: attemptId, ...scope },
-    include: { scenario: true, user: { select: { name: true } } },
+    include: {
+      scenario: true,
+      user: { select: { id: true, email: true, name: true } },
+      assignment: { select: { cohort: { select: { id: true, name: true } } } },
+    },
   });
   if (!attempt) backTo("/instructor/attempts", "That attempt no longer exists.", false);
 
@@ -511,6 +516,34 @@ export async function regradeAttempt(formData: FormData): Promise<void> {
     targetType: "attempt",
     targetId: attemptId,
     detail: { score: report.score, maxScore: report.maxScore, certificate: action },
+  });
+
+  // A re-grade is its own grading fact: it is a second event, not a correction of
+  // the first, so a consumer that stored the original score learns the new one
+  // without having to poll the API for the change.
+  await announceGraded({
+    attempt: {
+      id: attemptId,
+      status: regradedStatus(attempt.status),
+      score: report.score,
+      maxScore: report.maxScore,
+      startedAt: attempt.startedAt,
+      submittedAt: attempt.submittedAt,
+      gradedAt,
+      timeSpentSec: attempt.timeSpentSec,
+    },
+    learner: attempt.user,
+    scenario: {
+      id: attempt.scenarioId,
+      title: attempt.scenario.title,
+      platform: attempt.scenario.platform,
+      passScore: attempt.scenario.passScore,
+    },
+    cohort: attempt.assignment?.cohort ?? null,
+    checks: checksFor(report.results),
+    // Read back after the transaction: a re-grade that *keeps* an issued record
+    // still has to publish the code the learner already holds.
+    certificate: await storedCertificateOf(attemptId),
   });
 
   revalidatePath(`/instructor/attempts/${attemptId}`);

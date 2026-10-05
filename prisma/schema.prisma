@@ -384,3 +384,39 @@ model AuditLog {
   @@index([createdAt])
   @@index([action])
 }
+
+// ---------------------------------------------------------------------------
+// Integrations
+// ---------------------------------------------------------------------------
+
+/// One attempt event handed to an outside consumer, and what came back.
+///
+/// The row is written *before* the request, so a consumer that is unreachable
+/// leaves a PENDING delivery rather than a log line: "we told your system" is a
+/// claim an operator has to be able to check, and a consumer has to be able to
+/// reconcile. `eventId` is unique and derived from the grading fact itself, so a
+/// retry updates the delivery it belongs to instead of sending the same grading
+/// twice under a second id.
+model WebhookDelivery {
+  id         String   @id @default(cuid())
+  eventId    String   @unique
+  event      String
+  attemptId  String?
+  url        String
+  transport  String
+  /// PENDING until answered, then DELIVERED or FAILED.
+  status     String   @default("PENDING")
+  /// Tries so far, including the first: a consumer down for an hour is visible.
+  attempts   Int      @default(0)
+  lastStatus Int?
+  lastError  String?
+  /// The canonical body that was signed, kept so a retry sends the same bytes.
+  body       Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  deliveredAt DateTime?
+
+  @@index([status, createdAt])
+  @@index([attemptId])
+  @@index([createdAt])
+}

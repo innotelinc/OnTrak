@@ -18,6 +18,7 @@ import { evaluateScenario, loadAvailabilityContext } from "@/lib/availability";
 import { disposeSession, runSandboxCommand } from "@/lib/sim/sandbox";
 import { recordAudit } from "@/lib/audit";
 import { certificatePatchFor, readStoredCertificate } from "@/lib/certificates";
+import { announceGraded, checksFor, storedCertificateOf } from "@/lib/graded-events";
 import type { Prisma } from "@prisma/client";
 import type { SandboxCommandResponse } from "@/lib/sim/drivers/proxy";
 import type { EngineState } from "@/lib/sim/types";
@@ -188,7 +189,13 @@ export async function submitAttempt(formData: FormData): Promise<void> {
 
   const attempt = await prisma.attempt.findUnique({
     where: { id: attemptId },
-    include: { scenario: true, user: { select: { name: true } } },
+    include: {
+      scenario: true,
+      user: { select: { id: true, email: true, name: true } },
+      // The cohort is only ever read to name the class in the webhook payload and
+      // the API feed; nothing about grading depends on it being set.
+      assignment: { select: { cohort: { select: { id: true, name: true } } } },
+    },
   });
   if (!attempt) fail("/student", "That attempt no longer exists.");
   if (attempt.userId !== user.id && user.role === "STUDENT") fail("/student", "That attempt is not yours.");
@@ -254,6 +261,31 @@ export async function submitAttempt(formData: FormData): Promise<void> {
       targetType: "attempt",
       targetId: attemptId,
       detail: { score: report.score, maxScore: report.maxScore, reason, timedOut: expired },
+    });
+
+    await announceGraded({
+      attempt: {
+        id: attemptId,
+        status: expired ? "EXPIRED" : "GRADED",
+        score: report.score,
+        maxScore: report.maxScore,
+        startedAt: attempt.startedAt,
+        submittedAt: gradedAt,
+        gradedAt,
+        timeSpentSec: Math.round((gradedAt.getTime() - attempt.startedAt.getTime()) / 1000),
+      },
+      learner: attempt.user,
+      scenario: {
+        id: attempt.scenarioId,
+        title: attempt.scenario.title,
+        platform: attempt.scenario.platform,
+        passScore: attempt.scenario.passScore,
+      },
+      cohort: attempt.assignment?.cohort ?? null,
+      checks: checksFor(report.results),
+      // Read back after the transaction, so an issued record is published with the
+      // code the learner was handed rather than with the patch that created it.
+      certificate: await storedCertificateOf(attemptId),
     });
   }
 
