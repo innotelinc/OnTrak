@@ -21,6 +21,13 @@ import {
   type CsatGroupScore,
 } from "../../../lib/csat-rules";
 import { buildKnowledgeGapReport, type KnowledgeGapReport } from "../../../lib/knowledge-rules";
+import {
+  agentScorecards,
+  queueScorecards,
+  ticketTrends,
+  type TrendReport,
+  type WorkScorecard,
+} from "../../../lib/analytics-rules";
 
 export const metadata = { title: "Reports" };
 
@@ -77,6 +84,100 @@ function ClientRow({ card }: { card: ClientScorecard }) {
         )}
       </td>
     </tr>
+  );
+}
+
+/**
+ * The volume trend (M7): a compact table plus the change against the window before it.
+ *
+ * Days are UTC and read left-to-right oldest-first, and the backlog column is what was
+ * open at the *end of that day* — recomputed from timestamps, so a chart of last week
+ * does not change because somebody closed a ticket today.
+ */
+function TrendPanel({ report }: { report: TrendReport }) {
+  const change = (value: number | null): string =>
+    value === null ? "no prior window" : `${value >= 0 ? "+" : ""}${value}% vs previous`;
+  const shown = report.points.slice(-14);
+  return (
+    <>
+      <div className="mt-3 grid gap-4 sm:grid-cols-3">
+        <Stat label={`Opened (${report.days}d)`} value={String(report.createdTotal)} hint={change(report.createdChangePercent)} />
+        <Stat label={`Closed (${report.days}d)`} value={String(report.closedTotal)} hint={change(report.closedChangePercent)} />
+        <Stat label="Backlog now" value={String(report.backlogNow)} hint="open by the timeline" />
+      </div>
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="text-[11px] tracking-wide text-ink-faint uppercase">
+            <tr>
+              <th scope="col" className="py-1">Day</th>
+              <th scope="col" className="py-1">Opened</th>
+              <th scope="col" className="py-1">Closed</th>
+              <th scope="col" className="py-1">Backlog</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {shown.map((point) => (
+              <tr key={point.day}>
+                <th scope="row" className="py-1.5 text-left font-mono text-xs font-normal text-ink-soft">{point.day}</th>
+                <td className="py-1.5 text-ink">{point.created}</td>
+                <td className="py-1.5 text-ink">{point.closed}</td>
+                <td className="py-1.5 text-ink-soft">{point.backlog}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-xs text-ink-faint">
+        The last {shown.length} of {report.days} UTC days. Closed counts resolved and closed work; backlog is what was open at the
+        end of each day.
+      </p>
+    </>
+  );
+}
+
+/** One group's row on the agents/queues scorecard. */
+function WorkRow({ card }: { card: WorkScorecard }) {
+  return (
+    <tr>
+      <th scope="row" className="py-2 text-left font-semibold text-ink">
+        {card.name}
+        {card.withoutPolicy > 0 ? <span className="ml-2 text-[11px] text-attention">{card.withoutPolicy} without a policy</span> : null}
+      </th>
+      <td className="py-2 text-ink-soft">
+        {card.open}
+        <span className="text-ink-faint"> / {card.total}</span>
+      </td>
+      <td className="py-2 text-ink-soft">{card.closed}</td>
+      <td className={`py-2 ${card.breached > 0 ? "font-semibold text-bad" : "text-ink-soft"}`}>{card.breached}</td>
+      <td className="py-2 text-ink-soft">{percent(card.response.attainmentPercent)}</td>
+      <td className="py-2 text-ink-soft">{percent(card.resolution.attainmentPercent)}</td>
+    </tr>
+  );
+}
+
+/** A scorecard table: the same columns for a person and for a queue. */
+function WorkTable({ cards, empty }: { cards: WorkScorecard[]; empty: string }) {
+  if (cards.length === 0) return <p className="mt-2 text-sm text-ink-faint">{empty}</p>;
+  return (
+    <div className="mt-2 overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead className="text-[11px] tracking-wide text-ink-faint uppercase">
+          <tr>
+            <th scope="col" className="py-1">Group</th>
+            <th scope="col" className="py-1">Open</th>
+            <th scope="col" className="py-1">Closed</th>
+            <th scope="col" className="py-1">Breached</th>
+            <th scope="col" className="py-1">Response SLA</th>
+            <th scope="col" className="py-1">Resolution SLA</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line">
+          {cards.map((card) => (
+            <WorkRow key={card.groupId ?? "none"} card={card} />
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -205,7 +306,7 @@ export default async function ReportsPage() {
   if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
 
   const now = new Date().toISOString();
-  const [tickets, policies, escalations, csat, ticketSurveys, clients, clientSurveys, knowledge] = await Promise.all([
+  const [tickets, policies, escalations, csat, ticketSurveys, clients, clientSurveys, knowledge, queues] = await Promise.all([
     ticketServicesFor().store.listTickets(actor.tenantId),
     slaPolicyStoreFor().listForTenant(actor.tenantId),
     escalationServicesFor().list(actor.tenantId),
@@ -214,6 +315,14 @@ export default async function ReportsPage() {
     clientServicesFor().list(actor),
     clientSurveyServicesFor().all(actor),
     knowledgeServicesFor().list(actor),
+    // Queue names for the scorecard, so an empty queue can be named rather than shown
+    // as an id. The queue's routing lives in the rules engine; a scorecard only needs
+    // what a ticket already carries.
+    prisma.queue.findMany({
+      where: { tenantId: actor.tenantId },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
   ]);
 
   const report = buildSlaReport(tickets, policies, now);
@@ -290,6 +399,18 @@ export default async function ReportsPage() {
     now,
     surveys,
   );
+
+  // The M7 analytics: where the volume is going, and who is carrying it. Both are
+  // computed from the same tickets and policies the SLA report above uses, so an
+  // agent's or a queue's attainment cannot drift from the desk-wide figure.
+  const trends = ticketTrends(tickets, now, 30);
+  const agentCards = agentScorecards(
+    tickets,
+    policies,
+    staff.map((user) => ({ id: user.id, name: user.displayName })),
+    now,
+  );
+  const queueCards = queueScorecards(tickets, policies, queues, now);
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -439,6 +560,32 @@ export default async function ReportsPage() {
           </a>{" "}
           ledger.
         </p>
+      </section>
+
+      <section aria-label="Trends" className="rounded-xl2 border border-line bg-surface p-5">
+        <h2 className="font-display text-sm font-semibold text-ink">Trends</h2>
+        <p className="text-xs text-ink-faint">
+          Ticket volume over the last thirty days and the backlog it left. A flat backlog with rising intake is the quiet
+          warning; the change figure compares this window with the one before it.
+        </p>
+        <TrendPanel report={trends} />
+      </section>
+
+      <section aria-label="By agent" className="rounded-xl2 border border-line bg-surface p-5">
+        <h2 className="font-display text-sm font-semibold text-ink">By agent</h2>
+        <p className="text-xs text-ink-faint">
+          Attainment over each person&rsquo;s tickets whose clocks have closed, most-breached first. The parts add up to the
+          desk: unassigned work is a row of its own rather than omitted.
+        </p>
+        <WorkTable cards={agentCards} empty="No ticket has been assigned yet." />
+      </section>
+
+      <section aria-label="By queue" className="rounded-xl2 border border-line bg-surface p-5">
+        <h2 className="font-display text-sm font-semibold text-ink">By queue</h2>
+        <p className="text-xs text-ink-faint">
+          The same question asked of the routing: which queues are breaching, and how much is sitting in each.
+        </p>
+        <WorkTable cards={queueCards} empty="No queue has work in it yet." />
       </section>
 
       <section aria-label="Escalations" className="rounded-xl2 border border-line bg-surface p-5">

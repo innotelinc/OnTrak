@@ -2,8 +2,9 @@
 
 [`/reports`](../src/app/(desk)/reports/page.tsx) is the dispatcher's screen. It
 began with SLA attainment and timings (M1), grew a per-client scorecard (M4),
-and in M5 it gained the two views that answer *"how did this feel?"* and
-*"what could we have answered ourselves?"*.
+in M5 it gained the two views that answer *"how did this feel?"* and
+*"what could we have answered ourselves?"*, and in M7 it gained the trend and
+the agent/queue scorecards — *"which way are we going, and who is carrying it?"*.
 
 Both are pure reductions — computed in
 [`csat-rules.ts`](../src/lib/csat-rules.ts) and
@@ -65,10 +66,46 @@ Two decisions are worth stating out loud:
   `buildKnowledgeGapReport` both call the same `unansweredTickets` helper, so
   adding a cluster view cannot change what "unanswered" means.
 
+## Trends, agents and queues (M7)
+
+The report's M7 additions are in
+[`analytics-rules.ts`](../src/lib/analytics-rules.ts), and they exist to answer two
+questions a snapshot cannot: **which way the volume is going**, and **who is carrying
+the work**.
+
+`ticketTrends(tickets, now, days)` buckets *created* and *closed* work per UTC day and
+reads off the backlog left behind. Two decisions are the point of it:
+
+- **A day's backlog is recomputed from timestamps, not read off today's status.** A
+  point for last week says what was open *then*; a chart that redrew its own history
+  every time somebody closed a ticket would be worse than no chart. A ticket closed
+  with no `closedAt` falls back to `resolvedAt`; one with neither is still open.
+- **"Up from nothing" is not a percentage.** Each total is compared with the window
+  immediately before it, and a previous window of zero reports `null` rather than a
+  fake `+∞%`.
+
+`agentScorecards` and `queueScorecards` are the same function with a different key.
+Each bucket is scored by the *same* `buildSlaReport` the desk-wide figures come from,
+so an agent's attainment cannot drift from the report it was drawn off. And the buckets
+are built from the **records**, not from a supplied roster:
+
+- A group with no work is **absent**, not a zero row that hides the ones that matter.
+- Work with no group — an unassigned ticket, a ticket with no queue — is a row of its
+  own, because the parts must add up to the whole.
+- Work in a queue that has since been removed is still scored, under its id, rather
+  than dropped.
+
+The rows sort **most-breached first, then largest backlog, then worst resolution
+attainment** — the order a dispatcher reads, so the group about to cost the desk a
+promise is at the top and a big-but-healthy backlog does not outrank a breach. As
+everywhere else, a bucket with no applicable SLA policy reports that count
+(`withoutPolicy`) rather than a flattering `100%`.
+
 ## Tests
 
 ```bash
 npx tsx --tsconfig tests/tsconfig.json --test tests/tix-m5-csat-knowledge-reporting.test.ts
+npx tsx --tsconfig tests/tsconfig.json --test tests/tix-m7-analytics.test.ts
 ```
 
 `tix-m5-csat-knowledge-reporting.test.ts` covers the distribution over an empty
