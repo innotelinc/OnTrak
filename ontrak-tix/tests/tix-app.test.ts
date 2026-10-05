@@ -43,6 +43,8 @@ import {
 import type { Actor, Role } from "../src/lib/access-rules";
 import { AgentInbox } from "../src/components/AgentInbox";
 import { TicketDetail } from "../src/components/TicketDetail";
+import type { AssistResult } from "../src/lib/assist-rules";
+import type { AssistDecisionRecord } from "../src/lib/assist-service";
 
 /* -------------------------------------------------------------------------- */
 /*  A Prisma-shaped fake                                                      */
@@ -446,4 +448,46 @@ test("detail UI: the ticket, its thread and the offered actions render", () => {
   assert.match(html, /Have you tried a reboot\?/);
   assert.match(html, /Mark[\s\S]{0,40}resolved/);
   assert.match(html, /Internal note/);
+});
+
+test("detail UI: the assistant panel renders its suggestions and the decisions taken", () => {
+  const record = ticket({ id: "a", ref: "TIX-000042", subject: "VPN certificate invalid" });
+  const result: AssistResult = {
+    classification: {
+      type: "REQUEST",
+      priority: "HIGH",
+      queueId: "q-network",
+      queueName: "Network",
+      reasons: ["asks for something to be done"],
+    },
+    summary: "Reported: the VPN certificate is invalid.",
+    draftReply: "Hello, we are looking into it.",
+    similar: [],
+    source: "rules",
+  };
+  const history: AssistDecisionRecord[] = [
+    { at: "2026-01-03T09:00:00.000Z", actor: "u_agent", accepted: false, kind: "CLASSIFICATION", source: "rules", applied: false },
+    { at: "2026-01-02T09:00:00.000Z", actor: "u_agent", accepted: true, kind: "DRAFT_REPLY", source: "model", applied: false },
+    { at: "2026-01-01T09:00:00.000Z", actor: "u_agent", accepted: true, kind: "CLASSIFICATION", source: "model", applied: true },
+  ];
+  const html = renderToStaticMarkup(
+    createElement(TicketDetail, {
+      ticket: record,
+      assist: {
+        result,
+        canDecide: true,
+        decisionAction: async () => {},
+        applyAction: async () => {},
+        history,
+      },
+    }),
+  );
+  assert.match(html, /Assistant/);
+  assert.match(html, /Apply to ticket/);
+  assert.match(html, /Network/);
+  // The decision history, including the count of what was turned down.
+  assert.match(html, /Decisions/);
+  assert.match(html, /1 dismissed/);
+  assert.match(html, /applied/);
+  assert.match(html, /the model/);
 });
