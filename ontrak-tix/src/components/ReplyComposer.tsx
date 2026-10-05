@@ -11,6 +11,11 @@ import { applyCannedTemplate, type CannedResponse } from "../lib/canned-rules";
  * agent is looking at. The values substituted into `{{ref}}` etc. are passed in,
  * never fetched, so the composer stays a pure renderer of its props and the
  * server action still owns every access decision.
+ *
+ * The M7 assistant's draft is offered the same way a canned response is — one button
+ * that fills the box — and with the same guarantee: it *fills*, it never sends. The
+ * draft is a string prop, so the composer cannot fetch, and the agent still has to
+ * read it, edit it if it is wrong, and press Send.
  */
 export function ReplyComposer({
   action,
@@ -19,6 +24,7 @@ export function ReplyComposer({
   requester,
   agent,
   canned,
+  suggestedReply,
 }: {
   action: (formData: FormData) => Promise<void>;
   ticketId: string;
@@ -26,6 +32,8 @@ export function ReplyComposer({
   requester: string;
   agent: string;
   canned: CannedResponse[];
+  /** The assistant's draft, when one has been asked for (M7). */
+  suggestedReply?: string;
 }) {
   const [body, setBody] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -43,6 +51,24 @@ export function ReplyComposer({
   return (
     <form action={action} className="space-y-2">
       <input type="hidden" name="ticketId" value={ticketId} />
+      {suggestedReply ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs font-semibold text-ink-faint">Assistant:</span>
+          <button
+            type="button"
+            onClick={() => {
+              // Assigned, not substituted: the draft is prose, and a `{{...}}` an agent
+              // typed into their own template has no business being rewritten here.
+              setBody(suggestedReply);
+              textareaRef.current?.focus();
+            }}
+            className="rounded-full bg-brand-soft px-2.5 py-0.5 text-xs font-semibold text-brand hover:bg-brand/20"
+          >
+            Use suggested reply
+          </button>
+          <span className="text-xs text-ink-faint">edit before sending</span>
+        </div>
+      ) : null}
       {canned.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-xs font-semibold text-ink-faint">Canned:</span>

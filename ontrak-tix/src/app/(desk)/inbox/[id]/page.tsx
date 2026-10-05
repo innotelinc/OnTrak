@@ -10,7 +10,9 @@ import {
   linkServicesFor,
   macroServicesFor,
   timeServicesFor,
+  assistServicesFor,
 } from "../../../../lib/db";
+import type { AssistResult } from "../../../../lib/assist-rules";
 import { scopeByClient, scopeRefusal } from "../../../../lib/client-rules";
 import { slaStatusFor } from "../../../../lib/report-rules";
 import {
@@ -29,6 +31,7 @@ import {
   setStatusAction,
 } from "../../../actions/tickets";
 import { logTimeAction, removeTimeAction } from "../../../actions/time";
+import { recordAssistDecisionAction } from "../../../actions/assist";
 
 export const metadata = { title: "Ticket" };
 
@@ -42,14 +45,14 @@ export default async function TicketPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ flash?: string; error?: string }>;
+  searchParams: Promise<{ flash?: string; error?: string; assist?: string }>;
 }) {
   const actor = await requireActor();
   // Staff-only: a requester's own ticket lives in the portal, scoped by
   // `canReadTicket`, so this desk view must never expose the tenant worklist.
   if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
   const { id } = await params;
-  const { flash, error } = await searchParams;
+  const { flash, error, assist: assistAsked } = await searchParams;
 
   const [ticket, policies, everything, canned, time, scope] = await Promise.all([
     ticketServicesFor().store.findTicket(actor.tenantId, id),
@@ -69,6 +72,20 @@ export default async function TicketPage({
 
   const all = scopeByClient(scope, everything);
   const sla = slaStatusFor(ticket, policies, new Date().toISOString());
+
+  // The M7 assistant (opt-in). Suggestions are produced only when somebody asked for
+  // them, so an ordinary page view costs nothing — no gateway call, no query — and the
+  // panel is a deliberate act rather than something that appears on every ticket the
+  // desk opens. A suggestion that cannot be produced says why rather than vanishing.
+  const assistant = assistServicesFor();
+  const canDecide = canUpdateTicket(actor, ticket);
+  let assistResult: AssistResult | undefined;
+  let assistError: string | undefined;
+  if (assistant.enabled && assistAsked === "1") {
+    const suggestion = await assistant.suggest(actor, ticket.id);
+    if (suggestion.ok) assistResult = suggestion.value;
+    else assistError = suggestion.error;
+  }
   // The links and the picker are the same question asked twice: relating work to
   // a ticket you may not open would leak its reference and subject just as the
   // worklist would have.
@@ -110,6 +127,31 @@ export default async function TicketPage({
           {error}
         </p>
       ) : null}
+      {assistant.enabled ? (
+        <div className="flex items-center justify-between rounded-xl2 border border-line bg-surface px-4 py-2">
+          <span className="text-xs text-ink-faint">
+            The assistant proposes a classification, a summary, a draft reply and similar tickets. It never sends
+            anything.
+          </span>
+          {assistResult ? (
+            <a href={`/inbox/${ticket.id}`} className="text-xs font-semibold text-ink-faint hover:text-ink">
+              Hide assistant
+            </a>
+          ) : (
+            <a
+              href={`/inbox/${ticket.id}?assist=1`}
+              className="rounded-full bg-brand/12 px-3 py-1 text-xs font-semibold text-brand hover:bg-brand/20"
+            >
+              Ask the assistant
+            </a>
+          )}
+        </div>
+      ) : null}
+      {assistError ? (
+        <p role="alert" className="rounded-xl2 border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
+          {assistError}
+        </p>
+      ) : null}
       <TicketDetail
         ticket={ticket}
         actions={actions}
@@ -118,6 +160,9 @@ export default async function TicketPage({
         links={links}
         linkOptions={linkOptions}
         macros={macros}
+        {...(assistResult
+          ? { assist: { result: assistResult, canDecide, decisionAction: recordAssistDecisionAction } }
+          : {})}
       />
       <TicketTime
         ticketId={ticket.id}

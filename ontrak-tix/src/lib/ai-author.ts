@@ -17,6 +17,10 @@
  * in this file imports a vendor SDK, and nothing else in the product knows a model
  * exists.
  *
+ * The call itself now lives in `ai-gateway.ts`, shared with the M7 assist, so there
+ * is exactly one place in the product that speaks to a model — and one place to
+ * change if the shape ever does.
+ *
  * When no key is set — which is most deployments, and every air-gapped one — the
  * deterministic author writes the draft instead. When a key *is* set and the call
  * fails, times out, or answers with something that is not the JSON it was asked
@@ -35,25 +39,16 @@ import {
   type OutcomeDraft,
   type OutcomeTranscript,
 } from "./outcome-rules";
+import { callChat, type GatewayConfig } from "./ai-gateway";
 
-export interface AuthorConfig {
-  /** `<base>/chat/completions` is called; the trailing slash is not needed. */
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-  /** How long to wait before falling back to the template. */
-  timeoutMs: number;
-  /** Set to `0` to force the deterministic author even when a key is present. */
-  enabled: boolean;
-  /**
-   * Whether the deployment *asked* for a model and was refused.
-   *
-   * The distinction that decides whether a fallback is worth mentioning: a desk that
-   * configured a gateway and silently got the template needs to hear about it, while
-   * one that never configured anything is working exactly as intended.
-   */
-  switchedOff: boolean;
-}
+/**
+ * The author's settings.
+ *
+ * The shape lives in `ai-gateway.ts` — one place knows the knobs — and this name is
+ * kept so the author's own callers do not have to move when a second AI feature
+ * starts reading the same configuration.
+ */
+export type AuthorConfig = GatewayConfig;
 
 /**
  * OmniRoute's default endpoint, and its `auto` combo.
@@ -128,62 +123,18 @@ export async function authorOutcome(ticket: OutcomeTranscript, deps: AuthorDeps 
   }
 
   const { system, user } = buildAuthorPrompt(ticket);
-  const call = deps.fetchImpl ?? fetch;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+  const answer = await callChat({ config, system, user, fetchImpl: deps.fetchImpl });
+  if (!answer.ok) return { ...template, note: answer.reason };
 
-  try {
-    const response = await call(`${config.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        // Omitted rather than sent empty: a keyless local gateway rejects
-        // `Authorization: Bearer ` on some builds, and an empty credential is not a
-        // credential worth sending.
-        ...(config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {}),
-      },
-      body: JSON.stringify({
-        model: config.model,
-        // Low but not zero: a writer that never varies produces the same flat
-        // sentence for every ticket in the queue.
-        temperature: 0.2,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-      }),
-      signal: controller.signal,
-    });
+  const parsed = parseAuthorResponse(answer.content);
+  if (!parsed.ok) return { ...template, note: `the model's answer was unusable: ${parsed.reason}` };
 
-    if (!response.ok) {
-      return { ...template, note: `the model answered ${response.status}` };
-    }
-
-    const payload = (await response.json()) as {
-      choices?: { message?: { content?: unknown } }[];
-    };
-    const content = payload?.choices?.[0]?.message?.content;
-    if (typeof content !== "string") {
-      return { ...template, note: "the model's answer had no content" };
-    }
-
-    const parsed = parseAuthorResponse(content);
-    if (!parsed.ok) return { ...template, note: `the model's answer was unusable: ${parsed.reason}` };
-
-    // The caller's visibility wins over whatever the model put in the JSON: the
-    // model has no idea whether this desk publishes to customers, and the desk
-    // does. A model that answers PUBLIC is not granted one.
-    return {
-      source: "model",
-      article: { ...parsed.value.article, visibility: deps.visibility ?? "PRIVATE" },
-      scenario: parsed.value.scenario,
-    };
-  } catch (error) {
-    const reason = error instanceof Error && error.name === "AbortError"
-      ? `the model did not answer within ${config.timeoutMs}ms`
-      : `the model could not be reached (${error instanceof Error ? error.message : String(error)})`;
-    return { ...template, note: reason };
-  } finally {
-    clearTimeout(timer);
-  }
+  // The caller's visibility wins over whatever the model put in the JSON: the
+  // model has no idea whether this desk publishes to customers, and the desk
+  // does. A model that answers PUBLIC is not granted one.
+  return {
+    source: "model",
+    article: { ...parsed.value.article, visibility: deps.visibility ?? "PRIVATE" },
+    scenario: parsed.value.scenario,
+  };
 }

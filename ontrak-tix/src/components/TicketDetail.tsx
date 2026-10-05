@@ -12,9 +12,11 @@ import type { TicketRecord } from "../lib/ticket-service";
 import type { TicketSlaStatus } from "../lib/report-rules";
 import type { CannedResponse } from "../lib/canned-rules";
 import type { TicketLinkKind } from "../lib/link-rules";
+import type { AssistResult } from "../lib/assist-rules";
 import { MessageKindBadge, TicketPriorityBadge, TicketStatusBadge, TicketTypeBadge } from "./TicketBadges";
 import { SlaBadge } from "./SlaBadge";
 import { ReplyComposer } from "./ReplyComposer";
+import { AssistPanel } from "./AssistPanel";
 
 export interface TicketActions {
   reply?: (formData: FormData) => Promise<void>;
@@ -65,6 +67,7 @@ export function TicketDetail({
   links = [],
   linkOptions = [],
   macros = [],
+  assist,
 }: {
   ticket: TicketRecord;
   actions?: TicketActions;
@@ -78,7 +81,18 @@ export function TicketDetail({
   linkOptions?: TicketOption[];
   /** The shortcuts the caller may run on this ticket (M5). */
   macros?: MacroChoice[];
+  /**
+   * The assistant's suggestions (M7), when the desk asked for them. Absent on a desk that
+   * has not opted in, so the panel costs nothing on every other deployment.
+   */
+  assist?: {
+    result: AssistResult;
+    /** Whether this caller may record what they do with a suggestion. */
+    canDecide: boolean;
+    decisionAction?: (formData: FormData) => Promise<void>;
+  };
 }) {
+  const suggestedReply = assist?.result.draftReply;
   return (
     <section aria-label={`Ticket ${ticket.ref}`} className="rounded-xl2 border border-line bg-surface">
       <header className="border-b border-line px-5 py-4">
@@ -95,6 +109,17 @@ export function TicketDetail({
         <h2 className="mt-2 font-display text-lg font-semibold text-ink">{ticket.subject}</h2>
         <p className="mt-1 whitespace-pre-wrap text-sm text-ink-soft">{ticket.description}</p>
       </header>
+
+      {assist ? (
+        <div className="border-b border-line p-4">
+          <AssistPanel
+            ticketId={ticket.id}
+            result={assist.result}
+            canDecide={assist.canDecide}
+            {...(assist.decisionAction ? { decisionAction: assist.decisionAction } : {})}
+          />
+        </div>
+      ) : null}
 
       <ol className="divide-y divide-line">
         {ticket.messages.length === 0 ? (
@@ -145,6 +170,7 @@ export function TicketDetail({
               requester={ticket.requesterId}
               agent={ticket.assigneeId ?? "the desk"}
               canned={canned}
+              {...(suggestedReply ? { suggestedReply } : {})}
             />
           ) : null}
 

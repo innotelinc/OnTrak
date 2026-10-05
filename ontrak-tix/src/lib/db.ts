@@ -95,6 +95,8 @@ import { PrismaRoleStore, type RolePrismaClient } from "./role-store-prisma";
 import { ConnectorService } from "./connector-service";
 import { ConnectorRegistry } from "./connector-rules";
 import { PrismaConnectorStore, type ConnectorPrismaClient } from "./connector-store-prisma";
+import { AssistService } from "./assist-service";
+import { assistConfig, assistTicket } from "./ai-assist";
 
 /**
  * The OnTrak Tix database client and service bootstrap.
@@ -213,6 +215,7 @@ let chatNotify: ChatNotifyService | null = null;
 let forms: FormService | null = null;
 let roles: RoleService | null = null;
 let connectors: ConnectorService | null = null;
+let assist: AssistService | null = null;
 
 function csat(): CsatService {
   satisfaction ??= new CsatService(new PrismaCsatStore(prisma as unknown as CsatPrismaClient));
@@ -732,6 +735,45 @@ export function connectorServicesFor(): ConnectorService {
     ticketServices().audit,
   );
   return connectors;
+}
+
+/**
+ * The configured AI assist (M7).
+ *
+ * It shares the ticket stack's audit sink, so accepting or leaving a suggestion joins the
+ * same per-tenant hash chain as the ticket it was about — which is what makes the
+ * milestone's "measurable and reversible" a query rather than a promise. The assistant
+ * itself is `assistTicket`: the shared gateway when the deployment has one, and the
+ * deterministic rules when it does not. Whether this desk wants suggestions at all is read
+ * once here, from `ONTRAK_TIX_ASSIST_ENABLED`.
+ *
+ * The queues are read with only their name and slug because that is all a queue has —
+ * routing lives in the rules engine — and the candidate list is the ticket store's own
+ * worklist, capped by history. Nothing here reads the assistant's output: it proposes.
+ */
+const assistQueueLookup = {
+  listQueues: (tenantId: string) =>
+    (
+      prisma as unknown as {
+        queue: {
+          findMany(args: unknown): Promise<{ id: string; name: string; slug: string }[]>;
+        };
+      }
+    ).queue.findMany({ where: { tenantId }, orderBy: { name: "asc" }, select: { id: true, name: true, slug: true } }),
+};
+
+export function assistServicesFor(): AssistService {
+  assist ??= new AssistService({
+    tickets: {
+      findTicket: (tenantId, ticketId) => ticketServices().store.findTicket(tenantId, ticketId),
+      listTickets: (tenantId) => ticketServices().store.listTickets(tenantId),
+    },
+    queues: assistQueueLookup,
+    assist: (request) => assistTicket(request),
+    audit: ticketServices().audit,
+    enabled: assistConfig().enabled,
+  });
+  return assist;
 }
 
 /**
