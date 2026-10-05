@@ -822,6 +822,21 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
     the waiting proposal, the record handed to the plane, the hand lift and the sweep,
     a plane that refuses and one that throws, the HTTP body and token, and the unset
     environment).
+  - `[x]` **Alert delivery, as a seam rather than a pager** (`src/lib/alert-notify.ts`,
+    `notifierFromEnv`, and the last `DetectionService` argument): detection raised a row and
+    stopped there, which is right half of the job and a queue nobody is watching. A transport
+    is now told the alert's own **summary** the moment it is *created* — not on every sighting
+    that refreshes it, because re-sending a burst would be the noise delivery exists to end —
+    and it answers with an outcome rather than an exception, so a webhook that refuses or is
+    unreachable cannot undo a detection: the alert stays exactly where it is, and the refusal
+    is a `guard.alert.notify.failed` row naming the transport and its own words.
+    `HttpAlertNotifier` is one `POST` of the summary (optional bearer token, a timeout);
+    `RecordingAlertNotifier` is the dry run a deployment runs with no pager wired. No
+    transport is a real configuration — the shipped default, said out loud once at startup —
+    and the operator's side is written down in [docs/alert-delivery.md](./docs/alert-delivery.md).
+    Covered by `tests/sentinel-alert-notify.test.ts` (12 checks: delivered once and not on a
+    repeat, a refusing and a throwing transport, an unset transport, the projection, and the
+    HTTP body, token, refusal and unreachable paths).
   - `[x]` **The measured time-to-prevent** (`timeToPreventMs`/`timeToPreventSummary` in
     `enforcement-rules.ts`, the `detectedAt`/`timeToPreventMs` columns on
     `EnforcementAction`, and the figure the register states): S4's exit is a *measured*
@@ -972,9 +987,10 @@ missing rather than as a task name:
    has no answer. Versioning the rule set — and recording which version an alert
    was raised under — is what makes the evidence trail as durable on the network
    side as the hash-chained log already is on the identity side.
-3. **Alerts have no off switch.** There is no suppression, no maintenance window
-   and no notification transport, so every detection is a row in a queue that
-   somebody has to be looking at. 1.0 needs both the mute and the delivery.
+3. **Alerts have no off switch.** There is no suppression and no maintenance window,
+   so a known-noisy source still raises a row. The **delivery** half has landed (see
+   the bullet above): a raised alert is pushed to a configured transport, once, with
+   the refusal on the chain. 1.0 still needs the **mute**.
 4. ~~**Correlation is inert.**~~ **Closed (2026-10-01):** the interactive login
    stores the address it came from (`x-forwarded-for`, first entry) on the session
    it issues — both the password form and the Authentik callback — and a test now
@@ -1022,3 +1038,9 @@ stated as a median on the register — so what S4 still owes before it is a `[x]
 vendor adapters each deployment writes for its own firewall, agent or proxy. That is
 work a deployment owns by design rather than this build, so the measurement was the
 last of S4's own exit criteria.
+
+**Where that leaves the off switch (2026-10-05).** Of its two halves, the **delivery**
+has landed (`alert-notify.ts`): a raised alert reaches a configured transport once, and a
+transport that refuses or is unreachable leaves the alert where it is with the refusal on
+the chain. The **mute** — suppression rules and maintenance windows — is the half still
+open, so a known-noisy source keeps raising rows even when nobody is told about them.

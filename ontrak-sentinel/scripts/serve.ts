@@ -75,6 +75,7 @@ import {
 } from "../src/lib/enforcement-service";
 import { PrismaEnforcementStore, type EnforcementPrismaClient } from "../src/lib/enforcement-store-prisma";
 import { planeFromEnv } from "../src/lib/enforcement-plane";
+import { notifierFromEnv } from "../src/lib/alert-notify";
 import { enforcementSweepIntervalMs, startEnforcementScheduler } from "../src/lib/enforcement-scheduler";
 import { PrismaIndicatorStore, type IndicatorPrismaClient } from "../src/lib/threat-intel-store-prisma";
 import {
@@ -437,6 +438,17 @@ async function main(): Promise<void> {
   // holds: the console gets only the three triage methods, so a browser session cannot
   // reach ingest, and the last argument below is deliberately the service rather than a
   // second store.
+  // Alert delivery (S4's other half): where a *raised* alert is told to somebody, so a
+  // queue nobody is watching is not the detector's only reach. Unset is a deployment with
+  // no transport, which is the shipped default and behaves exactly as it did before the
+  // seam existed. Said out loud once, because "the detector fired" and "somebody was told"
+  // are different claims.
+  const alertNotifier = notifierFromEnv(process.env);
+  console.log(
+    alertNotifier === null
+      ? "[sentinel] alert delivery: no transport configured — alerts are raised into the queue only"
+      : `[sentinel] alert delivery: ${alertNotifier.name}`,
+  );
   const detection = new DetectionService(
     alertStore,
     identities,
@@ -445,6 +457,7 @@ async function main(): Promise<void> {
     systemDetectionIds(),
     sha256Hex,
     threatIntel,
+    alertNotifier,
   );
 
   // Access reviews (S2). The deprovisioning port is the SCIM service rather than a second

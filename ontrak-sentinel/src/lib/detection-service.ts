@@ -55,6 +55,11 @@ import {
 } from "./telemetry-rules";
 import { assignmentRefusal } from "./alert-assignment-rules";
 import {
+  alertNotification,
+  type AlertNotifier,
+  type NotifyOutcome,
+} from "./alert-notify";
+import {
   escalateSeverity,
   matchIndicators,
   type Indicator,
@@ -184,6 +189,13 @@ export class DetectionService {
      * unchanged, with enrichment switched off until somebody names a feed.
      */
     private readonly intel: IndicatorSource | null = null,
+    /**
+     * Where a raised alert is delivered, or `null` for a deployment that has no transport.
+     *
+     * Last in the list, like the feed, so every existing wiring and every test that builds
+     * this service keeps working unchanged — delivery is off until somebody names a transport.
+     */
+    private readonly notifier: AlertNotifier | null = null,
   ) {}
 
   /** The rules, so a deployment can see what it is running and at which version. */
@@ -316,9 +328,48 @@ export class DetectionService {
         occurrences: stored.alert.occurrences,
         sourceAddress: stored.alert.sourceAddress,
       });
+
+      // Delivered once, when the alert is *raised* — not on every repeat, which is exactly
+      // the noise delivery exists to end. A refreshed alert is the same incident.
+      if (stored.created) await this.notify(stored.alert);
     }
 
     return { alerts, rejected: [] };
+  }
+
+  /* ----------------------------------------------------------- delivery */
+
+  /**
+   * Hand a raised alert to the deployment's transport, and put its answer on the chain.
+   *
+   * Never throws and never refuses the alert. The detection happened; a transport that could
+   * not be told is recorded as `guard.alert.notify.failed` beside it, because "the detector
+   * fired" and "somebody was told" are different claims and an operator is entitled to know
+   * which one is true. A transport whose implementation throws is held to the same answer as
+   * one that refuses: the interface says it answers with an outcome, and a broken adapter does
+   * not get to take the detection down with it.
+   */
+  private async notify(record: AlertRecord): Promise<void> {
+    if (this.notifier === null) return;
+
+    let outcome: NotifyOutcome;
+    try {
+      outcome = await this.notifier.notify(alertNotification(record));
+    } catch (error) {
+      outcome = { ok: false, error: error instanceof Error ? error.message : "the transport threw" };
+    }
+
+    await this.append(
+      record.organizationId,
+      outcome.ok ? "guard.alert.notified" : "guard.alert.notify.failed",
+      record.id,
+      {
+        transport: this.notifier.name,
+        ruleId: record.ruleId,
+        severity: record.severity,
+        ...(outcome.ok ? { detail: outcome.detail } : { error: outcome.error }),
+      },
+    );
   }
 
   /* ------------------------------------------------------------- triage */

@@ -660,6 +660,16 @@ The contract is one JSON `POST` per operation; the operator's side of it, includ
 example adapter a deployment writes for its own firewall, is in
 [docs/enforcement-plane.md](./docs/enforcement-plane.md).
 
+**A raised alert reaches somebody, and the transport is a seam rather than a pager.** When a
+rule fires and the store *creates* an alert — not on every sighting that refreshes one — the
+alert's own summary is delivered to whatever `SENTINEL_ALERT_WEBHOOK_URL` names, so a queue
+nobody is watching is not the detector's only reach. A transport answers with an outcome
+rather than an exception, so a webhook that refuses or is unreachable cannot undo a
+detection: the alert stays exactly where it is, and the refusal is a `guard.alert.notify.failed`
+row naming the transport and its own words. Unset is a deployment with no transport — the
+shipped default, said out loud once at startup. The contract is one JSON `POST` of the alert's
+summary; the operator's side of it is in [docs/alert-delivery.md](./docs/alert-delivery.md).
+
 ## Containers
 
 All three products ship the same shape: a `Dockerfile` and a `docker-compose.yml`,
