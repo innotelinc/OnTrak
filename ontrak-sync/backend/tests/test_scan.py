@@ -634,6 +634,29 @@ class DockerMultiArch(ScanCase):
         self.assertEqual(first, self.manifest_calls())
 
 
+class PinWarmBudgetUnit(unittest.TestCase):
+    """The budget's own arithmetic, independent of a scan."""
+
+    def test_it_stops_at_its_limit(self):
+        budget = scan.PinWarmBudget(2)
+        self.assertTrue(budget.take("a@sha256x"))
+        self.assertTrue(budget.take("b@sha256x"))
+        self.assertFalse(budget.take("c@sha256x"))
+
+    def test_it_claims_an_index_once_so_concurrent_duplicates_cost_nothing(self):
+        # Hosts run concurrently and often carry the same image; a second host asking for
+        # the same index must not spend another slot (or make another request).
+        budget = scan.PinWarmBudget(5)
+        self.assertTrue(budget.take("repo@sha256x"))
+        self.assertFalse(budget.take("repo@sha256x"))
+        self.assertTrue(budget.take("other@sha256x"))
+
+    def test_zero_means_no_cap_and_no_coalescing(self):
+        budget = scan.PinWarmBudget(0)
+        for _ in range(50):
+            self.assertTrue(budget.take("repo@sha256x"))
+
+
 class DockerPinWarmup(ScanCase):
     """Warming the pinned-index cache is spread over scans, not done in one burst.
 

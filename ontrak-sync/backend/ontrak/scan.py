@@ -94,22 +94,34 @@ class PinWarmBudget:
     So a scan resolves at most `limit` indices it has not seen before, shared across the
     hosts it scans concurrently (hence the lock). The rest are left unjudged — protected,
     not called current — and picked up by later scans, which turns one burst into a
-    trickle and never invents a finding. `limit = 0` means no cap, which is the behavior
-    before this existed and the right choice for a deployment with a registry of its own.
+    trickle and never invents a finding.
+
+    Each index is *claimed* at most once per run. Hosts run concurrently and routinely
+    carry the same image, so without that a busy Network would spend several slots on the
+    same `repo@<index>` — several requests where one would do, and a second host left
+    unjudged anyway once the cache is written. The claim means a duplicate is treated as
+    deferred rather than re-requested; the next scan reads the answer from the cache.
+    `limit = 0` means no cap and no coalescing, which is the behavior before this existed
+    and the right choice for a deployment with a registry of its own.
     """
 
     def __init__(self, limit: int = 0):
         self._limit = max(0, int(limit))
         self._taken = 0
+        self._claimed: set[str] = set()
         self._lock = threading.Lock()
 
-    def take(self) -> bool:
-        """Claim one new resolution, or refuse when this scan has spent its budget."""
+    def take(self, ref: str = "") -> bool:
+        """Claim `ref`, or refuse when it is already claimed or the budget is spent."""
         if self._limit == 0:
             return True
         with self._lock:
+            if ref and ref in self._claimed:
+                return False
             if self._taken >= self._limit:
                 return False
+            if ref:
+                self._claimed.add(ref)
             self._taken += 1
             return True
 
@@ -265,19 +277,20 @@ def _resolve_local_platform(conn, host: Host, container: str, repo: str,
     *version*, not one per scan. An empty result — the index was pruned, or the
     registry refused — is unjudged, not current.
 
-    Returns `None` when this scan has spent its warm-up budget (`warm`) and the answer
-    is not already cached. That is *deferred*, not *unresolvable*: the image is left
-    unjudged exactly as an empty answer would leave it, but the caller reports it as a
-    budget deferral rather than as a registry that could not resolve the index, because
-    the two mean different things to an operator — one clears on the next scan, the
-    other may not.
+    Returns `None` when this scan will not resolve the index this time — either it has
+    spent its warm-up budget (`warm`) or another host is already resolving the same index
+    in this run — and the answer is not already cached. That is *deferred*, not
+    *unresolvable*: the image is left unjudged exactly as an empty answer would leave it,
+    but the caller reports it as a budget deferral rather than as a registry that could not
+    resolve the index, because the two mean different things to an operator — one clears on
+    the next scan, the other may not.
     """
     pinned_ref = f"{repo}@{local_digest}"
     ttl = PINNED_DIGEST_TTL_SECONDS if settings.digest_ttl_seconds > 0 else 0
     cached = db.get_digest(conn, pinned_ref, ttl_seconds=ttl)
     if cached is not None:
         return cached
-    if not warm.take():
+    if not warm.take(pinned_ref):
         return None
     authenticate(pinned_ref)
     manifest = docker_in_container(
