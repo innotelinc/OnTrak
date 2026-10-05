@@ -10,6 +10,7 @@
  * measured against a policy before anybody deletes it.
  */
 
+import { calendarWithHolidays, normalizeHolidays } from "./holiday-rules";
 import { weekdayCalendar, type BusinessCalendar, type SlaPolicy } from "./sla-rules";
 import type { SlaPolicyRecord, SlaPolicyStore } from "./sla-policy-service";
 import type { TicketPriority } from "./ticket-rules";
@@ -41,7 +42,16 @@ export interface SlaPolicyPrismaClient {
   };
 }
 
-/** A calendar is only usable if its weekly windows are well-formed. */
+/**
+ * A calendar is only usable if its weekly windows are well-formed.
+ *
+ * Its closures are re-read through the same rules that wrote them, because the
+ * column is JSON: a date typed by hand into the database, or written by an older
+ * build, must not put a closure the clock cannot interpret in front of a running
+ * promise. A holiday that does not survive normalisation is dropped, which fails
+ * towards the desk being open — the safe direction, since the alternative is a
+ * promise that silently never falls due.
+ */
 export function asBusinessCalendar(value: unknown): BusinessCalendar {
   const candidate = value as BusinessCalendar | null;
   if (
@@ -51,7 +61,7 @@ export function asBusinessCalendar(value: unknown): BusinessCalendar {
     candidate.week.length === 7 &&
     typeof candidate.utcOffsetMinutes === "number"
   ) {
-    return candidate;
+    return calendarWithHolidays(candidate, normalizeHolidays(candidate.holidays).dates);
   }
   return weekdayCalendar("default");
 }

@@ -13,6 +13,7 @@ import { revalidatePath } from "next/cache";
 
 import { requireActor } from "../../lib/session";
 import { slaPolicyServicesFor } from "../../lib/db";
+import { describeHolidays } from "../../lib/holiday-rules";
 import type { TicketPriority } from "../../lib/ticket-rules";
 import type { SlaHours } from "../../lib/sla-policy-service";
 
@@ -41,6 +42,10 @@ export async function saveSlaPolicyAction(formData: FormData): Promise<void> {
   // A form that does not carry a client is the desk's own form: absent must mean
   // "the desk", not "move this promise to the client named ''".
   const carried = formData.get("clientId");
+  // A form that does not carry the closures box is not a form saying "no closures"
+  // — it is a form that has nothing to say about them, and a desk's shutdown days
+  // must not be cleared by saving a promise's name.
+  const carriedHolidays = formData.get("holidays");
   // The queue scope is only offered at desk level (a client's card already says
   // who the promise is for), so absent means "leave the scope alone" and the
   // service keeps whatever the promise already had.
@@ -54,6 +59,7 @@ export async function saveSlaPolicyAction(formData: FormData): Promise<void> {
     clientId: carried === null ? undefined : text(formData, "clientId") || null,
     queueId: carriedQueue === null || carried !== null ? undefined : text(formData, "queueId") || null,
     hours: (hours === "always" ? "always" : "business") as SlaHours,
+    holidays: carriedHolidays === null ? undefined : text(formData, "holidays"),
     warningFraction: text(formData, "warningFraction"),
   };
 
@@ -62,7 +68,15 @@ export async function saveSlaPolicyAction(formData: FormData): Promise<void> {
   const result = policyId ? await service.update(actor, policyId, input) : await service.create(actor, input);
   if (!result.ok) fail(result.error);
 
-  ok(policyId ? `${result.value.name} updated.` : `${result.value.name} is now in force.`);
+  // The closures are stated back to the person who typed them: how many took, what
+  // they cost every promise, and which one is next. "Saved" on its own would leave
+  // a mistyped year to be discovered by a clock that never fell due.
+  const closures = describeHolidays(
+    result.value.calendar.holidays ?? [],
+    result.value.calendar,
+    new Date().toISOString(),
+  );
+  ok(`${policyId ? `${result.value.name} updated.` : `${result.value.name} is now in force.`} ${closures}`);
 }
 
 /** Remove a promise no ticket is measured against. */

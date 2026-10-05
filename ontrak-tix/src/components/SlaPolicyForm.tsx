@@ -10,6 +10,7 @@
  * service's; this only renders the fields a person fills in.
  */
 
+import { describeHolidays } from "../lib/holiday-rules";
 import type { SlaPolicyRecord, SlaHours } from "../lib/sla-policy-service";
 import { SLA_HOURS } from "../lib/sla-policy-service";
 import { TICKET_PRIORITIES } from "../lib/ticket-rules";
@@ -109,10 +110,31 @@ export function SlaPolicyForm({
             ))}
           </select>
         </label>
+        {/* Closures. Placed beside the hours rather than on a page of their own,
+            because "when we work" and "when we do not" are one decision, and a
+            desk that changes its week is exactly the desk that must revisit the
+            days it is shut. One date per line; a name after the date is kept out
+            of the calendar and is there for the person reading it back. */}
+        <label className="text-xs text-ink-soft">
+          Closures
+          <textarea
+            name="holidays"
+            rows={2}
+            placeholder={"2026-12-25 Christmas Day\n2027-01-01 New Year's Day"}
+            defaultValue={(policy?.calendar.holidays ?? []).join("\n")}
+            className={`block w-56 ${inputClass}`}
+          />
+        </label>
         <button type="submit" className="rounded-full border border-line px-2.5 py-1.5 text-[11px] font-semibold text-ink-soft">
           {policy ? "Save promise" : "Add promise"}
         </button>
       </form>
+
+      {policy ? (
+        <p className="text-[11px] text-ink-soft">
+          {describeHolidays(policy.calendar.holidays ?? [], policy.calendar, new Date().toISOString())}
+        </p>
+      ) : null}
 
       {policy && deleteAction ? (
         <form action={deleteAction}>

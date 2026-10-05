@@ -24,11 +24,13 @@ import { randomUUID } from "node:crypto";
 import { actorHasPermission, type Actor } from "./access-rules";
 import type { AuditEventInput, AuditSink } from "./audit-chain";
 import type { ClientService } from "./client-service";
+import { calendarWithHolidays, normalizeHolidays } from "./holiday-rules";
 import {
   ALWAYS_OPEN_CALENDAR,
   validateSlaPolicy,
   weekdayCalendar,
   type BusinessCalendar,
+  type HolidayDate,
   type SlaPolicy,
 } from "./sla-rules";
 import { TICKET_PRIORITIES, type TicketPriority } from "./ticket-rules";
@@ -88,6 +90,12 @@ export interface SlaPolicyInput {
   clientId?: string | null;
   queueId?: string | null;
   hours?: SlaHours;
+  /**
+   * The days this desk is closed, as dates or as the lines somebody typed.
+   * `undefined` on an edit means "leave the closures as they are", which is how
+   * a form that only carries the numbers keeps the ones already in force.
+   */
+  holidays?: readonly string[] | string;
   warningFraction?: number | string;
 }
 
@@ -265,6 +273,25 @@ export class SlaPolicyService {
       return { ok: false, error: "A promise belongs to a client or a queue, not both. Pick one scope." };
     }
 
+    // The base hours are a preset; the closures are a list beside it. An edit that
+    // does not mention `hours` keeps the calendar it already had — otherwise a call
+    // that only changes a name would quietly move a 24×7 desk onto weekdays.
+    const base =
+      input.hours === undefined
+        ? (existing?.calendar ?? calendarFor("business"))
+        : calendarFor(input.hours, existing?.calendar.utcOffsetMinutes ?? 0);
+
+    let closures: HolidayDate[];
+    if (input.holidays === undefined) {
+      closures = [...(existing?.calendar.holidays ?? [])];
+    } else {
+      const read = normalizeHolidays(input.holidays);
+      // Refused rather than partly applied: a closure that did not save is a
+      // clock that keeps running through a day the desk meant to be shut.
+      if (read.refused.length > 0) return { ok: false, error: read.refused[0].reason };
+      closures = read.dates;
+    }
+
     const candidate: SlaPolicyRecord = {
       id: existing?.id ?? this.ids.id(),
       tenantId,
@@ -272,7 +299,7 @@ export class SlaPolicyService {
       priority: priority ?? undefined,
       responseMinutes,
       resolutionMinutes,
-      calendar: calendarFor(input.hours ?? "business"),
+      calendar: calendarWithHolidays(base, closures),
       warningFraction: fraction(input.warningFraction) ?? existing?.warningFraction ?? 0.2,
       // An edit that does not mention the scope keeps it. Otherwise a form that
       // only carries the numbers would quietly turn a client's promise into the

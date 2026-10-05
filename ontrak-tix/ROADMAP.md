@@ -439,6 +439,22 @@ to stand on its own.
   - `[x]` The clock is visible where the work is: an `SlaBadge` on the ticket
     detail (inbox and portal) shows the soonest running clock or the breach,
     computed by the same rules the report and the sweep use.
+  - `[x]` A promise can say which days the desk is shut, and says what that
+    costs it. The calendar has honoured closures since M1, but nothing could
+    *state* them, so a desk that closes for Christmas had either to pretend it
+    does not or to leave its promises measured through a day nobody worked
+    (`src/lib/holiday-rules.ts`, edited beside the hours on the promise's own
+    form). A date is checked to be a day that exists — `2026-02-30` is refused
+    rather than rolled into March — the list is sorted, de-duplicated and capped,
+    and a refused list saves nothing, because a half-applied closure is a clock
+    that keeps running through a day the desk meant to be shut. A save that does
+    not mention closures keeps them, and one that does not mention the hours no
+    longer resets a 24×7 promise onto weekdays. The console states the
+    consequence and not the count — *2 closures · 16 business hours off every
+    promise · next 2026-12-25 (in 24 days)* — and a closure the desk is shut
+    anyway costs zero, which is worth seeing. Reads re-normalise the list, so a
+    hand-edited row fails towards the desk being open. Covered by
+    `tests/tix-holidays.test.ts` (12 checks, rules and service both).
 - Notifications: in-app + email digests; per-user preferences.
   - `[x]` Escalation notifications: each rung the sweep raises writes an
     in-app `Notification` addressed to its audience role, and hands an email
@@ -1317,8 +1333,9 @@ up to an adjuster or auditor.
 recurring tickets, ticket templates, approval flows, problem/change links.
 **Intake:** phone/agent quick-create, chat widget, WhatsApp/SMS channel,
 form builder, duplicate detection by embed/requester/subject.
-**SLAs:** pause conditions (customer waiting), multiple concurrent SLAs,
-holiday calendars, breach post-mortems.
+**SLAs:** pause conditions (customer waiting — partly shipped: a move to
+`PENDING` pauses the clock; conditions the desk configures are not), multiple
+concurrent SLAs, breach post-mortems. (Holiday calendars shipped — see M4 below.)
 **Agents:** presence, collision detection ("who is viewing"), collision avoid,
 saved views, keyboard-first command palette.
 **Reporting:** custom dashboards, scheduled CSV/PDF exports, data warehouse
