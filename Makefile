@@ -134,6 +134,10 @@ portal-logs: ## Tail the portal stack's logs
 FAMILY_GENIE_SERVICE := genie-app
 FAMILY_GENIE_PORT := 3400
 
+.PHONY: workspace
+workspace: ## Ensure the Genie workspace host directory is writable (Incus host fix for EACCES on /workspace/accounts)
+	bash scripts/ensure-genie-workspace.sh
+
 .PHONY: genie-up
 genie-up: ## Build and start Genie's own stack on :3410 (refuses while the family stack serves :3400)
 	@if docker compose -f docker-compose.all.yml ps --status running --services 2>/dev/null | grep -qx '$(FAMILY_GENIE_SERVICE)'; then \
@@ -163,7 +167,7 @@ lan: ## Detect this host's LAN address and write the builder network into an env
 # docker-compose.all.yml for what single sign-on additionally needs.
 
 .PHONY: all-up
-all-up: lan ## Build and start all six products together (:3400, :3300, :3000, :3001, :8787, :8420/8421)
+all-up: workspace lan ## Build and start all six products together (:3400, :3300, :3000, :3001, :8787, :8420/8421)
 	docker compose -f docker-compose.all.yml up -d --build
 
 .PHONY: all-down

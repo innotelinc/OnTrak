@@ -15,6 +15,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# Ensure the Genie workspace host directory is ready before any container mounts
+# it. This is the host-side half of the EACCES fix for mkdir /workspace/accounts:
+# the Incus host maps a device here and it can come up owned by nobody:nogroup
+# (UID 65534), which is outside the user-namespace range and therefore unwritable.
+# See scripts/ensure-genie-workspace.sh and the entrypoint safety net.
+bash "$ROOT/scripts/ensure-genie-workspace.sh" || true
+
 echo "==> OnTrak bootstrap"
 
 echo "--> guard hooks"
