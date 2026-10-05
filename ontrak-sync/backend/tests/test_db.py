@@ -557,5 +557,51 @@ class PruneTargets(unittest.TestCase):
         self.assertEqual({"i1"}, self.target_names(host="i1", kind="host"))
 
 
+class RegistryRefusals(unittest.TestCase):
+    """What the registry would not judge, kept per host so a throttle is visible.
+
+    A single scan says "N images the registry refused". The point of storing it is the
+    difference a *window* makes: a refusal is ordinary on a host of locally built
+    images, while the same host being rate-limited on every scan is a capacity problem.
+    """
+
+    def setUp(self):
+        self.conn = db.connect(":memory:")
+        db.init(self.conn)
+
+    def test_nothing_is_recorded_when_nothing_was_refused(self):
+        db.record_registry_refusals(self.conn, run_id=1, host="i1", counts={})
+        db.record_registry_refusals(self.conn, run_id=1, host="i2", counts={"": 0})
+        self.assertEqual({}, db.registry_refusal_summary(self.conn))
+
+    def test_the_summary_reads_each_hosts_newest_scan(self):
+        db.record_registry_refusals(self.conn, run_id=1, host="i1",
+                                    counts={"rate-limited": 3})
+        db.record_registry_refusals(self.conn, run_id=2, host="i1", counts={"not-found": 2})
+        summary = db.registry_refusal_summary(self.conn)
+        self.assertEqual({"not-found": 2}, summary["i1"]["latest"])
+        self.assertEqual(2, summary["i1"]["latest_run"])
+        # The newest scan is not throttled, but the window remembers that one was.
+        self.assertEqual(1, summary["i1"]["rate_limited_runs"])
+
+    def test_hosts_are_kept_apart(self):
+        db.record_registry_refusals(self.conn, run_id=1, host="i1", counts={"not-found": 4})
+        db.record_registry_refusals(self.conn, run_id=1, host="i2",
+                                    counts={"rate-limited": 1})
+        summary = db.registry_refusal_summary(self.conn)
+        self.assertEqual({"not-found": 4}, summary["i1"]["latest"])
+        self.assertEqual({"rate-limited": 1}, summary["i2"]["latest"])
+        self.assertEqual(0, summary["i1"]["rate_limited_runs"])
+        self.assertEqual(1, summary["i2"]["rate_limited_runs"])
+
+    def test_history_is_pruned_to_a_window(self):
+        for run in range(1, 6):
+            db.record_registry_refusals(self.conn, run_id=run, host="i1",
+                                        counts={"rate-limited": 1}, keep_runs=2)
+        runs = self.conn.execute(
+            "SELECT DISTINCT run_id FROM registry_refusals").fetchall()
+        self.assertEqual([4, 5], sorted(row["run_id"] for row in runs))
+
+
 if __name__ == "__main__":
     unittest.main()

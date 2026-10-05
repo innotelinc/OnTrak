@@ -174,6 +174,18 @@ export interface Host {
   pending: number;
   security: number;
   failed: number;
+  /**
+   * What the registry would not judge on this host's newest scan, by cause, plus how
+   * often a rate limit appeared inside the stored window. `null` when that scan
+   * refused nothing — which is not the same as the host not having been scanned, and
+   * the target rows already say which of the two it was.
+   */
+  registry_refusals: {
+    latest: Record<string, number>;
+    latest_run: number;
+    rate_limited_runs: number;
+    window: number;
+  } | null;
 }
 
 export interface Target {

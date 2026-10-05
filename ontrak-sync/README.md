@@ -266,6 +266,17 @@ an argument), and the pull — and every scan after it, because the daemon keeps
 spends the account's budget rather than the anonymous one. Anonymous is still the default: a
 registry with no credential is pulled exactly as before.
 
+### What the registry would not answer, per host
+
+A run report says how many images the registry would not judge, and why. That is one scan. The
+same figure is also stored per host per scan (`registry_refusals`, pruned to the newest twenty
+runs) and served alongside `/api/hosts`, so the hosts page can show a *rate limit* as a pattern
+rather than as a sentence: a host the registry throttles scan after scan is a capacity problem,
+while a refused read of a locally built image's name is ordinary noise — and one scan cannot tell
+the two apart. Deliberately keyed by host and not by target, because the host's address is what
+shares the registry's per-address allowance, however the affected images are spread over the
+containers on it.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Copyright © 2026 Innotel Inc. The repo is all original material: it

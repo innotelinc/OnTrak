@@ -235,6 +235,22 @@ CREATE TABLE IF NOT EXISTS registry_logins (
     logged_in_at INTEGER NOT NULL,
     PRIMARY KEY (host, container, registry)
 );
+
+-- What the registry would not judge, per host, per scan, and why. In a run report
+-- these failures are one sentence; here a *rate limit* (the registry is throttling
+-- this address) is kept apart from a refused read (a private or absent repository),
+-- because only one of them clears on its own — and which one an operator is looking
+-- at is a pattern, not a single scan's line. Pruned to the newest
+-- `REGISTRY_REFUSAL_KEEP_RUNS` runs as it is written, so it is a window on the recent
+-- past rather than a log that grows forever.
+CREATE TABLE IF NOT EXISTS registry_refusals (
+    run_id      INTEGER NOT NULL,
+    host        TEXT NOT NULL,
+    cause       TEXT NOT NULL,
+    count       INTEGER NOT NULL,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, host, cause)
+);
 """
 
 
@@ -797,6 +813,72 @@ def list_events(conn, limit: int = 200) -> list[dict]:
     rows = conn.execute(
         "SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     return [dict(r) for r in rows]
+
+
+# How many runs of registry-refusal history to keep — enough to see a rate limit come
+# and go, which is the only question the table answers that the run report cannot.
+REGISTRY_REFUSAL_KEEP_RUNS = 20
+
+
+def record_registry_refusals(conn, *, run_id: int, host: str, counts: dict[str, int],
+                             keep_runs: int = REGISTRY_REFUSAL_KEEP_RUNS) -> None:
+    """Record what the registry would not judge for one host on one scan.
+
+    One row per cause with a non-zero count, and nothing at all for a host the registry
+    answered about completely: an empty table then means "nothing was refused", which a
+    run that would have written here — and did not — distinguishes from "nobody looked".
+    A cause is a word from `scan._registry_failure` (`rate-limited`, `unauthorized`,
+    `not-found`), stored verbatim, so the dashboard names failures in the same words
+    the run report does.
+    """
+    positive = {cause: int(count) for cause, count in counts.items() if int(count) > 0}
+    if not positive:
+        return
+    now = utcnow()
+    for cause, count in positive.items():
+        conn.execute(
+            """
+            INSERT INTO registry_refusals (run_id, host, cause, count, recorded_at)
+            VALUES (?,?,?,?,?)
+            ON CONFLICT(run_id, host, cause) DO UPDATE SET
+                count=excluded.count, recorded_at=excluded.recorded_at
+            """,
+            (run_id, host, cause, count, now),
+        )
+    cutoff = run_id - max(1, keep_runs)
+    if cutoff > 0:
+        conn.execute("DELETE FROM registry_refusals WHERE run_id <= ?", (cutoff,))
+
+
+def registry_refusal_summary(conn, *, runs: int = REGISTRY_REFUSAL_KEEP_RUNS) -> dict[str, dict]:
+    """Per host: what its newest scan could not judge, and how often that was a throttle.
+
+    `latest` is the most recent scan that recorded anything for that host, keyed by
+    cause. `rate_limited_runs` is how many scans inside the stored window saw at least
+    one rate-limited image, which is the half a single scan cannot show: one refusal
+    could be anything, but a host the registry throttles on every scan is a capacity
+    problem, and only a window tells the two apart.
+    """
+    rows = conn.execute(
+        "SELECT run_id, host, cause, count FROM registry_refusals ORDER BY run_id ASC"
+    ).fetchall()
+    if not rows:
+        return {}
+    window = sorted({int(row["run_id"]) for row in rows})[-max(1, runs):]
+    summary: dict[str, dict] = {}
+    for row in rows:
+        host = str(row["host"])
+        run = int(row["run_id"])
+        entry = summary.setdefault(host, {
+            "latest": {}, "latest_run": 0, "rate_limited_runs": 0, "window": len(window),
+        })
+        if run > entry["latest_run"]:
+            entry["latest_run"] = run
+            entry["latest"] = {}
+        entry["latest"][str(row["cause"])] = int(row["count"])
+        if str(row["cause"]) == "rate-limited":
+            entry["rate_limited_runs"] += 1
+    return summary
 
 
 def upsert_schedule(conn, *, name: str, cron: str, mode: str, enabled: bool,

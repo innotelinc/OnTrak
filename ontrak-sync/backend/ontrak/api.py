@@ -692,7 +692,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/hosts", dependencies=[requires("sync:view")])
     def hosts():
-        return {"hosts": db.list_hosts(conn)}
+        """The Network's hosts, each carrying what the registry would not judge.
+
+        The refusal counts ride along rather than sitting behind a second call: the
+        hosts page is where an operator asks why a scan read `partial`, and a metric
+        that needs its own request is one the page will not make. `None` means nothing
+        was refused on that host's newest scan — not that nobody looked, which the
+        scan's own row already says.
+        """
+        refusals = db.registry_refusal_summary(conn)
+        return {"hosts": [
+            {**row, "registry_refusals": refusals.get(row["name"])}
+            for row in db.list_hosts(conn)
+        ]}
 
     @app.get("/api/hosts/{name}", dependencies=[requires("sync:view")])
     def host_detail(name: str):

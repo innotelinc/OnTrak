@@ -76,6 +76,7 @@ export default function HostsPage() {
                 <ReachablePill reachable={host.reachable} />
                 <RebootPill known={host.reboot_known} required={host.reboot_required}
                             packages={host.reboot_packages} />
+                <RegistryPill refusals={host.registry_refusals} />
                 <span className="faint">
                   coverage {scanned}/{hostTargets.length || "—"}
                 </span>
@@ -128,6 +129,36 @@ export default function HostsPage() {
         <Empty>No hosts recorded yet. Run a scan from the dashboard.</Empty>
       ) : null}
     </>
+  );
+}
+
+/**
+ * What the registry would not judge on this host's newest scan, and how often that was a
+ * throttle.
+ *
+ * Two facts in one pill because they are read together. A refusal is ordinary noise on a
+ * host that runs locally built images — Docker Hub answers a 401 for a name it will not
+ * confirm exists — while a *rate limit* recurring scan after scan is a capacity problem.
+ * One scan cannot tell the two apart; the stored window can, so it is what the tooltip
+ * reports when there is one.
+ */
+function RegistryPill({ refusals }: { refusals: Host["registry_refusals"] }) {
+  if (!refusals || Object.keys(refusals.latest).length === 0) return null;
+  const total = Object.values(refusals.latest).reduce((sum, count) => sum + count, 0);
+  const throttled =
+    (refusals.latest["rate-limited"] ?? 0) > 0 || refusals.rate_limited_runs > 0;
+  const detail = [
+    ...Object.entries(refusals.latest).map(([cause, count]) => `${cause}: ${count}`),
+    refusals.rate_limited_runs > 0
+      ? `rate-limited in ${refusals.rate_limited_runs} of the last ${refusals.window} scans`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" \u00b7 ");
+  return (
+    <span className={`pill ${throttled ? "pill--partial" : "pill--absent"}`} title={detail}>
+      registry {total} not judged
+    </span>
   );
 }
 

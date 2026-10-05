@@ -860,6 +860,18 @@ class DockerTagMissCache(ScanCase):
         self.scan()
         self.assertEqual(2, self.manifest_calls())
 
+    def test_a_scan_records_the_refusal_counts_per_host(self):
+        # Stored per host, not per target, because the host's address is what shares the
+        # registry's allowance — and so the dashboard can show a throttle recurring.
+        self.with_image()
+        self.fake.manifests["ghcr.io/innotelinc/zeus:latest"] = (
+            False, "",
+            "toomanyrequests: You have reached your unauthenticated pull rate limit.")
+        self.scan()
+        summary = db.registry_refusal_summary(self.conn)
+        self.assertEqual({"rate-limited": 1}, summary["i1"]["latest"])
+        self.assertEqual(1, summary["i1"]["rate_limited_runs"])
+
     def test_the_report_names_why_the_registry_would_not_answer(self):
         self.fake.images["monarch"] = [
             {"Repository": "nginx", "Tag": "1", "Digest": "sha256:d1"},

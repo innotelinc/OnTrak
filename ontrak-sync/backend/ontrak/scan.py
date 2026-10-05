@@ -168,6 +168,11 @@ class TargetReport:
     # protect any existing finding from expiry — an image whose registry refused a
     # token is not evidence that it was updated.
     inconclusive: set[tuple[str, str]] = field(default_factory=set)
+    # Images the registry would not judge, keyed by cause (see `_registry_failure`).
+    # Carried on the report rather than kept local to `_record_docker`, because the run
+    # records it per host — and the host is what shares the registry's per-address
+    # allowance, so it is the key an "are we being throttled?" question is asked of.
+    registry_refusals: dict[str, int] = field(default_factory=dict)
 
     @property
     def scanned(self) -> bool:
@@ -483,8 +488,9 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
     # Images the registry would not judge, keyed by why — a rate limit, a refused read, a
     # tag that does not exist, or a reason this code cannot name (`""`). Counted apart
     # from `unjudged` because the sentence an operator needs is different, and
-    # percent-apart from `deferred` because these may not clear on the next scan.
-    refusals: dict[str, int] = {}
+    # percent-apart from `deferred` because these may not clear on the next scan. Kept on
+    # the report so `scan_network` can record the same counts per host.
+    refusals = report.registry_refusals
     # Multi-arch images left unjudged because this scan has spent its warm-up budget (or
     # another host claimed the same index first). A deferral clears on a later scan.
     deferred = 0
@@ -856,6 +862,19 @@ def scan_network(conn, settings: Settings, policy: Policy, *, trigger: str = "ma
     # "what vanished" is reported in the same breath as the scan that discovered it.
     # It is read-and-record only — it never applies, expires or deletes anything.
     reconciliation = reconcile.reconcile(conn, settings, vanished=vanished, trigger=trigger)
+    # What the registry would not judge, per host, so the dashboard can show a rate limit
+    # as a pattern rather than as one scan's sentence. Aggregated across the host's own
+    # targets: the host's address is what shares the registry's allowance, so a throttle
+    # is a fact about the host however it is spread over the containers on it.
+    per_host_refusals: dict[str, dict[str, int]] = {}
+    for report in reports:
+        if not report.registry_refusals:
+            continue
+        bucket = per_host_refusals.setdefault(report.host, {})
+        for cause, count in report.registry_refusals.items():
+            bucket[cause] = bucket.get(cause, 0) + count
+    for host_name, counts in per_host_refusals.items():
+        db.record_registry_refusals(conn, run_id=run_id, host=host_name, counts=counts)
     conn.commit()
     return {
         "run_id": run_id,
