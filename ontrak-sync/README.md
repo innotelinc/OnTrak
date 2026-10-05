@@ -49,7 +49,7 @@ managers what is behind:
 |----------|--------------------------------------------------------------------------------|
 | `apt`    | `apt-get -s upgrade` — the only view that names the *archive*, which is how a security update is told from a feature update. Cross-checked against `apt list --upgradable`. |
 | `snap`   | `snap refresh --list`.                                                          |
-| `docker` | Local image digest vs the registry's, per platform.                             |
+| `docker` | Local image digest vs the registry's platform digest — resolved like for like, because a multi-arch tag's local digest is the *index* digest. |
 
 Findings land in SQLite with a status, and the dashboard shows them. **Approving installs** —
 the Approve buttons record the decision and run the apply in one call, because a person clicking
@@ -216,7 +216,7 @@ Docker Hub that question is answered anonymously out of roughly a hundred reques
 per address — the same budget every image **pull** in the Network draws from, so a scan that is
 careless about it is what makes an update fail with `429 Too Many Requests`.
 
-Two things keep the scanning side cheap, both of them about the same insight, that the answer is
+Three things keep the scanning side cheap, all of them about the same insight, that the answer is
 being re-requested when it has not changed:
 
 - **A locally built image is never asked about.** It has no repository digest, so no registry can
@@ -224,6 +224,11 @@ being re-requested when it has not changed:
 - **A fetched digest is reused for `ONTRAK_DIGEST_TTL` seconds** (six hours by default; `0` asks
   every time). The digest is cached, not the verdict — the comparison is redone on every scan, so
   an image pulled since the digest was fetched is still recognised as current.
+- **A multi-arch tag is compared like for like.** A manifest list's local repository digest is the
+  *index* digest, while the registry is asked for a *platform* digest, and the two never coincide —
+  so the scan first resolves the image's own index to its platform digest and compares that. The
+  answer names one immutable list and is therefore cached for a year: the extra request is one per
+  image *version*, not one per scan.
 
 In this Network that took a repeat scan from about 210 s to about 72 s, and the second scan made no
 registry requests at all. A failed lookup is never cached: a rate limit is not a statement about

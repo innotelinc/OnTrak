@@ -65,6 +65,21 @@ NOT_FOUND_DOCKER = "sh: 1: docker: not found"
 NOT_FOUND_SNAP = "sh: 1: snap: not found"
 
 
+def manifest_list(amd64: str, arm64: str = "sha256:arm64platform000") -> str:
+    """A `docker manifest inspect --verbose` answer for a multi-arch tag.
+
+    The shape is the point: a list is what makes the local `RepoDigest` an *index*
+    digest, which is the whole reason the scan must resolve it to a platform digest
+    before comparing (see `DockerMultiArch`).
+    """
+    return json.dumps([
+        {"Descriptor": {"digest": amd64,
+                        "platform": {"architecture": "amd64", "os": "linux"}}},
+        {"Descriptor": {"digest": arm64,
+                        "platform": {"architecture": "arm64", "os": "linux"}}},
+    ])
+
+
 class FakeNetwork:
     """A canned Network. Every method mirrors the signature it replaces.
 
@@ -549,6 +564,74 @@ class DockerScan(ScanCase):
         self.with_images({"Repository": "redis", "Tag": "7.4", "Digest": remote})
         self.scan()
         self.assertEqual({}, self.findings())
+
+
+class DockerMultiArch(ScanCase):
+    """A manifest list is compared like for like.
+
+    The regression this guards: a multi-arch tag's local `RepoDigest` is the *index*
+    digest while `docker manifest inspect` answers with a *platform* digest, and the
+    two never coincide — so comparing them directly, as the scan used to, reported
+    every multi-arch tag as behind on every scan and no apply could ever clear it
+    (the pull it suggested answered "up to date"). These cases pin that the scan
+    resolves the local index to its own platform digest first, and only calls the
+    image behind when that platform image actually moved.
+    """
+
+    INDEX = "sha256:localindex0000000"
+
+    def with_multiarch(self, repository="nginx", tag="1.27.0", index=None):
+        self.fake.images["monarch"] = [
+            {"Repository": repository, "Tag": tag, "Digest": index or self.INDEX}
+        ]
+
+    def test_the_same_platform_digest_is_not_a_finding(self):
+        # The list was republished (a new arm64 build, say) so the index digest no
+        # longer matches the tag — but this host's amd64 image is unchanged, and that
+        # is what "behind" means. The old comparison flagged this forever.
+        platform = "sha256:amd64platform00000"
+        self.with_multiarch()
+        self.fake.manifests["nginx:1.27.0"] = (True, manifest_list(amd64=platform))
+        self.fake.manifests[f"nginx@{self.INDEX}"] = (True, manifest_list(amd64=platform))
+        result = self.scan()
+        self.assertEqual(0, result["findings"])
+        self.assertEqual("ok", self.report(result, "monarch")["managers"]["docker"])
+
+    def test_a_moved_platform_digest_is_a_finding(self):
+        self.with_multiarch()
+        self.fake.manifests["nginx:1.27.0"] = (True, manifest_list(amd64="sha256:newplatform00000"))
+        self.fake.manifests[f"nginx@{self.INDEX}"] = (True, manifest_list(amd64="sha256:oldplatform00000"))
+        self.assertEqual(1, self.scan()["findings"])
+
+    def test_a_tag_whose_kind_was_cached_before_the_fix_is_re_fetched(self):
+        # An entry cached before the kind existed has a digest but no kind. Guessing
+        # would compare the wrong pair of digests; the scan re-fetches instead.
+        platform = "sha256:amd64platform00000"
+        self.with_multiarch()
+        self.fake.manifests["nginx:1.27.0"] = (True, manifest_list(amd64=platform))
+        self.fake.manifests[f"nginx@{self.INDEX}"] = (True, manifest_list(amd64=platform))
+        db.set_digest(self.conn, "nginx:1.27.0", "sha256:staleplatform0000", now=time.time())
+        self.assertEqual(0, self.scan()["findings"])
+
+    def test_an_old_index_the_registry_cannot_resolve_is_unjudged(self):
+        # If the local index has been pruned the platform digest cannot be known, so
+        # the image is protected rather than called current or behind.
+        self.with_multiarch()
+        self.fake.manifests["nginx:1.27.0"] = (True, manifest_list(amd64="sha256:newplatform00000"))
+        # no entry for nginx@<index> → the fake answers "no such manifest"
+        result = self.scan()
+        self.assertEqual(0, result["findings"])
+        self.assertEqual("partial", self.report(result, "monarch")["managers"]["docker"])
+
+    def test_the_platform_resolution_is_cached_so_a_later_scan_does_not_re_ask(self):
+        platform = "sha256:amd64platform00000"
+        self.with_multiarch()
+        self.fake.manifests["nginx:1.27.0"] = (True, manifest_list(amd64=platform))
+        self.fake.manifests[f"nginx@{self.INDEX}"] = (True, manifest_list(amd64=platform))
+        self.scan()
+        first = self.manifest_calls()
+        self.scan()
+        self.assertEqual(first, self.manifest_calls())
 
 
 class DockerScanLogin(ScanCase):

@@ -323,6 +323,18 @@ class DockerDigests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual("", scanners.parse_manifest_digest(text))
 
+    def test_the_kind_says_which_digest_the_local_repo_digest_is(self):
+        # A multi-arch tag's local RepoDigest is the *index* digest and must first be
+        # resolved to a platform digest; a single-manifest tag's is the manifest
+        # digest itself. The caller cannot tell those apart from the digest alone, so
+        # the parser reports which one it saw. Getting this wrong is what made every
+        # multi-arch tag read as permanently behind.
+        self.assertEqual(("sha256:amd64digest", "list"),
+                         scanners.parse_manifest(MANIFEST_LIST))
+        self.assertEqual(("sha256:singledigest", "single"),
+                         scanners.parse_manifest(MANIFEST_SINGLE))
+        self.assertEqual(("", ""), scanners.parse_manifest("not json"))
+
 
 class BehindComparison(unittest.TestCase):
     def test_a_different_digest_is_behind(self):

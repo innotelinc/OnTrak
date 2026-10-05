@@ -229,8 +229,8 @@ def parse_repo_digest(text: str) -> str:
     return first.split("@", 1)[1] if "@" in first else ""
 
 
-def parse_manifest_digest(text: str, arch: str = "amd64", os_name: str = "linux") -> str:
-    """The platform digest from `docker manifest inspect --verbose <ref>`.
+def parse_manifest(text: str, arch: str = "amd64", os_name: str = "linux") -> tuple[str, str]:
+    """`docker manifest inspect --verbose <ref>` → `(platform_digest, kind)`.
 
     Two shapes, because a multi-arch tag is a manifest list and a single-arch tag
     is not: a list has `.manifests[]` each with `.platform` and a digest, and a
@@ -238,26 +238,43 @@ def parse_manifest_digest(text: str, arch: str = "amd64", os_name: str = "linux"
     digest rather than the list's own digest is what makes the comparison correct —
     the list digest changes when any platform is republished, including ones this
     host does not run.
+
+    `kind` is `"list"` for a multi-arch tag and `"single"` for a single-manifest
+    one, and it is not decoration. It says which digest the local image's
+    `RepoDigest` may be compared to: a single-arch tag's `RepoDigest` *is* its
+    manifest digest, while a multi-arch tag's `RepoDigest` is the *index* digest —
+    a different kind of value entirely — and must be resolved to this host's
+    platform digest before the two can be compared at all. Comparing an index
+    digest against a platform digest is how every multi-arch tag read as
+    permanently behind (`ontrak.scan._record_docker` resolves it).
     """
     try:
         data = json.loads(text or "null")
     except (ValueError, TypeError):
-        return ""
+        return "", ""
     if isinstance(data, list):
         for entry in data:
             desc = (entry or {}).get("Descriptor") or {}
-            platform = (entry or {}).get("SchemaV2Manifest") or {}
             plat = desc.get("platform") or {}
             # `--verbose` on a list gives one entry per platform with its own
             # Descriptor; take the one this host would actually pull.
             if plat.get("architecture") == arch and (plat.get("os") or os_name) == os_name:
-                return str(desc.get("digest") or "")
+                return str(desc.get("digest") or ""), "list"
         # No matching platform is not "up to date"; it is unjudged.
-        return ""
+        return "", "list"
     if isinstance(data, dict):
         desc = data.get("Descriptor") or data
-        return str(desc.get("digest") or "")
-    return ""
+        return str(desc.get("digest") or ""), "single"
+    return "", ""
+
+
+def parse_manifest_digest(text: str, arch: str = "amd64", os_name: str = "linux") -> str:
+    """The platform digest from `docker manifest inspect --verbose <ref>`.
+
+    A thin view of `parse_manifest` for callers that do not need to know whether
+    the tag was a list or a single manifest.
+    """
+    return parse_manifest(text, arch, os_name)[0]
 
 
 def image_is_behind(local_digest: str, remote_digest: str) -> bool | None:

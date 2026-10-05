@@ -69,6 +69,11 @@ SNAP_LIST = ["sh", "-c",
              f"if command -v snap >/dev/null 2>&1; then LC_ALL=C snap refresh --list 2>&1; "
              f"else echo {NO_SNAP}; fi"]
 DOCKER_IMAGES = ["image", "ls", "--no-trunc", "--digests", "--format", "{{json .}}"]
+# A `repo@sha256:…` reference names one immutable manifest list, so the platform
+# digest it resolves to never changes. Cached far longer than a tag's answer (which
+# can be repointed), which keeps the resolution to one extra request per image
+# *version* rather than one per scan.
+PINNED_DIGEST_TTL_SECONDS = 365 * 24 * 3600
 OS_RELEASE = ["sh", "-c", ". /etc/os-release 2>/dev/null && printf '%s|%s\\n' \"$PRETTY_NAME\" \"$(uname -r)\""]
 
 Seen = set  # of (manager, package)
@@ -199,6 +204,47 @@ def _record_snap(conn, target_id: int, host: Host, container: str | None,
     return seen
 
 
+def _kind_key(ref: str) -> str:
+    """Cache key for a tag's manifest kind (`list` or `single`).
+
+    Stored beside the digest rather than inferred at read time: the kind cannot be
+    recovered from the digest alone, and the comparison depends on it (see
+    `scanners.parse_manifest`).
+    """
+    return f"kind:{ref}"
+
+
+def _resolve_local_platform(conn, host: Host, container: str, repo: str,
+                            local_digest: str, settings: Settings,
+                            authenticate) -> str:
+    """A multi-arch image's platform digest, from the index digest it was pulled by.
+
+    `local_digest` is the local `RepoDigest` of a manifest list: the *index* digest,
+    which names the same immutable list the image came from. Asking the registry for
+    that exact list — `repo@<index>` — and taking this architecture's entry yields the
+    platform digest the local image actually runs, which is the only thing comparable
+    to the digest `docker manifest inspect <tag>` returned for the tag as it is now.
+
+    The answer is immutable for a given index, so it is cached far longer than a
+    tag's answer (`PINNED_DIGEST_TTL_SECONDS`): the extra request costs one per image
+    *version*, not one per scan. An empty result — the index was pruned, or the
+    registry refused — is unjudged, not current.
+    """
+    pinned_ref = f"{repo}@{local_digest}"
+    ttl = PINNED_DIGEST_TTL_SECONDS if settings.digest_ttl_seconds > 0 else 0
+    cached = db.get_digest(conn, pinned_ref, ttl_seconds=ttl)
+    if cached is not None:
+        return cached
+    authenticate(pinned_ref)
+    manifest = docker_in_container(
+        host, container, ["manifest", "inspect", "--verbose", pinned_ref],
+        settings.command_timeout)
+    platform = scanners.parse_manifest(manifest.stdout)[0] if manifest.ok else ""
+    if platform:
+        db.set_digest(conn, pinned_ref, platform)
+    return platform
+
+
 def _record_docker(conn, target_id: int, host: Host, container: str | None,
                    settings: Settings, report: TargetReport) -> Seen:
     """Docker image findings for one target.
@@ -229,6 +275,15 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
     (`db.registry_login_is_fresh`). The pull path authenticates unconditionally, so
     a rotated token is still caught where it matters and this side only inherits the
     result.
+
+    AND A MULTI-ARCH TAG IS COMPARED LIKE FOR LIKE. The local `RepoDigest` of a
+    multi-arch image is the *index* digest, while `docker manifest inspect` answers
+    with the *platform* digest — two different values that never coincide. Comparing
+    them directly, as this used to, reported every multi-arch tag as behind on every
+    scan and never let the finding clear: the pull it suggested said "up to date".
+    When the tag is a manifest list this resolves the local index to its own platform
+    digest first (`_resolve_local_platform`) and compares that; a single-manifest tag
+    is compared directly, because there its `RepoDigest` *is* the manifest digest.
     """
     if container is None:
         # Docker runs inside the incus containers here, not on the bare hosts.
@@ -261,6 +316,32 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
     # keeps the credential, so one login covers every later request on the same
     # host and target; doing it per request would spend the budget the request needs.
     logged_in: set[tuple[str, str]] = set()
+
+    def authenticate(request_ref: str) -> None:
+        """Log in to `request_ref`'s registry when this deployment holds a credential.
+
+        Called before *any* registry request — the tag's manifest and the pinned
+        index's — so both are answered from the account's allowance rather than the
+        anonymous budget the pulls share. At most once per (container, registry): the
+        daemon keeps the credential, and a login is itself a request the registry
+        counts. A failure is not fatal (the manifest is still attempted) but it is
+        reported, so a rotated token shows up as itself.
+        """
+        registry = registry_of(request_ref)
+        credential = settings.credential_for(registry)
+        if credential is None or (container, registry) in logged_in:
+            return
+        logged_in.add((container, registry))
+        if not db.registry_login_is_fresh(
+                conn, host=host.name, container=container, registry=registry,
+                ttl_seconds=settings.login_ttl_seconds):
+            login = docker_login(host, container, registry, credential, settings)
+            if login.ok:
+                db.record_registry_login(
+                    conn, host=host.name, container=container, registry=registry)
+            else:
+                report.errors.append(f"docker login to {registry} failed: {login.message}")
+
     for row in images:
         repo = str(row.get("Repository") or "")
         tag = str(row.get("Tag") or "")
@@ -279,35 +360,33 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
             report.inconclusive.add(("docker", ref))
             continue
         remote_digest = db.get_digest(conn, ref, ttl_seconds=settings.digest_ttl_seconds)
-        if remote_digest is None:
-            # Authenticate before the registry is asked, if this deployment holds a
-            # credential for it, so the request is answered from the account's
-            # allowance instead of the anonymous budget the pulls share. A failure
-            # is not fatal — the manifest is still attempted, because an
-            # unauthenticated read may yet succeed — but it is reported, so a
-            # rotated token shows up as itself. Skipped when the daemon was logged
-            # into recently, because the credential is still in place and the login
-            # is itself a request the registry counts.
-            registry = registry_of(ref)
-            credential = settings.credential_for(registry)
-            if credential is not None and (container, registry) not in logged_in:
-                logged_in.add((container, registry))
-                if not db.registry_login_is_fresh(
-                        conn, host=host.name, container=container, registry=registry,
-                        ttl_seconds=settings.login_ttl_seconds):
-                    login = docker_login(host, container, registry, credential, settings)
-                    if login.ok:
-                        db.record_registry_login(
-                            conn, host=host.name, container=container, registry=registry)
-                    else:
-                        report.errors.append(f"docker login to {registry} failed: {login.message}")
+        kind = db.get_digest(conn, _kind_key(ref), ttl_seconds=settings.digest_ttl_seconds)
+        if remote_digest is None or kind is None:
+            # `kind` is fetched and cached with the digest because the comparison
+            # needs it as much as the digest itself: it says whether the local
+            # RepoDigest is directly comparable or must first be resolved. When it is
+            # missing the digest is re-fetched rather than the question guessed at —
+            # an older cache entry predates this fact and is no reason to compare the
+            # wrong pair of digests.
+            authenticate(ref)
             manifest = docker_in_container(
                 host, container, ["manifest", "inspect", "--verbose", ref], settings.command_timeout
             )
-            remote_digest = scanners.parse_manifest_digest(manifest.stdout) if manifest.ok else ""
+            remote_digest, kind = (
+                scanners.parse_manifest(manifest.stdout) if manifest.ok else ("", "")
+            )
             if remote_digest:
                 db.set_digest(conn, ref, remote_digest)
-        behind = scanners.image_is_behind(local_digest, remote_digest)
+                db.set_digest(conn, _kind_key(ref), kind)
+        if kind == "list":
+            # A manifest list's local RepoDigest is an *index* digest; resolve the
+            # image's own index to this host's platform digest before comparing, or
+            # every multi-arch tag reads as behind forever.
+            local_platform = _resolve_local_platform(
+                conn, host, container, repo, local_digest, settings, authenticate)
+            behind = scanners.image_is_behind(local_platform, remote_digest)
+        else:
+            behind = scanners.image_is_behind(local_digest, remote_digest)
         if behind is None:
             # No verdict. The image is protected rather than confirmed: a finding
             # already on record for it stays (we could not check), and no new one is
