@@ -216,7 +216,7 @@ Docker Hub that question is answered anonymously out of roughly a hundred reques
 per address — the same budget every image **pull** in the Network draws from, so a scan that is
 careless about it is what makes an update fail with `429 Too Many Requests`.
 
-Four things keep the scanning side cheap, all of them about the same insight, that the answer is
+Five things keep the scanning side cheap, all of them about the same insight, that the answer is
 being re-requested when it has not changed:
 
 - **A locally built image is never asked about.** It has no repository digest, so no registry can
@@ -235,15 +235,28 @@ being re-requested when it has not changed:
   `ONTRAK_DOCKER_PIN_WARM_BUDGET` (48 by default; `0` means no cap) indices it has not seen before;
   the rest are left *unjudged* — protected, never called current — and resolved by later scans. The
   budget is one per run, not per host, because the cache is a property of the Network.
+- **A tag the registry definitively refuses is remembered for a while.** A tag that does not exist,
+  or that this deployment may not read, cannot be judged however often it is asked, so re-asking buys
+  nothing and spends the request budget. The refusal is cached as a *cause* for `TAG_MISS_TTL_SECONDS`
+  (half an hour) — never as a digest — so the image stays unjudged. A rate limit or a timeout is
+  deliberately **not** remembered: those clear on their own, and caching one would hide the registry
+  coming back.
 
 In this Network that took a repeat scan from about 210 s to about 72 s, and the second scan made no
 registry requests at all. A failed lookup is never cached *as an answer*: a rate limit is not a
 statement about the image, and caching one as up to date would report a Network as current for as
-long as the row lived. A pinned index the registry will not resolve — a pruned manifest, a reference
-that is not a list — is the one failure that *is* remembered, for six hours
+long as the row lived. Two failures *are* remembered, both as misses and never as digests — a pinned
+index the registry will not resolve (a pruned manifest, a reference that is not a list) for six hours
 (`PINNED_MISS_TTL_SECONDS`), because otherwise a handful of gone indices spend a warm-up slot and a
-request on every scan and starve the ones that can be resolved. It records a miss, never a digest,
-so the image stays unjudged rather than being called current.
+request on every scan and starve the ones that can be resolved; and a tag the registry definitively
+refuses for half an hour (`TAG_MISS_TTL_SECONDS`). A rate limit and a timeout are pointedly excluded
+from both: they clear, and remembering one would hide the registry coming back. The image stays
+unjudged in every case rather than being called current.
+
+When the registry will not answer, the scan now says *why* rather than one flat "could not answer":
+a request the registry rate-limited, a read it refused, and a tag it says does not exist are three
+different facts to an operator — the first clears on its own, the last two are decisions — so they get
+their own line in the run report.
 
 The pulls are the other half, and thrift on the scanning side does not help them: a pull draws on
 the *same* anonymous allowance, so a Network that checks carefully can still 429 the moment it

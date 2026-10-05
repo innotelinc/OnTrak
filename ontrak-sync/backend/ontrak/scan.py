@@ -82,6 +82,14 @@ PINNED_DIGEST_TTL_SECONDS = 365 * 24 * 3600
 # published or unpruned tomorrow, and it deliberately does not record an *answer*: the
 # image stays unjudged, so this can never report a Network as up to date.
 PINNED_MISS_TTL_SECONDS = 6 * 3600
+# A tag manifest the registry *definitively* refuses — it does not exist, or this
+# deployment may not read it — is remembered briefly so a scan stops re-asking about an
+# image it cannot judge anyway. Deliberately NOT written for a rate limit or a timeout:
+# those clear on their own, and caching one would hide the registry coming back. The TTL
+# is short for the same reason — a tag made public, or republished under the same name,
+# is picked up by a later scan — and the recorded value is a cause, never a digest, so a
+# remembered miss can never read as an answer.
+TAG_MISS_TTL_SECONDS = 1800
 OS_RELEASE = ["sh", "-c", ". /etc/os-release 2>/dev/null && printf '%s|%s\\n' \"$PRETTY_NAME\" \"$(uname -r)\""]
 
 Seen = set  # of (manager, package)
@@ -278,6 +286,77 @@ def _kind_key(ref: str) -> str:
     return f"kind:{ref}"
 
 
+def _tag_miss_key(ref: str) -> str:
+    """Cache key for a tag manifest the registry definitively refuses.
+
+    A separate namespace from the tag's answer and from the pinned-index miss, so a
+    refusal is never mistaken for a digest. The stored value is the *cause*, which is
+    what lets a remembered miss be reported in the same words as a fresh one.
+    """
+    return f"tagmiss:{ref}"
+
+
+# The registry's own words, lowercased, for the failure modes worth telling apart.
+# Matched on words rather than status codes: a message is full of digests, and a `404`
+# substring test would eventually match one.
+_RATE_LIMIT_WORDS = ("toomanyrequests", "too many requests", "rate limit", "rate-limit")
+_UNAUTHORIZED_WORDS = ("unauthorized", "authentication required", "denied",
+                      "pull access denied")
+_NOT_FOUND_WORDS = ("no such manifest", "manifest unknown", "manifest_blob_unknown")
+# "not found" alone is the shell's missing-binary phrasing (`sh: 1: docker: not found`),
+# so a bare match is required to sit beside the word "manifest" before it counts.
+_NOT_FOUND_HINTS = ("not found", "does not exist", "unknown")
+# Refusals that will not change on their own, and so are worth remembering. A rate limit
+# and a timeout are pointedly absent: they clear, and remembering one would hide the
+# registry coming back.
+REMEMBERED_REFUSALS = frozenset({"not-found", "unauthorized"})
+# One sentence per cause for the run report. A throttled registry and a tag that does not
+# exist are not the same fact to an operator — the first clears on its own, the second is
+# a decision (re-pull, or stop tracking it) — so they must not share a line.
+_REFUSAL_SENTENCES = (
+    ("rate-limited",
+     "not compared — the registry rate-limited the request; a later scan retries"),
+    ("unauthorized",
+     "not compared — the registry refused access; check this deployment's credential"),
+    ("not-found",
+     "the registry has no such tag — not compared; re-pull or stop tracking them"),
+    ("", "the registry could not answer about — not compared"),
+)
+
+
+def _registry_failure(result: Result) -> str:
+    """Why a registry manifest request failed — `rate-limited`, `unauthorized`,
+    `not-found`, `timeout`, or `""` when the reason is not one this code can name.
+
+    Three different facts used to share one line ("the registry could not answer"), and
+    only one of them is worth acting on. Naming them is what lets an operator tell a
+    healthy scan against a throttled registry from a broken one, and it is what decides
+    whether the refusal is worth remembering (`REMEMBERED_REFUSALS`).
+
+    Never guessed from a return code alone, and never from a missing binary — only the
+    registry's own words, and only where they are unambiguous.
+    """
+    if result.timed_out:
+        return "timeout"
+    blob = "\n".join((result.stderr, result.error, result.stdout)).lower()
+    if "command not found" in blob or "executable file not found" in blob:
+        return ""
+    if any(word in blob for word in _RATE_LIMIT_WORDS):
+        return "rate-limited"
+    if any(word in blob for word in _UNAUTHORIZED_WORDS):
+        return "unauthorized"
+    if any(word in blob for word in _NOT_FOUND_WORDS):
+        return "not-found"
+    if "manifest" in blob and any(hint in blob for hint in _NOT_FOUND_HINTS):
+        return "not-found"
+    return ""
+
+
+def _note_refusal(counts: dict[str, int], cause: str) -> None:
+    """Tally one image the registry would not judge, keyed by cause (`""` = unknown)."""
+    counts[cause] = counts.get(cause, 0) + 1
+
+
 def _resolve_local_platform(conn, host: Host, container: str, repo: str,
                             local_digest: str, settings: Settings,
                             authenticate, warm: PinWarmBudget) -> str | None:
@@ -397,11 +476,11 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
     seen: set[tuple[str, str]] = set()
     # Locally built images: no repository digest, so no registry can give a verdict.
     unjudged = 0
-    # Images the registry could not answer about at all — a refused manifest, or a pinned
-    # index it will not resolve. Counted apart from `unjudged` because the sentence an
-    # operator needs is different, and percent-apart from `deferred` because this one may
-    # not clear on the next scan.
-    unresolved = 0
+    # Images the registry would not judge, keyed by why — a rate limit, a refused read, a
+    # tag that does not exist, or a reason this code cannot name (`""`). Counted apart
+    # from `unjudged` because the sentence an operator needs is different, and
+    # percent-apart from `deferred` because these may not clear on the next scan.
+    refusals: dict[str, int] = {}
     # Multi-arch images left unjudged because this scan has spent its warm-up budget (or
     # another host claimed the same index first). A deferral clears on a later scan.
     deferred = 0
@@ -461,6 +540,16 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
             # missing the digest is re-fetched rather than the question guessed at —
             # an older cache entry predates this fact and is no reason to compare the
             # wrong pair of digests.
+            #
+            # A tag the registry has *already* told us it will not answer about is not
+            # asked again until the short miss TTL lapses.
+            remembered = db.get_digest(
+                conn, _tag_miss_key(ref),
+                ttl_seconds=TAG_MISS_TTL_SECONDS if settings.digest_ttl_seconds > 0 else 0)
+            if remembered is not None:
+                _note_refusal(refusals, remembered)
+                report.inconclusive.add(("docker", ref))
+                continue
             authenticate(ref)
             manifest = docker_in_container(
                 host, container, ["manifest", "inspect", "--verbose", ref], settings.command_timeout
@@ -471,6 +560,17 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
             if remote_digest:
                 db.set_digest(conn, ref, remote_digest)
                 db.set_digest(conn, _kind_key(ref), kind)
+            else:
+                # No digest came back, so there is no verdict — and no answer to cache.
+                # The *cause* is named so the report can tell a throttled registry from a
+                # tag that does not exist, and so only the definitive refusal is
+                # remembered for a while.
+                cause = _registry_failure(manifest)
+                _note_refusal(refusals, cause)
+                if cause in REMEMBERED_REFUSALS:
+                    db.set_digest(conn, _tag_miss_key(ref), cause)
+                report.inconclusive.add(("docker", ref))
+                continue
         if kind == "list":
             # A manifest list's local RepoDigest is an *index* digest; resolve the
             # image's own index to this host's platform digest before comparing, or
@@ -489,7 +589,7 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
             # No verdict. The image is protected rather than confirmed: a finding
             # already on record for it stays (we could not check), and no new one is
             # invented. Note it is NOT added to `seen` — "seen" means judged.
-            unresolved += 1
+            _note_refusal(refusals, "")
             report.inconclusive.add(("docker", ref))
             continue
         if behind:
@@ -505,11 +605,13 @@ def _record_docker(conn, target_id: int, host: Host, container: str | None,
         # expired by the scan after it. Adding it here would strand that row as
         # pending forever, the same way the apt path would if it listed packages
         # that are no longer upgradable.
-    report.manager_status["docker"] = "ok" if not (unjudged or unresolved or deferred) else "partial"
+    report.manager_status["docker"] = (
+        "ok" if not (unjudged or any(refusals.values()) or deferred) else "partial")
     if unjudged:
         report.errors.append(f"docker: {unjudged} image(s) not in a registry — not compared")
-    if unresolved:
-        report.errors.append(f"docker: {unresolved} image(s) the registry could not answer about — not compared")
+    for cause, sentence in _REFUSAL_SENTENCES:
+        if refusals.get(cause):
+            report.errors.append(f"docker: {refusals[cause]} image(s) {sentence}")
     if deferred:
         report.errors.append(
             f"docker: {deferred} multi-arch image(s) left unjudged while the "

@@ -173,8 +173,13 @@ class FakeNetwork:
         if args and args[0] == "manifest":
             if not has_docker:
                 return Result("docker manifest inspect", 127, "", NOT_FOUND_DOCKER)
-            ok, out = self.manifests.get(args[-1], (False, "no such manifest"))
-            return Result("docker manifest inspect", 0 if ok else 1, out, "" if ok else "not found")
+            entry = self.manifests.get(args[-1], (False, "no such manifest"))
+            ok, out = entry[0], entry[1]
+            # The optional third element is the registry's own error text; the scan
+            # classifies a refusal by it (`scan._registry_failure`). The default keeps
+            # docker's own "not found" for a failure, which names no cause on its own.
+            err = entry[2] if len(entry) > 2 else ("" if ok else "not found")
+            return Result("docker manifest inspect", 0 if ok else 1, out, err)
         return Result("docker", 0, "", "")
 
 
@@ -785,6 +790,88 @@ class DockerPinMissCache(ScanCase):
         # which really moved and is judged at last.
         second = self.scan()
         self.assertEqual(1, second["findings"])
+
+
+class RegistryFailureClassifier(unittest.TestCase):
+    """The registry's own words name the cause — and a missing binary names nothing."""
+
+    def cause(self, *, stderr="", stdout="", error="", timed_out=False):
+        return scan._registry_failure(
+            Result("docker manifest inspect", 1, stdout, stderr,
+                   timed_out=timed_out, error=error))
+
+    def test_each_cause_comes_from_the_registrys_words(self):
+        self.assertEqual("rate-limited", self.cause(
+            stderr="toomanyrequests: You have reached your unauthenticated pull rate limit."))
+        self.assertEqual("unauthorized", self.cause(
+            stderr="unauthorized: authentication required"))
+        self.assertEqual("not-found", self.cause(stderr="no such manifest: nginx:1"))
+        self.assertEqual("not-found", self.cause(
+            stderr="Error response from daemon: manifest for nginx:1 not found"))
+        self.assertEqual("timeout", self.cause(timed_out=True))
+
+    def test_a_reason_it_cannot_name_is_left_unnamed(self):
+        self.assertEqual("", self.cause(stderr="something strange happened"))
+        # A missing binary says "not found" too, and must not be read as a gone tag.
+        self.assertEqual("", self.cause(stderr="sh: 1: docker: not found"))
+
+
+class DockerTagMissCache(ScanCase):
+    """A tag the registry definitively refuses is remembered briefly — and only then.
+
+    A tag that does not exist, or that this deployment may not read, cannot be judged
+    however often it is asked, so re-asking only spends the registry's request budget.
+    A rate limit or a timeout is the opposite: it clears, so it is never remembered.
+    The miss records a *cause*, never a digest, so a remembered tag stays unjudged and
+    can never read as current.
+    """
+
+    def with_image(self, repository="ghcr.io/innotelinc/zeus", tag="latest"):
+        self.fake.images["monarch"] = [
+            {"Repository": repository, "Tag": tag, "Digest": "sha256:olddigest0000000"}
+        ]
+        self.fake.manifests[f"{repository}:{tag}"] = (False, "no such manifest", "")
+
+    def test_a_tag_the_registry_says_is_gone_is_asked_once(self):
+        self.with_image()
+        first = self.scan()
+        self.assertEqual(0, first["findings"])
+        self.assertEqual("partial", self.report(first, "monarch")["managers"]["docker"])
+        self.assertEqual(1, self.manifest_calls())
+        # Remembered, so the second scan does not ask again.
+        self.scan()
+        self.assertEqual(1, self.manifest_calls())
+
+    def test_a_remembered_miss_is_unjudged_not_current(self):
+        # The point of recording a cause rather than an answer: an image whose tag is
+        # gone must never read as current (which would quietly expire a finding).
+        self.with_image()
+        self.scan()
+        self.assertEqual(0, self.report(self.scan(), "monarch")["findings"])
+
+    def test_a_rate_limit_is_not_remembered(self):
+        # A rate limit clears on its own; caching it would hide the registry coming back
+        # for the whole TTL.
+        self.with_image()
+        self.fake.manifests["ghcr.io/innotelinc/zeus:latest"] = (
+            False, "",
+            "toomanyrequests: You have reached your unauthenticated pull rate limit.")
+        self.scan()
+        self.scan()
+        self.assertEqual(2, self.manifest_calls())
+
+    def test_the_report_names_why_the_registry_would_not_answer(self):
+        self.fake.images["monarch"] = [
+            {"Repository": "nginx", "Tag": "1", "Digest": "sha256:d1"},
+            {"Repository": "redis", "Tag": "7", "Digest": "sha256:d2"},
+        ]
+        self.fake.manifests["nginx:1"] = (
+            False, "",
+            "toomanyrequests: You have reached your unauthenticated pull rate limit.")
+        self.fake.manifests["redis:7"] = (False, "no such manifest", "")
+        report = self.report(self.scan(), "monarch")
+        self.assertTrue(any("rate-limited" in e for e in report["errors"]), report["errors"])
+        self.assertTrue(any("no such tag" in e for e in report["errors"]), report["errors"])
 
 
 class DockerScanLogin(ScanCase):
