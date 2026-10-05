@@ -159,6 +159,7 @@ genie-logs: ## Tail the agent console's logs
 .PHONY: lan
 lan: ## Detect this host's LAN address and write the builder network into an env file
 	@scripts/lan-env.sh --file "$(LAN_ENV_FILE)"
+	@scripts/lan-env.sh --file ontrak-tix/.env
 
 # The family stack: all five products, one network, one command. `up`/`down`
 # above are the training app's; this brings up everything, with Tix's outbound
