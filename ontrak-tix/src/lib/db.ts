@@ -92,6 +92,9 @@ import type { TicketFormGate } from "./ticket-service";
 import { PrismaFormStore, type FormPrismaClient } from "./form-store-prisma";
 import { RoleService, systemRoleIds } from "./role-service";
 import { PrismaRoleStore, type RolePrismaClient } from "./role-store-prisma";
+import { ConnectorService } from "./connector-service";
+import { ConnectorRegistry } from "./connector-rules";
+import { PrismaConnectorStore, type ConnectorPrismaClient } from "./connector-store-prisma";
 
 /**
  * The OnTrak Tix database client and service bootstrap.
@@ -209,6 +212,7 @@ let rmm: RmmConnectorService | null = null;
 let chatNotify: ChatNotifyService | null = null;
 let forms: FormService | null = null;
 let roles: RoleService | null = null;
+let connectors: ConnectorService | null = null;
 
 function csat(): CsatService {
   satisfaction ??= new CsatService(new PrismaCsatStore(prisma as unknown as CsatPrismaClient));
@@ -701,6 +705,33 @@ export function roleServicesFor(): RoleService {
     ticketServices().audit,
   );
   return roles;
+}
+
+/**
+ * The process-wide connector catalog (M6).
+ *
+ * The first-party connectors are loaded from `connector-rules.ts`. A third-party
+ * connector is added with `connectorRegistry.register(manifest, handler)` — and that
+ * is the whole marketplace seam: shipping one is a registration, not a change to
+ * this file or to the install path.
+ */
+export const connectorRegistry = new ConnectorRegistry();
+
+/**
+ * The configured connector marketplace service (M6).
+ *
+ * It shares the ticket stack's audit sink, so a connector installed, configured,
+ * switched on or removed joins the same per-tenant hash chain as the tickets it will
+ * carry. Config values never reach that chain — only which fields were set and which
+ * are secrets (`auditConfigSummary`).
+ */
+export function connectorServicesFor(): ConnectorService {
+  connectors ??= new ConnectorService(
+    new PrismaConnectorStore(prisma as unknown as ConnectorPrismaClient),
+    connectorRegistry,
+    ticketServices().audit,
+  );
+  return connectors;
 }
 
 /**

@@ -7,7 +7,7 @@
 > exit criteria so "done" is not a matter of taste.
 >
 > **OnTrak family release 2026.09** ([portfolio](../INNOTEL-LABS.md)): this
-> product's slice of it is **M6 — platform & integrations**, largely shipped; the
+> product's slice of it is **M6 — platform & integrations**, shipped; the
 > others are **OnTrak IT Support Training v1.2** and **OnTrak Sentinel S3**.
 
 ---
@@ -963,7 +963,7 @@ up to an adjuster or auditor.
 > desk's clearest signal that something is missing. **M5 is feature-complete**;
 > its exit criteria are numbers the desk now has the reporting to read.
 
-### M6 — Platform & integrations `[~]`
+### M6 — Platform & integrations `[x]`
 **Goal:** fit into the surrounding toolchain.
 
 - Public REST API + webhooks with scoped tokens, rate limits and delivery logs.
@@ -1091,7 +1091,33 @@ up to an adjuster or auditor.
     silently — nobody notices a message that never arrived. A channel's URL is a
     credential, so it is never written to the audit trail, which records the name and
     provider instead. Covered by `tests/tix-m6-chat-notify.test.ts`.
-  - `[ ]` A marketplace pattern for third-party connectors.
+  - `[x]` **A marketplace pattern for third-party connectors**
+    (`connector-rules.ts`, `connector-service.ts`,
+    `connector-store-prisma.ts`, the `ConnectorInstallation` model,
+    `/admin/connectors`, `tests/tix-m6-connectors.test.ts` and
+    [docs/connectors.md](./docs/connectors.md)): M6 shipped four ways for the outside
+    world to reach the desk, each built where it was needed — which is right for the
+    connectors we ship and wrong for the one after them. This makes a connector a
+    **manifest** and installing one *data*. Six decisions carry it. **The manifest is
+    the whole contract** — id, vendor, category, the capabilities it offers and the
+    fields it needs — declared once, so the console, the registry and the install path
+    cannot disagree about what a connector is. **First-party connectors are catalogued,
+    not installed here**: Slack, webhooks, RMM and the rest each configure on their own
+    console, and `managePath` says where — so *“what can talk to this desk?”* has one
+    answer without a second place the same endpoint is set. **A third-party connector is
+    registered, not patched in** — `ConnectorRegistry.register(manifest, handler)`
+    validates the manifest with the same rules the built-ins pass and refuses an id it
+    could shadow, so shipping a connector is a registration rather than new plumbing.
+    **Config is validated in both directions** — a blank required field *and* a key the
+    manifest does not declare are refused, because a form that silently drops a setting
+    somebody typed lies about what the connector will do. **A secret is a secret
+    everywhere** — masked on screen and recorded on the chain as *which* fields were set
+    and which are secrets, never a value, because a chain entry outlives the deployment;
+    and because the console never receives one back, an edit that leaves a secret blank
+    keeps it. And **dispatch is a query over capability, not a list** — an event goes to
+    the enabled installations whose manifest declares it, resolved every time, with a
+    handler that throws reported as a failed outcome rather than allowed to undo the
+    ticket that raised it.
 - `[x]` **Custom fields, ticket forms and per-queue layouts** (`form-rules.ts`,
   `form-service.ts`, `form-store-prisma.ts`, `form-payload.ts`, the `CustomField`
   and `QueueForm` models, `/admin/forms`, and the fields rendered into both
@@ -1232,9 +1258,13 @@ up to an adjuster or auditor.
 > escalate anything; the narrowing is resolved as each request's actor is built
 > rather than carried in a cookie that cannot be re-issued, `actorHasPermission`
 > answers every one of the ~130 call sites, and a save or an assignment that would
-> leave nobody able to administer the desk is refused by name. What remains in M6
-> is the connector marketplace pattern. See [docs/api.md](./docs/api.md) and
-> [docs/rules.md](./docs/rules.md).
+> leave nobody able to administer the desk is refused by name. And the desk's
+> integrations are its own data too: a connector is a manifest the catalog lists,
+> installing one records config validated against that manifest, a secret is never
+> written to the chain, and an event is routed to the enabled connectors that
+> declared the capability — so the next connector is a registration rather than new
+> plumbing. **M6 is complete.** See [docs/api.md](./docs/api.md),
+> [docs/rules.md](./docs/rules.md) and [docs/connectors.md](./docs/connectors.md).
 
 - **Exit:** a monitoring alert opens a ticket and closes it when the alert clears
   (**done**); audit evidence exports on demand (**done** — a signed tenant-wide

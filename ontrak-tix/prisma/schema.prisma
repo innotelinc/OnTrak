@@ -88,6 +88,10 @@ model Tenant {
   // The desk's own shape of authority (M6): roles it writes for itself, which
   // can only ever narrow one of the four built-ins.
   tenantRoles           TenantRole[]
+  // The M6 marketplace: the third-party connectors this desk has installed, each
+  // naming a manifest in `src/lib/connector-rules.ts`. First-party connectors are
+  // catalogued but never installed here, so a row here is always a third party.
+  connectorInstallations ConnectorInstallation[]
 
   @@index([slug])
 }
@@ -1777,4 +1781,38 @@ model TenantRole {
 
   @@unique([tenantId, key])
   @@index([tenantId, archivedAt])
+}
+
+/// One third-party connector a desk has installed (M6).
+///
+/// The marketplace pattern: a connector is a manifest in `connector-rules.ts` (id,
+/// vendor, category, capabilities and the config fields it declares), and this row
+/// is the desk's *use* of one — the config it gave it, and whether it is on. The
+/// manifest is code and the installation is data, which is why this table names a
+/// `connectorId` rather than embedding the connector's definition: a manifest can
+/// gain a field without a migration, and the row is read back through the rules that
+/// judge it.
+///
+/// `connectorId` is fixed once written. Re-pointing an installation at another
+/// connector would silently re-interpret the config that belongs to the first, so
+/// that is a new installation rather than an edit.
+model ConnectorInstallation {
+  id          String    @id @default(cuid())
+  tenantId    String
+  /// The manifest id in the catalog. Fixed once written.
+  connectorId String
+  /// `Record<string, string>` — validated against the manifest before it is stored.
+  /// A secret field's value is here and nowhere else: never audited, never echoed.
+  config      Json
+  enabled     Boolean   @default(true)
+  installedBy String
+  installedAt DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  /// When it was switched off, so "off since when?" has an answer.
+  disabledAt  DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, connectorId])
+  @@index([tenantId, enabled])
 }

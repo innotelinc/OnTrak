@@ -97,6 +97,7 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
                         { href: "/admin/identity", label: "Identity" },
                         { href: "/admin/forms", label: "Fields" },
                         { href: "/admin/integrations", label: "Integrations" },
+                        { href: "/admin/connectors", label: "Connectors" },
                       ]
                     : []),
                   ...(canManageRoles ? [{ href: "/admin/roles", label: "Roles" }] : []),
