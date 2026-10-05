@@ -55,6 +55,10 @@ test-results/
 # artifacts, never source.
 .env.pre-vault.*
 
+# Generic `.env` backups (timestamped `.env.bak-*`) are the same class of
+# local-only migration artifact.
+.env.bak-*
+
 # The platform Cerulean Vault token directory and other runtime state under
 # it. Root-anchored so a product that tracks its own data/ is unaffected.
 /data/
