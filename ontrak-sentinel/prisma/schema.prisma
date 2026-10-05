@@ -68,6 +68,8 @@ model Organization {
   // somebody has published as worth watching.
   alerts     Alert[]
   indicators Indicator[]
+  /// Guard (S4): the windows in which a detection is known and must not be raised.
+  alertSuppressions AlertSuppression[]
   // Guard (S4): what the deployment then *did* about it. An action is state that outlives
   // the request that created it — a block stands until something lifts it — so it is a row
   // rather than a return value, and the policy it was judged against is a row beside it.
@@ -415,6 +417,40 @@ model Alert {
 
   @@unique([organizationId, dedupeKey])
   @@index([organizationId, state, lastSeenAt])
+}
+
+/// A mute (S4): a bounded window in which some detections are known and should not be raised.
+///
+/// The other half of "alerts have an off switch" — delivery stops a raised alert going
+/// unheard, and this stops a known one being raised at all. Three columns carry the design:
+///
+///   * `matcher` is one JSON column rather than a column per dimension, because it is read
+///     whole on every batch and a matcher half-written across five columns is a set of silence
+///     nobody can reason about while it is being edited.
+///   * `endsAt` is required (the rules module refuses a window longer than a week), because a
+///     mute with no end is a detection gap nobody remembers creating.
+///   * `(organizationId, endsAt)` is indexed because "what is in force right now" is asked on
+///     every ingestion, and it is the rail that has to be cheap to check.
+///
+/// A suppressed detection is *recorded* on the evidence chain rather than forgotten, so the
+/// silence is answerable afterwards instead of reading as a rule that stopped firing.
+model AlertSuppression {
+  id             String   @id @default(cuid())
+  organizationId String
+  /// What the operator called it — "patch window", "our Nessus box".
+  name           String
+  /// The dimensions this mute names: rule ids, addresses (CIDR or exact), assets, devices,
+  /// identity ids. Empty dimensions mean "any"; a matcher with no dimension at all is refused.
+  matcher        Json
+  startsAt       DateTime
+  endsAt         DateTime
+  createdById    String
+  createdByLabel String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, endsAt])
 }
 
 /// One indicator of compromise (S3): an address, block, domain, URL or digest that a feed

@@ -198,6 +198,29 @@ export interface ConsoleEndpoints {
   ): Promise<ServiceResult<{ ruleName: string; assigneeLabel: string | null }>>;
   /** Give it back to the queue. */
   unassignAlert(sessionId: string, alertId: string): Promise<ServiceResult<{ ruleName: string }>>;
+  /**
+   * Create a mute (S4): a bounded window in which a known detection is not raised.
+   *
+   * An administrator's act, and the service is what refuses anybody else — the page hides the
+   * section, but a link is not an access control and this router adds none. The window's length
+   * and the "name something" rule are the service's, so the page cannot record a mute the
+   * pipeline would ignore.
+   */
+  addSuppression(
+    sessionId: string,
+    input: {
+      name: string;
+      ruleIds: string;
+      sourceAddresses: string;
+      assets: string;
+      devices: string;
+      identityIds: string;
+      startsAt: string;
+      endsAt: string;
+    },
+  ): Promise<ServiceResult<{ name: string }>>;
+  /** Remove a mute (S4). The row goes; the chain keeps the fact that it existed. */
+  removeSuppression(sessionId: string, ruleId: string): Promise<ServiceResult<{ name: string }>>;
   /** The compliance posture summary (S4). Read-only: it writes nothing and grants nothing. */
   compliance(sessionId: string): Promise<ServiceResult<ConsoleComplianceView>>;
   /**
@@ -673,6 +696,46 @@ async function handleWithdrawIntel(request: HttpRequest, sessionId: string, endp
   return redirect(
     `${CONSOLE_PATHS.intel}?flash=${encodeURIComponent(
       `Withdrew ${result.value.value} from ${result.value.source}. Alerts already raised keep it on their record: the escalation they were judged on has to stay reviewable.`,
+    )}`,
+  );
+}
+
+/**
+ * Create a mute.
+ *
+ * A redirect rather than a rendered body, for the same reason acknowledging an alert is: it is
+ * a state change, and a state change that answered with a body would happen again on a refresh.
+ * The refusals a person actually reads (an empty matcher, a window longer than a week) are the
+ * service's own sentence, not a restatement here.
+ */
+async function handleAddSuppression(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const params = formParams(request);
+  const result = await endpoints.addSuppression(sessionId, {
+    name: params.name ?? "",
+    ruleIds: params.ruleIds ?? "",
+    sourceAddresses: params.sourceAddresses ?? "",
+    assets: params.assets ?? "",
+    devices: params.devices ?? "",
+    identityIds: params.identityIds ?? "",
+    startsAt: params.startsAt ?? "",
+    endsAt: params.endsAt ?? "",
+  });
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.alerts}?flash=${encodeURIComponent(
+      `Silencing “${result.value.name}” for its window. A detection it catches is recorded on the chain rather than raised.`,
+    )}`,
+  );
+}
+
+async function handleRemoveSuppression(request: HttpRequest, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const ruleId = formParams(request).ruleId ?? "";
+  if (!ruleId) return failure("Choose a window first.");
+  const result = await endpoints.removeSuppression(sessionId, ruleId);
+  if (!result.ok) return failure(result.error);
+  return redirect(
+    `${CONSOLE_PATHS.alerts}?flash=${encodeURIComponent(
+      `Removed “${result.value.name}”. What it already silenced stays on the evidence chain.`,
     )}`,
   );
 }
@@ -1216,6 +1279,10 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
       return post(() => handleAssignAlert(request, sessionId, endpoints));
     case CONSOLE_PATHS.alertUnassign:
       return post(() => handleUnassignAlert(request, sessionId, endpoints));
+    case CONSOLE_PATHS.suppressionAdd:
+      return post(() => handleAddSuppression(request, sessionId, endpoints));
+    case CONSOLE_PATHS.suppressionRemove:
+      return post(() => handleRemoveSuppression(request, sessionId, endpoints));
     case CONSOLE_PATHS.coverage:
       return get(() => handleCoveragePage(url, sessionId, endpoints));
     case CONSOLE_PATHS.enforcement:

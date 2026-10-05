@@ -670,6 +670,17 @@ row naming the transport and its own words. Unset is a deployment with no transp
 shipped default, said out loud once at startup. The contract is one JSON `POST` of the alert's
 summary; the operator's side of it is in [docs/alert-delivery.md](./docs/alert-delivery.md).
 
+**A known detection can be silenced for a bounded window, and the silence is on the record.** An
+administrator can create a *mute* on the queue page — a maintenance window, this desk's own
+scanner, a load test it scheduled — naming at least one rule, address, asset, device or person,
+for a window that must end and is capped at a week. A detection a window catches is **recorded on
+the evidence chain (`guard.detection.suppressed`) and not raised**, so the queue stays what is new
+and a review can still see what was silenced and by which window; an absence would read as a rule
+that stopped firing. A window that names nothing is refused rather than read as "any", because
+the one rule a person makes by accident is the one that switches the detector off — and the
+section is rendered only for an administrator, with the service refusing everybody else, because
+a list of where the detector has been made blind is not a page for the whole desk.
+
 ## Containers
 
 All three products ship the same shape: a `Dockerfile` and a `docker-compose.yml`,

@@ -837,6 +837,25 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
     Covered by `tests/sentinel-alert-notify.test.ts` (12 checks: delivered once and not on a
     repeat, a refusing and a throwing transport, an unset transport, the projection, and the
     HTTP body, token, refusal and unreachable paths).
+  - `[x]` **The mute — a bounded window in which a known detection is not raised**
+    (`alert-suppression-rules.ts`, `alert-suppression-service.ts`, the `AlertSuppression`
+    store, and the **Silenced windows** section on `/console/alerts`): the other half of
+    the off switch, so a known-noisy source stops filling the queue. A window names at
+    least one rule, address (CIDR or exact), asset, device or identity — an empty matcher
+    is refused rather than read as "any", because the one rule a person makes by accident
+    is the one that switches the detector off — must end, and is capped at a week. A
+    detection it catches is **recorded on the chain** (`guard.detection.suppressed`, with
+    the window that caught it) and not raised, so the queue stays what is new and a review
+    can see what was silenced; an absence would read as a rule that stopped firing. Inside
+    a dimension it is a list and across dimensions it is an AND, so "our scanner, during
+    the window" does not also mute that address's real badness outside it. Administration
+    only, to read and to write — the service refuses the write regardless of what the page
+    renders, and creating or removing a window lands on the chain. Covered by
+    `tests/sentinel-alert-suppression.test.ts` (7 checks: the validation, the window and
+    the dimensions, the service's audit trail, a muted detection recorded and not raised,
+    an unstarted window, and no delivery for a suppressed detection) and
+    `sentinel-alert-suppression-console.test.ts` (the section for an administrator, its
+    refusal for everybody else, the empty matcher named, and the removal).
   - `[x]` **The measured time-to-prevent** (`timeToPreventMs`/`timeToPreventSummary` in
     `enforcement-rules.ts`, the `detectedAt`/`timeToPreventMs` columns on
     `EnforcementAction`, and the figure the register states): S4's exit is a *measured*
@@ -987,10 +1006,12 @@ missing rather than as a task name:
    has no answer. Versioning the rule set — and recording which version an alert
    was raised under — is what makes the evidence trail as durable on the network
    side as the hash-chained log already is on the identity side.
-3. **Alerts have no off switch.** There is no suppression and no maintenance window,
-   so a known-noisy source still raises a row. The **delivery** half has landed (see
-   the bullet above): a raised alert is pushed to a configured transport, once, with
-   the refusal on the chain. 1.0 still needs the **mute**.
+3. ~~**Alerts have no off switch.**~~ **Closed (2026-10-05):** both halves have landed —
+   the **delivery** (a raised alert is pushed to a configured transport, once, with the
+   refusal on the chain) and the **mute** (a bounded window in which a known detection is
+   recorded on the chain and not raised, managed on the queue page). A known-noisy source
+   no longer fills the queue, and what is raised is delivered rather than waiting to be
+   noticed.
 4. ~~**Correlation is inert.**~~ **Closed (2026-10-01):** the interactive login
    stores the address it came from (`x-forwarded-for`, first entry) on the session
    it issues — both the password form and the Authentik callback — and a test now
@@ -1039,8 +1060,9 @@ vendor adapters each deployment writes for its own firewall, agent or proxy. Tha
 work a deployment owns by design rather than this build, so the measurement was the
 last of S4's own exit criteria.
 
-**Where that leaves the off switch (2026-10-05).** Of its two halves, the **delivery**
-has landed (`alert-notify.ts`): a raised alert reaches a configured transport once, and a
-transport that refuses or is unreachable leaves the alert where it is with the refusal on
-the chain. The **mute** — suppression rules and maintenance windows — is the half still
-open, so a known-noisy source keeps raising rows even when nobody is told about them.
+**Where that leaves the off switch (2026-10-05).** Both halves have landed. The
+**delivery** (`alert-notify.ts`) pushes a raised alert to a configured transport once, and
+the **mute** (`alert-suppression-rules.ts`, the `AlertSuppression` store and the queue
+page) records a known detection on the chain instead of raising it, inside a bounded window
+that is capped at a week. A known-noisy source no longer fills the queue, and what is raised
+reaches somebody rather than waiting to be noticed.

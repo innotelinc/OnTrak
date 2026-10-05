@@ -59,6 +59,7 @@ import {
   type AlertNotifier,
   type NotifyOutcome,
 } from "./alert-notify";
+import { matchSuppression, type SuppressionRule } from "./alert-suppression-rules";
 import {
   escalateSeverity,
   matchIndicators,
@@ -158,6 +159,18 @@ export interface IndicatorSource {
   activeIndicators(organizationId: string, at: number): Promise<readonly Indicator[]>;
 }
 
+/**
+ * What detection needs of the mute (S4), and nothing more.
+ *
+ * A port for the same reason the feed is one, and `SuppressionService` satisfies it as-is: the
+ * pipeline is tested with a fixed list of windows, and a deployment with no suppression store
+ * gets no mute at all rather than a lookup per batch. It answers rules rather than a boolean so
+ * the pipeline can record *which* window caught a detection and why.
+ */
+export interface SuppressionSource {
+  activeSuppressions(organizationId: string, at: number): Promise<readonly SuppressionRule[]>;
+}
+
 export function systemDetectionIds(): DetectionIds {
   return { id: () => randomUUID(), now: () => new Date().toISOString(), nowMs: () => Date.now() };
 }
@@ -170,6 +183,14 @@ export interface IngestReport {
   accepted: number;
   rejected: { reason: string }[];
   alerts: { id: string; ruleId: string; severity: Severity; created: boolean; identityLabel: string | null }[];
+  /**
+   * Detections a mute caught, with the window that caught them.
+   *
+   * Reported rather than silently dropped, for the same reason a refused payload is: a
+   * suppression that is quietly swallowing everything is a detection gap, and the count is how
+   * anybody notices one — the chain keeps the detail (`guard.detection.suppressed`).
+   */
+  suppressed: { suppressionId: string; name: string; ruleId: string }[];
 }
 
 export class DetectionService {
@@ -196,6 +217,13 @@ export class DetectionService {
      * this service keeps working unchanged — delivery is off until somebody names a transport.
      */
     private readonly notifier: AlertNotifier | null = null,
+    /**
+     * The mute, when this deployment has a store for it.
+     *
+     * Last again, so every existing wiring and test is unchanged and detection is un-muted
+     * until somebody names a suppression source.
+     */
+    private readonly suppressions: SuppressionSource | null = null,
   ) {}
 
   /** The rules, so a deployment can see what it is running and at which version. */
@@ -235,6 +263,7 @@ export class DetectionService {
         accepted: events.length,
         rejected: [...rejected, ...report.rejected],
         alerts: report.alerts,
+        suppressed: report.suppressed,
       },
     };
   }
@@ -248,7 +277,11 @@ export class DetectionService {
   async record(
     organizationId: string,
     events: readonly ObservedEvent[],
-  ): Promise<{ alerts: IngestReport["alerts"]; rejected: IngestReport["rejected"] }> {
+  ): Promise<{
+    alerts: IngestReport["alerts"];
+    rejected: IngestReport["rejected"];
+    suppressed: IngestReport["suppressed"];
+  }> {
     const drafts = evaluateRules(events, this.rules);
     const sessions = await this.identities.listSessions(organizationId);
     // Asked once per batch, not once per draft or per event: the same list answers every
@@ -256,12 +289,53 @@ export class DetectionService {
     // lookups against a table that did not change in between.
     const at = this.ids.nowMs();
     const indicators = this.intel ? await this.intel.activeIndicators(organizationId, at) : [];
+    // The mute, asked once for the same reason — and read before any enrichment, so a muted
+    // detection does not cost a feed lookup or an alert row it is about to be denied.
+    const suppressions = this.suppressions
+      ? await this.suppressions.activeSuppressions(organizationId, at)
+      : [];
+    const moment = new Date(at).toISOString();
     const alerts: IngestReport["alerts"] = [];
+    const suppressed: IngestReport["suppressed"] = [];
 
     for (const draft of drafts) {
       const identityId = correlateIdentity(draft.evidence[0], sessions);
       const identity = identityId ? await this.identities.findIdentity(organizationId, identityId) : null;
       const { device, asset } = locationOf(draft);
+
+      // A known detection is recorded on the chain and *not* raised. Recorded rather than
+      // forgotten: an absence is indistinguishable from a rule that stopped firing, and the
+      // whole point of the mute is that a review can still see what it silenced.
+      if (suppressions.length > 0) {
+        const mute = matchSuppression(
+          {
+            ruleId: draft.ruleId,
+            sourceAddress: draft.evidence[0].sourceAddress,
+            asset,
+            device,
+            identityId,
+          },
+          suppressions,
+          moment,
+        );
+        if (mute) {
+          suppressed.push({ suppressionId: mute.rule.id, name: mute.rule.name, ruleId: draft.ruleId });
+          await this.append(organizationId, "guard.detection.suppressed", draft.ruleId, {
+            suppressionId: mute.rule.id,
+            name: mute.rule.name,
+            reason: mute.reason,
+            ruleId: draft.ruleId,
+            ruleVersion: draft.ruleVersion,
+            severity: draft.severity,
+            sourceAddress: draft.evidence[0].sourceAddress ?? null,
+            device,
+            asset,
+            identityId,
+            occurrences: draft.occurrences,
+          });
+          continue;
+        }
+      }
 
       // What the feeds know about this evidence, and what it does to how bad it is.
       const threatIntel = indicators.length === 0 ? [] : this.matches(draft.evidence, indicators, at);
@@ -334,7 +408,7 @@ export class DetectionService {
       if (stored.created) await this.notify(stored.alert);
     }
 
-    return { alerts, rejected: [] };
+    return { alerts, rejected: [], suppressed };
   }
 
   /* ----------------------------------------------------------- delivery */

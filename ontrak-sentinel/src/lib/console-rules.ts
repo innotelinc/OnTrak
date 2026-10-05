@@ -157,6 +157,15 @@ export const CONSOLE_PATHS = {
   alertAssign: "/console/alerts/assign",
   alertUnassign: "/console/alerts/unassign",
   /**
+   * The mute (S4): the windows in which a detection is known and must not be raised.
+   *
+   * Two POST paths beside the queue they belong to, and both an administrator's — the same
+   * shape the enforcement register takes. Creating and removing a window lands on the evidence
+   * chain, because a silence nobody can find afterwards is worse than the noise it removed.
+   */
+  suppressionAdd: "/console/alerts/suppressions",
+  suppressionRemove: "/console/alerts/suppressions/remove",
+  /**
    * The compliance posture summary (S4).
    *
    * A read-only page on purpose. It reports what the deployment *is* — the controls in
@@ -1496,6 +1505,25 @@ export interface ConsoleAlertInvestigationView {
  * upward. One question each — "what is waiting?" and "how bad is it overall?" — so the two
  * numbers are allowed to disagree and the page says which is which.
  */
+/**
+ * One silenced window, as the queue page shows it.
+ *
+ * `active` is computed against the clock rather than stored, so a window that has passed is
+ * still listed — a review reads the history too — and the row says which of the two it is
+ * instead of the page quietly dropping it.
+ */
+export interface ConsoleSuppressionView {
+  id: string;
+  name: string;
+  /** What it names, in words: "rule SG-BEH-002 and address 203.0.113.0/24". */
+  matcherLabel: string;
+  startsAt: string;
+  endsAt: string;
+  createdByLabel: string;
+  /** False once its window has passed, or before it begins. */
+  active: boolean;
+}
+
 export interface ConsoleAlertsView {
   actor: ConsoleActor;
   session: ConsoleSessionView;
@@ -1504,6 +1532,10 @@ export interface ConsoleAlertsView {
   alerts: ConsoleAlertView[];
   /** The alert `?alert=` named, or `null` on a plain read of the queue. */
   investigation: ConsoleAlertInvestigationView | null;
+  /** Whether this actor may create and remove a mute. The service is the real gate. */
+  canSuppress: boolean;
+  /** The windows this organization has, in force or not. Empty for a non-administrator. */
+  suppressions: ConsoleSuppressionView[];
 }
 
 /** A severity, as a badge whose colour comes from the theme rather than from here. */
@@ -1622,6 +1654,46 @@ export function renderAlerts(view: ConsoleAlertsView, flash?: string | null, err
 
   const investigation = view.investigation ? renderInvestigation(view.investigation, query) : "";
 
+  // The mute. Rendered only for an administrator — the list names what is silenced, which is
+  // not a page for everybody — and the service refuses the writes regardless of what the nav says.
+  const suppressions = !view.canSuppress
+    ? ""
+    : `<h2>Silenced windows (${view.suppressions.filter((window) => window.active).length} in force)</h2>` +
+      `<div class="card">` +
+      (view.suppressions.length
+        ? `<table><thead><tr><th>Name</th><th>Silences</th><th>Window</th><th>By</th><th></th></tr></thead><tbody>` +
+          view.suppressions
+            .map(
+              (window) =>
+                `<tr><td>${escapeHtml(window.name)}${window.active ? "" : ` <span class="muted">(not in force)</span>`}</td>` +
+                `<td class="muted">${escapeHtml(window.matcherLabel)}</td>` +
+                `<td class="muted">${escapeHtml(window.startsAt)} → ${escapeHtml(window.endsAt)}</td>` +
+                `<td class="muted">${escapeHtml(window.createdByLabel)}</td>` +
+                `<td><form method="post" action="${CONSOLE_PATHS.suppressionRemove}" style="display:inline">` +
+                `<input type="hidden" name="ruleId" value="${escapeHtml(window.id)}">` +
+                `<button type="submit" class="quiet">Remove</button></form></td></tr>`,
+            )
+            .join("") +
+          `</tbody></table>`
+        : `<p class="muted">Nothing is silenced. A mute is a bounded window for a detection this desk ` +
+          `already knows — a maintenance window, its own load test, a scanner's visit — so the queue ` +
+          `stays what is new.</p>`) +
+      `<form method="post" action="${CONSOLE_PATHS.suppressionAdd}">` +
+      `<label>Name<input name="name" required maxlength="120" placeholder="e.g. February patch window"></label>` +
+      `<label>Silence these rules <span class="hint">(one id per line or comma-separated)</span>` +
+      `<textarea name="ruleIds" rows="2" placeholder="SG-BEH-002"></textarea></label>` +
+      `<label>…or these addresses <span class="hint">(CIDR or exact)</span>` +
+      `<textarea name="sourceAddresses" rows="2" placeholder="203.0.113.0/24"></textarea></label>` +
+      `<label>…or these assets<textarea name="assets" rows="1"></textarea></label>` +
+      `<label>…or these devices<textarea name="devices" rows="1"></textarea></label>` +
+      `<label>…or these identities<textarea name="identityIds" rows="1"></textarea></label>` +
+      `<label>Window starts<input type="datetime-local" name="startsAt" required></label>` +
+      `<label>Window ends<input type="datetime-local" name="endsAt" required></label>` +
+      `<button type="submit">Silence for this window</button>` +
+      `<p class="muted">A mute names at least one thing, and the window is capped at a week. A detection a ` +
+      `window catches is recorded on the evidence chain rather than raised — so a silence is answerable ` +
+      `afterwards instead of reading as a rule that stopped firing.</p></div>`;
+
   const body =
     form +
     `<h2>Where this organization stands</h2>` +
@@ -1630,7 +1702,8 @@ export function renderAlerts(view: ConsoleAlertsView, flash?: string | null, err
     `<h2>Waiting (${view.alerts.length})</h2><div class="card">${rows}</div>` +
     `<p class="muted">An alert is raised by a sensor's telemetry against a rule in the rulebook, and it is ` +
     `correlated to an identity when the address it came from held a session. A repeat refreshes the alert it ` +
-    `belongs to rather than raising a second one, so a burst that is still arriving is one row.</p>`;
+    `belongs to rather than raising a second one, so a burst that is still arriving is one row.</p>` +
+    suppressions;
 
   return consolePage({ title: "Alerts", actor: view.actor, body, flash, error });
 }

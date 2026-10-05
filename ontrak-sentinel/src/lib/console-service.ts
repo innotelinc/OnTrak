@@ -64,6 +64,11 @@ import {
   timeToPreventSummary,
   type EnforcementActionKind,
 } from "./enforcement-rules";
+// The mute (S4): the console's half of it. Imported as a type for the collaborator and as the
+// describer for the list, so the page cannot describe a window differently from the one the
+// pipeline will actually match.
+import { describeMatcher, type SuppressionRule } from "./alert-suppression-rules";
+import type { SuppressionService } from "./alert-suppression-service";
 import type { EnforcementActionRecord, EnforcementService } from "./enforcement-service";
 import type { MfaService, MfaStatus } from "./mfa-service";
 import type { OidcStore } from "./oidc-service";
@@ -75,6 +80,7 @@ import type {
   ComplianceRoleView,
   ConsoleAlertInvestigationView,
   ConsoleAlertsView,
+  ConsoleSuppressionView,
   ConsoleAlertView,
   ConsoleComplianceView,
   ConsoleCoverageView,
@@ -233,6 +239,18 @@ export class ConsoleService implements ConsoleEndpoints {
     private readonly prevention: Pick<
       EnforcementService,
       "list" | "policy" | "policyRecord" | "apply" | "approve" | "lift" | "setPolicy"
+    > | null = null,
+    /**
+     * The mute (S4), when the deployment wired a store for it.
+     *
+     * Optional like the other collaborators. A `Pick` of the three methods the queue page uses
+     * rather than the class, the same posture `detection` takes: the console can list, create
+     * and remove a window, and it deliberately cannot reach the query the pipeline runs — a
+     * browser is not a sensor.
+     */
+    private readonly suppressions: Pick<
+      SuppressionService,
+      "list" | "add" | "remove"
     > | null = null,
   ) {}
 
@@ -756,6 +774,14 @@ export class ConsoleService implements ConsoleEndpoints {
     const subject = wanted ? (all.value.find((alert) => alert.id === wanted) ?? null) : null;
     if (wanted && !subject) return { ok: false, error: "That alert does not exist." };
 
+    // The mute, read only for an administrator — the same gate the writes take, so a
+    // non-administrator's page does not even enumerate what is silenced.
+    const canSuppress = canApproveEnforcement(context.value.actor.role);
+    const windows =
+      canSuppress && this.suppressions
+        ? await this.suppressions.list(context.value.organizationId)
+        : [];
+
     const investigation: ConsoleAlertInvestigationView | null = subject
       ? {
           subject: alertView(subject, at),
@@ -779,8 +805,81 @@ export class ConsoleService implements ConsoleEndpoints {
         // survives the round trip through the query string as the word the operator chose.
         alerts: filterAlerts(all.value, filter, context.value.actor.id).map((alert) => alertView(alert, at)),
         investigation,
+        canSuppress,
+        suppressions: windows.map((rule) => suppressionView(rule, at)),
       },
     };
+  }
+
+  /**
+   * Silence a known detection for a bounded window (S4).
+   *
+   * An administrator's act, audited like prevention: "we silenced that rule last Tuesday" is
+   * exactly the fact an incident review is trying to reconstruct, and a silence nobody can find
+   * is worse than the noise it removed. The window's length and the "name something" rule are
+   * the service's, so the page and the product cannot disagree about what a usable mute is.
+   */
+  async addSuppression(
+    sessionId: string,
+    input: {
+      name: string;
+      ruleIds: string;
+      sourceAddresses: string;
+      assets: string;
+      devices: string;
+      identityIds: string;
+      startsAt: string;
+      endsAt: string;
+    },
+  ): Promise<ServiceResult<{ name: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    const guard = this.preventionGate(context.value.actor.role);
+    if (!guard.ok) return guard;
+    if (this.suppressions === null) {
+      return { ok: false, error: "This deployment has no suppression store, so a window cannot be recorded." };
+    }
+
+    const session = await this.spine.resolveOwnSession(context.value.sessionId);
+    if (!session.ok) return session;
+
+    const added = await this.suppressions.add(
+      context.value.organizationId,
+      {
+        name: input.name,
+        matcher: {
+          ruleIds: matcherLines(input.ruleIds),
+          sourceAddresses: matcherLines(input.sourceAddresses),
+          assets: matcherLines(input.assets),
+          devices: matcherLines(input.devices),
+          identityIds: matcherLines(input.identityIds),
+        },
+        startsAt: input.startsAt,
+        endsAt: input.endsAt,
+      },
+      { identityId: context.value.identityId, label: actorLabel(session.value.identity) },
+    );
+    if (!added.ok) return added;
+    return { ok: true, value: { name: added.value.name } };
+  }
+
+  /** Take a mute out. Reading the rules and one write; the audit row is the service's. */
+  async removeSuppression(sessionId: string, ruleId: string): Promise<ServiceResult<{ name: string }>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    const guard = this.preventionGate(context.value.actor.role);
+    if (!guard.ok) return guard;
+    if (this.suppressions === null) {
+      return { ok: false, error: "This deployment has no suppression store, so a window cannot be removed." };
+    }
+
+    const session = await this.spine.resolveOwnSession(context.value.sessionId);
+    if (!session.ok) return session;
+
+    return this.suppressions.remove(context.value.organizationId, ruleId, {
+      identityId: context.value.identityId,
+      label: actorLabel(session.value.identity),
+    });
   }
 
   /**
@@ -1850,6 +1949,34 @@ function alertView(alert: AlertRecord, at: number): ConsoleAlertView {
     indicators: alert.threatIntel.length,
     escalated: alert.threatIntel.some((match) => match.escalates),
     waitingMinutes: waitingMinutes(alert, at),
+  };
+}
+
+/**
+ * A textarea of matcher entries into the list a rule names.
+ *
+ * One per line or comma-separated, blanks and `#` comments dropped, the same reading the target
+ * box and the intel paste take. It does not validate an address: whether an entry is
+ * well-formed is the rules module's to answer, and a parser that also judged would be a second
+ * place the rules live.
+ */
+function matcherLines(text: string): string[] {
+  return text
+    .split(/[\r\n,]+/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "" && !entry.startsWith("#"));
+}
+
+/** One mute, projected for the register. `active` is computed against the clock, not stored. */
+function suppressionView(rule: SuppressionRule, at: number): ConsoleSuppressionView {
+  return {
+    id: rule.id,
+    name: rule.name,
+    matcherLabel: describeMatcher(rule.matcher),
+    startsAt: rule.startsAt,
+    endsAt: rule.endsAt,
+    createdByLabel: rule.createdByLabel,
+    active: Date.parse(rule.startsAt) <= at && at < Date.parse(rule.endsAt),
   };
 }
 

@@ -76,6 +76,15 @@ import {
 import { PrismaEnforcementStore, type EnforcementPrismaClient } from "../src/lib/enforcement-store-prisma";
 import { planeFromEnv } from "../src/lib/enforcement-plane";
 import { notifierFromEnv } from "../src/lib/alert-notify";
+import {
+  MemorySuppressionStore,
+  SuppressionService,
+  type SuppressionStore,
+} from "../src/lib/alert-suppression-service";
+import {
+  PrismaSuppressionStore,
+  type AlertSuppressionPrismaClient,
+} from "../src/lib/alert-suppression-store-prisma";
 import { enforcementSweepIntervalMs, startEnforcementScheduler } from "../src/lib/enforcement-scheduler";
 import { PrismaIndicatorStore, type IndicatorPrismaClient } from "../src/lib/threat-intel-store-prisma";
 import {
@@ -341,6 +350,8 @@ async function main(): Promise<void> {
   let reviewStore: AccessReviewStore;
   /** Guard's prevention actions and the policy they are judged against (S4). */
   let enforcementStore: EnforcementStore;
+  /** The windows in which a detection is known and is not raised (S4). */
+  let suppressionStore: SuppressionStore;
 
   // Where a directory connector points. `meta.location` links are built from it, so
   // they name the deployment's own origin rather than 127.0.0.1.
@@ -390,6 +401,7 @@ async function main(): Promise<void> {
     intelStore = new PrismaIndicatorStore(prisma as unknown as IndicatorPrismaClient);
     reviewStore = new PrismaAccessReviewStore(prisma as unknown as AccessReviewPrismaClient);
     enforcementStore = new PrismaEnforcementStore(prisma as unknown as EnforcementPrismaClient);
+    suppressionStore = new PrismaSuppressionStore(prisma as unknown as AlertSuppressionPrismaClient);
   } else {
     identities = new MemoryIdentityStore();
     audit = new OrganizationAuditLog(sha256Hex);
@@ -407,6 +419,7 @@ async function main(): Promise<void> {
     intelStore = new MemoryIndicatorStore();
     reviewStore = new MemoryAccessReviewStore();
     enforcementStore = new MemoryEnforcementStore();
+    suppressionStore = new MemorySuppressionStore();
   }
 
   /**
@@ -443,6 +456,10 @@ async function main(): Promise<void> {
   // no transport, which is the shipped default and behaves exactly as it did before the
   // seam existed. Said out loud once, because "the detector fired" and "somebody was told"
   // are different claims.
+  // The mute (S4): the store the pipeline reads and the console writes. Built before detection
+  // because detection is given it, and the service satisfies the pipeline's own `SuppressionSource`
+  // port as-is — the same posture the threat-intel feed takes.
+  const suppressions = new SuppressionService(suppressionStore, audit);
   const alertNotifier = notifierFromEnv(process.env);
   console.log(
     alertNotifier === null
@@ -458,6 +475,7 @@ async function main(): Promise<void> {
     sha256Hex,
     threatIntel,
     alertNotifier,
+    suppressions,
   );
 
   // Access reviews (S2). The deprovisioning port is the SCIM service rather than a second
@@ -527,6 +545,9 @@ async function main(): Promise<void> {
     // Guard's prevention (S4). Narrowed by the constructor to the methods the page uses, so a
     // browser session cannot reach `sweepExpired` and lift another organization's blocks.
     enforcement,
+    // The mute (S4), also narrowed: the console can list, create and remove a window, and it
+    // deliberately cannot reach the query the pipeline runs — a browser is not a sensor.
+    suppressions,
   );
   const guardService = new GuardService(detection, identities, {
     token: (process.env.SENTINEL_GUARD_TOKEN ?? "").trim() || null,
