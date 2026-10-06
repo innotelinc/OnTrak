@@ -19,6 +19,7 @@ import { disposeSession, runSandboxCommand } from "@/lib/sim/sandbox";
 import { recordAudit } from "@/lib/audit";
 import { certificatePatchFor, readStoredCertificate } from "@/lib/certificates";
 import { announceGraded, checksFor, storedCertificateOf } from "@/lib/graded-events";
+import { clearLtiLaunch, readLtiLaunch } from "@/lib/lti-session";
 import type { Prisma } from "@prisma/client";
 import type { SandboxCommandResponse } from "@/lib/sim/drivers/proxy";
 import type { EngineState } from "@/lib/sim/types";
@@ -86,12 +87,28 @@ export async function startAttempt(formData: FormData): Promise<void> {
     timeLimitSec: effectiveTimeLimit(scenario, assignment?.timeLimitSec),
   });
 
+  // A launch context belongs to exactly one attempt, so it is consumed here
+  // whether or not it is used: a cookie left behind would attach somebody else's
+  // gradebook line to whatever this browser ran next. The email check is the same
+  // kind of guard in the other direction — a browser can still hold the launch of
+  // the person who used it last.
+  const launched = await readLtiLaunch();
+  if (launched) {
+    await clearLtiLaunch();
+    if (launched.email === user.email.trim().toLowerCase()) {
+      await prisma.attempt.update({
+        where: { id: attempt.id },
+        data: { ltiLaunch: launched as unknown as Prisma.InputJsonValue },
+      });
+    }
+  }
+
   await recordAudit({
     actorId: user.id,
     action: "attempt.start",
     targetType: "attempt",
     targetId: attempt.id,
-    detail: { scenarioId, title: scenario.title },
+    detail: { scenarioId, title: scenario.title, ...(launched ? { launched: { platform: launched.issuer, lineItem: Boolean(launched.lineItem) } } : {}) },
   });
 
   redirect(`/student/attempt/${attempt.id}`);

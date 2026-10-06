@@ -16,6 +16,7 @@ import { readStoredCertificate, type StoredCertificate } from "./certificate-rul
 import { prisma } from "./db";
 import { gradedEventInput, type GradedEventInput, type WebhookCheck } from "./webhook-rules";
 import { deliverGradedEvent } from "./webhook-delivery";
+import { announceScore } from "./lti-grade";
 
 export interface GradedAttemptFacts {
   attempt: {
@@ -84,11 +85,15 @@ function certificateFact(stored: StoredCertificate): GradedEventInput["certifica
 }
 
 /**
- * Tell the deployment's consumer about a grading, and never let that break it.
+ * Tell everybody outside this deployment about a grading, and never let that
+ * break it.
  *
- * A graded attempt is a fact whether or not anybody outside this deployment
- * hears about it, so a consumer that is unreachable leaves a FAILED delivery row
- * and a log line — not a failed submission.
+ * Two audiences, and they are told in one place because they are the same fact.
+ * A **webhook consumer** is a deployment's own integration; a **learning platform**
+ * is where the attempt started, when it started in one. Neither is allowed to fail
+ * a submission: a graded attempt is a fact whether or not anybody outside hears
+ * about it, so an unreachable consumer leaves a FAILED delivery row and a log line,
+ * and a platform that refused a score leaves the grade exactly where it is.
  */
 export async function announceGraded(facts: GradedAttemptFacts): Promise<void> {
   try {
@@ -99,6 +104,12 @@ export async function announceGraded(facts: GradedAttemptFacts): Promise<void> {
   } catch (error) {
     console.error("[webhook] could not deliver a graded attempt", error);
   }
+
+  // The platform the attempt was launched from, if any. It reads the attempt row
+  // itself, because the launch context is a property of the attempt rather than of
+  // the grading decision, and an instructor re-grading is a different person from
+  // the learner who launched it.
+  await announceScore(facts.attempt.id);
 }
 
 /** The per-check list a payload carries, from grading's own report rows. */

@@ -322,6 +322,13 @@ model Attempt {
   /// so the product reads it here; `/verify` still only reports on the artifact.
   certificateRevokedAt  DateTime?
 
+  /// The learning-platform launch this attempt came from, when it did: which
+  /// platform, which subject, the Assignment & Grade Services line item the score
+  /// belongs on, and the course it was launched in. Read once, when a grade is
+  /// written back — see `src/lib/lti-grade.ts`. Null for every attempt started in
+  /// this product, which is most of them.
+  ltiLaunch Json?
+
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   scenario     Scenario      @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
   assignment   Assignment?   @relation(fields: [assignmentId], references: [id], onDelete: SetNull)

@@ -398,6 +398,17 @@ and creating accounts with **no** local password — a roster says who exists, n
 what their secret is. [`docs/integrations.md`](docs/integrations.md) is the
 consumer's document: routes, signature verification, and what each refusal means.
 
+The third way in is somebody else's product. Set `ONTRAK_LTI_ISSUER` and the
+learner never opens this app at all: their LMS launches a scenario here over
+**LTI 1.3** (`/api/lti/login` then `/api/lti/launch`), this app is the tool and
+the LMS is the platform, and when the attempt is graded the score goes back to the
+line item the launch named — a per-write `client_credentials` token signed with
+the deployment's key, and a score body with both progress fields set, because a
+platform holds a score without them as provisional and it never reaches a
+gradebook. A passback that cannot happen never fails a grading; it says which of
+its three reasons applies. Deep linking is refused by name rather than
+half-supported: this is a tool, not a gradebook or a course shell.
+
 ---
 
 ## Commands
@@ -544,7 +555,7 @@ caught a scrollable region without keyboard access on the landing page.
 | [docs/stack.md](docs/stack.md) | OnTrak's role in the Innotel Platform Stack (TrainingOps) — what it owns, consumes and does not own |
 | [docs/scenario-authoring.md](docs/scenario-authoring.md) | How a scenario is written and how its objectives are graded |
 | [docs/training-evidence.md](docs/training-evidence.md) | Completion records, certificates and the signed export packet |
-| [docs/integrations.md](docs/integrations.md) | The public API and webhooks: routes, signature verification, roster import |
+| [docs/integrations.md](docs/integrations.md) | The public API, webhooks and LTI 1.3: routes, signature verification, roster import, launching from an LMS and grading back to it |
 | [INNOTEL-LABS.md](INNOTEL-LABS.md) | The Innotel Labs product family and how the five products fit together |
 | [docs/family-operations.md](docs/family-operations.md) | The family as deployed: the five hostnames, the Authentik role groups, and how to repair each sign-in path |
 | [ontrak-portal/README.md](ontrak-portal/README.md) | The centralized dashboard — one sign-in, then the products a role belongs in |

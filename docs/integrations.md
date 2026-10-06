@@ -1,4 +1,4 @@
-# Integrations — the public API and webhooks
+# Integrations — the public API, webhooks, and LTI 1.3
 
 Training evidence is only useful if it leaves the platform. This app is the
 system of record for **who was trained, on what, when and how well**; everything
@@ -202,3 +202,62 @@ curl -X POST -H "Authorization: Bearer $ONTRAK_API_TOKEN" \
 `refused` entries never stop a later correct row for the same address from
 importing — only a *second accepted* row for one address in the same file is
 refused, because that is a file disagreeing with itself.
+
+## Launching a scenario from an LMS
+
+A webhook tells a system *that* something happened. LTI is the other direction:
+the learner never opens this app directly — they click a link in their course, and
+the LMS launches them here. This deployment is the LTI **tool**; the LMS is the
+platform. Two routes, and both are refused with 503 and a reason when
+`ONTRAK_LTI_ISSUER` is unset, so a deployment with no platform is untouched.
+
+```
+POST /api/lti/login    the platform's third-party-initiated login
+POST /api/lti/launch   where the platform posts the signed assertion
+```
+
+Register **`<ONTRAK_TRAINING_BASE_URL>/api/lti/launch`** as the tool's redirect
+URI, and give the platform the public half of `ONTRAK_LTI_PRIVATE_KEY` under
+`ONTRAK_LTI_KEY_ID`. Nothing else is discovered: LTI 1.3 has no discovery
+document, so the endpoints and the deployment ids are configuration.
+
+What a launch does here:
+
+* The assertion is verified against the platform's JWKS, then its `iss`, `aud`,
+  `azp`, `nonce`, `deployment_id`, version and message type are checked against
+  the registration. Each refusal is its own sentence — a wrong nonce, a launch
+  from another platform, deep linking — rather than one generic "invalid".
+* The LIS role becomes this product's role: `Instructor` and its cousins to
+  INSTRUCTOR, `Administrator` to ADMIN, `Learner`/`Member` to STUDENT. An
+  instructor who is also a learner is an instructor; a role this deployment does
+  not know becomes `ONTRAK_LTI_DEFAULT_ROLE`.
+* The account is found or created by the platform subject (namespaced
+  `lti:<issuer>#<sub>`, so two platforms' subject `1` are two people) and matched
+  by email on a first launch. The learner then lands on their own home page.
+
+**A launch and a sign-in through a directory are two ways in, and a deployment
+should offer one.** A person who arrives through both is matched by email, so they
+are one account either way, but the stored provider subject follows whichever
+signed in last. See `docs/integrations.md`'s sibling, the SSO section of the
+README.
+
+### The grade goes back
+
+If the launch carries an Assignment & Grade Services endpoint with the score
+scope, the grading context — which platform, which subject, the line item — is
+kept with the browser and copied onto the **attempt** when the learner starts one.
+Grading then writes the score to that line item:
+
+* a `client_credentials` access token minted per write, from an RS256 assertion
+  signed with `ONTRAK_LTI_PRIVATE_KEY`;
+* `application/vnd.ims.lis.v1.score+json` with both `activityProgress` and
+  `gradingProgress` set to their completed values, because a platform holds a
+  score without them as provisional and it never reaches a gradebook;
+* a `timestamp` of when the attempt was graded, so the platform orders it the way
+  this product did.
+
+A passback that cannot happen never fails a grading. It leaves the grade exactly
+where it is and says which of the three reasons applies — there was no line item,
+the launch was not granted the score scope, or this deployment has no platform
+credentials. The learner's score is real whether or not somebody else's server
+took a copy of it.

@@ -48,7 +48,7 @@ flowchart LR
 | Admin control room: platform toggles, software inventory, keys, users, audit | `[x]` |
 | Student experience: timed attempts, autosave, results, personal bests | `[x]` |
 | PWA / mobile quick-keys / offline shell | `[x]` |
-| Test suite (316) + typecheck + production build green | `[x]` |
+| Test suite (338) + typecheck + production build green | `[x]` |
 | Pure, unit-tested form/rule modules; ownership-guarded actions | `[x]` |
 | Versioned migrations (`prisma/migrations`) applied identically by every environment | `[x]` |
 
@@ -286,7 +286,39 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
     local account table. Deployed on Cerulean's Authentik, with the five
     hostnames, the role groups and the redirect URIs written down in
     [docs/family-operations.md](docs/family-operations.md).
-- LTI 1.3 so scenarios can be launched and graded from an LMS.
+- `[x]` **LTI 1.3, so a scenario is launched from an LMS and the grade goes back to it.**
+  - `[x]` **The launch.** `src/lib/lti-rules.ts` is pure and holds every decision:
+    the registration read from the environment (unset means off, half-set is an
+    issue said out loud), the third-party-initiated login, the authorization
+    request (`response_mode=form_post` with `prompt=none`, because it is a launch
+    and not a second sign-in), and the assertion's claims. Every claim that could
+    make a launch somebody else's is checked and each refusal is its own sentence
+    — another platform, another client, an `azp` that is not us, the wrong nonce,
+    a deployment that is not registered, a version that is not 1.3, deep linking,
+    a message type this product does not offer, nobody named, no email, no
+    resource link. `ltiRoleOf` maps the LIS role to this product's, and the more
+    capable role wins a tie, because a learner who is also the instructor is the
+    instructor. `/api/lti/login` starts the round trip with a `state` and a
+    `nonce` in a signed `SameSite=none` cookie — a launch begins in somebody
+    else's frame — and `/api/lti/launch` verifies the assertion against the
+    platform's JWKS with `jose` before anything here trusts it. The account half
+    is `oidc-service.ts`, borrowed whole, with the platform subject namespaced as
+    `lti:<issuer>#<sub>` so two platforms' subject `1` are two people.
+  - `[x]` **The grade.** The launch's Assignment & Grade Services context — which
+    platform, which subject, the line item, the course — travels in a second
+    short-lived signed cookie and is copied onto the **attempt** when the learner
+    starts one, because grading happens later and an instructor re-grading is not
+    the learner who launched it. `announceGraded` then writes the score to the line
+    item, minting its own access token from a `client_credentials` assertion signed
+    with the deployment's key (RS256), as `application/vnd.ims.lis.v1.score+json`
+    with both `*Progress` fields set — without them a platform holds the score as
+    provisional and it never reaches a gradebook. A passback that cannot happen
+    says which of the three reasons it is: no line item, no score scope on the
+    launch, or no credentials here. It never fails a grading.
+  - Covered by `tests/lti.test.ts` (22 checks: configuration, the login refusals,
+    the handshake URL, thirteen assertion refusals, role mapping, the AGS score
+    body, the token assertion, the three passback sentences, the launch context's
+    age, and the client seam).
 - `[x]` **Public API + webhooks for attempt/grading events, and bulk CSV
   import/export of rosters and results.**
   - `[x]` **A grading is announced, not only stored.** `src/lib/webhook-rules.ts`
@@ -326,9 +358,9 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
     line, and a round trip through export and import).
 - **Exit:** an org signs in through its IdP, rosters sync over SCIM, and results
   flow to an LMS and a webhook consumer.
-  - Signing in through an IdP is done, and results now flow to a webhook consumer
-    (or an API reader, or a spreadsheet) — the remaining halves are the directory
-    sync above and LTI 1.3 for an LMS to *launch* through.
+  - Signing in through an IdP is done, a scenario now launches from an LMS and its
+    grade goes back to that LMS, and results flow to a webhook consumer (or an API
+    reader, or a spreadsheet). The one remaining half is the directory sync above.
 
 ### v1.4 — Authoring at scale `[ ]`
 **Goal:** a catalog a team can maintain.
@@ -443,7 +475,11 @@ flowchart LR
 
 - **Container drivers** cost and complexity — sandboxing, cost caps and fallback
   behaviour need explicit limits.
-- **LMS/LTI scope** — decide how much to build versus integrate.
+- ~~**LMS/LTI scope** — decide how much to build versus integrate.~~ **Decided** in
+  v1.3: this product is the *tool*, the LMS is the platform. It implements LTI 1.3
+  launch and Assignment & Grade Services score passback itself (no LTI library, no
+  vendor), and it does not try to be a gradebook, a course shell or a deep-linking
+  server — deep linking is refused by name rather than half-supported.
 - **AI tutor** — keep it assistive and opt-in; never let it auto-grade.
 - **Localization** — sequencing (v1.1 groundwork vs later full locales).
 - **Evidence vs privacy** — training records are personal data; retention and
@@ -463,4 +499,6 @@ flowchart LR
    rather than product work: the ten bundled scenarios have no Spanish overlay
    yet, and their catalog titles and summaries are columns rather than
    definition text.
-4. Decide the LMS/LTI scope — build versus integrate — before starting v1.3.
+4. ~~Decide the LMS/LTI scope — build versus integrate — before starting v1.3.~~
+   **Done** — see the v1.3 bullet above: LTI 1.3 launch and grade passback, written
+   here rather than bought, with deep linking refused on purpose.
