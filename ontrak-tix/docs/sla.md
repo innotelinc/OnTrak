@@ -55,6 +55,13 @@ business hours off every promise · next 2026-12-25 (in 24 days)`. A closure on 
 day the desk is shut anyway costs zero, and the console says so rather than
 hiding it: a desk that lists every Saturday has bought itself no time at all.
 
+Beside a promise the console states less, and the one thing that matters more:
+the ladder on the clients page names the next day the desk is shut — `shut
+2026-12-25 (in 24 days)` — because the cost of the list is what a desk weighs when
+it is *choosing* the closures, while what changes the promise a client is already
+under is that the clock will not run that day. A closure behind the reader, or
+none at all, says nothing rather than "next year".
+
 On read, the list is re-normalised: the `calendar` column is JSON, so a date
 typed straight into the database, or written by an older build, must not put a
 closure the clock cannot interpret in front of a running promise. A holiday that

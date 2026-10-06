@@ -24,6 +24,7 @@ import {
   holidayCostOf,
   isHolidayDate,
   nextClosure,
+  nextClosureLabel,
   normalizeHolidays,
   parseHolidayText,
 } from "../src/lib/holiday-rules";
@@ -239,4 +240,19 @@ test("holidays: a hand-edited row cannot put a closure the clock cannot read in 
   });
   assert.deepEqual(policy.calendar.holidays, ["2026-12-25"]);
   assert.equal(isOpenAt("2027-01-01T12:00:00.000Z", policy.calendar), true, "a bad row does not close a day");
+});
+
+test("holidays: the line the console puts beside a promise names the next day the desk is shut", () => {
+  const business = calendarWithHolidays(weekdayCalendar("Weekdays", 0), [FRIDAY, "2027-01-01"]);
+  assert.equal(nextClosureLabel(business.holidays ?? [], business, NOW), "shut 2026-12-25 (in 24 days)");
+  assert.equal(
+    nextClosureLabel(business.holidays ?? [], business, "2026-12-25T08:00:00.000Z"),
+    "shut 2026-12-25 (today)",
+    "a day the desk is shut right now is the closure to state, not next year's",
+  );
+
+  // Past the last closure there is nothing to say, and an empty line is better
+  // than "shut never": the ladder should read as a promise, not as an absence.
+  assert.equal(nextClosureLabel(business.holidays ?? [], business, "2027-02-01T09:00:00.000Z"), null);
+  assert.equal(nextClosureLabel([], business, NOW), null);
 });

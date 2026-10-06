@@ -200,6 +200,29 @@ export function nextClosure(
   return { date: ahead, daysAway: Math.round((Date.parse(`${ahead}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / DAY_MS) };
 }
 
+/** How far ahead a date is, said the way a person reads it. */
+function daysAwayText(daysAway: number): string {
+  return daysAway === 0 ? "today" : `in ${daysAway} day${daysAway === 1 ? "" : "s"}`;
+}
+
+/**
+ * The next closure as a phrase to sit beside a promise, or `null` when the desk
+ * has nothing shut ahead of it.
+ *
+ * Separate from `describeHolidays` because the two answer different questions:
+ * the editor wants the whole cost of the list it is showing, while a ladder that
+ * is stating what the desk promised only needs the one fact that changes the
+ * promise — that the desk is shut on the 25th and the clock will not run.
+ */
+export function nextClosureLabel(
+  dates: readonly HolidayDate[],
+  calendar: BusinessCalendar,
+  at: Date | string,
+): string | null {
+  const next = nextClosure(dates, at, calendar);
+  return next ? `shut ${next.date} (${daysAwayText(next.daysAway)})` : null;
+}
+
 /** The calendar's local date for an instant, as `YYYY-MM-DD`. */
 export function localDateOf(instant: Date | string, calendar: BusinessCalendar): HolidayDate {
   const ms = instant instanceof Date ? instant.getTime() : Date.parse(instant);
@@ -217,6 +240,6 @@ export function describeHolidays(
   const cost = holidayCost(calendar, dates);
   const hours = Math.round(cost.totalMinutes / 6) / 10;
   const next = nextClosure(dates, at, calendar);
-  const ahead = next ? ` · next ${next.date}${next.daysAway === 0 ? " (today)" : ` (in ${next.daysAway} day${next.daysAway === 1 ? "" : "s"})`}` : "";
+  const ahead = next ? ` · next ${next.date} (${daysAwayText(next.daysAway)})` : "";
   return `${dates.length} closure${dates.length === 1 ? "" : "s"} · ${hours} business hour${hours === 1 ? "" : "s"} off every promise${ahead}`;
 }

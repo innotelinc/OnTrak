@@ -452,9 +452,12 @@ to stand on its own.
     longer resets a 24×7 promise onto weekdays. The console states the
     consequence and not the count — *2 closures · 16 business hours off every
     promise · next 2026-12-25 (in 24 days)* — and a closure the desk is shut
-    anyway costs zero, which is worth seeing. Reads re-normalise the list, so a
+    anyway costs zero, which is worth seeing. Where the promise is *read* rather
+    than edited — the ladder on the clients page — the console states the next
+    closure alone (`shut 2026-12-25 (in 24 days)`), since what changes a promise
+    already owed is that the clock will not run. Reads re-normalise the list, so a
     hand-edited row fails towards the desk being open. Covered by
-    `tests/tix-holidays.test.ts` (12 checks, rules and service both).
+    `tests/tix-holidays.test.ts` (13 checks, rules and service both).
 - Notifications: in-app + email digests; per-user preferences.
   - `[x]` Escalation notifications: each rung the sweep raises writes an
     in-app `Notification` addressed to its audience role, and hands an email

@@ -15,6 +15,7 @@ import { clientSurveyAnswered, clientSurveyStatus } from "../../../lib/client-su
 import { satisfactionLabel } from "../../../lib/csat-rules";
 import { resolveSlaPolicy } from "../../../lib/sla-rules";
 import { describeScope } from "../../../lib/sla-policy-service";
+import { nextClosureLabel } from "../../../lib/holiday-rules";
 import { formatMoney } from "../../../lib/time-rules";
 import { brandFor, brandingSummary } from "../../../lib/client-branding-rules";
 import { formatRate, retainerSummary } from "../../../lib/billing-rules";
@@ -191,6 +192,19 @@ export default async function ClientsPage({
                             (because {resolution.because}
                             {resolution.policy.name ? `: ${resolution.policy.name}` : ""})
                           </span>
+                          {/* The closures the promise is measured through. Stated
+                              here, on the rung that answered, because this is
+                              where a person reads what the desk owes — a calendar
+                              with the desk shut on the 25th is a different promise
+                              from the same minutes without it. */}
+                          {(() => {
+                            const shut = nextClosureLabel(
+                              resolution.policy.calendar.holidays ?? [],
+                              resolution.policy.calendar,
+                              now,
+                            );
+                            return shut ? <span className="text-attention"> · {shut}</span> : null;
+                          })()}
                         </>
                       ) : (
                         <span className="text-ink-faint">no policy covers this priority</span>
@@ -478,6 +492,9 @@ export default async function ClientsPage({
           ) : (
             <p key={policy.id} className="text-xs text-ink-soft">
               <span className="font-semibold text-ink">{policy.name}</span> — {describeScope(policy)} · {policy.calendar.name}
+              {nextClosureLabel(policy.calendar.holidays ?? [], policy.calendar, now)
+                ? ` · ${nextClosureLabel(policy.calendar.holidays ?? [], policy.calendar, now)}`
+                : ""}
             </p>
           ),
         )}
