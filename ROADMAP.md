@@ -48,7 +48,7 @@ flowchart LR
 | Admin control room: platform toggles, software inventory, keys, users, audit | `[x]` |
 | Student experience: timed attempts, autosave, results, personal bests | `[x]` |
 | PWA / mobile quick-keys / offline shell | `[x]` |
-| Test suite (338) + typecheck + production build green | `[x]` |
+| Test suite (359) + typecheck + production build green | `[x]` |
 | Pure, unit-tested form/rule modules; ownership-guarded actions | `[x]` |
 | Versioned migrations (`prisma/migrations`) applied identically by every environment | `[x]` |
 
@@ -270,10 +270,22 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
     `/api/sso/callback` with a cookie jar, then fetches a protected page with the
     session it issued, so the claim being proved is about the routes and not only
     about the rules.
-  - SCIM 2.0 provisioning at the provider is **shipped** (Sentinel's S2): Users and
-    Groups, a connector token minted in the console, and deprovisioning that ends
-    sessions and revokes their tokens. On this side there is no directory *sync*
-    from AD/Entra/Google yet — that is the rest of S2.
+  - `[x]` **A directory pushes people in.** SCIM 2.0 provisioning at the provider is
+    shipped (Sentinel's S2): Users and Groups, a connector token minted in the
+    console, and deprovisioning that ends sessions and revokes their tokens. The
+    training app is now a SCIM 2.0 **service provider** in its own right, so an
+    org's directory can point its Entra or Okta connector straight at
+    `/api/scim/v2` rather than only going through Sentinel: a single bearer token
+    (`ONTRAK_SCIM_TOKEN`), `ServiceProviderConfig`, `Users` (list, create, get,
+    replace, patch, delete) and `Groups` (list, get, patch). It deliberately will
+    not invent or destroy local structure — a class is owned by an instructor, so
+    `Groups` creation, rename and delete are refused `mutability` — and deleting a
+    user **deactivates** them rather than erasing their attempts. A provisioned
+    account has **no local password**, exactly like one an SSO sign-in or a roster
+    import creates. Covered by `tests/scim.test.ts` (20 checks: the filter subset
+    and its refusals, Entra's URN-form paths, both PATCH shapes, PUT replacement
+    semantics, the `uniqueness` 409, the deprovision audit, and membership
+    replacement that keeps `joinedAt` and `isMentor`).
   - MFA is enforced at the provider, so an organization that requires a second
     factor gets it here without the training app implementing one; a session is
     refused until a confirmed factor has been verified.
@@ -359,8 +371,10 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
 - **Exit:** an org signs in through its IdP, rosters sync over SCIM, and results
   flow to an LMS and a webhook consumer.
   - Signing in through an IdP is done, a scenario now launches from an LMS and its
-    grade goes back to that LMS, and results flow to a webhook consumer (or an API
-    reader, or a spreadsheet). The one remaining half is the directory sync above.
+    grade goes back to that LMS, results flow to a webhook consumer (or an API
+    reader, or a spreadsheet), and a directory can push people in over SCIM 2.0
+    from Entra, Okta or Sentinel. Scheduled sync stays the directory's job, not
+    this app's: this surface accepts a push, it does not poll.
 
 ### v1.4 — Authoring at scale `[ ]`
 **Goal:** a catalog a team can maintain.

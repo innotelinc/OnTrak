@@ -409,6 +409,22 @@ gradebook. A passback that cannot happen never fails a grading; it says which of
 its three reasons applies. Deep linking is refused by name rather than
 half-supported: this is a tool, not a gradebook or a course shell.
 
+The last way in is a **directory**, and it is a push rather than a sign-in. Set
+`ONTRAK_SCIM_TOKEN` and the app exposes a SCIM 2.0 service provider at
+`/api/scim/v2` — `Users` (list, create, get, replace, patch, delete),
+`Groups` (list, get, patch) and `ServiceProviderConfig` — so an Entra or Okta
+connector can provision, rename, deactivate and class-assign the roster without a
+human or a spreadsheet. The design is the same as everywhere else here: the
+surface is a *port* onto accounts this app already owns, a provisioned person has
+no local password at all, and deleting a user **deactivates** them rather than
+erasing the attempts and certificates behind them. It will not invent a class or
+reassign one — a cohort is an instructor's, so `Groups` creation, rename and
+delete are refused with SCIM's own `mutability` rather than half-honoured. Every
+accepted push is audited (`scim.user.provision`, `scim.user.update`,
+`scim.user.deprovision`, `scim.group.members`). `docs/integrations.md` is the
+connector's document. With no token set the whole surface answers 503 with a
+reason, so a deployment that never uses it is untouched.
+
 ---
 
 ## Commands
@@ -460,6 +476,9 @@ src/
     oidc-rules.ts             single sign-on decisions (discovery, claims, roles)
     oidc-client.ts            the two network calls, and PKCE — plus a fixture client
     oidc-service.ts           what a verified assertion does to a local account
+    scim-rules.ts             directory-sync (SCIM 2.0) decisions, pure
+    scim-service.ts           what a pushed user or group does to a local account
+    scim-store-prisma.ts      the SCIM port against the account tables
     templates.ts              starter definitions for the scenario editor
 prisma/
   schema.prisma               data model
@@ -470,6 +489,7 @@ tests/
   desktop-render.test.ts      the desktop surface still server-renders
   oidc.test.ts                single sign-on, including a real provider on loopback
   sso-live.test.ts            opt-in: the app's own SSO routes against a running app
+  scim.test.ts                the directory-sync service provider
   support/local-idp.ts        a real, minimal OpenID provider for the tests above
   tsconfig.json               JSX-enabled config just for the tests
 ```

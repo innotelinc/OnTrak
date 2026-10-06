@@ -1,15 +1,17 @@
-# Integrations — the public API, webhooks, and LTI 1.3
+# Integrations — the public API, webhooks, LTI 1.3, and directory sync
 
 Training evidence is only useful if it leaves the platform. This app is the
 system of record for **who was trained, on what, when and how well**; everything
 below exists so an LMS, a skills matrix or a spreadsheet somebody maintains can
 be told about it without a human in the middle.
 
-Two surfaces, one dataset:
+Three surfaces, one dataset:
 
 * a **webhook** so a consumer hears about a grading as it happens, and
 * a **read API** so the same consumer can catch up after it was down, plus a
-  **CSV** path for the people who will never run an integration.
+  **CSV** path for the people who will never run an integration, and
+* a **SCIM 2.0** surface so a directory can push people *in* without a human or a
+  spreadsheet.
 
 Set `ONTRAK_API_TOKEN` for the read API and the roster import;
 `ONTRAK_WEBHOOK_URL` + `ONTRAK_WEBHOOK_SECRET` for delivery. An unconfigured
@@ -261,3 +263,83 @@ where it is and says which of the three reasons applies — there was no line it
 the launch was not granted the score scope, or this deployment has no platform
 credentials. The learner's score is real whether or not somebody else's server
 took a copy of it.
+
+## A directory that pushes people in
+
+Everything above is this app being *asked*. A directory is the other direction:
+it decides who exists and tells this app, over **SCIM 2.0**. Set
+`ONTRAK_SCIM_TOKEN` and the app becomes a SCIM 2.0 **service provider** at
+`/api/scim/v2` — the same protocol OnTrak Sentinel speaks at its own `/scim/v2`,
+so a connector can be pointed at either.
+
+```
+GET    /api/scim/v2/ServiceProviderConfig   what this surface supports
+GET    /api/scim/v2/Users                   list, filtered and paged
+POST   /api/scim/v2/Users                   create one person
+GET    /api/scim/v2/Users/{id}
+PUT    /api/scim/v2/Users/{id}              replace (PUT semantics)
+PATCH  /api/scim/v2/Users/{id}              add / replace / remove
+DELETE /api/scim/v2/Users/{id}              deactivate (204)
+GET    /api/scim/v2/Groups                  the classes that exist
+GET    /api/scim/v2/Groups/{id}
+PATCH  /api/scim/v2/Groups/{id}             replace the membership
+```
+
+Authenticate every call but discovery with the token:
+
+```bash
+curl -H "Authorization: Bearer $ONTRAK_SCIM_TOKEN" \
+     -H "Content-Type: application/scim+json" \
+     "https://training.example.edu/api/scim/v2/Users?filter=userName%20eq%20%22ada%40example.edu%22"
+```
+
+Like the read API, an unconfigured deployment answers `503` with a reason and a
+wrong token answers `401` with a `WWW-Authenticate: Bearer` challenge — "nobody
+set a token" and "your token is wrong" are different problems, and only one is
+the caller's. `GET /api/scim/v2/ServiceProviderConfig` needs no token and is
+where a connector should look first: it advertises `Patch` support honestly and
+says `Bulk`, `changePassword` and `sort` are **false**, so a connector does not
+discover that by trial and error.
+
+A push does what a roster import does, and the reasoning is the same:
+
+* An account provisioned here has **no local password** — a directory says who
+exists, not what their secret is.
+* People are matched by `externalId` first, then by email, so a rename at the
+directory **moves** the account (and its attempts and certificates) instead of
+creating a second one. A create that would collide with an existing email or
+`externalId` is refused `409` with SCIM's `uniqueness`. The `externalId` this app
+stores for a directory push is the directory's own id; an LTI or SSO subject is
+namespaced separately, so the two never fight over one column.
+* `active: false` — or a `DELETE`, which is the same decision — **deactivates**
+the account; it never erases the attempts and certificates behind it. Sentinel
+owns the harder "end the sessions and revoke the tokens" behaviour for the family
+identity; this surface only stops the person signing in here.
+* `resourceRole` (or a `roles` array) carries the role; `STUDENT` is the default
+for a push that names none, and the vocabulary is the same three roles the app
+uses everywhere.
+* Filtering is deliberately a **subset**: `eq` on `userName`, `externalId`,
+  `displayName` and `id`, with the `:` schema prefix Entra sends
+  (`urn:ietf:params:scim:schemas:core:2.0:User:userName`) stripped first.
+  Anything else is refused `invalidFilter` rather than silently ignored.
+* Both PATCH shapes are read: Entra's path form
+  (`{op, path, value}`) and Okta's object form (`{op, value: {…}}`). Unsupported
+  operations are refused by name — an `add` where the attribute may not be added,
+  an unknown path.
+
+**Classes are not the directory's to invent.** A `Group` here is a cohort owned by
+an instructor, so `POST /Groups`, renaming a group and deleting one are all
+refused `mutability`: a sync may replace *who is in* a class (membership is
+replaced wholesale, and the members who stay keep their `joinedAt` and mentor
+flag), but it may not create a class nobody teaches or disband one. A membership
+naming a person who does not exist is refused `invalidValue`.
+
+Every accepted push is audited as `scim.user.provision`, `scim.user.update`,
+`scim.user.deprovision` or `scim.group.members`, so "where did this account come
+from?" has an answer.
+
+Finally, note what this surface is **not**: it does not poll. A scheduled sync is
+the directory's job — this app accepts a push whenever the directory sends one,
+and a deployment that stops receiving pushes simply stops changing. The
+[OnTrak Sync](ontrak-sync/README.md) host-inventory product is the family's
+scheduled-sync example if a connector needs a model.
