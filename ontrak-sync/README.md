@@ -114,9 +114,12 @@ applies to a finding. The instant never moves on a second report, because the qu
 long has this been true* and an answer that resets to "just now" every scan answers a different
 one. What the pill adds is the age, so a host that reported it this morning reads differently
 from one that has been waiting since the last patch window; the scans behind it are kept too,
-which is what tells a daily probe apart from a weekly one at the same age. A database written
-before these columns starts an existing reboot at the last time it was asked about, since an
-earlier instant would be invented rather than recovered.
+which is what tells a daily probe apart from a weekly one at the same age. The **run report
+carries it too** — a scan that leaves hosts waiting writes the count and the oldest age beside
+its finding counts, because a pending reboot is not a finding and would otherwise be counted
+only as the update that asked for the restart. A database written before these columns starts an
+existing reboot at the last time it was asked about, since an earlier instant would be invented
+rather than recovered.
 
 ### Modes
 
@@ -193,7 +196,7 @@ writes to it.
 ## Tests
 
 ```bash
-make test        # 399 tests, no Network required
+make test        # 406 tests, no Network required
 ```
 
 The suite covers the parsers, the cron arithmetic, the finding lifecycle, the scan engine (against

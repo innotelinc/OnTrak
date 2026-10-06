@@ -856,6 +856,12 @@ def scan_network(conn, settings: Settings, policy: Policy, *, trigger: str = "ma
     total = sum(r.findings for r in reports)
     status = "ok" if looked else "error"
     summary = _run_summary(reports)
+    # What the scan left waiting to restart, beside what it found. A pending reboot
+    # is not a finding, so without this the run report would count the update that
+    # asked for the restart and say nothing about the restart still owed.
+    reboot_note = db.reboot_run_note(db.list_hosts(conn))
+    if reboot_note:
+        summary = f"{summary}; {reboot_note}"
     db.finish_run(conn, run_id, status=status, findings=total, summary=summary)
     db.log(conn, f"scan finished: {summary}", run_id=run_id)
     # The reconcile runs inside the scan so the scheduled timer carries it, and so

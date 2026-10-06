@@ -32,6 +32,7 @@ A finding that is no longer detected is deleted by the next scan, except
 
 from __future__ import annotations
 
+import calendar
 import json
 import sqlite3
 import time
@@ -430,6 +431,50 @@ def record_reboot_state(conn, *, name: str, state) -> None:
         (int(bool(state.known)), int(bool(state.required)),
          "\n".join(state.packages) or None, now, since, scans, name),
     )
+
+
+def reboot_age_seconds(since: str | None, *, now: str) -> int | None:
+    """Whole seconds a pending reboot has been waiting, or `None` when unreadable.
+
+    A window with no readable opening instant — a row written before the column
+    existed, or a hand-edited file — has no age to state, and is reported as unknown
+    rather than as zero: "waiting 0s" reads as "this was just found", which is the
+    opposite of what a row without an instant actually tells you.
+    """
+    if not since:
+        return None
+    try:
+        opened = calendar.timegm(time.strptime(since, "%Y-%m-%dT%H:%M:%SZ"))
+        current = calendar.timegm(time.strptime(now, "%Y-%m-%dT%H:%M:%SZ"))
+    except (ValueError, TypeError):
+        return None
+    return max(0, current - opened)
+
+
+def reboot_run_note(hosts, *, now: str | None = None) -> str:
+    """The reboot half of a run's summary line, or "" when nobody is waiting.
+
+    The age is what turns a pending reboot into a decision somebody has to make: a
+    host that reported it this morning is working as intended, one that has been
+    waiting since the last patch window is a window nobody took. The run report is
+    where that decision is looked for, so the count and the oldest age are written
+    beside the finding counts rather than living only as a pill on the hosts page.
+
+    The age is stated only from a whole day up, matching what the hosts page shows:
+    "oldest waiting 0d" on the scan that just found it is noise. A window with no
+    readable instant is counted but does not drag the oldest age in either direction
+    — the count of hosts is a fact, and the oldest age is a separate one.
+    """
+    waiting = [h for h in hosts if int(h.get("reboot_required") or 0)]
+    if not waiting:
+        return ""
+    ages = [reboot_age_seconds(h.get("reboot_since"), now=now or utcnow()) for h in waiting]
+    known = [age for age in ages if age is not None]
+    note = f"{len(waiting)} host(s) waiting to restart"
+    days = max(known, default=0) // 86_400
+    if days >= 1:
+        note += f", oldest waiting {days}d"
+    return note
 
 
 # ── targets ──────────────────────────────────────────────────────────────────

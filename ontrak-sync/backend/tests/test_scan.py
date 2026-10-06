@@ -1246,6 +1246,30 @@ class PendingReboot(ScanCase):
             if "waiting for a reboot" in row["message"]]
         self.assertTrue(warning, "the reboot is a warning, not a note")
 
+    def run_summary(self, run_id):
+        return self.conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()["summary"]
+
+    def test_the_run_report_names_how_many_hosts_are_waiting(self):
+        # A pending reboot is not a finding, so the run report would otherwise count
+        # the update that asked for the restart and say nothing about the restart owed.
+        self.fake.reboot = self.REQUIRED
+        result = self.scan()
+        self.assertIn("1 host(s) waiting to restart", self.run_summary(result["run_id"]))
+
+    def test_the_run_report_ages_the_oldest_reboot(self):
+        self.fake.reboot = self.REQUIRED
+        self.scan()
+        # Backdate the window as if the reboot had been reported days ago; the next
+        # scan keeps the opening instant (see reboot_window) and the report ages it.
+        self.conn.execute("UPDATE hosts SET reboot_since='2026-01-01T00:00:00Z' WHERE name='i1'")
+        result = self.scan()
+        self.assertIn("oldest waiting", self.run_summary(result["run_id"]))
+        self.assertIn("waiting to restart", self.run_summary(result["run_id"]))
+
+    def test_a_run_with_nobody_waiting_says_nothing_about_a_reboot(self):
+        result = self.scan()
+        self.assertNotIn("waiting to restart", self.run_summary(result["run_id"]))
+
     def test_a_probe_that_could_not_answer_does_not_erase_a_known_reboot(self):
         # The rule the whole module is built on: absence of evidence is not evidence
         # of absence. A slow SSH connection must not turn "this host needs a reboot"

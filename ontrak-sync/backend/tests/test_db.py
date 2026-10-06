@@ -426,6 +426,43 @@ class RebootState(unittest.TestCase):
             known=True, required=True, packages=("linux-image-generic",)))
         self.assertEqual(1, self.row()["reboot_scans"])
 
+    def test_the_run_note_counts_the_hosts_waiting_and_the_oldest_age(self):
+        note = db.reboot_run_note(
+            [
+                {"reboot_required": 1, "reboot_since": "2026-10-01T00:00:00Z"},
+                {"reboot_required": 1, "reboot_since": "2026-10-05T00:00:00Z"},
+                {"reboot_required": 0, "reboot_since": None},
+            ],
+            now="2026-10-06T00:00:00Z",
+        )
+        self.assertEqual("2 host(s) waiting to restart, oldest waiting 5d", note)
+
+    def test_a_run_with_nobody_waiting_says_nothing(self):
+        self.assertEqual("", db.reboot_run_note(
+            [{"reboot_required": 0, "reboot_since": None}], now="2026-10-06T00:00:00Z"))
+        self.assertEqual("", db.reboot_run_note([], now="2026-10-06T00:00:00Z"))
+
+    def test_the_age_is_stated_only_from_a_whole_day(self):
+        # The scan that just found it: waiting, but not yet a day old, so the count is
+        # stated and the age is not — the same rule the hosts page's pill applies.
+        self.assertEqual(
+            "1 host(s) waiting to restart",
+            db.reboot_run_note([{"reboot_required": 1, "reboot_since": "2026-10-05T20:00:00Z"}],
+                               now="2026-10-06T00:00:00Z"),
+        )
+
+    def test_a_window_with_no_readable_instant_is_counted_but_not_aged(self):
+        note = db.reboot_run_note(
+            [
+                {"reboot_required": 1, "reboot_since": None},
+                {"reboot_required": 1, "reboot_since": "2026-10-01T00:00:00Z"},
+            ],
+            now="2026-10-06T00:00:00Z",
+        )
+        self.assertEqual("2 host(s) waiting to restart, oldest waiting 5d", note)
+        self.assertIsNone(db.reboot_age_seconds("not-a-date", now="2026-10-06T00:00:00Z"))
+        self.assertIsNone(db.reboot_age_seconds(None, now="2026-10-06T00:00:00Z"))
+
     def test_a_reboot_already_on_record_gains_a_window_from_its_last_ask(self):
         # The only evidence a database from before these columns has is the last time
         # it asked; an earlier instant would be invented, not recovered.
