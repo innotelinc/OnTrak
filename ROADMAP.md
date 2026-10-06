@@ -48,7 +48,7 @@ flowchart LR
 | Admin control room: platform toggles, software inventory, keys, users, audit | `[x]` |
 | Student experience: timed attempts, autosave, results, personal bests | `[x]` |
 | PWA / mobile quick-keys / offline shell | `[x]` |
-| Test suite (362) + typecheck + production build green | `[x]` |
+| Test suite (365) + typecheck + production build green | `[x]` |
 | Pure, unit-tested form/rule modules; ownership-guarded actions | `[x]` |
 | Versioned migrations (`prisma/migrations`) applied identically by every environment | `[x]` |
 
@@ -288,7 +288,10 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
     replacement that keeps `joinedAt` and `isMentor`). The operator's side —
     pointing Entra or Okta at the base URL, the attribute mapping, and where the
     token lives and how to rotate it — is in [`docs/integrations.md`](docs/integrations.md)
-    and [`docs/family-operations.md`](docs/family-operations.md).
+    and [`docs/family-operations.md`](docs/family-operations.md). The connector
+    paths themselves Entra and Okta drive — Entra's schema-URN filter and Okta's
+    object-form PATCH — are walked through the *running* routes by the opt-in
+    `tests/scim-live.test.ts`.
   - MFA is enforced at the provider, so an organization that requires a second
     factor gets it here without the training app implementing one; a session is
     refused until a confirmed factor has been verified.
@@ -304,7 +307,9 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
 - `[x]` **LTI 1.3, so a scenario is launched from an LMS and the grade goes back to it.**
   - `[x]` **The launch.** `src/lib/lti-rules.ts` is pure and holds every decision:
     the registration read from the environment (unset means off, half-set is an
-    issue said out loud), the third-party-initiated login, the authorization
+    issue said out loud — and `src/instrumentation.ts` prints it once at boot, so
+    a mis-wired `ONTRAK_LTI_*` block is a line in the app log rather than a
+    learner discovering a 503), the third-party-initiated login, the authorization
     request (`response_mode=form_post` with `prompt=none`, because it is a launch
     and not a second sign-in), and the assertion's claims. Every claim that could
     make a launch somebody else's is checked and each refusal is its own sentence
@@ -330,15 +335,17 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
     provisional and it never reaches a gradebook. A passback that cannot happen
     says which of the three reasons it is: no line item, no score scope on the
     launch, or no credentials here. It never fails a grading.
-  - Covered by `tests/lti.test.ts` (22 checks: configuration, the login refusals,
-    the handshake URL, thirteen assertion refusals, role mapping, the AGS score
-    body, the token assertion, the three passback sentences, the launch context's
-    age, and the client seam), and — for the half that actually leaves the building
-    — by `tests/lti-passback.test.ts`, which drives a real AGS token endpoint that
-    verifies the RS256 client assertion against the tool's registered key, so the
-    signature, its audience and its `kid` are proved rather than assumed. Mint the
-    pair with `make lti-key`, which prints the `.env` lines and the public JWKS to
-    register with the platform.
+  - Covered by `tests/lti.test.ts` (24 checks: configuration and the boot warning,
+    the login refusals, the handshake URL, thirteen assertion refusals, role
+    mapping, the AGS score body, the token assertion, the three passback sentences,
+    the launch context's age, and the client seam), and — for the half that
+    actually leaves the building — by `tests/lti-passback.test.ts`, which drives a
+    real AGS token endpoint that verifies the RS256 client assertion against the
+    tool's registered key, so the signature, its audience and its `kid` are proved
+    rather than assumed. Mint the pair with `make lti-key`, which prints the `.env`
+    lines plus the public key as both a JWKS and a PEM (Moodle's "RSA key" field
+    takes the PEM) to register with the platform; the end-to-end Moodle walkthrough
+    is [docs/moodle-lti.md](docs/moodle-lti.md).
 - `[x]` **Public API + webhooks for attempt/grading events, and bulk CSV
   import/export of rosters and results.**
   - `[x]` **A grading is announced, not only stored.** `src/lib/webhook-rules.ts`

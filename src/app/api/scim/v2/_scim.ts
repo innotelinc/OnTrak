@@ -18,7 +18,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { recordAudit } from "@/lib/audit";
 import { bearerToken, serviceTokenMatches } from "@/lib/its-intake-rules";
 import { deploymentOrigin } from "@/lib/oidc-rules";
-import { SCIM_CONTENT_TYPE, SCIM_ERROR_SCHEMA, type ScimError } from "@/lib/scim-rules";
+import { SCIM_CONTENT_TYPE, SCIM_ERROR_SCHEMA, SCIM_ROOT, type ScimError } from "@/lib/scim-rules";
 import { ScimService } from "@/lib/scim-service";
 import { prismaScimStore } from "@/lib/scim-store-prisma";
 
@@ -86,8 +86,13 @@ export function methodNotAllowed(allowed: readonly string[]): NextResponse {
  * The base URL is what `meta.location` links are built from, and it is stated by the
  * deployment (`ONTRAK_TRAINING_BASE_URL`) rather than guessed at the socket, so a
  * link a connector was handed keeps resolving behind a proxy.
+ *
+ * It is the **SCIM root**, not the app's own origin: `toScimUser`/`toScimGroup` append
+ * `SCIM_ENDPOINTS.users` (`/Users`) to it, and a connector stores that `location` and
+ * calls it back for every later write — a link missing `/api/scim/v2` is a 404 on
+ * somebody's next sync, not a cosmetic difference.
  */
 export function scimServiceFor(request: NextRequest): ScimService {
-  const base = deploymentOrigin(process.env.ONTRAK_TRAINING_BASE_URL, request.nextUrl.origin);
-  return new ScimService(prismaScimStore, base, (event) => recordAudit(event));
+  const origin = deploymentOrigin(process.env.ONTRAK_TRAINING_BASE_URL, request.nextUrl.origin);
+  return new ScimService(prismaScimStore, `${origin}${SCIM_ROOT}`, (event) => recordAudit(event));
 }

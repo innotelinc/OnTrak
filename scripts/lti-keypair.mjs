@@ -30,12 +30,17 @@
  *   node scripts/lti-keypair.mjs --kid my-kid    # mint under a chosen key id
  *   node scripts/lti-keypair.mjs --json          # the minted JWKS alone
  *   node scripts/lti-keypair.mjs --from-env      # the public half of the deployed key
+ *   node scripts/lti-keypair.mjs --from-env --pem  # ...as a PEM, for Moodle
  *
  * `--from-env` reads `ONTRAK_LTI_PRIVATE_KEY` — from the environment, or from this
  * checkout's `.env` when it is not exported — and prints the JWKS to hand an LMS.
  * Re-registering a key a deployment already holds therefore never means minting a
  * second one, which would leave the two sides disagreeing. It uses only Node's
  * built-in crypto, so it runs wherever the key already lives.
+ *
+ * Two LMSes want the same key in two shapes. Most take a **JWKS**; Moodle's manual
+ * tool form takes a **PEM public key** under "Public key type: RSA key" instead, so
+ * both are printed, and `--pem` asks for the PEM alone (see docs/moodle-lti.md).
  *
  * `make lti-key` runs the first form; `make lti-key ARGS=--from-env` the last.
  */
@@ -73,6 +78,13 @@ function publicJwks(privatePem) {
   return { keys: [{ ...jwk, kid, alg: "RS256", use: "sig" }] };
 }
 
+/** The same public half as an SPKI PEM, the shape Moodle's "RSA key" field wants. */
+function publicPem(privatePem) {
+  return createPublicKey(createPrivateKey(privatePem))
+    .export({ type: "spki", format: "pem" })
+    .trim();
+}
+
 if (args.includes("--from-env")) {
   // Republish the public half of the key this deployment already holds.
   const pem = setting("ONTRAK_LTI_PRIVATE_KEY").replace(/\\n/g, "\n").trim();
@@ -82,7 +94,8 @@ if (args.includes("--from-env")) {
     );
     process.exit(1);
   }
-  process.stdout.write(`${JSON.stringify(publicJwks(pem), null, 2)}\n`);
+  const output = args.includes("--pem") ? publicPem(pem) : JSON.stringify(publicJwks(pem), null, 2);
+  process.stdout.write(`${output}\n`);
   process.exit(0);
 }
 
@@ -118,8 +131,14 @@ if (jsonOnly) {
       "",
       JSON.stringify(jwks, null, 2),
       "",
+      "#    Some platforms — Moodle among them — take the key as a PEM instead of a",
+      "#    JWKS: choose \"Public key type: RSA key\" and paste this:",
+      "",
+      publicPem(pem),
+      "",
       "# Re-print this block for a key already in .env with:",
-      "#   make lti-key ARGS=--from-env",
+      "#   make lti-key ARGS=--from-env            # the JWKS",
+      "#   make lti-key ARGS=\"--from-env --pem\"   # the PEM",
       "",
       "# Full instructions: docs/integrations.md, \"The grade goes back\".",
       "",

@@ -209,6 +209,26 @@ export function ltiConfigIssues(env: Record<string, string | undefined> = proces
   return result.enabled && result.config === null ? result.issues : [];
 }
 
+/**
+ * The one line a boot log should print when a platform is registered but unusable.
+ *
+ * `ltiConfigIssues` already knows every way a registration can be half-wired — a
+ * missing endpoint, a private key with no key id, a token endpoint with nothing to
+ * sign with — and the routes answer `503` with the first of them. None of that is
+ * visible anywhere until somebody clicks the platform's link, though, and by then
+ * the person seeing it is a learner with no way to tell a broken deployment from a
+ * broken product. So the deployment says it out loud at startup instead.
+ *
+ * Returns `null` when LTI is off — the ordinary case, and not a mistake — or when
+ * the registration is complete. Wording a whole sentence rather than a code is
+ * deliberate: an operator reads this in a container log, not a stack trace.
+ */
+export function ltiConfigWarning(env: Record<string, string | undefined> = process.env): string | null {
+  const issues = ltiConfigIssues(env);
+  if (issues.length === 0) return null;
+  return `[lti] This deployment has a learning platform configured, but it cannot be used, so /api/lti/* answers 503: ${issues.join(" ")}`;
+}
+
 /** Split a comma- or newline-separated value into trimmed, non-empty entries. */
 export function splitList(value: string): string[] {
   return value

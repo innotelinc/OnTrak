@@ -407,8 +407,10 @@ the deployment's key (`make lti-key` mints one and prints the public half to
 register with the platform), and a score body with both progress fields set,
 because a platform holds a score without them as provisional and it never reaches
 a gradebook. A passback that cannot happen never fails a grading; it says which of
-its three reasons applies. Deep linking is refused by name rather than
-half-supported: this is a tool, not a gradebook or a course shell.
+its three reasons applies. `docs/moodle-lti.md` is the operator's runbook for
+standing this up in a real Moodle site, from the keypair to the role mapping.
+Deep linking is refused by name rather than half-supported: this is a tool, not a
+gradebook or a course shell.
 
 The last way in is a **directory**, and it is a push rather than a sign-in. Set
 `ONTRAK_SCIM_TOKEN` and the app exposes a SCIM 2.0 service provider at
@@ -580,6 +582,7 @@ caught a scrollable region without keyboard access on the landing page.
 | [docs/scenario-authoring.md](docs/scenario-authoring.md) | How a scenario is written and how its objectives are graded |
 | [docs/training-evidence.md](docs/training-evidence.md) | Completion records, certificates and the signed export packet |
 | [docs/integrations.md](docs/integrations.md) | The public API, webhooks, LTI 1.3 and SCIM 2.0 directory sync: routes, signature verification, roster import, launching from an LMS with grade passback, and letting a directory push people in |
+| [docs/moodle-lti.md](docs/moodle-lti.md) | Registering the training app in a real Moodle LTI 1.3 site, end to end: the keypair, the tool form, the identifiers back into `.env`, and the role mapping |
 | [INNOTEL-LABS.md](INNOTEL-LABS.md) | The Innotel Labs product family and how the five products fit together |
 | [docs/family-operations.md](docs/family-operations.md) | The family as deployed: the five hostnames, the Authentik role groups, and how to repair each sign-in path |
 | [ontrak-portal/README.md](ontrak-portal/README.md) | The centralized dashboard — one sign-in, then the products a role belongs in |

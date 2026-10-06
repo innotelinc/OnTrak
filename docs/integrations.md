@@ -299,8 +299,14 @@ A key a deployment already holds can be re-published without minting a second on
 which would leave the two sides disagreeing:
 
 ```bash
-make lti-key ARGS=--from-env    # the public JWKS for ONTRAK_LTI_PRIVATE_KEY
+make lti-key ARGS=--from-env            # the public JWKS for ONTRAK_LTI_PRIVATE_KEY
+make lti-key ARGS="--from-env --pem"    # ...as a PEM, for Moodle's "RSA key" field
 ```
+
+Moodle is the platform that wants the key in its own shape rather than as a JWKS:
+its manual tool form takes a PEM under *Public key type: RSA key*. The end-to-end
+Moodle walkthrough — which field takes which URL, which identifier goes in which
+variable, and the role mapping — is [docs/moodle-lti.md](moodle-lti.md).
 
 ## A directory that pushes people in
 

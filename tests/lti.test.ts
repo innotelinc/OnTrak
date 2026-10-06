@@ -32,6 +32,7 @@ import {
   extractLaunchClaims,
   launchFactsExpired,
   ltiConfigFromEnv,
+  ltiConfigWarning,
   ltiLaunchFacts,
   ltiRedirectUri,
   ltiRoleOf,
@@ -125,6 +126,66 @@ test("lti: a token endpoint with no private key is said out loud, because the gr
   });
   assert.equal(result.config, null, "an unusable registration is refused rather than half-used");
   assert.ok(result.issues.some((issue) => issue.includes("ONTRAK_LTI_PRIVATE_KEY")));
+});
+
+test("lti: a half-wired registration is a boot warning, and a working one says nothing", () => {
+  // An unconfigured deployment is quiet: no platform is the ordinary case, not a
+  // mistake, and a warning here would train an operator to ignore the line.
+  assert.equal(ltiConfigWarning({}), null);
+
+  const complete = ltiConfigWarning({
+    ONTRAK_LTI_ISSUER: ISSUER,
+    ONTRAK_LTI_CLIENT_ID: CLIENT_ID,
+    ONTRAK_LTI_AUTHORIZATION_ENDPOINT: `${ISSUER}/auth`,
+    ONTRAK_LTI_JWKS_URI: `${ISSUER}/jwks`,
+  });
+  assert.equal(complete, null, "a complete registration prints nothing");
+
+  const half = ltiConfigWarning({ ONTRAK_LTI_ISSUER: ISSUER, ONTRAK_LTI_CLIENT_ID: CLIENT_ID });
+  assert.ok(half, "a registration missing its endpoints is said out loud");
+  assert.match(half!, /ONTRAK_LTI_AUTHORIZATION_ENDPOINT/);
+
+  // The passback key is the case this exists for: the launch works, the grade is
+  // silently lost, and nothing else in the deployment mentions it.
+  const noKey = ltiConfigWarning({
+    ONTRAK_LTI_ISSUER: ISSUER,
+    ONTRAK_LTI_CLIENT_ID: CLIENT_ID,
+    ONTRAK_LTI_AUTHORIZATION_ENDPOINT: `${ISSUER}/auth`,
+    ONTRAK_LTI_JWKS_URI: `${ISSUER}/jwks`,
+    ONTRAK_LTI_TOKEN_ENDPOINT: `${ISSUER}/token`,
+  });
+  assert.ok(noKey, "a token endpoint with no key is said out loud");
+  assert.match(noKey!, /ONTRAK_LTI_PRIVATE_KEY/);
+});
+
+test("lti: the boot hook prints the warning once, naming what is wrong", async () => {
+  const { register } = await import("../src/instrumentation");
+  const warnings: string[] = [];
+  const original = console.warn;
+  const saved = { ...process.env };
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map((arg) => String(arg)).join(" "));
+  };
+  try {
+    process.env.NEXT_RUNTIME = "nodejs";
+
+    delete process.env.ONTRAK_LTI_ISSUER;
+    delete process.env.ONTRAK_LTI_CLIENT_ID;
+    await register();
+    assert.equal(warnings.length, 0, "an unconfigured deployment boots silently");
+
+    process.env.ONTRAK_LTI_ISSUER = ISSUER;
+    process.env.ONTRAK_LTI_CLIENT_ID = CLIENT_ID;
+    await register();
+    assert.equal(warnings.length, 1, "a broken registration is said exactly once");
+    assert.match(warnings[0], /ONTRAK_LTI_AUTHORIZATION_ENDPOINT/);
+  } finally {
+    console.warn = original;
+    for (const key of Object.keys(process.env)) {
+      if (!(key in saved)) delete process.env[key];
+    }
+    Object.assign(process.env, saved);
+  }
 });
 
 test("lti: a complete registration is read, with its deployments and its default role", () => {
