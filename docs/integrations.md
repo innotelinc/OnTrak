@@ -295,6 +295,13 @@ half is a credential and belongs in the environment, never in the repository.
 launch: it is a launch that works and a grade that stays here, and the app says so
 rather than pretending.
 
+A key a deployment already holds can be re-published without minting a second one —
+which would leave the two sides disagreeing:
+
+```bash
+make lti-key ARGS=--from-env    # the public JWKS for ONTRAK_LTI_PRIVATE_KEY
+```
+
 ## A directory that pushes people in
 
 Everything above is this app being *asked*. A directory is the other direction:

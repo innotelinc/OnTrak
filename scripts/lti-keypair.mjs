@@ -26,21 +26,68 @@
  * `docs/integrations.md`).
  *
  * Usage:
- *   node scripts/lti-keypair.mjs                 # key id: ontrak-training-1
- *   node scripts/lti-keypair.mjs --kid my-kid    # a chosen key id
- *   node scripts/lti-keypair.mjs --json          # the JWKS alone, for a pipeline
+ *   node scripts/lti-keypair.mjs                 # mint: key id ontrak-training-1
+ *   node scripts/lti-keypair.mjs --kid my-kid    # mint under a chosen key id
+ *   node scripts/lti-keypair.mjs --json          # the minted JWKS alone
+ *   node scripts/lti-keypair.mjs --from-env      # the public half of the deployed key
  *
- * `make lti-key` runs the first form.
+ * `--from-env` reads `ONTRAK_LTI_PRIVATE_KEY` — from the environment, or from this
+ * checkout's `.env` when it is not exported — and prints the JWKS to hand an LMS.
+ * Re-registering a key a deployment already holds therefore never means minting a
+ * second one, which would leave the two sides disagreeing. It uses only Node's
+ * built-in crypto, so it runs wherever the key already lives.
+ *
+ * `make lti-key` runs the first form; `make lti-key ARGS=--from-env` the last.
  */
 
-import { exportJWK, exportPKCS8, generateKeyPair } from "jose";
+import { createPrivateKey, createPublicKey } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+/**
+ * A setting, from the environment first and this checkout's `.env` second.
+ *
+ * `.env` here is the deployment's own file, not a template: the point of reading
+ * it is that an operator does not have to export a key they already have on disk.
+ */
+function setting(name) {
+  const fromEnv = process.env[name];
+  if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
+  try {
+    const text = readFileSync(new URL("../.env", import.meta.url), "utf8");
+    const line = text.split("\n").find((entry) => entry.startsWith(`${name}=`));
+    if (line) return line.slice(name.length + 1).trim().replace(/^["']|["']$/g, "");
+  } catch {
+    // No .env at all — an environment-only deployment.
+  }
+  return "";
+}
 
 const args = process.argv.slice(2);
-const jsonOnly = args.includes("--json");
 const kidFlag = args.indexOf("--kid");
-const kid = (kidFlag >= 0 ? args[kidFlag + 1] : "") || process.env.ONTRAK_LTI_KEY_ID || "ontrak-training-1";
-const tokenEndpoint =
-  process.env.ONTRAK_LTI_TOKEN_ENDPOINT || "https://lms.example.edu/mod/lti/token.php";
+const kid = (kidFlag >= 0 ? args[kidFlag + 1] : "") || setting("ONTRAK_LTI_KEY_ID") || "ontrak-training-1";
+const tokenEndpoint = setting("ONTRAK_LTI_TOKEN_ENDPOINT") || "https://lms.example.edu/mod/lti/token.php";
+
+/** The public JWKS an LMS is given, from a private PEM. Pure Node crypto, no jose. */
+function publicJwks(privatePem) {
+  const jwk = createPublicKey(createPrivateKey(privatePem)).export({ format: "jwk" });
+  return { keys: [{ ...jwk, kid, alg: "RS256", use: "sig" }] };
+}
+
+if (args.includes("--from-env")) {
+  // Republish the public half of the key this deployment already holds.
+  const pem = setting("ONTRAK_LTI_PRIVATE_KEY").replace(/\\n/g, "\n").trim();
+  if (!pem) {
+    process.stderr.write(
+      "ONTRAK_LTI_PRIVATE_KEY is not set, here or in .env, so there is no key to publish.\n",
+    );
+    process.exit(1);
+  }
+  process.stdout.write(`${JSON.stringify(publicJwks(pem), null, 2)}\n`);
+  process.exit(0);
+}
+
+const jsonOnly = args.includes("--json");
+const { exportJWK, exportPKCS8, generateKeyPair } = await import("jose");
 
 const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
 const pem = await exportPKCS8(privateKey);
@@ -70,6 +117,9 @@ if (jsonOnly) {
       "#    the assertion we sign. Paste the JSON into the registration's key set:",
       "",
       JSON.stringify(jwks, null, 2),
+      "",
+      "# Re-print this block for a key already in .env with:",
+      "#   make lti-key ARGS=--from-env",
       "",
       "# Full instructions: docs/integrations.md, \"The grade goes back\".",
       "",

@@ -222,9 +222,11 @@ is `503`, so the two failures name different problems. The value lives in that
 **Rotating the LTI passback key** has two sides by construction: `make lti-key`
 prints the `.env` lines and the public JWKS, and a key id the LMS does not hold is
 refused at its token endpoint — so the key id, the private key and the LMS's copy of
-the public half move together or the grade silently stays here. **Leave
-`ONTRAK_API_TOKEN` alone** unless something is genuinely wrong: several callers hold
-it, none re-reads it, and rotating it is a coordinated change rather than a restart.
+the public half move together or the grade silently stays here. To hand the LMS the
+public half of a key *already* in `.env`, without minting a second one, re-print it
+with `make lti-key ARGS=--from-env`. **Leave `ONTRAK_API_TOKEN` alone** unless
+something is genuinely wrong: several callers hold it, none re-reads it, and
+rotating it is a coordinated change rather than a restart.
 
 ### Sentinel is the family's, not a second stack
 

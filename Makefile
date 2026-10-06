@@ -306,8 +306,8 @@ dev: ## Run the training app (http://localhost:3000)
 	npm run dev
 
 .PHONY: lti-key
-lti-key: ## Mint an LTI grade-passback keypair (prints the .env lines and the LMS's JWKS)
-	@node scripts/lti-keypair.mjs
+lti-key: ## Mint an LTI grade-passback keypair (or ARGS=--from-env to republish an existing one)
+	@node scripts/lti-keypair.mjs $(ARGS)
 
 ## ---- OnTrak Tix ----
 
