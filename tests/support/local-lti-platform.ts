@@ -22,7 +22,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { SignJWT, exportJWK, generateKeyPair } from "jose";
+import { SignJWT, exportJWK, generateKeyPair, importJWK, jwtVerify } from "jose";
 
 export interface LocalLtiPlatformOptions {
   /** The client id the platform registered with the tool. */
@@ -35,6 +35,13 @@ export interface LocalLtiPlatformOptions {
   signWithUnpublishedKey?: boolean;
   /** Refuse the AGS token request, so a passback fails where a test wants it to. */
   refuseToken?: boolean;
+  /**
+   * The tool's public key, as an LMS holds it in its LTI registration. When set,
+   * the token endpoint verifies the client assertion's signature, issuer, audience
+   * and `kid` exactly as a real platform's would — so a passback test proves the
+   * key registration and not merely that a request was sent.
+   */
+  clientKey?: { jwk: Record<string, unknown>; kid: string };
 }
 
 export interface LocalLtiPlatform {
@@ -179,8 +186,30 @@ export async function startLocalLtiPlatform(options: LocalLtiPlatformOptions = {
       calls.token += 1;
       const form = await readForm(request);
       if (form.get("grant_type") !== "client_credentials") return send(response, 400, { error: "unsupported_grant_type" });
-      if (!form.get("client_assertion")) return send(response, 400, { error: "invalid_client", error_description: "no client assertion" });
+      const assertion = form.get("client_assertion");
+      if (!assertion) return send(response, 400, { error: "invalid_client", error_description: "no client assertion" });
       if (options.refuseToken) return send(response, 401, { error: "invalid_client" });
+      if (options.clientKey) {
+        // Exactly what an LMS's token endpoint checks: it verifies the signature
+        // against the key it was registered with, requires the assertion to name
+        // this platform as its audience and this client as its issuer, and matches
+        // the `kid` so a tool that rotated its key without re-registering is told.
+        try {
+          const key = await importJWK(options.clientKey.jwk as Parameters<typeof importJWK>[0], "RS256");
+          const { protectedHeader } = await jwtVerify(assertion, key, {
+            issuer: clientId,
+            audience: `${issuer}/token`,
+          });
+          if (protectedHeader.kid !== options.clientKey.kid) {
+            throw new Error(`unknown key id ${protectedHeader.kid ?? "(none)"}`);
+          }
+        } catch (error) {
+          return send(response, 401, {
+            error: "invalid_client",
+            error_description: `the client assertion was rejected: ${(error as Error).message}`,
+          });
+        }
+      }
       accessToken = `ags-token-${calls.token}`;
       return send(response, 200, { access_token: accessToken, token_type: "Bearer", expires_in: 300 });
     }

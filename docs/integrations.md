@@ -264,6 +264,37 @@ the launch was not granted the score scope, or this deployment has no platform
 credentials. The learner's score is real whether or not somebody else's server
 took a copy of it.
 
+### Registering the passback key
+
+The incoming launch and the outgoing score are secured in opposite directions,
+which is easy to get half-right. The platform signs the assertion and *we* verify
+it against the platform's key set; to write a score we then sign a client assertion
+with **our** key, and the platform can only check it if it was handed our public
+half first. One keypair covers both halves of that exchange, and `make lti-key`
+mints it:
+
+```bash
+make lti-key                 # id: ontrak-training-1, or override ONTRAK_LTI_KEY_ID
+```
+
+It writes nothing to disk. It prints two things that go to two places:
+
+1. **the deployment.** `ONTRAK_LTI_KEY_ID` and the escaped one-line
+   `ONTRAK_LTI_PRIVATE_KEY` go in the deployment's `.env`, beside
+   `ONTRAK_LTI_TOKEN_ENDPOINT` — the platform's token endpoint, from the
+   registration. With those three set, a graded attempt writes its score.
+2. **the platform.** The printed **public JWKS** goes to whoever administers the
+   LTI registration, pasted in under the *same* key id. Most platforms take a JWKS
+   or a JWK here rather than a certificate.
+
+A tool whose `kid` the platform does not have is refused at the token endpoint, and
+that refusal is indistinguishable from a wrong key — so the two halves are
+registered together or not at all. The public half is safe to share; the private
+half is a credential and belongs in the environment, never in the repository.
+`ONTRAK_LTI_TOKEN_ENDPOINT` set without a private key is not an error that stops a
+launch: it is a launch that works and a grade that stays here, and the app says so
+rather than pretending.
+
 ## A directory that pushes people in
 
 Everything above is this app being *asked*. A directory is the other direction:
@@ -343,3 +374,88 @@ the directory's job — this app accepts a push whenever the directory sends one
 and a deployment that stops receiving pushes simply stops changing. The
 [OnTrak Sync](ontrak-sync/README.md) host-inventory product is the family's
 scheduled-sync example if a connector needs a model.
+
+### Driving it from Entra or Okta
+
+Both connectors take the same two settings, and both should read the discovery
+document before anything else — it needs no token, so a connector cannot fail it by
+getting the credential wrong, and it is where `Patch` support and the `Bulk`/`sort`
+refusals are stated rather than discovered by trial:
+
+| Setting | Value |
+| --- | --- |
+| Tenant / SCIM base URL | `<ONTRAK_TRAINING_BASE_URL>/api/scim/v2` |
+| Authentication | Bearer token (header token) |
+| Token | the value of `ONTRAK_SCIM_TOKEN` on this deployment |
+
+```bash
+curl -sS "https://its.example.test/api/scim/v2/ServiceProviderConfig" | jq '.patch, .filter'
+```
+
+**Microsoft Entra ID** — a non-gallery enterprise application:
+
+1. **Entra admin center → Enterprise applications → New application → Create your
+   own application**, and choose "Integrate any other application you don't find in
+   the gallery (Non-gallery)". Name it for this training app.
+2. **Provisioning → Get started → Provisioning Mode: Automatic.**
+3. Under **Admin Credentials**, set **Tenant URL** to the base URL above and
+   **Secret Token** to `ONTRAK_SCIM_TOKEN`, then **Test Connection**. Entra reports
+   the failure it received, so a `401` here is the token and a `400` is the URL.
+4. **Mappings.** Entra's defaults are close, with one exception. Keep
+   `userName ← userPrincipalName` (it is exactly this app's `userName`) and map
+   `externalId ← mailNickname` (or `objectId`), which is what makes a second sync
+   update the identity it already created rather than making a twin. Entra's default
+   mapping also references `name.givenName` and `name.familyName`, which this app
+   does not emit — it carries `name.formatted` and `displayName` — so point the name
+   at `displayName` and leave the sub-attributes unmapped.
+5. **Settings.** Scope the sync to the groups that should be provisioned rather than
+   "all users": this app cannot tell a test push from a real one, so a first sync
+   against everybody is a real sync. Enable provisioning; the first cycle can take
+   up to 40 minutes.
+
+**Okta** — a SCIM 2.0 Test App with header authentication:
+
+1. **Admin Console → Applications → Create App Integration → SCIM 2.0 Test App
+   (Header Auth).** Header auth is the right variant: this app authenticates with a
+   bearer token, not Basic auth or OAuth.
+2. On the **Provisioning** tab, choose **Configure API Integration**, tick **Enable
+   API Integration**, enter the base URL and the token, then **Test API
+   Credentials** and **Save**.
+3. Under **To App**, enable **Create Users**, **Update User Attributes** and
+   **Deactivate Users**.
+4. **Push Groups** for class membership, and see the note on groups below first.
+
+**Attribute mapping.** This app serves an allowlist rather than an echo, and only
+`name.formatted` is emitted under `name` (no `givenName`/`familyName`), and there is
+no `emails` array — the address *is* `userName`:
+
+| SCIM attribute | What it is here |
+| --- | --- |
+| `userName` | the account's email address; required, and must be an email |
+| `externalId` | the directory's own immutable id; matched **first**, so a rename moves the account instead of duplicating it |
+| `displayName` / `name.formatted` | the person's name |
+| `roles` (or `role`) | `STUDENT`, `INSTRUCTOR` or `ADMIN`; a push that names none creates a `STUDENT` |
+| `active` | whether the person may sign in here; `false` — or a `DELETE` — deactivates and never erases their attempts |
+
+**Groups are cohorts, not the directory's to invent.** A connector may replace *who
+is in* a class, but a cohort has to exist first — `POST /Groups` is refused
+`mutability`, because a class with no owning instructor is a class with no teacher.
+Create the cohort in this app (an instructor owns it), then let the connector push
+its membership; the members who stay keep their `joinedAt` and mentor flag.
+
+**The filter subset** a connector will actually exercise is a single `eq` on
+`userName`, `externalId`, `displayName` or `id` — Entra's schema-prefixed form
+(`urn:ietf:params:scim:schemas:core:2.0:User:userName`) is stripped and accepted.
+`co`, `sw`, `pr`, `and`, `or` and parentheses are refused `invalidFilter` rather than
+answered with a narrower result. Pages are 1-based `startIndex`/`count`, default 100
+and at most 200; `count=0` returns the totals alone. Sorting is not implemented, and
+neither Entra nor Okta needs it.
+
+**Finally: the schedule is the directory's.** This surface never reaches out — it
+accepts whatever the connector sends, when the connector sends it. Set the sync
+interval in Entra's or Okta's provisioning settings; a deployment that stops
+receiving pushes simply stops changing, which is why the audit trail
+(`scim.user.provision`, `scim.user.update`, `scim.user.deprovision`,
+`scim.group.members`) is the way to see whether the schedule is still running. For
+an operator's walkthrough — minting the token, where it lives, and how to rotate it —
+see [docs/family-operations.md](family-operations.md).

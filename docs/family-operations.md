@@ -190,6 +190,42 @@ The `.env` files are **not** in the repository and each one is load-bearing:
 `ontrak-portal/.env` (the session signing secret). Back them up before a redeploy —
 a deployment that regenerates the API token silently breaks anything already using it.
 
+### The training app's machine credentials, and rotating them
+
+Three credentials in `/usr/src/ontrak/.env` are held by systems rather than people,
+so none is a session and none is discoverable from the app. Each is generated on the
+host and never committed:
+
+| Variable | Who presents it | Where the other side holds it |
+| --- | --- | --- |
+| `ONTRAK_SCIM_TOKEN` | the directory's SCIM connector (Entra, Okta) | the connector's **Secret Token** |
+| `ONTRAK_API_TOKEN` | whatever reads `/api/v1/*` (results, roster, deliveries) | in each caller |
+| `ONTRAK_LTI_KEY_ID` + `ONTRAK_LTI_PRIVATE_KEY` | this app, to the LMS's token endpoint | the matching **public JWKS** in the LTI registration |
+
+**Rotating the SCIM token** is a replace-and-restart, because nothing else reads it
+except the connector's next scheduled sync:
+
+```bash
+cd /usr/src/ontrak
+NEW=$(openssl rand -hex 24)
+sed -i "s|^ONTRAK_SCIM_TOKEN=.*|ONTRAK_SCIM_TOKEN=\"$NEW\"|" .env
+docker compose up -d app          # re-reads .env; add --force-recreate if it did not
+```
+
+Then paste `$NEW` into the connector's **Secret Token** and **Test Connection**
+before its next cycle. Until you do, the connector presents a token this app no
+longer accepts and every sync answers `401` — a wrong token is `401`, an *unset* one
+is `503`, so the two failures name different problems. The value lives in that
+`.env` (gitignored); the running container is the other place to confirm it:
+`docker exec ontrak-training-app-1 printenv ONTRAK_SCIM_TOKEN`.
+
+**Rotating the LTI passback key** has two sides by construction: `make lti-key`
+prints the `.env` lines and the public JWKS, and a key id the LMS does not hold is
+refused at its token endpoint — so the key id, the private key and the LMS's copy of
+the public half move together or the grade silently stays here. **Leave
+`ONTRAK_API_TOKEN` alone** unless something is genuinely wrong: several callers hold
+it, none re-reads it, and rotating it is a coordinated change rather than a restart.
+
 ### Sentinel is the family's, not a second stack
 
 Sentinel is the one product with two ways to run and one set of host ports

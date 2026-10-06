@@ -56,7 +56,9 @@ const CONFIG: LtiConfig = {
   authorizationEndpoint: `${ISSUER}/mod/lti/auth.php`,
   jwksUri: `${ISSUER}/mod/lti/certs.php`,
   tokenEndpoint: `${ISSUER}/mod/lti/token.php`,
-  privateKey: "-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----",
+  // A stand-in for a PEM: nothing here imports it, and a literal key marker in a
+  // tracked file is exactly what the repository's secret scan refuses.
+  privateKey: "escaped-pem-placeholder",
   keyId: "kid-1",
   defaultRole: "STUDENT",
 };

@@ -48,7 +48,7 @@ flowchart LR
 | Admin control room: platform toggles, software inventory, keys, users, audit | `[x]` |
 | Student experience: timed attempts, autosave, results, personal bests | `[x]` |
 | PWA / mobile quick-keys / offline shell | `[x]` |
-| Test suite (359) + typecheck + production build green | `[x]` |
+| Test suite (362) + typecheck + production build green | `[x]` |
 | Pure, unit-tested form/rule modules; ownership-guarded actions | `[x]` |
 | Versioned migrations (`prisma/migrations`) applied identically by every environment | `[x]` |
 
@@ -285,7 +285,10 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
     import creates. Covered by `tests/scim.test.ts` (20 checks: the filter subset
     and its refusals, Entra's URN-form paths, both PATCH shapes, PUT replacement
     semantics, the `uniqueness` 409, the deprovision audit, and membership
-    replacement that keeps `joinedAt` and `isMentor`).
+    replacement that keeps `joinedAt` and `isMentor`). The operator's side —
+    pointing Entra or Okta at the base URL, the attribute mapping, and where the
+    token lives and how to rotate it — is in [`docs/integrations.md`](docs/integrations.md)
+    and [`docs/family-operations.md`](docs/family-operations.md).
   - MFA is enforced at the provider, so an organization that requires a second
     factor gets it here without the training app implementing one; a session is
     refused until a confirmed factor has been verified.
@@ -330,7 +333,12 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   - Covered by `tests/lti.test.ts` (22 checks: configuration, the login refusals,
     the handshake URL, thirteen assertion refusals, role mapping, the AGS score
     body, the token assertion, the three passback sentences, the launch context's
-    age, and the client seam).
+    age, and the client seam), and — for the half that actually leaves the building
+    — by `tests/lti-passback.test.ts`, which drives a real AGS token endpoint that
+    verifies the RS256 client assertion against the tool's registered key, so the
+    signature, its audience and its `kid` are proved rather than assumed. Mint the
+    pair with `make lti-key`, which prints the `.env` lines and the public JWKS to
+    register with the platform.
 - `[x]` **Public API + webhooks for attempt/grading events, and bulk CSV
   import/export of rosters and results.**
   - `[x]` **A grading is announced, not only stored.** `src/lib/webhook-rules.ts`
