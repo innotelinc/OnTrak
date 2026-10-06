@@ -65,7 +65,8 @@ export function HostDetail({ name }: { name: string }) {
         <div className="actions">
           <ReachablePill reachable={record.reachable} />
           <RebootPill known={record.reboot_known} required={record.reboot_required}
-                      packages={record.reboot_packages} />
+                      packages={record.reboot_packages}
+                      since={record.reboot_since} scans={record.reboot_scans} />
           <button
             disabled={busy !== null}
             onClick={() =>
@@ -94,6 +95,18 @@ export function HostDetail({ name }: { name: string }) {
           a person in it.
           {rebootPackages.length ? (
             <> Waiting on <span className="mono">{rebootPackages.join(", ")}</span>.</>
+          ) : null}
+          {/* The age, said plainly. A reboot the desk has seen once is the machine
+              doing what it was told; the same reboot across scans is a window that
+              has not been taken, which is the thing this page exists to make
+              visible. */}
+          {record.reboot_since ? (
+            <>
+              {" "}First seen <When value={record.reboot_since} />
+              {record.reboot_scans > 1
+                ? ` and reported by ${record.reboot_scans} scans since.`
+                : "."}
+            </>
           ) : null}
         </div>
       ) : null}

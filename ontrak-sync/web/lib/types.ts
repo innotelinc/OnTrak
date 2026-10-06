@@ -169,6 +169,18 @@ export interface Host {
   /** Package names, one per line, exactly as the host's own file listed them. */
   reboot_packages: string | null;
   reboot_checked_at: string | null;
+  /**
+   * When this reboot was first seen, and how many scans have reported it since.
+   *
+   * The age is the decision: a verdict that has stood for a week is a maintenance
+   * window somebody missed, while one that appeared with this scan is ordinary.
+   * The window opens on the first answer that says *required* and closes only on an
+   * answer that says *clear* — a probe this code could not read neither opens nor
+   * closes it, so the age survives a scan that learned nothing. `reboot_since` is
+   * null whenever nothing is pending.
+   */
+  reboot_since: string | null;
+  reboot_scans: number;
   targets: number;
   unscanned: number;
   pending: number;

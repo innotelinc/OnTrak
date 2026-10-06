@@ -298,6 +298,15 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("hosts", "reboot_required", "INTEGER NOT NULL DEFAULT 0"),
     ("hosts", "reboot_packages", "TEXT"),
     ("hosts", "reboot_checked_at", "TEXT"),
+    # How long the reboot has stood. A verdict that has been the same answer for a
+    # week is a maintenance window somebody missed; one that appeared with this
+    # scan is the machine working as intended. `reboot_since` opens at the first
+    # scan that reports it and closes only on an explicit clear — never on a probe
+    # that could not read the host, because "I could not ask" is not evidence the
+    # machine restarted. `reboot_scans` counts the scans that have seen it, which is
+    # what tells a daily probe apart from a weekly one at the same age.
+    ("hosts", "reboot_since", "TEXT"),
+    ("hosts", "reboot_scans", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -322,6 +331,19 @@ def _migrate(conn: sqlite3.Connection) -> None:
                      WHERE last_scanned_at IS NOT NULL
                     """
                 )
+            elif (table, column) == ("hosts", "reboot_scans"):
+                # A reboot already on record has no opening instant to recover: the
+                # only evidence is the last time it was asked about, so the window
+                # starts there. Claiming an earlier moment would be inventing history,
+                # and the row is counted as seen at least once, because it is.
+                conn.execute(
+                    """
+                    UPDATE hosts
+                       SET reboot_since = COALESCE(reboot_since, reboot_checked_at),
+                           reboot_scans = CASE WHEN reboot_required = 1 THEN 1 ELSE 0 END
+                     WHERE reboot_required = 1
+                    """
+                )
 
 
 # ── hosts ────────────────────────────────────────────────────────────────────
@@ -343,8 +365,33 @@ def upsert_host(conn, *, name, address, kind, ssh_user, reachable, os_name=None,
     )
 
 
+def reboot_window(*, since: str | None, scans: int, state, now: str) -> tuple[str | None, int]:
+    """The reboot window after one answer: `(when it began, how many scans have seen it)`.
+
+    Pure, so the three transitions are testable without a clock or a database, and
+    there are exactly three of them:
+
+    * **Required** opens the window, or leaves it where it is. The instant does not
+      move on a second report — the question a person is asking is *how long has this
+      been true*, and an answer that resets to "just now" every scan is no answer at
+      all. The scan count does advance, so two probes a minute apart are not mistaken
+      for the same evidence as one probe on Monday and one on Friday.
+    * **Clear** closes it. That is the only thing that may, because it is the only
+      answer that says the machine went down and came back.
+    * **Not known** changes neither. A probe that answered in a form this code does not
+      understand has said nothing about the machine, and reading it as a clear would
+      reset the age of a reboot nobody restarted — the same rule
+      `expire_findings(..., protect=...)` applies to a finding.
+    """
+    if not state.known:
+        return since, scans
+    if not state.required:
+        return None, 0
+    return (since or now), scans + 1
+
+
 def record_reboot_state(conn, *, name: str, state) -> None:
-    """Record whether a host is waiting for a reboot.
+    """Record whether a host is waiting for a reboot, and for how long it has been.
 
     Called only when the host actually answered. A probe that timed out or failed
     leaves the previous row alone, and that is deliberate: "I could not ask" is not
@@ -353,18 +400,35 @@ def record_reboot_state(conn, *, name: str, state) -> None:
     state that could not be read *is* recorded as not-known, so the dashboard can
     tell a host that was asked from one that never has been.
 
+    The window itself is decided by `reboot_window`; this only reads the row it is
+    about to replace, so the transition has exactly one home.
+
     An UPDATE rather than an upsert: the host row is written by `upsert_host` in the
     same scan, moments earlier, and a function that could conjure a host row from a
     reboot answer would be a second, weaker writer of the hosts table.
     """
+    row = conn.execute(
+        "SELECT reboot_since, reboot_scans FROM hosts WHERE name=?", (name,)
+    ).fetchone()
+    if row is None:
+        return
+
+    now = utcnow()
+    since, scans = reboot_window(
+        since=row["reboot_since"],
+        scans=int(row["reboot_scans"] or 0),
+        state=state,
+        now=now,
+    )
     conn.execute(
         """
         UPDATE hosts
-           SET reboot_known=?, reboot_required=?, reboot_packages=?, reboot_checked_at=?
+           SET reboot_known=?, reboot_required=?, reboot_packages=?, reboot_checked_at=?,
+               reboot_since=?, reboot_scans=?
          WHERE name=?
         """,
         (int(bool(state.known)), int(bool(state.required)),
-         "\n".join(state.packages) or None, utcnow(), name),
+         "\n".join(state.packages) or None, now, since, scans, name),
     )
 
 

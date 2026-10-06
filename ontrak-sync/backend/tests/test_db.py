@@ -371,6 +371,87 @@ class RebootState(unittest.TestCase):
         self.assertEqual(0, row["reboot_required"])
         self.assertIsNone(row["reboot_packages"])
 
+    def test_the_first_scan_that_reports_it_opens_the_window(self):
+        db.record_reboot_state(self.conn, name="i1", state=scanners.RebootState(
+            known=True, required=True, packages=("libc6",)))
+        row = self.row()
+        self.assertTrue(row["reboot_since"])
+        self.assertEqual(1, row["reboot_scans"])
+
+    def test_a_reboot_that_stands_keeps_its_opening_instant_and_counts_the_scans(self):
+        # The question is *how long has this been true*. An instant that moves to
+        # "just now" on every scan answers a different one.
+        db.record_reboot_state(self.conn, name="i1", state=scanners.RebootState(
+            known=True, required=True, packages=("libc6",)))
+        opened = self.row()["reboot_since"]
+
+        for _ in range(2):
+            db.record_reboot_state(self.conn, name="i1", state=scanners.RebootState(
+                known=True, required=True, packages=("libc6",)))
+        row = self.row()
+        self.assertEqual(opened, row["reboot_since"])
+        self.assertEqual(3, row["reboot_scans"])
+
+    def test_a_scan_that_could_not_be_read_neither_counts_nor_closes_the_window(self):
+        # "I could not ask" says nothing about the machine. Reading it as a clear
+        # would reset the age of a reboot nobody restarted, which is the same rule
+        # `expire_findings(..., protect=...)` applies to a finding.
+        db.record_reboot_state(self.conn, name="i1", state=scanners.RebootState(
+            known=True, required=True, packages=("libc6",)))
+        opened = self.row()["reboot_since"]
+
+        db.record_reboot_state(self.conn, name="i1", state=scanners.UNKNOWN_REBOOT)
+        row = self.row()
+        self.assertEqual(opened, row["reboot_since"])
+        self.assertEqual(1, row["reboot_scans"])
+        self.assertEqual(0, row["reboot_required"], "the verdict itself is not-known")
+
+        db.record_reboot_state(self.conn, name="i1", state=scanners.RebootState(
+            known=True, required=True, packages=("libc6",)))
+        row = self.row()
+        self.assertEqual(opened, row["reboot_since"], "the window survived the scan that could not read it")
+        self.assertEqual(2, row["reboot_scans"])
+
+    def test_only_an_explicit_clear_closes_the_window(self):
+        db.record_reboot_state(self.conn, name="i1", state=scanners.RebootState(
+            known=True, required=True, packages=("libc6",)))
+        db.record_reboot_state(self.conn, name="i1", state=scanners.RebootState(
+            known=True, required=False))
+        row = self.row()
+        self.assertIsNone(row["reboot_since"])
+        self.assertEqual(0, row["reboot_scans"])
+
+        # A reboot after the restart is a new window, not the old one resumed.
+        db.record_reboot_state(self.conn, name="i1", state=scanners.RebootState(
+            known=True, required=True, packages=("linux-image-generic",)))
+        self.assertEqual(1, self.row()["reboot_scans"])
+
+    def test_a_reboot_already_on_record_gains_a_window_from_its_last_ask(self):
+        # The only evidence a database from before these columns has is the last time
+        # it asked; an earlier instant would be invented, not recovered.
+        old = db.connect(":memory:")
+        old.execute(
+            "CREATE TABLE hosts (name TEXT PRIMARY KEY, address TEXT NOT NULL,"
+            " kind TEXT NOT NULL DEFAULT 'incus', ssh_user TEXT NOT NULL DEFAULT 'root',"
+            " reachable INTEGER NOT NULL DEFAULT 0, os TEXT, kernel TEXT,"
+            " container_count INTEGER NOT NULL DEFAULT 0, last_seen TEXT, error TEXT,"
+            " reboot_known INTEGER NOT NULL DEFAULT 0, reboot_required INTEGER NOT NULL DEFAULT 0,"
+            " reboot_packages TEXT, reboot_checked_at TEXT)"
+        )
+        old.execute("INSERT INTO hosts (name, address, reachable, reboot_known, reboot_required,"
+                    " reboot_checked_at) VALUES ('i1','192.168.1.51',1,1,1,'2026-01-01T04:00:00Z')")
+        old.execute("INSERT INTO hosts (name, address, reachable, reboot_known, reboot_required)"
+                    " VALUES ('i2','192.168.1.52',1,1,0)")
+
+        db.init(old)
+
+        rows = {r["name"]: r for r in old.execute("SELECT * FROM hosts").fetchall()}
+        self.assertEqual("2026-01-01T04:00:00Z", rows["i1"]["reboot_since"])
+        self.assertEqual(1, rows["i1"]["reboot_scans"])
+        # A host that answered clear is not a reboot waiting to be aged in.
+        self.assertIsNone(rows["i2"]["reboot_since"])
+        self.assertEqual(0, rows["i2"]["reboot_scans"])
+
     def test_a_hosts_table_from_before_the_columns_gains_them(self):
         # The deployed SQLite file IS the Network's history, so these arrive by ALTER
         # and from nowhere else.
@@ -390,6 +471,10 @@ class RebootState(unittest.TestCase):
         self.assertEqual(0, row["reboot_known"])
         self.assertEqual(0, row["reboot_required"])
         self.assertIsNone(row["reboot_packages"])
+        # Nothing was waiting, so there is no window; and a host never asked is not
+        # one that has been waiting since this column existed.
+        self.assertIsNone(row["reboot_since"])
+        self.assertEqual(0, row["reboot_scans"])
         # The row it already had is untouched.
         self.assertEqual("192.168.1.51", row["address"])
         self.assertEqual(1, row["reachable"])

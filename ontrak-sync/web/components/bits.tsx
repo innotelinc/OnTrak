@@ -58,17 +58,40 @@ export function ReachablePill({ reachable }: { reachable: 0 | 1 }) {
  * *unknown* answer gets its own word rather than being drawn as a green "clear",
  * because a host this code could not ask must never look like one that answered.
  */
-export function RebootPill({ known, required, packages }: {
+/**
+ * Whole days a moment is behind us, or null if it cannot be read.
+ *
+ * The age is what makes a pending reboot a decision: a host that reported it this
+ * morning is working as intended, one that has been waiting since the last patch
+ * window is a window nobody took.
+ */
+function daysSince(value: string | null | undefined, now: number): number | null {
+  if (!value) return null;
+  const then = Date.parse(value.endsWith("Z") ? value : `${value}Z`);
+  if (Number.isNaN(then)) return null;
+  return Math.max(0, Math.floor((now - then) / 86_400_000));
+}
+
+export function RebootPill({ known, required, packages, since, scans }: {
   known: 0 | 1;
   required: 0 | 1;
   packages?: string | null;
+  /** When the reboot was first seen, and how many scans have reported it. */
+  since?: string | null;
+  scans?: number;
 }) {
   if (required) {
     const count = (packages ?? "").split("\n").filter(Boolean).length;
+    // The age only when there is one to state: "waiting 0d" on the scan that found
+    // it is noise, and the scan count already says how much evidence there is.
+    const days = daysSince(since, Date.now());
+    const age = days !== null && days >= 1 ? ` · waiting ${days}d` : "";
+    const firstSeen = since ? `first seen ${since.slice(0, 10)}` : "first seen never";
+    const history = `${firstSeen}${scans && scans > 1 ? `, across ${scans} scans` : ""}`;
     return (
       <span className="pill pill--pending"
-            title={packages || "This host reported a pending reboot."}>
-        reboot{count ? ` · ${count}` : ""}
+            title={`${packages || "This host reported a pending reboot."}\n${history}`}>
+        reboot{count ? ` · ${count}` : ""}{age}
       </span>
     );
   }

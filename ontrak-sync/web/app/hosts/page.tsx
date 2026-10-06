@@ -77,7 +77,8 @@ export default function HostsPage() {
               <div className="actions">
                 <ReachablePill reachable={host.reachable} />
                 <RebootPill known={host.reboot_known} required={host.reboot_required}
-                            packages={host.reboot_packages} />
+                            packages={host.reboot_packages}
+                            since={host.reboot_since} scans={host.reboot_scans} />
                 <RegistryPill refusals={host.registry_refusals} />
                 <span className="faint">
                   coverage {scanned}/{hostTargets.length || "—"}

@@ -18,7 +18,8 @@ and explicitly does not own.
 
 - The Network's **package state**: which apt/snap/docker updates each host and container
   is behind on, where that reading came from, and whether the host is waiting for a reboot —
-  the one fact about a patch no manager reports, because every manager reports an unpacked
+  and for how long, because a reboot nobody restarted is a maintenance window nobody took —
+  the one fact about a patch no manager reports, since every manager reports an unpacked
   kernel as current.
 - The **apply decision**: what gets installed, in what window, within what scope.
 - The **finding lifecycle**: what "approved", "skipped", "expired" and "unknown" mean,

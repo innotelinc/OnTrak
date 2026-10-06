@@ -106,6 +106,18 @@ A probe that times out records nothing at all: a machine that answered yesterday
 evidence that it needs nothing today. Sync will never do the reboot — that is a maintenance
 window with a person in it.
 
+A reboot also has an **age**, and the age is what turns the fact into a decision. The window
+opens at the first scan that reports it and closes only on a scan that reports *clear* — a probe
+this code could not read neither opens nor closes it, because "I could not ask" is not evidence
+that the machine went down and came back, the same rule `expire_findings(..., protect=...)`
+applies to a finding. The instant never moves on a second report, because the question is *how
+long has this been true* and an answer that resets to "just now" every scan answers a different
+one. What the pill adds is the age, so a host that reported it this morning reads differently
+from one that has been waiting since the last patch window; the scans behind it are kept too,
+which is what tells a daily probe apart from a weekly one at the same age. A database written
+before these columns starts an existing reboot at the last time it was asked about, since an
+earlier instant would be invented rather than recovered.
+
 ### Modes
 
 | | `detect` (default) | `auto` |
@@ -163,7 +175,7 @@ the container and authorises the SSH key on the Network hosts. See
 ```
 backend/ontrak/
   config.py     what a deployment is; the token is required, with no default
-  db.py         SQLite, and the lifetime of a finding
+  db.py         SQLite, and the lifetime of a finding — and of a reboot
   remote.py     every command that reaches another machine, in one file
   scanners.py   the pure parsers (the unit-tested core)
   scan.py       walks the Network, records findings, applies expiry
@@ -181,7 +193,7 @@ writes to it.
 ## Tests
 
 ```bash
-make test        # 303 tests, no Network required
+make test        # 399 tests, no Network required
 ```
 
 The suite covers the parsers, the cron arithmetic, the finding lifecycle, the scan engine (against

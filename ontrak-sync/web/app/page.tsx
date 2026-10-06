@@ -257,7 +257,8 @@ export default function DashboardPage() {
                       <td className="dim">{host.os ?? <span className="faint">unknown</span>}</td>
                       <td className="tight">
                         <RebootPill known={host.reboot_known} required={host.reboot_required}
-                                    packages={host.reboot_packages} />
+                                    packages={host.reboot_packages}
+                                    since={host.reboot_since} scans={host.reboot_scans} />
                       </td>
                       <td className="num">{host.container_count}</td>
                       <td className="num">{host.pending || <span className="faint">0</span>}</td>
