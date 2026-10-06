@@ -19,13 +19,14 @@
 
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createPublicKey, generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
 
 import { PrismaClient } from "@prisma/client";
 import { jwtVerify } from "jose";
 
 import { SESSION_COOKIE } from "../src/lib/auth-rules";
-import { LTI_LAUNCH_COOKIE, LTI_STATE_COOKIE } from "../src/lib/lti-rules";
+import { LTI_JWKS_PATH, LTI_LAUNCH_COOKIE, LTI_STATE_COOKIE } from "../src/lib/lti-rules";
 import { startLocalLtiPlatform } from "./support/local-lti-platform";
 
 const ENABLED = Boolean(process.env.ONTRAK_LTI_LIVE);
@@ -78,7 +79,10 @@ async function reachable(): Promise<PrismaClient | null> {
  * is `npx` plus the actual server plus its workers, and killing only the wrapper
  * leaves a dev server holding the pipes — and the test process never exits.
  */
-function startApp(platform: { issuer: string; clientId: string; deploymentId: string; authorizationEndpoint: string; jwksUri: string }): ChildProcess {
+function startApp(
+  platform: { issuer: string; clientId: string; deploymentId: string; authorizationEndpoint: string; jwksUri: string },
+  key: { keyId: string; privateKey: string },
+): ChildProcess {
   const child = spawn("npx", ["next", "dev", "-p", String(PORT)], {
     cwd: process.cwd(),
     detached: true,
@@ -91,6 +95,10 @@ function startApp(platform: { issuer: string; clientId: string; deploymentId: st
       ONTRAK_LTI_DEPLOYMENT_IDS: platform.deploymentId,
       ONTRAK_LTI_AUTHORIZATION_ENDPOINT: platform.authorizationEndpoint,
       ONTRAK_LTI_JWKS_URI: platform.jwksUri,
+      // The key the deployment signs a passback with, so the route that publishes its
+      // public half has something real to publish.
+      ONTRAK_LTI_KEY_ID: key.keyId,
+      ONTRAK_LTI_PRIVATE_KEY: key.privateKey,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -140,11 +148,34 @@ test("the training app launches a scenario from the real LTI routes", async (t) 
   const email = `lti-live-${tag}@ontrak.local`;
   const subject = `lms-subject-${tag}`;
 
+  // A keypair for this run alone. The public half is what the tool must publish; the
+  // private half is what it would sign a client assertion with, and is passed in the
+  // spelling an env var can hold.
+  const { privateKey: signingKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const key = {
+    keyId: "ontrak-training-live-1",
+    privateKey: signingKey.export({ type: "pkcs8", format: "pem" }).toString().trim().replace(/\n/g, "\\n"),
+  };
+
   const platform = await startLocalLtiPlatform({ claims: { sub: subject, email, name: "Lena LMS" } });
-  const app = startApp(platform);
+  const app = startApp(platform, key);
 
   try {
     await waitForApp(app);
+
+    // 0. The tool publishes its own public key set, so a platform can register a
+    //    Keyset URL instead of being handed a copy of a PEM that can drift. No
+    //    credential is needed to read it — a key set is public by construction.
+    const jwksResponse = await fetch(`${BASE}${LTI_JWKS_PATH}`);
+    assert.equal(jwksResponse.status, 200, "the tool serves its public key set");
+    const published = (await jwksResponse.json()) as { keys: Record<string, unknown>[] };
+    assert.equal(published.keys.length, 1);
+    assert.equal(published.keys[0].kid, key.keyId, "the key is published under the id the deployment registered");
+    assert.equal(published.keys[0].kty, "RSA");
+    assert.equal(published.keys[0].alg, "RS256");
+    assert.equal("d" in published.keys[0], false, "the private half is never published");
+    const expectedModulus = createPublicKey(signingKey).export({ format: "jwk" }) as Record<string, unknown>;
+    assert.equal(published.keys[0].n, expectedModulus.n, "the published key is the one this deployment signs with");
 
     // 1. The platform starts the login. A launch from somebody else's platform is
     //    refused before anything is begun, which is the one check that must happen

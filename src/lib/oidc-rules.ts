@@ -148,6 +148,27 @@ export function ssoConfigIssues(env: Record<string, string | undefined> = proces
   return result.enabled && result.config === null ? result.issues : [];
 }
 
+/**
+ * The one line a boot log should print when a provider is configured but unusable.
+ *
+ * Single sign-on degrades quietly, and that is exactly the problem. A half-wired
+ * `ONTRAK_OIDC_*` block publishes no button — `activeSsoConfig` is null, so the
+ * sign-in page keeps only the password form — which *looks* like a deployment that
+ * never wanted single sign-on. An operator who set those variables believes the
+ * deployment is protected by their directory, while everybody keeps signing in
+ * with a local password, and nothing anywhere says so.
+ *
+ * So the deployment says it out loud at startup instead, naming the variable at
+ * fault. Returns `null` when single sign-on is off — the ordinary case, and not a
+ * mistake — or when the configuration is complete. Wording a whole sentence rather
+ * than a code is deliberate: this is read in a container log.
+ */
+export function ssoConfigWarning(env: Record<string, string | undefined> = process.env): string | null {
+  const issues = ssoConfigIssues(env);
+  if (issues.length === 0) return null;
+  return `[sso] This deployment has single sign-on configured, but it cannot be used, so the sign-in page offers no single sign-on button: ${issues.join(" ")}`;
+}
+
 /** Split a comma- or newline-separated value into trimmed, non-empty entries. */
 export function splitList(value: string): string[] {
   return value

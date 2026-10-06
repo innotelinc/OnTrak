@@ -184,6 +184,33 @@ export const es: Messages = {
   "admin.scenarios": "Escenarios",
   "admin.practice": "Práctica",
 
+  "admin.integrations": "Integraciones",
+  "admin.integrationsHint":
+    "En quién confía este despliegue y a qué está conectado. Se configuran en el entorno, no en esta página: lo que se muestra es lo que el despliegue está usando de verdad.",
+  "admin.integration.sso": "Inicio de sesión único",
+  "admin.integration.lti": "Plataforma de aprendizaje (LTI)",
+  "admin.integration.scim": "Sincronización de directorio (SCIM)",
+  "admin.integration.state.off": "desactivada",
+  "admin.integration.state.ready": "configurada",
+  "admin.integration.state.incomplete": "mal configurada",
+  "admin.integration.off.sso": "Sin proveedor de identidad: se accede con la contraseña local.",
+  "admin.integration.off.lti": "Ninguna plataforma de aprendizaje puede abrir un escenario aquí.",
+  "admin.integration.off.scim": "Ningún conector de directorio puede leer ni escribir cuentas aquí.",
+  "admin.integration.incompleteHint":
+    "Este despliegue rechaza esas peticiones y el registro de arranque indica qué arreglar:",
+  "admin.integration.notSet": "sin definir",
+  "admin.integration.issuer": "Emisor",
+  "admin.integration.clientId": "ID de cliente",
+  "admin.integration.allowedDomains": "Dominios de acceso",
+  "admin.integration.launchPath": "URL de lanzamiento",
+  "admin.integration.loginPath": "URL de inicio de sesión",
+  "admin.integration.keySetPath": "URL del conjunto de claves",
+  "admin.integration.passback": "Endpoint de nota devuelta",
+  "admin.integration.keyId": "ID de clave",
+  "admin.integration.usersPath": "Endpoint de usuarios",
+  "admin.integration.groupsPath": "Endpoint de grupos",
+  "admin.integration.tokenEnv": "Variable del token",
+
   "audit.eyebrow": "Administración",
   "audit.title": "Registro de auditoría",
   "audit.description":

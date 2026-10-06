@@ -34,6 +34,7 @@ import {
   isAuthorizationState,
   parseRoleMappings,
   ssoConfigFromEnv,
+  ssoConfigWarning,
   ssoRedirectUri,
   stateExpired,
   validateDiscovery,
@@ -260,6 +261,57 @@ test("scopes and domains are read as lists, with or without the at-sign", () => 
   assert.deepEqual(result.config.scopes, ["profile", "email", "groups"]);
   assert.deepEqual(result.config.allowedDomains, ["ontrak.local", "innotel.us"]);
   assert.equal(result.config.requireMfa, true);
+});
+
+test("a half-wired provider is a boot warning, and a working one says nothing", () => {
+  // No provider is the ordinary case, not a mistake: a warning here would train an
+  // operator to ignore the line.
+  assert.equal(ssoConfigWarning({}), null);
+  assert.equal(
+    ssoConfigWarning({ ONTRAK_OIDC_ISSUER: "https://idp.test", ONTRAK_OIDC_CLIENT_ID: "app" }),
+    null,
+    "a complete configuration prints nothing",
+  );
+
+  const half = ssoConfigWarning({ ONTRAK_OIDC_ISSUER: "https://idp.test" });
+  assert.ok(half, "a provider with no client id is said out loud");
+  assert.match(half!, /^\[sso\]/);
+  assert.match(half!, /ONTRAK_OIDC_CLIENT_ID/);
+  // The failure is invisible from the outside — the sign-in page simply publishes
+  // no button — so the sentence has to say where it would have been.
+  assert.match(half!, /no single sign-on button/);
+});
+
+test("the boot hook prints the provider warning once, naming what is wrong", async () => {
+  const { register } = await import("../src/instrumentation");
+  const warnings: string[] = [];
+  // The boot hook warns about a learning platform too (see `lti.test.ts`), so this
+  // looks only at its own line.
+  const ssoWarnings = () => warnings.filter((line) => line.startsWith("[sso]"));
+  const original = console.warn;
+  const saved = { ...process.env };
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map((arg) => String(arg)).join(" "));
+  };
+  try {
+    process.env.NEXT_RUNTIME = "nodejs";
+
+    delete process.env.ONTRAK_OIDC_ISSUER;
+    delete process.env.ONTRAK_OIDC_CLIENT_ID;
+    await register();
+    assert.equal(ssoWarnings().length, 0, "a deployment with no provider boots silently");
+
+    process.env.ONTRAK_OIDC_ISSUER = "https://idp.test";
+    await register();
+    assert.equal(ssoWarnings().length, 1, "a broken configuration is said exactly once");
+    assert.match(ssoWarnings()[0], /ONTRAK_OIDC_CLIENT_ID/);
+  } finally {
+    console.warn = original;
+    for (const key of Object.keys(process.env)) {
+      if (!(key in saved)) delete process.env[key];
+    }
+    Object.assign(process.env, saved);
+  }
 });
 
 /* -------------------------------------------------------------------------- */

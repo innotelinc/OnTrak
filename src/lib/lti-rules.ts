@@ -65,6 +65,14 @@ export const LTI_CUSTOM_COHORT = "ontrak_cohort";
 
 export const LTI_LOGIN_PATH = "/api/lti/login";
 export const LTI_LAUNCH_PATH = "/api/lti/launch";
+/**
+ * Where this deployment publishes its *own* public key set.
+ *
+ * The two paths above are for the platform's traffic; this one is the tool saying
+ * which key it signs with, so a registration can point at a URL instead of holding a
+ * copy of a PEM that can drift out of step (see `src/lib/lti-keys.ts`).
+ */
+export const LTI_JWKS_PATH = "/api/lti/jwks.json";
 
 /** The round trip's state, and the launch context an attempt inherits. */
 export const LTI_STATE_COOKIE = "ontrak_training_lti";

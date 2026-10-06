@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/auth";
 import { evaluateScenario, inventoryHealth, loadAvailabilityContext, platformLabel } from "@/lib/availability";
 import { togglePlatform } from "@/app/actions/admin";
 import { recentAudit } from "@/lib/audit";
+import { integrationStatuses } from "@/lib/integration-status";
 import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, Button, ButtonLink, Card, Stat } from "@/components/ui";
 import { cn, formatBytes } from "@/lib/cn";
@@ -48,6 +49,7 @@ export default async function AdminHome({
   ]);
 
   const platforms: Platform[] = ["LINUX", "WINDOWS", "OFFICE"];
+  const integrations = integrationStatuses();
   const toggleFor = (platform: Platform) => toggles.find((toggle) => toggle.platform === platform);
   const availability = scenarios.map((scenario) => evaluateScenario(scenario, context));
   const runnable = availability.filter((entry) => entry.available).length;
@@ -131,6 +133,59 @@ export default async function AdminHome({
               </Card>
             );
           })}
+        </div>
+      </section>
+
+      {/* ------------------------------------------------------ integrations */}
+      <section className="mt-10">
+        <h2 className="font-display text-lg font-semibold text-ink">{t("admin.integrations")}</h2>
+        <p className="text-sm text-ink-soft">{t("admin.integrationsHint")}</p>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          {integrations.map((integration) => (
+            <Card key={integration.id}>
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="font-display text-base font-semibold text-ink">
+                  {t(`admin.integration.${integration.id}`)}
+                </h3>
+                <Badge
+                  tone={integration.state === "ready" ? "teal" : integration.state === "incomplete" ? "danger" : "neutral"}
+                >
+                  {t(`admin.integration.state.${integration.state}`)}
+                </Badge>
+              </div>
+
+              {integration.state === "off" ? (
+                <p className="mt-2 text-xs text-ink-soft">{t(`admin.integration.off.${integration.id}`)}</p>
+              ) : null}
+
+              {integration.details.length > 0 ? (
+                <dl className="mt-3 space-y-1.5 border-t border-line pt-3">
+                  {integration.details.map((detail) => (
+                    <div key={detail.key} className="flex flex-wrap items-baseline justify-between gap-x-3">
+                      <dt className="text-xs text-ink-faint">{t(`admin.integration.${detail.key}`)}</dt>
+                      <dd className="font-mono text-xs text-ink-soft">
+                        {detail.value || t("admin.integration.notSet")}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : null}
+
+              {integration.issues.length > 0 ? (
+                <div className="mt-3 border-t border-line pt-3">
+                  <p className="text-xs text-pink">{t("admin.integration.incompleteHint")}</p>
+                  <ul className="mt-1.5 space-y-1">
+                    {integration.issues.map((issue, index) => (
+                      <li key={index} className="font-mono text-[11px] text-pink">
+                        {issue}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </Card>
+          ))}
         </div>
       </section>
 

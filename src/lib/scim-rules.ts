@@ -70,6 +70,12 @@ export const SCIM_PATHS = {
 /** `application/scim+json` is the media type RFC 7644 asks for. */
 export const SCIM_CONTENT_TYPE = "application/scim+json";
 
+/**
+ * The one shared secret a directory sync presents, named here so everything that
+ * reports on directory sync — the guard, the admin console — reads the same variable.
+ */
+export const SCIM_TOKEN_ENV = "ONTRAK_SCIM_TOKEN";
+
 export const SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
 export const SCIM_GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group";
 export const SCIM_ENTERPRISE_USER_SCHEMA = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User";

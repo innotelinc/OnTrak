@@ -18,11 +18,11 @@ import { NextResponse, type NextRequest } from "next/server";
 import { recordAudit } from "@/lib/audit";
 import { bearerToken, serviceTokenMatches } from "@/lib/its-intake-rules";
 import { deploymentOrigin } from "@/lib/oidc-rules";
-import { SCIM_CONTENT_TYPE, SCIM_ERROR_SCHEMA, SCIM_ROOT, type ScimError } from "@/lib/scim-rules";
+import { SCIM_CONTENT_TYPE, SCIM_ERROR_SCHEMA, SCIM_ROOT, SCIM_TOKEN_ENV, type ScimError } from "@/lib/scim-rules";
 import { ScimService } from "@/lib/scim-service";
 import { prismaScimStore } from "@/lib/scim-store-prisma";
 
-export const SCIM_TOKEN_ENV = "ONTRAK_SCIM_TOKEN";
+export { SCIM_TOKEN_ENV };
 
 export type ScimAccess = { ok: true } | { ok: false; response: NextResponse };
 

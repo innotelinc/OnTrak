@@ -16,11 +16,13 @@
  */
 
 import assert from "node:assert/strict";
+import { createPublicKey, generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
 
 import {
   LTI_AGS_SCORE_SCOPE,
   LTI_CLAIM,
+  LTI_JWKS_PATH,
   LTI_LAUNCH_PATH,
   LTI_MESSAGE_TYPES,
   LTI_VERSION,
@@ -45,6 +47,7 @@ import {
   type LtiConfig,
 } from "../src/lib/lti-rules";
 import { MemoryLtiClient } from "../src/lib/lti-client";
+import { toolJwks } from "../src/lib/lti-keys";
 import { launchAuthorization, ltiExternalId, ltiLaunchAudit } from "../src/lib/lti-service";
 
 const ISSUER = "https://lms.example.edu";
@@ -161,6 +164,10 @@ test("lti: a half-wired registration is a boot warning, and a working one says n
 test("lti: the boot hook prints the warning once, naming what is wrong", async () => {
   const { register } = await import("../src/instrumentation");
   const warnings: string[] = [];
+  // The boot hook warns about the identity provider too (see `oidc.test.ts`), so
+  // this looks only at its own line: that way one integration's warning can never
+  // make the other's test read as noise.
+  const ltiWarnings = () => warnings.filter((line) => line.startsWith("[lti]"));
   const original = console.warn;
   const saved = { ...process.env };
   console.warn = (...args: unknown[]) => {
@@ -172,13 +179,13 @@ test("lti: the boot hook prints the warning once, naming what is wrong", async (
     delete process.env.ONTRAK_LTI_ISSUER;
     delete process.env.ONTRAK_LTI_CLIENT_ID;
     await register();
-    assert.equal(warnings.length, 0, "an unconfigured deployment boots silently");
+    assert.equal(ltiWarnings().length, 0, "an unconfigured deployment boots silently");
 
     process.env.ONTRAK_LTI_ISSUER = ISSUER;
     process.env.ONTRAK_LTI_CLIENT_ID = CLIENT_ID;
     await register();
-    assert.equal(warnings.length, 1, "a broken registration is said exactly once");
-    assert.match(warnings[0], /ONTRAK_LTI_AUTHORIZATION_ENDPOINT/);
+    assert.equal(ltiWarnings().length, 1, "a broken registration is said exactly once");
+    assert.match(ltiWarnings()[0], /ONTRAK_LTI_AUTHORIZATION_ENDPOINT/);
   } finally {
     console.warn = original;
     for (const key of Object.keys(process.env)) {
@@ -186,6 +193,50 @@ test("lti: the boot hook prints the warning once, naming what is wrong", async (
     }
     Object.assign(process.env, saved);
   }
+});
+
+test("lti: the tool publishes the public half of the key it signs with, and never the private one", () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+
+  const jwks = toolJwks(pem, "ontrak-training-1");
+  assert.ok(jwks, "a readable key produces a key set");
+  const [key] = jwks.keys;
+  assert.equal(jwks.keys.length, 1, "the deployment publishes exactly the key it holds");
+  assert.equal(key.kid, "ontrak-training-1", "the platform looks the key up by the id it registered");
+  assert.equal(key.alg, "RS256");
+  assert.equal(key.use, "sig");
+  assert.equal(key.kty, "RSA");
+  assert.ok(typeof key.n === "string" && (key.n as string).length > 100);
+
+  // A key set is fetched over the network by whoever holds the URL, so nothing that
+  // could sign may be in it. The public half is a separate key object, so there is no
+  // private material to strip — this asserts that stays true.
+  for (const secretField of ["d", "p", "q", "dp", "dq", "qi"]) {
+    assert.equal(secretField in key, false, `${secretField} must never be published`);
+  }
+
+  // The published modulus is the one this deployment actually signs with, so a
+  // platform that registers the URL and one that pasted the PEM earlier agree.
+  const expected = createPublicKey(privateKey).export({ format: "jwk" }) as Record<string, unknown>;
+  assert.equal(key.n, expected.n);
+  assert.equal(key.e, expected.e);
+
+  // The escaped spelling is what `.env` can hold, and it is the same key — this is
+  // what stops a rotated key from being published under yesterday's modulus.
+  assert.deepEqual(toolJwks(pem.replace(/\n/g, "\\n"), "k"), toolJwks(pem, "k"));
+
+  // A key that cannot be read, or a key with no id to register it under, is a
+  // refusal: a key set the platform cannot verify with reads as a bad signature.
+  assert.equal(toolJwks("not a pem", "k"), null);
+  assert.equal(toolJwks("", "k"), null);
+  assert.equal(toolJwks(pem, "   "), null);
+});
+
+test("lti: the key set is served at a stable path, so a registration can point at it", () => {
+  // The URL is the contract an operator pastes into the LMS, and the route builds it
+  // from this constant — a typo in either is a platform fetching a 404.
+  assert.equal(LTI_JWKS_PATH, "/api/lti/jwks.json");
 });
 
 test("lti: a complete registration is read, with its deployments and its default role", () => {

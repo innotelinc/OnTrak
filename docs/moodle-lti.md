@@ -30,9 +30,11 @@ passback   the app ──  Moodle's /mod/lti/token.php ─▶  Moodle   (the app
 
 The first direction needs **Moodle's** public key here — that is
 `ONTRAK_LTI_JWKS_URI`. The second needs **this tool's** public key in Moodle —
-that is the PEM you paste in step 2. A registration that does only the first is a
-launch that works and a grade that never leaves. `make lti-key` produces the pair
-once and both halves are registered together, under one key id.
+either the **Keyset URL** this deployment publishes at
+`https://its.ontrak.innotel.us/api/lti/jwks.json`, or the PEM you paste in step 2.
+The URL is the one to prefer (see step 1). A registration that does only the first
+direction is a launch that works and a grade that never leaves. `make lti-key`
+produces the pair once and both halves are registered together, under one key id.
 
 ## Before you start
 
@@ -57,12 +59,24 @@ It writes nothing to disk and prints everything you need. Two parts matter here:
 
 * the **two `.env` lines** (`ONTRAK_LTI_KEY_ID` and the escaped one-line
   `ONTRAK_LTI_PRIVATE_KEY`), which go in the deployment in step 3;
-* the **public key in PEM form** (`-----BEGIN PUBLIC KEY----- …`), which goes
-  into Moodle in step 2.
+* the **public half** — as a JWKS and as a PEM (`-----BEGIN PUBLIC KEY----- …`),
+  which is what goes into Moodle in step 2.
 
-Most platforms take a JWKS instead; Moodle has a field for each
-(`Public key type`), and this app ships no JWKS URL, so use the PEM. If the
-keypair already exists and only the public half needs reprinting:
+**Moodle has a field for each shape** (`Public key type`), and you do not have to
+choose one from a printout at all: the deployment serves its own public key set at
+
+```
+https://its.ontrak.innotel.us/api/lti/jwks.json
+```
+
+so the cleanest registration is **Public key type: Keyset URL** with that URL in
+**Public keyset**. Then the deployment is the only copy of the key — a rotation
+under the same key id needs no change in Moodle at all. Choose **RSA key** and
+paste the PEM instead if you would rather Moodle held the key itself, or if your
+Moodle version's fetch of a key set has been unreliable; both work, and the key
+set is the same key either way.
+
+If the keypair already exists and only a paste is needed:
 
 ```bash
 make lti-key ARGS="--from-env --pem"     # the PEM for Moodle
@@ -83,8 +97,9 @@ then **configure a tool manually**. Fill in:
 | **Tool name** | `OnTrak IT Support Training` (any label your learners will recognise) |
 | **Tool URL** | `https://its.ontrak.innotel.us/api/lti/launch` |
 | **LTI version** | **LTI 1.3** |
-| **Public key type** | **RSA key** — *not* Keyset URL; this app does not host a JWKS URL |
-| **Public key** | the `-----BEGIN PUBLIC KEY----- …` block from step 1 |
+| **Public key type** | **Keyset URL** — or **RSA key**, if you would rather paste the key |
+| **Public keyset** | `https://its.ontrak.innotel.us/api/lti/jwks.json` (the Keyset URL choice) |
+| **Public key** | the `-----BEGIN PUBLIC KEY----- …` block from step 1 (the RSA key choice) |
 | **Initiate login URL** | `https://its.ontrak.innotel.us/api/lti/login` |
 | **Redirection URI(s)** | `https://its.ontrak.innotel.us/api/lti/launch` |
 | **Default launch container** | **New window** |
@@ -246,11 +261,28 @@ applies, so a missing grade is a fact you can look up rather than a mystery.
 | `400` "…did not match the request this deployment started" | The `state`/`nonce` cookie did not survive the round trip — usually the browser blocking a cross-site cookie, or a proxy stripping `Set-Cookie`. A launch begins in Moodle's frame, so the cookie is `SameSite=None` and needs HTTPS. |
 | Launch works, no grade in the gradebook | Assignment and Grade Services is off, the activity has no **Maximum grade**, or the token endpoint/key is missing. Check the app's audit and log for the passback reason. |
 | A second account appeared | The first launch matched by email; Moodle's `email` for that person differs from the address the account was created with. Match them, or provision by directory so the identity is stable. |
-| "Invalid client" from Moodle's token endpoint | The public key in Moodle does not match `ONTRAK_LTI_PRIVATE_KEY`, or the `kid` differs. Re-register the public half with `make lti-key ARGS="--from-env --pem"`. |
+| "Invalid client" from Moodle's token endpoint | The public key in Moodle does not match `ONTRAK_LTI_PRIVATE_KEY`, or the `kid` differs. With a **Keyset URL** registration, check the boot log for a `503` from `/api/lti/jwks.json`; with a pasted key, re-register the public half with `make lti-key ARGS="--from-env --pem"`. |
+| `503` from `/api/lti/jwks.json`, naming `ONTRAK_LTI_PRIVATE_KEY` or `ONTRAK_LTI_KEY_ID` | The deployment has no keypair to publish, so a **Keyset URL** registration has nothing to verify with. Either mint and set the pair (step 1), or register the **RSA key** you minted earlier while the deployment catches up. |
 
 ## Rotating the key
 
-Both halves move together, and the order matters:
+Which order to do this in depends on which **Public key type** you registered.
+
+**With a Keyset URL**, the deployment is the only copy, so there is one step:
+
+1. `make lti-key` **reusing the same key id** — a new pair under a `kid` Moodle
+   already knows, so nothing in Moodle changes.
+2. Update `ONTRAK_LTI_KEY_ID` and `ONTRAK_LTI_PRIVATE_KEY` in `.env` and
+   `docker compose up -d --force-recreate app`.
+
+The key set is cached for an hour, so a passback started with the old key while
+Moodle still holds the cached copy is refused at the token endpoint and simply
+does not deliver — retry it once the cache turns over, or revoke and re-add the
+activity if you want it immediate. Keeping the **same** key id is what makes this
+a one-sided change; a new key id means a new registration in Moodle.
+
+**With a pasted RSA key**, both halves still move together, and there are three
+steps:
 
 1. `make lti-key` (a new keypair, a new **or the same** `kid`).
 2. Register the new **PEM** in Moodle's tool configuration and **save first** —
@@ -259,8 +291,13 @@ Both halves move together, and the order matters:
 3. Update `ONTRAK_LTI_KEY_ID` and `ONTRAK_LTI_PRIVATE_KEY` in `.env` and
    `docker compose up -d --force-recreate app`.
 
-An old key left registered alongside the new one is harmless for launches and is
-the safe way to roll over without a window where passbacks fail.
+The pasted form holds one key at a time, so registering the new one before the
+deployment switches leaves a window where a passback is signed under a `kid`
+Moodle no longer has — which is why it is saved first: at worst Moodle holds a key
+for a deployment that has not switched yet, and only passbacks are affected.
+Launches keep working throughout either way, because they verify the opposite
+direction. Serving the key set from this deployment is the shape that avoids the
+pasting altogether.
 
 ## See also
 

@@ -287,6 +287,16 @@ It writes nothing to disk. It prints two things that go to two places:
    LTI registration, pasted in under the *same* key id. Most platforms take a JWKS
    or a JWK here rather than a certificate.
 
+**Better than a paste, where the platform offers it:** the deployment serves its own
+public key set at `GET /api/lti/jwks.json` — `<ONTRAK_TRAINING_BASE_URL>/api/lti/jwks.json`
+— so a registration can point at a *Keyset URL* and hold no copy of the key. The
+route derives the public half from `ONTRAK_LTI_PRIVATE_KEY` on the way out, which
+makes it the same key as the paste (byte for byte the same output as
+`make lti-key ARGS=--from-env`), so the two ways of registering cannot disagree. It
+answers `503` naming what is wrong when the deployment has no usable registration or
+no keypair, and nothing needs a credential to read it — a key set is public by
+construction.
+
 A tool whose `kid` the platform does not have is refused at the token endpoint, and
 that refusal is indistinguishable from a wrong key — so the two halves are
 registered together or not at all. The public half is safe to share; the private
@@ -303,10 +313,11 @@ make lti-key ARGS=--from-env            # the public JWKS for ONTRAK_LTI_PRIVATE
 make lti-key ARGS="--from-env --pem"    # ...as a PEM, for Moodle's "RSA key" field
 ```
 
-Moodle is the platform that wants the key in its own shape rather than as a JWKS:
-its manual tool form takes a PEM under *Public key type: RSA key*. The end-to-end
-Moodle walkthrough — which field takes which URL, which identifier goes in which
-variable, and the role mapping — is [docs/moodle-lti.md](moodle-lti.md).
+Moodle offers a field for each shape: *Public key type: Keyset URL* takes the URL
+above, and *Public key type: RSA key* takes the PEM printed by
+`make lti-key ARGS="--from-env --pem"`. The end-to-end Moodle walkthrough — which
+field takes which URL, which identifier goes in which variable, the role mapping,
+and how to rotate the key — is [docs/moodle-lti.md](moodle-lti.md).
 
 ## A directory that pushes people in
 

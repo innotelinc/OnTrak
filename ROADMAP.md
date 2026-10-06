@@ -45,10 +45,10 @@ flowchart LR
 | RBAC (admin / instructor / student) on middleware **and** every action | `[x]` |
 | Scenario authoring + validator ("passes before work" warnings) + templates | `[x]` |
 | Cohorts, join codes, assignments, due dates, attempt caps, time limits | `[x]` |
-| Admin control room: platform toggles, software inventory, keys, users, audit | `[x]` |
+| Admin control room: platform toggles, software inventory, keys, users, audit, integration status | `[x]` |
 | Student experience: timed attempts, autosave, results, personal bests | `[x]` |
 | PWA / mobile quick-keys / offline shell | `[x]` |
-| Test suite (365) + typecheck + production build green | `[x]` |
+| Test suite (373) + typecheck + production build green | `[x]` |
 | Pure, unit-tested form/rule modules; ownership-guarded actions | `[x]` |
 | Versioned migrations (`prisma/migrations`) applied identically by every environment | `[x]` |
 
@@ -263,7 +263,10 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
     rename at the directory is a *move* rather than a second account. There is no
     tenant slug — one deployment, one provider — and nothing changes for a
     deployment that names none: the sign-in page only offers the button when a
-    handshake can actually complete. Covered by `tests/oidc.test.ts` (32 checks),
+    handshake can actually complete — and a half-wired `ONTRAK_OIDC_*` block, which
+    degrades to exactly that quiet state, is named once at boot by
+    `src/instrumentation.ts` so an operator who configured a provider cannot be left
+    believing it is in use. Covered by `tests/oidc.test.ts` (34 checks),
     including a full handshake against a real OpenID provider on a loopback port
     and the forgeries it must refuse — and by the opt-in `tests/sso-live.test.ts`,
     which starts the app itself and walks `/api/sso/start` → the provider →
@@ -335,7 +338,24 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
     provisional and it never reaches a gradebook. A passback that cannot happen
     says which of the three reasons it is: no line item, no score scope on the
     launch, or no credentials here. It never fails a grading.
-  - Covered by `tests/lti.test.ts` (24 checks: configuration and the boot warning,
+  - `[x]` **The key is published, not copied.** `GET /api/lti/jwks.json` serves the
+    public half of `ONTRAK_LTI_PRIVATE_KEY` under `ONTRAK_LTI_KEY_ID`, derived with
+    Node's crypto so it is byte-identical to what `make lti-key ARGS=--from-env`
+    prints. A platform that offers a **Keyset URL** points at it, which means the two
+    sides cannot drift: the deployment always publishes the key it actually signs
+    with, and a rotation under the same key id needs no change on the platform at
+    all. It refuses the same way every `/api/lti/*` route does — a `503` naming the
+    first thing that is wrong — and a key set is public by construction, so there is
+    nothing to authorise and the response is cacheable for an hour.
+  - `[x]` **The control room says what is wired.** The integrations panel on
+    `/admin` reads all three registrations (`src/lib/integration-status.ts`, pure)
+    and shows each as off, configured, or **misconfigured with the reason** — the
+    last being the case where the routes refuse the configuration, which is what
+    makes a broken registration visible before a learner clicks a link. Shared
+    secrets are reported as the *name* of the variable that holds them, never as a
+    value.
+  - Covered by `tests/lti.test.ts` (26 checks: configuration and the boot warning,
+    the published key set and its path,
     the login refusals, the handshake URL, thirteen assertion refusals, role
     mapping, the AGS score body, the token assertion, the three passback sentences,
     the launch context's age, and the client seam), and — for the half that

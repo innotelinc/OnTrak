@@ -219,14 +219,29 @@ is `503`, so the two failures name different problems. The value lives in that
 `.env` (gitignored); the running container is the other place to confirm it:
 `docker exec ontrak-training-app-1 printenv ONTRAK_SCIM_TOKEN`.
 
-**Rotating the LTI passback key** has two sides by construction: `make lti-key`
-prints the `.env` lines and the public JWKS, and a key id the LMS does not hold is
-refused at its token endpoint — so the key id, the private key and the LMS's copy of
-the public half move together or the grade silently stays here. To hand the LMS the
-public half of a key *already* in `.env`, without minting a second one, re-print it
-with `make lti-key ARGS=--from-env`. **Leave `ONTRAK_API_TOKEN` alone** unless
-something is genuinely wrong: several callers hold it, none re-reads it, and
-rotating it is a coordinated change rather than a restart.
+**Rotating the LTI passback key** is a change to one side or two, depending on how
+the LMS registered the key. This deployment publishes its own public key set at
+`https://its.ontrak.innotel.us/api/lti/jwks.json` (`GET /api/lti/jwks.json`), so an
+LMS registered with a **Keyset URL** is already reading the key from here: rotate
+with `make lti-key` **reusing the same `ONTRAK_LTI_KEY_ID`**, update the two `.env`
+lines, and nothing in the LMS changes. An LMS registered with a **pasted key** is
+still two sides — the key id, the private key and the LMS's copy of the public half
+move together, or the grade silently stays here — and the paste comes from
+`make lti-key ARGS="--from-env --pem"` for a key already in `.env`, or from the
+fuller output of `make lti-key`. Either way, the key set is cached for an hour, so
+a passback in flight during the change is refused and simply does not deliver.
+
+**Reading the deployment's own state** no longer means reading three `.env` files:
+the control room at `/admin` shows single sign-on, LTI and directory sync as off,
+configured or misconfigured, with the reason, and reports each shared secret as the
+name of the variable that holds it. A mis-wired `ONTRAK_OIDC_*`, `ONTRAK_LTI_*` or
+`ONTRAK_SCIM_TOKEN` is also the first line of the app log at boot, because the
+quiet failure — a deployment that silently fell back to local passwords, or an LMS
+that launches nothing — is the one an operator does not notice.
+
+**Leave `ONTRAK_API_TOKEN` alone** unless something is genuinely wrong: several
+callers hold it, none re-reads it, and rotating it is a coordinated change rather
+than a restart.
 
 ### Sentinel is the family's, not a second stack
 

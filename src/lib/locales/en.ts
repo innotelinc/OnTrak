@@ -195,6 +195,34 @@ export const en = {
   "admin.scenarios": "Scenarios",
   "admin.practice": "Practice",
 
+  // Integrations: the registrations the environment decides
+  "admin.integrations": "Integrations",
+  "admin.integrationsHint":
+    "Who this deployment trusts, and what it is wired to. These are set in the environment rather than on this page — what is shown is what the deployment is actually running with.",
+  "admin.integration.sso": "Single sign-on",
+  "admin.integration.lti": "Learning platform (LTI)",
+  "admin.integration.scim": "Directory sync (SCIM)",
+  "admin.integration.state.off": "off",
+  "admin.integration.state.ready": "configured",
+  "admin.integration.state.incomplete": "misconfigured",
+  "admin.integration.off.sso": "No identity provider: people sign in with a local password.",
+  "admin.integration.off.lti": "No learning platform can launch a scenario here.",
+  "admin.integration.off.scim": "No directory connector can read or write accounts here.",
+  "admin.integration.incompleteHint":
+    "This deployment refuses those requests, and the boot log names what to fix:",
+  "admin.integration.notSet": "not set",
+  "admin.integration.issuer": "Issuer",
+  "admin.integration.clientId": "Client ID",
+  "admin.integration.allowedDomains": "Sign-in domains",
+  "admin.integration.launchPath": "Launch URL",
+  "admin.integration.loginPath": "Login URL",
+  "admin.integration.keySetPath": "Key set URL",
+  "admin.integration.passback": "Grade passback endpoint",
+  "admin.integration.keyId": "Key id",
+  "admin.integration.usersPath": "Users endpoint",
+  "admin.integration.groupsPath": "Groups endpoint",
+  "admin.integration.tokenEnv": "Token variable",
+
   // Audit log
   "audit.eyebrow": "Administration",
   "audit.title": "Audit log",

@@ -403,12 +403,15 @@ learner never opens this app at all: their LMS launches a scenario here over
 **LTI 1.3** (`/api/lti/login` then `/api/lti/launch`), this app is the tool and
 the LMS is the platform, and when the attempt is graded the score goes back to the
 line item the launch named — a per-write `client_credentials` token signed with
-the deployment's key (`make lti-key` mints one and prints the public half to
-register with the platform), and a score body with both progress fields set,
-because a platform holds a score without them as provisional and it never reaches
-a gradebook. A passback that cannot happen never fails a grading; it says which of
-its three reasons applies. `docs/moodle-lti.md` is the operator's runbook for
-standing this up in a real Moodle site, from the keypair to the role mapping.
+the deployment's key (`make lti-key` mints one), and a score body with both
+progress fields set, because a platform holds a score without them as provisional
+and it never reaches a gradebook. The matching public half is served from this
+deployment at `/api/lti/jwks.json`, so a platform that offers a **Keyset URL**
+registers the URL and holds no copy of the key — and an LMS with a pasted-key field
+takes the same key as a PEM instead. A passback that cannot happen never fails a
+grading; it says which of its three reasons applies. `docs/moodle-lti.md` is the
+operator's runbook for standing this up in a real Moodle site, from the keypair to
+the role mapping.
 Deep linking is refused by name rather than half-supported: this is a tool, not a
 gradebook or a course shell.
 
@@ -427,6 +430,13 @@ accepted push is audited (`scim.user.provision`, `scim.user.update`,
 `scim.user.deprovision`, `scim.group.members`). `docs/integrations.md` is the
 connector's document. With no token set the whole surface answers 503 with a
 reason, so a deployment that never uses it is untouched.
+
+None of this is hidden from the operator either. The control room at `/admin`
+shows single sign-on, LTI and directory sync as off, configured or **misconfigured
+with the reason**, and reports each shared secret as the name of the variable that
+holds it rather than its value — and a half-wired `ONTRAK_OIDC_*` or `ONTRAK_LTI_*`
+block is said out loud in the app log at boot, because a deployment that quietly
+fell back to local passwords is the failure nobody notices.
 
 ---
 
@@ -493,8 +503,11 @@ tests/
   oidc.test.ts                single sign-on, including a real provider on loopback
   sso-live.test.ts            opt-in: the app's own SSO routes against a running app
   scim.test.ts                the directory-sync service provider
-  lti.test.ts                 LTI launch decisions and the client seam
+  scim-live.test.ts           opt-in: the SCIM routes a real connector drives
+  lti.test.ts                 LTI launch decisions, the published key set, the client seam
+  lti-live.test.ts            opt-in: a scenario launched through the app's own LTI routes
   lti-passback.test.ts        grade passback against a real AGS token endpoint
+  integration-status.test.ts  what the control room reports about the three integrations
   support/local-idp.ts        a real, minimal OpenID provider for the tests above
   support/local-lti-platform.ts  a real, minimal LTI 1.3 platform for the passback test
   tsconfig.json               JSX-enabled config just for the tests
