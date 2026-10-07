@@ -40,9 +40,28 @@ html, body {
   font-size: 14px;
 }
 
+/*
+ * iOS Safari inflates body text when a phone is turned to landscape unless it is
+ * told not to. That is a reading aid on an article and a bug in a console: the
+ * line lengths, the diff columns and the wrapping were all chosen for the size
+ * that is set, so the size stays what it is set to.
+ */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 .mono { font-family: var(--mono); }
 .muted { color: var(--text-dim); }
 .hidden { display: none !important; }
+
+/*
+ * Off by default, and switched on by the one media query that needs it: the
+ * controls that exist only in the narrow layout (the sidebar's drawer handle and
+ * its close button). Naming the rule once is what stops a control from being
+ * rendered on a desktop where the thing it acts on is not a drawer.
+ */
+.only-narrow { display: none; }
 
 /* Visible only to screen readers, for status announcements. */
 .sr-only {
@@ -90,6 +109,14 @@ html, body {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr) auto;
   height: 100vh;
+  /*
+   * `vh` is the tallest viewport a phone will ever show, which is not the height
+   * the page has while the browser's chrome is on screen — so a `100vh` console
+   * puts its composer under the address bar. `dvh` is the height that is true
+   * right now, and it is written second because an engine that does not know it
+   * drops the declaration and keeps the line above.
+   */
+  height: 100dvh;
 }
 
 /* --- sidebar --- */
@@ -1106,6 +1133,31 @@ body.preview-resizing * { cursor: col-resize !important; }
   min-height: 0;
 }
 
+/* ========================================================================
+ * Sizing: tablets, then phones, then pointers that are fingers
+ * ========================================================================
+ *
+ * Three rules rather than one, because they answer three different questions.
+ *
+ * **1080px** is where the console stops having room for three columns: the
+ * preview rail leaves the grid for an overlay (below), and the toolbar is
+ * allowed to wrap — a control pushed past the right edge is a feature nobody can
+ * reach, which is exactly what this console already refuses to do inside the
+ * preview's own header.
+ *
+ * **720px** is where a width stops being a small window and starts being a
+ * phone: one column, and the sidebar leaves the flow to become a drawer.
+ *
+ * **Coarse pointers** are orthogonal to width — a tablet is wide and still
+ * touched — so target sizes and the 16px field minimum are keyed to the pointer
+ * rather than to the viewport. Nothing here is a second layout: the DOM, the ids
+ * and the wiring are identical on every device, and only the sizes change.
+ *
+ * There is deliberately no JavaScript in this: `matchMedia` in the app would be
+ * a second copy of a breakpoint that already exists here, and the two would
+ * drift the first time one was edited.
+ */
+
 @media (max-width: 1080px) {
   /* Two tracks again — the preview becomes an overlay at this width, so it must
      not reserve a third column that would squeeze the conversation. */
@@ -1118,5 +1170,174 @@ body.preview-resizing * { cursor: col-resize !important; }
     min-width: 0;
     z-index: 25;
     box-shadow: var(--shadow-pop);
+  }
+  .topbar { flex-wrap: wrap; }
+  .topbar-right { flex-wrap: wrap; justify-content: flex-end; }
+  .preview-head { padding: 8px 12px; }
+}
+
+@media (max-width: 720px) {
+  /* One column: the sidebar is out of the flow and the preview is an overlay,
+     so the conversation owns the viewport instead of being squeezed between
+     two things that are not on screen. */
+  .app { grid-template-columns: minmax(0, 1fr); }
+
+  /*
+   * The sidebar becomes a drawer rather than a column. At 240px it was more than
+   * half of a phone's width — which is not a sidebar, it is the page.
+   *
+   * `visibility` is part of the transition on purpose: a drawer that is only
+   * translated off-screen is still in the tab order, and tabbing into a panel
+   * nobody can see is worse than the panel not being there. Hidden, it is also
+   * out of the accessibility tree, so a screen reader is offered the console
+   * rather than a menu it has no way to open.
+   */
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(300px, 86vw);
+    z-index: 35;
+    transform: translateX(-100%);
+    visibility: hidden;
+    /*
+     * `visibility` is transitioned with a delay and a zero duration, which is
+     * the only reason it is in the list at all: it flips *after* the slide is
+     * over when the drawer closes (so the slide is visible all the way out) and
+     * immediately when it opens (so it is never invisible on the way in).
+     */
+    transition: transform 180ms ease, visibility 0s linear 180ms;
+    box-shadow: var(--shadow-pop);
+    /* The drawer is the page's edge here, so it — not the page — keeps clear of
+       a notch and a home indicator. */
+    padding-left: env(safe-area-inset-left);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .sidebar.open {
+    transform: none;
+    visibility: visible;
+    /* Made visible on the first frame of the slide, not halfway through it. */
+    transition: transform 180ms ease, visibility 0s;
+  }
+
+  /* Behind the drawer, above everything that is not a dialog. */
+  #sidebar-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 34;
+    background: rgb(0 0 0 / 0.45);
+  }
+  #sidebar-scrim.hidden { display: none; }
+
+  .only-narrow { display: inline-flex; align-items: center; }
+  /* Brand on the left, the two controls that act on it on the right. */
+  #new-chat { margin-left: auto; }
+  #sidebar-close { margin-left: 6px; }
+
+  /*
+   * The toolbar, which is where a phone pays for everything the console can do.
+   * Eleven controls at once, and at 44px each for a thumb, is four stacked rows
+   * and a fifth of the screen — so this is the one place the narrow layout
+   * changes what is *drawn* rather than only how wide it is.
+   *
+   *   row 1  the drawer handle and the chat's name
+   *   row 2  the model picker, on its own row because it is the one control
+   *          here that is a *value* rather than an action — squeezed into a
+   *          corner of a row it shows three characters of the model's name
+   *   row 3  the actions, tightened so they are one row on a 390px screen
+   *
+   * `appearance` is the single control not drawn, and only because it is the
+   * one with a second door on a phone: the drawer's theme switch is the same
+   * markup wired by the same script. The dialog itself is still one `/appearance`
+   * away in the palette and one `?settings=appearance` deep link away — which is
+   * asserted in `layout:check` rather than assumed, so "hidden" cannot quietly
+   * become "gone".
+   */
+  .topbar { padding: 8px 12px; gap: 8px; }
+  .topbar-left { flex: 1 1 auto; }
+  .topbar-right { flex: 1 1 100%; justify-content: flex-start; gap: 8px; }
+  .chat-title { max-width: none; flex: 1; }
+  #model-field { flex: 1 1 100%; }
+  #model-field .select { flex: 1; min-width: 0; max-width: none; }
+  #appearance-open { display: none; }
+  .topbar-right .btn-ghost { padding: 5px 8px; font-size: 12px; }
+  /* A badge is a sentence, not a label: it wraps instead of pushing the row
+     wider than the screen. */
+  .badge { max-width: 100%; white-space: normal; }
+
+  /* Full-bleed dialogs. 6vh of margin on a 640px-tall phone is a third of the
+     panel before anything is read, and a modal is already the screen's whole
+     business. */
+  .viewer { inset: 0; border: none; border-radius: 0; }
+  .viewer-head { padding: 10px 12px; flex-wrap: wrap; }
+  .viewer-actions { flex-wrap: wrap; gap: 6px; }
+  .settings-form { padding: 12px; }
+
+  /* The overlay rail is the viewport's width here, and its drag grip does
+     nothing below the docked breakpoint anyway — so it goes, rather than
+     sitting across the transcript as a 9px strip that swallows taps. */
+  .preview { width: 100vw; max-width: 100vw; }
+  .preview-resize { display: none; }
+  .preview-head { padding: 8px 12px; }
+  .preview-app-bar, .preview-app-actions { flex-wrap: wrap; }
+
+  .files.open { width: 100vw; }
+  .file-entry, .project, .session { padding-top: 9px; padding-bottom: 9px; }
+
+  .turn-progress { padding: 0 12px 8px; }
+  .terminal { max-height: 50vh; min-height: 140px; }
+  .hosting-plan { flex-wrap: wrap; }
+
+  /* A phone in landscape is wide and short, so the welcome goes up rather than
+     pushing the composer off the bottom. */
+  .empty { margin-top: 4vh; }
+}
+
+/*
+ * A finger is not a mouse. WCAG 2.5.5 asks for 44px, and iOS Safari zooms the
+ * page in whenever a focused field's text is under 16px — which on a console
+ * whose height *is* the viewport is not a courtesy but a layout that jumps.
+ *
+ * This is keyed to the pointer and not the width on purpose: an iPad is 1024px
+ * wide and still touched, and a 1024px-wide touchscreen is where the small
+ * targets hurt most.
+ */
+@media (pointer: coarse) {
+  .btn-ghost, .btn-primary, .btn-danger, .select, .session, .file-entry, .project,
+  .session-archived-toggle, .followup, .palette-row {
+    min-height: 44px;
+  }
+  /* The mini controls live *inside* another control's row, where 44px each would
+     make the row twice as tall as the thing it acts on. 32px still clears the
+     WCAG 2.5.8 floor of 24px with room for a thumb. */
+  .btn-ghost.mini, .session-action, .sweep-row .btn-ghost { min-height: 32px; }
+  /* The family's switch is the theme's own component, so only its target grows. */
+  .ot-theme button { min-height: 40px; }
+
+  #input, .select, .input-text, .input-num, .terminal-input { font-size: 16px; }
+}
+
+/*
+ * No hover, so nothing may be *only* on hover. The session row reveals its
+ * rename/archive/delete controls on hover or keyboard focus; with neither, they
+ * would be permanently invisible and the row would look like a title.
+ */
+@media (hover: none) {
+  .session-actions { opacity: 1; }
+}
+
+/*
+ * Reduced motion is a preference, not a request for a shorter animation: it is
+ * asked for by people the animations make unwell. So everything stops instead of
+ * slowing — and `content`, which is not an animation, keeps the caret visible.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
   }
 }

@@ -2,7 +2,12 @@
 <html lang="en" data-scheme="operations">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      `viewport-fit=cover` so the console may paint under a notch and a home
+      indicator; the parts that must not be covered keep clear of them with
+      `env(safe-area-inset-*)`, which is what the layout below does.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <title>OnTrak Genie</title>
     <!--
@@ -31,10 +36,23 @@
     <a class="skip-link" href="#input">Skip to the message box</a>
 
     <div class="app">
-      <aside class="sidebar" aria-label="Sessions and status">
+      <aside id="sidebar" class="sidebar" aria-label="Sessions and status">
         <div class="sidebar-head">
           <span class="brand">OnTrak Genie</span>
           <button id="new-chat" class="btn-ghost" title="Start a new chat" aria-label="Start a new chat">+</button>
+          <!--
+            The drawer's own way out, on the head it belongs to. On a wide screen
+            the sidebar is a real column and this button is not rendered at all
+            (`.only-narrow`), so there is nothing to explain to a desktop user.
+          -->
+          <button
+            id="sidebar-close"
+            class="btn-ghost only-narrow"
+            title="Hide the chat list"
+            aria-label="Hide the chat list"
+          >
+            close
+          </button>
         </div>
         <nav id="sessions" class="sessions" aria-label="Chat sessions"></nav>
         <div class="sidebar-foot">
@@ -79,6 +97,22 @@
       <main class="main">
         <header class="topbar">
           <div class="topbar-left">
+            <!--
+              Wide screens show the sidebar as a column and this button is
+              `display: none`; narrow ones turn the sidebar into an overlay, and
+              this is the only way to it. Its `aria-expanded` is pinned to the
+              drawer's real state by `toggleSidebar`, in both directions.
+            -->
+            <button
+              id="sidebar-toggle"
+              class="btn-ghost only-narrow"
+              title="Show the chat list and status"
+              aria-label="Show the chat list and status"
+              aria-controls="sidebar"
+              aria-expanded="false"
+            >
+              <span aria-hidden="true">☰</span>
+            </button>
             <span id="chat-title" class="chat-title">New chat</span>
           </div>
           <div class="topbar-right">
@@ -410,6 +444,13 @@
         <div id="files-list" class="files-list"></div>
       </aside>
     </div>
+
+    <!--
+      The dimmer behind the sidebar when it is an overlay. Outside `.app` because
+      it is not a track in that grid, and inert to the tab order (`hidden`), so
+      the only thing a keyboard user can reach behind the drawer is the drawer.
+    -->
+    <div id="sidebar-scrim" class="scrim hidden"></div>
 
     <div
       id="viewer"

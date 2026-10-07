@@ -2219,6 +2219,7 @@ function startNewChat() {
   setGatewayBadge("primary");
   $("#messages").innerHTML =
     '<div class="empty" id="empty"><h2>What are we building?</h2><p class="muted">This agent reads, edits and runs code inside the workspace. Model access is routed through your OmniRoute gateway.</p></div>';
+  toggleSidebar(false);
   void loadSessions();
   $("#input").focus();
 }
@@ -2278,6 +2279,9 @@ async function openSession(id) {
 
   state.sessionId = session.id;
   setSharedView(null);
+  // On a phone the chat list is a drawer covering the chat that was just
+  // chosen; on a desktop this is a no-op, which is the point.
+  toggleSidebar(false);
   $("#chat-title").textContent = session.title;
   renderTranscript(session);
 
@@ -3093,6 +3097,30 @@ function autoGrow() {
   input.style.height = `${Math.min(input.scrollHeight, 220)}px`;
 }
 
+/* --------------------------------------------------------------- the sidebar */
+
+/**
+ * The sidebar: a column on a desktop, a drawer on a phone.
+ *
+ * One class decides it and the stylesheet decides what that class *means* at
+ * this width — so there is no `matchMedia` here, and no second copy of the 720px
+ * breakpoint to drift away from the one in `style.css`. Two things fall out of
+ * that for free: a resize across the breakpoint needs no listener (the drawer's
+ * rules stop applying and the column comes back on their own), and closing it is
+ * safe to call on any device — which is why opening a chat can call it without
+ * first asking how wide the screen is.
+ *
+ * `aria-expanded` reports the drawer's real state rather than the click that
+ * asked for the change, so the handle in the toolbar and the close button on the
+ * head cannot disagree with each other or with the panel.
+ */
+function toggleSidebar(force) {
+  const open = force === undefined ? !$("#sidebar").classList.contains("open") : force;
+  $("#sidebar").classList.toggle("open", open);
+  $("#sidebar-scrim").classList.toggle("hidden", !open);
+  $("#sidebar-toggle").setAttribute("aria-expanded", open ? "true" : "false");
+}
+
 function toggleFilesPanel(force) {
   const panel = $("#files-panel");
   const open = force === undefined ? !panel.classList.contains("open") : force;
@@ -3775,6 +3803,12 @@ function wire() {
 
   $("#files-root").addEventListener("click", () => void loadFiles("."));
 
+  $("#sidebar-toggle").addEventListener("click", () => toggleSidebar());
+  $("#sidebar-close").addEventListener("click", () => toggleSidebar(false));
+  // Tapping the dimmed page behind the drawer dismisses it, like a dialog's
+  // backdrop — the one gesture a person will try first.
+  $("#sidebar-scrim").addEventListener("click", () => toggleSidebar(false));
+
   $("#toggle-files").addEventListener("click", () => toggleFilesPanel());
   $("#files-close").addEventListener("click", () => toggleFilesPanel(false));
   $("#files-new").addEventListener("click", () => void newWorkspaceFolder());
@@ -3851,6 +3885,10 @@ function wire() {
     else if (!$("#hosting").classList.contains("hidden")) closeHosting();
     else if (!$("#appearance").classList.contains("hidden")) toggleAppearance(false);
     else if (!$("#settings").classList.contains("hidden")) toggleSettings(false);
+    // The drawer is the last thing Escape reaches: anything open on top of it
+    // is what the user is looking at, and dismissing that must not also hide
+    // the panel underneath it.
+    else if ($("#sidebar").classList.contains("open")) toggleSidebar(false);
     else closeViewer();
   });
 }

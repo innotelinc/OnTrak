@@ -106,6 +106,18 @@ test("the appearance controls only offer what the theme can paint", async () => 
   // Every scheme a button names has to have a palette. A scheme with no
   // `:root[data-scheme=...]` block falls back to the default one, so the button
   // would look like it did nothing — the silent failure this test exists for.
+  /*
+   * The narrow layout does not draw the toolbar button for this panel — three
+   * rows of toolbar is the budget on a phone, and this is the one control with
+   * another door. So the other doors have to exist: the drawer's own switch
+   * (same markup, wired by the same script) and a palette action, which is the
+   * only one of the two that reaches the *scheme*, not just the mode.
+   */
+  const style = await fs.readFile(path.join(PUBLIC_DIR, "style.css"), "utf8");
+  assert.match(style, /#appearance-open\s*\{\s*display:\s*none/, "the phone does not draw it");
+  const console = await fs.readFile(path.join(PUBLIC_DIR, "app.js"), "utf8");
+  assert.match(console, /\{ name: "appearance"/, "so the palette has to offer it");
+
   const offered = [...html.matchAll(/data-theme-scheme="([^"]+)"/g)].map((match) => match[1] ?? "");
   assert.ok(offered.length >= 2, "more than one scheme should be offerable");
   for (const scheme of offered) {
@@ -118,6 +130,55 @@ test("the appearance controls only offer what the theme can paint", async () => 
       `${scheme} is offered but has no palette in unity-theme.css`,
     );
   }
+});
+
+test("the console is laid out for the screen it is on", async () => {
+  /*
+   * `layout:check` proves all of this in a real browser — at 320, 390, 834 and
+   * 1440 pixels, with a thumb and with a mouse — and it skips where there is no
+   * Chromium, which is every CI runner this repository has. This is the half
+   * that can always run: the rules that make the console adapt have to still be
+   * in the stylesheet. It catches the deletion; the browser check catches the
+   * mistake.
+   */
+  const html = await fs.readFile(path.join(PUBLIC_DIR, "index.html"), "utf8");
+  const css = await fs.readFile(path.join(PUBLIC_DIR, "style.css"), "utf8");
+  const chat = await fs.readFile(path.join(PUBLIC_DIR, "chat-surface.css"), "utf8");
+
+  assert.match(html, /viewport-fit=cover/, "a notch has to be accounted for");
+
+  // The phone's only way to the chat list, wired to the panel it opens.
+  assert.match(
+    html,
+    /id="sidebar-toggle"[^>]*aria-controls="sidebar"/,
+    "the drawer needs a handle that names what it opens",
+  );
+  assert.match(html, /id="sidebar-scrim"/, "and something to dismiss it with");
+
+  // Four rules, four different questions — see the comment above them.
+  for (const query of [
+    "@media (max-width: 1080px)",
+    "@media (max-width: 720px)",
+    "@media (pointer: coarse)",
+    "@media (hover: none)",
+    "@media (prefers-reduced-motion: reduce)",
+  ]) {
+    assert.ok(css.includes(query), `style.css lost \`${query}\``);
+  }
+
+  // The tallest viewport a phone will ever show, which is not the height it has.
+  assert.match(css, /height: 100dvh/, "100vh alone puts the composer under the address bar");
+  // A drawer that is merely translated off-screen is still in the tab order.
+  assert.match(
+    css,
+    /\.sidebar\.open \{[^}]*visibility: visible/,
+    "the phone's drawer has to be hidden from the keyboard when closed",
+  );
+  assert.match(
+    chat,
+    /safe-area-inset-bottom/,
+    "the composer has to keep clear of a home indicator",
+  );
 });
 
 test("the follow-up rule is one module, served to the console", async () => {

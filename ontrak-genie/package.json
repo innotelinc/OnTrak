@@ -18,7 +18,7 @@
     "dev": "tsx watch src/server.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test dist/test/*.test.js",
-    "check": "npm run typecheck && npm run build && npm run copy:check && npm test && npm run ui:smoke",
+    "check": "npm run typecheck && npm run build && npm run copy:check && npm test && npm run layout:check && npm run ui:smoke",
     "gateway": "npx -y omniroute",
     "gateway:docker": "docker run --rm -p 20128:20128 diegosouzapw/omniroute",
     "sandbox:build": "docker build -t coding-agent-sandbox:latest sandbox",
@@ -30,7 +30,8 @@
     "tenancy:check": "node scripts/verify-tenancy.mjs",
     "copy:check": "node scripts/copy-check.mjs",
     "live:check": "node scripts/offline-check.mjs && node scripts/draft-check.mjs",
-    "ui:smoke": "node scripts/ui-smoke.mjs"
+    "ui:smoke": "node scripts/ui-smoke.mjs",
+    "layout:check": "node scripts/layout-check.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

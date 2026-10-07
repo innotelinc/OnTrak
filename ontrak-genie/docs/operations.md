@@ -772,6 +772,30 @@ A single-page app with no build step (`public/`), served by the agent itself.
   `[data-theme-mode]` / `[data-theme-scheme]` button in the page is wired by the same
   loop. Nothing offered can be a no-op — a test fails if a scheme button names a
   palette `unity-theme.css` does not define.
+- **Screens.** One layout, three sizes, and no second build for any of them.
+  `style.css` carries the rules. At **1080px** the preview rail leaves the grid for
+  an overlay and the toolbar is allowed to wrap — a control pushed past the right
+  edge is a feature nobody can reach. At **720px** the console is a single column
+  and the sidebar becomes a drawer: a handle in the toolbar, a scrim behind it,
+  `Escape` out of it, and `visibility: hidden` while it is closed so a panel
+  nobody can see is not in the tab order. Target sizes are keyed to the **pointer**
+  rather than the width, because a 1024px tablet is still touched: 44px for
+  anything a thumb drives (WCAG 2.5.5) and 24px as the floor everywhere else
+  (2.5.8), with the mini controls inside a row at 32px. A focused field is at least
+  16px so iOS Safari does not zoom the page in when it is tapped, the shell is
+  `100dvh` rather than `100vh` so the composer is not under the address bar, the
+  composer keeps clear of a home indicator, and `prefers-reduced-motion` stops the
+  animations without removing the signals they carried (the caret is still drawn —
+  it just does not blink). On a phone the toolbar is three rows and does not draw
+  the **appearance** button: the drawer's own theme switch is the same markup wired
+  by the same script, and `?settings=appearance` is the third door. `npm run
+  layout:check` is what keeps all of this honest — it serves the real shell and
+  drives a real Chromium at 320, 390, 834, 844×390 and 1440 pixels, with a thumb
+  and with a mouse, and fails on sideways overflow, a control pushed off the edge,
+  a target under the floor, a shell that is not exactly as tall as the viewport,
+  or a drawer whose `aria-expanded` does not follow it. It skips where there is no
+  browser, like `ui:smoke`; the part that can always run lives in
+  `src/test/static-assets.test.ts`.
 - **Diff view.** `write_file` and `edit_file` return a structured line diff
   alongside the tool result, so each change is rendered as before/after hunks
   with per-line numbers and `+`/`−` counts, and the raw tool output is one
@@ -1443,8 +1467,9 @@ same `POST /api/approvals/:id` the browser card uses.
 ```bash
 npm run dev           # tsx watch (reload on change)
 npm run typecheck     # tsc --noEmit
-npm test              # node:test — 386 tests, no browser needed
+npm test              # node:test — 557 tests, no browser needed
 npm run ui:smoke      # drives the real UI in a headless Chromium
+npm run layout:check  # phone, tablet and desktop sizes, in a headless Chromium
 npm run model:health  # which advertised models really do tool calling
 npm run tenancy:check # two accounts, isolated, against a running console
 npm run offline:check # proves the offline fallback, with the gateway dead
@@ -1454,10 +1479,14 @@ npm run sandbox:build # rebuild the run_command container image
 ```
 
 `npm run check` runs the whole gate in the order that makes sense: `typecheck`,
-`build`, `copy:check`, `test`, `ui:smoke`. The build comes before the tests because
-the suite runs the compiled `dist/test/*.test.js`, not the TypeScript, and
-`ui:smoke` comes last because it needs a server to drive — start one first (or use
-the compose container, which is already on `ONTRAK_GENIE_PORT`).
+`build`, `copy:check`, `test`, `layout:check`, `ui:smoke`. The build comes before
+the tests because the suite runs the compiled `dist/test/*.test.js`, not the
+TypeScript, and the last two come after it because they need a browser and a build
+behind them. `layout:check` starts its own shell on a scratch workspace and needs
+nothing else; `ui:smoke` needs a server to drive — start one first (or use the
+compose container, which is already on `ONTRAK_GENIE_PORT`) — so on a host with a
+browser but no running agent it is the one step that cannot pass. Both skip
+cleanly when there is no Chromium, which is what every CI runner has.
 
 **`test` reads the deployment's `.env` when the gate is run from a directory that
 has one**, because `config.ts` loads it at import time. It cannot override a

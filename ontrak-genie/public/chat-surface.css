@@ -402,4 +402,12 @@
   .msg-user { max-width: 92%; }
   .messages { padding: 18px 12px 8px; }
   .followups { margin-left: 0; margin-right: 0; }
+  /* A home indicator is drawn over the bottom of the page, and the composer is
+     the one thing on it that must never be behind anything. */
+  .composer { margin-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  /* Anchored above the composer, so the palette can only ever be as tall as the
+     room over it; three quarters of a phone's height would cover the box it
+     belongs to. */
+  .palette { max-height: 52vh; }
+  .composer-hint { flex-wrap: wrap; gap: 6px; }
 }
