@@ -36,6 +36,7 @@ const {
   magnateEntitled,
   normalizePreviewName,
   previewLabelFromHost,
+  previewPublic,
   proxyPreview,
   removePreview,
   resetPreviewCache,
@@ -164,6 +165,24 @@ test("the registry", async (t) => {
     const after = await getPreview("p46212");
     assert.equal(after?.pid, null);
     await removePreview("p46212");
+  });
+
+  await t.test("a command whose cwd does not exist fails alone, not the server", async () => {
+    resetPreviewCache();
+    const preview = await createPreview({
+      port: 46213,
+      command: "node -e \"process.exit(0)\"",
+      cwd: path.join(scratch, "a-directory-that-is-not-there"),
+    });
+    // The spawn fails on the missing `cwd` and emits `error`. Without a listener
+    // that event is an uncaught exception, so *this test process dying* is what a
+    // regression looks like; reaching the assertions is the proof it did not. Give
+    // the async error a turn to land, then a preview that never started reads as
+    // not running rather than as an outage.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(preview.pid, null);
+    assert.equal(previewPublic(preview).running, false);
+    await removePreview("p46213");
   });
 });
 

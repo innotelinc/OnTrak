@@ -512,6 +512,21 @@ function startPreviewProcess(preview: Preview): void {
       child.unref();
       children.set(preview.name, child);
       preview.pid = child.pid ?? null;
+      // A spawn that never becomes a process — an unknown `cwd`, a missing
+      // interpreter — emits `error` and never `exit`. With no listener that event
+      // is an uncaught exception, and it takes the *whole hosting server* down:
+      // one preview that could not start becomes every address going dark, and
+      // the console reads the outage as "the hosting server is unreachable".
+      // Record the failure against the preview and keep this process serving the
+      // others, so a bad `cwd` is one address that does not answer rather than an
+      // outage nobody can attribute.
+      child.once("error", (error) => {
+        children.delete(preview.name);
+        preview.pid = null;
+        void fs
+          .appendFile(logPath, `\n[preview] could not start: ${error.message}\n`)
+          .catch(() => undefined);
+      });
       child.once("exit", () => {
         children.delete(preview.name);
       });
