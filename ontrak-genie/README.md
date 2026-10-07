@@ -17,13 +17,13 @@
 
 > **OnTrak Genie** is the **CodeOps** product of the [Innotel Labs](../INNOTEL-LABS.md)
 > family and a member of the [Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack):
-> the browser console for a coding agent. You state a task; the agent reads, edits
-> and runs code inside a workspace it cannot leave; and every call it makes is on
-> screen as it happens — including the file it is writing, rendered and diffed
-> against what is on disk *before* the write lands. It consumes the platform
-> services rather than re-implementing them, and it is
-> deliberately the only surface in the family that shows an agent's work rather
-> than its output.
+> the console for a coding agent — **a browser UI and a terminal CLI** — over
+> one server. You state a task; the agent reads, edits and runs code inside a
+> workspace it cannot leave; and every call it makes is on screen as it happens
+> — including the file it is writing, rendered and diffed against what is on
+> disk *before* the write lands. It consumes the platform services rather than
+> re-implementing them, and it is deliberately the only surface in the family
+> that shows an agent's work rather than its output.
 > **Landing page:** [https://innotelinc.github.io/OnTrak/ontrak-genie/](https://innotelinc.github.io/OnTrak/ontrak-genie/)
 
 ---
@@ -40,7 +40,8 @@
 
 ## What it is
 
-- **The agent loop** — request → tool call → result, streamed to the browser over Server-Sent Events, with the partial tool call rendered as it is still arriving.
+- **The agent loop** — request → tool call → result, streamed over Server-Sent Events, with the partial tool call rendered as it is still arriving — in the browser and in the terminal alike.
+- **A terminal client** — `genie`: the same turns, tool cards, diffs and approval gate, plus slash commands, Tab completion, skills, session management and follow-ups. A client of the server, never a second agent ([docs/cli.md](docs/cli.md)).
 - **A workspace jail you can aim** — the agent works in a directory you choose from the workspace panel (and can create folders from there). The choice is always inside the sandbox: absolute paths and `../` escapes are refused, so pointing the agent at a project never points it at the host. `.git`, `node_modules` and build output are skipped.
 - **The tool set** — `read`, `edit`, `write`, `list`, `search`, `run`, each confined to that workspace.
 - **The approval gate** — a browser decision for commands and large writes, with a deny path that ends the turn instead of stalling it.
@@ -61,6 +62,17 @@ cp .env.example .env          # then set OMNIROUTE_URL to a reachable gateway
 npm install
 npm run build && npm start    # http://127.0.0.1:3400
 ```
+
+The terminal client is the same server, one command:
+
+```bash
+genie login                   # browser-assisted sign-in, credential stored locally
+genie                         # chat: streamed tool calls, live diffs, and the gate
+genie ask "run the typecheck" # one turn; --yes approves gated commands
+```
+
+It has no runtime dependencies and no second agent — see
+[docs/cli.md](docs/cli.md).
 
 In Docker:
 
@@ -94,6 +106,7 @@ gitignored.
 
 | Document | What it covers |
 | --- | --- |
+| [docs/cli.md](docs/cli.md) | The terminal client: sign-in, the REPL and its commands, skills, follow-ups, scripting and the flags. |
 | [docs/operations.md](docs/operations.md) | The full developer reference: HTTP API, SSE events, every environment variable, the check commands, the Docker and sandbox setup. |
 | [docs/stack.md](docs/stack.md) | Genie's role in the Innotel Platform Stack — what it owns, provides and consumes, and the service map. |
 | [docs/roadmap.md](docs/roadmap.md) | What is shipped, what is open, and what comes next — the milestones from the console to stack citizenship. |
@@ -105,6 +118,7 @@ gitignored.
 ```
 ontrak-genie/
 ├── src/            # agent loop, tools, workspace jail, HTTP server, diff, snapshots
+│   ├── cli/        # the `genie` terminal client: client, renderer, REPL, skills
 │   └── test/       # unit + HTTP tests (node --test)
 ├── public/         # the browser UI: app.js, highlight.js, style.css, index.html
 ├── scripts/        # check commands: ui-smoke, draft-check, offline-check, model-health

@@ -34,7 +34,10 @@ full developer reference.
 > sessions** (hand one chat's transcript to a colleague, read-only, still gated per
 > turn), **propose-then-commit** (a change set a reviewer applies in one call), and
 > **repository-aware workspaces** (take a repository, branch it, open a PR, all
-> through the same jail and gate).
+> through the same jail and gate). **0.5 shipped** — the **terminal client**:
+> `genie` drives the same server over the same API, with sign-in handed back to a
+> loopback, skills, follow-ups and the gate, and no runtime dependency
+> ([cli.md](cli.md)).
 
 ## 1. Vision
 
@@ -311,6 +314,46 @@ becoming the bottleneck.
 - `[-]` **ONYX** is explicitly *not* this: Genie owns no storage; a shared artifact
   that outlives a workspace is ONYX's to hold, which is why this is out of scope
   rather than an open bullet.
+
+### v0.5 — The terminal client `[x]`
+
+**Goal:** the console's promise without the console — the same server, driven
+from a terminal, so the people who work in one are not second-class.
+
+- `[x]` **`genie`, a client of the server.** `src/cli/` is a terminal client over
+the same HTTP API the browser uses: `POST /api/chat` streamed as SSE, the same
+`AgentEvent` union, the same `POST /api/approvals/:id` gate. It owns no agent
+loop and no provider credential, so the jail, the gate and the audit trail are
+unchanged by its existence — and it adds **no runtime dependency**, matching the
+console's own rule (the SSE parser, the argument parser and the renderer are all
+here). See [cli.md](cli.md).
+- `[x]` **Sign-in from a terminal.** A CLI cannot read the session cookie the
+deployment sets, so a sign-in started at `GET /api/auth/cli?port=` finishes by
+redirecting to that loopback port with the session in the URL **fragment** — never
+sent to a server, so it cannot land in an access log or a `Referer`. The port is
+bounded to loopback so the handoff can never be pointed at another host, and the
+CLI verifies the credential against `/api/auth/status` before storing it. Pinned
+by `src/test/cli-handoff.test.ts`.
+- `[x]` **The REPL.** Streamed prose, tool cards, live diffs and the gate; a
+slash-command palette with Tab completion drawn from the same table `/help` uses;
+session list/resume/rename/archive/delete; model, step budget and offline
+per-chat settings; and a non-interactive `ask` whose exit code is the answer.
+- `[x]` **Skills.** Markdown playbooks loaded from a personal directory, the
+environment or `./.genie/skills/`, composed into the message with the task last —
+no hidden system prompt, and `/last` shows what was sent.
+- `[x]` **Follow-ups.** Up to three next steps derived from the turn's own events
+(a failure outranks a review; a clean change suggests review, tests, commit).
+Deliberately not a second model call: a suggestion can never invent work the turn
+did not do.
+- `[ ]` **Propose-then-commit.** The live diff exists and the review-after-the-fact
+is not it; a queued change set a reviewer approves before it lands is still open
+(v0.4's item, and the place a terminal client pays off most).
+- `[ ]` **Web research tools.** `search`/`fetch` over the network are still the
+sandbox's business, not the agent's tool set.
+
+**Open, plainly:** the CLI covers the console's core and the housekeeping around
+it. What it does not yet have is a propose-then-commit review, a web tool set, and
+commands over the sharing API (`/api/shares` is reachable but unwrapped).
 
 ### v1.0 — The CodeOps surface `[x]`
 

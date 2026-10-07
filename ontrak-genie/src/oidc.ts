@@ -253,6 +253,46 @@ interface Pending {
   returnTo: string;
   /** The redirect URI this sign-in started with, so the exchange matches it. */
   redirectUri: string;
+  /**
+   * Set when the sign-in came from a CLI waiting on a loopback port.
+   *
+   * A CLI cannot receive a browser redirect to the deployment's own callback and
+   * read the cookie it sets — that cookie belongs to the deployment's origin, and
+   * the CLI has no browser to hold it. So a sign-in started with a loopback port
+   * sends the **answer** to that port instead: the browser ends on the CLI's own
+   * address, which is the one place the credential can be handed over without
+   * crossing an origin. `null` for an ordinary browser sign-in.
+   */
+  cliPort: number | null;
+}
+
+/**
+ * A port a CLI may listen on for a handoff, or null.
+ *
+ * Bounded to the loopback range on purpose: the callback turns this into a
+ * `Location` header, and an unvalidated one would let a crafted sign-in link
+ * bounce a freshly minted session to an attacker's host. Loopback only means
+ * the worst case is the machine that started the sign-in.
+ */
+export function cliHandoffPort(raw: string | null | undefined): number | null {
+  if (typeof raw !== "string" || !/^\d{2,5}$/.test(raw)) return null;
+  const port = Number.parseInt(raw, 10);
+  return port >= 1024 && port <= 65535 ? port : null;
+}
+
+/**
+ * Where a CLI handoff sends the browser.
+ *
+ * Always loopback, and the credential rides in the URL **fragment**. A fragment
+ * is never sent to a server, so the session cannot land in an access log or leak
+ * as a `Referer` on the way out; the CLI's own page reads it locally and posts it
+ * back to the listener. Pure, so the shape is pinned by a test rather than by
+ * reading the handler.
+ */
+export function cliHandoffUrl(port: number, session: string): string {
+  const url = new URL(`http://127.0.0.1:${port}/`);
+  url.hash = new URLSearchParams({ genie_token: session }).toString();
+  return url.toString();
 }
 
 /**
@@ -292,7 +332,11 @@ function sweep(now = Date.now()): void {
  * name it decides which of the configured redirect URIs this sign-in uses, and
  * that choice is stored with the state so the token exchange repeats it.
  */
-export async function beginLogin(returnTo = "/", host?: string): Promise<string> {
+export async function beginLogin(
+  returnTo = "/",
+  host?: string,
+  cliPort: number | null = null,
+): Promise<string> {
   sweep();
   const discovery = await discover();
   const uri = redirectUri(host);
@@ -300,7 +344,7 @@ export async function beginLogin(returnTo = "/", host?: string): Promise<string>
   const nonce = crypto.randomBytes(16).toString("base64url");
   const verifier = crypto.randomBytes(32).toString("base64url");
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
-  pending.set(state, { verifier, nonce, at: Date.now(), returnTo: safeReturnTo(returnTo), redirectUri: uri });
+  pending.set(state, { verifier, nonce, at: Date.now(), returnTo: safeReturnTo(returnTo), redirectUri: uri, cliPort });
 
   const url = new URL(discovery.authorization_endpoint);
   url.searchParams.set("response_type", "code");
@@ -320,6 +364,16 @@ export class LoginError extends Error {}
 export interface CompletedLogin {
   identity: Identity;
   returnTo: string;
+  /** The CLI loopback port this sign-in was started for, or null. */
+  cliPort: number | null;
+  /**
+   * The freshly minted session, so a CLI handoff can carry it to the loopback.
+   *
+   * The browser route ignores this and sets the cookie itself; it is returned
+   * here rather than minted again so the value the CLI stores is the same one a
+   * browser sign-in would have been given.
+   */
+  session: string;
 }
 
 /**
@@ -366,7 +420,13 @@ export async function completeLogin(code: string, state: string): Promise<Comple
     (typeof claims.preferred_username === "string" && claims.preferred_username) ||
     email ||
     claims.sub;
-  return { identity: { sub: claims.sub, email, name }, returnTo: entry.returnTo };
+  const identity: Identity = { sub: claims.sub, email, name };
+  return {
+    identity,
+    returnTo: entry.returnTo,
+    cliPort: entry.cliPort,
+    session: mintSession(identity),
+  };
 }
 
 /** Drop a started sign-in, e.g. when the provider answered with an error. */

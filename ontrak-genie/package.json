@@ -4,13 +4,17 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "OnTrak Genie — the family's browser agent console: it drives a coding agent over a sandboxed workspace, streams its tool calls, and gates risky commands behind a click. An Innotel Labs product.",
+  "description": "OnTrak Genie — the family's coding agent: a browser console and a terminal CLI that drive an agent over a sandboxed workspace, stream its tool calls, and gate risky commands behind a decision. An Innotel Labs product.",
   "engines": {
     "node": ">=20.11"
+  },
+  "bin": {
+    "genie": "dist/cli/main.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
+    "cli": "node dist/cli/main.js",
     "dev": "tsx watch src/server.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test dist/test/*.test.js",

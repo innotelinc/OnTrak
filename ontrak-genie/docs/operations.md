@@ -1339,6 +1339,11 @@ All optional — see `.env.example`.
 
 | Method   | Path                  | Purpose                              |
 | -------- | --------------------- | ------------------------------------ |
+| `GET`    | `/api/auth/status`    | Unauthenticated: whether sign-in is configured, whether *you* are signed in, and your identity |
+| `GET`    | `/api/auth/login`     | Start sign-in; `302` to the provider. `next` is normalized to a path on this origin |
+| `GET`    | `/api/auth/cli`       | Start sign-in for a terminal client; `port` is a loopback port the session is handed back to (see [cli.md](cli.md) §2). `400` for a port outside `1024-65535` |
+| `GET`    | `/api/auth/callback`  | The provider's return: exchanges the code, then sets the cookie — or, for a CLI sign-in, redirects to the loopback with the session in the URL fragment |
+| `POST`   | `/api/auth/logout`    | Clear the session cookie |
 | `POST`   | `/api/chat`           | Run a turn; SSE stream of `AgentEvent`. Accepts `model`, `fallbackModels`, `maxSteps` |
 | `GET`    | `/api/previews`       | Registered previews, plus the wildcard and port range |
 | `POST`   | `/api/previews`       | Register (and optionally start) a preview. Body: `name?`, `port?`, `command?`, `cwd?` |
@@ -1378,7 +1383,12 @@ All optional — see `.env.example`.
 `POST /api/chat` takes `{ message, sessionId?, model?, maxSteps? }` and streams
 `AgentEvent`s: `session`, `step`, `draft` (a file being generated, with the content
 so far), `text`, `tool_call`, `tool_result` (with an optional `diff`), `notice`,
-`error`, then `done` and `[DONE]`.
+`error`, then `done` and `[DONE]`. (`approval_request` / `approval_result` and
+`gateway` also appear — see `src/agent.ts` for the full union.)
+
+The terminal client ([cli.md](cli.md)) consumes this API and nothing else: it
+speaks the same routes, shows the same events, and answers the gate through the
+same `POST /api/approvals/:id` the browser card uses.
 
 ## Development
 

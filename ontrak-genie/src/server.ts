@@ -30,10 +30,11 @@ import { autoFreeChain } from "./modelSelect.js";
 import {
   abandonLogin,
   beginLogin,
+  cliHandoffPort,
+  cliHandoffUrl,
   clearedCookie,
   completeLogin,
   LoginError,
-  mintSession,
   oidcEnabled,
   redirectUri,
   safeReturnTo,
@@ -553,6 +554,29 @@ async function handleAuthRoutes(
     return true;
   }
 
+  /*
+   * `genie login`. The same sign-in, with the answer sent to the machine that
+   * asked for it instead of to a page.
+   *
+   * A CLI cannot read the cookie this deployment sets — the cookie belongs to the
+   * deployment's origin and the CLI has no browser to hold it — so a sign-in that
+   * names a loopback `port` finishes by redirecting there with the session in the
+   * URL **fragment**. A fragment is never sent to a server, so the credential
+   * cannot end up in an access log or in a `Referer` on the way; the CLI validates
+   * it against `/api/auth/status` before it stores anything. The port is bounded
+   * to loopback, so this is a handoff to the local machine and not an open redirect.
+   */
+  if (pathname === "/api/auth/cli" && req.method === "GET") {
+    if (!oidcEnabled()) throw new HttpError(404, "sign-in is not configured");
+    const port = cliHandoffPort(url.searchParams.get("port"));
+    if (port === null) {
+      throw new HttpError(400, "port must be a loopback port between 1024 and 65535");
+    }
+    res.writeHead(302, { Location: await beginLogin("/", req.headers.host, port) });
+    res.end();
+    return true;
+  }
+
   if (pathname === "/api/auth/callback" && req.method === "GET") {
     if (!oidcEnabled()) throw new HttpError(404, "sign-in is not configured");
     const state = url.searchParams.get("state") ?? "";
@@ -573,11 +597,20 @@ async function handleAuthRoutes(
       throw new HttpError(status, (failure as Error).message);
     }
 
+    // A CLI handoff: end on the caller's own loopback instead of on a page. The
+    // credential rides in the fragment (see `/api/auth/cli`), and no cookie is
+    // set — the CLI is not a browser and the cookie would belong to nobody.
+    if (completed.cliPort !== null) {
+      res.writeHead(302, { Location: cliHandoffUrl(completed.cliPort, completed.session) });
+      res.end();
+      return true;
+    }
+
     // Back to the page the visitor asked for rather than always the root, which
     // is what a link into a deep page expects of a sign-in.
     res.writeHead(302, {
       Location: completed.returnTo,
-      "Set-Cookie": sessionCookie(mintSession(completed.identity)),
+      "Set-Cookie": sessionCookie(completed.session),
     });
     res.end();
     return true;
