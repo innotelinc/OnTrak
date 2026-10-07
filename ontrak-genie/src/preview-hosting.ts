@@ -51,6 +51,15 @@ export interface Preview {
   command: string;
   /** OS process id of the process Genie started, or null. */
   pid: number | null;
+  /**
+   * True when an operator stopped this address on purpose.
+   *
+   * A stop keeps the record so the name and the port stay reserved, which means
+   * `pid: null` on its own cannot tell "stopped" from "died". Resuming on boot
+   * has to be able to tell them apart, or a restart silently reverses a
+   * deliberate stop and starts a development server nobody asked for again.
+   */
+  stopped: boolean;
   createdAt: string;
   updatedAt: string;
   /** Epoch ms after which the address is swept. 0 means it never expires. */
@@ -140,6 +149,7 @@ function previewFromRow(row: RemotePreviewRow): Preview {
     custom: row.custom === true,
     command: typeof row.command === "string" ? row.command : "",
     pid: running ? 1 : null,
+    stopped: false,
     createdAt,
     updatedAt: createdAt,
     expiresAt: typeof row.expiresAt === "number" ? row.expiresAt : 0,
@@ -262,6 +272,7 @@ function coercePreview(row: unknown): Preview | null {
     custom: value.custom === true,
     command: typeof value.command === "string" ? value.command : "",
     pid: typeof value.pid === "number" ? value.pid : null,
+    stopped: value.stopped === true,
     createdAt: typeof value.createdAt === "string" ? value.createdAt : new Date().toISOString(),
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : new Date().toISOString(),
     expiresAt: typeof value.expiresAt === "number" ? value.expiresAt : 0,
@@ -335,6 +346,52 @@ export async function sweepPreviews(rows?: Preview[]): Promise<number> {
   }
   await writeRegistry(live);
   return removed;
+}
+
+/**
+ * Start the registered addresses whose process did not survive the restart.
+ *
+ * The registry is a file in the data directory, so it outlives the container: a
+ * redeploy brings every published record back and none of the processes they
+ * name. Without this each record returned with a stale pid, nothing ever started
+ * it again, and every published address answered "not answering yet" until
+ * somebody republished it by hand. The address was never lost — it was dark, and
+ * to the person opening the link the two look the same.
+ *
+ * Three things are deliberately skipped. A record with no command was never
+ * something this process could start, so there is nothing to resume. A record an
+ * operator stopped was stopped on purpose, and quietly reversing that on the next
+ * deploy would start a development server nobody asked for. An expired one
+ * belongs to the sweep, which removes it a moment later either way.
+ *
+ * The port decides the rest, for the same reason the publish path asks it rather
+ * than the record: a pid is evidence that something was started, not that
+ * anything is answering. A port that is already bound means something else is
+ * serving that address, and a second process on it would be two servers fighting
+ * over one socket.
+ *
+ * Called once at boot, before the sweep timer. `children` is empty by definition
+ * at that point, so the file and the port are the only evidence there is.
+ */
+export async function resumePreviews(): Promise<number> {
+  // `previewEnabled()`, not `hostingEnabled()`: this starts child processes, so
+  // it is about *this* process. A console that delegates must not start anything.
+  if (!previewEnabled()) return 0;
+  const rows = await readRegistry();
+  let started = 0;
+  for (const preview of rows) {
+    if (preview.command === "") continue;
+    if (preview.stopped) continue;
+    if (isExpired(preview)) continue;
+    if (children.has(preview.name)) continue;
+    if (!(await portIsFree(preview.port))) continue;
+    startPreviewProcess(preview);
+    started += 1;
+  }
+  // Only when something changed: a boot with nothing to resume must not rewrite
+  // the file, because a rewrite is the one thing that could lose a record.
+  if (started > 0) await writeRegistry(rows);
+  return started;
 }
 
 // --- port allocation --------------------------------------------------------
@@ -469,6 +526,9 @@ export async function createPreview(options: CreatePreviewOptions = {}): Promise
       // sweep.
       existingPort.expiresAt = ttlFor(options.ttlMs, existingPort.custom);
       existingPort.updatedAt = new Date().toISOString();
+      // A publish is a request to have it running, so it is not the record of a
+      // stop any more.
+      existingPort.stopped = false;
       startPreviewProcess(existingPort);
       await writeRegistry(rows);
     }
@@ -500,6 +560,7 @@ export async function createPreview(options: CreatePreviewOptions = {}): Promise
     custom,
     command: options.command ?? "",
     pid: null,
+    stopped: false,
     createdAt: now,
     updatedAt: now,
     expiresAt: ttlFor(options.ttlMs, custom),
@@ -618,6 +679,7 @@ export async function stopPreview(name: string): Promise<boolean> {
   if (found === undefined) return false;
   killPreviewProcess(name);
   found.pid = null;
+  found.stopped = true;
   found.updatedAt = new Date().toISOString();
   await writeRegistry(rows);
   return true;

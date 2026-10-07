@@ -41,6 +41,7 @@ const {
   proxyPreview,
   removePreview,
   resetPreviewCache,
+  resumePreviews,
   stopPreview,
 } = await import("../preview-hosting.js");
 const { createServer } = await import("../server.js");
@@ -63,6 +64,39 @@ async function waitFree(port: number): Promise<boolean> {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   return false;
+}
+
+/**
+ * The registry a fresh process would find on disk, written by hand.
+ *
+ * A restart cannot be reproduced from inside the suite — the file survives and
+ * the children do not — so the file is written directly and the module cache
+ * cleared, which is the state a redeployed container boots into.
+ */
+async function writeRegistryFile(rows: unknown[]): Promise<void> {
+  const dir = path.join(scratch, ".agent");
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, "previews.json"), JSON.stringify(rows, null, 2));
+  resetPreviewCache();
+}
+
+/** One registry row, with everything the resume path reads. */
+function registryRow(name: string, port: number, command: string): Record<string, unknown> {
+  const now = new Date().toISOString();
+  return {
+    name,
+    port,
+    host: "127.0.0.1",
+    cwd: scratch,
+    account: "",
+    custom: false,
+    command,
+    pid: null,
+    stopped: false,
+    createdAt: now,
+    updatedAt: now,
+    expiresAt: 0,
+  };
 }
 
 /** A throwaway upstream that answers every request with its own marker. */
@@ -247,6 +281,65 @@ test("the registry", async (t) => {
   });
 });
 
+test("a restart resumes the addresses whose processes did not survive", async (t) => {
+  const serve =
+    "node -e \"require('net').createServer().listen(Number(process.env.PORT), '127.0.0.1')\"";
+
+  await t.test("a published address comes back serving", async (t) => {
+    // The command holds a port, so it has to be reaped even if an assertion above
+    // throws: a listener left behind keeps the port for every later run.
+    t.after(async () => {
+      await removePreview("p46215");
+      assert.equal(await waitFree(46215), true);
+    });
+    await writeRegistryFile([registryRow("p46215", 46215, serve)]);
+    assert.equal(await portIsFree(46215), true);
+    assert.equal(await resumePreviews(), 1);
+    assert.equal(await waitListening(46215), true);
+  });
+
+  await t.test("an address an operator stopped is left stopped", async () => {
+    // A stop keeps the record so the name and the port stay reserved, so the
+    // record alone cannot say why it is down. Resuming it here would start a
+    // development server on the next deploy that somebody had turned off.
+    await writeRegistryFile([{ ...registryRow("p46216", 46216, serve), stopped: true }]);
+    assert.equal(await resumePreviews(), 0);
+    assert.equal(await portIsFree(46216), true);
+    await removePreview("p46216");
+  });
+
+  await t.test("an address with no command is not started", async () => {
+    // Registered by hand, or served by something this process never started:
+    // there is nothing here that could run it, so it is not a failure either.
+    await writeRegistryFile([registryRow("p46217", 46217, "")]);
+    assert.equal(await resumePreviews(), 0);
+    await removePreview("p46217");
+  });
+
+  await t.test("an expired address is left to the sweep", async () => {
+    await writeRegistryFile([
+      { ...registryRow("p46218", 46218, serve), expiresAt: Date.now() - 1_000 },
+    ]);
+    assert.equal(await resumePreviews(), 0);
+    assert.equal(await portIsFree(46218), true);
+    await removePreview("p46218");
+  });
+
+  await t.test("a second process is never put on a bound port", async (t) => {
+    const upstream = await startUpstream("occupied");
+    t.after(async () => {
+      await upstream.close();
+    });
+    // The record says the address is Genie's, but the port says something else is
+    // answering on it. The port is what the person opening the link sees, so it
+    // decides — and the running server is left where it is.
+    await writeRegistryFile([registryRow(`p${upstream.port}`, upstream.port, serve)]);
+    assert.equal(await resumePreviews(), 0);
+    assert.equal(await portIsFree(upstream.port), false);
+    await removePreview(`p${upstream.port}`);
+  });
+});
+
 test("a custom name is refused while Magnate is not configured", async () => {
   await assert.rejects(() => magnateEntitled("someone@example.test"), /MAGNATE_ENTITLEMENTS_URL/);
 });
@@ -294,6 +387,7 @@ test("a bare proxy reports a backend that is not answering yet", async () => {
       custom: false,
       command: "",
       pid: null,
+      stopped: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       expiresAt: 0,

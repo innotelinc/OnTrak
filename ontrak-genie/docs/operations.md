@@ -1293,6 +1293,20 @@ address. `DELETE /api/previews/<name>` stops the process group and drops the
 address; the TTL does the same on its own, and what expired while the process was
 down is swept at boot.
 
+**A restart resumes what is still published.** The registry is a file in the data
+directory, so it outlives the container: a redeploy brings every record back and
+none of the processes they name. Without a resume each address came back dark and
+answered "not answering yet" until somebody republished it by hand — the address
+was never lost, but to the person opening the link the two look the same. So at
+boot, after the expired records are swept, every registered address that carries a
+command is started again. Three are deliberately left alone: a record with no
+command (nothing here could ever start it), one an operator stopped, and one whose
+port is already bound (something else is answering there). The stop is the reason
+the record carries `stopped` — a stop keeps the name and the port reserved, so
+`pid: null` alone cannot tell "stopped" from "died", and a deploy that silently
+reversed a deliberate stop would start a development server nobody asked for.
+Publishing again always clears it.
+
 **A free address expires sooner than a paid one.** A named address is the thing
 the plan sells, so it keeps `PREVIEW_TTL_MS`; a free `p<port>` address gets
 `PREVIEW_FREE_TTL_MS` (30 minutes by default), because free addresses are
@@ -1509,7 +1523,7 @@ same `POST /api/approvals/:id` the browser card uses.
 ```bash
 npm run dev           # tsx watch (reload on change)
 npm run typecheck     # tsc --noEmit
-npm test              # node:test — 557 tests, no browser needed
+npm test              # node:test — 566 tests, no browser needed
 npm run ui:smoke      # drives the real UI in a headless Chromium
 npm run layout:check  # phone, tablet and desktop sizes, in a headless Chromium
 npm run model:health  # which advertised models really do tool calling

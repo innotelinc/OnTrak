@@ -60,6 +60,7 @@ import {
   proxyPreview as proxyHostingPreview,
   proxyUpgrade,
   removePreview,
+  resumePreviews,
   startPreviewSweepLoop,
   stopPreview as stopHostingPreview,
   sweepPreviews,
@@ -1845,8 +1846,14 @@ if (isEntrypoint) {
       void sweepPreviews().then((removed) => {
         if (removed > 0) console.log(`  previews  swept ${removed} expired address(es)`);
       });
-      // And keep enforcing it while the process is up, so a free address's port
-      // comes back on time rather than at the next restart.
+      // Then the records that did not expire but whose process is gone. The
+      // registry survives a redeploy; the children do not, so without this every
+      // published address comes back dark until somebody republishes it.
+      void resumePreviews().then((resumed) => {
+        if (resumed > 0) console.log(`  previews  resumed ${resumed} published address(es)`);
+      });
+      // And keep enforcing the clock while the process is up, so a free address's
+      // port comes back on time rather than at the next restart.
       startPreviewSweepLoop();
     }
     console.log(
