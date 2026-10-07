@@ -147,3 +147,23 @@ export function canMutateMessage(_message: MessageLike): MessageMutation {
 export function ticketRef(seq: number, prefix = "TIX"): string {
   return `${prefix}-${String(Math.max(1, Math.trunc(seq))).padStart(6, "0")}`;
 }
+
+/**
+ * The sequence inside a reference we issued, or `0` when it is not one we
+ * recognise.
+ *
+ * The inverse of `ticketRef`, and the reader that lets the store keep its
+ * high-water mark *after a delete*: a row count would hand a deleted ticket's
+ * number to the next one and collide with `@@unique([tenantId, ref])`, so the
+ * next reference is derived from the highest number already spent. A reference
+ * from another prefix, or a malformed one, contributes nothing rather than
+ * poisoning the count.
+ */
+export function refSequence(ref: string | null | undefined, prefix = "TIX"): number {
+  // The prefix is a literal we choose, never user input, but it still goes
+  // through a regex: escape it so a future caller passing one with a `-` or `.`
+  // does not silently match more than it should.
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^${escaped}-(\\d+)$`).exec((ref ?? "").trim());
+  return match ? Number(match[1]) : 0;
+}

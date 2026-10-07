@@ -1,8 +1,16 @@
 import { notFound, redirect } from "next/navigation";
 
 import { requireActor } from "../../../../lib/session";
-import { canAssignTicket, canReplyToTicket, canUpdateTicket, actorHasPermission } from "../../../../lib/access-rules";
 import {
+  canAssignTicket,
+  canDeleteTicket,
+  canReplyToTicket,
+  canUpdateTicket,
+  actorHasPermission,
+} from "../../../../lib/access-rules";
+import { assigneeOptions, ASSIGNEE_ROLES } from "../../../../lib/assignee-rules";
+import {
+  prisma,
   ticketServicesFor,
   slaPolicyStoreFor,
   cannedServicesFor,
@@ -25,6 +33,7 @@ import {
 import { TicketTime } from "../../../../components/TicketTime";
 import {
   assignAction,
+  deleteTicketAction,
   linkAction,
   mergeAction,
   replyAction,
@@ -55,15 +64,24 @@ export default async function TicketPage({
   const { id } = await params;
   const { flash, error, assist: assistAsked } = await searchParams;
 
-  const [ticket, policies, everything, canned, time, scope] = await Promise.all([
+  const [ticket, policies, everything, canned, time, scope, staff] = await Promise.all([
     ticketServicesFor().store.findTicket(actor.tenantId, id),
     slaPolicyStoreFor().listForTenant(actor.tenantId),
     ticketServicesFor().store.listTickets(actor.tenantId),
     cannedServicesFor().list(actor.tenantId),
     timeServicesFor().entries(actor, { ticketId: id }),
     clientServicesFor().scope(actor),
+    // The desk's people, for the assignment picker. Read even when this caller may not
+    // assign, because the same query feeds the header's "assigned to" name; the value
+    // being present is not the permission — `actions.assign` is only set below.
+    prisma.user.findMany({
+      where: { tenantId: actor.tenantId, active: true, role: { in: [...ASSIGNEE_ROLES] } },
+      select: { id: true, displayName: true, email: true },
+      orderBy: { displayName: "asc" },
+    }),
   ]);
   if (!ticket) notFound();
+  const assignees = assigneeOptions(staff);
   // One desk serving many clients: a ticket is readable through the client its
   // work belongs to. Addressed by id it is *not* confirmed to exist, because
   // the worklist already refuses to show it — a filter on one page and an open
@@ -114,6 +132,7 @@ export default async function TicketPage({
   if (canReplyToTicket(actor, ticket)) actions.reply = replyAction;
   if (canUpdateTicket(actor, ticket)) actions.setStatus = setStatusAction;
   if (canAssignTicket(actor, ticket)) actions.assign = assignAction;
+  if (canDeleteTicket(actor, ticket)) actions.delete = deleteTicketAction;
   if (canUpdateTicket(actor, ticket)) {
     actions.link = linkAction;
     actions.merge = mergeAction;
@@ -169,6 +188,7 @@ export default async function TicketPage({
         links={links}
         linkOptions={linkOptions}
         macros={macros}
+        assignees={assignees}
         {...(assistResult
           ? {
               assist: {

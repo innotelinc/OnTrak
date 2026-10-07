@@ -33,6 +33,7 @@ import {
 import {
   accessDenial,
   canAssignTicket,
+  canDeleteTicket,
   canReadTicket,
   canReplyToTicket,
   canUpdateTicket,
@@ -49,6 +50,7 @@ import {
   isOpen,
   isTerminal,
   priorityRank,
+  refSequence,
   ticketRef,
   transition,
   validateTicketInput,
@@ -113,6 +115,21 @@ test("access: requesters reply but never update or assign", () => {
   assert.equal(canAssignTicket(dispatcher, ownTicket), true);
 });
 
+test("access: deleting is the narrowest action, and never crosses a tenant", () => {
+  // Only ADMIN holds `ticket:delete` by default: an agent or dispatcher who may
+  // update and assign still may not remove the record.
+  assert.equal(canDeleteTicket(admin, ownTicket), true);
+  assert.equal(canDeleteTicket(dispatcher, ownTicket), false);
+  assert.equal(canDeleteTicket(agent, ownTicket), false);
+  assert.equal(canDeleteTicket(requester, ownTicket), false);
+  // A ticket in another tenant is never deletable, whatever the role.
+  const foreignTicket = { tenantId: "t_other", requesterId: "u_out", assigneeId: null };
+  assert.equal(canDeleteTicket(outsider, ownTicket), false);
+  assert.equal(canDeleteTicket(admin, foreignTicket), false);
+  assert.match(accessDenial(agent, "delete", ownTicket) ?? "", /cannot delete/);
+  assert.equal(accessDenial(admin, "delete", ownTicket), null);
+});
+
 test("access: denials describe the action without leaking tenant detail", () => {
   assert.equal(accessDenial(agent, "read", someoneElsesTicket), null);
   assert.match(accessDenial(outsider, "read", ownTicket) ?? "", /do not have access/);
@@ -162,6 +179,20 @@ test("ticket: validation reports every problem at once", () => {
 
   const unknown = validateTicketInput({ subject: "x", description: "y", requesterId: "u_1", type: "PROBLEM" as never });
   assert.ok(unknown.some((issue) => issue.field === "type"));
+});
+
+test("ticket: a reference's sequence is read back, and junk contributes nothing", () => {
+  // The reader that keeps the high-water mark after a delete: only a reference we
+  // issued contributes its number.
+  assert.equal(refSequence("TIX-000042"), 42);
+  assert.equal(refSequence("TIX-000001"), 1);
+  assert.equal(refSequence("  TIX-000007  "), 7);
+  assert.equal(refSequence("OTH-000005"), 0, "another prefix is not ours");
+  assert.equal(refSequence("TIX-000123", "TIX"), 123);
+  assert.equal(refSequence("TIX-abc"), 0);
+  assert.equal(refSequence("TIX-000042-extra"), 0);
+  assert.equal(refSequence(""), 0);
+  assert.equal(refSequence(null), 0);
 });
 
 test("ticket: a subject may not exceed its limit", () => {
@@ -434,6 +465,33 @@ test("service: only assigners assign, and another tenant sees nothing", async ()
   const reply = await service.reply(foreign, created.value.id, "hello");
   assert.equal(reply.ok, false);
   assert.match(reply.ok === false ? reply.error : "", /not found/);
+});
+
+test("service: only a deleter removes a ticket, and the removal is audited", async () => {
+  const { store, audit, service } = makeService();
+  const created = await service.createTicket(dispatcher, NEW_TICKET);
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+
+  // The staff who may edit and assign still may not delete.
+  assert.equal((await service.deleteTicket(agent, created.value.id)).ok, false);
+  assert.equal((await service.deleteTicket(dispatcher, created.value.id)).ok, false);
+  // A caller in another tenant cannot even find it.
+  const foreign: Actor = { id: "u_out", tenantId: "t_other", role: "ADMIN" };
+  const denied = await service.deleteTicket(foreign, created.value.id);
+  assert.equal(denied.ok, false);
+  assert.match(denied.ok === false ? denied.error : "", /not found/);
+
+  const removed = await service.deleteTicket(admin, created.value.id);
+  assert.equal(removed.ok, true);
+  assert.equal(removed.ok && removed.value.ref, "TIX-000001");
+  assert.equal(await store.findTicket("t_acme", created.value.id), null, "the row is gone");
+
+  // The chain keeps what the table forgot: create then delete, in order.
+  assert.equal(audit.length, 2);
+  const actions = audit.snapshot().events.map((event) => event.action);
+  assert.deepEqual(actions, ["ticket.create", "ticket.delete"]);
+  assert.deepEqual(audit.verify(), { ok: true, length: 2 });
 });
 
 /* -------------------------------------------------------------------------- */

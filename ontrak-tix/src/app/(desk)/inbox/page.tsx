@@ -1,8 +1,16 @@
 import { redirect } from "next/navigation";
 
 import { requireActor } from "../../../lib/session";
-import { actorHasPermission } from "../../../lib/access-rules";
 import {
+  actorHasPermission,
+  canAssignTicket,
+  canDeleteTicket,
+  canReplyToTicket,
+  canUpdateTicket,
+} from "../../../lib/access-rules";
+import { assigneeOptions, ASSIGNEE_ROLES } from "../../../lib/assignee-rules";
+import {
+  prisma,
   clientServicesFor,
   ticketServicesFor,
   slaPolicyStoreFor,
@@ -10,12 +18,20 @@ import {
   savedViewServicesFor,
 } from "../../../lib/db";
 import { scopeByClient } from "../../../lib/client-rules";
-import { bulkAction, deleteViewAction, saveViewAction } from "../../actions/tickets";
+import {
+  assignAction,
+  bulkAction,
+  deleteTicketAction,
+  deleteViewAction,
+  replyAction,
+  saveViewAction,
+  setStatusAction,
+} from "../../actions/tickets";
 import { buildInboxView, parseInboxFilter, selectedTicket, type InboxSearchParams } from "../../../lib/inbox-view";
 import { slaFlagsByTicket, slaStatusFor } from "../../../lib/report-rules";
 import { AgentInbox } from "../../../components/AgentInbox";
 import { SavedViews } from "../../../components/SavedViews";
-import { TicketDetail } from "../../../components/TicketDetail";
+import { TicketDetail, type TicketActions } from "../../../components/TicketDetail";
 
 export const metadata = { title: "Inbox" };
 
@@ -32,12 +48,20 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
 
   const params = await searchParams;
   const clients = clientServicesFor();
-  const [everything, policies, views, scope] = await Promise.all([
+  const [everything, policies, views, scope, staff] = await Promise.all([
     ticketServicesFor().store.listTickets(actor.tenantId),
     slaPolicyStoreFor().listForTenant(actor.tenantId),
     savedViewServicesFor().list(actor),
     clients.scope(actor),
+    // The desk's people, once for the page: they fill the assignment picker in the
+    // selection panel and the bulk toolbar alike, so one read answers both.
+    prisma.user.findMany({
+      where: { tenantId: actor.tenantId, active: true, role: { in: [...ASSIGNEE_ROLES] } },
+      select: { id: true, displayName: true, email: true },
+      orderBy: { displayName: "asc" },
+    }),
   ]);
+  const assignees = assigneeOptions(staff);
   // One desk serving many clients means the worklist is scoped before it is
   // rendered: an agent sees their clients' work and the work that names no
   // client, never a third client's. Filtering here (rather than in the list
@@ -54,6 +78,19 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
 
   const flash = first(params.flash);
   const error = first(params.error);
+
+  // The actions the selected ticket offers. This is the pair view's whole point: an
+  // agent working the list should be able to reply, resolve, reassign or delete the
+  // ticket they just clicked without opening its page — and the controls are gated by
+  // the same rules the ticket page uses. The service re-checks every one of them
+  // server-side, so what is rendered here is a courtesy, not the control.
+  const actions: TicketActions = {};
+  if (selected) {
+    if (canReplyToTicket(actor, selected)) actions.reply = replyAction;
+    if (canUpdateTicket(actor, selected)) actions.setStatus = setStatusAction;
+    if (canAssignTicket(actor, selected)) actions.assign = assignAction;
+    if (canDeleteTicket(actor, selected)) actions.delete = deleteTicketAction;
+  }
 
   return (
     <div className="space-y-4">
@@ -105,10 +142,17 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
           basePath="/inbox"
           selectedId={selected?.id ?? null}
           sla={sla}
+          assignees={assignees}
           bulk={actorHasPermission(actor, "ticket:update") ? { action: bulkAction } : undefined}
         />
         {selected ? (
-          <TicketDetail ticket={selected} sla={slaStatusFor(selected, policies, now)} links={links} />
+          <TicketDetail
+            ticket={selected}
+            actions={actions}
+            sla={slaStatusFor(selected, policies, now)}
+            links={links}
+            assignees={assignees}
+          />
         ) : (
           <p className="ot-note self-start">
             Select a ticket to see its conversation. The list on the left is every ticket in your scope, most urgent

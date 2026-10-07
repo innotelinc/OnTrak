@@ -416,6 +416,32 @@ export async function assignAction(formData: FormData): Promise<void> {
 }
 
 /**
+ * Delete a ticket outright.
+ *
+ * The one ticket action that removes the record, so it is guarded like every other
+ * write: `requireActor`, then the client scope (a hidden ticket id must not let an
+ * agent delete a client's work they do not serve), then the service, which checks
+ * `ticket:delete` (ADMIN by default). There is no ticket left to return to, so the
+ * caller lands on the worklist with the reference it removed.
+ */
+export async function deleteTicketAction(formData: FormData): Promise<void> {
+  const actor = await requireActor();
+  const home = homePath(actor);
+  const ticketId = text(formData, "ticketId");
+  if (!ticketId) fail(home, "Choose a ticket first.");
+
+  const blocked = await blockedByClientScope(actor, [ticketId]);
+  if (blocked.has(ticketId)) fail(`${home}/${ticketId}`, blocked.get(ticketId) as string);
+
+  const result = await ticketServices().service.deleteTicket(actor, ticketId);
+  if (!result.ok) fail(`${home}/${ticketId}`, result.error);
+
+  revalidatePath(home);
+  revalidatePath(`${home}/${ticketId}`);
+  redirect(`${home}?flash=${encodeURIComponent(`Ticket ${result.value.ref} deleted`)}`);
+}
+
+/**
  * Run a macro on a ticket (M5).
  *
  * The same client-scope check the other ticket actions run, because a macro can

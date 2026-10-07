@@ -179,6 +179,19 @@ export function canAssignTicket(actor: Actor, ticket: TicketScope): boolean {
 }
 
 /**
+ * Whether an actor may delete a ticket outright.
+ *
+ * The narrowest staff permission there is (`ticket:delete`, which only ADMIN
+ * holds by default), because a delete is the one ticket action that removes the
+ * record rather than adding to it. The tenant rule is the same as everywhere: a
+ * ticket in another tenant is never deletable.
+ */
+export function canDeleteTicket(actor: Actor, ticket: TicketScope): boolean {
+  if (!isSameTenant(actor, ticket.tenantId)) return false;
+  return actorHasPermission(actor, "ticket:delete");
+}
+
+/**
  * Whether an actor may reply on a ticket. Requesters may reply on their own
  * tickets; staff who may read the ticket may reply on it.
  */
@@ -195,7 +208,7 @@ export function canReplyToTicket(actor: Actor, ticket: TicketScope): boolean {
  */
 export function accessDenial(
   actor: Actor,
-  action: "read" | "reply" | "update" | "assign",
+  action: "read" | "reply" | "update" | "assign" | "delete",
   ticket: TicketScope,
 ): string | null {
   switch (action) {
@@ -207,5 +220,7 @@ export function accessDenial(
       return canUpdateTicket(actor, ticket) ? null : "You cannot update this ticket.";
     case "assign":
       return canAssignTicket(actor, ticket) ? null : "You cannot assign this ticket.";
+    case "delete":
+      return canDeleteTicket(actor, ticket) ? null : "You cannot delete this ticket.";
   }
 }

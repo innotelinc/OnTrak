@@ -40,7 +40,8 @@ import {
   sessionDisplayName,
   TIX_SESSION_COOKIE,
 } from "../src/lib/session-rules";
-import type { Actor, Role } from "../src/lib/access-rules";
+import { canDeleteTicket, type Actor, type Role } from "../src/lib/access-rules";
+import { assigneeOptions } from "../src/lib/assignee-rules";
 import { AgentInbox } from "../src/components/AgentInbox";
 import { TicketDetail } from "../src/components/TicketDetail";
 import type { AssistResult } from "../src/lib/assist-rules";
@@ -80,6 +81,13 @@ class FakePrisma implements TicketPrismaClient {
       Object.assign(row, args.data);
       return row;
     },
+    delete: async (args: any): Promise<unknown> => {
+      const row = this.tickets.get(args.where.id);
+      if (!row) throw new Error(`no ticket ${args.where.id}`);
+      this.tickets.delete(args.where.id);
+      for (const [id, message] of this.messages) if (message.ticketId === args.where.id) this.messages.delete(id);
+      return row;
+    },
   };
 
   message = {
@@ -114,6 +122,7 @@ class FakePrisma implements TicketPrismaClient {
 
 const requester: Actor = { id: "u_req", tenantId: "t_acme", role: "REQUESTER" };
 const agent: Actor = { id: "u_agent", tenantId: "t_acme", role: "AGENT" };
+const admin: Actor = { id: "u_admin", tenantId: "t_acme", role: "ADMIN" };
 
 const NEW_TICKET = { subject: "VPN down", description: "The certificate is invalid.", type: "INCIDENT" as const, priority: "HIGH" as const };
 
@@ -236,6 +245,48 @@ test("prisma store: a ticket and its thread survive a full read-back", async () 
   const list = await store.listTickets("t_acme");
   assert.equal(list.length, 2);
   assert.equal(await store.findTicket("t_other", created.value.id), null, "another tenant sees nothing");
+});
+
+test("prisma store: deleting a ticket removes it and never reissues its reference", async () => {
+  const db = new FakePrisma();
+  const store = new PrismaTicketStore(db);
+  const services = createTicketServices(db);
+
+  const first = await services.service.createTicket(requester, NEW_TICKET);
+  const second = await services.service.createTicket(requester, { ...NEW_TICKET, subject: "Second" });
+  assert.equal(first.ok && first.value.ref, "TIX-000001");
+  assert.equal(second.ok && second.value.ref, "TIX-000002");
+  if (!first.ok) return;
+
+  // A caller who may not delete is refused, and the row survives.
+  assert.equal((await services.service.deleteTicket(agent, first.value.id)).ok, false);
+  assert.equal(await store.findTicket("t_acme", first.value.id) !== null, true);
+
+  assert.equal((await services.service.deleteTicket(admin, first.value.id)).ok, true);
+  assert.equal(await store.findTicket("t_acme", first.value.id), null, "the row is gone");
+
+  // The next reference continues from the highest ever issued, not from the row
+  // count (which would be 1 here and collide with TIX-000002).
+  const third = await services.service.createTicket(requester, { ...NEW_TICKET, subject: "Third" });
+  assert.equal(third.ok && third.value.ref, "TIX-000003");
+  assert.equal((await store.listTickets("t_acme")).length, 2);
+});
+
+test("assignee options: staff are labelled by name, by email when nameless, and sorted", () => {
+  assert.deepEqual(
+    assigneeOptions([
+      { id: "b", displayName: "zoe", email: "z@x" },
+      { id: "a", displayName: "   ", email: "amy@x" },
+      { id: "c", displayName: null, email: null },
+    ]),
+    [
+      { id: "a", name: "amy@x" },
+      { id: "c", name: "c" },
+      { id: "b", name: "zoe" },
+    ],
+  );
+  assert.equal(canDeleteTicket(admin, { tenantId: "t_acme", requesterId: "u_req", assigneeId: null }), true);
+  assert.equal(canDeleteTicket(agent, { tenantId: "t_acme", requesterId: "u_req", assigneeId: null }), false);
 });
 
 test("prisma audit: the chain persists and continues across a fresh service", async () => {
@@ -448,6 +499,41 @@ test("detail UI: the ticket, its thread and the offered actions render", () => {
   assert.match(html, /Have you tried a reboot\?/);
   assert.match(html, /Mark[\s\S]{0,40}resolved/);
   assert.match(html, /Internal note/);
+});
+
+test("detail UI: the delete control and the assignee picker render when offered", () => {
+  const record = ticket({ id: "a", ref: "TIX-000042", subject: "Persistent blue screen" });
+  const html = renderToStaticMarkup(
+    createElement(TicketDetail, {
+      ticket: record,
+      actions: { setStatus: async () => {}, assign: async () => {}, delete: async () => {} },
+      assignees: [
+        { id: "u_disp", name: "Dee Dispatcher" },
+        { id: "u_agent", name: "Sam Agent" },
+      ],
+    }),
+  );
+  // The removal control is offered, and it says so plainly.
+  assert.match(html, /Delete ticket/);
+  assert.match(html, /removes it for good/i);
+  // Assignment is a real picker of people, not a box asking for a raw user id.
+  assert.match(html, /<select[^>]*name="assigneeId"/);
+  assert.match(html, /Sam Agent/);
+  assert.match(html, /Dee Dispatcher/);
+  assert.doesNotMatch(html, /Assignee id \(blank to unassign\)/);
+});
+
+test("inbox UI: the bulk toolbar offers a staff picker when the desk's people are known", () => {
+  const html = renderToStaticMarkup(
+    createElement(AgentInbox, {
+      all: [ticket({ id: "a" })],
+      bulk: { action: async () => {} },
+      assignees: [{ id: "u_agent", name: "Sam Agent" }],
+    }),
+  );
+  assert.match(html, /With selected/);
+  assert.match(html, /<select[^>]*name="assigneeId"/);
+  assert.match(html, /Sam Agent/);
 });
 
 test("detail UI: the assistant panel renders its suggestions and the decisions taken", () => {

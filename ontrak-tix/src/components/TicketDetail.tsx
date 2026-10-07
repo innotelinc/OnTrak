@@ -14,6 +14,7 @@ import type { CannedResponse } from "../lib/canned-rules";
 import type { TicketLinkKind } from "../lib/link-rules";
 import type { AssistResult } from "../lib/assist-rules";
 import type { AssistDecisionRecord } from "../lib/assist-service";
+import type { AssigneeOption } from "../lib/assignee-rules";
 import { MessageKindBadge, TicketPriorityBadge, TicketStatusBadge, TicketTypeBadge } from "./TicketBadges";
 import { SlaBadge } from "./SlaBadge";
 import { ReplyComposer } from "./ReplyComposer";
@@ -27,6 +28,8 @@ export interface TicketActions {
   merge?: (formData: FormData) => Promise<void>;
   /** Run a saved shortcut (M5) on this ticket. */
   applyMacro?: (formData: FormData) => Promise<void>;
+  /** Remove the ticket outright (M7). Only offered to a caller who may delete. */
+  delete?: (formData: FormData) => Promise<void>;
 }
 
 /** A saved macro, as the picker shows it. */
@@ -68,6 +71,7 @@ export function TicketDetail({
   links = [],
   linkOptions = [],
   macros = [],
+  assignees,
   assist,
 }: {
   ticket: TicketRecord;
@@ -82,6 +86,12 @@ export function TicketDetail({
   linkOptions?: TicketOption[];
   /** The shortcuts the caller may run on this ticket (M5). */
   macros?: MacroChoice[];
+  /**
+   * The staff this ticket may be handed to. When supplied the assign control is a
+   * real picker; when omitted (a caller that has not read the desk's people) it falls
+   * back to the raw-id box, so no screen breaks while its wiring catches up.
+   */
+  assignees?: AssigneeOption[];
   /**
    * The assistant's suggestions (M7), when the desk asked for them. Absent on a desk that
    * has not opted in, so the panel costs nothing on every other deployment.
@@ -199,18 +209,50 @@ export function TicketDetail({
             {actions.assign ? (
               <form action={actions.assign} className="flex items-center gap-2">
                 <input type="hidden" name="ticketId" value={ticket.id} />
-                <input
-                  name="assigneeId"
-                  defaultValue={ticket.assigneeId ?? ""}
-                  placeholder="Assignee id (blank to unassign)"
-                  className="rounded-xl2 border border-line bg-surface px-3 py-1.5 text-xs text-ink"
-                />
+                {assignees && assignees.length > 0 ? (
+                  <select
+                    name="assigneeId"
+                    defaultValue={ticket.assigneeId ?? ""}
+                    aria-label="Assignee"
+                    className="rounded-xl2 border border-line bg-surface px-3 py-1.5 text-xs text-ink"
+                  >
+                    <option value="">Unassigned</option>
+                    {assignees.map((person) => (
+                      <option key={person.id} value={person.id}>
+                        {person.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    name="assigneeId"
+                    defaultValue={ticket.assigneeId ?? ""}
+                    placeholder="Assignee id (blank to unassign)"
+                    className="rounded-xl2 border border-line bg-surface px-3 py-1.5 text-xs text-ink"
+                  />
+                )}
                 <button type="submit" className="rounded-full bg-surface-muted px-3 py-1.5 text-xs font-semibold text-ink-soft">
                   Assign
                 </button>
               </form>
             ) : null}
           </div>
+
+          {actions.delete ? (
+            <form
+              action={actions.delete}
+              className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3"
+            >
+              <input type="hidden" name="ticketId" value={ticket.id} />
+              <span className="text-xs text-ink-faint">Deleting a ticket removes it for good.</span>
+              <button
+                type="submit"
+                className="rounded-full bg-bad/12 px-3 py-1.5 text-xs font-semibold text-bad hover:bg-bad/20"
+              >
+                Delete ticket
+              </button>
+            </form>
+          ) : null}
 
           {actions.applyMacro && macros.length > 0 ? (
             <form action={actions.applyMacro} className="flex flex-wrap items-center gap-2">

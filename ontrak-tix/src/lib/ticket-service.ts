@@ -14,7 +14,14 @@
 
 import { randomUUID } from "node:crypto";
 
-import { canAssignTicket, canReplyToTicket, canUpdateTicket, actorHasPermission, type Actor } from "./access-rules";
+import {
+  canAssignTicket,
+  canDeleteTicket,
+  canReplyToTicket,
+  canUpdateTicket,
+  actorHasPermission,
+  type Actor,
+} from "./access-rules";
 import {
   TICKET_PRIORITIES,
   TICKET_TYPES,
@@ -327,6 +334,34 @@ export function planAssignment(
 }
 
 /**
+ * Delete a ticket outright.
+ *
+ * The one ticket action that removes the record rather than adding to it, so it is
+ * gated on the narrowest staff permission there is (`ticket:delete`, which only ADMIN
+ * holds by default) and it emits `ticket.delete` naming the reference and the status
+ * the ticket was in when it went. Nothing is mutated: there is no next ticket to
+ * return, and the returned value is only the audit event the caller writes.
+ *
+ * A delete is deliberately *not* a status change, so no rule fires and the SLA clock
+ * is not touched — the ticket leaves the desk's world rather than reaching an end
+ * state inside it, and the chain is what remembers it was ever there.
+ */
+export function planDeletion(
+  actor: Actor,
+  ticket: TicketRecord,
+  ids: IdSource,
+): ServiceResult<{ audit: AuditEventInput }> {
+  if (!canDeleteTicket(actor, ticket)) {
+    return { ok: false, error: "You cannot delete this ticket." };
+  }
+  const at = ids.now();
+  return {
+    ok: true,
+    value: { audit: audit(actor, "ticket.delete", ticket, at, { ref: ticket.ref, status: ticket.status }) },
+  };
+}
+
+/**
  * The sighting a reclassification is: the type and priority the desk settled on,
  * and the queue the work now belongs to.
  *
@@ -405,6 +440,8 @@ export interface TicketStore {
   findTicket(tenantId: string, ticketId: string): Promise<TicketRecord | null>;
   insertTicket(ticket: TicketRecord): Promise<void>;
   updateTicket(ticket: TicketRecord): Promise<void>;
+  /** Remove a ticket outright. Tenant-scoped, so a guessed id from elsewhere removes nothing. */
+  deleteTicket(tenantId: string, ticketId: string): Promise<void>;
 }
 
 export class TicketService {
@@ -541,6 +578,27 @@ export class TicketService {
   }
 
   /**
+   * Delete a ticket (M7).
+   *
+   * The write a deletion becomes: `planDeletion` decides and audits, the store
+   * removes the row. The audit event is appended *after* the row is gone, matching
+   * every other write here (create, status, assign all persist then audit) — so the
+   * chain and the table agree on what happened even if the process dies between the
+   * two. A failure to remove the row never reaches the chain, because nothing is
+   * written until the store has agreed.
+   */
+  async deleteTicket(actor: Actor, ticketId: string): Promise<ServiceResult<{ id: string; ref: string }>> {
+    const ticket = await this.load(actor.tenantId, ticketId);
+    if (!ticket) return { ok: false, error: "Ticket not found." };
+    const plan = planDeletion(actor, ticket, this.ids);
+    if (!plan.ok) return plan;
+
+    await this.store.deleteTicket(actor.tenantId, ticket.id);
+    await this.audit.append(plan.value.audit);
+    return { ok: true, value: { id: ticket.id, ref: ticket.ref } };
+  }
+
+  /**
    * Run a macro on a ticket (M5).
    *
    * Unlike a rule, this is not triggered: an agent chose the macro and the
@@ -612,5 +670,9 @@ export class MemoryTicketStore implements TicketStore {
 
   async updateTicket(ticket: TicketRecord): Promise<void> {
     this.tickets.set(`${ticket.tenantId}:${ticket.id}`, structuredClone(ticket));
+  }
+
+  async deleteTicket(tenantId: string, ticketId: string): Promise<void> {
+    this.tickets.delete(`${tenantId}:${ticketId}`);
   }
 }

@@ -30,7 +30,7 @@ import {
 } from "./audit-chain";
 import { coercePauses, pausesToJson, type SlaPause } from "./sla-rules";
 import { FIELD_KEY_PATTERN } from "./form-rules";
-import type { MessageKind, TicketPriority, TicketStatus, TicketType } from "./ticket-rules";
+import { refSequence, type MessageKind, type TicketPriority, type TicketStatus, type TicketType } from "./ticket-rules";
 import type { TicketMessage, TicketRecord, TicketStore } from "./ticket-service";
 
 /** SHA-256 hex digest — the default hash for every Innotel Labs audit chain. */
@@ -288,6 +288,7 @@ export interface TicketPrismaClient {
     findMany(args: unknown): Promise<TicketRow[]>;
     create(args: { data: unknown }): Promise<unknown>;
     update(args: { where: { id: string }; data: unknown }): Promise<unknown>;
+    delete(args: { where: { id: string } }): Promise<unknown>;
   };
   message: {
     createMany(args: { data: unknown[]; skipDuplicates?: boolean }): Promise<unknown>;
@@ -306,12 +307,24 @@ export class PrismaTicketStore implements TicketStore {
   constructor(private readonly db: TicketPrismaClient) {}
 
   /**
-   * The next reference number for a tenant. Tickets are never deleted in M0, so
-   * the row count is the high-water mark; a tenant that later deletes tickets
-   * should switch this to a dedicated counter row in the same transaction.
+   * The next reference number for a tenant, derived from the highest reference
+   * already issued rather than from the row count.
+   *
+   * A count was the high-water mark only while tickets were never deleted. Now that
+   * `deleteTicket` exists, a count would drop when a row is removed and hand the
+   * deleted number to the next ticket — colliding with `@@unique([tenantId, ref])`
+   * (or, worse, reissuing a reference in a desk that never noticed). Reading the
+   * refs keeps the mark after a delete; the numbers it would reuse are only ever the
+   * ones still present, and a reference that is gone is free again.
    */
   async nextTicketSeq(tenantId: string): Promise<number> {
-    return (await this.db.ticket.count({ where: { tenantId } })) + 1;
+    const rows = await this.db.ticket.findMany({ where: { tenantId }, select: { ref: true } });
+    let highest = 0;
+    for (const row of rows) {
+      const seq = refSequence((row as { ref?: string | null }).ref);
+      if (seq > highest) highest = seq;
+    }
+    return highest + 1;
   }
 
   async listTickets(tenantId: string): Promise<TicketRecord[]> {
@@ -345,6 +358,18 @@ export class PrismaTicketStore implements TicketStore {
     await this.db.ticket.update({ where: { id: ticket.id }, data: toTicketUpdate(ticket) });
     const rows = toMessageRows(ticket);
     if (rows.length > 0) await this.db.message.createMany({ data: rows, skipDuplicates: true });
+  }
+
+  /**
+   * Remove a ticket and, through the schema's cascades, its thread, links,
+   * escalations and satisfaction response with it.
+   *
+   * Deleted by id alone, like `updateTicket`: the service loads the ticket through
+   * `findTicket(tenantId, id)` first, so by the time this is reached the id is known
+   * to belong to the caller's tenant.
+   */
+  async deleteTicket(_tenantId: string, ticketId: string): Promise<void> {
+    await this.db.ticket.delete({ where: { id: ticketId } });
   }
 }
 

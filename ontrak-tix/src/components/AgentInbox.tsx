@@ -21,6 +21,7 @@ import { buildInboxView, inboxFilterQuery, parseInboxFilter, type InboxSearchPar
 import type { InboxFilter, InboxSlaFlags } from "../lib/inbox-rules";
 import { TICKET_STATUSES } from "../lib/ticket-rules";
 import type { TicketRecord } from "../lib/ticket-service";
+import type { AssigneeOption } from "../lib/assignee-rules";
 import { TicketPriorityBadge, TicketStatusBadge, TicketTypeBadge } from "./TicketBadges";
 
 export interface AgentInboxProps {
@@ -36,6 +37,12 @@ export interface AgentInboxProps {
   sla?: ReadonlyMap<string, InboxSlaFlags>;
   /** When supplied, rows gain checkboxes and the worklist gains a bulk toolbar. */
   bulk?: { action: (formData: FormData) => Promise<void> };
+  /**
+   * The staff a selected ticket may be handed to. When supplied the bulk toolbar's
+   * assign control is a real picker; when omitted it falls back to asking for a raw
+   * user id, so the toolbar still works on a caller that has not read the desk's people.
+   */
+  assignees?: AssigneeOption[];
 }
 
 function inboxHref(basePath: string, filter: InboxFilter, ticketId?: string): string {
@@ -187,7 +194,16 @@ function TicketRow({
   );
 }
 
-export function AgentInbox({ all, filter, params, basePath = "/inbox", selectedId = null, sla, bulk }: AgentInboxProps) {
+export function AgentInbox({
+  all,
+  filter,
+  params,
+  basePath = "/inbox",
+  selectedId = null,
+  sla,
+  bulk,
+  assignees,
+}: AgentInboxProps) {
   const active = filter ?? parseInboxFilter(params);
   const view = buildInboxView(all, active, sla);
   const counts = view.counts;
@@ -305,12 +321,28 @@ export function AgentInbox({ all, filter, params, basePath = "/inbox", selectedI
             <span aria-hidden className="text-ink-faint">
               ·
             </span>
-            <input
-              name="assigneeId"
-              aria-label="Assignee id"
-              placeholder="Assignee id (blank to unassign)"
-              className="ot-input w-56 py-1 text-xs"
-            />
+            {assignees && assignees.length > 0 ? (
+              <select
+                name="assigneeId"
+                defaultValue=""
+                aria-label="Assignee"
+                className="ot-input w-auto py-1 text-xs"
+              >
+                <option value="">Unassigned</option>
+                {assignees.map((person) => (
+                  <option key={person.id} value={person.id}>
+                    {person.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                name="assigneeId"
+                aria-label="Assignee id"
+                placeholder="Assignee id (blank to unassign)"
+                className="ot-input w-56 py-1 text-xs"
+              />
+            )}
             <button type="submit" name="op" value="assign" className="ot-btn px-3 py-1 text-xs">
               Assign
             </button>

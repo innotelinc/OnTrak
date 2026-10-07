@@ -228,6 +228,13 @@ to stand on its own.
     assigns or changes status on many tickets at once, with pure selection and
     summary rules (`src/lib/bulk-rules.ts`) so skipped tickets and their reasons
     are reported honestly.
+  - `[x]` The pair view acts: the ticket selected beside the worklist offers reply,
+    status, assignment and deletion directly, gated by the same rules as its own
+    page. Assignment is a picker of the desk's active staff
+    (`src/lib/assignee-rules.ts`) rather than a box asking for a raw user id, and a
+    ticket may be removed outright by a caller holding `ticket:delete` (ADMIN by
+    default) — audited as `ticket.delete`, with the reference high-water mark kept
+    after a delete (`refSequence`) so a removed number is never reissued.
   - `[x]` Saved views: named, shareable inbox filters (`src/lib/saved-view-rules.ts`,
     `saved-view-service.ts`, `saved-view-store-prisma.ts`) as a chip strip above
     the worklist. A view is private to its owner unless shared, and only the
