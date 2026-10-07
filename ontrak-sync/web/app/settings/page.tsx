@@ -101,6 +101,10 @@ export default function SettingsPage() {
         scopes: draft!.scopes,
         security_only: draft!.security_only,
         max_concurrent: draft!.max_concurrent,
+        // Sent explicitly so clearing from the form clears on the server; an
+        // omitted field means "leave alone", which is not what empty inputs mean.
+        freeze_from: draft!.freeze_from ?? "",
+        freeze_to: draft!.freeze_to ?? "",
       };
       if (draft!.window_start_hour === null || draft!.window_end_hour === null) {
         payload.clear_window = true;
@@ -335,6 +339,42 @@ export default function SettingsPage() {
             />
             <small>Parallelism across hosts. One host is walked serially.</small>
           </label>
+
+          <div className="field" style={{ marginTop: 14 }}>
+            <span className="dim" style={{ fontSize: 12 }}>Change freeze (inclusive dates)</span>
+            <div className="row-inline" style={{ marginTop: 6 }}>
+              <label className="checkline">
+                from
+                <input
+                  type="date"
+                  value={draft.freeze_from ?? ""}
+                  onChange={(event) => update("freeze_from", event.target.value)}
+                />
+              </label>
+              <label className="checkline">
+                to
+                <input
+                  type="date"
+                  value={draft.freeze_to ?? ""}
+                  onChange={(event) => update("freeze_to", event.target.value)}
+                />
+              </label>
+              {draft.freeze_from || draft.freeze_to ? (
+                <button
+                  onClick={() => {
+                    update("freeze_from", "");
+                    update("freeze_to", "");
+                  }}
+                >
+                  clear
+                </button>
+              ) : null}
+            </div>
+            <small className="faint">
+              Nothing is applied between these dates — automatic mode included. Both ends are
+              required and both are inclusive; leave them empty for no freeze.
+            </small>
+          </div>
         </div>
       </section>
 
@@ -350,6 +390,7 @@ export default function SettingsPage() {
               scopes: draft.scopes,
               security_only: draft.security_only,
               window: windowSet ? [draft.window_start_hour, draft.window_end_hour] : null,
+              freeze: draft.freeze_from && draft.freeze_to ? [draft.freeze_from, draft.freeze_to] : null,
               max_concurrent: draft.max_concurrent,
               timezone: draft.timezone,
             },

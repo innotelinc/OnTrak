@@ -263,6 +263,9 @@ export interface Policy {
   window_end_hour: number | null;
   max_concurrent: number;
   host_ids: number[];
+  /** A change freeze, inclusive ISO dates (`YYYY-MM-DD`), or empty for none. */
+  freeze_from: string;
+  freeze_to: string;
   description: string;
   next_runs: string[];
 }

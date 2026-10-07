@@ -110,6 +110,10 @@ class PolicyRequest(BaseModel):
     window_end_hour: int | None = None
     max_concurrent: int | None = None
     host_ids: list[int] | None = None
+    # A change freeze: an inclusive ISO date range during which nothing is applied.
+    # Empty strings clear it; `None` (an omitted field) leaves it alone.
+    freeze_from: str | None = None
+    freeze_to: str | None = None
     # A separate flag so "clear the window" is expressible. Without it, an omitted
     # field means "leave alone" and there is no way to remove a window once set.
     clear_window: bool = False
@@ -871,7 +875,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         current = load_policy(conn, settings)
         data = current.as_dict()
         for key in ("mode", "schedule", "enabled", "timezone", "scopes", "security_only",
-                    "window_start_hour", "window_end_hour", "max_concurrent", "host_ids"):
+                    "window_start_hour", "window_end_hour", "max_concurrent", "host_ids",
+                    "freeze_from", "freeze_to"):
             value = getattr(body, key)
             if value is not None:
                 data[key] = value
