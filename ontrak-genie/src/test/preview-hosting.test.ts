@@ -35,6 +35,7 @@ const {
   listPreviews,
   magnateEntitled,
   normalizePreviewName,
+  portIsFree,
   previewLabelFromHost,
   previewPublic,
   proxyPreview,
@@ -45,6 +46,24 @@ const {
 const { createServer } = await import("../server.js");
 
 const PREVIEW_DOMAIN = "genie.innotel.us";
+
+/** Wait until something is listening on a port, or give up. */
+async function waitListening(port: number): Promise<boolean> {
+  for (let i = 0; i < 100; i += 1) {
+    if (!(await portIsFree(port))) return true;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return false;
+}
+
+/** Wait until a port is free again, or give up. */
+async function waitFree(port: number): Promise<boolean> {
+  for (let i = 0; i < 100; i += 1) {
+    if (await portIsFree(port)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return false;
+}
 
 /** A throwaway upstream that answers every request with its own marker. */
 async function startUpstream(marker: string): Promise<{ port: number; close: () => Promise<void> }> {
@@ -165,6 +184,48 @@ test("the registry", async (t) => {
     const after = await getPreview("p46212");
     assert.equal(after?.pid, null);
     await removePreview("p46212");
+  });
+
+  await t.test("republishing an address that is down starts it again", async (t) => {
+    resetPreviewCache();
+    // This is the one case in the file whose command holds a port, so the child has
+    // to be reaped even when an assertion throws above the cleanup: a leaked
+    // listener keeps the port and breaks every later run against the same range.
+    t.after(async () => {
+      await removePreview("p46214");
+      assert.equal(await waitFree(46214), true);
+    });
+    // A command that actually takes the port, so "serving" can be told from
+    // "recorded": `startPreviewProcess` hands the child PORT.
+    const serve =
+      "node -e \"require('net').createServer().listen(Number(process.env.PORT), '127.0.0.1')\"";
+    const first = await createPreview({ port: 46214, command: serve, ttlMs: 600_000 });
+    assert.equal(await waitListening(46214), true);
+    assert.equal(first.pid !== null, true);
+    // `createPreview` hands back the registry's own record, and republishing
+    // mutates that record in place, so the first TTL has to be copied out here to
+    // still mean anything after the republish.
+    const firstExpiresAt = first.expiresAt;
+
+    // A duplicate publish of an address that is serving is left alone. The TTL is
+    // the observable: the restart path refreshes it, this call did not pass one,
+    // so a bounced app would show up as a changed `expiresAt`.
+    const again = await createPreview({ port: 46214, command: serve });
+    assert.equal(again.pid, first.pid);
+    assert.equal(again.expiresAt, first.expiresAt);
+
+    // Now take it down, as a crash or an operator stop would.
+    assert.equal(await stopPreview("p46214"), true);
+    assert.equal(await waitFree(46214), true);
+
+    // The request a user makes when they press publish again on an address that is
+    // not answering. It has to come back serving, not as the record that was dead.
+    const republished = await createPreview({ port: 46214, command: serve, ttlMs: 900_000 });
+    assert.equal(republished.name, "p46214");
+    assert.equal(await waitListening(46214), true);
+    // A restart is a fresh publish, so it does not inherit the TTL of the record
+    // it replaced.
+    assert.equal(republished.expiresAt > firstExpiresAt, true);
   });
 
   await t.test("a command whose cwd does not exist fails alone, not the server", async () => {

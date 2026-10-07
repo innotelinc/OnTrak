@@ -446,7 +446,34 @@ export async function createPreview(options: CreatePreviewOptions = {}): Promise
   }
 
   const existingPort = rows.find((row) => row.port === port);
-  if (existingPort !== undefined) return existingPort;
+  if (existingPort !== undefined) {
+    // Idempotent for an address that is already serving — a duplicate publish
+    // must not bounce a healthy app — but *not* for one that is registered and
+    // down. A preview that died, or that an operator stopped, is the case a
+    // publish is trying to fix, so a request carrying a command starts it again
+    // instead of handing the caller back the dead record. Without this the caller
+    // gets `201` with `running: false`, the address stays dark, and the page they
+    // are looking at goes on saying it is not answering yet.
+    //
+    // "Serving" is asked of the port, not of the record: the record can outlive
+    // the process it names. A preview that fails leaves a pid behind, and a spawn
+    // that lands after a stop can write one back, so a pid is evidence of a
+    // process having been started rather than of anything being answered. The
+    // port is the thing the user is actually looking at.
+    if ((options.command ?? "") !== "" && (await portIsFree(existingPort.port))) {
+      existingPort.command = options.command ?? "";
+      if ((options.cwd ?? "") !== "") existingPort.cwd = options.cwd ?? "";
+      if ((options.account ?? "") !== "") existingPort.account = options.account ?? "";
+      // A restart is a fresh publish, so the address gets a fresh TTL: one
+      // republished a second before it expired should not vanish on the next
+      // sweep.
+      existingPort.expiresAt = ttlFor(options.ttlMs, existingPort.custom);
+      existingPort.updatedAt = new Date().toISOString();
+      startPreviewProcess(existingPort);
+      await writeRegistry(rows);
+    }
+    return existingPort;
+  }
 
   const name = requestedName === "" ? `p${port}` : requestedName;
   const existingName = rows.find((row) => row.name === name);
@@ -761,6 +788,16 @@ export function stopPreviewSweepLoop(): void {
 // --- public projection ------------------------------------------------------
 
 /** The registry record as the browser should see it. */
+/**
+ * Whether a preview's process is up.
+ *
+ * One definition, shared by the projection the API returns and by the publish
+ * decision above, so the two can never disagree about what "running" means.
+ */
+function previewIsRunning(preview: Preview): boolean {
+  return preview.running ?? (children.has(preview.name) || preview.pid !== null);
+}
+
 export function previewPublic(preview: Preview): Record<string, unknown> {
   return {
     name: preview.name,
@@ -769,7 +806,7 @@ export function previewPublic(preview: Preview): Record<string, unknown> {
     port: preview.port,
     custom: preview.custom,
     command: preview.command,
-    running: preview.running ?? (children.has(preview.name) || preview.pid !== null),
+    running: previewIsRunning(preview),
     createdAt: preview.createdAt,
     expiresAt: preview.expiresAt,
   };
