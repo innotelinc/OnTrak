@@ -796,6 +796,22 @@ A single-page app with no build step (`public/`), served by the agent itself.
   or a drawer whose `aria-expanded` does not follow it. It skips where there is no
   browser, like `ui:smoke`; the part that can always run lives in
   `src/test/static-assets.test.ts`.
+- **Focus, and the modal panels.** A panel that says `aria-modal="true"` is
+  promising that the page behind it is inert until it closes — and a class flip
+  keeps none of that promise on its own: a screen reader is told the rest of the
+  page is unavailable while the keyboard is still free to walk into it, which is
+  exactly what Tab does. So all five panels (`viewer`, `settings`, `appearance`,
+  `hosting`, `sweep`) get the same three things from one place in `app.js`:
+  opening moves focus onto the panel so its `aria-labelledby` title is read before
+  the controls, Tab and Shift+Tab are steered back at the panel's edges (the
+  browser still does the walking, so `tabindex`, disabled controls and whatever a
+  panel is hiding stay authoritative), and closing hands focus back to the control
+  that opened it — recorded from the click in the *capture* phase, because
+  clicking a button does not focus it in every browser and a panel that closes by
+  dropping focus on `<body>` loses your place. The panels carry `tabindex="-1"` for
+  that first step, and `layout:check` drives the whole thing: a real click, ten
+  real Tabs, Shift+Tab, Escape, and a `?settings=appearance` deep link that must
+  not have focus taken back by the composer.
 - **Diff view.** `write_file` and `edit_file` return a structured line diff
   alongside the tool result, so each change is rendered as before/after hunks
   with per-line numbers and `+`/`−` counts, and the raw tool output is one

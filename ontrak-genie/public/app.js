@@ -35,7 +35,6 @@ const state = {
    * your own behind it to continue, and the composer says so.
    */
   shareOf: null,
-  lastFocus: null,
   viewer: { path: null, mode: "file", diff: null },
   /**
    * The file the agent is writing, as it is being written. `content` is what has
@@ -1653,10 +1652,92 @@ async function runSweep(all) {
   }
 }
 
+/* ------------------------------------------------------------------ dialogs */
+
+/*
+ * Focus, for the five modal panels — `[role="dialog"][aria-modal="true"]`.
+ *
+ * A panel that says `aria-modal="true"` is making a promise: the page behind it
+ * is inert until it closes. The class flip that shows it keeps none of that
+ * promise on its own — a screen reader is told the rest of the page is
+ * unavailable while the keyboard is still free to wander into it, and Tab does
+ * exactly that, straight out of "this chat's model settings" and into the
+ * toolbar behind it. So the promise is kept in one place for all five: opening
+ * moves focus in, Tab is steered back at the panel's edges, and closing hands
+ * focus to whatever opened it.
+ *
+ * The opener is remembered from the *click*, in the capture phase, rather than
+ * read off `document.activeElement` at open time: clicking a button does not
+ * focus it in every browser, and a panel that closes by dropping focus on
+ * `<body>` is a panel that loses your place in a transcript you were reading.
+ * `document.activeElement` is still the fallback, which is what covers a panel
+ * opened from the keyboard rather than from a click (the palette's `/settings`).
+ */
+
+/** The modal panels: derived from the markup, not kept in a list that can drift. */
+function modalPanels() {
+  return [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')];
+}
+
+/**
+ * The panel on top, which is the last one open in document order. That is the
+ * same order the Escape handler unwinds them in, so the two cannot disagree
+ * about which panel "the current one" is.
+ */
+function openModal() {
+  const shown = modalPanels().filter((panel) => !panel.classList.contains("hidden"));
+  return shown.length === 0 ? null : shown[shown.length - 1];
+}
+
+/** Everything inside a panel that a Tab should stop on, in tab order. */
+function tabStops(panel) {
+  const selector =
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]),' +
+    ' textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  return [...panel.querySelectorAll(selector)].filter(
+    // `offsetParent` is null for anything inside a `display: none` subtree, which
+    // is how the controls that are not relevant right now stay out of it: the
+    // viewer's `delete` before a file is open, `show change` before there is one.
+    (element) => element.offsetParent !== null,
+  );
+}
+
+/** Where focus goes when the last panel closes. */
+let dialogOpener = null;
+
+/**
+ * Show a panel's focus. The panel itself takes it rather than its first control:
+ * that is what makes a screen reader read the title (`aria-labelledby`) before
+ * the options, and one Tab then lands on the first control anyway.
+ */
+function enterDialog(panel) {
+  const from = document.activeElement;
+  if (from instanceof HTMLElement && from !== document.body) dialogOpener = from;
+  panel.focus();
+}
+
+/**
+ * Remember the control a click is about to act on, before it acts — see the
+ * capture-phase listener in `wire()`. Kept here so the whole of "where did this
+ * panel come from" is in one place.
+ */
+function noteDialogOpener(control) {
+  if (control === null || openModal() !== null) return;
+  dialogOpener = control;
+}
+
+/** Hand focus back, unless another panel is still open to own it. */
+function leaveDialog(panel) {
+  panel.blur();
+  if (openModal() !== null) return;
+  const opener = dialogOpener;
+  dialogOpener = null;
+  if (opener !== null && opener.isConnected) opener.focus();
+}
+
 function openSweep() {
-  state.lastFocus = document.activeElement;
   $("#sweep").classList.remove("hidden");
-  $("#sweep-close").focus();
+  enterDialog($("#sweep"));
   void refreshSweep();
 }
 
@@ -1667,7 +1748,7 @@ function closeSweep() {
     clearInterval(sweepTimer);
     sweepTimer = null;
   }
-  state.lastFocus?.focus?.();
+  leaveDialog($("#sweep"));
 }
 
 /**
@@ -2771,6 +2852,9 @@ function toggleSettings(force) {
   if (open) {
     $("#settings-note").textContent =
       state.sessionId === null ? "Saved on the chat once it starts." : "Saved on this chat.";
+    enterDialog(dialog);
+  } else {
+    leaveDialog(dialog);
   }
 }
 
@@ -2788,6 +2872,8 @@ function toggleAppearance(force) {
   const open = force === undefined ? dialog.classList.contains("hidden") : force;
   dialog.classList.toggle("hidden", !open);
   $("#appearance-open").setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) enterDialog(dialog);
+  else leaveDialog(dialog);
 }
 
 /* --------------------------------------------------------- deleting a file */
@@ -2850,8 +2936,7 @@ function closeViewer() {
   disarmDelete();
   viewer.classList.add("hidden");
   state.viewer = { path: null, mode: "file", diff: null };
-  if (state.lastFocus && typeof state.lastFocus.focus === "function") state.lastFocus.focus();
-  state.lastFocus = null;
+  leaveDialog(viewer);
 }
 
 /** Switch the viewer between the agent's change and the file as it stands. */
@@ -2913,9 +2998,8 @@ async function openFile(path) {
     // For a file the agent has touched, the change is what you came to see.
     await setViewerMode(payload.hasHistory ? "diff" : "file");
 
-    state.lastFocus = document.activeElement;
     $("#viewer").classList.remove("hidden");
-    $("#viewer-close").focus();
+    enterDialog($("#viewer"));
   } catch (error) {
     addErrorMessage(error.message);
   }
@@ -3264,12 +3348,14 @@ let hostingInfoCache = null;
 function openHosting() {
   $("#hosting").classList.remove("hidden");
   $("#hosting-open").setAttribute("aria-expanded", "true");
+  enterDialog($("#hosting"));
   void loadHosting();
 }
 
 function closeHosting() {
   $("#hosting").classList.add("hidden");
   $("#hosting-open").setAttribute("aria-expanded", "false");
+  leaveDialog($("#hosting"));
 }
 
 function money(cents) {
@@ -3879,6 +3965,53 @@ function wire() {
 
   $("#use-offline").addEventListener("change", () => void persistSettings());
 
+  /*
+   * A click is remembered before it is handled, because a panel it opens has to
+   * know what to hand focus back to — and clicking a button does not focus it in
+   * every browser (Safari on iOS and macOS is the one that matters there), so
+   * asking `document.activeElement` at open time is not that answer. Capture
+   * phase, so this runs before the button's own handler opens anything.
+   */
+  document.addEventListener(
+    "click",
+    (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      noteDialogOpener(target === null ? null : target.closest("button, a[href]"));
+    },
+    true,
+  );
+
+  /*
+   * Tab is kept inside whichever panel is open. Only the *edges* are steered:
+   * the browser still does the walking, so `tabindex`, disabled controls and
+   * whatever the panel currently hides stay authoritative, and the trap cannot
+   * invent a tab order of its own.
+   */
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab") return;
+    const panel = openModal();
+    if (panel === null) return;
+    const stops = tabStops(panel);
+    if (stops.length === 0) {
+      event.preventDefault();
+      panel.focus();
+      return;
+    }
+    const first = stops[0];
+    const last = stops[stops.length - 1];
+    const active = document.activeElement;
+    if (!panel.contains(active)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    } else if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus();
+    }
+  });
+
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     if (!$("#sweep").classList.contains("hidden")) closeSweep();
@@ -3921,7 +4054,9 @@ void loadFiles(".");
 // A link can carry the panel with it: `?settings=appearance` opens Appearance, so
 // a person is sent to "make it dark" rather than to "go and find the toggle".
 if (new URLSearchParams(location.search).get("settings") === "appearance") toggleAppearance(true);
-$("#input").focus();
+// The deep link above can have opened a panel, and the composer does not get to
+// take focus back out of a panel that is up.
+if (openModal() === null) $("#input").focus();
 
 // The server checks the chain on its own timer, so re-read the status to show it.
 // Skipped mid-turn: the row is about the chain, not about the reply in flight.

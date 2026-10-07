@@ -181,6 +181,46 @@ test("the console is laid out for the screen it is on", async () => {
   );
 });
 
+test("every modal panel can hold focus the way it promises", async () => {
+  /*
+   * `aria-modal="true"` is a promise that the page behind the panel is inert
+   * until it closes. The class flip that shows a panel keeps none of that promise
+   * on its own, so `app.js` does three things for all of them: focus in, steer Tab
+   * at the edges, hand focus back on close. Two of those three need something from
+   * the markup, and both are silent when missing — a panel with no `tabindex`
+   * simply keeps the focus it had, and a panel the trap never hears about simply
+   * lets Tab walk out. `layout:check` drives the behaviour with real key events;
+   * this is the half that runs without a browser.
+   */
+  const html = await fs.readFile(path.join(PUBLIC_DIR, "index.html"), "utf8");
+  const app = await fs.readFile(path.join(PUBLIC_DIR, "app.js"), "utf8");
+
+  const panels = [...html.matchAll(/<div[^>]*role="dialog"[^>]*>/gs)].map((match) => match[0]);
+  assert.ok(panels.length >= 5, `expected the console's five panels, found ${panels.length}`);
+  for (const panel of panels) {
+    assert.match(panel, /aria-modal="true"/, "a panel has to say it is modal");
+    assert.match(panel, /aria-labelledby=/, "focus lands on the panel, so it needs a name");
+    assert.match(
+      panel,
+      /tabindex="-1"/,
+      `a modal panel without tabindex="-1" cannot take focus: ${panel.slice(0, 60)}`,
+    );
+  }
+
+  // The panels are found from the markup, not from a list that can fall behind it.
+  assert.match(app, /querySelectorAll\('\[role="dialog"\]\[aria-modal="true"\]'\)/);
+  assert.match(app, /function tabStops\(/, "Tab has to know where a panel's edges are");
+  assert.match(app, /function enterDialog\(/, "and opening has to move focus in");
+  assert.match(app, /function leaveDialog\(/, "and closing has to hand it back");
+  assert.match(
+    app,
+    /noteDialogOpener\(/,
+    "the opener is remembered from the click, which is the only way it survives Safari",
+  );
+  // One rule, not a per-panel copy: the old ad-hoc ``state.lastFocus`` is gone.
+  assert.doesNotMatch(app, /state\.lastFocus/, "focus return should not be done twice");
+});
+
 test("the follow-up rule is one module, served to the console", async () => {
   // The console and the CLI must offer the same next steps, so the browser runs
   // the CLI's compiled module rather than a second copy of the rule. `public/`

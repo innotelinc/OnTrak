@@ -140,6 +140,74 @@ async function waitFor(expression, timeoutMs = 20_000) {
   }
 }
 
+/* A key, sent the way a browser's own Tab traversal is driven: `rawKeyDown` for
+   a key that produces no text, then `keyUp` to close it out. */
+async function press(name, { shift = false } = {}) {
+  const keys = {
+    Tab: { key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 },
+    Escape: { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 },
+  };
+  const modifiers = shift ? 8 : 0; // Alt 1, Ctrl 2, Meta 4, Shift 8.
+  await send("Input.dispatchKeyEvent", { type: "rawKeyDown", modifiers, ...keys[name] });
+  await send("Input.dispatchKeyEvent", { type: "keyUp", modifiers, ...keys[name] });
+  await sleep(40);
+}
+
+/**
+ * A real click at a control's centre, not `element.click()`.
+ *
+ * The difference is the whole point of the check it drives: a real click is what
+ * focuses the button, and a panel that hands focus back has to know where from.
+ */
+async function clickControl(selector) {
+  const centre = await evaluate(`
+    const el = document.querySelector('${selector}');
+    if (el === null) throw new Error('no ${selector}');
+    const r = el.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  `);
+  await send("Input.dispatchMouseEvent", {
+    type: "mousePressed", x: centre.x, y: centre.y, button: "left", buttons: 1, clickCount: 1,
+  });
+  await send("Input.dispatchMouseEvent", {
+    type: "mouseReleased", x: centre.x, y: centre.y, button: "left", buttons: 0, clickCount: 1,
+  });
+  await sleep(60);
+}
+
+/** Where focus is, and whether it is inside a given panel. */
+async function focusedIn(panelSelector) {
+  return evaluate(`
+    const panel = document.querySelector('${panelSelector}');
+    const el = document.activeElement;
+    return {
+      where: el === null ? "none" : (el.id || String(el.className) || el.tagName.toLowerCase()).slice(0, 40),
+      inside: el !== null && panel.contains(el),
+      onPanel: el === panel,
+    };
+  `);
+}
+
+/**
+ * Tab a given number of times from wherever focus is, and report whether it ever
+ * left the panel — and how many distinct controls it reached.
+ *
+ * The count is not decoration: "focus never left" is true of a walk that never
+ * moved either, so a check that only looked for escape would pass on a page whose
+ * Tab does nothing at all.
+ */
+async function tabWalk(panelSelector, presses, { shift = false } = {}) {
+  const seen = new Set();
+  let escaped = null;
+  for (let i = 0; i < presses; i += 1) {
+    await press("Tab", { shift });
+    const at = await focusedIn(panelSelector);
+    if (!at.inside && escaped === null) escaped = `press ${i + 1} landed on ${at.where}`;
+    else if (at.inside) seen.add(at.where);
+  }
+  return { stops: seen.size, escaped };
+}
+
 /* ---------------------------------------------------------------- checks ---- */
 
 let failures = 0;
@@ -265,7 +333,9 @@ const chrome = spawn(
     `--user-data-dir=${profile}`,
     "about:blank",
   ],
-  { stdio: ["ignore", "ignore", "pipe"] },
+  // `detached` gives the browser its own process group, so the whole group can be
+  // killed below. See the `finally` block for why that matters.
+  { stdio: ["ignore", "ignore", "pipe"], detached: true },
 );
 
 /** One viewport: emulate it, load the console, and report what it measures. */
@@ -381,9 +451,16 @@ try {
 
   await check("the drawer opens, traps nothing, and closes", async () => {
     await evaluate("document.querySelector('#sidebar-toggle').click();");
-    // The slide is a transition, so the state that matters is the one it settles
-    // on rather than the one the click left it in mid-flight.
-    await sleep(260);
+    /*
+     * Wait for the slide to *settle*, not for the clock to pass. A fixed sleep is
+     * a bet on how loaded the machine is, and losing that bet looks exactly like a
+     * broken drawer — which is how this check failed once, in a run that also had
+     * the test suite and a browser in flight. `transform: none` is the end of the
+     * transition; a matrix mid-flight is not.
+     */
+    await waitFor(`
+      getComputedStyle(document.querySelector('#sidebar')).transform === 'none'
+    `, 5_000);
     const opened = await evaluate(`
       const sidebar = document.querySelector('#sidebar');
       const r = sidebar.getBoundingClientRect();
@@ -403,7 +480,11 @@ try {
     // The scrim is the first gesture anyone tries, so it is the one that is
     // checked; Escape is wired in the same handler and covered by its own check.
     await evaluate("document.querySelector('#sidebar-scrim').click();");
-    await sleep(260);
+    // The other direction is a `visibility` flip, deliberately delayed to the end
+    // of the slide, so it is the thing that has to be waited for here.
+    await waitFor(`
+      getComputedStyle(document.querySelector('#sidebar')).visibility === 'hidden'
+    `, 5_000);
     const closed = await evaluate(`
       const sidebar = document.querySelector('#sidebar');
       return {
@@ -420,7 +501,10 @@ try {
 
   await check("Escape closes the drawer", async () => {
     await evaluate("document.querySelector('#sidebar-toggle').click();");
-    await sleep(260);
+    await waitFor(
+      "getComputedStyle(document.querySelector('#sidebar')).transform === 'none'",
+      5_000,
+    );
     await send("Input.dispatchKeyEvent", {
       type: "keyDown",
       key: "Escape",
@@ -572,6 +656,74 @@ try {
     return desktop.media.coarse ? "the pointer reports coarse (assertion skipped)" : "targets stay as drawn";
   });
 
+  /* -------------------------------------------------------- dialog and focus -- */
+
+  console.log("\nDialogs and focus (desktop, keyboard)");
+
+  await check("opening a panel moves focus into it", async () => {
+    await clickControl("#chat-settings");
+    const at = await focusedIn("#settings");
+    if (!at.inside) throw new Error(`focus is on ${at.where}, not in the panel`);
+    return at.onPanel
+      ? "the panel takes focus, so its title is read before its controls"
+      : `focus on ${at.where}`;
+  });
+
+  await check("Tab walks the panel and cannot leave it", async () => {
+    const walk = await tabWalk("#settings", 10);
+    if (walk.escaped !== null) throw new Error(walk.escaped);
+    if (walk.stops < 2) {
+      throw new Error(`Tab reached only ${walk.stops} control(s), so this proves nothing`);
+    }
+    return `${walk.stops} controls walked, never outside`;
+  });
+
+  await check("Shift+Tab cannot leave it either", async () => {
+    const walk = await tabWalk("#settings", 6, { shift: true });
+    if (walk.escaped !== null) throw new Error(walk.escaped);
+    if (walk.stops < 2) throw new Error("Shift+Tab never moved");
+    return `${walk.stops} controls walked backwards`;
+  });
+
+  await check("closing a panel hands focus back to what opened it", async () => {
+    await press("Escape");
+    const at = await focusedIn("#settings");
+    if (at.inside) throw new Error("the panel is still open");
+    if (at.where !== "chat-settings") throw new Error(`focus went to ${at.where}`);
+    return "#chat-settings — the button that was pressed";
+  });
+
+  await check("the sweep panel, which has its own two handlers, behaves the same", async () => {
+    await clickControl("#sweep-open");
+    const opened = await focusedIn("#sweep");
+    if (!opened.inside) throw new Error(`focus is on ${opened.where}, not in the panel`);
+    const walk = await tabWalk("#sweep", 8);
+    if (walk.escaped !== null) throw new Error(walk.escaped);
+    await press("Escape");
+    const closed = await focusedIn("#sweep");
+    if (closed.inside) throw new Error("Escape left the panel open");
+    if (closed.where !== "sweep-open") throw new Error(`focus went to ${closed.where}`);
+    return `${walk.stops} controls, and back to #sweep-open`;
+  });
+
+  await check("a deep link's panel is not robbed of focus by the composer", async () => {
+    await send("Page.navigate", { url: `${base}/?settings=appearance` });
+    const booted = await waitFor("document.querySelector('.composer-hint')");
+    if (!booted) throw new Error("the console did not boot on the deep link");
+    const at = await evaluate(`
+      const panel = document.querySelector('#appearance');
+      const el = document.activeElement;
+      return {
+        open: !panel.classList.contains('hidden'),
+        inside: el !== null && panel.contains(el),
+        where: el === null ? "none" : (el.id || el.tagName.toLowerCase()),
+      };
+    `);
+    if (!at.open) throw new Error("?settings=appearance did not open the panel");
+    if (!at.inside) throw new Error(`focus is on ${at.where} — the composer took it back`);
+    return "focus is in the panel the link opened";
+  });
+
   /* --------------------------------------------------------- reduced motion -- */
 
   console.log("\nDesktop, prefers-reduced-motion: reduce");
@@ -621,12 +773,36 @@ try {
     return "no exceptions and no console errors across four loads";
   });
 } finally {
-  chrome.kill("SIGKILL");
+  /*
+   * Kill the browser's whole process group, not just the process this script
+   * spawned. Chromium's renderer and GPU processes are its children, and they
+   * outlive a SIGKILL aimed at the parent — still writing into the profile
+   * directory while it is being removed, which failed the run *after* every
+   * check had passed and would have failed it in CI too, for nothing.
+   */
+  try {
+    process.kill(-chrome.pid, "SIGKILL");
+  } catch {
+    chrome.kill("SIGKILL");
+  }
+  await sleep(300);
   await new Promise((resolve) => server.close(resolve));
-  fs.rmSync(workspace, { recursive: true, force: true });
-  // The profile is still being written when the browser is killed, so the
-  // removal retries rather than failing the run on a race it cannot win.
-  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+
+  /*
+   * The scratch directories are not a check, so failing to remove one is a note
+   * rather than a failed run — but it is a note, not silence: something left in
+   * the temporary directory is worth seeing.
+   */
+  for (const [what, target] of [
+    ["workspace", workspace],
+    ["browser profile", profile],
+  ]) {
+    try {
+      fs.rmSync(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch (error) {
+      console.log(`  note: could not remove the temporary ${what} at ${target} (${error.code})`);
+    }
+  }
 }
 
 if (failures > 0) {

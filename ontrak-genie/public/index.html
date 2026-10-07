@@ -452,12 +452,18 @@
     -->
     <div id="sidebar-scrim" class="scrim hidden"></div>
 
+    <!--
+      `tabindex="-1"` on all five panels is what lets the console put focus on the
+      panel itself when it opens, so a screen reader reads the title before the
+      controls and Tab then walks them (see `enterDialog` in `app.js`).
+    -->
     <div
       id="viewer"
       class="viewer hidden"
       role="dialog"
       aria-modal="true"
       aria-labelledby="viewer-title"
+      tabindex="-1"
     >
       <div class="viewer-head">
         <span id="viewer-title" class="mono"></span>
@@ -487,6 +493,7 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="settings-title"
+      tabindex="-1"
     >
       <div class="viewer-head">
         <span id="settings-title" class="mono">this chat's model settings</span>
@@ -542,6 +549,7 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="appearance-title"
+      tabindex="-1"
     >
       <div class="viewer-head">
         <span id="appearance-title" class="mono">appearance</span>
@@ -580,6 +588,7 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="hosting-title"
+      tabindex="-1"
     >
       <div class="viewer-head">
         <span id="hosting-title" class="mono">publish &amp; host</span>
@@ -618,6 +627,7 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="sweep-title"
+      tabindex="-1"
     >
       <div class="viewer-head">
         <span id="sweep-title" class="mono">which models actually work</span>

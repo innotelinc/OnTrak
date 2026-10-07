@@ -1120,6 +1120,13 @@ body.preview-resizing * { cursor: col-resize !important; }
   box-shadow: var(--shadow-pop);
   z-index: 40;
 }
+/*
+ * The panel takes focus when it opens so its title is announced first, but it is
+ * a container rather than a control: drawing the 2px focus ring around the whole
+ * dialog would read as "the panel is selected", which is not what happened. The
+ * controls inside keep their own ring.
+ */
+.viewer:focus { outline: none; }
 #viewer-title { font-size: 12.5px; color: var(--text-dim); }
 .viewer-body {
   margin: 0;
