@@ -547,15 +547,29 @@ function startPreviewProcess(preview: Preview): void {
       // Record the failure against the preview and keep this process serving the
       // others, so a bad `cwd` is one address that does not answer rather than an
       // outage nobody can attribute.
+      //
+      // Both handlers are guarded by identity, and that guard is load-bearing: a
+      // name can have more than one child behind it over time. Publishing an
+      // address that is registered and down starts it again, which means a stop
+      // and a spawn in quick succession under the *same* name — and the stopped
+      // child's `exit` can land after the new one has registered itself here. An
+      // unguarded `children.delete(preview.name)` would then delete the *new*
+      // child's entry, orphaning a process that is serving the port with nothing
+      // left that can kill it: the address answers, the record's pid is stale, and
+      // stopping it stops nothing. `preview.pid = null` is the same hazard from
+      // the other side — a late `error` from a child that is already forgotten
+      // must not unname the one that replaced it.
       child.once("error", (error) => {
-        children.delete(preview.name);
-        preview.pid = null;
+        if (children.get(preview.name) === child) {
+          children.delete(preview.name);
+          preview.pid = null;
+        }
         void fs
           .appendFile(logPath, `\n[preview] could not start: ${error.message}\n`)
           .catch(() => undefined);
       });
       child.once("exit", () => {
-        children.delete(preview.name);
+        if (children.get(preview.name) === child) children.delete(preview.name);
       });
       void handle.close();
     });
