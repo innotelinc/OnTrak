@@ -78,9 +78,16 @@ const sleep = (ms: number): Promise<void> =>
  * Polling rather than one fixed wait: the gate opens on the test's command, and
  * how long the fixture then takes to bind is the machine's business, not this
  * test's. A bounded number of attempts so a regression fails rather than hangs.
+ *
+ * The bound is patience and not an assertion, so it is set where a *loaded*
+ * machine cannot spend it: a detected command starts through a login shell and a
+ * `python3` interpreter, and the suite is quite capable of running this while a
+ * browser drives the console and a build runs in the next pane. Six seconds of
+ * that was the flake — the fixture had not bound yet, which is not the same thing
+ * as a preview that never comes up.
  */
 async function previewSettled(): Promise<{ running: boolean; pending?: boolean; error: string | null }> {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
     const body = (await fetch(`${base}/api/preview?token=${TOKEN}`).then((r) => r.json())) as {
       running: boolean;
       pending?: boolean;
