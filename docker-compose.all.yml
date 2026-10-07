@@ -386,7 +386,16 @@ services:
   sync-api:
     build:
       context: ontrak-sync/backend
-    image: innotel/ontrak-sync-api:1.1.0
+    # The dev/family stack follows the branch, so its images carry the moving
+    # `main` tag and every build moves it. A moving tag cannot say which tree an
+    # image came from, though — two builds of two commits are the same tag, which
+    # is how a container ends up running an image older than the checkout it was
+    # built from with nothing showing it. So every build also stamps the commit
+    # alongside (`sha-<commit>`, the rule `scripts/publish-images.sh` and
+    # `publish.yml` already use), and that is the one tag a later build cannot
+    # overwrite. Set `ONTRAK_<PRODUCT>_IMAGE_TAG` to pin a specific build instead;
+    # the deployment overlays already work this way.
+    image: innotel/ontrak-sync-api:${ONTRAK_SYNC_API_IMAGE_TAG:-main}
     restart: unless-stopped
     env_file:
       - path: ontrak-sync/.env
@@ -431,7 +440,7 @@ services:
         # API container itself. That is what makes the session cookie belong to one
         # hostname and the registered SSO redirect URI land on the browser's origin.
         NEXT_PUBLIC_ONTRAK_API: ""
-    image: innotel/ontrak-sync-web:1.1.0
+    image: innotel/ontrak-sync-web:${ONTRAK_SYNC_WEB_IMAGE_TAG:-main}
     restart: unless-stopped
     depends_on:
       - sync-api
@@ -466,7 +475,7 @@ services:
   genie-app:
     build:
       context: ontrak-genie
-    image: innotel/ontrak-genie:0.2.0
+    image: innotel/ontrak-genie:${ONTRAK_GENIE_IMAGE_TAG:-main}
     restart: unless-stopped
     env_file:
       - path: ontrak-genie/.env
@@ -581,7 +590,7 @@ services:
   portal-app:
     build:
       context: ontrak-portal
-    image: innotel/ontrak-portal:0.1.0
+    image: innotel/ontrak-portal:${ONTRAK_PORTAL_IMAGE_TAG:-main}
     restart: unless-stopped
     depends_on:
       - sync-api

@@ -193,27 +193,38 @@ ps: ## List the containers in all five stacks
 	cd $(PORTAL_DIR) && docker compose ps
 	cd $(GENIE_DIR) && docker compose ps
 
+# Every build also stamps the commit beside its tag (`sha-<commit>`), so an
+# image stays traceable to the tree it came from even though the dev tag moves
+# with every build. The stamping is part of the target rather than something to
+# remember, because a tag nobody applies is a tag that is never there.
+STAMP := $(CURDIR)/scripts/tag-build-images.sh
+
 .PHONY: images
 images: ## Build the training, Tix and Sentinel images without starting anything
 	docker build --target runner -t ontrak-training:local .
 	cd $(TIX_DIR) && docker build --target runner -t ontrak-tix:local .
 	cd $(SENTINEL_DIR) && docker build --target runner -t ontrak-sentinel:local .
+	$(STAMP) ontrak-training:local ontrak-tix:local ontrak-sentinel:local
 
 .PHONY: sync-images
 sync-images: ## Build the OnTrak Sync API + dashboard images without starting anything
 	cd $(SYNC_DIR) && docker compose build
+	cd $(SYNC_DIR) && docker compose config --images | $(STAMP)
 
 .PHONY: portal-images
 portal-images: ## Build the portal image without starting anything
 	cd $(PORTAL_DIR) && docker compose build
+	cd $(PORTAL_DIR) && docker compose config --images | $(STAMP)
 
 .PHONY: genie-images
 genie-images: ## Build the agent console image without starting anything
 	cd $(GENIE_DIR) && docker compose build
+	cd $(GENIE_DIR) && docker compose config --images | $(STAMP)
 
 .PHONY: family-image
 family-image: ## Build the family stack's images without starting anything
 	docker compose -f docker-compose.all.yml build
+	docker compose -f docker-compose.all.yml config --images | $(STAMP)
 
 .PHONY: check-compose
 check-compose: ## Validate every development compose file against its .env.example

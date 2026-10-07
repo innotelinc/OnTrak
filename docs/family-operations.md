@@ -175,6 +175,18 @@ published either by `make publish-images` or by cutting a release, which runs
 (`gh auth token | docker login ghcr.io -u <user> --password-stdin`) rather than a
 toolchain and the memory to run several Next builds at once.
 
+The **development** tags work differently, and deliberately. A dev or family stack
+builds on the host, so its images carry the moving `main` tag and every build moves
+it — following the branch is what a development checkout is for. A moving tag
+cannot say which tree an image came from, though, and two builds of two commits are
+then indistinguishable: a container can be running an image older than the checkout
+beside it with nothing on screen showing it. So every build also stamps the commit
+(`sha-<commit>`, the same rule `make publish-images` and `publish.yml` use), which
+is the one tag a later build cannot overwrite. `make images`, `make family-image`
+and the per-product `-images` targets apply it as part of the build rather than
+leaving it to be remembered. To pin a development stack to one build instead, set
+the same variable the overlays use — `ONTRAK_GENIE_IMAGE_TAG=0.2.0 make family-image`.
+
 One thing to know before publishing by hand: the migration image is **separate and
 required**. Each migration runs in its Dockerfile's `builder` stage — the stage that
 carries the Prisma CLI and the schema tree, which the serving image deliberately

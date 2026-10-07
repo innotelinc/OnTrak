@@ -32,6 +32,11 @@
 services:
   agent:
     build: .
+    # Named, so this stack and the family stack build the same image under the
+    # same tag instead of two anonymous ones. `main` is the dev tag and every
+    # build moves it; every build also stamps `sha-<commit>`, which is what says
+    # which tree an image came from. Set `ONTRAK_GENIE_IMAGE_TAG` to pin one.
+    image: innotel/ontrak-genie:${ONTRAK_GENIE_IMAGE_TAG:-main}
     restart: unless-stopped
     network_mode: host
     # The whole of .env comes through as-is. A hand-maintained list of variables

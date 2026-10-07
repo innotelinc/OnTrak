@@ -50,7 +50,10 @@ services:
   genie-preview:
     build:
       context: ontrak-genie
-    image: innotel/ontrak-genie:0.2.0
+    # The dev tag, the same one the console runs — see the note in
+    # `docker-compose.all.yml`. Every build moves `main` and also stamps the
+    # commit as `sha-<commit>`, which is what says which tree this image is.
+    image: innotel/ontrak-genie:${ONTRAK_GENIE_IMAGE_TAG:-main}
     restart: unless-stopped
     # The console's own `.env`, reused for the two things this server genuinely
     # needs: the Cerulean Vault token file path (so `vault://` values resolve the

@@ -18,7 +18,9 @@ services:
   ontrak-api:
     build:
       context: ./backend
-    image: innotel/ontrak-sync-api:1.1.0
+    # The dev tag, moved by every build. Every build also stamps the commit as
+    # `sha-<commit>` — see the note in the repository's `docker-compose.all.yml`.
+    image: innotel/ontrak-sync-api:${ONTRAK_SYNC_API_IMAGE_TAG:-main}
     container_name: ontrak-sync-api
     restart: unless-stopped
     env_file:
@@ -86,7 +88,7 @@ services:
         # asked for same-origin would silently get the other one. With `-`, unset
         # takes the LAN default and *empty* means empty.
         NEXT_PUBLIC_ONTRAK_API: ${ONTRAK_PUBLIC_API-http://192.168.1.21:8420}
-    image: innotel/ontrak-sync-web:1.1.0
+    image: innotel/ontrak-sync-web:${ONTRAK_SYNC_WEB_IMAGE_TAG:-main}
     container_name: ontrak-sync-web
     restart: unless-stopped
     depends_on:

@@ -20,7 +20,9 @@ services:
   ontrak-portal:
     build:
       context: .
-    image: innotel/ontrak-portal:0.1.0
+    # The dev tag, moved by every build. Every build also stamps the commit as
+    # `sha-<commit>` — see the note in the repository's `docker-compose.all.yml`.
+    image: innotel/ontrak-portal:${ONTRAK_PORTAL_IMAGE_TAG:-main}
     container_name: ontrak-portal
     restart: unless-stopped
     env_file:
