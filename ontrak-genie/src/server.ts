@@ -195,11 +195,27 @@ async function readJson(
 
 // --- static assets ----------------------------------------------------------
 
-const STATIC_FILES: Record<string, { file: string; type: string }> = {
+const STATIC_FILES: Record<string, { file: string; type: string; root?: string }> = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/index.html": { file: "index.html", type: "text/html; charset=utf-8" },
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
   "/highlight.js": { file: "highlight.js", type: "text/javascript; charset=utf-8" },
+  //
+  // The follow-up rule, served from the compiled CLI module rather than copied
+  // into `public/`.
+  //
+  // The console and the terminal must offer the *same* next steps for the same
+  // turn, and the only way to be sure of that is for both to run the same code —
+  // a second copy is a second thing to keep in step, and the copy that drifts is
+  // never the one you are looking at. There is no bundler here, so the browser
+  // imports the compiled module directly: it is a plain ES module with no runtime
+  // imports of its own, which is exactly what makes that safe. `root` names the
+  // directory it is read from, so the allowlist still says no by default.
+  "/followups.js": {
+    file: path.join("cli", "followups.js"),
+    type: "text/javascript; charset=utf-8",
+    root: DIST_DIR,
+  },
   "/style.css": { file: "style.css", type: "text/css; charset=utf-8" },
   // The chat surface: the conversation column, the composer, the command palette
   // and the follow-up chips, layered over `style.css` (see `public/chat-surface.css`).
@@ -438,7 +454,7 @@ async function serveStatic(res: http.ServerResponse, pathname: string): Promise<
   const entry = STATIC_FILES[pathname];
   if (!entry) return false;
   try {
-    const body = await fs.readFile(path.join(PUBLIC_DIR, entry.file));
+    const body = await fs.readFile(path.join(entry.root ?? PUBLIC_DIR, entry.file));
     res.writeHead(200, { "Content-Type": entry.type, "Content-Length": body.length });
     res.end(body);
     return true;

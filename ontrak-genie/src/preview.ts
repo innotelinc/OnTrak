@@ -98,7 +98,24 @@ interface PreviewProcess {
 }
 
 const LOG_LIMIT = 8_000;
-const START_GRACE_MS = 900;
+/**
+ * How long a started app is given to answer on its port, before "started" is
+ * reported as "not yet".
+ *
+ * The *boundary* is unchanged, deliberately: an app that has not answered within
+ * it is `pending`, which is the flag that stops the pane showing "not reachable"
+ * over a framework's first build (see the test of the same name). What changed is
+ * how the boundary is *measured*. It used to be one sleep followed by a single
+ * probe, which is a race: a server that binds a little late — always true under
+ * load — was reported as not-answering the instant that one probe happened to
+ * miss it. Polling asks the same question repeatedly until the boundary, so a
+ * server that answers at 700 ms is reported the moment it does rather than
+ * whenever the single probe was scheduled.
+ */
+const READY_GRACE_MS = 900;
+
+/** How long one probe waits for a connection, while polling. */
+const READY_PROBE_MS = 300;
 
 /**
  * Ports a project's own dev server might listen on when it ignores `PORT`.
@@ -220,6 +237,25 @@ export function previewPort(): number | null {
   const entry = running.get(keyFor(workspaceRoot()));
   if (entry === undefined || entry.exitCode !== null) return null;
   return entry.port;
+}
+
+/**
+ * Poll a port until something answers or the deadline passes.
+ *
+ * The loop is what makes a slow start a *wait* rather than a wrong answer: the
+ * first probe runs immediately, so a server already up is reported without delay,
+ * and a server still compiling is given the rest of the deadline instead of being
+ * called not-yet-answering the instant one probe happened to miss it.
+ */
+async function waitForAnswer(port: number, deadlineMs: number): Promise<boolean> {
+  const until = Date.now() + deadlineMs;
+  for (;;) {
+    if (await portAnswers(port, Math.min(READY_PROBE_MS, Math.max(50, until - Date.now())))) {
+      return true;
+    }
+    if (Date.now() >= until) return false;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  }
 }
 
 /** Is anything listening there yet? Used to report "started but not answering". */
@@ -479,14 +515,15 @@ export async function startPreview(options: {
     entry.exitCode = code ?? 0;
   });
 
-  // Give it a moment, so "started" can be reported as "answering" or "not yet".
-  await new Promise((resolve) => setTimeout(resolve, START_GRACE_MS));
+  // Wait for it to answer, so "started" can be reported as "answering" or
+  // "not yet" — as soon as it is true rather than after a fixed guess.
+  const answeredOnPort = entry.exitCode === null && (await waitForAnswer(port, READY_GRACE_MS));
 
-  if (entry.exitCode === null && !(await portAnswers(port, 400))) {
+  if (entry.exitCode === null && !answeredOnPort) {
     // It ignored PORT. Follow it to whichever quiet port it took instead.
     for (const candidate of COMMON_PORTS) {
       if (candidate === port || !wasQuiet.has(candidate)) continue;
-      if (await portAnswers(candidate, 400)) {
+      if (await waitForAnswer(candidate, READY_PROBE_MS)) {
         entry.port = candidate;
         appendLog(entry, Buffer.from(`\n[preview] the app ignored PORT and is listening on ${candidate}.\n`));
         break;

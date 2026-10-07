@@ -1,6 +1,10 @@
 /* Coding agent web client — talks to the local server, which talks to OmniRoute. */
 
 import { highlightCode, languageOf } from "./highlight.js";
+// The follow-up rule is the CLI's, served to this page as-is: one reducer and one
+// suggestion order for both surfaces, so a turn offers the same three next steps
+// wherever it is read. See `src/cli/followups.ts`.
+import { emptyTurnSummary, reduceTurn, suggestFollowups } from "/followups.js";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -1897,8 +1901,8 @@ async function sendMessage(text) {
     setStreaming(false);
     void loadSessions();
     // A failure included: "fix the failure" is the most useful chip there is,
-    // and it is first in `followupsFor` for exactly that reason.
-    if (turnNotes !== null) showFollowups(followupsFor(turnNotes));
+    // and it is first in `suggestFollowups` for exactly that reason.
+    if (turnNotes !== null) showFollowups(suggestFollowups(turnNotes));
     $("#input").focus();
   }
 }
@@ -2766,6 +2770,22 @@ function toggleSettings(force) {
   }
 }
 
+/**
+ * Appearance: light, dark, system, and the family's colour scheme.
+ *
+ * Nothing here decides anything — `unity-theme.js` owns the preference and paints
+ * it before the first frame, which is why the page never flashes the wrong palette.
+ * This only shows the controls whose state is read back from the document, so the
+ * panel cannot claim a mode the page is not in. That is also what makes the deep
+ * link honest: `?settings=appearance` opens the same controls anyone else gets.
+ */
+function toggleAppearance(force) {
+  const dialog = $("#appearance");
+  const open = force === undefined ? dialog.classList.contains("hidden") : force;
+  dialog.classList.toggle("hidden", !open);
+  $("#appearance-open").setAttribute("aria-expanded", open ? "true" : "false");
+}
+
 /* --------------------------------------------------------- deleting a file */
 
 /*
@@ -3413,6 +3433,7 @@ const PALETTE_ACTIONS = [
   { name: "help", desc: "what this console can do", run: () => addNotice(paletteHelp()) },
   { name: "new", desc: "start a new chat", run: () => startNewChat() },
   { name: "settings", desc: "this chat's model, chain and step budget", run: () => toggleSettings(true) },
+  { name: "appearance", desc: "light, dark or system, and the colour scheme", run: () => toggleAppearance(true) },
   { name: "workspace", desc: "toggle the workspace panel", run: () => toggleFilesPanel() },
   { name: "preview", desc: "run this project and watch it change", run: () => { togglePreview(true); void showPreviewApp(); } },
   { name: "terminal", desc: "run a shell command in the workspace", run: () => toggleTerminal() },
@@ -3575,55 +3596,12 @@ function paletteOnInput() {
 let turnNotes = null;
 
 function beginTurnNotes() {
-  turnNotes = { files: [], commands: [], errors: [], spoke: false, denied: 0 };
+  turnNotes = emptyTurnSummary();
 }
 
 function noteTurnEvent(event) {
   if (turnNotes === null) return;
-  if (event.type === "text" && event.text.trim() !== "") turnNotes.spoke = true;
-  if (event.type === "approval_result" && event.decision === "deny") turnNotes.denied += 1;
-  if (event.type === "tool_call") {
-    const args = event.args ?? {};
-    const readOnly = event.name === "read_file" || event.name === "list_dir" || event.name === "search_code";
-    if (typeof args.path === "string" && args.path !== "" && !readOnly) {
-      if (!turnNotes.files.includes(args.path)) turnNotes.files.push(args.path);
-    }
-    if (typeof args.command === "string" && args.command !== "" && !turnNotes.commands.includes(args.command)) {
-      turnNotes.commands.push(args.command);
-    }
-  }
-  if (event.type === "tool_result" && event.diff && !turnNotes.files.includes(event.diff.path)) {
-    turnNotes.files.push(event.diff.path);
-  }
-  if (event.type === "tool_result" && !event.ok) {
-    const line = String(event.content ?? "").split("\n").find((part) => part.trim() !== "") ?? "failed";
-    const flat = line.trim();
-    if (!turnNotes.errors.includes(flat)) turnNotes.errors.push(flat.slice(0, 160));
-  }
-}
-
-/** Up to three next steps, most specific first. Pure, so its order is testable. */
-function followupsFor(notes) {
-  const out = [];
-  const add = (value) => {
-    if (out.length < 3 && !out.includes(value)) out.push(value);
-  };
-  if (notes.errors.length > 0) {
-    add("Fix the failure: " + notes.errors[0]);
-    add("Show me the full output of the last command");
-  }
-  if (notes.files.length > 0) {
-    add(notes.files.length === 1 ? "Review the change to " + notes.files[0] : "Review the " + notes.files.length + " changed files");
-    add("Run the test suite for this workspace");
-    add("Commit this change with a descriptive message");
-  }
-  if (notes.denied > 0) add("Propose an alternative that does not need the denied action");
-  if (out.length === 0 && notes.commands.length > 0) add("Explain what the last command showed");
-  if (out.length === 0) {
-    add("Explain the approach and what you would do next");
-    add("Keep going with the next logical step");
-  }
-  return out.slice(0, 3);
+  reduceTurn(turnNotes, event);
 }
 
 function showFollowups(suggestions) {
@@ -3838,6 +3816,12 @@ function wire() {
     if (event.target === $("#settings")) toggleSettings(false);
   });
 
+  $("#appearance-open").addEventListener("click", () => toggleAppearance());
+  $("#appearance-close").addEventListener("click", () => toggleAppearance(false));
+  $("#appearance").addEventListener("click", (event) => {
+    if (event.target === $("#appearance")) toggleAppearance(false);
+  });
+
   // The palette and the follow-up chips build their own DOM, so this is the
   // whole of their wiring.
   wirePalette();
@@ -3865,6 +3849,7 @@ function wire() {
     if (event.key !== "Escape") return;
     if (!$("#sweep").classList.contains("hidden")) closeSweep();
     else if (!$("#hosting").classList.contains("hidden")) closeHosting();
+    else if (!$("#appearance").classList.contains("hidden")) toggleAppearance(false);
     else if (!$("#settings").classList.contains("hidden")) toggleSettings(false);
     else closeViewer();
   });
@@ -3895,6 +3880,9 @@ void loadSessions();
 void loadProjects();
 void loadWorkspace();
 void loadFiles(".");
+// A link can carry the panel with it: `?settings=appearance` opens Appearance, so
+// a person is sent to "make it dark" rather than to "go and find the toggle".
+if (new URLSearchParams(location.search).get("settings") === "appearance") toggleAppearance(true);
 $("#input").focus();
 
 // The server checks the chain on its own timer, so re-read the status to show it.

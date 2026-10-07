@@ -72,6 +72,26 @@ const remove = (rel: string): Promise<void> =>
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * The status endpoint, asked until the preview stops saying it is still starting.
+ *
+ * Polling rather than one fixed wait: the gate opens on the test's command, and
+ * how long the fixture then takes to bind is the machine's business, not this
+ * test's. A bounded number of attempts so a regression fails rather than hangs.
+ */
+async function previewSettled(): Promise<{ running: boolean; pending?: boolean; error: string | null }> {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const body = (await fetch(`${base}/api/preview?token=${TOKEN}`).then((r) => r.json())) as {
+      running: boolean;
+      pending?: boolean;
+      error: string | null;
+    };
+    if (body.pending === undefined) return body;
+    await sleep(100);
+  }
+  throw new Error("the preview never stopped reporting that it was still starting");
+}
+
 /** A page that asks for a root-relative asset, which is what the rewrite is for. */
 const PAGE = `<!doctype html>
 <html><head><title>preview fixture</title><base href="/"></head>
@@ -122,6 +142,35 @@ server.on("upgrade", (req, socket) => {
   socket.write("hot-reload-ok");
 });
 server.listen(Number(process.env.PORT), "127.0.0.1");
+`;
+
+/**
+ * A dev server that binds only when the workspace says so.
+ *
+ * A framework's first build holds the port for an unpredictable time, and the
+ * "still starting" test used to guess it with `sleep 1.4` against a fixed grace
+ * window. Under load that margin is not a margin: if this process is descheduled
+ * past the window, the app answers first and the preview is *correctly* reported
+ * as up — so the assertion, not the behaviour, was the flake. A gate file takes
+ * the clock out of the question: the port stays unbound until the test opens it,
+ * however long the machine takes, so "still starting" is what the status must
+ * say and nothing can make it look wrong.
+ */
+const GATED_SERVER_JS = `
+const fs = require("fs");
+const http = require("http");
+const page = ${JSON.stringify(PAGE)};
+const server = http.createServer((_req, res) => {
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(page);
+});
+// Bind only once the workspace opens the gate — the port is held, deliberately,
+// for as long as the test needs it held.
+const gate = setInterval(() => {
+  if (!fs.existsSync("open.gate")) return;
+  clearInterval(gate);
+  server.listen(Number(process.env.PORT), "127.0.0.1");
+}, 25);
 `;
 
 /* ------------------------------------------------------------- detection */
@@ -373,22 +422,22 @@ test("the preview, end to end", async (t) => {
   });
 
   await t.test("a server still coming up is starting, not already broken", async () => {
-    // The port is left unbound past the start grace, the way a framework's first
-    // build does. Reporting that as an error is what put a "preview is not
-    // reachable" page in front of an app that was a moment from working.
-    const status = await startPreview({ command: "sleep 1.4; exec node server.js" });
+    // The port stays unbound until the workspace opens the gate, the way a
+    // framework's first build holds it. Reporting that as an error is what put a
+    // "preview is not reachable" page in front of an app that was a moment from
+    // working.
+    await remove("open.gate");
+    await write("gated.js", GATED_SERVER_JS);
+
+    const status = await startPreview({ command: "node gated.js" });
     assert.equal(status.running, true, "it is up; it just has nothing to answer with yet");
     assert.equal(status.pending, true);
     assert.equal(status.error, null, "still building is not a failure");
 
     // The pane polls the status; once the app binds, the same read stops saying
     // `pending`, which is what lets the frame load the app it was waiting for.
-    await sleep(1600);
-    const settled = (await fetch(`${base}/api/preview?token=${TOKEN}`).then((r) => r.json())) as {
-      running: boolean;
-      pending?: boolean;
-      error: string | null;
-    };
+    await write("open.gate", "open");
+    const settled = await previewSettled();
     assert.equal(settled.running, true);
     assert.equal(settled.pending, undefined, "answering clears the starting flag");
     assert.equal(settled.error, null);
@@ -405,6 +454,13 @@ test("the preview, end to end", async (t) => {
     assert.equal(status.cwd, "smoketest");
     assert.equal(status.detected, true, "nothing named this command; it was worked out");
     assert.match(String(status.command), /http\.server/);
+
+    // Ready, not merely started: a detected command starts through a login shell
+    // and a `python3` interpreter, so on a loaded machine the port can still be
+    // unbound when `startPreview` returns and the status says `pending`. The pane
+    // waits that out by polling; asking for the page before it clears is how this
+    // asserted against a 502 that meant "starting", not "broken".
+    await previewSettled();
 
     // And it is that directory's page being served, not the workspace root's.
     const response = await fetch(`${base}/preview/?token=${TOKEN}`);

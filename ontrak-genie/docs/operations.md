@@ -758,8 +758,20 @@ A single-page app with no build step (`public/`), served by the agent itself.
   suggests review, tests, commit) and never from a second model call — so a chip
   can only name work the turn actually did. A chip **fills the composer** rather
   than sending: a suggestion you can edit is a suggestion; one that fires on click
-  is a command. The same rule and the same order exist in the CLI
-  (`src/cli/followups.ts`).
+  is a command. The rule is the CLI's (`src/cli/followups.ts`), not a second copy:
+  the server serves that compiled module at **`/followups.js`** and the page imports
+  it, so the console and the terminal offer the same three steps for the same turn
+  by construction. `src/test/static-assets.test.ts` pins both halves — the endpoint
+  answers, and `public/app.js` imports it instead of carrying its own.
+- **Appearance.** The family theme (`unity-theme.js`) owns the preference and
+  paints it before the first frame, so the page never flashes the wrong palette. The
+  controls live in an Appearance panel — light / dark / follow-the-system, and the
+  colour scheme (Operations, Security, Desk) — opened from the top bar or from the
+  deep link **`?settings=appearance`**. The panel keeps no state: its buttons read
+  their pressed state back from the document, so two tabs cannot disagree, and every
+  `[data-theme-mode]` / `[data-theme-scheme]` button in the page is wired by the same
+  loop. Nothing offered can be a no-op — a test fails if a scheme button names a
+  palette `unity-theme.css` does not define.
 - **Diff view.** `write_file` and `edit_file` return a structured line diff
   alongside the tool result, so each change is rendered as before/after hunks
   with per-line numbers and `+`/`−` counts, and the raw tool output is one
@@ -1216,9 +1228,9 @@ what makes "run it and look at it" possible from a phone or another machine with
 a tunnel per port.
 
 One wildcard does all of it. `*.genie.innotel.us` is registered **once** in
-Cerulean — a DNS record, an edge proxy host forwarding to this server, and a
-wildcard certificate — by `scripts/cerulean-genie-previews.py`. Every subdomain
-then arrives here, and Genie maps the left-most label to a loopback port:
+Cerulean — a DNS record, an edge proxy host forwarding to the *preview host*, and
+a wildcard certificate — by `scripts/cerulean-genie-previews.py`. Every subdomain
+then arrives there, and Genie maps the left-most label to a loopback port:
 
 ```
 p4001.genie.innotel.us   →   http(s)://127.0.0.1:4001
@@ -1285,6 +1297,18 @@ mounted at the same path (`/workspace`) in both containers, which is what lets t
 `cwd` the console computes be valid where the process actually runs. Empty
 `GENIE_HOSTING_URL` keeps everything in one process, which is what a single-host
 checkout has always done.
+
+**A published address is public, and that is the point.** The edge sends the
+wildcard to the *preview host* — the container that routes it — and **not** to the
+console. That distinction is the whole feature: a preview is the thing the user
+wanted to show somebody, so a published URL that bounces to the console's sign-in
+is not a smaller version of the feature, it is a broken one. The preview host
+proxies a matched `Host` before it looks at any session, so an address answers for
+anyone who has the link — free `p<port>` and paid custom name alike; the plan
+buys the *name*, never the audience. Pointing the wildcard at the console instead
+is the misconfiguration to look for when a published URL asks a visitor to sign
+in: the console keeps `PREVIEW_ENABLED=false` by design, so it answers the
+wildcard with its own sign-in page rather than proxying anything.
 
 ## Configuration
 

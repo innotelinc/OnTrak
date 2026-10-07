@@ -94,6 +94,48 @@ test("the chat surface stylesheet is served as CSS", async () => {
   assert.match(body, /\.followup\b/, "so do the follow-up chips'");
 });
 
+test("the appearance controls only offer what the theme can paint", async () => {
+  const html = await fs.readFile(path.join(PUBLIC_DIR, "index.html"), "utf8");
+  const css = await fs.readFile(path.join(PUBLIC_DIR, "unity-theme.css"), "utf8");
+
+  assert.match(html, /id="appearance"/, "the panel `?settings=appearance` opens has to exist");
+  for (const mode of ["system", "light", "dark"]) {
+    assert.match(html, new RegExp(`data-theme-mode="${mode}"`), `${mode} must be offerable`);
+  }
+
+  // Every scheme a button names has to have a palette. A scheme with no
+  // `:root[data-scheme=...]` block falls back to the default one, so the button
+  // would look like it did nothing — the silent failure this test exists for.
+  const offered = [...html.matchAll(/data-theme-scheme="([^"]+)"/g)].map((match) => match[1] ?? "");
+  assert.ok(offered.length >= 2, "more than one scheme should be offerable");
+  for (const scheme of offered) {
+    // `desk` is the base palette, applied by removing the attribute rather than
+    // by a selector of its own — so there is nothing to find in the CSS for it.
+    if (scheme === "desk") continue;
+    assert.match(
+      css,
+      new RegExp(`:root\\[data-scheme="${scheme}"\\]`),
+      `${scheme} is offered but has no palette in unity-theme.css`,
+    );
+  }
+});
+
+test("the follow-up rule is one module, served to the console", async () => {
+  // The console and the CLI must offer the same next steps, so the browser runs
+  // the CLI's compiled module rather than a second copy of the rule. `public/`
+  // has no bundler, so this endpoint *is* the sharing mechanism — and pinning it
+  // is what stops the copy quietly growing back.
+  const response = await fetch(`${base}/followups.js`);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /javascript/);
+  const body = await response.text();
+  assert.match(body, /export function suggestFollowups/, "the CLI's rule is what the browser runs");
+
+  const app = await fs.readFile(path.join(PUBLIC_DIR, "app.js"), "utf8");
+  assert.match(app, /from "\/followups\.js"/, "app.js imports the shared rule");
+  assert.doesNotMatch(app, /function followupsFor/, "and does not also keep its own");
+});
+
 test("an asset that is not on the allowlist is not served", async () => {
   // The allowlist is the point: `public/` is not a directory listing.
   const response = await fetch(`${base}/objectstore-notes.txt`);

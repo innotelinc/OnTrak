@@ -111,6 +111,15 @@
               settings
             </button>
             <button
+              id="appearance-open"
+              class="btn-ghost"
+              title="Light or dark, and the colour scheme"
+              aria-controls="appearance"
+              aria-expanded="false"
+            >
+              appearance
+            </button>
+            <button
               id="toggle-files"
               class="btn-ghost"
               title="Toggle the workspace panel"
@@ -479,6 +488,51 @@
       </div>
     </div>
 
+    <!--
+      Appearance. The controls live here; the preference belongs to
+      `unity-theme.js`, which paints <html> before the first frame — so this dialog
+      holds no state of its own and the buttons report what the document is doing
+      rather than what was clicked. That is what makes the deep link safe: two tabs
+      cannot disagree about which mode is on.
+    -->
+    <div
+      id="appearance"
+      class="viewer hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="appearance-title"
+    >
+      <div class="viewer-head">
+        <span id="appearance-title" class="mono">appearance</span>
+        <div class="viewer-actions">
+          <button id="appearance-close" class="btn-ghost" aria-label="Close appearance">close</button>
+        </div>
+      </div>
+      <div class="viewer-content settings-form">
+        <div class="field wide">
+          <span class="muted">mode</span>
+          <div class="ot-theme" role="group" aria-label="Colour mode">
+            <button type="button" data-theme-mode="system">System</button>
+            <button type="button" data-theme-mode="light">Light</button>
+            <button type="button" data-theme-mode="dark">Dark</button>
+          </div>
+        </div>
+        <div class="field wide">
+          <span class="muted">scheme</span>
+          <div class="ot-theme" role="group" aria-label="Colour scheme">
+            <button type="button" data-theme-scheme="operations">Operations</button>
+            <button type="button" data-theme-scheme="soc">Security</button>
+            <button type="button" data-theme-scheme="desk">Desk</button>
+          </div>
+        </div>
+        <p class="muted settings-note">
+          Remembered in this browser rather than on the account, so the machine in
+          front of you answers the same way whoever signs in. Open it directly with
+          <span class="mono">?settings=appearance</span>.
+        </p>
+      </div>
+    </div>
+
     <div
       id="hosting"
       class="viewer hidden"
@@ -554,18 +608,33 @@
       (function () {
         var api = window.UnityTheme || window.OntrakTheme;
         if (!api) return;
+        // Two groups, one rule: every button carrying the attribute reports and
+        // sets the value the shared theme owns. The sidebar's switch and the
+        // Appearance dialog's are the same control in two places, so they cannot
+        // drift — and neither can a button added later.
+        var GROUPS = [
+          ["data-theme-mode", function () { return api.mode(); }, function (value) { api.setMode(value); }],
+          ["data-theme-scheme", function () { return api.scheme(); }, function (value) { api.setScheme(value); }],
+        ];
         function paint() {
-          var now = api.mode();
-          var all = document.querySelectorAll("[data-theme-mode]");
-          for (var i = 0; i < all.length; i++) {
-            all[i].setAttribute("aria-pressed", String(all[i].getAttribute("data-theme-mode") === now));
+          for (var g = 0; g < GROUPS.length; g++) {
+            var attribute = GROUPS[g][0];
+            var now = GROUPS[g][1]();
+            var all = document.querySelectorAll("[" + attribute + "]");
+            for (var i = 0; i < all.length; i++) {
+              all[i].setAttribute("aria-pressed", String(all[i].getAttribute(attribute) === now));
+            }
           }
         }
-        var buttons = document.querySelectorAll("[data-theme-mode]");
-        for (var i = 0; i < buttons.length; i++) {
-          buttons[i].addEventListener("click", function () {
-            api.setMode(this.getAttribute("data-theme-mode"));
-          });
+        for (var g = 0; g < GROUPS.length; g++) {
+          (function (attribute, apply) {
+            var buttons = document.querySelectorAll("[" + attribute + "]");
+            for (var i = 0; i < buttons.length; i++) {
+              buttons[i].addEventListener("click", function () {
+                apply(this.getAttribute(attribute));
+              });
+            }
+          })(GROUPS[g][0], GROUPS[g][2]);
         }
         window.addEventListener("unity:theme", paint);
         paint();
