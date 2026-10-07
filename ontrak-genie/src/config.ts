@@ -106,6 +106,21 @@ function approvalMode(name: string, fallback: ApprovalMode): ApprovalMode {
   return raw === "off" || raw === "risky" || raw === "all" ? raw : fallback;
 }
 
+/**
+ * How the agent's file writes land.
+ *
+ * `apply` (the default) is the console that has always existed: a write is written.
+ * `propose` holds writes in a change set a reviewer commits in one go — the roadmap's
+ * "propose then commit", for the reviewer who would rather read a change set than
+ * watch writes arrive. See `proposals.ts`.
+ */
+export type WriteMode = "apply" | "propose";
+
+function writeMode(name: string, fallback: WriteMode): WriteMode {
+  const raw = str(name, fallback).toLowerCase();
+  return raw === "propose" || raw === "apply" ? raw : fallback;
+}
+
 /** Comma-separated list, trimmed, with blanks dropped. */
 function list(name: string): string[] {
   const raw = process.env[name];
@@ -284,6 +299,12 @@ export const config = {
   approval: approvalMode("AGENT_APPROVAL", "off"),
   approvalMaxLines: int("AGENT_APPROVAL_MAX_LINES", 200),
   approvalTimeoutMs: int("AGENT_APPROVAL_TIMEOUT_MS", 300_000),
+
+  /**
+   * `apply` writes directly; `propose` stages writes in a change set a reviewer
+   * commits. See `AGENT_WRITE_MODE` and `proposals.ts`.
+   */
+  writeMode: writeMode("AGENT_WRITE_MODE", "apply"),
 
   /**
    * The live preview: the app running, beside the code that makes it.

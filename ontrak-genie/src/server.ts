@@ -7,6 +7,13 @@ import { fileURLToPath } from "node:url";
 import { runAgent } from "./agent.js";
 import { listPendingApprovals, pendingApprovals, resolveApproval } from "./approval.js";
 import {
+  applyChangeSet,
+  ChangeSetError,
+  currentChangeSet,
+  describePending,
+  discardChangeSet,
+} from "./proposals.js";
+import {
   previewDialHost,
   previewEvents,
   previewPort,
@@ -1321,6 +1328,30 @@ async function handleApi(
     const resolved = resolveApproval(id, decision, approvalActor(req));
     // 404 means the turn already finished or timed out; the UI just shows that.
     return sendJson(res, resolved ? 200 : 404, { resolved });
+  }
+
+  /*
+   * Propose mode: what is waiting to be committed, and the one decision on it.
+   *
+   * A change set is a document a person reads, so these are its index, its
+   * committal and its dismissal. `GET` is safe to poll for a badge; both POSTs
+   * are deliberate and both are filed in `changes.jsonl`.
+   */
+  if (pathname === "/api/changes" && method === "GET") {
+    return sendJson(res, 200, { changeSet: currentChangeSet(), summary: describePending() });
+  }
+  if (pathname === "/api/changes/apply" && method === "POST") {
+    try {
+      const result = await applyChangeSet(approvalActor(req));
+      return sendJson(res, 200, result);
+    } catch (error) {
+      // An empty set is a conflict, not a server fault: there is nothing to apply.
+      if (error instanceof ChangeSetError) throw new HttpError(409, error.message);
+      throw error;
+    }
+  }
+  if (pathname === "/api/changes/discard" && method === "POST") {
+    return sendJson(res, 200, { discarded: discardChangeSet(approvalActor(req)) });
   }
 
   if (pathname === "/api/previews" && method === "GET") {

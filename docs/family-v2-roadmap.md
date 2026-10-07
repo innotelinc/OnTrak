@@ -54,6 +54,34 @@ The family's front doors are now **one screen wearing one theme**.
 
 ---
 
+## 2b. Advanced this pass (last-mile v1.0 and first v2.0 slices)
+
+Real code, each verified by its own suite:
+
+- **Tix (M7) — backup/DR and SOC 2 controls `[x]`.** `scripts/backup.sh` takes a
+  checksummed `pg_dump` (exit `2` = written-but-unverified), `scripts/restore.sh`
+  verifies before it drops anything and refuses without an explicit `--yes`,
+  `docs/disaster-recovery.md` states the RPO/RTO per asset and a rehearsal
+  cadence, and `docs/soc2-controls.md` maps the CC/A/C criteria to the control,
+  its location and its evidence. The one M7 item left is a recorded load test at
+  the stated target.
+- **Genie (v0.4) — propose then commit `[x]`.** `AGENT_WRITE_MODE=propose` holds
+  file writes in a change set; `GET /api/changes` lists it and
+  `POST /api/changes/apply` commits the whole set (or `/discard` drops it). Rules
+  are pure (`src/change-set.ts`), the set is filed to `changes.jsonl` either way,
+  and a path proposed twice is one entry. Covered by `src/test/change-set.test.ts`.
+- **Sync — change freeze.** `Policy.freeze_from`/`freeze_to` (inclusive ISO dates)
+  refuse every apply — `auto` included — during a moratorium, separate from the
+  hourly window. Pure, validated, and covered in `tests/test_policy.py`.
+- **Unity — fleet roll-up.** `summarizeFleet` turns the tiles' lights into one
+  honest headline and an attention list (down before not-checked; a product nobody
+  probed is never "up"), drawn above the tiles from the same map they are drawn
+  from. Covered by `tests/fleet-summary.test.ts`.
+
+Still open from the last-mile notes: Tix's load-test evidence, Sentinel S4's
+compliance extras (retention windows, control history, CSV/PDF), and Genie's
+repository-aware workspaces.
+
 ## 3. v2.0 — the enterprise line
 
 Each product's own roadmap already sketches its "after 1.0" direction; this turns

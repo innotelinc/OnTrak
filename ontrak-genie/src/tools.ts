@@ -2,8 +2,10 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { changeSetSummary } from "./change-set.js";
 import { config } from "./config.js";
 import { buildFileDiff, type FileDiff } from "./diff.js";
+import { stageChange } from "./proposals.js";
 import { workspaceRoot } from "./scope.js";
 import { backendLabel, effectiveTimeoutMs, runShellCommand } from "./shell.js";
 import { saveSnapshot } from "./snapshots.js";
@@ -220,6 +222,23 @@ const writeFileTool: ToolDefinition = {
   },
   async run(args) {
     const plan = await planWrite(args);
+    // Propose mode: stage instead of write, so a reviewer commits the set. The
+    // model is told plainly that nothing landed, or it would assume its edit
+    // took effect and read a stale file next.
+    if (config.writeMode === "propose") {
+      const set = stageChange({
+        path: plan.rel,
+        kind: plan.existed ? "overwrite" : "create",
+        content: plan.content,
+        added: plan.diff?.added ?? 0,
+        removed: plan.diff?.removed ?? 0,
+      });
+      return {
+        ok: true,
+        content: `Proposed ${plan.existed ? "overwrite of" : "creation of"} ${plan.rel}; staged for review (${changeSetSummary(set)}). Nothing has been written yet — the change lands when the set is applied.`,
+        ...(plan.diff ? { diff: plan.diff } : {}),
+      };
+    }
     // Keep the "before" for the viewer's diff, but never fail a write over it.
     await saveSnapshot(plan.rel, plan.before).catch(() => {});
     const bytes = await writeTextFile(plan.abs, plan.content);
@@ -286,6 +305,23 @@ const editFileTool: ToolDefinition = {
   },
   async run(args) {
     const plan = await planEdit(args);
+    // Propose mode: the edit is computed against the file *as it is now*, so a set
+    // of edits to the same file composes in order and the last one wins (see
+    // `addEntry`). Nothing is written until the set is applied.
+    if (config.writeMode === "propose") {
+      const set = stageChange({
+        path: plan.rel,
+        kind: "edit",
+        content: plan.updated,
+        added: plan.diff.added,
+        removed: plan.diff.removed,
+      });
+      return {
+        ok: true,
+        content: `Proposed edit to ${plan.rel} (${plan.count} replacement${plan.count === 1 ? "" : "s"}); staged for review (${changeSetSummary(set)}). Nothing has been written yet.`,
+        diff: plan.diff,
+      };
+    }
     await saveSnapshot(plan.rel, plan.content).catch(() => {});
     await writeTextFile(plan.abs, plan.updated);
     return {

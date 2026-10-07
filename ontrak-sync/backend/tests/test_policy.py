@@ -301,5 +301,59 @@ class ApplyDecision(unittest.TestCase):
                                                now=dt(2026, 9, 28, 12, 0)))
 
 
+class ChangeFreeze(unittest.TestCase):
+    """The date-range freeze, which is a different question from the hourly window.
+
+    The window says *which hours* the desk patches; the freeze says *which weeks*
+    it does not (an audit, a shutdown, a change moratorium). The load-bearing
+    assertion is that a freeze outranks `auto` — a freeze that `auto` could drive
+    through would be a label rather than a rail.
+    """
+
+    def test_an_auto_policy_applies_outside_the_freeze(self):
+        p = policy.Policy(mode="auto", freeze_from="2026-12-20", freeze_to="2027-01-03")
+        self.assertEqual("apply", p.action_for(security_count=1, total_count=3,
+                                               now=dt(2026, 12, 1, 12, 0)))
+
+    def test_a_freeze_outranks_auto(self):
+        p = policy.Policy(mode="auto", freeze_from="2026-12-20", freeze_to="2027-01-03")
+        self.assertEqual("skip", p.action_for(security_count=9, total_count=9,
+                                              now=dt(2026, 12, 25, 12, 0)))
+
+    def test_the_freeze_is_inclusive_on_both_ends(self):
+        p = policy.Policy(mode="auto", freeze_from="2026-12-20", freeze_to="2027-01-03")
+        self.assertTrue(p.in_freeze(dt(2026, 12, 20, 0, 0)))
+        self.assertTrue(p.in_freeze(dt(2027, 1, 3, 23, 0)))
+        self.assertFalse(p.in_freeze(dt(2027, 1, 4, 0, 0)))
+        self.assertFalse(p.in_freeze(dt(2026, 12, 19, 23, 59)))
+
+    def test_no_freeze_is_the_default(self):
+        self.assertFalse(policy.Policy(mode="auto").in_freeze(dt(2026, 12, 25, 12, 0)))
+
+    def test_a_half_written_freeze_is_refused(self):
+        self.assertTrue(any("both" in m for m in policy.Policy(freeze_from="2026-12-20").validate()))
+        self.assertTrue(any("both" in m for m in policy.Policy(freeze_to="2027-01-03").validate()))
+
+    def test_a_malformed_date_is_refused(self):
+        msgs = policy.Policy(freeze_from="20/12/2026", freeze_to="2027-01-03").validate()
+        self.assertTrue(any("ISO date" in m for m in msgs))
+
+    def test_an_ended_freeze_is_refused(self):
+        msgs = policy.Policy(freeze_from="2027-01-03", freeze_to="2026-12-20").validate()
+        self.assertTrue(any("before it starts" in m for m in msgs))
+
+    def test_the_freeze_round_trips_through_a_dict(self):
+        p = policy.Policy(freeze_from="2026-12-20", freeze_to="2027-01-03")
+        self.assertEqual(p.as_dict()["freeze_from"], "2026-12-20")
+        again = policy.Policy.from_dict(p.as_dict())
+        self.assertEqual(again.freeze_from, "2026-12-20")
+        self.assertEqual(again.freeze_to, "2027-01-03")
+
+    def test_detect_mode_still_never_applies(self):
+        p = policy.Policy(mode="detect", freeze_from="2026-12-20", freeze_to="2027-01-03")
+        for now in (dt(2026, 12, 25, 12, 0), dt(2026, 12, 1, 12, 0)):
+            self.assertNotEqual("apply", p.action_for(security_count=1, total_count=1, now=now))
+
+
 if __name__ == "__main__":
     unittest.main()

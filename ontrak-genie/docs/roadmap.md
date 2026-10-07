@@ -279,10 +279,20 @@ becoming the bottleneck.
   second, weaker permission. Covered by the four sharing cases in
   `src/test/tenancy-http.test.ts`.
 - `[ ]` **Repository-aware workspaces.** Gitea/Atlas as the source of a workspace
-  — clone, branch and open a PR from the console — with the same jail and gate.
-- `[ ]` **Diff review before write, not only during.** The live diff already
-  exists; a queued "propose then commit" mode lets a reviewer approve a change set
-  rather than one write at a time.
+  — clone, branch and open a PR from the console — with the same jail and gate.- `[x]` **Diff review before write, not only during.** `AGENT_WRITE_MODE=propose`
+  holds the agent's file writes in a **change set** instead of writing them, and one
+  `POST /api/changes/apply` commits the whole set (a `discard` drops it without a
+  byte written). The rules are pure (`src/change-set.ts` — an entry, the totals, and
+  the apply order), the state is one pending set (`src/proposals.ts`) filed to
+  `changes.jsonl` whether it lands or is dropped, and the file tools stage at the
+  exact seam that already computed the diff (`src/tools.ts`), so what a reviewer
+  approves is computed the same way the approval prompt already was. A path
+  proposed twice is one entry — the later one wins, because an agent correcting
+  itself should not ask a reviewer to approve both — and the model is told plainly
+  that nothing landed, because one that believed otherwise would read a stale file
+  next. Covered by `src/test/change-set.test.ts`. One pending set per process is
+  deliberate: a change set is a document a person reads, and the per-account set is
+  part of the same "beyond a single operator" work as the repository bullet below.
 - `[ ]` **ONYX** is explicitly *not* this: Genie owns no storage; a shared artifact
   that outlives a workspace is ONYX's to hold.
 

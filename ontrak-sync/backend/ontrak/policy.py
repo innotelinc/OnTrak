@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 # ── cron ─────────────────────────────────────────────────────────────────────
 # The weekday field's upper bound is 7, not 6, because cron accepts both 0 and 7
@@ -173,6 +173,13 @@ class Policy:
     window_end_hour: int | None = None
     max_concurrent: int = 3
     host_ids: list[int] = field(default_factory=list)   # empty = every host
+    # A change freeze — an inclusive ISO date range during which nothing is applied,
+    # whatever the mode. The hourly window says "these are the hours we patch"; the
+    # freeze says "these are the weeks we do not" (an audit, a holiday shutdown, a
+    # change moratorium), which is a different question and needs a date rather than
+    # an hour. Empty on both ends means no freeze, which is the shipped default.
+    freeze_from: str = ""                # ISO YYYY-MM-DD, inclusive
+    freeze_to: str = ""                  # ISO YYYY-MM-DD, inclusive
 
     def as_dict(self) -> dict:
         return {
@@ -181,6 +188,7 @@ class Policy:
             "security_only": self.security_only, "window_start_hour": self.window_start_hour,
             "window_end_hour": self.window_end_hour, "max_concurrent": self.max_concurrent,
             "host_ids": list(self.host_ids),
+            "freeze_from": self.freeze_from, "freeze_to": self.freeze_to,
         }
 
     @classmethod
@@ -207,6 +215,23 @@ class Policy:
                 problems.append(f"{label} must be 0-23, not {hour}")
         if self.max_concurrent < 1:
             problems.append("max_concurrent must be at least 1")
+
+        # A freeze is a promise the operator makes to somebody else (an auditor, a
+        # change board), so a half-written one is refused rather than quietly read
+        # as "no freeze": one date without the other is almost always a form that
+        # was saved too early, and failing open on it is the wrong direction.
+        if bool(self.freeze_from) != bool(self.freeze_to):
+            problems.append("a change freeze needs both a start and an end date")
+        parsed: dict[str, date] = {}
+        for label, value in (("freeze_from", self.freeze_from), ("freeze_to", self.freeze_to)):
+            if not value:
+                continue
+            try:
+                parsed[label] = date.fromisoformat(value)
+            except ValueError:
+                problems.append(f"{label} must be an ISO date (YYYY-MM-DD), not {value!r}")
+        if len(parsed) == 2 and parsed["freeze_from"] > parsed["freeze_to"]:
+            problems.append("the change freeze ends before it starts")
         return problems
 
     def in_window(self, moment: datetime) -> bool:
@@ -224,6 +249,37 @@ class Policy:
             return self.window_start_hour <= hour < self.window_end_hour
         return hour >= self.window_start_hour or hour < self.window_end_hour
 
+    def _freeze_dates(self) -> tuple[date, date] | None:
+        """The freeze as inclusive dates, or None when there is no usable freeze.
+
+        A freeze with one end missing or an unparseable date is a form error that
+        `validate()` reports; here it degrades to *no freeze* rather than to an
+        open-ended one, and the read paths that only need a yes/no answer (the
+        API payload, the report) get that answer without having to re-parse.
+        """
+        if not self.freeze_from or not self.freeze_to:
+            return None
+        try:
+            start = date.fromisoformat(self.freeze_from)
+            end = date.fromisoformat(self.freeze_to)
+        except ValueError:
+            return None
+        return (start, end) if start <= end else None
+
+    def in_freeze(self, moment: datetime) -> bool:
+        """Is `moment`'s date inside the change freeze? Inclusive on both ends.
+
+        A freeze is a *date* question and the window is an *hour* question, so this
+        is checked separately rather than folded into `in_window` — a deployment
+        can want "patch on Sunday nights, except through the December moratorium"
+        and should be able to say exactly that.
+        """
+        window = self._freeze_dates()
+        if window is None:
+            return False
+        start, end = window
+        return start <= moment.date() <= end
+
     def action_for(self, *, security_count: int, total_count: int, now: datetime | None = None) -> str:
         """What should happen to a host's findings right now?
 
@@ -237,6 +293,11 @@ class Policy:
             return "skip"
         moment = now or datetime.now(timezone.utc)
         if not self.in_window(moment):
+            return "skip"
+        if self.in_freeze(moment):
+            # A freeze outranks the mode: `auto` still applies *nothing* while the
+            # moratorium is on, which is the only reading of "freeze" that means
+            # anything.
             return "skip"
         return "apply" if self.mode == "auto" else "approve"
 

@@ -286,6 +286,87 @@ export function tilesFor(
 }
 
 /**
+ * One product's liveness, as the dashboard knows it. `unknown` is a first-class
+ * answer here too: "we could not ask" is not "it is down", and the dashboard must
+ * never paint the two the same.
+ */
+export type ReachabilityLike = "up" | "down" | "unknown";
+
+export interface FleetStatusEntry {
+  reachability: ReachabilityLike;
+  detail: string;
+}
+
+export interface FleetAttention extends FleetStatusEntry {
+  key: ProductKey;
+  name: string;
+}
+
+export interface FleetSummary {
+  total: number;
+  up: number;
+  down: number;
+  unknown: number;
+  /** Products that are not answering, worst first — down before not-checked. */
+  attention: FleetAttention[];
+  /** One sentence for the top of the dashboard. */
+  headline: string;
+}
+
+/** Down sorts before unknown: a fact before an absence. */
+function attentionRank(reachability: ReachabilityLike): number {
+  return reachability === "down" ? 0 : reachability === "unknown" ? 1 : 2;
+}
+
+/**
+ * Roll a set of tiles and their statuses into one sentence and one list.
+ *
+ * The dashboard draws a light per tile, which answers "is this one up". A person
+ * arriving at the front door asks the other question first — "is the family
+ * healthy" — and reading four lights to answer it is the work this does for them.
+ * It is pure so the sentence cannot disagree with the lights: both are computed
+ * from the same map, and a product with no entry counts as *not checked* rather
+ * than as up, because a green light nobody tested is the failure the family was
+ * built to remove.
+ */
+export function summarizeFleet(
+  tiles: readonly Pick<Tile, "key" | "name">[],
+  statuses: ReadonlyMap<string, FleetStatusEntry | undefined>,
+): FleetSummary {
+  let up = 0;
+  let down = 0;
+  let unknown = 0;
+  const attention: FleetAttention[] = [];
+
+  for (const tile of tiles) {
+    const status = statuses.get(tile.key);
+    if (!status) {
+      unknown += 1;
+      attention.push({ key: tile.key, name: tile.name, reachability: "unknown", detail: "not checked" });
+      continue;
+    }
+    if (status.reachability === "up") {
+      up += 1;
+      continue;
+    }
+    if (status.reachability === "down") down += 1;
+    else unknown += 1;
+    attention.push({ key: tile.key, name: tile.name, reachability: status.reachability, detail: status.detail });
+  }
+
+  attention.sort((a, b) => attentionRank(a.reachability) - attentionRank(b.reachability));
+
+  const total = tiles.length;
+  let headline: string;
+  if (total === 0) headline = "no products for this role";
+  else if (down === 0 && unknown === 0) headline = `all ${total} product${total === 1 ? "" : "s"} answering`;
+  else if (up === 0 && down === 0) headline = "no product could be checked";
+  else headline = `${up} of ${total} answering · ${down} not answering · ${unknown} not checked`;
+
+  return { total, up, down, unknown, attention, headline };
+}
+
+/**
  * The groups a session carries, and the role they produce *now*.
  *
  * The signed cookie holds the groups the provider sent at sign-in, plus the role that

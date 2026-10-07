@@ -1306,6 +1306,19 @@ up to an adjuster or auditor.
   the agent and queue scorecards, and a forward-looking SLA risk list that bands open
   work by how soon its nearest running clock will lapse.
 - Performance/multi-region hardening, backup/DR runbooks, SOC 2-ready controls.
+  - `[x]` **Backup & DR runbook** — `docs/disaster-recovery.md` states what has to
+    survive, an RPO/RTO per asset, and a rehearsal cadence; `scripts/backup.sh`
+    takes a checksummed `pg_dump` (exit `2` means written-but-unverified, which is
+    a page and not a warning) and `scripts/restore.sh` verifies before it drops
+    anything and refuses without an explicit `--yes`.
+  - `[x]` **SOC 2-ready controls** — `docs/soc2-controls.md` maps the Security
+    (common criteria), Availability and Confidentiality criteria to the control
+    that answers each, the module or table it lives in, and how a run evidences it,
+    and states plainly which controls are the operator's rather than the
+    product's.
+  - `[~]` **Performance under a stated load** — the targets are in §10; the open
+    item is a recorded load-test result at the 10k-agent / 1M-ticket target, which
+    is a rehearsal on real hardware rather than a code change.
 
 > The desk's memory of its own work is usable now. A ticket can be read by an
 > assistant that proposes a classification, a one-paragraph summary, a draft reply

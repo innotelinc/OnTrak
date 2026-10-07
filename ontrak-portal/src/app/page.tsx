@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { SignOutButton } from "@/components/SignOutButton";
 import { portalConfig, ssoConfigured } from "@/lib/config";
-import { emptyStateFor, PRODUCTS, tilesFor, urlFor } from "@/lib/portal-rules";
+import { emptyStateFor, PRODUCTS, summarizeFleet, tilesFor, urlFor } from "@/lib/portal-rules";
 import { readSession } from "@/lib/session";
 import { probeProduct, syncHealth, type Reachability } from "@/lib/sync-client";
 
@@ -56,6 +56,10 @@ export default async function DashboardPage() {
   const health = await syncHealth();
   const defaultedRole = session.source === "cerulean" && session.matched_group === null;
 
+  // One sentence above the tiles, from the same map they are drawn from — so the
+  // summary cannot disagree with the lights under it.
+  const fleet = summarizeFleet(tiles, statuses);
+
   return (
     <>
       <div className="head">
@@ -82,6 +86,23 @@ export default async function DashboardPage() {
           ) : null}
           <SignOutButton />
         </div>
+      </div>
+
+      <div
+        className={`note ${
+          fleet.down > 0 ? "note--bad" : fleet.attention.length > 0 ? "note--warn" : "note--ok"
+        }`}
+        role="status"
+      >
+        <strong>{fleet.headline}</strong>
+        {fleet.attention.length > 0 ? (
+          <span>
+            {": "}
+            {fleet.attention
+              .map((entry) => `${entry.name} (${entry.reachability === "down" ? "not answering" : "not checked"})`)
+              .join(" · ")}
+          </span>
+        ) : null}
       </div>
 
       {defaultedRole ? (
