@@ -87,8 +87,13 @@ services:
       WEB_TOKEN: ${PREVIEW_HOST_TOKEN:-}
       # Where a custom name is checked. The console forwards the subscriber's
       # identity; this server asks Magnate before it registers the name.
-      MAGNATE_ENTITLEMENTS_URL: ${MAGNATE_ENTITLEMENTS_URL:-}
-      MAGNATE_GENIE_PLAN: ${MAGNATE_GENIE_PLAN:-genie}
+      #
+      # Deliberately NOT set here: an `environment:` entry overrides `env_file:`,
+      # so `MAGNATE_ENTITLEMENTS_URL: ${MAGNATE_ENTITLEMENTS_URL:-}` would resolve
+      # against the *root* `.env` (where it is unset) and hand this container an
+      # empty endpoint — silently disabling the very check this service runs, even
+      # though `ontrak-genie/.env` above already sets it. The endpoint and plan
+      # come from that env_file, which is the one place they are configured.
     volumes:
       # The shared workspace. `/srv/genie-workspace` is a host directory on the
       # incus host, mapped into this container by an incus disk device; compose

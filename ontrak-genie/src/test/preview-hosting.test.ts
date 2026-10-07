@@ -19,6 +19,13 @@ process.env.PREVIEW_PORT_START = "46200";
 process.env.PREVIEW_PORT_END = "46240";
 process.env.PREVIEW_TTL_MS = "0";
 process.env.AGENT_SANDBOX = "host";
+// Magnate is deliberately left unconfigured: a case below proves the refusal when
+// no endpoint is set, so the operator's own `.env` — which points at the real
+// Magnate on the LAN — must not leak in and configure it, or the case would assert
+// the opposite of what it means. Node's env-file loading does not override a
+// variable already in the environment, so an explicit empty value wins.
+process.env.MAGNATE_ENTITLEMENTS_URL = "";
+process.env.ENTITLEMENTS_API_TOKEN = "";
 
 const {
   allocatePort,
