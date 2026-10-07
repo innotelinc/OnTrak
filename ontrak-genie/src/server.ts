@@ -201,6 +201,9 @@ const STATIC_FILES: Record<string, { file: string; type: string }> = {
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
   "/highlight.js": { file: "highlight.js", type: "text/javascript; charset=utf-8" },
   "/style.css": { file: "style.css", type: "text/css; charset=utf-8" },
+  // The chat surface: the conversation column, the composer, the command palette
+  // and the follow-up chips, layered over `style.css` (see `public/chat-surface.css`).
+  "/chat-surface.css": { file: "chat-surface.css", type: "text/css; charset=utf-8" },
   // The family theme, served inline rather than bundled: this app has no bundler, and
   // both files are byte-identical copies of `theme/unity-theme.{css,js}` checked by
   // `theme/tests/test_theme_copies.py`.

@@ -42,6 +42,7 @@
 
 - **The agent loop** — request → tool call → result, streamed over Server-Sent Events, with the partial tool call rendered as it is still arriving — in the browser and in the terminal alike.
 - **A terminal client** — `genie`: the same turns, tool cards, diffs and approval gate, plus slash commands, Tab completion, skills, session management and follow-ups. A client of the server, never a second agent ([docs/cli.md](docs/cli.md)).
+- **A chat surface built for reading** — the conversation is the page: your turn is a bubble, the agent's is a document, tool calls are cards you can open, and diffs land before the write does. `/` opens a command palette over the console's own actions and the model catalog, and each turn ends with up to three next steps offered as chips that fill the composer rather than firing on click.
 - **A workspace jail you can aim** — the agent works in a directory you choose from the workspace panel (and can create folders from there). The choice is always inside the sandbox: absolute paths and `../` escapes are refused, so pointing the agent at a project never points it at the host. `.git`, `node_modules` and build output are skipped.
 - **The tool set** — `read`, `edit`, `write`, `list`, `search`, `run`, each confined to that workspace.
 - **The approval gate** — a browser decision for commands and large writes, with a deny path that ends the turn instead of stalling it.

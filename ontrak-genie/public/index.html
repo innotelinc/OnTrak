@@ -18,6 +18,14 @@
     <script>window.UNITY_DEFAULT_SCHEME = "operations";</script>
     <script src="/unity-theme.js"></script>
     <link rel="stylesheet" href="/style.css" />
+    <!--
+      The chat surface: the conversation column, the composer, the command palette
+      and the follow-up chips. A layer *over* `style.css` rather than a rewrite — it
+      dresses the transcript and the two surfaces the console did not have, and
+      everything about it is built from the same Unity tokens, so light mode, dark
+      mode and the family theme are unaffected.
+    -->
+    <link rel="stylesheet" href="/chat-surface.css" />
   </head>
   <body>
     <a class="skip-link" href="#input">Skip to the message box</a>

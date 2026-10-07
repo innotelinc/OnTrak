@@ -736,6 +736,30 @@ told the user refused rather than being left to retry.
 
 A single-page app with no build step (`public/`), served by the agent itself.
 
+- **The chat surface.** `public/chat-surface.css` is a layer *over* `style.css` —
+  loaded after it, and built entirely from the names `style.css` already aliases
+  onto the Unity tokens, so light mode, dark mode and the family theme keep
+  working. It dresses the conversation column (a user turn is a bubble on the
+  right; an agent turn is the page), the tool cards, the approval cards and the
+  composer, which floats as a rounded panel that brightens on focus. The asset is
+  on `STATIC_FILES` in `src/server.ts`, and `src/test/static-assets.test.ts`
+  asserts that every local `href`/`src` a page references actually answers `200` —
+  an allowlist that is not checked fails silently, which is how the first version
+  of this stylesheet shipped as a 404.
+- **The command palette.** `/` in the composer opens a listbox of the console's
+  own actions (`/new`, `/settings`, `/workspace`, `/preview`, `/terminal`,
+  `/sweep`, `/publish`, `/help`) and, after `/model`, the deployment's own model
+  catalog read from the picker the console already populated. `Up`/`Down` move,
+  `Enter` or `Tab` chooses, `Escape` closes; the input is a `combobox` with
+  `aria-activedescendant`, so the keyboard selection is announced. `Enter` sends
+  only when the palette is closed.
+- **Follow-up chips.** After a turn the console offers up to three next steps as
+  chips, derived from the turn's own events (a failure outranks a review; a change
+  suggests review, tests, commit) and never from a second model call — so a chip
+  can only name work the turn actually did. A chip **fills the composer** rather
+  than sending: a suggestion you can edit is a suggestion; one that fires on click
+  is a command. The same rule and the same order exist in the CLI
+  (`src/cli/followups.ts`).
 - **Diff view.** `write_file` and `edit_file` return a structured line diff
   alongside the tool result, so each change is rendered as before/after hunks
   with per-line numbers and `+`/`−` counts, and the raw tool output is one

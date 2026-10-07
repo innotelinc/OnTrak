@@ -1810,6 +1810,8 @@ async function sendMessage(text) {
   autoGrow();
   setStreaming(true);
 
+  closePalette();
+  beginTurnNotes();
   const assistant = addAssistantMessage();
   let buffer = "";
   state.controller = new AbortController();
@@ -1817,6 +1819,7 @@ async function sendMessage(text) {
   setGatewayBadge("primary");
 
   const onEvent = (event) => {
+    noteTurnEvent(event);
     switch (event.type) {
       case "session": {
         state.sessionId = event.id;
@@ -1893,6 +1896,9 @@ async function sendMessage(text) {
     state.controller = null;
     setStreaming(false);
     void loadSessions();
+    // A failure included: "fix the failure" is the most useful chip there is,
+    // and it is first in `followupsFor` for exactly that reason.
+    if (turnNotes !== null) showFollowups(followupsFor(turnNotes));
     $("#input").focus();
   }
 }
@@ -3385,6 +3391,301 @@ function buyHosting() {
   window.open(url.toString(), "_blank", "noopener");
 }
 
+/*
+ * The command palette, and what to do next.
+ *
+ * Two affordances the console did not have, both of them about *not typing a
+ * sentence to do a thing the console already knows how to do*:
+ *
+ *   - `/` in the composer opens a palette of the console's own actions, plus the
+ *     models, filtered as you type. It is a listbox (`role=listbox` / `role=option`
+ *     with `aria-activedescendant`), so the keyboard selection is announced
+ *     rather than only drawn.
+ *   - After a turn, up to three next steps are offered as chips. They **fill the
+ *     composer** instead of sending: a suggestion you can edit before it goes is a
+ *     suggestion, and one that fires on click is a command.
+ *
+ * The follow-ups are derived from the turn's own events — a failure outranks a
+ * review; a change suggests review, tests, commit — and never from a second model
+ * call, so a chip can only ever name work the turn actually did.
+ */
+const PALETTE_ACTIONS = [
+  { name: "help", desc: "what this console can do", run: () => addNotice(paletteHelp()) },
+  { name: "new", desc: "start a new chat", run: () => startNewChat() },
+  { name: "settings", desc: "this chat's model, chain and step budget", run: () => toggleSettings(true) },
+  { name: "workspace", desc: "toggle the workspace panel", run: () => toggleFilesPanel() },
+  { name: "preview", desc: "run this project and watch it change", run: () => { togglePreview(true); void showPreviewApp(); } },
+  { name: "terminal", desc: "run a shell command in the workspace", run: () => toggleTerminal() },
+  { name: "files", desc: "open the workspace tree", run: () => toggleFilesPanel(true) },
+  { name: "sweep", desc: "ask which models can actually call a tool", run: () => openSweep() },
+  { name: "publish", desc: "put this workspace on the network", run: () => openHosting() },
+  { name: "model", desc: "choose the model for this chat", run: null },
+];
+
+let paletteRows = [];
+let paletteActive = 0;
+let paletteOpen = false;
+
+function paletteHelp() {
+  return (
+    "Slash commands: " +
+    PALETTE_ACTIONS.map((action) => "/" + action.name).join(", ") +
+    ". Enter sends, Shift+Enter makes a new line, and after a turn the chips under the reply fill this box."
+  );
+}
+
+function paletteElement() {
+  return $("#palette");
+}
+
+function paletteRowsFor(text) {
+  const body = text.slice(1);
+  const space = body.indexOf(" ");
+  const word = (space === -1 ? body : body.slice(0, space)).toLowerCase();
+  const rest = space === -1 ? "" : body.slice(space + 1).trim().toLowerCase();
+
+  // `/model <prefix>` completes the deployment's own catalog, read from the
+  // picker the console already populated — so the palette cannot offer a model
+  // the console would not.
+  if (word === "model") {
+    const options = [...$("#model").options].map((option) => option.value).filter((id) => id !== "");
+    return options
+      .filter((id) => id.toLowerCase().includes(rest))
+      .slice(0, 40)
+      .map((id) => ({ name: id, desc: "use this model for this chat", model: id }));
+  }
+
+  return PALETTE_ACTIONS.filter((action) => action.name.startsWith(word)).map((action) => ({
+    name: action.name,
+    desc: action.desc,
+    run: action.run,
+  }));
+}
+
+function renderPalette(text) {
+  const rows = paletteRowsFor(text);
+  const box = paletteElement();
+  if (rows.length === 0) {
+    box.innerHTML = '<div class="palette-empty">No command matches. Type /help.</div>';
+    paletteRows = [];
+    paletteOpen = true;
+    box.classList.remove("hidden");
+    return;
+  }
+  paletteRows = rows;
+  paletteActive = Math.min(paletteActive, rows.length - 1);
+  box.innerHTML =
+    '<div class="palette-group" role="presentation">Commands</div>' +
+    rows
+      .map((row, index) =>
+        '<div class="palette-row' +
+        (index === paletteActive ? " active" : "") +
+        '" id="palette-row-' +
+        index +
+        '" role="option" aria-selected="' +
+        (index === paletteActive) +
+        '"><span class="palette-name">/' +
+        escapeHtml(row.name) +
+        '</span><span class="palette-desc">' +
+        escapeHtml(row.desc) +
+        "</span></div>",
+      )
+      .join("");
+  paletteOpen = true;
+  box.classList.remove("hidden");
+  $("#input").setAttribute("aria-activedescendant", "palette-row-" + paletteActive);
+  $("#input").setAttribute("aria-expanded", "true");
+}
+
+function closePalette() {
+  if (!paletteOpen) return;
+  paletteOpen = false;
+  paletteRows = [];
+  paletteActive = 0;
+  paletteElement().classList.add("hidden");
+  $("#input").removeAttribute("aria-activedescendant");
+  $("#input").setAttribute("aria-expanded", "false");
+}
+
+function choosePaletteRow(row) {
+  closePalette();
+  const input = $("#input");
+  if (row.model !== undefined) {
+    state.model = row.model;
+    input.value = "";
+    autoGrow();
+    if ($("#model").querySelector('option[value="' + row.model + '"]') !== null) {
+      $("#model").value = row.model;
+      void persistSettings();
+    } else {
+      addNotice("This deployment serves every account the same model, so " + row.model + " is not selectable here.");
+    }
+    input.focus();
+    return;
+  }
+  input.value = "";
+  autoGrow();
+  if (typeof row.run === "function") row.run();
+  else addNotice("/" + row.name + " needs an argument — type /" + row.name + " and pick from the list.");
+  input.focus();
+}
+
+/** Returns true when the palette consumed the key, so the composer must not. */
+function paletteHandleKey(event) {
+  if (!paletteOpen) return false;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closePalette();
+    return true;
+  }
+  if (paletteRows.length === 0) return false;
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    paletteActive = (paletteActive + 1) % paletteRows.length;
+    renderPalette($("#input").value);
+    return true;
+  }
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    paletteActive = (paletteActive - 1 + paletteRows.length) % paletteRows.length;
+    renderPalette($("#input").value);
+    return true;
+  }
+  if (event.key === "Tab" || event.key === "Enter") {
+    event.preventDefault();
+    const row = paletteRows[paletteActive];
+    if (row !== undefined) choosePaletteRow(row);
+    return true;
+  }
+  return false;
+}
+
+function paletteOnInput() {
+  const text = $("#input").value;
+  if (text.startsWith("/") && !text.includes("\n") && !state.streaming) {
+    paletteActive = 0;
+    renderPalette(text);
+    return;
+  }
+  closePalette();
+}
+
+/* ------------------------------------------------------------- follow-ups */
+
+let turnNotes = null;
+
+function beginTurnNotes() {
+  turnNotes = { files: [], commands: [], errors: [], spoke: false, denied: 0 };
+}
+
+function noteTurnEvent(event) {
+  if (turnNotes === null) return;
+  if (event.type === "text" && event.text.trim() !== "") turnNotes.spoke = true;
+  if (event.type === "approval_result" && event.decision === "deny") turnNotes.denied += 1;
+  if (event.type === "tool_call") {
+    const args = event.args ?? {};
+    const readOnly = event.name === "read_file" || event.name === "list_dir" || event.name === "search_code";
+    if (typeof args.path === "string" && args.path !== "" && !readOnly) {
+      if (!turnNotes.files.includes(args.path)) turnNotes.files.push(args.path);
+    }
+    if (typeof args.command === "string" && args.command !== "" && !turnNotes.commands.includes(args.command)) {
+      turnNotes.commands.push(args.command);
+    }
+  }
+  if (event.type === "tool_result" && event.diff && !turnNotes.files.includes(event.diff.path)) {
+    turnNotes.files.push(event.diff.path);
+  }
+  if (event.type === "tool_result" && !event.ok) {
+    const line = String(event.content ?? "").split("\n").find((part) => part.trim() !== "") ?? "failed";
+    const flat = line.trim();
+    if (!turnNotes.errors.includes(flat)) turnNotes.errors.push(flat.slice(0, 160));
+  }
+}
+
+/** Up to three next steps, most specific first. Pure, so its order is testable. */
+function followupsFor(notes) {
+  const out = [];
+  const add = (value) => {
+    if (out.length < 3 && !out.includes(value)) out.push(value);
+  };
+  if (notes.errors.length > 0) {
+    add("Fix the failure: " + notes.errors[0]);
+    add("Show me the full output of the last command");
+  }
+  if (notes.files.length > 0) {
+    add(notes.files.length === 1 ? "Review the change to " + notes.files[0] : "Review the " + notes.files.length + " changed files");
+    add("Run the test suite for this workspace");
+    add("Commit this change with a descriptive message");
+  }
+  if (notes.denied > 0) add("Propose an alternative that does not need the denied action");
+  if (out.length === 0 && notes.commands.length > 0) add("Explain what the last command showed");
+  if (out.length === 0) {
+    add("Explain the approach and what you would do next");
+    add("Keep going with the next logical step");
+  }
+  return out.slice(0, 3);
+}
+
+function showFollowups(suggestions) {
+  if (suggestions.length === 0) return;
+  const wrap = document.createElement("div");
+  wrap.className = "followups";
+  const label = document.createElement("span");
+  label.className = "followups-label";
+  label.textContent = "next";
+  wrap.appendChild(label);
+  for (const suggestion of suggestions) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "followup";
+    chip.textContent = suggestion;
+    // Fills the box rather than sending: the suggestion stays editable.
+    chip.addEventListener("click", () => {
+      $("#input").value = suggestion;
+      autoGrow();
+      $("#input").focus();
+    });
+    wrap.appendChild(chip);
+  }
+  $("#messages").appendChild(wrap);
+  scrollToBottom();
+}
+
+function wirePalette() {
+  // Built here rather than in index.html so the palette is one feature in one
+  // place: the markup, the keyboard handling and the actions ship together.
+  const box = document.createElement("div");
+  box.id = "palette";
+  box.className = "palette hidden";
+  box.setAttribute("role", "listbox");
+  box.setAttribute("aria-label", "Slash commands");
+  $("#composer").appendChild(box);
+  $("#input").setAttribute("role", "combobox");
+  $("#input").setAttribute("aria-expanded", "false");
+  $("#input").setAttribute("aria-controls", "palette");
+  $("#input").setAttribute("aria-autocomplete", "list");
+
+  const hint = document.createElement("div");
+  hint.className = "composer-hint";
+  hint.innerHTML =
+    "<span><kbd>/</kbd> for commands</span><span><kbd>Enter</kbd> to send</span><span><kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line</span>";
+  $("#composer").after(hint);
+
+  $("#input").addEventListener("input", paletteOnInput);
+  box.addEventListener("mousedown", (event) => {
+    // `mousedown`, not `click`: the input's blur would close the palette first.
+    const row = event.target.closest(".palette-row");
+    if (row === null) return;
+    event.preventDefault();
+    const index = [...box.querySelectorAll(".palette-row")].indexOf(row);
+    const chosen = paletteRows[index];
+    if (chosen !== undefined) choosePaletteRow(chosen);
+  });
+  document.addEventListener("click", (event) => {
+    if (!$("#composer").contains(event.target)) closePalette();
+  });
+}
+
 function wire() {
   $("#composer").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -3393,6 +3694,9 @@ function wire() {
 
   $("#input").addEventListener("input", autoGrow);
   $("#input").addEventListener("keydown", (event) => {
+    // The palette sees the key first: Enter picks a row while it is open, and
+    // only sends when it is not.
+    if (paletteHandleKey(event)) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void sendMessage($("#input").value);
@@ -3533,6 +3837,10 @@ function wire() {
   $("#settings").addEventListener("click", (event) => {
     if (event.target === $("#settings")) toggleSettings(false);
   });
+
+  // The palette and the follow-up chips build their own DOM, so this is the
+  // whole of their wiring.
+  wirePalette();
 
   $("#model").addEventListener("change", (event) => {
     state.model = event.target.value;

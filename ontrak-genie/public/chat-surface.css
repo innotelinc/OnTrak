@@ -1,0 +1,405 @@
+/*
+ * The chat surface.
+ *
+ * Loaded after `style.css`, and deliberately an *overlay* rather than a rewrite:
+ * the console's rules still own the layout, the panels and every dialog, and this
+ * file re-dresses the conversation itself — the column, the messages, the tool
+ * cards, the composer, and the two surfaces the console did not have (a command
+ * palette and follow-up chips).
+ *
+ * It is built entirely from the names `style.css` already aliases onto the Unity
+ * tokens (`--bg*`, `--border`, `--text*`, `--accent*`), so light mode, dark mode
+ * and the family theme keep working. Nothing here hard-codes a colour that would
+ * survive a theme switch badly.
+ */
+
+/* ---------------------------------------------------------------- the column */
+
+.messages {
+  padding: 28px 20px 12px;
+  scroll-behavior: smooth;
+}
+
+.msg {
+  max-width: 780px;
+  margin: 0 auto 22px;
+}
+
+/* A user turn is a bubble on the right; an agent turn is the page. That is the
+   whole visual grammar: what you said is a message, what it did is a document. */
+.msg-user {
+  width: fit-content;
+  margin-left: auto;
+  margin-right: 0;
+  max-width: min(78%, 620px);
+  padding: 11px 15px;
+  border: 1px solid color-mix(in oklab, var(--accent) 26%, var(--border));
+  border-radius: 16px 16px 4px 16px;
+  background: color-mix(in oklab, var(--accent) 10%, var(--bg-panel));
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.msg-assistant {
+  padding: 0 2px;
+  line-height: 1.72;
+  font-size: 14.5px;
+}
+
+.msg-assistant p { margin: 0 0 12px; }
+
+.msg-assistant pre {
+  margin: 12px 0;
+  padding: 13px 15px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-sunken, var(--bg-raised));
+  overflow-x: auto;
+}
+
+.msg-assistant code {
+  font-family: var(--mono);
+  font-size: 12.75px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--text) 7%, transparent);
+}
+
+.msg-assistant pre code { padding: 0; background: none; }
+
+.msg-assistant h1,
+.msg-assistant h2,
+.msg-assistant h3 {
+  margin: 20px 0 9px;
+  font-size: 15.5px;
+  letter-spacing: -0.01em;
+}
+
+.msg-assistant .li { padding-left: 2px; margin: 5px 0; }
+
+/* A caret while the answer is still arriving, so a pause reads as work. */
+.msg-assistant.cursor::after {
+  content: "▍";
+  color: var(--accent);
+  animation: genie-blink 1.05s steps(2, start) infinite;
+}
+
+@keyframes genie-blink {
+  to { visibility: hidden; }
+}
+
+/* ------------------------------------------------------------- tool cards */
+
+.tool {
+  margin: 10px 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-panel);
+  overflow: hidden;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.tool:hover {
+  border-color: color-mix(in oklab, var(--accent) 30%, var(--border));
+  box-shadow: var(--shadow-card, 0 1px 2px rgb(0 0 0 / 0.12));
+}
+
+.tool summary {
+  padding: 9px 12px;
+  gap: 8px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.tool-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.tool-arg { font-family: var(--mono); font-size: 12px; }
+
+.tool-stat {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill, 999px);
+  background: color-mix(in oklab, var(--text) 8%, transparent);
+}
+
+.tool-body,
+.tool-content {
+  border-top: 1px solid var(--border);
+  background: var(--surface-sunken, var(--bg-raised));
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* --------------------------------------------------------------- approvals */
+
+.approval {
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: 12px;
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
+.approval-head { padding: 12px 14px; gap: 6px; }
+.approval-title { font-size: 13.5px; }
+.approval-summary { font-family: var(--mono); font-size: 11.75px; }
+
+/* ---------------------------------------------------------------- composer */
+
+/*
+ * The composer floats: a rounded panel with its own border that brightens when
+ * it has focus, so the box you are typing in is obvious without a heavy focus
+ * outline around a bare textarea. The hint row underneath is where the palette
+ * tells you it exists.
+ */
+.composer {
+  position: relative;
+  margin: 0 auto 14px;
+  width: min(100%, 820px);
+  padding: 10px 12px;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-card, 0 2px 8px rgb(0 0 0 / 0.10));
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.composer:focus-within {
+  border-color: color-mix(in oklab, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 14%, transparent),
+    var(--shadow-card, 0 2px 8px rgb(0 0 0 / 0.10));
+}
+
+.composer textarea {
+  border: none;
+  background: transparent;
+  padding: 6px 4px;
+  font-size: 14.5px;
+  line-height: 1.55;
+  resize: none;
+}
+
+.composer textarea:focus { outline: none; }
+
+#send {
+  border-radius: var(--radius-pill, 999px);
+  padding: 0 18px;
+  font-weight: 600;
+}
+
+.composer-hint {
+  width: min(100%, 820px);
+  margin: 0 auto 10px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.composer-hint kbd {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
+/* ------------------------------------------------------------- the palette */
+
+/*
+ * The command palette, anchored above the composer. It is a listbox: the rows
+ * carry `role=option` and the input owns `aria-activedescendant`, so a screen
+ * reader follows the keyboard selection rather than only the text.
+ */
+.palette {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-pop, 0 12px 32px rgb(0 0 0 / 0.28));
+  z-index: 40;
+}
+
+.palette-group {
+  padding: 8px 10px 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.palette-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.palette-row:hover { background: var(--bg-hover); }
+
+.palette-row.active {
+  background: color-mix(in oklab, var(--accent) 16%, transparent);
+}
+
+.palette-row .palette-name {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.palette-row .palette-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-empty {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* --------------------------------------------------------- follow-up chips */
+
+/*
+ * What to do next, offered where the turn ended. Chips rather than links: they
+ * fill the composer, so the suggestion is editable before it is sent rather
+ * than being a command the console runs on your behalf.
+ */
+.followups {
+  max-width: 780px;
+  margin: -6px auto 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.followups-label {
+  width: 100%;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.followup {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: 12.25px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 120ms ease, background 120ms ease;
+}
+
+.followup:hover {
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
+  background: color-mix(in oklab, var(--accent) 9%, var(--bg-panel));
+  transform: translateY(-1px);
+}
+
+/* --------------------------------------------------------------- the chrome */
+
+.sidebar { border-right: 1px solid var(--border); }
+
+.sidebar-head {
+  padding: 14px 14px 10px;
+}
+
+.sidebar-head .brand {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.sessions { padding: 6px 8px; }
+
+.sessions .session-row,
+.sessions a,
+.sessions button {
+  border-radius: 10px;
+}
+
+.topbar {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklab, var(--bg-panel) 88%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.chat-title {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  max-width: 46ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A thin bar reads as progress; a thick one competes with the transcript. */
+.turn-progress-track { height: 3px; border-radius: 999px; }
+.turn-progress-label { font-size: 11px; }
+
+/* Empty state, when the console has one: give it the room a welcome deserves. */
+.empty {
+  max-width: 640px;
+  margin: 6vh auto 0;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+/* Subtle scrollbars: the transcript is long, and a bright bar is the loudest
+   thing on a quiet page. */
+.messages,
+.palette,
+.files-list,
+.tool-body {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--text) 22%, transparent) transparent;
+}
+
+.messages::-webkit-scrollbar,
+.palette::-webkit-scrollbar,
+.files-list::-webkit-scrollbar { width: 10px; }
+
+.messages::-webkit-scrollbar-thumb,
+.palette::-webkit-scrollbar-thumb,
+.files-list::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+  background-color: color-mix(in oklab, var(--text) 22%, transparent);
+}
+
+@media (max-width: 720px) {
+  .msg-user { max-width: 92%; }
+  .messages { padding: 18px 12px 8px; }
+  .followups { margin-left: 0; margin-right: 0; }
+}
