@@ -243,8 +243,21 @@ try {
   await session.send("Runtime.enable");
   await session.send("Page.enable");
 
-  const booted = await session.waitFor(`document.querySelector('#gateway-label')`);
-  if (!booted) throw new Error("the UI never rendered");
+  /*
+   * Boot is two things, and waiting on the first one alone is what used to make
+   * this script fail on a workspace that was perfectly fine: `index.html` carries
+   * the shell *before* `app.js` — a module — runs at all, and everything the
+   * checks below read arrives from `/api/*` after that. So the wait is for the
+   * wired shell (`.composer-hint` is built by `wire()`) and then for the first
+   * fetch it fires to land (the health row leaving "checking"). Probing the
+   * markup and calling it the app is how "no entries rendered" got reported for a
+   * workspace with files in it.
+   */
+  const booted = await session.waitFor(`
+    Boolean(document.querySelector('.composer-hint')) &&
+    !/^checking/i.test(document.querySelector('#gateway-label').textContent.trim())
+  `);
+  if (!booted) throw new Error("the UI never finished starting");
 
   await check("the app boots and reaches its own API", async () => {
     const label = await session.evaluate("return document.querySelector('#gateway-label').textContent;");
@@ -253,6 +266,8 @@ try {
   });
 
   await check("the workspace tree loads", async () => {
+    // `loadFiles` is its own request, so it can land after the health row does.
+    await session.waitFor(`document.querySelectorAll('#files-list .file-entry').length > 0`, 15_000);
     const count = await session.evaluate("return document.querySelectorAll('#files-list .file-entry').length;");
     if (!count) throw new Error("no entries rendered");
     return `${count} entries`;
