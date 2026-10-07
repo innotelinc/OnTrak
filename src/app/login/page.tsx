@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 
-import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Alert, Card } from "@/components/ui";
 import { activeSsoConfig } from "@/lib/oidc-rules";
 import { getTranslator } from "@/lib/i18n-server";
 
@@ -11,10 +9,16 @@ export const metadata: Metadata = { title: "Sign in" };
 /**
  * Sign-in: single sign-on, and nothing else.
  *
- * OnTrak is one identity layer, so this page has exactly one control on it: the
- * provider. The email-and-password form that used to sit underneath it moved to
- * `/login/break-glass` — a local account is still the answer on the day the
- * provider is down, but it is not the front door, and it is not linked from here.
+ * The family's front door, drawn the same way here as in OnTrak Unity: the
+ * product's name and the one control that hands the browser to the provider.
+ * There is deliberately no email-and-password form. A second way in is a second
+ * place a password can be wrong, a second place it can be reused, and a second
+ * place to audit; the whole premise of the Network is that a person is who the
+ * directory says they are.
+ *
+ * The break-glass account still exists for the day the provider is down, at
+ * `/login/break-glass` — deliberately not linked from here, because using it is a
+ * decision rather than a convenience.
  *
  * The button is offered only when this deployment can actually complete a
  * handshake; a button that cannot work is worse than no button. The check reads the
@@ -31,45 +35,41 @@ export default async function LoginPage({
   const t = await getTranslator();
 
   return (
-    <main className="relative flex min-h-dvh items-center justify-center overflow-hidden px-5 py-12">
-      <div className="mesh-bg pointer-events-none absolute inset-0 opacity-70" aria-hidden />
-      <div className="relative w-full max-w-md">
-        <div className="mb-6 flex items-center justify-between">
-          <Logo subtitle="IT support training" />
+    <div className="gate-wrap">
+      <div className="gate">
+        <div className="gate__tools">
           <ThemeToggle />
         </div>
 
-        <Card className="animate-rise">
-          <h1 className="font-display text-2xl font-semibold text-ink">{t("auth.welcomeBack")}</h1>
-          <p className="mt-1 mb-6 text-sm text-ink-soft">{t("auth.signInIntro")}</p>
+        <h1 className="gate__mark">
+          OnTrak <span>IT Support Training</span>
+        </h1>
 
-          {error ? (
-            <div className="mb-5">
-              <Alert tone="danger" title={t("auth.signInFailed")}>
-                {error}
-              </Alert>
-            </div>
-          ) : null}
+        {error ? (
+          <div className="ot-note ot-note--bad text-left" role="alert">
+            {error}
+          </div>
+        ) : null}
 
-          {sso ? (
-            <>
-              {/* An anchor, not a button: the handshake is a browser navigation,
-                  and fetching it is what breaks it. */}
-              <a
-                href={`/api/sso/start${next ? `?next=${encodeURIComponent(next)}` : ""}`}
-                className="flex w-full items-center justify-center rounded-xl bg-brand px-4 py-3 text-sm font-semibold text-brand-ink transition hover:opacity-95"
-              >
-                {t("auth.ssoSignIn")}
-              </a>
-              <p className="mt-3 text-center text-xs text-ink-soft">{t("auth.ssoIntro")}</p>
-            </>
-          ) : (
-            <Alert tone="amber" title={t("auth.ssoMissing")}>
-              {t("auth.ssoMissingBody")}
-            </Alert>
-          )}
-        </Card>
+        {sso ? (
+          <>
+            {/* An anchor, not a button: the handshake is a browser navigation, and
+                fetching it is what breaks it. */}
+            <a
+              className="sso-button"
+              href={`/api/sso/start${next ? `?next=${encodeURIComponent(next)}` : ""}`}
+            >
+              {t("auth.ssoSignIn")}
+            </a>
+            <p className="ot-muted m-0 text-[12.5px]">{t("auth.ssoIntro")}</p>
+          </>
+        ) : (
+          <div className="ot-note ot-note--warn text-left" role="status">
+            <strong>{t("auth.ssoMissing")}</strong>
+            <p className="m-0 mt-1">{t("auth.ssoMissingBody")}</p>
+          </div>
+        )}
       </div>
-    </main>
+    </div>
   );
 }

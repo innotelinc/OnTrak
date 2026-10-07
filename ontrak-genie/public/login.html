@@ -30,22 +30,27 @@
          theme tokens — so the gate is themed where the theme is present and
          legible where it is not. Nothing below is a second palette. */
       body { display: grid; place-items: center; min-height: 100vh; }
+      /* The front door, drawn the same way here as in OnTrak Unity: the name, then
+         the single control. Simple sign-on, no fluff — there is no password field,
+         only the hand-off to the provider. */
       .gate {
-        width: min(92vw, 360px);
-        display: flex; flex-direction: column; gap: 18px;
+        width: min(92vw, 420px);
+        display: flex; flex-direction: column; gap: 22px;
         background: var(--bg-panel);
         border: 1px solid var(--border);
-        border-radius: 14px;
-        padding: 30px 26px;
+        border-radius: var(--radius, 18px);
+        box-shadow: var(--shadow-card);
+        padding: 32px 28px 28px;
+        text-align: center;
       }
-      .gate__mark { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: 0.01em; }
+      .gate__mark { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.02em; }
       .gate__mark span { color: var(--accent); }
       .gate__note { margin: 0; color: var(--text-dim); font-size: 13px; line-height: 1.55; }
       .gate__note code { font-family: var(--mono); color: var(--text); }
       .gate__btn {
         display: block; text-align: center; text-decoration: none;
         background: var(--accent); color: var(--brand-ink);
-        border-radius: 10px; padding: 11px 18px; font-weight: 600;
+        border-radius: 12px; padding: 11px 18px; font-weight: 650;
       }
       .gate__btn:hover { filter: brightness(1.08); }
     </style>

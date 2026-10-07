@@ -147,12 +147,19 @@ export function LoginPanel({
         <ThemeToggle />
       </div>
 
-      <h1>{local ? "Break-glass sign-in" : "OnTrak Sync"}</h1>
-      <p>
-        {local
-          ? "OnTrak Sync is single sign-on only. This screen is the local fallback for the day the identity provider cannot be reached."
-          : "Package and container updates across the Network. Sign in to review what is pending and decide what gets installed."}
-      </p>
+      {local ? (
+        <h1 className="gate__mark">Break-glass sign-in</h1>
+      ) : (
+        <h1 className="gate__mark">
+          OnTrak <span>Sync</span>
+        </h1>
+      )}
+      {local ? (
+        <p>
+          OnTrak Sync is single sign-on only. This screen is the local fallback for the day the identity
+          provider cannot be reached.
+        </p>
+      ) : null}
 
       {notice ? <div className="note note--bad" role="alert">{notice}</div> : null}
       {ssoError ? (
@@ -183,7 +190,7 @@ export function LoginPanel({
       {!local ? (
         ssoEnabled ? (
           <div className="gate__sso">
-            <a className="gate__sso-button" href={api.ssoStartUrl(next)}>
+            <a className="sso-button" href={api.ssoStartUrl(next)}>
               Sign in
             </a>
           </div>

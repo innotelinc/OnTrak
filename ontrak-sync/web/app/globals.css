@@ -280,16 +280,34 @@ pre.out {
 .empty { padding: 26px 14px; text-align: center; color: var(--text-faint); }
 .spinner { color: var(--text-dim); font-size: 12.5px; }
 
-/* ── token gate ────────────────────────────────────────────────────────── */
+/* ── the Unity sign-in gate ──────────────────────────────────────────────
+   One front door for every product in the family, drawn the same way here as
+   in OnTrak Unity: the name, then the single control that hands the browser to
+   the provider. Simple sign-on, no fluff — the password form lives only on the
+   unlinked break-glass page. The palette is the shared theme's. */
 .gate {
-  max-width: 460px;
-  margin: 12vh auto;
-  background: var(--bg-raised);
+  max-width: 420px;
+  margin: 9vh auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: 22px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 32px 28px 28px;
+  text-align: center;
 }
-.gate h1 { margin: 0 0 6px; font-size: 19px; }
+.gate__mark {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0;
+  color: var(--ink);
+}
+.gate__mark span { color: var(--brand); }
+.gate h1 { margin: 0; font-size: 19px; }
 .gate p { color: var(--text-dim); margin-top: 0; }
 
 .sched-list { list-style: none; margin: 8px 0 0; padding: 0; font-family: var(--mono); font-size: 12px; }
@@ -323,7 +341,7 @@ pre.out {
 .pill--local { background: var(--surface-sunken); color: var(--text-dim); border-color: var(--line-strong); }
 
 /* ── single sign-on ─────────────────────────────────────────────────────── */
-.gate__sso { margin-top: 18px; }
+.gate__sso { margin-top: 0; }
 .gate__divider {
   display: flex;
   align-items: center;
@@ -343,18 +361,18 @@ pre.out {
 /* Rendered as an anchor, because it is a navigation to the provider and must be
    a plain browser redirect — a fetch through the dashboard's own origin is what
    breaks the handshake. */
-.gate__sso-button {
+.gate__sso-button, .sso-button {
   display: block;
   text-align: center;
-  background: var(--surface-muted);
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  padding: 8px 12px;
-  color: var(--text);
-  font-weight: 600;
-  font-size: 13px;
+  background: var(--brand);
+  border: 1px solid var(--brand);
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  color: var(--brand-ink);
+  font-weight: 650;
+  font-size: 13.5px;
 }
-.gate__sso-button:hover { background: var(--surface-sunken); text-decoration: none; }
+.gate__sso-button:hover, .sso-button:hover { text-decoration: none; filter: brightness(1.06); }
 
 /* A table of accounts can be wide; let it scroll rather than squeeze. */
 .panel table select { min-width: 130px; }

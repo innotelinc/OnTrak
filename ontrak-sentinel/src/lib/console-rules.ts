@@ -678,6 +678,19 @@ const STYLES = `
   .signin h1 { font-size: 1.5rem; }
   .signin .sub { color: var(--ink-faint); margin-bottom: var(--space-5); }
   .signin button[type="submit"] { width: 100%; padding: .6rem; margin-top: var(--space-2); }
+  /* The provider door is an anchor, not a button (the handshake is a browser
+     navigation), and it is the family's front door, so it is styled as the one
+     primary control — matching the Unity gate. Left as a plain link it would make
+     single sign-on look like the lesser path beside a password form. */
+  .signin a.button { display: block; text-align: center; background: var(--brand); color: var(--brand-ink);
+    border: 1px solid var(--brand); border-radius: var(--radius-sm); padding: .65rem .9rem; font-weight: 650;
+    text-decoration: none; }
+  .signin a.button:hover { filter: brightness(1.06); text-decoration: none; }
+  /* The console's own password, demoted below the provider: the same shape as the
+     gate elsewhere, with the fallback separated by a rule rather than competing. */
+  .signin .or { display: flex; align-items: center; gap: var(--space-3); color: var(--ink-faint);
+    font-size: .72rem; text-transform: uppercase; letter-spacing: .09em; margin: var(--space-5) 0 var(--space-2); }
+  .signin .or::before, .signin .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 `;
 
 export interface ConsolePageInput {
@@ -918,12 +931,14 @@ export function renderSignIn(view: ConsoleSignInView): string {
     actor: null,
     body:
       `<div class="signin">` +
-      `<p class="muted">OnTrak Sentinel is the identity provider for the Network: this console holds the ` +
-      `identities, so this is the one place that checks a password itself.</p>` +
       (view.upstream
-        ? `<p><a class="button" href="${escapeHtml(view.upstream.path)}">Sign in with ${escapeHtml(view.upstream.label)}</a></p>` +
-          `<p class="hint muted">or sign in with the password for this console</p>`
-        : "") +
+        ? `<p class="muted">Sign in with your organisation’s account. Sentinel is the Network’s identity ` +
+          `provider, so this console also keeps its own password as a fallback for the day the provider is ` +
+          `unreachable.</p>` +
+          `<p><a class="button" href="${escapeHtml(view.upstream.path)}">Sign in with ${escapeHtml(view.upstream.label)}</a></p>` +
+          `<p class="or">console password</p>`
+        : `<p class="muted">OnTrak Sentinel is the identity provider for the Network: this console holds the ` +
+          `identities, so this is the one place that checks a password itself.</p>`) +
       `<form method="post" action="${CONSOLE_PATHS.signIn}">` +
       `<span class="field"><label for="identifier">Email address</label>` +
       `<input id="identifier" name="identifier" type="text" inputmode="email" autocomplete="username" ` +

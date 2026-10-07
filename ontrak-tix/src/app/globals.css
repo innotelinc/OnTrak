@@ -107,3 +107,56 @@
   border: 1px solid var(--line);
   box-shadow: var(--shadow-card);
 }
+
+/* ── the Unity sign-in gate ──────────────────────────────────────────────
+ * One front door for every product in the family, drawn the same way here as in
+ * OnTrak Unity: the name, then the single control that hands the browser to the
+ * provider. Simple sign-on, no fluff — there is deliberately no password form on
+ * this screen. The break-glass account lives at its own unlinked path.
+ *
+ * It is plain CSS rather than Tailwind utilities so the markup is byte-for-byte
+ * the shape the other products use; the palette is the shared theme's. */
+.gate-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 0 20px;
+}
+.gate {
+  max-width: 420px;
+  width: 100%;
+  margin: 9vh auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 32px 28px 28px;
+  text-align: center;
+}
+.gate__mark {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0;
+  color: var(--ink);
+}
+.gate__mark span { color: var(--brand); }
+.gate__tools { display: flex; justify-content: flex-end; }
+
+/* An anchor, not a button: the handshake is a browser navigation, and fetching it
+   is what breaks it. */
+.sso-button {
+  display: block;
+  text-align: center;
+  background: var(--brand);
+  border: 1px solid var(--brand);
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  color: var(--brand-ink);
+  font-weight: 650;
+  font-size: 13.5px;
+}
+.sso-button:hover { text-decoration: none; filter: brightness(1.06); }
