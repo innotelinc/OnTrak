@@ -1332,11 +1332,37 @@ With `GENIE_HOSTING_URL` set, every route that used to start a process locally
 (`GET`/`POST /api/previews`, `DELETE /api/previews/<name>`, `/api/previews/claim`)
 forwards to the hosting server instead, carrying the subscriber's identity for a
 custom name. `GET /api/hosting` still reports hosting as enabled — it asks the
-server, not its own `PREVIEW_ENABLED`. The two share one workspace directory
-mounted at the same path (`/workspace`) in both containers, which is what lets the
-`cwd` the console computes be valid where the process actually runs. Empty
-`GENIE_HOSTING_URL` keeps everything in one process, which is what a single-host
-checkout has always done.
+server, not its own `PREVIEW_ENABLED`. Empty `GENIE_HOSTING_URL` keeps everything
+in one process, which is what a single-host checkout has always done.
+
+**The workspace they share is a host directory on an Incus disk device, and the
+device is the part that goes missing.** The two containers have to see the *same*
+files at the *same* path: the console works out an absolute `cwd` and the preview
+host has to be able to run the command there. A docker volume is private to the
+daemon inside one container, so the tree lives on the host
+(`/srv/genie-workspace`) and each container gets it from a `genie-workspace`
+device at that path.
+
+Neither half fails loudly when this is wrong, which is why it has to be checked
+rather than assumed:
+
+- A device that is *declared* but not applied leaves the container serving a
+  private directory in its own rootfs. Both halves report themselves healthy and
+  previews say nothing is listening — on a port whose `cwd` never existed on the
+  host that was asked to run it. `scripts/incus-workspace.sh`, run **on the Incus
+  host**, creates and verifies the device on every container that needs it (by
+  default `ontrak genie-preview`); a container it had to add the device to needs a
+  restart before its bind mount picks it up.
+- The directory has to be owned by the host ID that *maps to the container's
+  root* — `1000000` for Incus's default unprivileged map, which is why the host
+  copy of the tree is owned by `1000000` and not by `root`. A host directory owned
+  by host `root` (0) falls below the mapping, reads as `nobody` inside the
+  container, and cannot be written even by container root. The symptom is `EACCES`
+  on the first file an agent writes, which reads as a bug in the agent.
+  `scripts/ensure-genie-workspace.sh` repairs what it can from inside the
+  container (where that owner is just `root`) — it runs from `make workspace`, from
+  the boot unit and from the daily timer — and reports anything it cannot, with a
+  pointer back to the host script.
 
 **A published address is public, and that is the point.** The edge sends the
 wildcard to the *preview host* — the container that routes it — and **not** to the

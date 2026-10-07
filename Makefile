@@ -135,7 +135,7 @@ FAMILY_GENIE_SERVICE := genie-app
 FAMILY_GENIE_PORT := 3400
 
 .PHONY: workspace
-workspace: ## Ensure the Genie workspace host directory is writable (Incus host fix for EACCES on /workspace/accounts)
+workspace: ## Check the shared Genie workspace is the host's tree and writable (container half; run scripts/incus-workspace.sh on the Incus host for the device)
 	bash scripts/ensure-genie-workspace.sh
 
 .PHONY: genie-up
