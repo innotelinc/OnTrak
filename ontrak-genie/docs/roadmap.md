@@ -30,9 +30,11 @@ full developer reference.
 > rather than assumed ([threat-model.md](threat-model.md), [runbook.md](runbook.md)),
 > and — the last of the exit — two accounts proven isolated on a running console by
 > a check rather than by a description (`scripts/verify-tenancy.mjs`). What is
-> **in progress** is the milestone after it, v0.4: the shared half of more than one
-> operator — and its first bullet, **shared sessions**, has landed (hand one chat's
-> transcript to a colleague, read-only, still gated per turn).
+> **v0.4 has landed** — the shared half of more than one operator: **shared
+> sessions** (hand one chat's transcript to a colleague, read-only, still gated per
+> turn), **propose-then-commit** (a change set a reviewer applies in one call), and
+> **repository-aware workspaces** (take a repository, branch it, open a PR, all
+> through the same jail and gate).
 
 ## 1. Vision
 
@@ -254,7 +256,7 @@ not.
   an upstream, applied to a preview. `AGENT_SANDBOX_NETWORK=host` is the same
   answer for a sandboxed command that starts the app itself.
 
-### v0.4 — Beyond a single operator `[~]`
+### v0.4 — Beyond a single operator `[x]`
 
 **Goal:** more than one person, more than one workspace, without the operator
 becoming the bottleneck.
@@ -278,8 +280,21 @@ becoming the bottleneck.
   operator mode (no accounts to share with) returns empty lists instead of a
   second, weaker permission. Covered by the four sharing cases in
   `src/test/tenancy-http.test.ts`.
-- `[ ]` **Repository-aware workspaces.** Gitea/Atlas as the source of a workspace
-  — clone, branch and open a PR from the console — with the same jail and gate.- `[x]` **Diff review before write, not only during.** `AGENT_WRITE_MODE=propose`
+- `[x]` **Repository-aware workspaces.** Gitea/Atlas as the source of a workspace
+  — clone, branch and open a PR from the console — with the same jail and gate.
+  The console provides the three moves a person makes before the agent has anything
+  to do, and the agent then edits, commits and reviews through the ordinary tools:
+  a clone lands through `resolveInWorkspace`, so a repository name can never become a
+  path out of the account's own slice, and every git command runs through
+  `runShellCommand`, so it meets the *same* guard, sandbox and timeout a tool call
+  does. A repository is named `owner/name` and a pasted URL is reduced to that form —
+  its host discarded, never dialled — so a caller cannot point the console at a host
+  of their choosing; the credential is supplied **per command and never stored** (the
+  clone rewrites `origin` back to the plain URL, so `.git/config` holds no live
+  token), and any token a git error echoes is redacted before it is returned. The
+  rules are pure (`src/repo-rules.ts`), the operations are `src/repo.ts`, and the
+  routes are `GET /api/repo` and `POST /api/repo/{clone,branch,push,pr}`. Covered by
+  `src/test/repo.test.ts`.- `[x]` **Diff review before write, not only during.** `AGENT_WRITE_MODE=propose`
   holds the agent's file writes in a **change set** instead of writing them, and one
   `POST /api/changes/apply` commits the whole set (a `discard` drops it without a
   byte written). The rules are pure (`src/change-set.ts` — an entry, the totals, and
@@ -293,8 +308,9 @@ becoming the bottleneck.
   next. Covered by `src/test/change-set.test.ts`. One pending set per process is
   deliberate: a change set is a document a person reads, and the per-account set is
   part of the same "beyond a single operator" work as the repository bullet below.
-- `[ ]` **ONYX** is explicitly *not* this: Genie owns no storage; a shared artifact
-  that outlives a workspace is ONYX's to hold.
+- `[-]` **ONYX** is explicitly *not* this: Genie owns no storage; a shared artifact
+  that outlives a workspace is ONYX's to hold, which is why this is out of scope
+  rather than an open bullet.
 
 ### v1.0 — The CodeOps surface `[x]`
 

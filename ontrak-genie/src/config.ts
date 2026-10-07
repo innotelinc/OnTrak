@@ -273,6 +273,29 @@ export const config = {
   webToken: str("WEB_TOKEN", ""),
 
   /**
+   * The git host repository-aware workspaces clone from, and the token used to
+   * do it (v0.4).
+   *
+   * `AGENT_GIT_BASE_URL` is the host that serves the repository's web UI —
+   * `https://git.innotel.us`, say — and `repo-rules.ts` resolves `owner/name`
+   * against it, so a caller can never name a different host to dial. The token is
+   * the credential Gitea/Atlas accepts for a private clone, a push and a pull
+   * request; it is supplied per command and never written into the workspace's
+   * `.git/config`.
+   *
+   * Empty (the default) means the console has no repository source and the feature
+   * is off rather than half-configured: `/api/repo` says so, and a clone is refused
+   * before it rings anybody. The token is optional even when the base is set — a
+   * public repository clones without one.
+   */
+  gitBaseUrl: str("AGENT_GIT_BASE_URL", "").replace(/\/+$/, ""),
+  gitToken: str("AGENT_GIT_TOKEN", ""),
+  /**
+   * The branch a pull request is opened against when the caller names none.
+   */
+  gitDefaultBranch: str("AGENT_GIT_DEFAULT_BRANCH", "main"),
+
+  /**
    * Optional Authentik (OIDC) sign-in, for a deployment that puts this console
    * behind the family's identity provider. Off until the issuer, the client id
    * and the session secret are all set — see the header of `src/oidc.ts` for why

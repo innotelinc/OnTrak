@@ -71,6 +71,15 @@ import {
   ProjectError,
   updateProject as updateWorkspaceProject,
 } from "./projects.js";
+import {
+  cloneRepository,
+  createBranch,
+  detectRepoRef,
+  gitInfo,
+  openPullRequest,
+  pushBranch,
+  RepoError,
+} from "./repo.js";
 import { sandboxInfo } from "./sandbox.js";
 import { backendLabel, runShellCommand } from "./shell.js";
 import {
@@ -1455,6 +1464,96 @@ async function handleApi(
     const name = decodeURIComponent(hostingMatch[1] ?? "");
     const removed = await unpublishWorkspace(name);
     return sendJson(res, removed ? 200 : 404, { removed });
+  }
+
+  /*
+   * Repository-aware workspaces (v0.4): where a workspace comes from.
+   *
+   * The console provides the three moves a person makes before the agent has
+   * anything to do — take a repository, make a branch, open the pull request — and
+   * leaves the editing, committing and reviewing to the agent and its gate. Every
+   * clone lands through `repo.ts`, which resolves the target through the *same*
+   * workspace fence a tool write does, so a repository name can never become a path
+   * out of the account's slice, and every git command runs through `runShellCommand`,
+   * so it meets the same guard and sandbox as anything else. A `RepoError` is the
+   * caller's problem (400), never a server fault.
+   */
+  if (pathname === "/api/repo" && method === "GET") {
+    const info = gitInfo();
+    const repo = await detectRepoRef();
+    return sendJson(res, 200, {
+      configured: info.base !== "",
+      base: info.base,
+      token: info.token,
+      defaultBranch: info.defaultBranch,
+      repo: repo === null ? null : `${repo.owner}/${repo.name}`,
+    });
+  }
+
+  if (pathname === "/api/repo/clone" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      return sendJson(
+        res,
+        201,
+        await cloneRepository({
+          spec: payload.spec,
+          ...(payload.dir === undefined ? {} : { dir: payload.dir }),
+          ...(payload.branch === undefined ? {} : { branch: payload.branch }),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof RepoError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  if (pathname === "/api/repo/branch" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      return sendJson(
+        res,
+        201,
+        await createBranch({
+          ...(payload.name === undefined ? {} : { name: payload.name }),
+          ...(payload.title === undefined ? {} : { title: payload.title }),
+          ...(payload.suffix === undefined ? {} : { suffix: payload.suffix }),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof RepoError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  if (pathname === "/api/repo/push" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      return sendJson(res, 200, await pushBranch({ branch: payload.branch }));
+    } catch (error) {
+      if (error instanceof RepoError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  if (pathname === "/api/repo/pr" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      return sendJson(
+        res,
+        201,
+        await openPullRequest({
+          title: payload.title,
+          head: payload.head,
+          ...(payload.base === undefined ? {} : { base: payload.base }),
+          ...(payload.body === undefined ? {} : { body: payload.body }),
+          ...(payload.spec === undefined ? {} : { spec: payload.spec }),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof RepoError) throw new HttpError(400, error.message);
+      throw error;
+    }
   }
 
   if (pathname === "/api/chat" && method === "POST") {
