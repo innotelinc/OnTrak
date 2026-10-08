@@ -452,6 +452,10 @@ Stated plainly, because the integration is **not** complete:
   `instructor`/`student`.
 - **The lab's host-half has never been verified in this environment** (no
   hypervisor), and this audit did not run either application.
+- **The family landing page still lists six products, without OnTrak Lab.** It lists
+  what the family site links to and serves, and OnTrak Lab is served from its own host
+  until Q4 below is answered, so it stays off that page; `docs/stack.md` carries its
+  row instead, where being part of the architecture is the question being asked.
 - **Terminology is resolved** (§9/Q1). *OnTrak* names this repository and the family
   inside it, never one product; the product in `src/` is **OnTrak IT Support Training**,
   and the lab is **OnTrak Lab**.
