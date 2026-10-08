@@ -756,6 +756,11 @@ async function main(): Promise<void> {
       ? `[sentinel] Guard ingest: POST ${url}${GUARD_PATHS.events} (rulebook: GET ${url}${GUARD_PATHS.rules})`
       : `[sentinel] Guard ingest: off (set SENTINEL_GUARD_TOKEN to accept telemetry)`,
   );
+  // The OTLP receiver (S3) rides the same HTTP listener and the same token, so it needs no
+  // port of its own — but a deployment pointing a collector at it needs to be told the path.
+  if (guard) {
+    console.log(`[sentinel] Guard OTLP:   POST ${url}${GUARD_PATHS.otel} (OpenTelemetry logs and traces, JSON)`);
+  }
   console.log(
     syslog === null
       ? `[sentinel] Guard syslog: off (set SENTINEL_GUARD_SYSLOG_PORT and SENTINEL_GUARD_ORGANIZATION to listen)`

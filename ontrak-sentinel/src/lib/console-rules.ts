@@ -2323,10 +2323,10 @@ export function renderCoverage(view: ConsoleCoverageView, flash?: string | null,
     `<h2>By source</h2>` +
     `<div class="card"><table><thead><tr><th>Source</th><th>Kind</th><th></th><th>Rules</th></tr></thead><tbody>${sourceRows}</tbody></table>` +
     `<p class="muted">The ingest surface accepts a batch a collector posts ` +
-    `(<code>POST /guard/v1/events</code>), and two sources have a streaming listener of their own — ` +
-    `<code>SYSLOG</code> over UDP and TCP, and <code>NETFLOW</code>/<code>IPFIX</code> on one UDP collector. ` +
-    `Every other source is declared vocabulary with no reader, so “read” is a statement about the ` +
-    `rules, not about a feed being live.</p></div>` +
+    `(<code>POST /guard/v1/events</code>), and three sources have a reader of their own — ` +
+    `<code>SYSLOG</code> over UDP and TCP, <code>NETFLOW</code>/<code>IPFIX</code> on one UDP collector, and ` +
+    `<code>OTEL</code> through the OTLP/HTTP receiver. Every other source is declared vocabulary with ` +
+    `no reader, so “read” is a statement about the rules, not about a feed being live.</p></div>` +
     unreachable +
     `<h2>The rulebook</h2>` +
     `<div class="card"><table><thead><tr><th>Rule</th><th>Name</th><th>Severity</th><th>Shape</th><th>Reads</th></tr></thead><tbody>${ruleRows}</tbody></table></div>` +

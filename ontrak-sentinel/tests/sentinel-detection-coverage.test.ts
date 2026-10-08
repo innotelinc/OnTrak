@@ -183,11 +183,12 @@ test("coverage: the page is behind a session, and renders what the rulebook says
   assert.match(page.body, /EBPF/);
   assert.match(page.body, /PROXY/);
   assert.match(page.body, /SG-BEH-002/);
-  // The page says which sources actually listen, and there are two now: syslog and the
-  // NetFlow/IPFIX collector. "Read" is still a statement about the rules for every other
-  // source, and the page says so rather than implying a feed is live.
-  assert.match(page.body, /two sources have a streaming listener/);
+  // The page says which sources actually have a reader, and there are three now: syslog,
+  // the NetFlow/IPFIX collector and the OTLP receiver. "Read" is still a statement about
+  // the rules for every other source, and the page says so rather than implying a feed is live.
+  assert.match(page.body, /three sources have a reader/);
   assert.match(page.body, /NETFLOW/);
+  assert.match(page.body, /OTEL/);
 });
 
 test("coverage: every value on the page is escaped", () => {

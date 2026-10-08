@@ -7,7 +7,7 @@ import { evaluateScenario, inventoryHealth, loadAvailabilityContext, platformLab
 import { togglePlatform } from "@/app/actions/admin";
 import { recentAudit } from "@/lib/audit";
 import { integrationStatuses } from "@/lib/integration-status";
-import { sentinelStatus } from "@/lib/sentinel-status";
+import { capabilities } from "@/lib/capabilities";
 import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, Button, ButtonLink, buttonClass, Card, Stat } from "@/components/ui";
 import { cn, formatBytes } from "@/lib/cn";
@@ -51,7 +51,7 @@ export default async function AdminHome({
 
   const platforms: Platform[] = ["LINUX", "WINDOWS", "OFFICE"];
   const integrations = integrationStatuses();
-  const sentinel = sentinelStatus();
+  const familyCapabilities = capabilities();
   const toggleFor = (platform: Platform) => toggles.find((toggle) => toggle.platform === platform);
   const availability = scenarios.map((scenario) => evaluateScenario(scenario, context));
   const runnable = availability.filter((entry) => entry.available).length;
@@ -191,56 +191,49 @@ export default async function AdminHome({
         </div>
       </section>
 
-      {/* ------------------------------------------------------ sentinel */}
+      {/* ------------------------------------------------------ capabilities */}
       <section className="mt-10">
-        <h2 className="font-display text-lg font-semibold text-ink">{t("admin.sentinel")}</h2>
-        <p className="text-sm text-ink-soft">{t("admin.sentinelHint")}</p>
+        <h2 className="font-display text-lg font-semibold text-ink">{t("admin.capabilities")}</h2>
+        <p className="text-sm text-ink-soft">{t("admin.capabilitiesHint")}</p>
 
-        <Card className="mt-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 className="font-display text-base font-semibold text-ink">{t("admin.sentinel.title")}</h3>
-            <Badge
-              tone={sentinel.state === "ready" ? "teal" : sentinel.state === "incomplete" ? "danger" : "neutral"}
-            >
-              {t(`admin.integration.state.${sentinel.state}`)}
-            </Badge>
-          </div>
-
-          {sentinel.state === "ready" && sentinel.controlCenterUrl ? (
-            <div className="mt-3 space-y-3">
-              <p className="text-xs text-ink-soft">{t("admin.sentinel.ready")}</p>
-              <a
-                href={sentinel.controlCenterUrl}
-                target="_blank"
-                rel="noreferrer"
-                className={buttonClass("primary", "sm")}
-              >
-                {t("admin.sentinel.open")}
-              </a>
-              <dl className="space-y-1.5 border-t border-line pt-3">
-                {sentinel.details.map((detail) => (
-                  <div key={detail.key} className="flex flex-wrap items-baseline justify-between gap-x-3">
-                    <dt className="text-xs text-ink-faint">{t(`admin.sentinel.${detail.key}`)}</dt>
-                    <dd className="font-mono text-[11px] text-ink-soft">
-                      {detail.value || t("admin.integration.notSet")}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          ) : (
-            <div className="mt-3 space-y-1.5">
-              <p className="text-xs text-ink-soft">
-                {t(sentinel.state === "off" ? "admin.sentinel.off" : "admin.sentinel.incomplete")}
-              </p>
-              {sentinel.issues.map((issue, index) => (
-                <p key={index} className="font-mono text-[11px] text-pink">
-                  {issue}
+        <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {familyCapabilities.map((entry) => (
+            <Card key={entry.id}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="font-display text-base font-semibold text-ink">
+                  {t(`admin.capability.${entry.id}.name`)}
+                </h3>
+                <Badge tone={entry.url === null ? "danger" : entry.named ? "teal" : "neutral"}>
+                  {t(
+                    entry.url === null
+                      ? "admin.capability.state.unreachable"
+                      : entry.named
+                        ? "admin.capability.state.named"
+                        : "admin.capability.state.family",
+                  )}
+                </Badge>
+              </div>
+              <p className="mt-2 text-xs text-ink-soft">{t(`admin.capability.${entry.id}.tagline`)}</p>
+              {entry.url ? (
+                <a
+                  href={entry.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={cn(buttonClass("secondary", "sm"), "mt-3")}
+                >
+                  {t("admin.capability.open")}
+                </a>
+              ) : (
+                <p className="mt-3 font-mono text-[11px] text-pink">
+                  {entry.note ?? t("admin.capability.state.unreachable")}
                 </p>
-              ))}
-            </div>
-          )}
-        </Card>
+              )}
+              {entry.url ? (
+                <p className="mt-2 font-mono text-[11px] break-all text-ink-faint">{entry.url}</p>
+              ) : null}
+            </Card>
+          ))}
+        </div>
       </section>
 
       {/* ------------------------------------------------------ provisioning */}

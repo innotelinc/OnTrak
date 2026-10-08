@@ -199,18 +199,31 @@ export const es: Messages = {
   "admin.integration.incompleteHint":
     "Este despliegue rechaza esas peticiones y el registro de arranque indica qué arreglar:",
   "admin.integration.notSet": "sin definir",
-  "admin.sentinel": "Sentinel (identidad e IPS)",
-  "admin.sentinelHint":
-    "OnTrak Sentinel es el proveedor de identidad y la plataforma de detección y prevención de intrusiones de la familia. Esta sala de control no lo reimplementa; enlaza al centro de control propio de Sentinel. Define SENTINEL_CONSOLE_URL (o SENTINEL_ISSUER) para apuntar este despliegue a él.",
-  "admin.sentinel.title": "Centro de control",
-  "admin.sentinel.ready":
-    "Detección, prevención, cobertura y la cadena de evidencia en una sola pantalla, en el despliegue de Sentinel al que esta aplicación está conectada.",
-  "admin.sentinel.off":
-    "No hay ninguna consola de Sentinel configurada, así que no hay a dónde enlazar. Define SENTINEL_CONSOLE_URL al Sentinel de este despliegue.",
-  "admin.sentinel.incomplete": "Se definió una URL de Sentinel pero fue rechazada, así que no se puede enlazar nada:",
-  "admin.sentinel.open": "Abrir el centro de control",
-  "admin.sentinel.controlCenter": "URL del centro de control",
-  "admin.sentinel.issuer": "Emisor",
+  "admin.capabilities": "Capacidades de la familia",
+  "admin.capabilitiesHint":
+    "Los productos OnTrak a los que este despliegue puede llegar, en el orden de la familia. Cada uno está o bien nombrado aquí en el entorno, o bien se alcanza en su dirección estándar de la familia; en esta página no se consulta nada, así que se ofrece un enlace haya o no producto en marcha.",
+  "admin.capability.state.named": "nombrado aquí",
+  "admin.capability.state.family": "dirección familiar",
+  "admin.capability.state.unreachable": "sin enlace",
+  "admin.capability.open": "Abrir",
+  "admin.capability.training.name": "OnTrak IT Support Training",
+  "admin.capability.training.tagline":
+    "Práctica en el navegador calificada automáticamente: arregla máquinas Linux, Windows y Office averiadas a propósito.",
+  "admin.capability.tix.name": "OnTrak Tix",
+  "admin.capability.tix.tagline":
+    "El servicio de asistencia: tickets, SLA, clientes, facturación y evidencia de incidentes con calidad de seguro.",
+  "admin.capability.sentinel.name": "OnTrak Sentinel",
+  "admin.capability.sentinel.tagline":
+    "Proveedor de identidad y detección y prevención de intrusiones: quién es alguien y si debería estar en la red.",
+  "admin.capability.sync.name": "OnTrak Sync",
+  "admin.capability.sync.tagline":
+    "La vista de actualizaciones de paquetes y contenedores de la red, y el único lugar que instala lo que una persona aprobó.",
+  "admin.capability.genie.name": "OnTrak Genie",
+  "admin.capability.genie.tagline":
+    "La consola de programación en el navegador: elige una carpeta, describe el cambio y observa a un agente leer, editar y ejecutar código en ella.",
+  "admin.capability.lab.name": "OnTrak Lab",
+  "admin.capability.lab.tagline":
+    "La plataforma práctica: máquinas virtuales Linux reales e instancias de escenarios para ejercicios prácticos, aprovisionadas bajo demanda.",
   "admin.integration.issuer": "Emisor",
   "admin.integration.clientId": "ID de cliente",
   "admin.integration.allowedDomains": "Dominios de acceso",

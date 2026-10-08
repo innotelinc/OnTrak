@@ -563,20 +563,25 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
   **refuses to decode** a data set whose template it has not seen rather than
   guessing an unknown layout (which would be fabricated telemetry), leaves the
   direction unstated because NetFlow carries none, and hands each decoded flow to the
-  same `GuardService.ingest`. The OTel receiver remains declared vocabulary rather
-  than a reader. The
+  same `GuardService.ingest`. The **OTLP receiver** (`telemetry-otel.ts`, `POST
+  /guard/v1/otel`) is the third and the shortest, because it does not invent a second
+  vocabulary: an OTLP log record or span is **flattened** — resource attributes,
+  record attributes and a JSON `body` merged — into the same payload a relay's JSON
+  body is and handed to the same normalizer, with the exporter's `service.name` as the
+  sensor and metrics deliberately unread because an aggregate over time has no
+  five-tuple. The
   **normalizer** is built (`telemetry-rules.ts`): a source-neutral
   `ObservedEvent` with kind (`NETWORK`/`HOST`/`HTTP`/`AUTH`), addresses and ports,
   direction, protocol, bytes and a free-form detail bag; `toObservedEvent` validates
   and narrows a JSON payload, `toObservedEventFromSyslog` reads the RFC 3164 shape,
   and `validateTelemetrySource` refuses a source the deployment has not declared. The
   ingest surface is live (`POST /guard/v1/events`, a bearer token per organization,
-  `guard-http.ts` + `guard-service.ts`) and accepts a **batch**, and two of the
-  sources now have a streaming listener of their own — `SYSLOG` over UDP and TCP and
-  `NETFLOW`/`IPFIX` on one UDP collector — so a detector can be pointed at a network
-  and not only at something else's feed. The rest (`EBPF`, `OTEL`, `PROXY`, `EDR`,
-  `FIREWALL`) are declared vocabulary rather than implemented readers, and the roadmap
-  says so on purpose.
+  `guard-http.ts` + `guard-service.ts`) and accepts a **batch**, and three of the
+  sources now have a reader of their own — `SYSLOG` over UDP and TCP, `NETFLOW`/`IPFIX`
+  on one UDP collector, and `OTEL` through the OTLP/HTTP receiver — so a detector can
+  be pointed at a network and not only at something else's feed. The rest (`EBPF`,
+  `PROXY`, `EDR`, `FIREWALL`) are declared vocabulary rather than implemented readers,
+  and the roadmap says so on purpose.
 - `[~]` Signature + behavioural detection rules; rule versioning and test harness.
   Three rules ship (`SUSPICIOUS_SERVICE_RULE`, `SCAN_RULE`,
   `CREDENTIAL_STUFFING_RULE`) with a pure `evaluateRules` that is nothing but a fold
@@ -1010,8 +1015,9 @@ missing rather than as a task name:
    — so a detector can be pointed at a network rather than at something else's
    feed. **Extended (2026-10-08):** the **flow listener** (`guard-netflow.ts`) puts
    NetFlow v5/v9 and IPFIX on the same door, so the device that exports flows rather
-   than logs is read too. What is still true: the OTel receiver and a pcap reader are
-   the listeners after these, so 1.0 has a listener rather than a taxonomy.
+   than logs is read too, and the **OTLP receiver** reads an OpenTelemetry agent's logs
+   and spans on the same HTTP surface. What is still true: a pcap reader is the listener
+   after these, so 1.0 has a listener rather than a taxonomy.
 2. **A rule change is not a version.** Detection rules are code, and the corpus
    they are judged against is not tracked, so "why did this fire last Tuesday"
    has no answer. Versioning the rule set — and recording which version an alert

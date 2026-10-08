@@ -222,21 +222,34 @@ export const en = {
   "admin.integration.usersPath": "Users endpoint",
   "admin.integration.groupsPath": "Groups endpoint",
   "admin.integration.tokenEnv": "Token variable",
-  // Sentinel — the family's IDS/IPS product, reached from this control room but
-  // deployed beside it, so the tile's job is to say where its console is rather than
-  // to re-implement it here.
-  "admin.sentinel": "Sentinel (identity & IPS)",
-  "admin.sentinelHint":
-    "OnTrak Sentinel is the family's identity provider and intrusion detection & prevention platform. This control room does not re-implement it; it links to Sentinel's own control center. Set SENTINEL_CONSOLE_URL (or SENTINEL_ISSUER) to point this deployment at it.",
-  "admin.sentinel.title": "Control center",
-  "admin.sentinel.ready":
-    "Detection, prevention, coverage and the evidence chain on one screen, on the Sentinel deployment this app is wired to.",
-  "admin.sentinel.off":
-    "No Sentinel console is configured, so there is nowhere to link. Set SENTINEL_CONSOLE_URL to this deployment's Sentinel.",
-  "admin.sentinel.incomplete": "A Sentinel URL is set but was refused, so nothing can be linked:",
-  "admin.sentinel.open": "Open control center",
-  "admin.sentinel.controlCenter": "Control center URL",
-  "admin.sentinel.issuer": "Issuer",
+  // Capabilities — one list of everything this deployment can reach, mirroring the
+  // portal's catalogue. The names and taglines are the products' own, so the family
+  // calls itself the same thing everywhere.
+  "admin.capabilities": "Family capabilities",
+  "admin.capabilitiesHint":
+    "The OnTrak products this deployment can reach, in the family's order. Each is either named here in the environment or reached at its standard family address; nothing on this page is fetched, so a link is offered whether or not the product is running.",
+  "admin.capability.state.named": "named here",
+  "admin.capability.state.family": "family address",
+  "admin.capability.state.unreachable": "no link",
+  "admin.capability.open": "Open",
+  "admin.capability.training.name": "OnTrak IT Support Training",
+  "admin.capability.training.tagline":
+    "Browser-based, automatically-graded practice: fix deliberately broken Linux, Windows and Office machines.",
+  "admin.capability.tix.name": "OnTrak Tix",
+  "admin.capability.tix.tagline":
+    "The service desk: tickets, SLAs, clients, billing, and insurance-grade incident evidence.",
+  "admin.capability.sentinel.name": "OnTrak Sentinel",
+  "admin.capability.sentinel.tagline":
+    "Identity provider and intrusion detection and prevention: who somebody is, and whether they should be on the network.",
+  "admin.capability.sync.name": "OnTrak Sync",
+  "admin.capability.sync.tagline":
+    "The Network's package and container update view, and the one place that installs what a person approved.",
+  "admin.capability.genie.name": "OnTrak Genie",
+  "admin.capability.genie.tagline":
+    "The browser coding console: choose a folder, describe the change, and watch an agent read, edit and run code in it.",
+  "admin.capability.lab.name": "OnTrak Lab",
+  "admin.capability.lab.tagline":
+    "The hands-on platform: real Linux virtual machines and scenario instances for practical exercises, provisioned on demand.",
 
   // Audit log
   "audit.eyebrow": "Administration",
