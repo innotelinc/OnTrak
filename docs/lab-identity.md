@@ -142,4 +142,7 @@ never grant it.
   client is something an operator confirms by signing in.
 - **It does not deploy OnTrak Lab.** OnTrak Lab is a catalogue entry, a tile and a
   gated student link (audit Steps 2 and 4). This step is about *who somebody is* when
-  they arrive, not about where OnTrak Lab is served from, which is §9/Q4.
+  they arrive, not about where OnTrak Lab is served from, which is §9/Q4 (answered:
+  the family edge serves a lab as one name, `lab.<base domain>`, over the lab's own
+  single published port). A lab signed into through the family's provider is signed
+  into from wherever it is served, so that answer changes nothing here.
