@@ -22,6 +22,17 @@
  * on a laptop with nothing installed — and the lab's two boundary tests, the only pair a
  * lab host depends on, must keep being run by a job rather than only by whoever remembers.
  *
+ * The same thesis holds one artifact class over: a suite that is not an npm package.
+ * `ontrak-genie/scripts/tests/test_verify_sso.py` is twelve offline tests of Genie's
+ * sign-in posture check, and nothing ran them — `npm test` in that job is the TypeScript
+ * suite, and no Makefile target named the directory — so they only ever ran on the
+ * machine of whoever wrote them. Every directory of Python tests must therefore be run
+ * by a job, derived from the tree rather than listed. A job runs such a directory when it
+ * works in the directory whose own `tests/` that is, or names the directory as a path in a
+ * step; a job's `working-directory`, a step's `cd` and the repository root are all places a
+ * step can be said to work. Comments are stripped first, because a comment about a suite is
+ * not a suite being run.
+ *
  * What it does not check is whether those steps are all a package needs, or whether a
  * suite is worth running: those are judgements about a job that has to be read, and
  * this settles the claims a set of files can settle on their own.
@@ -125,14 +136,113 @@ function workflowFiles(): string[] {
  * asserting the very thing being checked. What is left is what a runner would execute.
  */
 function uncommented(file: string): string {
-  return read(path.posix.join(WORKFLOW_DIR, file))
+  return executed(read(path.posix.join(WORKFLOW_DIR, file)));
+}
+
+/**
+ * Workflow text with YAML and shell comments removed: what a runner would execute.
+ *
+ * Shared by the file-level scan above and the job-level coverage check below, and for
+ * the same reason in both: a comment is prose about work, never the work. A step whose
+ * comment names a test directory has not run it.
+ */
+function executed(text: string): string {
+  return text
     .split("\n")
     .map((line) => line.replace(/\s*#.*$/, ""))
     .join("\n");
 }
 
+/**
+ * The directories a job works in: its own default, plus every `cd` in its steps.
+ *
+ * `cd` is resolved against the job's default rather than the repository root, because
+ * that is what a shell in the runner does: `cd scripts` in the genie job — whose default
+ * is `ontrak-genie` — means `ontrak-genie/scripts`. A job with no default works at the
+ * repository root, spelled `.`.
+ */
+function workingDirectories(job: { directory: string; text: string }): string[] {
+  const base = job.directory === "" ? "." : job.directory;
+  // The repository root, because a step with nothing to say about its directory runs
+  // there; then every step-level override, which GitHub resolves from the root; then
+  // every `cd`, which a shell resolves from where the step started.
+  const resolved = new Set<string>([".", base]);
+  for (const match of job.text.matchAll(/^\s*working-directory: (\S+)$/gm)) {
+    resolved.add((match[1] ?? "").replace(/^\.\//, "").replace(/\/$/, ""));
+  }
+  for (const match of job.text.matchAll(/^\s*cd (\S+)/gm)) {
+    const target = match[1] ?? "";
+    if (target.startsWith("/")) continue;
+    const parts = base === "." ? [] : base.split("/");
+    for (const segment of target.split("/")) {
+      if (segment === "" || segment === ".") continue;
+      if (segment === "..") parts.pop();
+      else parts.push(segment);
+    }
+    resolved.add(parts.length === 0 ? "." : parts.join("/"));
+  }
+  return [...resolved].filter(Boolean);
+}
+
+/**
+ * Whether a job runs the Python tests in `directory`.
+ *
+ * Two shapes count, and both have to be something the runner does rather than something
+ * a comment says, which is why the text is comment-stripped first. Either the job works
+ * in the directory whose own `tests/` this is — discovery reaches a suite one level down,
+ * not through an ancestor, so `cd scripts && … discover -s tests` counts and discovering
+ * from the package root does not — or a step names the directory as one of its path
+ * tokens, which is how the sync job runs its suite and how the structure job runs one by
+ * file. A step that merely names an *ancestor* is not running the suite: the difference
+ * between `discover -s tests` and `discover -s scripts/tests` is the whole check.
+ */
+function runsPythonTests(job: { directory: string; text: string }, directory: string): boolean {
+  const text = executed(job.text);
+  if (!/python3?|unittest|pytest/.test(text)) return false;
+  const tokens = text.split(/[\s"'`()]+/).filter(Boolean);
+
+  return workingDirectories({ directory: job.directory, text }).some((dir) => {
+    const under =
+      dir === "." ? directory : directory.startsWith(`${dir}/`) ? directory.slice(dir.length + 1) : "";
+    if (under === "") return false;
+    // The working directory's own tests, or a path a step spells out.
+    return under === "tests" || tokens.some((token) => token === under || token.startsWith(`${under}/`));
+  });
+}
+
 /** Tools that exist only on a machine with a hypervisor, `/dev/kvm` included. */
 const HYPERVISOR = /\b(incus|virsh|qemu|libvirt|kvm)\b/i;
+
+/**
+ * Every directory in the tree that holds Python tests, as a repository-relative path.
+ *
+ * A `tests/` directory containing at least one `test_*.py`, which is how every Python
+ * suite here is spelled — the provisioner's, the theme's, the lab client's, the sync
+ * backend's. Build output and dependency trees are skipped: a `tests` directory inside
+ * `node_modules` is not this repository's to run.
+ */
+function pythonTestDirectories(): string[] {
+  const SKIP = new Set(["node_modules", ".git", ".next", "dist", "__pycache__", ".venv"]);
+  const found: string[] = [];
+
+  const walk = (directory: string): void => {
+    for (const entry of readdirSync(path.join(ROOT, directory || "."), { withFileTypes: true })) {
+      if (!entry.isDirectory() || SKIP.has(entry.name)) continue;
+      const full = directory === "" ? entry.name : `${directory}/${entry.name}`;
+      if (entry.name === "tests") {
+        const files = readdirSync(path.join(ROOT, full));
+        if (files.some((file) => /^test_.*\.py$/.test(file))) {
+          found.push(full);
+          continue;
+        }
+      }
+      walk(full);
+    }
+  };
+
+  walk("");
+  return found.sort();
+}
 
 /**
  * The root suite's live tests: the flag each one reads, and whether it skips.
@@ -195,6 +305,24 @@ test("ci: every package that declares a suite has a job that runs it", () => {
       );
     } else if (!/npm run typecheck\b/.test(runner.text)) {
       problems.push(`${name} (${directory}): the ${runner.name} job runs its tests but never typechecks it`);
+    }
+  }
+
+  assert.deepEqual(problems, [], problems.join("\n"));
+});
+
+test("ci: every directory of Python tests is run by a job", () => {
+  const directories = pythonTestDirectories();
+  assert.ok(
+    directories.length >= 4,
+    `the walk found ${directories.length} directories of Python tests: ${directories.join(", ")}`,
+  );
+
+  const all = jobs();
+  const problems: string[] = [];
+  for (const directory of directories) {
+    if (!all.some((job) => runsPythonTests(job, directory))) {
+      problems.push(`${directory} holds Python tests and no job runs them`);
     }
   }
 

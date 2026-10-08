@@ -490,6 +490,20 @@ jobs:
       - name: Unit and HTTP tests
         run: npm test
 
+      # `scripts/verify-sso.py` is Genie's sign-in posture check, and its suite is
+      # offline by design: it tests what the check *decides* — config precedence, the
+      # redirect URI that has to be this name's callback, a redirect handed back rather
+      # than followed, an unset admin token as SKIP (exit 2) rather than failure — which
+      # is where a green run would otherwise mean nothing. Nothing ran it: `npm test` is
+      # the TypeScript suite (`node --test dist/test/*.test.js`), so these 12 tests only
+      # ever ran on the machine of whoever wrote them. The same failure the portal's own
+      # job was added for, one artifact class over (tests/ci-coverage.test.ts).
+      - name: Sign-in check script tests
+        run: |
+          set -euo pipefail
+          cd scripts
+          python3 -m unittest discover -s tests -q
+
   # The family's front door, run like the products behind it. It had no job: its
   # typecheck, its unit tests and its copy check only ever ran on the machine of
   # whoever was editing it, and its TypeScript was compiled only as a side effect of
