@@ -169,6 +169,14 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      # `npm test` skips this (it boots a server), and this is the one place it is
+      # actually run: the lab-completion boundary driven through the app's own route
+      # against the migrations applied above, so the route's database path, its
+      # idempotency and the results feed's mode filter are covered on every change
+      # — with no hypervisor and no lab (docs/consolidation-audit.md §9/Q8).
+      - name: Lab-completion live test
+        run: ONTRAK_LAB_LIVE=1 npx tsx --tsconfig tests/tsconfig.json --test tests/lab-live.test.ts
+
       - name: Build
         run: npm run build
 
