@@ -465,6 +465,15 @@ Stated plainly, because the integration is **not** complete:
   names a directory present here may no longer call it planned or built elsewhere, which
   `tests/service-map.test.ts` fails on. The lab's row keeps its marker, because there the
   claim is true.
+- **A shipped listener is a port the guide has to name.** The same sweep found two more
+  documents that had fallen behind the code in the same way: [INNOTEL-LABS.md](../INNOTEL-LABS.md)
+  still said "when Sentinel's IdP is built" although S1 is closed and the same page names
+  Sentinel as the layer the other products sign in through, and the operations guide's list
+  of Sentinel's shared host ports stopped at the syslog listener, omitting the NetFlow/IPFIX
+  collector `docker-compose.all.yml` has published since the flow listener landed. The
+  guide's "What runs where" table is checked against the compose file now, by
+  `tests/family-ops.test.ts`: a port it names that no family stack publishes is a failure
+  rather than a reader's dead end at 3am.
 - **Terminology is resolved** (§9/Q1). *OnTrak* names this repository and the family
   inside it, never one product; the product in `src/` is **OnTrak IT Support Training**,
   and the lab is **OnTrak Lab**.
