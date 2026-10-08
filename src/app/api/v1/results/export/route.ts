@@ -8,8 +8,11 @@
  * the JSON feed and concatenates the pages; the header row is emitted every
  * time so each page is a file that opens on its own.
  *
- *   GET /api/v1/results/export?cohortId=...&limit=500
+ *   GET /api/v1/results/export?cohortId=...&mode=lab&limit=500
  *   Authorization: Bearer $ONTRAK_API_TOKEN
+ *
+ * Same `mode` filter as the JSON feed: `mode=lab` for only the results produced on
+ * real machines, omitted for everything.
  */
 
 import { NextResponse, type NextRequest } from "next/server";

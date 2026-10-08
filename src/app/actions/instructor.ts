@@ -486,6 +486,8 @@ export async function regradeAttempt(formData: FormData): Promise<void> {
     passScore: attempt.scenario.passScore,
     completedAt: gradedAt,
     skills: attempt.scenario.tags,
+    // So a re-grade that issues a fresh record still says which grader produced it.
+    mode,
   };
   const action = certificateAction(attemptPassed(certificateFacts), stored);
   const certificate = certificatePatchFor(certificateFacts, stored, gradedAt);

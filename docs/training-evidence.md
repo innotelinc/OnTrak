@@ -32,6 +32,7 @@ A `CompletionRecord` is a small, self-describing statement:
 | `skills` | Competencies demonstrated (e.g. `networking`, `linux-permissions`). |
 | `completedAt` | Grading time, ISO-8601 UTC. |
 | `issuer` | The deployment/organisation that issued the record. |
+| `mode` | Optional: `simulated` or `lab` — which grader produced the outcome. Inside the signed content when present, so the same numbers graded two ways are two different records. Absent (not `simulated`) on a record issued before the field existed, or by a caller that has no mode to state. |
 | `digest` | Hash over the canonical record — the tamper-evident seal. |
 
 ### Canonicalisation and digest

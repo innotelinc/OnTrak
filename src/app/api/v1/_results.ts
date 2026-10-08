@@ -13,87 +13,23 @@
  * bug a reconciliation feed must not have.
  */
 
-import type { AttemptStatus } from "@prisma/client";
-
 import { prisma } from "@/lib/db";
 import { certificateCode } from "@/lib/credentials";
 import { readStoredCertificate } from "@/lib/certificates";
 import { normalizeGradingMode } from "@/lib/grading-mode";
+import { resultWhere, type ResultFilters } from "@/lib/result-filters";
 import type { ResultCsvRow } from "@/lib/csv-rules";
 
-export const DEFAULT_LIMIT = 100;
-export const MAX_LIMIT = 500;
-
-export const RESULT_STATUSES: readonly AttemptStatus[] = ["GRADED", "EXPIRED", "SUBMITTED", "ABANDONED"];
-
-export interface ResultFilters {
-  since: Date | null;
-  scenarioId: string | null;
-  cohortId: string | null;
-  status: AttemptStatus[];
-  limit: number;
-  cursor: string | null;
-}
-
-export type FilterRead = { ok: true; filters: ResultFilters } | { ok: false; reason: string };
-
-export function readResultFilters(url: URL): FilterRead {
-  const sinceText = (url.searchParams.get("since") ?? "").trim();
-  let since: Date | null = null;
-  if (sinceText) {
-    const parsed = new Date(sinceText);
-    if (Number.isNaN(parsed.getTime())) return { ok: false, reason: "`since` must be an ISO-8601 date-time." };
-    since = parsed;
-  }
-
-  const status = (url.searchParams.get("status") ?? "")
-    .split(",")
-    .map((entry) => entry.trim().toUpperCase() as AttemptStatus)
-    .filter((entry) => entry.length > 0);
-  const unknown = status.filter((entry) => !RESULT_STATUSES.includes(entry));
-  if (unknown.length > 0) {
-    return { ok: false, reason: `unknown status ${unknown.join(", ")}; expected ${RESULT_STATUSES.join(", ")}` };
-  }
-
-  const rawLimit = Number((url.searchParams.get("limit") ?? "").trim());
-  const limit =
-    Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(MAX_LIMIT, Math.floor(rawLimit)) : DEFAULT_LIMIT;
-
-  return {
-    ok: true,
-    filters: {
-      since,
-      scenarioId: emptyToNull(url.searchParams.get("scenarioId")),
-      cohortId: emptyToNull(url.searchParams.get("cohortId")),
-      // Absent means "everything that finished", which is what a consumer wants by
-      // default: an abandoned attempt is still a thing that happened to a learner.
-      status: status.length > 0 ? status : [...RESULT_STATUSES],
-      limit,
-      cursor: emptyToNull(url.searchParams.get("cursor")),
-    },
-  };
-}
-
-function emptyToNull(value: string | null): string | null {
-  const trimmed = (value ?? "").trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function resultWhere(filters: ResultFilters) {
-  return {
-    status: { in: filters.status },
-    ...(filters.since ? { gradedAt: { gte: filters.since } } : {}),
-    ...(filters.scenarioId ? { scenarioId: filters.scenarioId } : {}),
-    ...(filters.cohortId
-      ? {
-          OR: [
-            { assignment: { cohortId: filters.cohortId } },
-            { user: { memberships: { some: { cohortId: filters.cohortId } } } },
-          ],
-        }
-      : {}),
-  };
-}
+// The filters and the query they build live in a pure module so they can be
+// tested without a database; re-exported here so callers keep one import site.
+export {
+  DEFAULT_LIMIT,
+  MAX_LIMIT,
+  RESULT_STATUSES,
+  readResultFilters,
+  type FilterRead,
+  type ResultFilters,
+} from "@/lib/result-filters";
 
 const INCLUDE = {
   user: { select: { id: true, email: true, name: true } },

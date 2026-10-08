@@ -245,6 +245,9 @@ export async function submitAttempt(formData: FormData): Promise<void> {
         passScore: attempt.scenario.passScore,
         completedAt: gradedAt,
         skills: attempt.scenario.tags,
+        // The mode rides on the certificate too, so a lab pass cannot be read as
+        // a simulated one from a pasted record (audit §9/Q7).
+        mode,
       },
       readStoredCertificate(attempt),
       gradedAt,

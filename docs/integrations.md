@@ -45,8 +45,14 @@ instructor's login an API credential.
 
 `/api/v1/results` filters: `since` (ISO-8601, matched against `gradedAt`),
 `scenarioId`, `cohortId`, `status` (comma-separated; defaults to everything that
-finished, which includes `EXPIRED` and `ABANDONED`), `limit` (default 100, max
-500) and `cursor`.
+finished, which includes `EXPIRED` and `ABANDONED`), `mode` (`simulated` or
+`lab`; omit for both, and `mode=simulated` matches an attempt with no mode
+recorded because those were graded by the simulator too), `limit` (default 100,
+max 500) and `cursor`.
+
+One more route accepts writes from a lab: `POST /api/v1/lab/completions` records
+a finished session on a real machine as a graded attempt. See
+[lab-completion.md](lab-completion.md).
 
 Paging is a **keyset**, not an offset: the response carries `nextCursor`, and a
 full page always has one, so a loop terminates on a null instead of guessing.

@@ -11,7 +11,14 @@
  * The canonical-JSON + hash approach deliberately mirrors
  * `ontrak-sentinel/src/lib/audit-chain.ts`, so both products emit the same
  * evidence shape. The hash function is injected, keeping this module pure.
+ *
+ * `mode` (docs/consolidation-audit.md §9/Q7) is **optional and part of the signed
+ * content when present**: a record issued for a task graded on a live machine says
+ * so, and one issued before modes existed has no `mode` key and its digest is
+ * unchanged. Absent is therefore a distinct, and weaker, claim than `simulated`.
  */
+
+import type { GradingMode } from "./grading-mode";
 
 /** A synchronous hash of a UTF-8 string, returned as a lower-case hex digest. */
 export type HashFn = (input: string) => string;
@@ -36,6 +43,12 @@ export interface CompletionInput {
   completedAt: string;
   /** Who issued the record (the training deployment / organisation). */
   issuer: string;
+  /**
+   * Who graded it: the in-browser simulator or the lab's live machine. Optional,
+   * and omitted rather than defaulted when unknown, so a record that has no mode
+   * is a record that predates the field — not one that claims `simulated`.
+   */
+  mode?: GradingMode;
 }
 
 export interface CompletionRecord extends CompletionInput {
@@ -85,6 +98,10 @@ function payloadOf(input: CompletionInput): CompletionInput {
     skills: input.skills ?? [],
     completedAt: input.completedAt,
     issuer: input.issuer,
+    // Spread rather than assigned: an absent mode leaves no key at all, so a
+    // record issued before the field existed is byte-identical to one today and
+    // its digest still matches.
+    ...(input.mode ? { mode: input.mode } : {}),
   };
 }
 
