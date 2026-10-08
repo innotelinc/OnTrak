@@ -334,6 +334,14 @@ model Attempt {
   /// this product, which is most of them.
   ltiLaunch Json?
 
+  /// How this attempt was graded: `simulated` by this app's in-browser engine, or
+  /// `lab` by the lab's checks against a live machine (docs/consolidation-audit.md
+  /// §7 Step 6, §6/C2). Written at grading time rather than derived from the
+  /// scenario's tags, so a retag cannot rewrite what past evidence says. Null on
+  /// every attempt graded before modes existed, which reads back as `simulated` —
+  /// see `src/lib/grading-mode.ts`.
+  gradingMode String?
+
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   scenario     Scenario      @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
   assignment   Assignment?   @relation(fields: [assignmentId], references: [id], onDelete: SetNull)

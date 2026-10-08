@@ -148,6 +148,16 @@ export const en = {
   "analytics.byScenario": "By scenario",
   "analytics.hardest": "Hardest checks",
   "analytics.hardestHint": "Lowest pass rate first — usually where a briefing needs a hint.",
+  "analytics.allModes": "All modes combined",
+  "analytics.byMode": "By grading mode",
+  "analytics.byModeHint":
+    "A simulator's pass and a live machine's are different claims, so every figure here states the grader that produced it.",
+  "analytics.mode.summary": "{passed} of {total} passed, against a {mark}% bar",
+  "analytics.mode.median": "median {time} on task",
+
+  // Grading mode (who produced a score)
+  "grading.mode.simulated": "Simulated",
+  "grading.mode.lab": "Real machine (lab)",
 
   // Admin control room
   "admin.eyebrow": "Administration",

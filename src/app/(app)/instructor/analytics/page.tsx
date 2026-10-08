@@ -5,6 +5,7 @@ import { requireSession } from "@/lib/auth";
 import { attemptScopeFor } from "@/lib/attempt-scope";
 import {
   summariseAttempts,
+  summariseByMode,
   summariseByScenario,
   summariseChecks,
   trendByDay,
@@ -55,6 +56,8 @@ export default async function AnalyticsPage({
         timeSpentSec: true,
         score: true,
         maxScore: true,
+        // Read so every figure can state the grader that produced it (audit Q7).
+        gradingMode: true,
         checkResults: { select: { checkId: true, label: true, passed: true } },
       },
       orderBy: { submittedAt: "desc" },
@@ -78,9 +81,11 @@ export default async function AnalyticsPage({
     timeSpentSec: attempt.timeSpentSec,
     score: attempt.score,
     maxScore: attempt.maxScore,
+    mode: attempt.gradingMode,
   }));
 
   const overall = summariseAttempts(rows, passScoreByScenario);
+  const byMode = summariseByMode(rows, passScoreByScenario);
   const byScenario = summariseByScenario(rows, passScoreByScenario);
   const checks = summariseChecks(attempts.flatMap((attempt) => attempt.checkResults));
   const trend = trendByDay(rows, TREND_DAYS, new Date());
@@ -106,7 +111,10 @@ export default async function AnalyticsPage({
         </div>
       ) : (
         <>
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {/* These four are deliberately cross-mode, so they say so: the figures
+              that name one grader are in the "By grading mode" panel below. */}
+          <h2 className="mt-6 font-display text-lg font-semibold text-ink">{t("analytics.allModes")}</h2>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Stat
               label={t("analytics.stat.finished")}
               value={overall.attempts}
@@ -132,6 +140,39 @@ export default async function AnalyticsPage({
               tone="brand"
             />
           </div>
+
+          {/*
+            * The same attempts, split by grader. A simulator's pass and a live
+            * machine's are different claims, so the aggregate cards above state
+            * that they are cross-mode and the number that actually means something
+            * is the one inside a mode (docs/consolidation-audit.md §9/Q7).
+            */}
+          <section className="mt-8">
+            <h2 className="font-display text-lg font-semibold text-ink">{t("analytics.byMode")}</h2>
+            <p className="mt-1 text-xs text-ink-faint">{t("analytics.byModeHint")}</p>
+            <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {byMode.map((stat) => (
+                <Card key={stat.mode} className="p-5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold tracking-wide text-ink-faint uppercase">
+                      {t(`grading.mode.${stat.mode}`)}
+                    </span>
+                    <Badge tone={stat.mode === "lab" ? "brand" : "neutral"}>{stat.attempts}</Badge>
+                  </div>
+                  <p className="mt-2 font-display text-3xl font-semibold text-ink">
+                    {stat.averagePercent}
+                    <span className="text-xl text-ink-faint">%</span>
+                  </p>
+                  <p className="mt-1 text-xs text-ink-soft">
+                    {t("analytics.mode.summary", { passed: stat.passed, total: stat.attempts, mark: stat.passMark })}
+                  </p>
+                  <p className="mt-0.5 text-xs text-ink-faint">
+                    {t("analytics.mode.median", { time: formatDuration(stat.medianTimeSec) })}
+                  </p>
+                </Card>
+              ))}
+            </div>
+          </section>
 
           <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
             <section>

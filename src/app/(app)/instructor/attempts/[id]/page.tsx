@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { requireSession } from "@/lib/auth";
 import { attemptScopeFor } from "@/lib/attempt-scope";
 import { attemptPercent, ATTEMPT_STATUS_LABELS, coerceSubmittedState, toDefinition } from "@/lib/scenarios";
+import { normalizeGradingMode } from "@/lib/grading-mode";
 import { canRegrade } from "@/lib/grading-rules";
 import { gradeAttempt } from "@/lib/sim/grade";
 import { regradeAttempt } from "@/app/actions/instructor";
@@ -44,6 +45,8 @@ export default async function AttemptReviewPage({
   const definition = toDefinition(attempt.scenario);
   const percent = attemptPercent(attempt);
   const passed = percent >= attempt.scenario.passScore;
+  // Which grader produced these numbers (docs/consolidation-audit.md §7 Step 6).
+  const mode = normalizeGradingMode(attempt.gradingMode);
 
   // Re-derive the report live so the page shows what a re-grade would produce,
   // and whether the stored results are stale.
@@ -73,6 +76,7 @@ export default async function AttemptReviewPage({
             <Badge tone={passed ? "teal" : "amber"}>
               {passed ? t("attempts.badge.passed") : t("attempts.badge.below")}
             </Badge>
+            <Badge tone={mode === "lab" ? "brand" : "neutral"}>{t(`grading.mode.${mode}`)}</Badge>
             <span className="text-xs text-ink-faint">
               {attempt.user.name} · {attempt.user.email}
               {attempt.assignment?.cohort ? ` · ${attempt.assignment.cohort.name}` : ""}

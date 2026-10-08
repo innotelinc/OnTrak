@@ -52,11 +52,13 @@ test("csv: writing ends every line with CRLF", () => {
       gradedAt: new Date("2026-10-05T09:20:01.000Z"),
       timeSpentSec: 1200,
       certificateCode: "ONTRAK-ABCD-EF01-2345",
+      mode: "simulated",
     } satisfies ResultCsvRow,
   ]);
   const lines = text.split("\r\n");
   assert.equal(lines[0], (RESULTS_HEADERS as unknown as string[]).join(","));
-  assert.equal(lines[1], 'att_1,ada@acme.test,\"Ada, Countess\",s1,\"Fix the \"\"broken\"\" NIC\",LINUX,GRADED,8,10,80,yes,2026-10-05T09:00:00.000Z,2026-10-05T09:20:01.000Z,1200,ONTRAK-ABCD-EF01-2345');
+  assert.equal(lines[1], 'att_1,ada@acme.test,\"Ada, Countess\",s1,\"Fix the \"\"broken\"\" NIC\",LINUX,GRADED,8,10,80,yes,2026-10-05T09:00:00.000Z,2026-10-05T09:20:01.000Z,1200,ONTRAK-ABCD-EF01-2345,simulated');
+  assert.equal((RESULTS_HEADERS as unknown as string[]).at(-1), "mode", "the mode is appended, never inserted");
   assert.equal(lines.at(-1), "");
   assert.equal(text.split("\n").length, 3, "a trailing newline, and no more");
 });
@@ -77,12 +79,15 @@ test("csv: percent and the pass mark are computed, not copied", () => {
     gradedAt: null,
     timeSpentSec: 60,
     certificateCode: null,
+    mode: "lab",
   };
   const cells = resultCells(row);
   assert.equal(cells[9], 33);
   assert.equal(cells[10], "no");
   assert.equal(cells[12], "", "an unfinished attempt has no grading instant");
   assert.equal(cells[14], "");
+  assert.equal(cells[15], "lab", "the export states which grader produced the row");
+  assert.equal(cells.length, RESULTS_HEADERS.length);
   const zero: ResultCsvRow = { ...row, score: 0, maxScore: 0, passScore: 0 };
   assert.equal(resultCells(zero)[9], 0, "a scenario worth nothing is not 100%");
 });

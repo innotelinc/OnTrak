@@ -130,6 +130,10 @@ export const RESULTS_HEADERS = [
   "graded_at",
   "time_spent_sec",
   "certificate_code",
+  // Appended, never inserted, so a spreadsheet that reads by column name is
+  // unaffected and one that reads by position only loses the new field's value.
+  // A consumer sorting by score has to know which grader produced it (audit Q7).
+  "mode",
 ] as const;
 
 export interface ResultCsvRow {
@@ -147,6 +151,8 @@ export interface ResultCsvRow {
   gradedAt: Date | null;
   timeSpentSec: number;
   certificateCode: string | null;
+  /** `simulated` | `lab` — who graded the attempt. See `grading-mode.ts`. */
+  mode: string;
 }
 
 export function resultCells(row: ResultCsvRow): CsvCell[] {
@@ -167,6 +173,7 @@ export function resultCells(row: ResultCsvRow): CsvCell[] {
     row.gradedAt ? row.gradedAt.toISOString() : "",
     row.timeSpentSec,
     row.certificateCode ?? "",
+    row.mode,
   ];
 }
 

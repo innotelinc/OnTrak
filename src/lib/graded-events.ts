@@ -13,6 +13,7 @@
 
 import { certificateCode, type CompletionRecord } from "./credentials";
 import { readStoredCertificate, type StoredCertificate } from "./certificate-rules";
+import type { GradingMode } from "./grading-mode";
 import { prisma } from "./db";
 import { gradedEventInput, type GradedEventInput, type WebhookCheck } from "./webhook-rules";
 import { deliverGradedEvent } from "./webhook-delivery";
@@ -22,6 +23,8 @@ export interface GradedAttemptFacts {
   attempt: {
     id: string;
     status: string;
+    /** Who graded it: the simulator, or the lab's live machine. See `grading-mode.ts`. */
+    mode: GradingMode;
     score: number;
     maxScore: number;
     startedAt: Date;
@@ -57,6 +60,7 @@ export function gradedEventFor(facts: GradedAttemptFacts): GradedEventInput {
   return gradedEventInput({
     attemptId: attempt.id,
     status: attempt.status,
+    mode: attempt.mode,
     learner: facts.learner,
     scenario: facts.scenario,
     cohort: facts.cohort,

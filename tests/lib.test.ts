@@ -61,6 +61,7 @@ import { canDeleteScenario, parseScenarioMeta, slugify } from "../src/lib/scenar
 import {
   percentile,
   summariseAttempts,
+  summariseByMode,
   summariseByScenario,
   summariseChecks,
   trendByDay,
@@ -1109,6 +1110,37 @@ test("analytics: per-scenario rows keep the scenario's own pass mark", () => {
   );
   const marks = Object.fromEntries(stats.map((stat) => [stat.scenarioId, stat.passScore]));
   assert.deepEqual(marks, { s1: 55, s2: 85 });
+});
+
+test("analytics: figures are split by grading mode, never blended", () => {
+  // Two simulated attempts and one lab attempt. Blended, this reads as 70%
+  // passing; split, it says the simulator passed and the lab did not, which is
+  // the claim the dashboard has to make (docs/consolidation-audit.md §9/Q7).
+  const byMode = summariseByMode(
+    [
+      attemptRow({ id: "s1", mode: "simulated", score: 9, maxScore: 10 }),
+      attemptRow({ id: "s2", mode: "simulated", score: 8, maxScore: 10 }),
+      attemptRow({ id: "l1", mode: "lab", score: 4, maxScore: 10 }),
+    ],
+    {},
+  );
+
+  assert.deepEqual(byMode.map((stat) => stat.mode), ["simulated", "lab"], "the default mode is listed first");
+  assert.equal(byMode[0].attempts, 2);
+  assert.equal(byMode[0].averagePercent, 85);
+  assert.equal(byMode[0].passRate, 100);
+  assert.equal(byMode[1].attempts, 1);
+  assert.equal(byMode[1].averagePercent, 40);
+  assert.equal(byMode[1].passRate, 0);
+
+  // An absent or nonsense mode reads as simulated, never as the lab.
+  const defaulted = summariseByMode([attemptRow({ id: "d", mode: undefined }), attemptRow({ id: "x", mode: "real-vm" })], {});
+  assert.deepEqual(defaulted.map((stat) => stat.mode), ["simulated"]);
+  assert.equal(defaulted[0].attempts, 2);
+
+  // A lab with no finished attempts is left out rather than shown as a zero.
+  assert.deepEqual(summariseByMode([attemptRow({ mode: "simulated" })], {}).map((stat) => stat.mode), ["simulated"]);
+  assert.deepEqual(summariseByMode([], {}), []);
 });
 
 test("analytics: the daily trend fills gaps and ignores older rows", () => {

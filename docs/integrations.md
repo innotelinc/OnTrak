@@ -54,9 +54,15 @@ A `Cookie`-free, stateless read of a table that is still being written cannot us
 an offset — rows shift underneath it and records are skipped silently, which is
 exactly the bug a reconciliation feed must not have.
 
-Each result carries the learner, the scenario, the cohort, the score, the pass
-mark, per-check outcomes, and the certificate if one was issued. It is the same
-object the webhook's `data` field holds, so one parser serves both.
+Each result carries the learner, the scenario, the cohort, the mode that graded
+it, the score, the pass mark, per-check outcomes, and the certificate if one was
+issued. It is the same object the webhook's `data` field holds, so one parser
+serves both; the CSV export carries the same fields, with `mode` appended as the
+last column.
+
+`mode` is always present (`simulated` or `lab`) and never null. A simulated pass
+and a pass on a real machine were produced by different graders, so a consumer
+that aggregates scores has to keep them apart — the field is there so it can.
 
 ## A grading, as it happens
 
@@ -80,6 +86,7 @@ x-ontrak-signature: t=1759660802,sha256=6f4b…
   "data": {
     "attemptId": "cmumaw…",
     "status": "GRADED",
+    "mode": "simulated",
     "learner": { "id": "…", "email": "ada@acme.test", "name": "Ada" },
     "scenario": { "id": "…", "title": "Fix a broken NIC", "platform": "LINUX" },
     "cohort": { "id": "…", "name": "Autumn intake" },
