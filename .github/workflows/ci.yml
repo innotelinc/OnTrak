@@ -507,19 +507,62 @@ jobs:
           # Placeholders: this job checks wiring, not secrets. The prod overlays are
           # the ones that refuse to start without real values, and they are not used
           # here.
+          #
+          # `ONTRAK_API_TOKEN` is one of these placeholders because it is the value
+          # Sync's API refuses to start without — "this service can install packages
+          # across the Network, so it will not start without one" — and until this
+          # job waited for the whole stack, that refusal was a crash loop nothing
+          # looked at: the API restarted every few seconds behind a dashboard that
+          # answered, and the job stayed green.
           AUTH_SECRET=ci-only-not-a-production-secret-value \
           TIX_AUTH_SECRET=ci-only-not-a-production-secret-value \
+          ONTRAK_API_TOKEN=ci-only-not-a-production-secret-value \
             docker compose -f docker-compose.all.yml up -d --build
 
-          for _ in $(seq 1 90); do
-            if curl -fsS http://127.0.0.1:3000/login >/dev/null 2>&1 \
-              && curl -fsS http://127.0.0.1:3001/sign-in >/dev/null 2>&1 \
-              && curl -fsS http://127.0.0.1:8787/.well-known/openid-configuration >/dev/null 2>&1; then
-              echo "all three products are up"
-              break
-            fi
+          # Every product the family stack serves, at the address this job reaches it
+          # and the path it answers without a credential. Six products, seven
+          # services — Sync's dashboard and its API are separate processes and both
+          # have to be up — and all seven are waited for. The loop used to ask three
+          # of them, and the steps below only ever asked the same three, so a product
+          # that never came up left this job green.
+          #
+          # Each product answers `/health` with its own name. Sync's API is the one
+          # exception and keeps its liveness on `/api/health`, because everything it
+          # serves is under `/api`: `/health` there is a 404, which is exactly what a
+          # status light reports as an outage.
+          probes="training http://127.0.0.1:3000/health
+          tix http://127.0.0.1:3001/health
+          sentinel http://127.0.0.1:8787/health
+          portal http://127.0.0.1:3300/health
+          genie http://127.0.0.1:3400/health
+          sync-api http://127.0.0.1:8420/api/health
+          sync-web http://127.0.0.1:8421/health"
+
+          missing=""
+          for _ in $(seq 1 120); do
+            missing=""
+            while read -r name url; do
+              [ -n "$name" ] || continue
+              curl -fsS "$url" >/dev/null 2>&1 || missing="$missing $name"
+            done <<< "$probes"
+            if [ -z "$missing" ]; then break; fi
             sleep 4
           done
+          if [ -n "$missing" ]; then
+            echo "::error::still not answering after eight minutes:$missing"
+            docker compose -f docker-compose.all.yml ps -a
+            # A product that never answered has usually already said why: a crash
+            # loop prints its own traceback, and the loop above can only report its
+            # absence. `$missing` holds compose service names, so this asks for
+            # exactly the containers under suspicion.
+            for service in $missing; do
+              echo "::group::logs: $service"
+              docker compose -f docker-compose.all.yml logs --no-color --tail 40 "$service" || true
+              echo "::endgroup::"
+            done
+            exit 1
+          fi
+          echo "every product is up"
 
       - name: The training app answers
         run: curl -fsS -o /dev/null http://127.0.0.1:3000/login
@@ -527,8 +570,63 @@ jobs:
       - name: The desk answers
         run: curl -fsS -o /dev/null http://127.0.0.1:3001/sign-in
 
+      - name: The portal answers
+        run: curl -fsS http://127.0.0.1:3300/health | grep -q '"service":"ontrak-portal"'
+
+      - name: The code console answers
+        run: curl -fsS http://127.0.0.1:3400/health | grep -q '"service":"ontrak-genie"'
+
       - name: The provider answers discovery
         run: curl -fsS http://127.0.0.1:8787/.well-known/openid-configuration | grep -q authorization_endpoint
+
+      - name: The sync dashboard answers
+        run: curl -fsS http://127.0.0.1:8421/health | grep -q '"service":"ontrak-sync"'
+
+      - name: The sync API answers, without a credential
+        run: curl -fsS http://127.0.0.1:8420/api/health | grep -q '"status":"ok"'
+
+      # The dashboard draws a light per product by asking
+      # `<ONTRAK_<KEY>_INTERNAL_URL><health>` from *inside* the portal container, and
+      # this asks the same question the same way, with the same rule for what counts
+      # as an answer — 2xx, 3xx, 401 and 403 all mean "it is there". A product that
+      # answers this job but not the portal is a red light beside a healthy service,
+      # and a light nobody believes is worse than no light at all.
+      #
+      # Sync is why this is worth doing: the family stack pointed its probe at the API
+      # (`sync-api:8420`, whose liveness is `/api/health`) while the portal asked for
+      # `/health`, so the one product the stack runs as two services was reported as
+      # down on the page whose whole job is to say which products are up.
+      - name: The portal can reach every product it draws a light for
+        run: |
+          set -euo pipefail
+          # `</dev/null` on both exec calls is load-bearing: `docker exec -T` reads
+          # standard input, so without it the first product eats the rest of the
+          # list and the loop ends after one light — a check that reports "Training
+          # answers" and nothing else, which is the shape of check this whole step
+          # exists to replace.
+          while read -r name key path; do
+            [ -n "$name" ] || continue
+            base=$(docker compose -f docker-compose.all.yml exec -T portal-app \
+              printenv "ONTRAK_${key}_INTERNAL_URL" </dev/null)
+            if [ -z "$base" ]; then
+              echo "::error::the portal has no ONTRAK_${key}_INTERNAL_URL, so its ${name} light can never read up"
+              exit 1
+            fi
+            if docker compose -f docker-compose.all.yml exec -T portal-app \
+              node -e 'fetch(process.argv[1], { redirect: "manual" }).then(r => process.exit(r.ok || r.status === 401 || r.status === 403 || (r.status >= 300 && r.status < 400) ? 0 : 1)).catch(() => process.exit(1))' \
+              "${base}${path}" </dev/null; then
+              echo "${name}: ${base}${path} answers"
+            else
+              echo "::error::the portal cannot reach ${name} at ${base}${path}"
+              exit 1
+            fi
+          done <<'PROBES'
+          Training ITS /health
+          Tix TIX /health
+          Sentinel SENTINEL /health
+          Sync SYNC /health
+          Genie GENIE /health
+          PROBES
 
       # A registered client is the half of single sign-on that can silently not
       # happen: the callbacks are only registered when the family stack supplies

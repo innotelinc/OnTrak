@@ -474,6 +474,31 @@ Stated plainly, because the integration is **not** complete:
   guide's "What runs where" table is checked against the compose file now, by
   `tests/family-ops.test.ts`: a port it names that no family stack publishes is a failure
   rather than a reader's dead end at 3am.
+- **The family-stack job now waits for the family stack, and the portal's lights are
+  pointed at the products that answer them.** The one CI job that boots six products
+  together waited for three — training, tix and Sentinel — and printed "all three
+  products are up" while `docker-compose.all.yml` starts seven services, so the portal,
+  Genie and both halves of Sync were booted and never asked: a product that never came
+  up left the job green, which is the same empty green as a status light nobody asked.
+  All seven are waited for now, the four that had no check at all have one, and
+  `tests/family-stack.test.ts` refuses a service the family stack publishes a port for
+  that the job never waits for. Waiting for the whole stack also found what the
+  three-product wait had been hiding: **Sync's API has never started in CI.** It refuses
+  to boot without `ONTRAK_API_TOKEN` — deliberately, because it can install packages
+  across the Network — and the job supplied no placeholder, so the container
+  crash-looped from the first run while the dashboard beside it answered and the job
+  watched three other products. The job now supplies a placeholder token beside the
+  other two, and a product that fails to come up has its own logs printed at the point
+  of failure instead of only in the whole-stack dump. The same sweep found the way a
+  light can lie *inside* the stack: the portal asks
+  `<ONTRAK_<KEY>_INTERNAL_URL><health>` from inside its own
+  container, and the family stack aimed Sync's at its API (`sync-api:8420/health`, a
+  404 — the API answers only under `/api`) and never set Genie's at all, so a healthy
+  Sync and a healthy Genie were drawn as outages on the page whose whole job is to say
+  which products are up. Each light is now pointed at the product's own address (Sync's
+  dashboard answers `/health`; its API keeps `ONTRAK_SYNC_API_URL`), the job asks the
+  portal container the same question on every push, and the same test refuses a light
+  aimed at a service that does not answer the path the portal asks.
 - **Terminology is resolved** (§9/Q1). *OnTrak* names this repository and the family
   inside it, never one product; the product in `src/` is **OnTrak IT Support Training**,
   and the lab is **OnTrak Lab**.
