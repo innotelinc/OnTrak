@@ -1,0 +1,133 @@
+{
+  "id": "net-static-ip-conflict",
+  "title": "A contractor 'optimised' the network settings",
+  "category": "network",
+  "difficulty": 2,
+  "minutes": 25,
+  "pass_score": 80,
+  "tags": [
+    "ip",
+    "dhcp",
+    "gateway",
+    "routing",
+    "level-2"
+  ],
+  "requires_internet": true,
+  "ticket": {
+    "from": "Marcus Webb (Warehouse)",
+    "system": "WORKSTATION-117",
+    "priority": "High",
+    "channel": "Email",
+    "reported": "This morning",
+    "form": {
+      "title": "Incident write-up — addressing brought back to standard",
+      "intro": "Marcus has moved desks twice this month, which is exactly why the site bans fixed addresses. Record what you found and what you did about it.\n",
+      "weight": 30,
+      "fields": [
+        {
+          "id": "symptom",
+          "label": "Reported symptom, in your own words",
+          "kind": "textarea",
+          "weight": 15,
+          "min_words": 8,
+          "placeholder": "What did not work, and what still did."
+        },
+        {
+          "id": "root_cause",
+          "label": "Root cause",
+          "kind": "textarea",
+          "weight": 30,
+          "min_words": 6,
+          "any_of": [
+            "static",
+            "manual",
+            "hardcoded",
+            "hard-coded",
+            "fixed address",
+            "dhcp"
+          ],
+          "none_of": [
+            "reinstall windows",
+            "the cable"
+          ],
+          "hint": "Say where the address came from, and which setting made it so."
+        },
+        {
+          "id": "category",
+          "label": "Classification",
+          "kind": "select",
+          "weight": 15,
+          "options": [
+            "Network",
+            "Driver and device",
+            "Permissions",
+            "Software configuration",
+            "Account"
+          ],
+          "expected": "Network"
+        },
+        {
+          "id": "action",
+          "label": "What you changed",
+          "kind": "textarea",
+          "weight": 25,
+          "min_words": 8,
+          "any_of": [
+            "dhcp",
+            "automatic",
+            "ipconfig",
+            "release",
+            "renew",
+            "Set-NetIPInterface"
+          ],
+          "hint": "Which adapter, which setting, and what it is set to now."
+        },
+        {
+          "id": "verification",
+          "label": "How you verified it",
+          "kind": "textarea",
+          "weight": 15,
+          "min_words": 6,
+          "any_of": [
+            "gateway",
+            "10.20.0.1",
+            "ping",
+            "ipconfig",
+            "fileserver",
+            "reachable"
+          ],
+          "hint": "A machine with no route out still looks 'connected' — show the route."
+        }
+      ]
+    }
+  },
+  "briefing": "WORKSTATION-117 came back from an on-site visit with \"hardcoded network\nsettings for speed\". Nothing works now: no intranet, no shared drive, no web\nbrowsing. The machine does answer to a remote session, which is how you are\nconnected to it.\n\nThe site standard is simple: workstations take their address from DHCP, on the\n10.20.0.0/24 network, gateway 10.20.0.1. Warehouse machines are never given\nfixed addresses because they get moved between desks.\n\nFix the machine's addressing so it matches the standard, and prove you have\nworking connectivity after the change.\n",
+  "objectives": [
+    {
+      "id": "dhcp-enabled",
+      "text": "The adapter takes its address from DHCP again",
+      "weight": 30,
+      "critical": true,
+      "hint": "`Get-NetIPInterface -AddressFamily IPv4 | Select InterfaceAlias, Dhcp` shows which adapters are static."
+    },
+    {
+      "id": "gateway-reachable",
+      "text": "The default gateway answers",
+      "weight": 40,
+      "critical": true,
+      "hint": "A wrong gateway is not a wrong address — the machine can look 'connected' with no route out."
+    },
+    {
+      "id": "reach-intranet",
+      "text": "The file server is reachable by name and port",
+      "weight": 30,
+      "hint": "Fixing the address is not done until the service the user needs actually answers."
+    }
+  ],
+  "hints": [
+    "`ipconfig /all` and `Get-NetIPAddress` show the address; `Get-NetRoute` shows whether a default route exists.",
+    "The contractor left a static address and a gateway of 10.20.0.254. DHCP would supply 10.20.0.1.",
+    "`Set-NetIPInterface -Dhcp Enabled` then `ipconfig /renew`, or set the adapter to 'Obtain an IP address automatically'."
+  ],
+  "reset_notes": "Reset restores the static bogus address and gateway from the clean snapshot."
+}

@@ -317,12 +317,15 @@ with its state and link, driven by env (`ONTRAK_LAB_URL`, base-domain derivation
 (`tests/capabilities.test.ts`); no lab code runs. *Revert:* drop the entry; nothing
 else changed.
 
-**Step 3 — One identity for the lab.** *Artefacts:* OnTrak-dev's
-`ONTRAK_PORTAL__OIDC_*` pointed at the family IdP; a documented
-`instructor`/`student` → family-role mapping; the SQLite `users` row kept as a
-cache. *Verify:* sign in to the lab through the family provider; confirm a group
-change takes effect on the next sign-in (OnTrak-dev already re-reads the IdP per
-sign-in). *Revert:* point the OIDC vars back at Authentik directly.
+**Step 3 — One identity for the lab.** **(done — as documentation; operator-run)**
+*Artefacts:* `docs/lab-identity.md` — the operator steps to point the lab's OIDC at
+the family's provider (the exact `ONTRAK_PORTAL__<SECTION>__<KEY>` variables and the
+redirect-URI rule), the explicit `instructor`/`student` → family-role mapping, and that
+the lab's SQLite `users` row is a role/display **cache keyed by the IdP subject**, not a
+source of truth. OnTrak-dev is unchanged. *Verify:* an operator signs in to the lab
+through the family provider and confirms a group change takes effect on the next sign-in
+(OnTrak-dev re-reads the IdP per sign-in, `ontrak/oidc.py`); **not executed here — no lab
+host exists in this environment.** *Revert:* point the OIDC vars back at Authentik.
 
 **Step 4 — Surface a lab session from the family UI.** **(done)** *Artefacts:*
 `src/lib/lab-rules.ts` (a pure, tested reader of `ONTRAK_LAB_ENABLED` and
@@ -340,12 +343,20 @@ unset `ONTRAK_LAB_ENABLED`.
 today's data the link renders nowhere. The reader and the gate are the deliverable;
 the affordance becomes visible when a lab scenario exists and a lab is deployed.
 
-**Step 5 — Converge the scenario model, one direction.** *Artefacts:* a mapping
-spec plus a one-way importer (lab `scenario.yaml` → family `Scenario`), a migration
-for whatever columns it needs, and a round-trip test over the 14 lab scenarios.
-*Verify:* imported scenarios grade identically in the simulation where the simulator
-supports them, and are refused (not silently accepted) where it does not.
-*Revert:* delete the imported rows; the source files were never touched.
+**Step 5 — Converge the scenario model, one direction.** **(done)** *Artefacts:*
+`src/lib/lab-scenario-import.ts` — a pure, one-way importer from a parsed lab
+`scenario.yaml` to the family's row shape (platform, engine, difficulty, time limit,
+pass mark, tags incl. `lab`, the briefing as `description`/`brief`, and the objectives
+as the task list), with `exportLabScenario` for the return trip; one nullable column,
+`Scenario.labMeta` (+ `prisma/migrations/20261106000000_add_scenario_lab_meta`), for the
+facts the family's model has no column for (objective ids/weights/critical flags,
+category, workloads, lessons); and the 14 lab scenarios as JSON fixtures under
+`tests/fixtures/lab-scenarios/`. *Verify:* `tests/lab-scenario-import.test.ts` holds all
+14 to a field-for-field round trip, and asserts that the **simulator refuses every one**
+— the imported definition carries no checks (the lab grades against a live machine, and
+nothing in the YAML says which live condition an objective tests), so
+`validateDefinition` declines it rather than letting it pass as simulated. *Revert:*
+delete the imported rows; the source files were never touched.
 
 **Step 6 — Evidence at the boundary.** *Artefacts:* lab session completion (and
 enforcement-relevant events) appended to the family evidence chain with the mode
@@ -370,14 +381,17 @@ Stated plainly, because the integration is **not** complete:
 
 - **No OnTrak-dev code has been ported or merged.** Not one Python module has been
   re-implemented in TypeScript, and no lab route is served by the family stack.
-- **No database migration has been written for OnTrak-dev.** Step 5's migration is
-  planned, not authored; OnTrak-dev keeps its results in SQLite and no schema change
-  exists in either repository to reconcile them.
-- **Steps 1, 2 and 4 are real; Steps 3, 5, 6 and 7 are planned.** The lab is a
-  catalogue entry, a tile, and a gated "start a real machine" link on a `lab`-tagged
-  scenario — but **no scenario is tagged yet, no lab is deployed, and nothing is
-  graded through it.** Step 3 (one identity for the lab) is configuration on
-  OnTrak-dev, which must stay unchanged, so it is left as an operator step.
+- **Nothing has been migrated in OnTrak-dev.** Its schema is created on first use and
+  this work adds no change there. Step 5 adds one nullable column on *this* side
+  (`Scenario.labMeta`, with its migration), and no attempt is made to reconcile the two
+  databases: the family's Postgres and the lab's SQLite stay separate stores (§6/C4).
+- **Steps 1–5 are real; Steps 6 and 7 are planned.** The lab is a catalogue entry, a
+  tile, a gated "start a real machine" link on a `lab`-tagged scenario, a documented
+  identity mapping, and an importer that reads the lab's 14 scenarios into the family's
+  shape. **But no imported scenario has been written to a database, no scenario is
+  tagged `lab` in a live deployment, no lab is deployed, and nothing is graded through
+  it.** Step 3 is documentation for an operator (OnTrak-dev must stay unchanged); the
+  lab identity has not been exercised here.
 - **OnTrak-dev has not been modified**, as required. Its `README.md` still describes
   a standalone range; its portal still signs in only through Authentik and only as
   `instructor`/`student`.

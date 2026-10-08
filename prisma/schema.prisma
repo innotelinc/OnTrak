@@ -194,6 +194,11 @@ model Scenario {
   tags         String[]   @default([])
   /// The full ScenarioDefinition JSON (see src/lib/sim/types.ts).
   definition   Json
+  /// OnTrak-dev provenance, for a scenario imported from the lab (docs/consolidation-audit.md
+  /// §7 Step 5): objective ids and weights, the category, the workloads and lessons — none of
+  /// which has a column here, and all of which a lab round-trip needs. Null for every scenario
+  /// authored in this app. See src/lib/lab-scenario-import.ts.
+  labMeta      Json?
   authorId     String
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
