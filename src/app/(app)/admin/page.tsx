@@ -203,13 +203,19 @@ export default async function AdminHome({
                 <h3 className="font-display text-base font-semibold text-ink">
                   {t(`admin.capability.${entry.id}.name`)}
                 </h3>
-                <Badge tone={entry.url === null ? "danger" : entry.named ? "teal" : "neutral"}>
+                {/* `off` is a state of its own: a product this deployment does not run
+                    is a normal thing to see, not the red of one that was refused. */}
+                <Badge
+                  tone={entry.off ? "neutral" : entry.url === null ? "danger" : entry.named ? "teal" : "neutral"}
+                >
                   {t(
-                    entry.url === null
-                      ? "admin.capability.state.unreachable"
-                      : entry.named
-                        ? "admin.capability.state.named"
-                        : "admin.capability.state.family",
+                    entry.off
+                      ? "admin.capability.state.off"
+                      : entry.url === null
+                        ? "admin.capability.state.unreachable"
+                        : entry.named
+                          ? "admin.capability.state.named"
+                          : "admin.capability.state.family",
                   )}
                 </Badge>
               </div>

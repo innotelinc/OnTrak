@@ -34,6 +34,9 @@ test("capabilities: with nothing configured, each is reached by the family's own
   const found = byId({});
 
   for (const id of ORDER) {
+    // The lab is the one exception, and has its own test below: it is a peer deployment
+    // rather than a product at a name, so the family's naming is not an address for it.
+    if (id === "lab") continue;
     const entry = found.get(id)!;
     assert.equal(entry.named, false, `${id} was never named in this environment`);
     assert.equal(entry.note, null);
@@ -44,7 +47,6 @@ test("capabilities: with nothing configured, each is reached by the family's own
   assert.equal(found.get("tix")!.url, "https://tix.ontrak.innotel.us");
   assert.equal(found.get("sync")!.url, "https://sync.ontrak.innotel.us");
   assert.equal(found.get("genie")!.url, "https://genie.ontrak.innotel.us");
-  assert.equal(found.get("lab")!.url, "https://lab.ontrak.innotel.us");
   // Sentinel is reached at its control center, not at the bare host.
   assert.equal(found.get("sentinel")!.url, `https://sentinel.ontrak.innotel.us${SENTINEL_CONTROL_CENTER_PATH}`);
 });
@@ -53,7 +55,6 @@ test("capabilities: a base domain and scheme follow the deployment", () => {
   const found = byId({ ONTRAK_PORTAL_BASE_DOMAIN: "lab.example.test", ONTRAK_PORTAL_SECURE: "false" });
   // A family served over plain HTTP must link to plain HTTP.
   assert.equal(found.get("tix")!.url, "http://tix.lab.example.test");
-  assert.equal(found.get("lab")!.url, "http://lab.lab.example.test");
   // A trailing dot is the same name as without it.
   const dotted = byId({ ONTRAK_PORTAL_BASE_DOMAIN: "lab.example.test." });
   assert.equal(dotted.get("tix")!.url, "https://tix.lab.example.test");
@@ -62,7 +63,8 @@ test("capabilities: a base domain and scheme follow the deployment", () => {
 test("capabilities: an explicit URL wins, is marked named, and loses its trailing slash", () => {
   const found = byId({
     ONTRAK_TIX_BASE_URL: "https://desk.internal.test/",
-    ONTRAK_LAB_URL: "http://10.0.0.5:8080",
+    ONTRAK_LAB_ENABLED: "on",
+    ONTRAK_LAB_URL: "http://10.0.0.5:8080/",
   });
   assert.equal(found.get("tix")!.url, "https://desk.internal.test");
   assert.equal(found.get("tix")!.named, true);
@@ -70,6 +72,43 @@ test("capabilities: an explicit URL wins, is marked named, and loses its trailin
   assert.equal(found.get("lab")!.named, true);
   // The ones not named are still on the family's names.
   assert.equal(found.get("genie")!.named, false);
+});
+
+test("capabilities: the lab is off, not linked, until the deployment asks for one", () => {
+  // The lab is OnTrak-dev on its own host, so the family's naming convention is not an
+  // address for it: without both facts — the deployment wants a lab, and here is where —
+  // there is nothing to link to. A link to `lab.<base domain>` in a deployment with no lab
+  // is precisely the "invents a link that does not resolve" failure this list is meant to
+  // avoid, and it is the second reader of `ONTRAK_LAB_URL` this file now delegates away.
+  const off = byId({});
+  assert.equal(off.get("lab")!.url, null);
+  assert.equal(off.get("lab")!.off, true);
+  assert.equal(off.get("lab")!.named, false);
+  assert.match(off.get("lab")!.note!, /ONTRAK_LAB_ENABLED is not set/);
+
+  // …and the row stays, because a product missing from the list is a product nobody can
+  // reach from here — which is why the lab is marked rather than dropped.
+  assert.deepEqual(capabilities({}).map((entry) => entry.id), ORDER);
+
+  // An address alone is not an invitation: an operator who has set one but not asked for
+  // the lab has said where a lab would be, not that there is one.
+  const addressOnly = byId({ ONTRAK_LAB_URL: "https://lab.example.test" });
+  assert.equal(addressOnly.get("lab")!.url, null);
+  assert.equal(addressOnly.get("lab")!.off, true);
+
+  // On, but nowhere: a fault with something to fix, reported the way Sentinel reports a
+  // refused address rather than as a family link that would be a dead end.
+  const nowhere = byId({ ONTRAK_LAB_ENABLED: "on" });
+  assert.equal(nowhere.get("lab")!.url, null);
+  assert.equal(nowhere.get("lab")!.off, undefined);
+  assert.match(nowhere.get("lab")!.note!, /not set/);
+
+  // On and located: the origin the operator gave, which is what the reader returns.
+  const located = byId({ ONTRAK_LAB_ENABLED: "1", ONTRAK_LAB_URL: "http://10.0.0.5:8080/" });
+  assert.equal(located.get("lab")!.url, "http://10.0.0.5:8080");
+  assert.equal(located.get("lab")!.named, true);
+  assert.equal(located.get("lab")!.off, undefined);
+  assert.equal(located.get("lab")!.note, null);
 });
 
 test("capabilities: a quoted value is unquoted, the way .env's three readers half-agree", () => {
