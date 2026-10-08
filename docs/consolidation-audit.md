@@ -499,6 +499,18 @@ Stated plainly, because the integration is **not** complete:
   `ontrak-portal/tests/portal-rules.test.ts` for the README, which documents the catalogue
   itself and so includes it. The guide's table now says which of the two it is, so a
   reader comparing them does not have to guess why one lists a product the other does not.
+- **The first-sign-in table is held to the seeds now.** Which address, which account,
+  which password, which join code — that table is the one page an operator reads on the
+  first morning, and it was the last table in the guide held to nothing, in a document
+  whose every other list is compared against the file that decides it. It matters more
+  than the rest: a stale row here is a room that cannot sign in, and nobody reading it
+  can tell a wrong password from a wrong server. `tests/family-ops.test.ts` reads the
+  demo accounts, the default password and the join code out of `prisma/seed.ts` and
+  `src/lib/seed-rules.ts`, the desk's accounts and password out of
+  `ontrak-tix/prisma/seed.ts`, and refuses an account the seed does not create; it also
+  refuses Sync's row unless the phrase it tells an operator to grep for is one
+  `ontrak-sync/backend/ontrak/api.py` actually prints. A guide may name fewer accounts
+  than a seed creates — it may not name one that does not exist.
 - **The family-stack job now waits for the family stack, and the portal's lights are
   pointed at the products that answer them.** The one CI job that boots six products
   together waited for three — training, tix and Sentinel — and printed "all three

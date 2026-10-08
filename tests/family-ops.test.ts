@@ -10,7 +10,7 @@
  * down. This is the same failure the service map had (see `service-map.test.ts`),
  * one layer down: a document that describes a deployment has to describe *this* one.
  *
- * So four claims are checked mechanically, each settled by files:
+ * So five claims are checked mechanically, each settled by files:
  *
  *  * every port in the guide's "What runs where" table is a port the family compose
  *    publishes;
@@ -25,7 +25,10 @@
  *    gives that role, because that table is where an operator decides which group to put
  *    somebody in — and it had drifted too: `SYSADMIN` reaches Genie, and the row said
  *    "Tix, Sentinel, Sync", four pages above a sentence saying sysadmins reach
- *    everything.
+ *    everything;
+ *  * the accounts, passwords and join code its first-sign-in table names are the ones
+ *    the seeds create — the table an operator reads on the first morning, where a stale
+ *    row is a room that cannot sign in.
  *
  * What it does not check is which product *should* be in the table, or whether a
  * product is worth listing: those are decisions, and the audit records them — §9/Q4
@@ -190,6 +193,24 @@ function guideRoleTable(): { group: string; role: string; belongsIn: string }[] 
     });
 }
 
+/**
+ * The guide's first-sign-in table, one raw line per product.
+ *
+ * Whole lines rather than cells, because the Sync row carries a pipe of its own
+ * (`docker logs ontrak-sync-api | grep …`): splitting on `|` would shear that row in
+ * two, and the phrase it tells an operator to grep for is most of the check.
+ */
+function firstSignIn(): Map<string, string> {
+  const [, afterHeading = ""] = read(GUIDE).split(/^## 6a\. Signing in for the first time\s*$/m);
+  const [section = ""] = afterHeading.split(/^## /m);
+  const rows = new Map<string, string>();
+  for (const line of section.split("\n")) {
+    const product = /^\|\s*([A-Za-z]+)/.exec(line)?.[1];
+    if (product) rows.set(product.toLowerCase(), line);
+  }
+  return rows;
+}
+
 test("family-ops: the guide and the compose file it describes were both read", () => {
   // A parser that silently found nothing would pass the check below by defining it
   // away, so both sides have to be shown to have content first.
@@ -297,6 +318,68 @@ test("family-ops: the guide's role table is the catalogue's answer, role by role
     (role) => !rows.some((row) => row.role === role),
   );
   if (absent.length > 0) problems.push(`no row for ${absent.join(", ")}`);
+
+  assert.deepEqual(problems, [], problems.join("\n"));
+});
+
+test("family-ops: the first-sign-in table names accounts the seeds actually create", () => {
+  const rows = firstSignIn();
+
+  // The training app's demo accounts, its default password and its join code, all read
+  // from the files that create them rather than repeated here.
+  const seed = read(path.join("prisma", "seed.ts"));
+  const seeded = new Set(
+    [...seed.matchAll(/"([a-z0-9._%+-]+@ontrak\.local)"/g)].map((match) => match[1]),
+  );
+  const seedPassword =
+    /DEMO_PASSWORD_DEFAULT = "([^"]+)"/.exec(read(path.join("src", "lib", "seed-rules.ts")))?.[1] ?? "";
+  const joinCode = /joinCode: "([^"]+)"/.exec(seed)?.[1] ?? "";
+  assert.ok(seeded.size >= 3, `the training seed yielded ${seeded.size} demo addresses`);
+  assert.ok(seedPassword !== "", "the training app's default demo password was not read");
+  assert.ok(joinCode !== "", "the training seed's join code was not read");
+
+  // The desk's demo accounts and password, from the desk's own seed.
+  const deskSeed = read(path.join("ontrak-tix", "prisma", "seed.ts"));
+  const deskSeeded = new Set(
+    [...deskSeed.matchAll(/email: "([^"]+@acme\.test)"/g)].map((match) => match[1]),
+  );
+  const deskPassword = /const DEMO_PASSWORD = "([^"]+)"/.exec(deskSeed)?.[1] ?? "";
+  assert.ok(deskSeeded.size >= 3, `the desk's seed yielded ${deskSeeded.size} demo addresses`);
+  assert.ok(deskPassword !== "", "the desk's demo password was not read");
+
+  const training = rows.get("training") ?? "";
+  const tix = rows.get("tix") ?? "";
+  const sync = rows.get("sync") ?? "";
+  assert.ok(training !== "" && tix !== "" && sync !== "", "the guide's first-sign-in table was not read");
+
+  const problems: string[] = [];
+
+  // A guide may name fewer accounts than a seed creates, but never one it does not.
+  for (const email of training.match(/[a-z0-9._%+-]+@ontrak\.local/g) ?? []) {
+    if (!seeded.has(email)) problems.push(`Training names ${email}, which the seed does not create`);
+  }
+  // Every literal in this guide is a backticked token, and matching the token rather
+  // than the bare text is what keeps `ChangeMe1234` from counting as `ChangeMe123`: a
+  // substring test calls a drifted password correct because the old one is inside it.
+  if (!training.includes(`\`${seedPassword}\``)) {
+    problems.push(`Training does not state the seed's default password (${seedPassword}), so a first sign-in fails`);
+  }
+  if (!training.includes(`\`${joinCode}\``)) problems.push(`Training does not state the seed's join code (${joinCode})`);
+
+  for (const email of tix.match(/[a-z0-9._%+-]+@acme\.test/g) ?? []) {
+    if (!deskSeeded.has(email)) problems.push(`Tix names ${email}, which the desk's seed does not create`);
+  }
+  if (!tix.includes(`\`${deskPassword}\``)) {
+    problems.push(`Tix does not state the desk's demo password (${deskPassword})`);
+  }
+
+  // Sync's first sign-in is a password printed once, so the guide tells an operator to
+  // grep for a phrase — and the API has to be printing it.
+  const phrase = /grep '([^']+)'/.exec(sync)?.[1] ?? "";
+  assert.ok(phrase !== "", "the Sync row no longer names the phrase to grep for");
+  if (!read(path.join("ontrak-sync", "backend", "ontrak", "api.py")).includes(phrase)) {
+    problems.push(`Sync tells an operator to grep for "${phrase}", which the API never prints`);
+  }
 
   assert.deepEqual(problems, [], problems.join("\n"));
 });
