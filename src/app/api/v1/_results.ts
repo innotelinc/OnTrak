@@ -18,6 +18,7 @@ import type { AttemptStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { certificateCode } from "@/lib/credentials";
 import { readStoredCertificate } from "@/lib/certificates";
+import { normalizeGradingMode } from "@/lib/grading-mode";
 import type { ResultCsvRow } from "@/lib/csv-rules";
 
 export const DEFAULT_LIMIT = 100;
@@ -132,6 +133,9 @@ export function toResultJson(attempt: AttemptRow) {
   return {
     attemptId: attempt.id,
     status: attempt.status,
+    // Who graded it. Always present, never null: a consumer comparing scores
+    // must be able to tell a simulator's pass from a live machine's (§7 Step 6).
+    mode: normalizeGradingMode(attempt.gradingMode),
     learner: { id: attempt.user.id, email: attempt.user.email, name: attempt.user.name },
     scenario: {
       id: attempt.scenario.id,
@@ -176,5 +180,6 @@ export function toCsvRow(attempt: AttemptRow): ResultCsvRow {
     gradedAt: attempt.gradedAt,
     timeSpentSec: attempt.timeSpentSec,
     certificateCode: certificateOf(attempt)?.code ?? null,
+    mode: normalizeGradingMode(attempt.gradingMode),
   };
 }

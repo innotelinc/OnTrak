@@ -16,6 +16,7 @@ import { test } from "node:test";
 import {
   MAX_CHECKS,
   SIGNATURE_TOLERANCE_SEC,
+  WEBHOOK_EVENT_VERSION,
   buildGradedEvent,
   eventId,
   gradedEventInput,
@@ -80,6 +81,21 @@ test("webhook: the body is canonical, so the same fact signs the same way", () =
   assert.equal(parsed?.event, "attempt.graded");
   assert.equal(parsed?.version, 1);
   assert.equal(parsed?.data.attemptId, "att_1");
+  assert.equal(parsed?.data.mode, "simulated", "a fact with no stated mode was graded by the simulator");
+});
+
+test("webhook: the payload always states which mode graded the attempt", () => {
+  // Additive on purpose: a consumer must be able to read `mode`, but a change of
+  // that shape does not move the version it already understands.
+  assert.equal(WEBHOOK_EVENT_VERSION, 1);
+
+  assert.equal(gradedEventInput(SOURCE).mode, "simulated");
+  assert.equal(gradedEventInput({ ...SOURCE, mode: "lab" }).mode, "lab");
+  // An unrecognised value is not promoted to the stronger claim.
+  assert.equal(gradedEventInput({ ...SOURCE, mode: "real-vm" }).mode, "simulated");
+
+  const lab = buildGradedEvent(gradedEventInput({ ...SOURCE, mode: "lab" }), "2026-10-05T09:20:02.000Z");
+  assert.equal(readWebhookEvent(JSON.parse(webhookBody(lab)))?.data.mode, "lab");
 });
 
 test("webhook: reading a body that is not an event gives nothing back", () => {

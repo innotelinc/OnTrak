@@ -8,6 +8,7 @@
  * fixed fixtures.
  */
 
+import { GRADING_MODES, normalizeGradingMode, type GradingMode } from "./grading-mode";
 import { DEFAULT_PASS_SCORE } from "./scenario-rules";
 
 export interface CheckResultRow {
@@ -25,6 +26,8 @@ export interface AttemptRow {
   timeSpentSec: number;
   score: number;
   maxScore: number;
+  /** `simulated` | `lab`; absent reads as `simulated`. See `grading-mode.ts`. */
+  mode?: string | null;
 }
 
 export interface CheckStat {
@@ -63,6 +66,38 @@ export interface ScenarioStat {
   passRate: number;
   /** This scenario's own pass mark, so the row can show the bar it used. */
   passScore: number;
+}
+
+/** One grading mode's attempt statistics, so a figure can state its mode (audit Q7). */
+export interface ModeStat extends AttemptStat {
+  mode: GradingMode;
+}
+
+/**
+ * The same attempt statistics, split by grading mode.
+ *
+ * A simulated pass and a lab pass are not the same claim, so the dashboard must
+ * not average them into one number without saying so (docs/consolidation-audit.md
+ * §9/Q7). Only the modes that actually appear are returned, in the canonical
+ * order (`simulated` first), and the empty list is the honest answer when there
+ * are no finished attempts.
+ */
+export function summariseByMode(
+  rows: readonly AttemptRow[],
+  passScoreByScenario: Record<string, number> = {},
+): ModeStat[] {
+  const byMode = new Map<GradingMode, AttemptRow[]>();
+  for (const row of rows) {
+    const mode = normalizeGradingMode(row.mode);
+    const list = byMode.get(mode);
+    if (list) list.push(row);
+    else byMode.set(mode, [row]);
+  }
+
+  return GRADING_MODES.filter((mode) => byMode.has(mode)).map((mode) => ({
+    mode,
+    ...summariseAttempts(byMode.get(mode)!, passScoreByScenario),
+  }));
 }
 
 /** Per-scenario rollup, busiest first. */

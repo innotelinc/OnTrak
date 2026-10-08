@@ -138,6 +138,16 @@ export const es: Messages = {
   "analytics.byScenario": "Por escenario",
   "analytics.hardest": "Comprobaciones más difíciles",
   "analytics.hardestHint": "Primero la tasa de aprobación más baja: normalmente donde el enunciado necesita una pista.",
+  "analytics.allModes": "Todos los modos combinados",
+  "analytics.byMode": "Por modo de calificación",
+  "analytics.byModeHint":
+    "Aprobar en el simulador y aprobar en una máquina real no son la misma afirmación, así que cada cifra aquí indica quién la calificó.",
+  "analytics.mode.summary": "{passed} de {total} aprobados, frente a un umbral del {mark}%",
+  "analytics.mode.median": "mediana {time} en la tarea",
+
+  // Modo de calificación (quién produjo la puntuación)
+  "grading.mode.simulated": "Simulado",
+  "grading.mode.lab": "Máquina real (laboratorio)",
 
   "admin.eyebrow": "Administración",
   "admin.title": "Sala de control",

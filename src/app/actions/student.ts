@@ -19,6 +19,7 @@ import { disposeSession, runSandboxCommand } from "@/lib/sim/sandbox";
 import { recordAudit } from "@/lib/audit";
 import { certificatePatchFor, readStoredCertificate } from "@/lib/certificates";
 import { announceGraded, checksFor, storedCertificateOf } from "@/lib/graded-events";
+import { gradingModeForTags } from "@/lib/grading-mode";
 import { clearLtiLaunch, readLtiLaunch } from "@/lib/lti-session";
 import type { Prisma } from "@prisma/client";
 import type { SandboxCommandResponse } from "@/lib/sim/drivers/proxy";
@@ -221,6 +222,10 @@ export async function submitAttempt(formData: FormData): Promise<void> {
     const definition = toDefinition(attempt.scenario);
     const state = coerceSubmittedState(attempt.snapshot, definition);
     const report = gradeAttempt(definition, state, attempt.scenario.passScore);
+    // The mode the task was graded in, recorded on the evidence so a report can
+    // never add a simulator's pass to a live machine's (docs/consolidation-audit.md
+    // §7 Step 6). Read from the task's own tag, the same marker the student page uses.
+    const mode = gradingModeForTags(attempt.scenario.tags);
     // The server owns the clock: whatever the client's timer believed, an
     // attempt closed after `expiresAt` is expired. `reason` only records how
     // it ended (audit + the report's wording), never whether it ran out of time.
@@ -267,6 +272,7 @@ export async function submitAttempt(formData: FormData): Promise<void> {
           score: report.score,
           maxScore: report.maxScore,
           timeSpentSec: Math.round((gradedAt.getTime() - attempt.startedAt.getTime()) / 1000),
+          gradingMode: mode,
           ...certificate,
         },
       }),
@@ -277,13 +283,17 @@ export async function submitAttempt(formData: FormData): Promise<void> {
       action: "attempt.submit",
       targetType: "attempt",
       targetId: attemptId,
-      detail: { score: report.score, maxScore: report.maxScore, reason, timedOut: expired },
+      // `mode` is in the audit detail as well as the column and the payload: the
+      // audit log is the family's append-only evidence chain (§6/C4), and a review
+      // that reads the chain must see which grader a score came from.
+      detail: { score: report.score, maxScore: report.maxScore, reason, timedOut: expired, mode },
     });
 
     await announceGraded({
       attempt: {
         id: attemptId,
         status: expired ? "EXPIRED" : "GRADED",
+        mode,
         score: report.score,
         maxScore: report.maxScore,
         startedAt: attempt.startedAt,

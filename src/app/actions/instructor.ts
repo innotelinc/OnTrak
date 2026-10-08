@@ -15,6 +15,7 @@ import { canRegrade, regradedStatus } from "@/lib/grading-rules";
 import { certificateAction, readStoredCertificate } from "@/lib/certificate-rules";
 import { attemptPassed, certificatePatchFor } from "@/lib/certificates";
 import { announceGraded, checksFor, storedCertificateOf } from "@/lib/graded-events";
+import { gradingModeForTags } from "@/lib/grading-mode";
 import type { ScenarioDefinition } from "@/lib/sim/types";
 
 async function requireStaff() {
@@ -463,6 +464,10 @@ export async function regradeAttempt(formData: FormData): Promise<void> {
   const definition = toDefinition(attempt.scenario);
   const state = coerceSubmittedState(attempt.snapshot, definition);
   const report = gradeAttempt(definition, state, attempt.scenario.passScore);
+  // A re-grade is the same task graded again, so it keeps the task's mode and
+  // re-publishes it: the re-graded evidence must state its grader just as the
+  // original did (docs/consolidation-audit.md §7 Step 6).
+  const mode = gradingModeForTags(attempt.scenario.tags);
 
   // A re-grade moves the score, but it must not rewrite a certificate the
   // learner already holds: an existing record is kept as issued, and one is
@@ -505,6 +510,7 @@ export async function regradeAttempt(formData: FormData): Promise<void> {
         maxScore: report.maxScore,
         gradedAt,
         status: regradedStatus(attempt.status),
+        gradingMode: mode,
         ...certificate,
       },
     }),
@@ -515,7 +521,7 @@ export async function regradeAttempt(formData: FormData): Promise<void> {
     action: "attempt.regrade",
     targetType: "attempt",
     targetId: attemptId,
-    detail: { score: report.score, maxScore: report.maxScore, certificate: action },
+    detail: { score: report.score, maxScore: report.maxScore, certificate: action, mode },
   });
 
   // A re-grade is its own grading fact: it is a second event, not a correction of
@@ -525,6 +531,7 @@ export async function regradeAttempt(formData: FormData): Promise<void> {
     attempt: {
       id: attemptId,
       status: regradedStatus(attempt.status),
+      mode,
       score: report.score,
       maxScore: report.maxScore,
       startedAt: attempt.startedAt,

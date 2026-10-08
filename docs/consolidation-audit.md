@@ -257,6 +257,16 @@ stays the default and needs no host, the lab is opt-in per scenario and per
 deployment. Grading evidence records which mode produced it, because "passed" means
 something different in each.
 
+*How it is recorded (Step 6).* The mode is a **column on the attempt**
+(`Attempt.gradingMode`), written when the attempt is graded and read back by every
+surface that reports a score — never re-derived from the scenario's tags at read
+time, so a scenario retagged later cannot rewrite what past evidence says (the same
+reason a certificate is stored rather than recomputed). The task's own marker is the
+`lab` tag Steps 4–5 already use (`src/lib/grading-mode.ts`); a task without it is the
+simulator's. An absent or unrecognised value reads back as `simulated`, which is the
+weaker claim and therefore the safe default for an assurance record. This is what
+answers **Q2** and **Q3** in §9.
+
 **C3 — Two scenario schemas cannot be one without losing something.** ITS scenarios
 are rows with software inventory and i18n; OnTrak-dev's are files with guest scripts
 and a generated-from-primitives provenance. A single table that held both would be a
@@ -358,16 +368,41 @@ nothing in the YAML says which live condition an objective tests), so
 `validateDefinition` declines it rather than letting it pass as simulated. *Revert:*
 delete the imported rows; the source files were never touched.
 
-**Step 6 — Evidence at the boundary.** *Artefacts:* lab session completion (and
-enforcement-relevant events) appended to the family evidence chain with the mode
-recorded. *Verify:* a completed lab session appears in the chain and in a signed
-assurance packet. *Revert:* stop the append; existing rows remain (append-only).
+**Step 6 — Evidence at the boundary.** **(done)** *Artefacts:* `src/lib/grading-mode.ts`
+(the two modes, the task's `lab`-tag rule, and the default-to-`simulated` coercion);
+the mode is written to `Attempt.gradingMode` (+ migration
+`20261107000000_add_attempt_grading_mode`: one nullable TEXT column) at grading time,
+carried on the `attempt.submit` and `attempt.regrade` entries in the family's
+append-only audit chain (§6/C4), added to the graded-event payload (`GradedEventInput.mode`
+— an additive field, so `WEBHOOK_EVENT_VERSION` stays 1 and an existing consumer is
+unaffected), and stated on the results API JSON and CSV (`mode`). *Verify:*
+`tests/grading-mode.test.ts` pins the tag rule and the default;
+the webhook suite asserts every payload carries a mode and that an unstated or
+unrecognised one is `simulated`; the CSV suite asserts the column is appended.
+*Revert:* the column is nullable and every reader defaults to `simulated`, so
+dropping it restores the previous behaviour with no backfill.
 
-**Step 7 — Reporting and instructor convergence.** *Artefacts:* the lab's results
-and CSV surface folded into the Next.js instructor view; OnTrak-dev's own portal
-reduced to the session + console surface. *Verify:* the instructor view shows both
-modes from one query; the lab portal no longer offers a competing dashboard.
-*Revert:* the lab portal is unchanged until this step, so reverting restores it.
+  *Caveat, stated plainly:* **no lab is deployed in this environment**, so `lab` is
+written only where a lab-completion boundary would put it, and no such record exists
+to show. What is delivered — and tested — is the field, its derivation from the
+task's own tag, and every reader that now states it. The boundary that accepts a
+lab's completion and writes that row is OnTrak-dev's to drive and is not implemented.
+
+**Step 7 — Reporting and instructor convergence.** **(done on this side; the lab's own
+portal is untouched)** *Artefacts:* `summariseByMode` in `src/lib/analytics-rules.ts`
+splits the same attempts by grader, and `/instructor/analytics` renders a "By grading
+mode" panel where each figure names the mode that produced it (audit Q7) instead of
+blending a simulator's pass with a live machine's; `/instructor/attempts` and the
+attempt review show a mode badge on every row; `mode` is on `/api/v1/results` and its
+CSV export. *Verify:* `tests/lib.test.ts` holds two simulated attempts and one lab
+attempt to *not* blend (the aggregate would read 70% while the split reads
+simulator-100%/lab-0%); the CSV suite holds the appended column. *Revert:* drop the
+panel and the column; the aggregate cards are unchanged.
+
+  *Caveat, stated plainly:* reducing OnTrak-dev's own portal to a session + console
+surface is a change **inside OnTrak-dev**, which this work must not make, so the lab
+portal still offers its own dashboard. The convergence here is one-directional: the
+family's instructor view is ready to show lab results the moment a lab reports them.
 
 **Not in this plan, deliberately:** porting OnTrak-dev to TypeScript; merging the
 two databases; deleting either scenario representation; retiring the lab's
@@ -382,16 +417,21 @@ Stated plainly, because the integration is **not** complete:
 - **No OnTrak-dev code has been ported or merged.** Not one Python module has been
   re-implemented in TypeScript, and no lab route is served by the family stack.
 - **Nothing has been migrated in OnTrak-dev.** Its schema is created on first use and
-  this work adds no change there. Step 5 adds one nullable column on *this* side
-  (`Scenario.labMeta`, with its migration), and no attempt is made to reconcile the two
-  databases: the family's Postgres and the lab's SQLite stay separate stores (§6/C4).
-- **Steps 1–5 are real; Steps 6 and 7 are planned.** The lab is a catalogue entry, a
+  this work adds no change there. Steps 5–6 add two nullable columns on *this* side
+  (`Scenario.labMeta` and `Attempt.gradingMode`, each with its migration), and no attempt
+  is made to reconcile the two databases: the family's Postgres and the lab's SQLite stay
+  separate stores (§6/C4).
+- **Steps 1–7 are real; the lab itself is not deployed.** The lab is a catalogue entry, a
   tile, a gated "start a real machine" link on a `lab`-tagged scenario, a documented
-  identity mapping, and an importer that reads the lab's 14 scenarios into the family's
-  shape. **But no imported scenario has been written to a database, no scenario is
+  identity mapping, an importer that reads the lab's 14 scenarios into the family's shape,
+  a recorded grading mode on every attempt's evidence, and an instructor view that states
+  that mode. **But no imported scenario has been written to a database, no scenario is
   tagged `lab` in a live deployment, no lab is deployed, and nothing is graded through
-  it.** Step 3 is documentation for an operator (OnTrak-dev must stay unchanged); the
-  lab identity has not been exercised here.
+  it — so no row in this deployment carries `gradingMode = 'lab'` yet.** Steps 3 and 6 are
+  the halves that a live lab would exercise (identity at sign-in, and a completion reported
+  across the boundary); OnTrak-dev must stay unchanged, so both are delivered as code and
+  documentation rather than as a running integration. No lab identity has been exercised
+  here.
 - **OnTrak-dev has not been modified**, as required. Its `README.md` still describes
   a standalone range; its portal still signs in only through Authentik and only as
   `instructor`/`student`.
@@ -407,11 +447,11 @@ Stated plainly, because the integration is **not** complete:
 | # | Risk / question | Why it matters |
 | --- | --- | --- |
 | Q1 | **What is the merged product called, and what is the lab called?** | Two repositories, one name. Until this is decided, docs and links will keep colliding. |
-| Q2 | **Does the lab become a product or a mode of ITS?** | It changes the Portal catalogue, the role model and the URL scheme. §6/C2 assumes "mode"; §7/Step 2 assumes "capability". |
-| Q3 | **Who owns the real-VM grading record?** | If a `lab` attempt is graded by OnTrak-dev but stored by ITS, the write path crosses two languages and two stores. §6/C2 proposes ITS owns `Attempt` and records the mode. |
+| Q2 | **Does the lab become a product or a mode of ITS?** | **Resolved — both, at different layers.** The lab stays a **product** in the family catalogue (its own origin, roles, health and deployment, Step 2), because that is *where the service lives*; and a training task carries a **mode** (`simulated` \| `lab`, Step 6), because that is *how one attempt was graded*. "Where is it" and "who graded this" are different questions, and treating them as one is what made this look open. Removing the mode would not remove the product; removing the catalogue entry would not change a grade. |
+| Q3 | **Who owns the real-VM grading record?** | **Resolved — the family owns the graded `Attempt`; the lab owns only its operational session.** One ledger means one certificate path, one analytics query and one assurance packet; the lab's SQLite row is operational, like Sentinel's raw events, and stays labelled as such (§6/C4). The cross-language write is accepted and made **one-directional and idempotent**: a lab completion maps to at most one family attempt, keyed by the lab session id, written with `mode = lab`. Only the family-side field and its readers exist today (Step 6); the inbound handler that receives a completion is OnTrak-dev's to drive. |
 | Q4 | **Can the family edge serve the lab?** | The lab's Guacamole console, its three names and its signed single-VM payloads all assume its own nginx gateway; moving to the family's subdomain + wildcard-cert model is unproven. |
 | Q5 | **Hypervisor capacity under the family's tenancy** | The lab is single-tenant and RAM-bound (warm pools, `max_total`). Multi-tenant hosting is out of scope today and must stay out until measured. |
 | Q6 | **Licensing** | OnTrak-dev uses Microsoft evaluation media (expires in 90–180 days) and never redistributes retail media; a merged product inherits that operator responsibility and must keep saying so. |
-| Q7 | **Two ways to grade, one definition of "passed"** | Analytics and certificates that mix modes will be misleading unless every figure states its mode. |
+| Q7 | **Two ways to grade, one definition of "passed"** | **Addressed for analytics (Step 7).** `summariseByMode` and the "By grading mode" panel state each figure's mode, and the attempts list and review badge every row, so a simulator's pass is never averaged into a live machine's. **Still open for certificates:** a completion record does not yet carry the mode, so a lab certificate would presently look like a simulated one — the fix is to put the mode on the record's provenance when the lab path is built, not to change the format now. |
 | Q8 | **CI** | The family's "Family stack" job brings up six containers; adding the lab means a hypervisor in CI, which is why Step 4's automation is gated and Steps 5–7 must be verifiable without a VM. |
 | Q9 | **Review cost** | The integration touches identity, evidence and deployment at once. §7's sequencing exists to keep each step independently revertable; skipping ahead trades that away. |

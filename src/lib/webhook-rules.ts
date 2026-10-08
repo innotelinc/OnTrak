@@ -26,6 +26,7 @@
 import { createHash, createHmac } from "node:crypto";
 
 import { canonicalize } from "./credentials";
+import { normalizeGradingMode, type GradingMode } from "./grading-mode";
 
 /** Bumped only for a change a consumer must notice; additive fields do not. */
 export const WEBHOOK_EVENT_VERSION = 1;
@@ -53,6 +54,13 @@ export interface WebhookCheck {
 export interface GradedEventInput {
   attemptId: string;
   status: string;
+  /**
+   * How this attempt was graded (docs/consolidation-audit.md §7 Step 6). Always
+   * present and never null on the wire: a consumer that receives `passed` needs to
+   * know whether a simulator or a live machine produced it, because the two numbers
+   * are not comparable. Additive, so `WEBHOOK_EVENT_VERSION` stays 1.
+   */
+  mode: GradingMode;
   learner: { id: string; email: string; name: string };
   scenario: { id: string; title: string; platform: string };
   cohort: { id: string; name: string } | null;
@@ -96,6 +104,8 @@ export const MAX_CHECKS = 200;
 export interface GradedFactSource {
   attemptId: string;
   status: string;
+  /** The grader. Absent or unknown is normalized to `simulated` by `gradedEventInput`. */
+  mode?: GradingMode | string | null;
   learner: { id: string; email: string; name: string };
   scenario: { id: string; title: string; platform: string };
   cohort: { id: string; name: string } | null;
@@ -115,6 +125,9 @@ export function gradedEventInput(source: GradedFactSource): GradedEventInput {
   return {
     attemptId: source.attemptId,
     status: source.status,
+    // An unstated mode means the simulator graded it, which is what everything
+    // graded before modes existed did. The default points at the weaker claim.
+    mode: normalizeGradingMode(source.mode),
     learner: source.learner,
     scenario: source.scenario,
     cohort: source.cohort,

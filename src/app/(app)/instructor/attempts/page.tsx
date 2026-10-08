@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { requireSession } from "@/lib/auth";
 import { attemptScopeFor } from "@/lib/attempt-scope";
 import { attemptPercent, ATTEMPT_STATUS_LABELS } from "@/lib/scenarios";
+import { normalizeGradingMode } from "@/lib/grading-mode";
 import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, ButtonLink, Card, EmptyState } from "@/components/ui";
 import { cn, formatDateTime, formatDuration } from "@/lib/cn";
@@ -125,6 +126,7 @@ export default async function AttemptsPage({
                   const percent = attemptPercent(attempt);
                   const passed = percent >= attempt.scenario.passScore;
                   const failed = attempt.checkResults.filter((result) => !result.passed).length;
+                  const mode = normalizeGradingMode(attempt.gradingMode);
                   return (
                     <li key={attempt.id}>
                       <Link
@@ -138,6 +140,7 @@ export default async function AttemptsPage({
                             <Badge tone={passed ? "teal" : "amber"}>
                               {passed ? t("attempts.badge.passed") : t("attempts.badge.below")}
                             </Badge>
+                            <Badge tone={mode === "lab" ? "brand" : "neutral"}>{t(`grading.mode.${mode}`)}</Badge>
                           </div>
                           <p className="mt-1 text-xs text-ink-faint">
                             {t("attempts.meta", {
