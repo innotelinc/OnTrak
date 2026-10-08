@@ -124,7 +124,7 @@ python3 /path/to/ontrak/scripts/cerulean-ontrak.py              # do it
 It ensures, for each name: a Technitium A record at the address the zone apex
 already uses, an NPM proxy host forwarding to the product's port, and the
 certificate that covers the name — including the Network's `*.ontrak.innotel.us`
-wildcard, which is the one that matters for the four subdomains.
+wildcard, which is the one that matters for the five subdomains.
 
 ### `already in use`, and why it is not obvious
 
@@ -391,6 +391,13 @@ somebody's afternoon:
   ever read "not answering". Setting the switch without an address is reported as a
   misconfiguration rather than drawn as one. `ONTRAK_LAB_INTERNAL_URL` is the probe's
   address when the lab's public name is not reachable from inside the portal container,
-  exactly as the other products have one.
+  exactly as the other products have one. That deployment also puts the lab behind this
+  deployment's edge ([audit §9/Q4](consolidation-audit.md)): one name,
+  `lab.<base domain>`, forwarding to the lab host's single published port with
+  websockets enabled, because the lab's own gateway keeps `/` and `/guacamole/` on that
+  one port and the Network's `*.ontrak` wildcard already covers the name. The lab's own
+  provisioner must not be pointed at this zone: it publishes `ontrak.innotel.us` too,
+  and here that name is the portal, so NPM would refuse the second claim rather than
+  quietly move the front door.
 - **The portal does not sign you out of the products.** It clears its own session
   and says so; each product holds its own credential.

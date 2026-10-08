@@ -16,8 +16,9 @@
  * settled by files, which is why they can be asserted rather than reviewed.
  *
  * What it does not check is which product *should* be in the table, or whether a
- * product is worth listing: those are decisions, and the audit records them (§8 keeps
- * the lab off the page until Q4 is answered).
+ * product is worth listing: those are decisions, and the audit records them — §9/Q4
+ * settles whether the family edge may serve one, and §8 keeps the lab off the page
+ * either way, because the page lists what this deployment serves.
  *
  *   npm test
  */
