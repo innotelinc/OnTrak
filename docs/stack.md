@@ -29,6 +29,15 @@ This document only states OnTrak's place in it.
 - **The family's front door** — routing a signed-in person to the product their
   role belongs in (OnTrak Portal). The portal owns the *routing decision* and
   nothing else: no accounts, no data, no second authorisation system.
+- **Identity and network defence** — OnTrak Sentinel, built in this repository: the
+  family's own IdP (OIDC/SAML/SCIM, MFA, sessions, access reviews) *and* its
+  IDS/IPS (Guard — the syslog, NetFlow/IPFIX and OTLP listeners, the normalizer,
+  the detection rules, triage and policy-gated enforcement), sharing one
+  hash-chained evidence log. A deployment can sign in against it instead of
+  Cerulean, and it federates to Cerulean where that is the directory.
+- **CodeOps** — a coding agent you can watch (OnTrak Genie): a browser console and
+  a terminal CLI over one server, working inside a workspace it cannot leave, with
+  every write and every risky command stopping at an approval gate before it lands.
 
 **Consumes**
 
@@ -55,8 +64,6 @@ This document only states OnTrak's place in it.
   subscription lifecycle, no entitlements.
 - Telephony (Zeus) and e-signature (Signara) — integrated when a deployment has
   them, not replaced.
-- The Intrusion-detection platform that will become **OnTrak Sentinel**; until it
-  ships, Tix ingests identity and telemetry events through a connector port.
 
 ## Service map
 
@@ -67,7 +74,8 @@ This document only states OnTrak's place in it.
 | OnTrak Lab (not built from this repository) | Python, FastAPI, Guacamole, its own SQLite | The hands-on half: starts a real machine for a `lab`-tagged task and grades it. Runs from its own repository and host, maps its two roles onto the vocabulary below at sign-in ([lab-identity.md](lab-identity.md)), and reports a finished session to `POST /api/v1/lab/completions` ([lab-completion.md](lab-completion.md)) |
 | `ontrak-portal` | Next.js 15, React 19, TypeScript, no database | The family's front door: one sign-in, then the products a role belongs in. Routes by role and authorises nothing — every product re-checks the caller itself |
 | `ontrak-sync` | Python 3.12 + FastAPI + SQLite (API), Next.js 16 dashboard | Network package/container update monitoring and approved updating; the family's local account table and its capability model |
-| `ontrak-sentinel` (planned) | (unbuilt) | IdP + IDS/IPS for the family |
+| `ontrak-genie` | Node/TypeScript, no database; browser console and terminal CLI over one server | The family's coding agent: state a task and watch it read, edit and run commands in a workspace it cannot leave, with every write and risky command stopping at an approval gate |
+| `ontrak-sentinel` | Node/TypeScript, Prisma, PostgreSQL; framework-free, server-rendered console | The family's own IdP **and** IDS/IPS: OIDC/SAML/SCIM, MFA, sessions and access reviews, and Guard's detection and policy-gated enforcement, on one hash-chained evidence log. The family stack runs it as `sentinel-app`; `npm run serve` runs it alone |
 | Audit chain | Append-only rows, hash-chained per tenant | Tamper-evident history shared by every app |
 | Evidence store | Filesystem or object storage behind an object-lock port | Incident artifacts under a retention window nobody can shorten |
 
