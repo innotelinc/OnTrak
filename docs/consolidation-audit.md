@@ -478,9 +478,42 @@ Stated plainly, because the integration is **not** complete:
   carries `mode: "lab"` and the `lab` skill tag, an `attempt.lab_completion` entry in the
   audit chain, and the same `mode` in `GET /api/v1/results` and its CSV. A completion
   filed against a simulated scenario was refused `422`. What that proves is the *boundary*
-  and the *catalogue*; it does not prove a real session, because no lab host exists here
-  and the session id in that test was typed by hand rather than by a machine. The lab's
-  side of the wire is still unwalked.
+  and the *catalogue*; at that point it did not prove a real session, because no lab host
+  existed and the session id in that test was typed by hand rather than by a machine.
+
+  **The lab's side of the wire has since been walked, on a lab host built for it.** A
+  host with `/dev/kvm` (16 vCPU, 22 GiB, nested AMD under VMware) was prepared with the
+  lab's own bootstrap — Incus 7.5.1, the `ontrak0` bridge on 10.20.0.1/24 with DNS domain
+  `ontrak.lab`, the `ontrak` project and the `ontrak-student` limits profile — and two
+  scenario templates were built from the lab's own catalogue
+  (`tpl-linux-perms-chmod-repair-ubuntu-24-04` and `-debian-12`, each with its `clean`
+  snapshot). A session was then allocated, graded and completed on the lab's own command
+  line: the guest booted at 10.20.0.200 with the fault injected, `session check` read the
+  live filesystem and named each wrong mode (0%), the fix was made in the guest and the
+  same check returned 100% with every critical objective passing, and `session complete`
+  recorded the lab's blended grade (70%, because the incident write-up was never written)
+  and destroyed the machine. The completion client was installed at
+  `/opt/ontrak-lab-client` as its README says, and an operator's reporting script — which
+  lives on that host, not in either repository, because it needs the lab's own store —
+  reported the session as `capstone-linux-perms-chmod-repair-1`. The family answered
+  **201** and recorded attempt `cmv02c4vc0005n301w97dr8th`: `GRADED`,
+  `gradingMode = 'lab'`, four `CheckResult` rows carrying the lab's own objective ids and
+  points, `timeSpentSec` derived from the two instants, and `attempt.lab_completion` in
+  the audit chain with `mode: lab`. The retry answered **200** with the same attempt id.
+  With the two lab facts set, the student page drew the real-machine door on all 14 lab
+  scenarios and linked it at the lab host's own dashboard, and the portal's health check
+  reported the lab as part of the deployment.
+
+  **What that still is not.** It is not the Network: this lab host is a machine built for
+  the exercise, and `its.ontrak.innotel.us` remains without one. **No Windows or Office
+  scenario ran**, because the golden image needs Microsoft evaluation media the operator
+  supplies and a build that takes 30–60 minutes — and the lab's own doctor reports that
+  this host's nested AMD KVM cannot virtualise SMM, so a Windows guest takes the
+  `ONTRAK_QEMU_ACCEL=tcg` path the lab reserves for hosts that cannot help it. Two of the
+  lab's 14 templates exist, both for one Linux scenario. The console half is up (the
+  lab's portal and Guacamole on one port, `/` and `/guacamole/`) but no browser has driven
+  it here, so the websocket tunnel Q4 named as the first thing a real host owes is still
+  unmeasured.
 - **OnTrak-dev has not been modified**, as required. Its `README.md` still describes
   a standalone range; its portal still signs in only through Authentik and only as
   `instructor`/`student`.

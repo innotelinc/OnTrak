@@ -103,16 +103,28 @@ passthrough is a no-op because a lab attempt has no launch.
 
 ## Caveats
 
-- **Executed against a booted family stack, but not against a lab.** The route has now
-  been driven end to end: `sess-2026-10-08-0001` was filed against `net-dns-failure` in a
-  running deployment and answered `201`, the retry `200` with the same `attemptId`, the
-  attempt recorded `GRADED` with `gradingMode = 'lab'` and a certificate whose content
-  carries `mode: "lab"`, and a completion against a simulated scenario refused `422`. What
-  that proves is this side of the boundary. The request was typed by hand: **no lab host
-  exists here**, so nothing has sent a real session's id, and the scenario it was filed
-  against had to be put in the catalogue first (`npm run lab:import`, which is what makes
-  a row carry the `lab` tag at all). The rules are also covered by unit tests
+- **Reported from a live lab host, once.** The route has been driven end to end twice.
+  First with a hand-typed body: `sess-2026-10-08-0001` against `net-dns-failure`, answered
+  `201`, retry `200` with the same `attemptId`, `GRADED` with `gradingMode = 'lab'` and a
+  certificate whose content carries `mode: "lab"`, and a completion against a simulated
+  scenario refused `422`.
+
+  Then from a lab host with a real machine behind it: a session was allocated, graded and
+  completed on the lab's own command line, and the installed client
+  (`/opt/ontrak-lab-client`, copied from this repository) reported it as
+  `capstone-linux-perms-chmod-repair-1`. The family answered `201` — attempt GRADED,
+  `gradingMode = 'lab'`, four `CheckResult` rows carrying the lab's objective ids and
+  points — and the retry `200` with the same attempt id. The scenario it was filed
+  against had to be in the catalogue first (`npm run lab:import`, which is what makes a row
+  carry the `lab` tag at all). The rules are also covered by unit tests
   (`tests/lab-completion.test.ts`).
+- **What the lab host did not exercise.** No Windows or Office session: the golden image
+  needs operator-supplied Microsoft media and a 30–60 minute build, and the host used here
+  reports nested-AMD KVM without SMM, so it would take the lab's emulated path. The
+  console (Guacamole) was up on the lab host but driven by no browser, so the websocket
+  tunnel through its own gateway is still unmeasured. The reporting script that made the
+  call lives on the lab host rather than in either repository, because it needs the lab's
+  own session store; this document is the contract it follows.
 - **OnTrak-dev is unchanged.** OnTrak Lab's half of this boundary is the call it makes
   after its own `check.ps1` run, idempotently, with this deployment's token. That code is
   drafted **out of tree**, in this repository, precisely so OnTrak-dev stays untouched:
