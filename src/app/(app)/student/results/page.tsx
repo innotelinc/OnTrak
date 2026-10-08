@@ -56,8 +56,15 @@ export default async function ResultsIndex() {
   function rowCertificateCode(attempt: (typeof attempts)[number]): string | null {
     const stored = readStoredCertificate(attempt);
     if (stored) return stored.revokedAt ? null : certificateCode(stored.record);
-    const percent = attempt.maxScore > 0 ? Math.round((attempt.score / attempt.maxScore) * 100) : 0;
-    if (percent < attempt.scenario.passScore) return null;
+    // The same rule that issued the record in the first place (`score-rules.ts`),
+    // so a derived fallback code cannot appear for an attempt that could not have
+    // earned one.
+    const earned = clearedPassMark({
+      score: attempt.score,
+      maxScore: attempt.maxScore,
+      passScore: attempt.scenario.passScore,
+    });
+    if (!earned) return null;
     return certificateCodeForAttempt({
       learnerId: attempt.userId,
       learnerName: user.name,

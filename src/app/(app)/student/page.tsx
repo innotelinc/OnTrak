@@ -7,7 +7,7 @@ import { evaluateScenario, loadAvailabilityContext, platformLabel } from "@/lib/
 import { sweepExpiredAttempts } from "@/lib/scenarios";
 import { startAttempt } from "@/app/actions/student";
 import { isLabScenario, labConfigFromEnv, labSessionUrl } from "@/lib/lab-rules";
-import { clearedPassMark } from "@/lib/score-rules";
+import { clearedPassMark, scorePercent } from "@/lib/score-rules";
 import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, Button, Card, EmptyState, ProgressBar } from "@/components/ui";
 import { formatDateTime, formatDuration, cn } from "@/lib/cn";
@@ -263,8 +263,12 @@ export default async function StudentHome({
           <Card className="mt-3 overflow-hidden p-0">
             <ul className="divide-y divide-line">
               {history.map((attempt) => {
-                const percent = attempt.maxScore > 0 ? Math.round((attempt.score / attempt.maxScore) * 100) : 0;
-                const ok = percent >= attempt.scenario.passScore;
+                const percent = scorePercent(attempt.score, attempt.maxScore);
+                const ok = clearedPassMark({
+                  score: attempt.score,
+                  maxScore: attempt.maxScore,
+                  passScore: attempt.scenario.passScore,
+                });
                 return (
                   <li key={attempt.id}>
                     <Link
