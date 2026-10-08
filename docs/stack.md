@@ -64,6 +64,7 @@ This document only states OnTrak's place in it.
 |---|---|---|
 | `ontrak-tix` | Next.js 15, React 19, TypeScript, Prisma, PostgreSQL | The service desk: tickets, SLAs, clients, time, billing, incidents, assurance |
 | OnTrak IT Support Training | Next.js 15, React 19, TypeScript, Prisma, PostgreSQL, xterm.js | Graded Linux/Windows/Office simulations, attempts, certificates |
+| OnTrak Lab (not built from this repository) | Python, FastAPI, Guacamole, its own SQLite | The hands-on half: starts a real machine for a `lab`-tagged task and grades it. Runs from its own repository and host, maps its two roles onto the vocabulary below at sign-in ([lab-identity.md](lab-identity.md)), and reports a finished session to `POST /api/v1/lab/completions` ([lab-completion.md](lab-completion.md)) |
 | `ontrak-portal` | Next.js 15, React 19, TypeScript, no database | The family's front door: one sign-in, then the products a role belongs in. Routes by role and authorises nothing — every product re-checks the caller itself |
 | `ontrak-sync` | Python 3.12 + FastAPI + SQLite (API), Next.js 16 dashboard | Network package/container update monitoring and approved updating; the family's local account table and its capability model |
 | `ontrak-sentinel` (planned) | (unbuilt) | IdP + IDS/IPS for the family |
@@ -77,11 +78,12 @@ for every privileged write. OnTrak Sync follows the same shape in Python — pur
 parsers and cron arithmetic (`scanners.py`, `policy.py`) behind a `unittest` suite,
 and one module (`applier.py`) that is the only code allowed to change a machine.
 
-One vocabulary of roles and capabilities crosses all five: `ADMIN`, `SYSADMIN`,
-`ANALYST`, `TECHNICIAN`, `INSTRUCTOR`, `STUDENT`. It exists so a claim from the
-directory means the same thing to every product, and so nothing has to be
-translated at a boundary — a translation table is where `instructor` silently
-becomes `student` after a migration.
+One vocabulary of roles and capabilities crosses all five products this repository
+builds: `ADMIN`, `SYSADMIN`, `ANALYST`, `TECHNICIAN`, `INSTRUCTOR`, `STUDENT`. It
+exists so a claim from the directory means the same thing to every product, and so
+nothing has to be translated at a boundary — a translation table is where
+`instructor` silently becomes `student` after a migration. OnTrak Lab maps its own
+two roles onto that vocabulary at sign-in rather than widening it.
 
 ## In the ecosystem
 
