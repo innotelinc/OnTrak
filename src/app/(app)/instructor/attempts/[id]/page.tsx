@@ -8,6 +8,7 @@ import { attemptPercent, ATTEMPT_STATUS_LABELS, coerceSubmittedState, toDefiniti
 import { normalizeGradingMode } from "@/lib/grading-mode";
 import { canRegrade } from "@/lib/grading-rules";
 import { gradeAttempt } from "@/lib/sim/grade";
+import { clearedPassMark } from "@/lib/score-rules";
 import { regradeAttempt } from "@/app/actions/instructor";
 import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, Button, ButtonLink, Card, ProgressBar } from "@/components/ui";
@@ -44,7 +45,11 @@ export default async function AttemptReviewPage({
 
   const definition = toDefinition(attempt.scenario);
   const percent = attemptPercent(attempt);
-  const passed = percent >= attempt.scenario.passScore;
+  const passed = clearedPassMark({
+    score: attempt.score,
+    maxScore: attempt.maxScore,
+    passScore: attempt.scenario.passScore,
+  });
   // Which grader produced these numbers (docs/consolidation-audit.md §7 Step 6).
   const mode = normalizeGradingMode(attempt.gradingMode);
 

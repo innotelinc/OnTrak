@@ -5,6 +5,7 @@ import { requireSession } from "@/lib/auth";
 import { attemptScopeFor } from "@/lib/attempt-scope";
 import { attemptPercent, ATTEMPT_STATUS_LABELS } from "@/lib/scenarios";
 import { normalizeGradingMode } from "@/lib/grading-mode";
+import { clearedPassMark } from "@/lib/score-rules";
 import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, ButtonLink, Card, EmptyState } from "@/components/ui";
 import { cn, formatDateTime, formatDuration } from "@/lib/cn";
@@ -124,7 +125,11 @@ export default async function AttemptsPage({
               <ul className="divide-y divide-line">
                 {attempts.map((attempt) => {
                   const percent = attemptPercent(attempt);
-                  const passed = percent >= attempt.scenario.passScore;
+                  const passed = clearedPassMark({
+                    score: attempt.score,
+                    maxScore: attempt.maxScore,
+                    passScore: attempt.scenario.passScore,
+                  });
                   const failed = attempt.checkResults.filter((result) => !result.passed).length;
                   const mode = normalizeGradingMode(attempt.gradingMode);
                   return (

@@ -1,13 +1,13 @@
 /**
  * One answer to "how well was this attempt scored, and did it clear the bar?"
  *
- * Six surfaces used to answer that question independently — the simulator's
- * report, the webhook payload, the results API, the CSV export, the certificate
- * and four screens — and they disagreed in the one case that matters: a
- * scenario worth zero points. `sim/grade.ts` called it **100%**, the certificate
- * and the results feed called it **0%**, and the webhook refused to call it a
- * pass at all — so the same attempt could be a pass on the learner's page and
- * not a pass in the payload their employer received.
+ * Every surface that reports an outcome used to answer that question for itself:
+ * the simulator's report, the webhook payload, the results API, the CSV export,
+ * the certificate, the analytics count and eight screens. They disagreed about
+ * the one case that matters, a scenario worth zero points. `sim/grade.ts` called
+ * it **100%**, the certificate and the results feed called it **0%**, and the
+ * webhook refused to call it a pass at all — so the same attempt could be a pass
+ * on the learner's page and not a pass in the payload their employer received.
  *
  * The rule here is the webhook's, because it is the only one that said why:
  * **a scenario worth zero points is not a pass.** Nothing was asked, so nothing
