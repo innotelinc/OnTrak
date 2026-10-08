@@ -6,7 +6,7 @@
 > by anything in this document**, and no lab is deployed in the environment this was
 > written in — so nothing below has been run end to end.
 
-The lab is the hands-on half of the same training the range runs in a browser. Its
+OnTrak Lab is the hands-on half of the same training the range runs in a browser. Its
 portal already signs a person in through a single OIDC provider, keeps no password of
 its own, and re-reads the provider's groups on every sign-in
 (`OnTrak-dev/ontrak/oidc.py`). What it does not yet share is the family's *identity*:
@@ -140,6 +140,6 @@ never grant it.
   names, route paths and role rules are read from the sources named inline; whether a
   given deployment's provider returns a compatible `email` and `groups` for the lab's
   client is something an operator confirms by signing in.
-- **It does not make the lab a family product yet.** The lab is a catalogue entry, a tile
-  and a gated student link (audit Steps 2 and 4). This step is about *who somebody is*
-  when they arrive, not about where the lab is served from, which is §9/Q4.
+- **It does not deploy OnTrak Lab.** OnTrak Lab is a catalogue entry, a tile and a
+  gated student link (audit Steps 2 and 4). This step is about *who somebody is* when
+  they arrive, not about where OnTrak Lab is served from, which is §9/Q4.

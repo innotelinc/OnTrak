@@ -63,7 +63,7 @@ This document only states OnTrak's place in it.
 | Component | Technology | Job |
 |---|---|---|
 | `ontrak-tix` | Next.js 15, React 19, TypeScript, Prisma, PostgreSQL | The service desk: tickets, SLAs, clients, time, billing, incidents, assurance |
-| ITS training app | Next.js 15, React 19, TypeScript, Prisma, PostgreSQL, xterm.js | Graded Linux/Windows/Office simulations, attempts, certificates |
+| OnTrak IT Support Training | Next.js 15, React 19, TypeScript, Prisma, PostgreSQL, xterm.js | Graded Linux/Windows/Office simulations, attempts, certificates |
 | `ontrak-portal` | Next.js 15, React 19, TypeScript, no database | The family's front door: one sign-in, then the products a role belongs in. Routes by role and authorises nothing — every product re-checks the caller itself |
 | `ontrak-sync` | Python 3.12 + FastAPI + SQLite (API), Next.js 16 dashboard | Network package/container update monitoring and approved updating; the family's local account table and its capability model |
 | `ontrak-sentinel` (planned) | (unbuilt) | IdP + IDS/IPS for the family |

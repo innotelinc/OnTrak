@@ -27,6 +27,15 @@
 > chain; no virtual machines and no terminal servers are required for any of them.
 > **Landing page:** [https://innotelinc.github.io/OnTrak/](https://innotelinc.github.io/OnTrak/)
 
+**Names, once.** *OnTrak* alone is this repository and the family of products inside
+it, never one product. The product in `src/` is **OnTrak IT Support Training**
+(capability id `training`, host label `its`), and the products beside it are
+**OnTrak Tix**, **OnTrak Sentinel**, **OnTrak Sync**, **OnTrak Genie** and
+**OnTrak Portal**. What the family's documents called "the lab" until now is
+**OnTrak Lab** (capability id and host label `lab`): the Python platform that runs
+real machines for the hands-on half of a task, served from its own host rather than
+from the family stack `docker-compose.all.yml` starts.
+
 ---
 
 ## Why OnTrak
@@ -380,7 +389,7 @@ Training evidence is only worth collecting if it can leave. Set
 `ONTRAK_API_TOKEN` and a deployment exposes a read API over the same rows the UI
 shows — `GET /api/v1/results` (paged by cursor, filtered by `since`, scenario,
 cohort, status or grading mode), `GET /api/v1/roster`, and CSV exports of both.
-A lab reports a finished session to `POST /api/v1/lab/completions`. Set
+OnTrak Lab reports a finished session to `POST /api/v1/lab/completions`. Set
 `ONTRAK_WEBHOOK_URL` and `ONTRAK_WEBHOOK_SECRET` as well and every new grading is
 posted to a consumer as it happens, HMAC-signed over a canonical body with the
 timestamp inside the signature.

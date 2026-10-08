@@ -7,6 +7,7 @@ import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, ButtonLink, Card, EmptyState, ProgressBar, Stat } from "@/components/ui";
 import { cn, formatRelative } from "@/lib/cn";
 import { getTranslator } from "@/lib/i18n-server";
+import { clearedPassMark, scorePercent } from "@/lib/score-rules";
 
 export const metadata: Metadata = { title: "Teaching overview" };
 
@@ -203,8 +204,12 @@ export default async function InstructorHome({
               <Card className="mt-3 overflow-hidden p-0">
                 <ul className="divide-y divide-line">
                   {attempts.map((attempt) => {
-                    const percent = attempt.maxScore > 0 ? Math.round((attempt.score / attempt.maxScore) * 100) : 0;
-                    const passed = percent >= attempt.scenario.passScore;
+                    const percent = scorePercent(attempt.score, attempt.maxScore);
+                    const passed = clearedPassMark({
+                      score: attempt.score,
+                      maxScore: attempt.maxScore,
+                      passScore: attempt.scenario.passScore,
+                    });
                     return (
                       <li key={attempt.id}>
                         <Link

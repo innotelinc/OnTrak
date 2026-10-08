@@ -35,6 +35,7 @@ import {
   type StoredCertificate,
 } from "./certificate-rules";
 import { normalizeGradingMode, type GradingMode } from "./grading-mode";
+import { clearedPassMark, scorePercent } from "./score-rules";
 
 export { readStoredCertificate, type StoredCertificate };
 
@@ -78,15 +79,25 @@ export interface CertificateAttempt {
 
 /** Percentage of the maximum, safe when the scenario was worth zero points. */
 export function attemptPercentOf(attempt: Pick<CertificateAttempt, "score" | "maxScore">): number {
-  if (attempt.maxScore <= 0) return 0;
-  return Math.round((attempt.score / attempt.maxScore) * 100);
+  return scorePercent(attempt.score, attempt.maxScore);
 }
 
-/** Did this attempt clear the scenario's own pass mark? */
+/**
+ * Did this attempt clear the scenario's own pass mark?
+ *
+ * A scenario worth zero points does not, at any mark, because nothing was asked
+ * of the learner. That is the rule the webhook, the results feed and the CSV use
+ * too (`score-rules.ts`), so a certificate cannot be issued for an attempt the
+ * payload calls a failure.
+ */
 export function attemptPassed(
   attempt: Pick<CertificateAttempt, "score" | "maxScore" | "passScore">,
 ): boolean {
-  return attemptPercentOf(attempt) >= attempt.passScore;
+  return clearedPassMark({
+    score: attempt.score,
+    maxScore: attempt.maxScore,
+    passScore: attempt.passScore,
+  });
 }
 
 /** Trimmed, de-duplicated competency tags, in author order, capped. */

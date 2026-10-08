@@ -52,7 +52,8 @@ max 500) and `cursor`.
 
 One more route accepts writes from a lab: `POST /api/v1/lab/completions` records
 a finished session on a real machine as a graded attempt. See
-[lab-completion.md](lab-completion.md).
+[lab-completion.md](lab-completion.md). The client a lab host installs to call it is
+[`integrations/lab-completion-client/`](../integrations/lab-completion-client/README.md).
 
 Paging is a **keyset**, not an offset: the response carries `nextCursor`, and a
 full page always has one, so a loop terminates on a null instead of guessing.
@@ -69,6 +70,14 @@ last column.
 `mode` is always present (`simulated` or `lab`) and never null. A simulated pass
 and a pass on a real machine were produced by different graders, so a consumer
 that aggregates scores has to keep them apart — the field is there so it can.
+
+`passed` is derived, not copied: the mark it is compared against is a
+*percentage*, and a scenario worth zero points is not a pass at any mark. One rule
+decides that (`src/lib/score-rules.ts`) and every surface uses it, including the
+certificate, the CSV and four screens, so the same attempt cannot be a pass here
+and a failure there. The event's `version` is **2** because that value was
+recomputed: a `1` compared a raw score to a percentage mark, and a consumer that
+stored one stored a wrong answer.
 
 ## A grading, as it happens
 
@@ -87,7 +96,7 @@ x-ontrak-signature: t=1759660802,sha256=6f4b…
 {
   "id": "evt_9c1f…",
   "event": "attempt.graded",
-  "version": 1,
+  "version": 2,
   "deliveredAt": "2026-10-05T09:20:02.000Z",
   "data": {
     "attemptId": "cmumaw…",

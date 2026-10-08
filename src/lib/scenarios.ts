@@ -5,6 +5,7 @@ import { prisma } from "./db";
 import { createInitialState } from "./sim/state";
 import type { AttemptStatus } from "@prisma/client";
 import type { EngineState, ScenarioDefinition } from "./sim/types";
+import { scorePercent } from "./score-rules";
 
 /** The relations every scenario view needs. */
 export const SCENARIO_INCLUDE = {
@@ -128,10 +129,15 @@ export const ATTEMPT_STATUS_LABELS: Record<AttemptStatus, string> = {
   ABANDONED: "Abandoned",
 };
 
-/** Percentage of the maximum, safe when the scenario is worth zero. */
+/**
+ * Percentage of the maximum, safe when the scenario is worth zero.
+ *
+ * The rule itself is shared with the certificate, the webhook and the CSV
+ * (`score-rules.ts`); this stays as the app's name for it, next to the rest of the
+ * attempt helpers.
+ */
 export function attemptPercent(attempt: Pick<Attempt, "score" | "maxScore">): number {
-  if (attempt.maxScore <= 0) return 0;
-  return Math.round((attempt.score / attempt.maxScore) * 100);
+  return scorePercent(attempt.score, attempt.maxScore);
 }
 
 /**

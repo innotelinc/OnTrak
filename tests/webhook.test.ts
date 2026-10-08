@@ -79,15 +79,17 @@ test("webhook: the body is canonical, so the same fact signs the same way", () =
   const parsed = readWebhookEvent(JSON.parse(body));
   assert.equal(parsed?.id, event.id);
   assert.equal(parsed?.event, "attempt.graded");
-  assert.equal(parsed?.version, 1);
+  assert.equal(parsed?.version, 2);
   assert.equal(parsed?.data.attemptId, "att_1");
   assert.equal(parsed?.data.mode, "simulated", "a fact with no stated mode was graded by the simulator");
 });
 
 test("webhook: the payload always states which mode graded the attempt", () => {
-  // Additive on purpose: a consumer must be able to read `mode`, but a change of
-  // that shape does not move the version it already understands.
-  assert.equal(WEBHOOK_EVENT_VERSION, 1);
+  // `mode` itself is additive and did not move the version. The version is 2
+  // because `passed` was *recomputed* (the test below, and `score-rules.ts`): a
+  // consumer that stored the old value stored a wrong one, and the version is the
+  // only way to make that visible to somebody who is not here.
+  assert.equal(WEBHOOK_EVENT_VERSION, 2);
 
   assert.equal(gradedEventInput(SOURCE).mode, "simulated");
   assert.equal(gradedEventInput({ ...SOURCE, mode: "lab" }).mode, "lab");
@@ -146,9 +148,10 @@ test("webhook: passing compares the score as a percentage of the pass mark", () 
   // ...and the same 60% clears a 7% mark, where a points comparison would not.
   assert.equal(gradedEventInput({ ...SOURCE, score: 6 }).passed, true);
 
-  // A scenario nobody scored has not been passed by scoring zero.
+  // A scenario nobody scored has not been passed by scoring zero, at any mark.
   const unscored = gradedEventInput({ ...SOURCE, score: 0, maxScore: 0, passScore: 0 });
   assert.equal(unscored.passed, false);
+  assert.equal(gradedEventInput({ ...SOURCE, score: 0, maxScore: 0, passScore: 70 }).passed, false);
 });
 
 test("webhook: an unset URL is a configuration, a missing secret is a refusal", () => {

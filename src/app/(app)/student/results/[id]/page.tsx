@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { prisma } from "@/lib/db";
 import { requireSession } from "@/lib/auth";
 import { attemptPercent, ATTEMPT_STATUS_LABELS, toDefinition } from "@/lib/scenarios";
+import { clearedPassMark } from "@/lib/score-rules";
 import { Badge, ButtonLink, Card, ProgressBar } from "@/components/ui";
 import { certificateViewFor, readStoredCertificate } from "@/lib/certificates";
 import { certificateCode } from "@/lib/credentials";
@@ -43,7 +44,11 @@ export default async function ResultPage({ params }: { params: Promise<{ id: str
   // reader should see it (v1.1).
   const localized = localizeDefinition(definition, locale);
   const percent = attemptPercent(attempt);
-  const passed = percent >= attempt.scenario.passScore;
+  const passed = clearedPassMark({
+    score: attempt.score,
+    maxScore: attempt.maxScore,
+    passScore: attempt.scenario.passScore,
+  });
   const earned = attempt.checkResults.filter((result) => result.passed);
 
   // A pass earns a certificate: a tamper-evident completion record, stored on

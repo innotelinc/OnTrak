@@ -9,6 +9,7 @@
 
 import { computeCell, computeCellNumber } from "./formula";
 import { baseName, display, homeFor, normalize, parseMode } from "./paths";
+import { clearedPassMark, scorePercent } from "../score-rules";
 import { get, listDir } from "./vfs";
 import type {
   CheckEvaluation,
@@ -569,14 +570,17 @@ export function gradeAttempt(def: ScenarioDefinition, state: EngineState, passSc
   const rawScore = results.reduce((sum, result) => sum + result.points, 0);
   const maxScore = results.reduce((sum, result) => sum + result.maxPoints, 0);
   const score = Math.max(0, rawScore - penalty);
-  const percent = maxScore === 0 ? 100 : Math.round((score / maxScore) * 100);
+  // A scenario worth nothing is 0%, not 100%: a report that called it full marks
+  // is the reading `validate.ts` warns against, and it contradicted the stored
+  // attempt, the certificate and the webhook. `score-rules.ts` holds the rule.
+  const percent = scorePercent(score, maxScore);
 
   return {
     results,
     score,
     maxScore,
     percent,
-    passed: percent >= passScore,
+    passed: clearedPassMark({ score, maxScore, passScore }),
     penalty,
   };
 }
