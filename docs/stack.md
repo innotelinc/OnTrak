@@ -114,3 +114,18 @@ two roles onto that vocabulary at sign-in rather than widening it.
 
 Nothing in the list is a hard dependency: OnTrak is designed to boot and be
 useful with none of them configured, and to gain each one without a rewrite.
+
+## Licences
+
+This repository's own code is MIT ([LICENSE](../LICENSE)). Third-party material that
+ships beside it keeps its own licence, which applies to its output rather than to this
+repository's code, and no upstream source is vendored or re-licensed here.
+
+The machines OnTrak Lab runs are the operator's licences, not this repository's. The
+lab fetches Microsoft **evaluation** media, which expires (90 days for desktop, 180 for
+Server), and never redistributes retail Windows or Office media: retail media is
+supplied by the operator from their own licences, and volume licensing stays with
+whoever runs the host. The lab's own repository is the source for that rule
+([OnTrak-dev](https://github.com/innotelinc/OnTrak-dev), `docs/catalog.md`); this
+paragraph exists so that a reader of the family's architecture meets it as a
+responsibility rather than as a surprise after a class has been booked onto it.
