@@ -649,6 +649,7 @@ export const es: Messages = {
   "student.recent.viewAll": "Ver todos",
   "student.recent.timedOut": "agotó el tiempo",
   "student.startScenario": "Iniciar escenario",
+  "student.startRealMachine": "Iniciar una máquina real",
 
   "results.eyebrow": "Tu historial",
   "results.title": "Todos los intentos que has hecho",

@@ -675,6 +675,9 @@ export const en = {
   "student.recent.viewAll": "View all",
   "student.recent.timedOut": "timed out",
   "student.startScenario": "Start scenario",
+  // The lab (real machines), offered only when a deployment configures it and the
+  // scenario is tagged for it. Absent everywhere else.
+  "student.startRealMachine": "Start a real machine",
 
   // Results index
   "results.eyebrow": "Your record",

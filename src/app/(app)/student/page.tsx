@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/auth";
 import { evaluateScenario, loadAvailabilityContext, platformLabel } from "@/lib/availability";
 import { sweepExpiredAttempts } from "@/lib/scenarios";
 import { startAttempt } from "@/app/actions/student";
+import { isLabScenario, labConfigFromEnv, labSessionUrl } from "@/lib/lab-rules";
 import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, Button, Card, EmptyState, ProgressBar } from "@/components/ui";
 import { formatDateTime, formatDuration, cn } from "@/lib/cn";
@@ -34,6 +35,10 @@ export default async function StudentHome({
   const { flash, error } = await searchParams;
   const user = await requireSession();
   const t = await getTranslator();
+
+  // The lab is off unless this deployment turned it on and named it; when it is off
+  // this is `null` and every card renders exactly as it did before the lab existed.
+  const labUrl = labSessionUrl(labConfigFromEnv());
 
   // Reconcile clocks first so the page never shows a stale "in progress" card.
   await sweepExpiredAttempts(user.id);
@@ -190,6 +195,7 @@ export default async function StudentHome({
                 <li key={scenario.id}>
                   <ScenarioCard
                     scenario={scenario}
+                    labUrl={isLabScenario(scenario.tags) ? labUrl : null}
                     badge={
                       assignment?.dueAt ? (
                         <Badge tone={overdue ? "danger" : "amber"}>
@@ -227,7 +233,11 @@ export default async function StudentHome({
           <ul className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {openScenarios.map(({ scenario }) => (
               <li key={scenario.id}>
-                <ScenarioCard scenario={scenario} t={t} />
+                <ScenarioCard
+                  scenario={scenario}
+                  labUrl={isLabScenario(scenario.tags) ? labUrl : null}
+                  t={t}
+                />
               </li>
             ))}
           </ul>
@@ -292,11 +302,14 @@ function ScenarioCard({
   scenario,
   badge,
   note,
+  labUrl,
   t,
 }: {
   scenario: ScenarioCardData;
   badge?: React.ReactNode;
   note?: string | null;
+  /** Where to run this scenario on a real machine, when the lab offers one. */
+  labUrl?: string | null;
   t: Translator;
 }) {
   return (
@@ -334,6 +347,18 @@ function ScenarioCard({
           </svg>
         </Button>
       </form>
+
+      {labUrl ? (
+        // The second door to the same exercise: the simulated machine above, or a real
+        // one in the lab. Drawn only when the deployment turned the lab on and this
+        // scenario is tagged for it, so the simulation path is untouched everywhere else.
+        <a
+          href={labUrl}
+          className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-brand hover:underline"
+        >
+          {t("student.startRealMachine")} →
+        </a>
+      ) : null}
     </Card>
   );
 }

@@ -324,12 +324,21 @@ cache. *Verify:* sign in to the lab through the family provider; confirm a group
 change takes effect on the next sign-in (OnTrak-dev already re-reads the IdP per
 sign-in). *Revert:* point the OIDC vars back at Authentik directly.
 
-**Step 4 — Surface a lab session from the family UI.** *Artefacts:* a
-"start a real machine" action for scenarios tagged `lab`, behind
-`ONTRAK_LAB_ENABLED` (default **off**), which deep-links into the lab portal's
-session flow with the signed-in identity. *Verify:* an integration test asserts the
-action is absent when the flag is off and links correctly when it is on; the
-simulation path is unchanged. *Revert:* clear the flag.
+**Step 4 — Surface a lab session from the family UI.** **(done)** *Artefacts:*
+`src/lib/lab-rules.ts` (a pure, tested reader of `ONTRAK_LAB_ENABLED` and
+`ONTRAK_LAB_URL`, default **off**, plus the exact `lab` scenario-tag match), and a
+"start a real machine" link on the student page's scenario card, drawn only when the
+deployment enabled the lab *and* the scenario is tagged `lab`. It deep-links to the
+lab's own dashboard (`<ONTRAK_LAB_URL>/dashboard`), which signs the student in against
+the same provider — the link carries **no identity**, because a subject in a query
+string would be a second, weaker identity path (§6/C5). *Verify:* `tests/lab-rules.test.ts`
+asserts off-with-no-link, enabled-with-the-right-link, and a half-configured lab that
+is reported rather than drawn as a dead link; the simulated start is unchanged. *Revert:*
+unset `ONTRAK_LAB_ENABLED`.
+
+  *Caveat, stated plainly:* no scenario is tagged `lab` yet (that is Step 5), so in
+today's data the link renders nowhere. The reader and the gate are the deliverable;
+the affordance becomes visible when a lab scenario exists and a lab is deployed.
 
 **Step 5 — Converge the scenario model, one direction.** *Artefacts:* a mapping
 spec plus a one-way importer (lab `scenario.yaml` → family `Scenario`), a migration
@@ -364,9 +373,11 @@ Stated plainly, because the integration is **not** complete:
 - **No database migration has been written for OnTrak-dev.** Step 5's migration is
   planned, not authored; OnTrak-dev keeps its results in SQLite and no schema change
   exists in either repository to reconcile them.
-- **Steps 1 and 2 are real; Steps 3–7 are planned.** The lab is a catalogue entry
-  and a tile — the portal lists it and the training app's control room links to it —
-  but nothing runs, signs in, or is graded through it yet.
+- **Steps 1, 2 and 4 are real; Steps 3, 5, 6 and 7 are planned.** The lab is a
+  catalogue entry, a tile, and a gated "start a real machine" link on a `lab`-tagged
+  scenario — but **no scenario is tagged yet, no lab is deployed, and nothing is
+  graded through it.** Step 3 (one identity for the lab) is configuration on
+  OnTrak-dev, which must stay unchanged, so it is left as an operator step.
 - **OnTrak-dev has not been modified**, as required. Its `README.md` still describes
   a standalone range; its portal still signs in only through Authentik and only as
   `instructor`/`student`.
