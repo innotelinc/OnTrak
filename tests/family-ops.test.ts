@@ -10,10 +10,17 @@
  * down. This is the same failure the service map had (see `service-map.test.ts`),
  * one layer down: a document that describes a deployment has to describe *this* one.
  *
- * So two claims are checked mechanically — every port in the guide's "What runs
- * where" table is a port the family compose publishes, and every deployment the guide
- * says has a production overlay has one, with the target that starts it. Both are
- * settled by files, which is why they can be asserted rather than reviewed.
+ * So three claims are checked mechanically, each settled by files:
+ *
+ *  * every port in the guide's "What runs where" table is a port the family compose
+ *    publishes;
+ *  * every deployment the guide says has a production overlay has one, with the target
+ *    that starts it;
+ *  * the redirect URIs it lists for the `ontrak` client are exactly the ones
+ *    `scripts/cerulean-ontrak.py` registers, each at a name that script publishes —
+ *    because the guide is what an operator registers the client from while the script
+ *    is what fills Cerulean's `.env`, and the two had already drifted: the page stopped
+ *    at five while the client registers six, with Genie's callback missing from it.
  *
  * What it does not check is which product *should* be in the table, or whether a
  * product is worth listing: those are decisions, and the audit records them — §9/Q4
@@ -28,10 +35,12 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-/** The guide, the file that decides the ports, and the file that starts a deployment. */
+/** The guide, the file that decides the ports, the file that starts a deployment, and
+ * the script that provisions the trust plane. */
 const GUIDE = path.join("docs", "family-operations.md");
 const COMPOSE = "docker-compose.all.yml";
 const MAKEFILE = "Makefile";
+const PROVISION = path.join("scripts", "cerulean-ontrak.py");
 
 /** The deployments the guide says have a production overlay, and how each is started. */
 const OVERLAYS: Record<string, { compose: string; target: string }> = {
@@ -74,6 +83,47 @@ function guidePorts(): string[] {
     });
 }
 
+/**
+ * The redirect URIs the guide lists for the `ontrak` client, in the order it lists them.
+ *
+ * Read from the fenced block under the heading, because the block is what an operator
+ * copies into the provider: it is the copy that has to be right.
+ */
+function guideRedirectUris(): string[] {
+  const [, afterHeading = ""] = read(GUIDE).split(
+    /^### The redirect URIs registered on the `ontrak` client\s*$/m,
+  );
+  const fenced = afterHeading.split("```")[1] ?? "";
+  return [...fenced.matchAll(/https:\/\/\S+/g)].map((match) => match[0]);
+}
+
+/**
+ * The redirect URIs `scripts/cerulean-ontrak.py` registers on the same client.
+ *
+ * Parsed rather than run: the script needs a Cerulean service key to do anything, and a
+ * check that cannot run without a credential is a check that stops being run.
+ */
+function scriptRedirectUris(): string[] {
+  const [, afterList = ""] = read(PROVISION).split(/^REDIRECT_URIS = \[\s*$/m);
+  const [block = ""] = afterList.split(/^\]/m);
+  return [...block.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+}
+
+/**
+ * Every name the script publishes, as `<name>.<zone>`.
+ *
+ * The host map's `name` and the zone the script defaults to, both read from the file: a
+ * hand-kept list here would be the same kind of stale claim one level down.
+ */
+function publishedNames(): Set<string> {
+  const script = read(PROVISION);
+  const rows = [...script.matchAll(/"name":\s*"([^"]+)"/g)].map((match) => match[1]);
+  const zone = /env\("CERULEAN_ONTRAK_ZONE",\s*"([^"]+)"\)/.exec(script)?.[1] ?? "";
+  assert.ok(rows.length >= 6, `the script's host map yielded ${rows.length} names`);
+  assert.ok(zone, `${PROVISION} no longer states the zone its names live in`);
+  return new Set(rows.map((name) => `${name}.${zone}`));
+}
+
 test("family-ops: the guide and the compose file it describes were both read", () => {
   // A parser that silently found nothing would pass the check below by defining it
   // away, so both sides have to be shown to have content first.
@@ -110,4 +160,39 @@ test("family-ops: the deployments the guide says have an overlay have one", () =
   }
 
   assert.deepEqual(missing, [], missing.join("\n"));
+});
+
+test("family-ops: the guide and the script register one set of redirect URIs", () => {
+  const guide = guideRedirectUris();
+  const script = scriptRedirectUris();
+
+  // Both sides have to be shown to have content, or two empty lists compare equal and
+  // the check passes by defining itself away.
+  assert.ok(guide.length >= 5, `the guide's redirect block yielded ${guide.length} URIs`);
+  assert.ok(script.length >= 5, `REDIRECT_URIS yielded ${script.length} URIs`);
+
+  const missing = script.filter((uri) => !guide.includes(uri));
+  const extra = guide.filter((uri) => !script.includes(uri));
+
+  assert.deepEqual(
+    { missing, extra },
+    { missing: [], extra: [] },
+    "an operator registers the provider's client from the guide and fills Cerulean's " +
+      "`.env` from `--print-redirect-uris`, so two lists that differ are a sign-in that " +
+      `fails at the provider. Missing from the guide: ${missing.join(", ") || "none"}. ` +
+      `Registered by the script but not the guide: ${extra.join(", ") || "none"}.`,
+  );
+});
+
+test("family-ops: every redirect URI is a name the script publishes", () => {
+  const names = publishedNames();
+  const uris = [...new Set([...guideRedirectUris(), ...scriptRedirectUris()])];
+  const orphans = uris.filter((uri) => !names.has(new URL(uri).host));
+
+  assert.deepEqual(
+    orphans,
+    [],
+    "a callback at a name with no proxy host is a sign-in that cannot complete: " +
+      `${orphans.join(", ")} (published: ${[...names].join(", ")})`,
+  );
 });

@@ -476,6 +476,18 @@ Stated plainly, because the integration is **not** complete:
   guide's "What runs where" table is checked against the compose file now, by
   `tests/family-ops.test.ts`: a port it names that no family stack publishes is a failure
   rather than a reader's dead end at 3am.
+- **A registered client is a list the guide has to have.** The same sweep found the
+  operations guide one callback short of the client it describes: its "redirect URIs
+  registered on the `ontrak` client" stopped at five and closed by saying
+  "`--print-redirect-uris` prints the same list, so the script and the registered client
+  cannot drift apart unnoticed" — while `scripts/cerulean-ontrak.py` registers six. The
+  one missing was Genie's (`https://genie.ontrak.innotel.us/api/auth/callback`, which
+  `ontrak-genie/src/server.ts` answers), so an operator who registered the client from
+  that page left Genie's sign-in failing at the provider with the guide's own
+  `redirect_uri mismatch` row as the only clue. The page is that list rather than a second
+  copy of it now, and the claim is mechanical: `tests/family-ops.test.ts` holds the
+  guide's block against the script's `REDIRECT_URIS` in both directions, and refuses a
+  callback at a name the script publishes no proxy host for.
 - **The family-stack job now waits for the family stack, and the portal's lights are
   pointed at the products that answer them.** The one CI job that boots six products
   together waited for three — training, tix and Sentinel — and printed "all three
