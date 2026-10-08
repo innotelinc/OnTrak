@@ -378,9 +378,13 @@ somebody's afternoon:
 - **OnTrak Lab is not one of the six.** It is a peer deployment — OnTrak-dev, Python,
   on its own host — rather than a service `docker-compose.all.yml` starts, and
   `scripts/cerulean-ontrak.py` provisions no name for it, so §1's six names are the whole
-  list this deployment serves. A deployment that *does* run a lab says so in two facts,
-  both in the root `.env` that the family stack hands to the training app and to the
-  portal: `ONTRAK_LAB_ENABLED` and `ONTRAK_LAB_URL`. Until both are set the portal draws
+  list this deployment serves. A deployment that *does* run a lab says so in two facts:
+  `ONTRAK_LAB_ENABLED` and `ONTRAK_LAB_URL`. Put them in the file the deployment
+  actually reads — the root `.env` for `docker-compose.all.yml`, which hands them to the
+  training app and to the portal, or `.env.production` for the training app's production
+  overlay, whose `.env.production.example` does not list them (the overlay passes
+  whatever that file holds, so adding the two lines there is enough). Until both are set
+  the portal draws
   no lab tile, the training app's control room marks the lab "not deployed here", and
   `npm run health:check` in the portal skips it — deliberately, because a link to a lab
   nobody deployed is a dead link with a status light beside it, and the light can only
