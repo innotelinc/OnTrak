@@ -563,7 +563,25 @@ Stated plainly, because the integration is **not** complete:
   `tests/lab-rules.test.ts` now holds *who* may read them: a list of the readers — one
   per package, because the portal is independently deployable and cannot import the
   training app's — checked against the tree, with a marker for a file that genuinely
-  must name them. A planted second reader fails it, naming the file and the line.
+  must name them. A planted second reader fails it, naming the file and the line. Where
+  the two facts go is stated too, because the deployment paths differ: the root `.env`
+  for the family stack, `.env.production` for the training app's production overlay
+  (`docs/family-operations.md` §7). A real intermittent failure in the genie job turned
+  up on the way through, and it was worth measuring rather than guessing at.
+  `preview-hosting.test.ts` gave a spawned `node` two seconds of fixed polling to reach
+  `listen()`, and the failing run gave up 53ms past that mark on an address that was
+  about to answer — the assertion was never wrong, its patience was. It is bounded by a
+  deadline now: a child that takes three seconds to listen fails the old budget and
+  passes this one, and a port that never answers still fails. Asking *how* it asked turned
+  up a second hazard, and an honest one to record because the measurement did not support
+  the first explanation it suggested: the wait asked "is anything listening?" by
+  **binding** the port, so it held the port for the instant between `listen()` and
+  `close()`, and a process that binds in that instant dies of `EADDRINUSE` — reproducible
+  on demand, but it did not turn up in forty amplified trials of this loop, so it is not
+  what this failure was. The wait asks by **connecting** now: a probe that cannot take the
+  port from the process it is waiting for, and the same question a user asks. `waitFree`
+  still asks with a bind, because *free* means bindable and nothing is racing for the port
+  there.
 - **Terminology is resolved** (§9/Q1). *OnTrak* names this repository and the family
   inside it, never one product; the product in `src/` is **OnTrak IT Support Training**,
   and the lab is **OnTrak Lab**.

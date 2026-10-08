@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import http from "node:http";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -48,22 +48,64 @@ const { createServer } = await import("../server.js");
 
 const PREVIEW_DOMAIN = "genie.innotel.us";
 
-/** Wait until something is listening on a port, or give up. */
-async function waitListening(port: number): Promise<boolean> {
-  for (let i = 0; i < 100; i += 1) {
-    if (!(await portIsFree(port))) return true;
-    await new Promise((resolve) => setTimeout(resolve, 20));
+/**
+ * How long a wait is willing to wait.
+ *
+ * Generous on purpose, because it is the *answer* that is asserted here, never the
+ * speed of it. What these waits watch is a real `node` process this suite spawned and a
+ * real port it opens, so the time to `listen()` is not something this file controls. The
+ * budget used to be two seconds of fixed polling, and that is what the failing CI run
+ * shows: it gave up 53ms past two seconds on an address that was about to answer. A
+ * child that takes three seconds to reach `listen()` fails that and passes this; a port
+ * that never answers still fails, however long the deadline is.
+ */
+const WAIT_DEADLINE_MS = 20_000;
+
+/** Poll a question until it says yes, or until the deadline passes. */
+async function waitUntil(ask: () => Promise<boolean>): Promise<boolean> {
+  const deadline = Date.now() + WAIT_DEADLINE_MS;
+  for (;;) {
+    if (await ask()) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  return false;
 }
 
-/** Wait until a port is free again, or give up. */
-async function waitFree(port: number): Promise<boolean> {
-  for (let i = 0; i < 100; i += 1) {
-    if (await portIsFree(port)) return true;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  return false;
+/**
+ * Whether something is accepting a connection on a port.
+ *
+ * A *connection*, not a bind, and that matters more than it looks. Asking "is anything
+ * listening?" by binding the port — which is what `portIsFree` does, and what this wait
+ * used to ask — means the wait holds the port for the instant between `listen()` and
+ * `close()`, and a preview that reaches its own `listen()` inside that instant dies of
+ * `EADDRINUSE`, after which no wait is long enough because there is nothing left to
+ * serve. It reproduces on demand (hold a port and a child binding it exits 7); it did
+ * *not* turn up in forty amplified trials of that loop, so it is not what the CI failure
+ * above was — it is a hazard this wait should not carry regardless, because a probe that
+ * only connects cannot take the port from the process it is waiting for, and connecting
+ * is what a user does, which is the question the test means to ask.
+ */
+function somethingListening(port: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const socket = net.connect(port, "127.0.0.1");
+    socket.once("connect", () => { socket.destroy(); resolve(true); });
+    socket.once("error", () => { socket.destroy(); resolve(false); });
+  });
+}
+
+/** Wait until something is listening on a port, or give up. */
+function waitListening(port: number): Promise<boolean> {
+  return waitUntil(() => somethingListening(port));
+}
+
+/**
+ * Wait until a port is free again, or give up.
+ *
+ * Free means *bindable*, so this half keeps asking with a bind: `portIsFree` is the
+ * question that matches it, and nothing here is racing to take the port.
+ */
+function waitFree(port: number): Promise<boolean> {
+  return waitUntil(() => portIsFree(port));
 }
 
 /**
