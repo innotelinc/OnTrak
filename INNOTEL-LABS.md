@@ -151,9 +151,9 @@ the other four add up to a system rather than four logins:
   Network, and because it is the natural owner of a local account table: it is the
   service that has to work when the identity provider does not.
 
-When Sentinel's IdP is built, it takes over the directory role and Sync keeps the
-local accounts — the split that exists today, with Cerulean's Authentik in the
-directory seat.
+Sentinel's IdP is built and **S1 is closed**, so it can take the directory role and
+Sync keeps the local accounts — the split that exists today, with Cerulean's
+Authentik in the directory seat of this Network.
 
 Sequencing note worth keeping: Sentinel's own gap in the shared identity layer is the
 half-landed one — a synced group is a recorded fact and decides nothing until roles,

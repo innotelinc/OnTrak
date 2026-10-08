@@ -258,8 +258,9 @@ than a restart.
 ### Sentinel is the family's, not a second stack
 
 Sentinel is the one product with two ways to run and one set of host ports
-(`:8787` for HTTP, `:5434` for Postgres, `:5514` for Guard's syslog listener), so
-only one of them may serve at a time. The family stack's `sentinel-app` is that
+(`:8787` for HTTP, `:5434` for Postgres, `:5514` for Guard's syslog listener and
+`:2055` for its NetFlow/IPFIX collector — the standalone stack and the family stack
+map all four the same way), so only one of them may serve at a time. The family stack's `sentinel-app` is that
 one. Its database and signing key live on the family volumes, and they are **not**
 interchangeable with the standalone stack's: starting the family copy against the
 volumes it creates for itself mints a **new signing key** and opens an **empty
