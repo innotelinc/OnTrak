@@ -49,6 +49,16 @@ Run its tests with:
 cd integrations/lab-completion-client && python -m unittest discover -s tests
 ```
 
+Those tests stub the transport, so they prove the payload and not the request. To
+prove the request, run the repository's live test, which boots the family app and
+drives `tests/live_probe.py` through the real client (it needs `python3` and a
+reachable Postgres):
+
+```
+ONTRAK_LAB_CLIENT_LIVE=1 DATABASE_URL=postgresql://\u2026 \
+  npx tsx --tsconfig tests/tsconfig.json --test tests/lab-client-live.test.ts
+```
+
 ## Configuration
 
 | Variable | Used for | Notes |
@@ -143,10 +153,12 @@ Two rules worth knowing before reporting:
 
 ## Caveats
 
-- **This client has never reported to a running family from a live lab.** There is
-  no lab host in this repository's environment, so the client is covered by its own
-  offline tests and the server side by its own. Nobody has driven the pair
-  end to end across two hosts.
+- **This client has never reported from a live lab, because there is no lab host in
+  this repository's environment.** What has been driven is the pair itself: the
+  offline tests above stub the transport, so `tests/lab-client-live.test.ts` in the
+  repository root boots the family app and runs `tests/live_probe.py` through this
+  client's real request path. What remains unproven is two hosts across a network,
+  with a real machine behind the session.
 - **The family derives `timeSpentSec`** from `started_at` and `completed_at` and
   clamps it to a week, so the client does not send it and cannot disagree.
 - **`checks` are optional.** A session reported without them records an attempt
