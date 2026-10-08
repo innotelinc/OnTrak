@@ -419,5 +419,18 @@ somebody's afternoon:
   **no simulated start**: the lab grades them, this app has no checks for them, and a
   simulated attempt would be a score nobody earned filed as lab-graded, so the student page
   draws the lab door in place of the start button and the server refuses the POST.
+
+  The lab host itself is the other repository's to prepare, and the order is: its own
+  `infra/bootstrap-host.sh` (Incus, the lab bridge, the project and the limits profile — it
+  refuses a host with no usable `/dev/kvm`), `make setup && make doctor`, `make templates`
+  for the scenarios this deployment offers, and finally `npm run lab:import` here so the
+  catalogue holds the tasks those templates grade. **Windows and Office scenarios need one
+  thing a host cannot fetch for you**: the golden image is built from the operator's own
+  Microsoft evaluation media (`make golden`, 30–60 minutes), and without it only the Linux
+  scenarios — which run as system containers, no hypervisor image at all — are buildable.
+  Reporting a finished session back is the client in
+  `integrations/lab-completion-client/`, installed on the lab host and pointed at this
+  deployment's address and `ONTRAK_API_TOKEN`; the lab's own store is what says what
+  happened, so the call is written on that host.
 - **The portal does not sign you out of the products.** It clears its own session
   and says so; each product holds its own credential.
