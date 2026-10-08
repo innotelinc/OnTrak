@@ -411,6 +411,13 @@ somebody's afternoon:
   4 GiB per student VM, prewarmed before a class) and multi-tenant hosting stays out of
   scope until somebody measures it ([audit §9/Q5](consolidation-audit.md)). Nine people
   cannot be given a lab by adding a second one to this stack: that is a second host and a
-  second name.
+  second name. A deployment that runs one also puts the lab's scenarios in the training
+  catalogue — `npm run lab:import` writes the 14 of them as `lab`-tagged, published
+  scenarios (idempotent by slug, so it is safe on every release), which is what makes a
+  student see a door to the real machine at all; without it the catalogue has no lab
+  scenario and the two facts above turn nothing on. Those rows are published but have
+  **no simulated start**: the lab grades them, this app has no checks for them, and a
+  simulated attempt would be a score nobody earned filed as lab-graded, so the student page
+  draws the lab door in place of the start button and the server refuses the POST.
 - **The portal does not sign you out of the products.** It clears its own session
   and says so; each product holds its own credential.

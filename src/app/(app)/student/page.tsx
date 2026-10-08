@@ -6,7 +6,7 @@ import { requireSession } from "@/lib/auth";
 import { evaluateScenario, loadAvailabilityContext, platformLabel } from "@/lib/availability";
 import { sweepExpiredAttempts } from "@/lib/scenarios";
 import { startAttempt } from "@/app/actions/student";
-import { isLabScenario, labConfigFromEnv, labSessionUrl } from "@/lib/lab-rules";
+import { isLabScenario, labConfigFromEnv, labSessionUrl, simulatedStartRefusal } from "@/lib/lab-rules";
 import { clearedPassMark, scorePercent } from "@/lib/score-rules";
 import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, Button, Card, EmptyState, ProgressBar } from "@/components/ui";
@@ -323,6 +323,11 @@ function ScenarioCard({
   labUrl?: string | null;
   t: Translator;
 }) {
+  // The same rule `startAttempt` enforces server-side, asked here to decide which door
+  // this card draws. Both ask it because a rule only one of them checks is a rule a POST
+  // can walk past; the message itself is the refusal, so "is there one" is answer enough.
+  const labOnly = simulatedStartRefusal(scenario.tags) !== null;
+
   return (
     <Card className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-2">
@@ -349,20 +354,33 @@ function ScenarioCard({
         </ul>
       ) : null}
 
-      <form action={startAttempt} className="mt-5 pt-1">
-        <input type="hidden" name="scenarioId" value={scenario.id} />
-        <Button type="submit" className="w-full sm:w-auto">
-          {t("student.startScenario")}
-          <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-            <path d="M5 12h14M13 6l6 6-6 6" />
-          </svg>
-        </Button>
-      </form>
+      {labOnly ? (
+        // One door, not two. A lab scenario has no simulated checks (they cannot be
+        // derived from its YAML), so the start button is not drawn at all — an attempt
+        // would grade nothing and still be filed as lab-graded. What replaces it is the
+        // truth: the lab grades this, and here is whether this deployment runs one.
+        <div className="mt-5 rounded-xl2 border border-line bg-surface-muted px-3 py-2.5">
+          <p className="text-xs font-semibold text-ink">{t("student.labOnly.title")}</p>
+          <p className="mt-1 text-xs text-ink-soft">
+            {labUrl ? t("student.labOnly.where") : t("student.labOnly.absent")}
+          </p>
+        </div>
+      ) : (
+        <form action={startAttempt} className="mt-5 pt-1">
+          <input type="hidden" name="scenarioId" value={scenario.id} />
+          <Button type="submit" className="w-full sm:w-auto">
+            {t("student.startScenario")}
+            <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
+          </Button>
+        </form>
+      )}
 
       {labUrl ? (
-        // The second door to the same exercise: the simulated machine above, or a real
-        // one in the lab. Drawn only when the deployment turned the lab on and this
-        // scenario is tagged for it, so the simulation path is untouched everywhere else.
+        // The other door to the same exercise: a real machine in the lab. Drawn only when
+        // the deployment turned the lab on and this scenario is tagged for it, so the
+        // simulation path is untouched everywhere else.
         <a
           href={labUrl}
           className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-brand hover:underline"

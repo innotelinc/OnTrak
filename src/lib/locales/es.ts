@@ -661,6 +661,11 @@ export const es: Messages = {
   "student.recent.timedOut": "agotó el tiempo",
   "student.startScenario": "Iniciar escenario",
   "student.startRealMachine": "Iniciar una máquina real",
+  "student.labOnly.title": "Se califica en una máquina real",
+  "student.labOnly.where":
+    "Este se ejecuta en OnTrak Lab, donde la máquina es real y el laboratorio lo califica. Inícialo desde el enlace del laboratorio que aparece abajo.",
+  "student.labOnly.absent":
+    "Este se ejecuta en OnTrak Lab, que tu implementación no tiene, así que aquí no hay nada que iniciar. Pregúntale a tu instructor.",
 
   "results.eyebrow": "Tu historial",
   "results.title": "Todos los intentos que has hecho",

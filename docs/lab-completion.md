@@ -103,16 +103,27 @@ passthrough is a no-op because a lab attempt has no launch.
 
 ## Caveats
 
-- **Not executed here.** This repository has no lab host, so this documents the
-  contract the lab would call and the route that accepts it; no completion has been
-  posted end-to-end. The rules are covered by unit tests
+- **Executed against a booted family stack, but not against a lab.** The route has now
+  been driven end to end: `sess-2026-10-08-0001` was filed against `net-dns-failure` in a
+  running deployment and answered `201`, the retry `200` with the same `attemptId`, the
+  attempt recorded `GRADED` with `gradingMode = 'lab'` and a certificate whose content
+  carries `mode: "lab"`, and a completion against a simulated scenario refused `422`. What
+  that proves is this side of the boundary. The request was typed by hand: **no lab host
+  exists here**, so nothing has sent a real session's id, and the scenario it was filed
+  against had to be put in the catalogue first (`npm run lab:import`, which is what makes
+  a row carry the `lab` tag at all). The rules are also covered by unit tests
   (`tests/lab-completion.test.ts`).
 - **OnTrak-dev is unchanged.** OnTrak Lab's half of this boundary is the call it makes
   after its own `check.ps1` run, idempotently, with this deployment's token. That code is
   drafted **out of tree**, in this repository, precisely so OnTrak-dev stays untouched:
   [`integrations/lab-completion-client/`](../integrations/lab-completion-client/README.md)
   is a dependency-free Python client for exactly this route, with its own tests. It has not
-  been installed on a lab host, so no completion has travelled from a real session.
-- **The scenario has to be tagged `lab`.** The boundary refuses a completion filed
+  been installed on a lab host, so no completion has travelled from a real session.- **The scenario has to be tagged `lab`.** The boundary refuses a completion filed
   against a simulated task, so the task's declared mode and its evidence never
-  disagree.
+  disagree. `npm run lab:import` (see [consolidation-audit.md](consolidation-audit.md)
+  §7 Step 5) is what writes those rows: the lab's 14 scenarios, published and tagged.
+- **A lab scenario has no simulated start, deliberately.** It carries no simulated
+  checks — the lab grades it against a live machine — so starting one here would grade
+  nothing and still be filed as lab-graded. The student page draws the lab door instead
+  of the start button, and `startAttempt` refuses the POST; `simulatedStartRefusal` in
+  `src/lib/lab-rules.ts` is the rule both ask.

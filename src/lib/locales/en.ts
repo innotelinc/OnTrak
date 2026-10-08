@@ -689,6 +689,12 @@ export const en = {
   // The lab (real machines), offered only when a deployment configures it and the
   // scenario is tagged for it. Absent everywhere else.
   "student.startRealMachine": "Start a real machine",
+  // A lab scenario has no simulated checks, so it has no simulated start either.
+  "student.labOnly.title": "Graded on a real machine",
+  "student.labOnly.where":
+    "This one runs in OnTrak Lab, where the machine is real and the lab grades it. Start it from the lab door below.",
+  "student.labOnly.absent":
+    "This one runs in OnTrak Lab, which your deployment does not run, so there is nothing here to start. Ask your instructor.",
 
   // Results index
   "results.eyebrow": "Your record",

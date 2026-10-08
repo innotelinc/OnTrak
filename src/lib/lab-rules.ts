@@ -116,3 +116,29 @@ export function isLabScenario(tags: readonly string[] | null | undefined): boole
   if (!tags) return false;
   return tags.some((tag) => tag.trim().toLowerCase() === LAB_SCENARIO_TAG);
 }
+
+/**
+ * Why a simulated attempt at this scenario must be refused, or `null` when it may start.
+ *
+ * The one thing a lab scenario cannot do here is be simulated, and the reason is a
+ * fact about its definition rather than a policy: an imported lab scenario carries
+ * **no checks** on purpose (see `lab-scenario-import.ts` — the lab grades its
+ * objectives against a live machine, and nothing in its YAML says which live
+ * condition an objective tests, so inventing checks would score a student on
+ * something nobody authored). An attempt started anyway would grade nothing and
+ * record a score, while `gradingModeForTags` labelled that record `lab` — because
+ * the mode is read from this same tag. The evidence would then say a real machine
+ * decided something no machine touched, which is the single failure §9/Q7 exists to
+ * prevent.
+ *
+ * So this is the rule both halves of the seam ask: the student page asks it to know
+ * which door to draw, and `startAttempt` asks it before creating anything, because a
+ * rule only the page checks is a rule a POST can walk past.
+ */
+export function simulatedStartRefusal(tags: readonly string[] | null | undefined): string | null {
+  if (!isLabScenario(tags)) return null;
+  return (
+    "This scenario is run and graded on a real machine in OnTrak Lab, and it has no " +
+    "simulated checks, so there is nothing here to grade. Open it from the lab door instead."
+  );
+}
