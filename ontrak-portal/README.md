@@ -56,7 +56,7 @@ account table:
 | `INSTRUCTOR` | training, the lab | `range-instructors`, `ontrak-instructors` |
 | `TECHNICIAN` | the desk | `ontrak-desk` |
 | `ANALYST` | Sentinel | `ontrak-analysts` |
-| `SYSADMIN` | the desk, Sentinel, Sync | `ontrak-sysadmins` |
+| `SYSADMIN` | the desk, Sentinel, Sync, Genie | `ontrak-sysadmins` |
 | `ADMIN` | everything, plus account management | `ontrak-admins` |
 
 A group that matches nothing falls back to `STUDENT` — the *least* privileged role

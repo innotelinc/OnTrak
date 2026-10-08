@@ -70,12 +70,15 @@ to family roles by `ONTRAK_OIDC_ROLE_MAPPINGS` in each product's `.env`:
 | `range-instructors`, `ontrak-instructors` | `INSTRUCTOR` | training |
 | `ontrak-desk` | `TECHNICIAN` | Tix |
 | `ontrak-analysts` | `ANALYST` | Sentinel |
-| `ontrak-sysadmins` | `SYSADMIN` | Tix, Sentinel, Sync |
+| `ontrak-sysadmins` | `SYSADMIN` | Tix, Sentinel, Sync, Genie |
 | `ontrak-admins` | `ADMIN` | everything, plus accounts |
 
-Add a person to a group in Authentik and their access follows within one
-sign-in — nothing is copied into a product, which is why a change here needs no
-migration anywhere else.
+The last column is the portal's catalogue answering for each role
+(`ontrak-portal/src/lib/portal-rules.ts`), minus **OnTrak Lab** — the catalogue's one
+optional product, which a deployment runs only if it says so (§7), so it is not in a
+table describing what *this* deployment serves. Add a person to a group in Authentik and
+their access follows within one sign-in — nothing is copied into a product, which is why
+a change here needs no migration anywhere else.
 
 A group that matches nothing falls through to `ONTRAK_OIDC_DEFAULT_ROLE`
 (`STUDENT` — the *least* privileged role). The portal says so on the dashboard

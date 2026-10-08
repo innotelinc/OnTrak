@@ -488,6 +488,17 @@ Stated plainly, because the integration is **not** complete:
   copy of it now, and the claim is mechanical: `tests/family-ops.test.ts` holds the
   guide's block against the script's `REDIRECT_URIS` in both directions, and refuses a
   callback at a name the script publishes no proxy host for.
+- **A role table is a list of what each role can reach, and Genie was not in it.** The
+  catalogue gives `SYSADMIN` the agent console (`ontrak-portal/src/lib/portal-rules.ts`),
+  and both documents that answer "which group do I put this person in" stopped short of
+  it: the operations guide's `ontrak-sysadmins` row read "Tix, Sentinel, Sync" — four
+  pages above its own sentence saying sysadmins reach *everything* — and the portal's
+  README said the desk, Sentinel and Sync as well. Both name Genie now, and both tables
+  are held to the catalogue: `tests/family-ops.test.ts` for the guide, which describes
+  this deployment and so leaves the optional lab out, and
+  `ontrak-portal/tests/portal-rules.test.ts` for the README, which documents the catalogue
+  itself and so includes it. The guide's table now says which of the two it is, so a
+  reader comparing them does not have to guess why one lists a product the other does not.
 - **The family-stack job now waits for the family stack, and the portal's lights are
   pointed at the products that answer them.** The one CI job that boots six products
   together waited for three — training, tix and Sentinel — and printed "all three
