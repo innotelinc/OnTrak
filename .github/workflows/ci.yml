@@ -488,6 +488,46 @@ jobs:
       - name: Unit and HTTP tests
         run: npm test
 
+  # The family's front door, run like the products behind it. It had no job: its
+  # typecheck, its unit tests and its copy check only ever ran on the machine of
+  # whoever was editing it, and its TypeScript was compiled only as a side effect of
+  # the image build — which builds the *serving* stage, and cannot say whether the
+  # rules hold. The copy check is the one that catches what nothing else can: the
+  # sign-in gate and the chrome may not carry the family's taglines, and no build
+  # fails and no type breaks when they do, so it is prose that stays wrong on the one
+  # screen every user sees first.
+  portal:
+    name: OnTrak Portal
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ontrak-portal
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # 22 because that is what the portal's image is built on; a suite green on
+          # a different major would still be one that never ran in the container.
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ontrak-portal/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: The gate and the chrome carry no family copy
+        run: npm run copy:check
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
   # The family stack — every product in one project — is the artefact behind
   # `make all-up`, so it is the thing to boot. The unit suites prove each product's
   # rules; this proves the *wiring between them*: a database per product on its own
