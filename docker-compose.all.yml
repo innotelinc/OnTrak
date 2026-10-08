@@ -617,11 +617,22 @@ services:
       # The local account table, over the compose network — not the published port.
       ONTRAK_SYNC_API_URL: http://sync-api:8420
       # Probes for the tiles' status lights. Server-side, so they use the network
-      # names; the *links* still print the public addresses.
+      # names; the *links* still print the public addresses. Each one is the address
+      # of the *product* — the origin a browser would open — because that is what the
+      # portal asks for liveness and each product answers `/health` there.
+      #
+      # Sync is the product that makes the distinction matter, because it is the one
+      # the stack runs as two services: `/health` is the dashboard's, so the probe has
+      # to go to `sync-web:8421`. Pointed at the API instead, it asks
+      # `sync-api:8420/health`, which serves only `/api/...` and answers 404 — a
+      # healthy Sync drawn as an outage on the page whose whole job is the opposite.
+      # The API keeps its own address above, in `ONTRAK_SYNC_API_URL`, where the
+      # account table is read.
       ONTRAK_ITS_INTERNAL_URL: http://training-app:3000
       ONTRAK_TIX_INTERNAL_URL: http://tix-app:3000
       ONTRAK_SENTINEL_INTERNAL_URL: http://sentinel-app:8787
-      ONTRAK_SYNC_INTERNAL_URL: http://sync-api:8420
+      ONTRAK_SYNC_INTERNAL_URL: http://sync-web:8421
+      ONTRAK_GENIE_INTERNAL_URL: http://genie-app:3400
     ports:
       - "${ONTRAK_PORTAL_PORT:-3300}:3300"
     healthcheck:
