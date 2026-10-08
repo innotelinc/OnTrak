@@ -96,6 +96,16 @@ jobs:
       - name: Unity theme copies are byte-identical
         run: python3 theme/tests/test_theme_copies.py
 
+      # The lab's reporting client ships here because OnTrak-dev must stay unchanged,
+      # so its suite runs here too rather than waiting for a lab host to report a
+      # payload the server refuses. Offline by design: no network, no database, and
+      # the same command its README gives an operator.
+      - name: Lab client unit tests
+        run: |
+          set -euo pipefail
+          cd integrations/lab-completion-client
+          python3 -m unittest discover -s tests
+
   secrets:
     name: Secret scan
     runs-on: ubuntu-latest
