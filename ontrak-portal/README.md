@@ -12,9 +12,9 @@
 
 ## Why a portal
 
-The family is five products that each work on their own, and one more thing that
-remembers who somebody is for all of them. Without the portal, that means five
-bookmarks, five sign-ins, and a person who has been given the wrong role finding
+The family is six products that each work on their own, and one more thing that
+remembers who somebody is for all of them. Without the portal, that means six
+bookmarks, six sign-ins, and a person who has been given the wrong role finding
 out by being refused something at 9am. With it, there is one address:
 
 | | |

@@ -99,14 +99,14 @@ the image without starting anything with `docker build --target runner .` (or
 ### Run the whole family at once
 
 Each product keeps its own stack because each is independently deployable, and
-there is also `docker-compose.all.yml` — all five in one project on one network,
+there is also `docker-compose.all.yml` — all six in one project on one network,
 with the wiring between them already in place (each app's own database and public
 address, a registered OIDC client per product, the desk's outbound provisioning
 pointed at the provider, and the portal's password sign-in pointed at OnTrak
 Sync's account table):
 
 ```bash
-make all-up     # :3300 portal, :3000 training, :3001 desk, :8787 provider, :8420/:8421 Sync
+make all-up     # :3300 portal, :3000 training, :3001 desk, :8787 provider, :8420/:8421 Sync, :3400 Genie
 make all-demo   # optional: the demo data for both demo-able apps
 make all-down
 ```
@@ -114,7 +114,7 @@ make all-down
 The one thing it cannot decide for you is the provider's address, because it has
 to be one that **both** the browser and the app containers resolve — see the
 header of that file. [docs/family-operations.md](docs/family-operations.md) is the
-same stack written down as it is actually deployed: the five names, the role
+same stack written down as it is actually deployed: the six names, the role
 groups in Authentik, and which of the two sign-in paths to check when one fails.
 
 ### Deploy it

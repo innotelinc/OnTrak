@@ -25,9 +25,11 @@
  * **Sentinel is delegated, not re-derived.** It has its own reader
  * (`sentinel-status.ts`) with a richer state — a console URL can be *set and
  * refused* — so the Sentinel entry is built from `sentinelStatus` and the rest of
- * this file never looks at its variables. The lab is new here: it is OnTrak-dev, the
- * hands-on platform that runs real Linux VMs and scenario instances, which the
- * portal catalogue does not carry yet.
+ * this file never looks at its variables. The lab is the one product here that is not
+ * built in this repository: it is OnTrak-dev, the hands-on platform that runs real
+ * Linux VMs and scenario instances, and the portal catalogue carries it as the `lab`
+ * entry — the same host label, and probed at `/healthz`, the path a Python peer
+ * actually serves.
  *
  * Pure — no fetch, no clock — so every state is cheap to assert and the page is only
  * presentation.

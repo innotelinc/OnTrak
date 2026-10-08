@@ -456,6 +456,15 @@ Stated plainly, because the integration is **not** complete:
   what the family site links to and serves, and OnTrak Lab is served from its own host
   until Q4 below is answered, so it stays off that page; `docs/stack.md` carries its
   row instead, where being part of the architecture is the question being asked.
+- **The family's service map now describes the family that exists.** It had listed
+  `ontrak-sentinel` as "(planned)"/"(unbuilt)" and carried no row for `ontrak-genie`,
+  while `docker-compose.all.yml` starts both of them and [INNOTEL-LABS.md](../INNOTEL-LABS.md)
+  records Sentinel's S0–S3 as shipped — so a reader of the architecture document was told
+  the family's own IdP and IDS/IPS did not exist yet, in the repository that ships them.
+  The rows are corrected, and the claim cannot come back silently: a service-map row that
+  names a directory present here may no longer call it planned or built elsewhere, which
+  `tests/service-map.test.ts` fails on. The lab's row keeps its marker, because there the
+  claim is true.
 - **Terminology is resolved** (§9/Q1). *OnTrak* names this repository and the family
   inside it, never one product; the product in `src/` is **OnTrak IT Support Training**,
   and the lab is **OnTrak Lab**.
