@@ -405,6 +405,12 @@ somebody's afternoon:
   one port and the Network's `*.ontrak` wildcard already covers the name. The lab's own
   provisioner must not be pointed at this zone: it publishes `ontrak.innotel.us` too,
   and here that name is the portal, so NPM would refuse the second claim rather than
-  quietly move the front door.
+  quietly move the front door. That deployment runs **one** lab host: the lab is
+  single-tenant — its VMs share one bridge, one warm pool and one results store, and
+  nothing in it names a tenant — so its host sizing is its own arithmetic (2 vCPU and
+  4 GiB per student VM, prewarmed before a class) and multi-tenant hosting stays out of
+  scope until somebody measures it ([audit §9/Q5](consolidation-audit.md)). Nine people
+  cannot be given a lab by adding a second one to this stack: that is a second host and a
+  second name.
 - **The portal does not sign you out of the products.** It clears its own session
   and says so; each product holds its own credential.

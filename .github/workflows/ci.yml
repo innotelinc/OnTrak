@@ -183,7 +183,9 @@ jobs:
       # actually run: the lab-completion boundary driven through the app's own route
       # against the migrations applied above, so the route's database path, its
       # idempotency and the results feed's mode filter are covered on every change
-      # — with no hypervisor and no lab (docs/consolidation-audit.md §9/Q8).
+      # — with no hypervisor and no lab. The boundary is what CI can test, and does;
+      # where the lab is hosted is an operator's deployment (docs/consolidation-audit.md
+      # §9/Q8), and the clauses that keep that true are held by tests/ci-coverage.test.ts.
       - name: Lab-completion live test
         run: ONTRAK_LAB_LIVE=1 npx tsx --tsconfig tests/tsconfig.json --test tests/lab-live.test.ts
 
