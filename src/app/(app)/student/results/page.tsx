@@ -9,6 +9,7 @@ import { certificateCode } from "@/lib/credentials";
 import { PageHeader } from "@/components/PageHeader";
 import { cn, formatDateTime, formatDuration } from "@/lib/cn";
 import { getTranslator } from "@/lib/i18n-server";
+import { clearedPassMark, scorePercent } from "@/lib/score-rules";
 
 export const metadata: Metadata = { title: "My results" };
 
@@ -113,8 +114,12 @@ export default async function ResultsIndex() {
           <Card className="mt-6 overflow-hidden p-0">
             <ul className="divide-y divide-line">
               {attempts.map((attempt) => {
-                const percent = attempt.maxScore > 0 ? Math.round((attempt.score / attempt.maxScore) * 100) : 0;
-                const passed = percent >= attempt.scenario.passScore;
+                const percent = scorePercent(attempt.score, attempt.maxScore);
+                const passed = clearedPassMark({
+                  score: attempt.score,
+                  maxScore: attempt.maxScore,
+                  passScore: attempt.scenario.passScore,
+                });
                 const passedChecks = attempt.checkResults.filter((result) => result.passed).length;
                 const isBest =
                   attempt.status !== "ABANDONED" &&

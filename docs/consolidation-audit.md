@@ -374,8 +374,9 @@ the mode is written to `Attempt.gradingMode` (+ migration
 `20261107000000_add_attempt_grading_mode`: one nullable TEXT column) at grading time,
 carried on the `attempt.submit` and `attempt.regrade` entries in the family's
 append-only audit chain (§6/C4), added to the graded-event payload (`GradedEventInput.mode`
-— an additive field, so `WEBHOOK_EVENT_VERSION` stays 1 and an existing consumer is
-unaffected), and stated on the results API JSON and CSV (`mode`). *Verify:*
+— an additive field, which on its own would not move the version; the version is **2**
+because `passed` was recomputed, see §9/Q7 and `src/lib/score-rules.ts`), and stated on
+the results API JSON and CSV (`mode`). *Verify:*
 `tests/grading-mode.test.ts` pins the tag rule and the default;
 the webhook suite asserts every payload carries a mode and that an unstated or
 unrecognised one is `simulated`; the CSV suite asserts the column is appended.
@@ -441,16 +442,19 @@ Stated plainly, because the integration is **not** complete:
   it — so no completion has been posted and no row carries `gradingMode = 'lab'` yet.**
   Steps 3 and 6 are the halves a live lab would exercise (identity at sign-in, and a
   completion reported across the boundary); both exist on this side, but OnTrak-dev must
-  stay unchanged, so **the lab's half — signing in through the family IdP, and calling
-  the completion route after a session — is not implemented.** No lab identity has been
+  stay unchanged, so **OnTrak Lab's half — signing in through the family IdP, and calling
+  the completion route after a session — is drafted out of tree** in this repository
+  (`integrations/lab-completion-client/`, a dependency-free Python client with its own
+  tests) **and has not been installed on a lab host.** No lab identity has been
   exercised here.
 - **OnTrak-dev has not been modified**, as required. Its `README.md` still describes
   a standalone range; its portal still signs in only through Authentik and only as
   `instructor`/`student`.
 - **The lab's host-half has never been verified in this environment** (no
   hypervisor), and this audit did not run either application.
-- **Terminology is unresolved.** Two products are called "OnTrak"; the merged
-  product's name, and the name of the lab capability, are open (§9).
+- **Terminology is resolved** (§9/Q1). *OnTrak* names this repository and the family
+  inside it, never one product; the product in `src/` is **OnTrak IT Support Training**,
+  and the lab is **OnTrak Lab**.
 
 ---
 
@@ -458,12 +462,12 @@ Stated plainly, because the integration is **not** complete:
 
 | # | Risk / question | Why it matters |
 | --- | --- | --- |
-| Q1 | **What is the merged product called, and what is the lab called?** | Two repositories, one name. Until this is decided, docs and links will keep colliding. |
+| Q1 | **What is the merged product called, and what is the lab called?** | **Resolved.** *OnTrak* is this repository and the family of products inside it, never one product on its own. The product in `src/` keeps the name it already serves and issues certificates under, **OnTrak IT Support Training** (capability id `training`, host label `its`), and what was called "the lab" is **OnTrak Lab** (capability id and host label `lab`). Keeping the training product's name is the decision that costs nothing: it is already in `NEXT_PUBLIC_APP_NAME`, in the default certificate issuer and in every host label, and the collision was never between those two names, it was between a *family* and a *product* that were both called OnTrak. The source repository keeps its own name, `OnTrak-dev`. |
 | Q2 | **Does the lab become a product or a mode of ITS?** | **Resolved — both, at different layers.** The lab stays a **product** in the family catalogue (its own origin, roles, health and deployment, Step 2), because that is *where the service lives*; and a training task carries a **mode** (`simulated` \| `lab`, Step 6), because that is *how one attempt was graded*. "Where is it" and "who graded this" are different questions, and treating them as one is what made this look open. Removing the mode would not remove the product; removing the catalogue entry would not change a grade. |
-| Q3 | **Who owns the real-VM grading record?** | **Resolved — the family owns the graded `Attempt`; the lab owns only its operational session.** One ledger means one certificate path, one analytics query and one assurance packet; the lab's SQLite row is operational, like Sentinel's raw events, and stays labelled as such (§6/C4). The cross-language write is accepted and made **one-directional and idempotent**: `POST /api/v1/lab/completions` writes one family attempt per lab session id (unique `Attempt.labSessionId`), with `mode = lab`, its check results and a `mode`-carrying certificate ([lab-completion.md](lab-completion.md)). The family's half is built and unit-tested; **OnTrak-dev's half — calling it after a session, with the deployment token — is not made**, because OnTrak-dev must stay unchanged. |
+| Q3 | **Who owns the real-VM grading record?** | **Resolved — the family owns the graded `Attempt`; the lab owns only its operational session.** One ledger means one certificate path, one analytics query and one assurance packet; the lab's SQLite row is operational, like Sentinel's raw events, and stays labelled as such (§6/C4). The cross-language write is accepted and made **one-directional and idempotent**: `POST /api/v1/lab/completions` writes one family attempt per lab session id (unique `Attempt.labSessionId`), with `mode = lab`, its check results and a `mode`-carrying certificate ([lab-completion.md](lab-completion.md)). The family's half is built and unit-tested; **OnTrak Lab's half — calling it after a session, with the deployment token — is drafted out of tree** in `integrations/lab-completion-client/`, because OnTrak-dev must stay unchanged, and has not been installed on a lab host. |
 | Q4 | **Can the family edge serve the lab?** | The lab's Guacamole console, its three names and its signed single-VM payloads all assume its own nginx gateway; moving to the family's subdomain + wildcard-cert model is unproven. |
 | Q5 | **Hypervisor capacity under the family's tenancy** | The lab is single-tenant and RAM-bound (warm pools, `max_total`). Multi-tenant hosting is out of scope today and must stay out until measured. |
 | Q6 | **Licensing** | OnTrak-dev uses Microsoft evaluation media (expires in 90–180 days) and never redistributes retail media; a merged product inherits that operator responsibility and must keep saying so. |
-| Q7 | **Two ways to grade, one definition of "passed"** | **Addressed.** Analytics: `summariseByMode` and the "By grading mode" panel state each figure's mode, and the attempts list and review badge every row, so a simulator's pass is never averaged into a live machine's (Step 7). Evidence: a completion record now carries `mode` **inside its signed content**, so the same numbers graded two ways are two different records with two different codes, and a lab certificate cannot be read as a simulated one (the record is only byte-unchanged for a record that predates the field — see [training-evidence.md](training-evidence.md)). The results feed and CSV report the mode too. |
+| Q7 | **Two ways to grade, one definition of "passed"** | **Addressed.** Analytics: `summariseByMode` and the "By grading mode" panel state each figure's mode, and the attempts list and review badge every row, so a simulator's pass is never averaged into a live machine's (Step 7). Evidence: a completion record now carries `mode` **inside its signed content**, so the same numbers graded two ways are two different records with two different codes, and a lab certificate cannot be read as a simulated one (the record is only byte-unchanged for a record that predates the field — see [training-evidence.md](training-evidence.md)). The results feed and CSV report the mode too. The half of Q7 that was still open — whether a lab attempt and a simulated one could disagree about *passed* — is closed as well: one rule decides a pass (`src/lib/score-rules.ts`) and the simulator's report, the certificate, the payload, the feed, the CSV and the screens all apply it, so a scenario worth zero points is a failure on every one of them instead of full marks on four. |
 | Q8 | **CI** | The family's "Family stack" job brings up six containers; adding the lab means a hypervisor in CI, which is why Step 4's automation is gated and Steps 5–7 must be verifiable without a VM. |
 | Q9 | **Review cost** | The integration touches identity, evidence and deployment at once. §7's sequencing exists to keep each step independently revertable; skipping ahead trades that away. |

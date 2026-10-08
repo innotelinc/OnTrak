@@ -27,9 +27,18 @@ import { createHash, createHmac } from "node:crypto";
 
 import { canonicalize } from "./credentials";
 import { normalizeGradingMode, type GradingMode } from "./grading-mode";
+import { clearedPassMark, scorePercent } from "./score-rules";
 
-/** Bumped only for a change a consumer must notice; additive fields do not. */
-export const WEBHOOK_EVENT_VERSION = 1;
+/**
+ * Bumped only for a change a consumer must notice; additive fields do not.
+ *
+ * 2: `passed` was **recomputed**, not added. It used to compare a raw score to a
+ * mark that is a percentage, so an 8/10 attempt against a 70% mark published
+ * `passed: false` while every screen and the certificate said pass. A consumer
+ * that stored the old value has stored a wrong one, and a version is the only
+ * way to make that visible to somebody who is not here. The shape is unchanged.
+ */
+export const WEBHOOK_EVENT_VERSION = 2;
 
 export const WEBHOOK_GRADED_EVENT = "attempt.graded";
 
@@ -134,10 +143,11 @@ export function gradedEventInput(source: GradedFactSource): GradedEventInput {
     score: source.score,
     maxScore: source.maxScore,
     passScore,
-    // The pass mark is a *percentage*, so the score is compared as one: a raw
-    // `score >= passScore` would fail an 8/10 attempt against a 70% mark. A
-    // scenario worth zero points is not a pass even at zero: nothing was asked.
-    passed: source.maxScore > 0 && percent(source.score, source.maxScore) >= passScore,
+    // The one definition of a pass, shared with the certificate, the results feed,
+    // the CSV and every screen (`score-rules.ts`): the mark is a *percentage*, so
+    // the score is compared as one, and a scenario worth zero points is not a pass
+    // even at a zero mark, because nothing was asked.
+    passed: clearedPassMark({ score: source.score, maxScore: source.maxScore, passScore }),
     startedAt: source.startedAt,
     submittedAt: source.submittedAt,
     gradedAt: source.gradedAt,
@@ -153,11 +163,14 @@ export function gradedEventInput(source: GradedFactSource): GradedEventInput {
   };
 }
 
-/** Whole-percent score, 0–100, integer-rounded. Zero questions is zero. */
+/**
+ * Whole-percent score, 0–100, integer-rounded. Zero questions is zero.
+ *
+ * The rule itself lives in `score-rules.ts` now; this stays as this module's name
+ * for it, because the tests and the docs read a payload through this file.
+ */
 export function percent(score: number, maxScore: number): number {
-  if (!Number.isFinite(maxScore) || maxScore <= 0) return 0;
-  const value = (score / maxScore) * 100;
-  return Math.max(0, Math.min(100, Math.round(value)));
+  return scorePercent(score, maxScore);
 }
 
 /**

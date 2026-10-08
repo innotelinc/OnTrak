@@ -1,7 +1,7 @@
 # The lab-completion boundary
 
-How the lab (OnTrak-dev) reports a finished session on a real machine to the
-family, and what the family does with it.
+How OnTrak Lab reports a finished session on a real machine to the family, and what
+the family does with it.
 
 This is the answer to **Q3** in the consolidation audit
 ([consolidation-audit.md](consolidation-audit.md) §9): the family owns the graded
@@ -107,9 +107,12 @@ passthrough is a no-op because a lab attempt has no launch.
   contract the lab would call and the route that accepts it; no completion has been
   posted end-to-end. The rules are covered by unit tests
   (`tests/lab-completion.test.ts`).
-- **OnTrak-dev is unchanged.** Adding the call to OnTrak-dev (after its own
-  `check.ps1` run, idempotently, with this deployment's token) is the lab's half and
-  was not made — the repo must stay untouched.
+- **OnTrak-dev is unchanged.** OnTrak Lab's half of this boundary is the call it makes
+  after its own `check.ps1` run, idempotently, with this deployment's token. That code is
+  drafted **out of tree**, in this repository, precisely so OnTrak-dev stays untouched:
+  [`integrations/lab-completion-client/`](../integrations/lab-completion-client/README.md)
+  is a dependency-free Python client for exactly this route, with its own tests. It has not
+  been installed on a lab host, so no completion has travelled from a real session.
 - **The scenario has to be tagged `lab`.** The boundary refuses a completion filed
   against a simulated task, so the task's declared mode and its evidence never
   disagree.

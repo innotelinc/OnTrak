@@ -10,6 +10,7 @@
 
 import { GRADING_MODES, normalizeGradingMode, type GradingMode } from "./grading-mode";
 import { DEFAULT_PASS_SCORE } from "./scenario-rules";
+import { clearedPassMark } from "./score-rules";
 
 export interface CheckResultRow {
   checkId: string;
@@ -188,7 +189,12 @@ export function summariseAttempts(
   const times = rows.map((row) => row.timeSpentSec).filter((seconds) => seconds > 0);
   const percentages = rows.map((row) => percent(row.score, row.maxScore));
   const marks = rows.map((row) => passScoreByScenario[row.scenarioId] ?? DEFAULT_PASS_SCORE);
-  const passed = percentages.filter((value, index) => value >= marks[index]).length;
+  // The same rule every other surface uses, so a pass count cannot disagree with
+  // the attempts it counts. The mean above stays fractional on purpose: it is an
+  // average, not a score, and rounding each row first would move it.
+  const passed = rows.filter((row, index) =>
+    clearedPassMark({ score: row.score, maxScore: row.maxScore, passScore: marks[index] }),
+  ).length;
 
   return {
     attempts: rows.length,

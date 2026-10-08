@@ -58,9 +58,13 @@ test("certificate: the percentage and pass mark decide the outcome", () => {
   assert.equal(attemptPassed(attempt({ score: 7, passScore: 75 })), false);
   assert.equal(attemptPassed(attempt({ score: 7, passScore: 70 })), true);
 
-  // A zero-point scenario cannot be failed or passed.
+  // A scenario worth zero points is not a pass, at any mark: nothing was asked,
+  // so nothing was demonstrated. This is the same rule the webhook, the results
+  // feed and the CSV apply (tests/score-rules.test.ts), so a certificate cannot be
+  // issued for an attempt the payload a consumer receives calls a failure.
   assert.equal(attemptPercentOf(attempt({ score: 0, maxScore: 0 })), 0);
-  assert.equal(attemptPassed(attempt({ score: 0, maxScore: 0, passScore: 0 })), true);
+  assert.equal(attemptPassed(attempt({ score: 0, maxScore: 0, passScore: 0 })), false);
+  assert.equal(attemptPassed(attempt({ score: 0, maxScore: 0, passScore: 70 })), false);
 });
 
 test("certificate: the record is derived from the attempt's own facts", () => {

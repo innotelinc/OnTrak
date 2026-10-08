@@ -7,6 +7,7 @@ import { evaluateScenario, loadAvailabilityContext, platformLabel } from "@/lib/
 import { sweepExpiredAttempts } from "@/lib/scenarios";
 import { startAttempt } from "@/app/actions/student";
 import { isLabScenario, labConfigFromEnv, labSessionUrl } from "@/lib/lab-rules";
+import { clearedPassMark } from "@/lib/score-rules";
 import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, Button, Card, EmptyState, ProgressBar } from "@/components/ui";
 import { formatDateTime, formatDuration, cn } from "@/lib/cn";
@@ -87,9 +88,15 @@ export default async function StudentHome({
   // so they count. A zero-point scenario simply has no percentage.
   const graded = history.filter((attempt) => attempt.maxScore > 0);
   // Each scenario carries its own pass mark; a hard-coded 70 would silently
-  // miscount any scenario an instructor set a different bar for.
-  const passed = graded.filter(
-    (attempt) => (attempt.score / attempt.maxScore) * 100 >= attempt.scenario.passScore,
+  // miscount any scenario an instructor set a different bar for. The comparison
+  // itself lives in `score-rules.ts`, so this count cannot disagree with the
+  // certificate or the webhook about the same attempt.
+  const passed = graded.filter((attempt) =>
+    clearedPassMark({
+      score: attempt.score,
+      maxScore: attempt.maxScore,
+      passScore: attempt.scenario.passScore,
+    }),
   );
   const average =
     graded.length > 0

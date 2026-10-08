@@ -92,6 +92,7 @@ test("csv: percent and the pass mark are computed, not copied", () => {
   assert.equal(cells.length, RESULTS_HEADERS.length);
   const zero: ResultCsvRow = { ...row, score: 0, maxScore: 0, passScore: 0 };
   assert.equal(resultCells(zero)[9], 0, "a scenario worth nothing is not 100%");
+  assert.equal(resultCells(zero)[10], "no", "and it is not a pass at a 0% mark either");
 });
 
 test("csv: parsing round-trips what writing produced", () => {

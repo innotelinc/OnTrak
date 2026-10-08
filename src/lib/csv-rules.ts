@@ -21,6 +21,8 @@
 
 import type { Role } from "@prisma/client";
 
+import { clearedPassMark, scorePercent } from "./score-rules";
+
 /* -------------------------------------------------------------------------- */
 /*  Writing and parsing                                                       */
 /* -------------------------------------------------------------------------- */
@@ -156,7 +158,7 @@ export interface ResultCsvRow {
 }
 
 export function resultCells(row: ResultCsvRow): CsvCell[] {
-  const percent = row.maxScore > 0 ? Math.round((row.score / row.maxScore) * 100) : 0;
+  const percent = scorePercent(row.score, row.maxScore);
   return [
     row.attemptId,
     row.learnerEmail,
@@ -170,7 +172,11 @@ export function resultCells(row: ResultCsvRow): CsvCell[] {
     percent,
     // The pass mark is a percentage, so compare percentages: a raw
     // `score >= passScore` would call an 8/10 attempt a failure against a 70% mark.
-    percent >= row.passScore ? "yes" : "no",
+    // The rule itself is shared (`score-rules.ts`), so a spreadsheet and the JSON
+    // feed cannot disagree about the same attempt.
+    clearedPassMark({ score: row.score, maxScore: row.maxScore, passScore: row.passScore })
+      ? "yes"
+      : "no",
     row.startedAt.toISOString(),
     row.gradedAt ? row.gradedAt.toISOString() : "",
     row.timeSpentSec,
