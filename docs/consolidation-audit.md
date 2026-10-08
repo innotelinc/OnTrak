@@ -511,6 +511,24 @@ Stated plainly, because the integration is **not** complete:
   than from a list of products: every `package.json` in this repository that declares a
   `test` script must have a job running from its directory that runs that suite and its
   typecheck.
+- **The family's liveness question is asked in one place.** The dashboard and
+  `npm run health:check` answer the same question about the same deployment, and they
+  did it with two copies of the rule: the page asked through `probeProduct` and honoured
+  `ONTRAK_<KEY>_INTERNAL_URL` (the addresses a deployment sets when the public names are
+  not reachable from where the question is asked), while the check had its own `fetch`,
+  its own list of statuses and its own idea of which address to ask. The two disagree
+  exactly where the overrides matter, and in the direction that costs most: an operator
+  reading "DOWN" for every product while the dashboard two feet away draws every light
+  green believes neither again. Both now go through `probeFleet` — the page for the
+  tiles a person can see, the check for the whole catalogue — so the statuses that count
+  as an answer, the address asked and the path appended to it are decided once. A
+  product with nothing to ask stays `unknown` and is never reported up, and the check
+  exits 1 on it, because "we did not look" is not a yes. The rule cannot come back in a
+  second copy silently: `ontrak-portal/tests/product-health.test.ts` refuses a file
+  outside `src/lib/sync-client.ts` that counts both a 401 and a 403 as an answer, and
+  `ontrak-portal/tests/fleet-probe.test.ts` drives the shared answer against a real
+  server — the override is a base the declared path is appended to, and a family that
+  answers 404 everywhere reads down, nowhere up.
 - **Terminology is resolved** (§9/Q1). *OnTrak* names this repository and the family
   inside it, never one product; the product in `src/` is **OnTrak IT Support Training**,
   and the lab is **OnTrak Lab**.

@@ -4,7 +4,7 @@ import { SignOutButton } from "@/components/SignOutButton";
 import { portalConfig, ssoConfigured } from "@/lib/config";
 import { emptyStateFor, PRODUCTS, summarizeFleet, tilesFor, urlFor } from "@/lib/portal-rules";
 import { readSession } from "@/lib/session";
-import { probeProduct, syncHealth, type Reachability } from "@/lib/sync-client";
+import { probeFleet, syncHealth, type Reachability } from "@/lib/sync-client";
 
 /**
  * The dashboard — one sign-in, then the products this person belongs in.
@@ -39,19 +39,16 @@ export default async function DashboardPage() {
     secure: config.secureLinks,
   });
 
-  // Probe the products this person can see, in parallel, with a short deadline.
-  // The health check is unauthenticated and always has been — asking the Network
-  // "are you there" must not require a credential the portal would have to hold.
-  const statuses = new Map<string, { reachability: Reachability; detail: string }>();
-  await Promise.all(
-    tiles.map(async (tile) => {
-      const entry = PRODUCTS.find((product) => product.key === tile.key);
-      if (!entry) return;
-      const internal = process.env[`ONTRAK_${entry.key.toUpperCase()}_INTERNAL_URL`];
-      statuses.set(tile.key, await probeProduct(
-        { key: entry.key, url: tile.url, health: entry.health }, internal));
-    }),
+  // Probe the products this person can see, in parallel, with a short deadline. The
+  // health check is unauthenticated and always has been — asking the Network "are you
+  // there" must not require a credential the portal would have to hold — and it is now
+  // the same call `npm run health:check` makes, so the exit code an operator reads and
+  // the lights drawn below cannot disagree about the same deployment.
+  const probes = await probeFleet(
+    tiles,
+    (key) => process.env[`ONTRAK_${key.toUpperCase()}_INTERNAL_URL`],
   );
+  const statuses = new Map(probes.map((probe) => [probe.key, probe] as const));
 
   const health = await syncHealth();
   const defaultedRole = session.source === "cerulean" && session.matched_group === null;
