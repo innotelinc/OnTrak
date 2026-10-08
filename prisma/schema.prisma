@@ -342,6 +342,12 @@ model Attempt {
   /// see `src/lib/grading-mode.ts`.
   gradingMode String?
 
+  /// The lab session this attempt was reported from, when the lab graded it: the
+  /// inbound boundary's idempotency key (docs/lab-completion.md). Unique, so a
+  /// completion the lab sends twice is recognised as one session instead of creating
+  /// a second attempt. Null for every attempt not produced by a lab.
+  labSessionId String? @unique
+
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   scenario     Scenario      @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
   assignment   Assignment?   @relation(fields: [assignmentId], references: [id], onDelete: SetNull)

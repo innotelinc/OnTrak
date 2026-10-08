@@ -6,8 +6,12 @@
  * consumer writes one parser and the webhook's `data` and this route's `results[]`
  * are the same object.
  *
- *   GET /api/v1/results?since=2026-10-01T00:00:00Z&cohortId=...&limit=200
+ *   GET /api/v1/results?since=2026-10-01T00:00:00Z&cohortId=...&mode=lab&limit=200
  *   Authorization: Bearer $ONTRAK_API_TOKEN
+ *
+ * `mode=simulated|lab` narrows by grader; omit it for both. `mode=simulated`
+ * matches an attempt with no mode recorded, because those were graded by the
+ * simulator too (docs/consolidation-audit.md §7 Step 6).
  *
  * `nextCursor` is returned whenever the page was full: the caller passes it back
  * as `cursor` to continue. It is null on the last page, so a loop that follows it

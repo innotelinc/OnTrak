@@ -379,7 +379,8 @@ documented in [ontrak-tix/docs/identity.md](ontrak-tix/docs/identity.md).
 Training evidence is only worth collecting if it can leave. Set
 `ONTRAK_API_TOKEN` and a deployment exposes a read API over the same rows the UI
 shows — `GET /api/v1/results` (paged by cursor, filtered by `since`, scenario,
-cohort or status), `GET /api/v1/roster`, and CSV exports of both. Set
+cohort, status or grading mode), `GET /api/v1/roster`, and CSV exports of both.
+A lab reports a finished session to `POST /api/v1/lab/completions`. Set
 `ONTRAK_WEBHOOK_URL` and `ONTRAK_WEBHOOK_SECRET` as well and every new grading is
 posted to a consumer as it happens, HMAC-signed over a canonical body with the
 timestamp inside the signature.

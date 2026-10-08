@@ -34,6 +34,7 @@ import {
   verifyInputProblem,
   type StoredCertificate,
 } from "./certificate-rules";
+import { normalizeGradingMode, type GradingMode } from "./grading-mode";
 
 export { readStoredCertificate, type StoredCertificate };
 
@@ -68,6 +69,11 @@ export interface CertificateAttempt {
   completedAt: Date;
   /** Scenario tags, read as the competencies the attempt demonstrated. */
   skills?: readonly string[];
+  /**
+   * Who graded the attempt (`Attempt.gradingMode`). Omitted for a caller that has
+   * none — the record then carries no mode rather than a guessed one.
+   */
+  mode?: GradingMode | string | null;
 }
 
 /** Percentage of the maximum, safe when the scenario was worth zero points. */
@@ -115,6 +121,10 @@ export function completionInputFor(
     skills: skillsFor(attempt.skills),
     completedAt: attempt.completedAt.toISOString(),
     issuer,
+    // Only when the attempt says how it was graded. Spreading conditionally keeps
+    // the key out of the record entirely for an attempt that has no mode, so a
+    // record issued before modes existed hashes exactly as it did.
+    ...(attempt.mode ? { mode: normalizeGradingMode(attempt.mode) } : {}),
   };
 }
 
@@ -141,14 +151,17 @@ export function recordIntact(record: CompletionRecord): boolean {
 /* -------------------------------------------------------------------------- */
 
 /**
- * A `prisma.attempt.update` fragment for the certificate columns.
+ * A fragment for the certificate columns, for `create` or `update`.
  *
  * Empty for the common cases — a failing attempt that never had a certificate,
  * or a re-grade that leaves a live one alone — so the caller can spread it into
- * the same update that writes the score.
+ * the same write that records the score. Typed against the *create* input, whose
+ * fields are plain values rather than update operations: every value produced here
+ * is a record or a date, so both an insert (`lab/completions`) and an update
+ * (`regradeAttempt`, `submitAttempt`) accept it.
  */
 export type CertificatePatch = Pick<
-  Prisma.AttemptUpdateInput,
+  Prisma.AttemptCreateInput,
   "certificate" | "certificateIssuedAt" | "certificateRevokedAt"
 >;
 
@@ -279,7 +292,7 @@ export function interpretEvidence(raw: string): EvidenceVerdict {
       code: certificateCode(parsed),
       summary: `${parsed.learnerName ?? "A learner"} · ${parsed.scenarioTitle ?? "a scenario"} · ${
         parsed.percent ?? "?"
-      }%`,
+      }%${parsed.mode ? ` · ${parsed.mode}` : ""}`,
     };
   }
 

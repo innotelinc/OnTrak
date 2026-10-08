@@ -47,6 +47,7 @@ function attempt(overrides: Partial<CertificateAttempt> = {}): CertificateAttemp
     passScore: 70,
     completedAt: new Date("2026-09-26T14:30:00.000Z"),
     skills: ["linux-services", "firewall"],
+    mode: "simulated",
     ...overrides,
   };
 }
@@ -77,7 +78,32 @@ test("certificate: the record is derived from the attempt's own facts", () => {
     skills: ["linux-services", "firewall"],
     completedAt: "2026-09-26T14:30:00.000Z",
     issuer: "Springfield College",
+    mode: "simulated",
   });
+});
+
+test("certificate: the record names the grader, and a lab pass cannot pass as simulated", () => {
+  const simulated = certificateForAttempt(attempt());
+  const lab = certificateForAttempt(attempt({ mode: "lab" }));
+
+  assert.equal(simulated.mode, "simulated");
+  assert.equal(lab.mode, "lab");
+  // The mode is inside the signed content, so the same numbers graded two ways
+  // are two different records with two different codes.
+  assert.notEqual(lab.digest, simulated.digest);
+  assert.notEqual(certificateCode(lab), certificateCode(simulated));
+  // Rewriting a simulated record to claim the lab broke the seal.
+  assert.equal(recordIntact({ ...simulated, mode: "lab" }), false);
+});
+
+test("certificate: an attempt with no recorded mode produces a record without one, and it still verifies", () => {
+  const record = certificateForAttempt(attempt({ mode: undefined }));
+  assert.equal("mode" in record, false, "absent is omitted rather than guessed");
+  assert.equal(recordIntact(record), true);
+  // And a pasted record that predates the field checks out unchanged.
+  const verdict = interpretEvidence(JSON.stringify(record));
+  assert.equal(verdict.status, "valid");
+  assert.doesNotMatch(verdict.summary ?? "", /simulated/);
 });
 
 test("certificate: competency tags are trimmed, de-duplicated and capped", () => {
