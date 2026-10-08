@@ -23,10 +23,18 @@
  * answers is "is every product answering", and "we did not look" is not a yes — the
  * same reason the dashboard never draws a green light it did not test.
  *
+ * *Which* products, though, is the products **this deployment runs**. OnTrak Lab is the
+ * catalogue's one optional product: a peer Python host, not a service in the family stack,
+ * and absent unless an operator has both enabled it and said where it is. Probing it
+ * anyway would fail a deployment for a product it does not run — the false "DOWN" this
+ * command exists to make visible, turned on the command itself — so the lab is skipped,
+ * in as many words, until the deployment says where it is.
+ *
  * Exit 0 when every product answered, 1 when any did not.
  */
 
-import { PRODUCTS, urlFor } from "../src/lib/portal-rules";
+import { PRODUCTS, addressFor, runsHere, type ProductAddresses } from "../src/lib/portal-rules";
+import { LAB_ENABLED_ENV, LAB_URL_ENV, labAddress } from "../src/lib/config";
 import { probeFleet } from "../src/lib/sync-client";
 
 async function main(): Promise<void> {
@@ -34,22 +42,35 @@ async function main(): Promise<void> {
   const base = process.env.ONTRAK_BASE_DOMAIN ?? "ontrak.innotel.us";
   const secure = process.env.ONTRAK_PORTAL_SECURE !== "false";
 
+  const addresses: ProductAddresses = {};
+  const lab = labAddress();
+  if (lab) addresses.lab = lab;
+
+  const monitored = PRODUCTS.filter((entry) => runsHere(entry, addresses));
+  const skipped = PRODUCTS.filter((entry) => !runsHere(entry, addresses)).map((entry) => entry.key);
+
   const results = await probeFleet(
-    PRODUCTS.map((product) => ({
-      key: product.key,
-      url: urlFor(product, base, secure),
-      health: product.health ?? null,
+    monitored.map((entry) => ({
+      key: entry.key,
+      url: addressFor(entry, { baseDomain: base, secure, addresses }),
+      health: entry.health ?? null,
     })),
     (key) => process.env[`ONTRAK_${key.toUpperCase()}_INTERNAL_URL`],
   );
 
   if (asJson) {
-    console.log(JSON.stringify({ base, results }, null, 2));
+    console.log(JSON.stringify({ base, skipped, results }, null, 2));
   } else {
     for (const result of results) {
       const label =
         result.reachability === "up" ? "ok  " : result.reachability === "unknown" ? "none" : "DOWN";
       console.log(`${label} ${result.url} — ${result.detail}`);
+    }
+    if (skipped.length > 0) {
+      console.log(
+        `skip ${skipped.join(", ")} — not part of this deployment ` +
+        `(set ${LAB_ENABLED_ENV} and ${LAB_URL_ENV} to include the lab)`,
+      );
     }
   }
 

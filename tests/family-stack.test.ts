@@ -40,9 +40,12 @@ const PORTAL_RULES = path.join("ontrak-portal", "src", "lib", "portal-rules.ts")
 /**
  * Lights the family stack does not serve, and why.
  *
- * OnTrak Lab is OnTrak-dev's Python control plane: it runs on its own host, it is not
- * a service in this compose file, and the audit defers the question of whether the
- * family edge should serve it (§9/Q4). Its tile is a link, not a probe, until then.
+ * OnTrak Lab is OnTrak-dev's Python control plane: it runs on its own host, it is not a
+ * service in this compose file, and the audit defers the question of whether the family
+ * edge should serve it (§9/Q4). It is also the portal catalogue's one *optional* product:
+ * the family stack enables neither `ONTRAK_LAB_ENABLED` nor `ONTRAK_LAB_URL`, and the
+ * dashboard draws no lab tile at all until a deployment sets both — so the light skipped
+ * here is one this stack never draws.
  */
 const NOT_IN_FAMILY_STACK = new Set(["lab"]);
 

@@ -23,7 +23,12 @@ import { PRODUCTS, urlFor } from "../src/lib/portal-rules";
 import { probeFleet } from "../src/lib/sync-client";
 
 /**
- * The catalogue as both callers hand it over: each product, at its public address.
+ * The widest fleet either caller could hand over: the whole catalogue, at public addresses.
+ *
+ * Both callers narrow this first — to the tiles a person can see, or to the products this
+ * deployment runs — and the narrowing is the catalogue's own rule (`runsHere`), asserted in
+ * `portal-rules.test.ts`. What is asserted *here* is what happens to an entry once it is
+ * handed over, so these tests hand over every product rather than a deployment's subset.
  *
  * The public address is what the override replaces, so these tests hand over the real
  * one and then assert that the override — and only the override — is what was asked.

@@ -15,8 +15,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  asRole, canOpen, emptyStateFor, isRole, landingFor, parseRoleMappings, product,
-  productsFor, roleChanged, roleForGroups, roleFromGroups, tilesFor, urlFor, PRODUCTS, ROLES,
+  addressFor, asRole, canOpen, emptyStateFor, isRole, landingFor, parseRoleMappings, product,
+  productsFor, roleChanged, roleForGroups, roleFromGroups, runsHere, tilesFor, urlFor,
+  PRODUCTS, ROLES,
 } from "../src/lib/portal-rules";
 import {
   checkClaims, safeReturnTo, type IdTokenClaims,
@@ -120,11 +121,73 @@ describe("the catalogue", () => {
     const tiles = tilesFor("SYSADMIN");
     assert.equal(tiles.filter((tile) => tile.primary).length, 1);
     assert.equal(tiles.find((tile) => tile.primary)?.key, "sync");
-    assert.deepEqual(tilesFor("STUDENT").map((tile) => tile.url),
-      ["https://its.ontrak.innotel.us", "https://lab.ontrak.innotel.us"]);
     // Two tiles share the training tone, but only one is the landing product: the
     // range stays where a student arrives, and the lab is the second tile beside it.
     assert.equal(landingFor("STUDENT")?.key, "its");
+  });
+
+  it("takes a product out of a deployment without taking it out of the catalogue", () => {
+    // The catalogue is the whole family, and the lab stays in it: what it is for, who
+    // belongs in it and the path it answers do not change with a deployment. Only the
+    // *dashboard* narrows — see `runsHere` and `tilesFor`.
+    assert.deepEqual(productsFor("STUDENT").map((entry) => entry.key), ["its", "lab"]);
+    assert.equal(canOpen("STUDENT", "lab"), true);
+    assert.equal(product("lab")?.health, "/healthz");
+  });
+
+  it("draws an optional product only once the deployment says where it is", () => {
+    // The lab is a peer deployment, not a service the family stack runs, so a portal that
+    // has not been told where it is draws no tile for it at all — no link, and no status
+    // light that could only read "not answering" for a product nobody is running.
+    assert.deepEqual(tilesFor("STUDENT").map((tile) => tile.key), ["its"]);
+    assert.deepEqual(
+      tilesFor("STUDENT", { addresses: { lab: "https://lab.example.test" } }).map((tile) => tile.key),
+      ["its", "lab"],
+    );
+  });
+
+  it("links a configured optional product at the address it was given", () => {
+    const lab = tilesFor("STUDENT", { addresses: { lab: "https://lab.example.test" } })
+      .find((tile) => tile.key === "lab");
+    assert.ok(lab);
+    // The address an operator gave, not the name the family's convention would derive:
+    // the link has to be where they said the lab is.
+    assert.equal(lab.url, "https://lab.example.test");
+    assert.equal(lab.health, "/healthz");
+    // It shares the training tone but is not the landing product.
+    assert.equal(lab.primary, false);
+  });
+
+  it("does not land somebody on a product this deployment does not run", () => {
+    // Somebody who came for the lab, in a deployment with no lab, still lands on the
+    // range: a landing product that is not there is a tile nobody is sent to.
+    const tiles = tilesFor("STUDENT", { preferred: ["lab"] });
+    assert.deepEqual(tiles.map((tile) => tile.key), ["its"]);
+    assert.equal(tiles.find((tile) => tile.primary)?.key, "its");
+
+    // …and where the lab is running, the same preference is honoured.
+    const withLab = tilesFor("STUDENT", {
+      preferred: ["lab"],
+      addresses: { lab: "https://lab.example.test" },
+    });
+    assert.equal(withLab.find((tile) => tile.primary)?.key, "lab");
+  });
+
+  it("keeps every product that is not optional in the fleet, whatever the addresses say", () => {
+    // A deployment that configures nothing still draws the five products it always runs,
+    // at the derived names — the optional rule narrows nothing else.
+    assert.deepEqual(
+      tilesFor("ADMIN").map((tile) => tile.key),
+      ["its", "tix", "sentinel", "sync", "genie"],
+    );
+    assert.equal(runsHere(product("its")!), true);
+    assert.equal(runsHere(product("lab")!), false);
+    assert.equal(addressFor(product("lab")!, { baseDomain: "ontrak.innotel.us" }),
+      "https://lab.ontrak.innotel.us");
+    assert.equal(
+      addressFor(product("lab")!, { addresses: { lab: "https://lab.example.test" } }),
+      "https://lab.example.test",
+    );
   });
 
   it("says something a person can act on when a role has no product", () => {

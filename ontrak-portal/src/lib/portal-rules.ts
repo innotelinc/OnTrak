@@ -55,6 +55,17 @@ export interface Product {
   /** A colour family, so the tiles are distinguishable at a glance. */
   tone: "training" | "desk" | "security" | "operations" | "agent";
   /**
+   * A product this repository does not serve, which a deployment may not run at all.
+   *
+   * OnTrak Lab is a peer deployment on its own host (OnTrak-dev), not a directory of
+   * this repository and not a service in the family stack, so an operator has to say
+   * *both* that the deployment wants it and where it is. A product marked here is drawn
+   * only when `tilesFor` is told its address: without one there is nothing to link to
+   * and nothing to ask, and a light for it could only ever read "not answering" — the
+   * false outage the dashboard once drew for Sentinel, pointed at a product nobody runs.
+   */
+  optional?: true;
+  /**
    * Where to read a one-line status from, relative to the product's own origin.
    * Absent where the product has no unauthenticated endpoint to ask — and an
    * absent probe is reported as "not checked", never as "up", because a green
@@ -137,6 +148,11 @@ export const PRODUCTS: readonly Product[] = [
     // sibling, and the shared colour says so. The tile still carries its own name,
     // so the tone remains a label rather than the only signal (see the theme).
     tone: "training",
+    // The catalogue's one optional product: the lab runs on its own host, from its own
+    // repository, so a deployment has to say it wants the lab *and* where it is before
+    // a tile is drawn for it (see `runsHere`). Both the link and the light come from
+    // that answer.
+    optional: true,
     // The lab is the Python control plane (OnTrak-dev), a peer service rather than a
     // Next.js app, and it answers `/healthz`. Probing it at `/health` would draw the
     // false "not answering" the dashboard once drew for Sentinel.
@@ -187,6 +203,45 @@ export function urlFor(entry: Product, baseDomain = "ontrak.innotel.us", secure 
   return `${secure ? "https" : "http"}://${entry.host}.${baseDomain}`;
 }
 
+/**
+ * Where the products a deployment runs actually are, by key.
+ *
+ * An entry is the deployment saying two things at once — that it runs this product, and
+ * where. Only an *optional* product may be absent (see `runsHere`), and a configured
+ * address wins over the family's derived name for it, because it is what an operator
+ * stated rather than what the naming convention guesses.
+ */
+export type ProductAddresses = Partial<Record<ProductKey, string>>;
+
+/**
+ * Whether this deployment runs a product.
+ *
+ * Every product the family builds is always part of the family; the lab is the one
+ * exception, because it is a peer deployment rather than a directory of this repository.
+ * So it is part of *this* deployment only once an operator has said where it is — the two
+ * facts the training app's `src/lib/lab-rules.ts` already requires, stated once here for
+ * the front door.
+ */
+export function runsHere(entry: Product, addresses: ProductAddresses = {}): boolean {
+  return !entry.optional || Boolean(addresses[entry.key]);
+}
+
+/**
+ * Where a browser reaches a product in this deployment.
+ *
+ * The configured address when there is one, and the family's derived name otherwise. A
+ * product that is not running has neither, so callers ask `runsHere` first rather than
+ * treating this as the deployment question; the derived name is still returned rather
+ * than thrown, because for every product the deployment *does* run it is the right answer.
+ */
+export function addressFor(
+  entry: Product,
+  options: { baseDomain?: string; secure?: boolean; addresses?: ProductAddresses } = {},
+): string {
+  return options.addresses?.[entry.key]
+    ?? urlFor(entry, options.baseDomain ?? "ontrak.innotel.us", options.secure ?? true);
+}
+
 /** The products a role belongs in, in catalogue order. */
 export function productsFor(role: Role): Product[] {
   return PRODUCTS.filter((entry) => entry.roles.includes(role));
@@ -207,7 +262,22 @@ export function canOpen(role: Role, key: ProductKey): boolean {
  * and the catalogue order is the tie-break.
  */
 export function landingFor(role: Role, preferred: readonly ProductKey[] = []): Product | null {
-  const allowed = productsFor(role);
+  return pickLanding(role, productsFor(role), preferred);
+}
+
+/**
+ * The landing product among the products the caller has already decided are available.
+ *
+ * Split out from `landingFor` because the dashboard narrows the catalogue to the products
+ * *this deployment runs* before choosing, and somebody who came for the lab in a
+ * deployment with no lab still has to land somewhere: a landing product that is not there
+ * is a tile nobody is sent to.
+ */
+function pickLanding(
+  role: Role,
+  allowed: readonly Product[],
+  preferred: readonly ProductKey[],
+): Product | null {
   if (allowed.length === 0) return null;
   for (const key of preferred) {
     const match = allowed.find((entry) => entry.key === key);
@@ -287,17 +357,29 @@ export interface Tile {
  * grid of nothing reads as a broken portal; "your account has no product yet, ask
  * an administrator to put you in a group" is the actual situation, and the person
  * reading it can act on it.
+ *
+ * Only the products *this deployment runs* produce a tile. An optional product with no
+ * address is not drawn at all: a lab tile in a deployment with no lab is a link that
+ * leads nowhere and a status light that reads "not answering" for a product nobody is
+ * running, and its `primary` mark would be a landing page that does not exist.
  */
 export function tilesFor(
   role: Role,
-  options: { baseDomain?: string; secure?: boolean; preferred?: readonly ProductKey[] } = {},
+  options: {
+    baseDomain?: string;
+    secure?: boolean;
+    preferred?: readonly ProductKey[];
+    /** Where the optional products this deployment runs are; see `runsHere`. */
+    addresses?: ProductAddresses;
+  } = {},
 ): Tile[] {
-  const landing = landingFor(role, options.preferred ?? []);
-  return productsFor(role).map((entry) => ({
+  const allowed = productsFor(role).filter((entry) => runsHere(entry, options.addresses));
+  const landing = pickLanding(role, allowed, options.preferred ?? []);
+  return allowed.map((entry) => ({
     key: entry.key,
     name: entry.name,
     tagline: entry.tagline,
-    url: urlFor(entry, options.baseDomain ?? "ontrak.innotel.us", options.secure ?? true),
+    url: addressFor(entry, options),
     tone: entry.tone,
     primary: landing !== null && landing.key === entry.key,
     health: entry.health ?? null,

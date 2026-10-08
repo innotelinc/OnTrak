@@ -2,7 +2,9 @@ import { redirect } from "next/navigation";
 
 import { SignOutButton } from "@/components/SignOutButton";
 import { portalConfig, ssoConfigured } from "@/lib/config";
-import { emptyStateFor, PRODUCTS, summarizeFleet, tilesFor, urlFor } from "@/lib/portal-rules";
+import {
+  addressFor, emptyStateFor, PRODUCTS, runsHere, summarizeFleet, tilesFor, type ProductAddresses,
+} from "@/lib/portal-rules";
 import { readSession } from "@/lib/session";
 import { probeFleet, syncHealth, type Reachability } from "@/lib/sync-client";
 
@@ -34,9 +36,16 @@ export default async function DashboardPage() {
   if (!session) redirect("/login");
 
   const config = portalConfig();
+
+  // The products this deployment runs, and where. Only OnTrak Lab may be absent, and
+  // only when an operator has both enabled it and said where it is — so the lab's tile
+  // is drawn (and probed) here exactly when there is a lab to draw, and a deployment
+  // with none is never told a product it does not run is "not answering".
+  const addresses: ProductAddresses = config.labUrl ? { lab: config.labUrl } : {};
   const tiles = tilesFor(session.role, {
     baseDomain: config.baseDomain,
     secure: config.secureLinks,
+    addresses,
   });
 
   // Probe the products this person can see, in parallel, with a short deadline. The
@@ -171,12 +180,22 @@ export default async function DashboardPage() {
             <tbody>
               {PRODUCTS.map((entry) => {
                 const allowed = entry.roles.includes(session.role);
+                // The catalogue is the whole family, so the lab keeps its row even where
+                // the deployment runs none — but the row says so instead of printing an
+                // address nothing resolves.
+                const running = runsHere(entry, addresses);
                 return (
                   <tr key={entry.key}>
                     <td><strong>{entry.name}</strong></td>
                     <td className="dim">{entry.audience}</td>
                     <td className="faint mono" style={{ fontSize: 11.5 }}>
-                      {urlFor(entry, config.baseDomain, config.secureLinks).replace(/^https?:\/\//, "")}
+                      {running
+                        ? addressFor(entry, {
+                          baseDomain: config.baseDomain,
+                          secure: config.secureLinks,
+                          addresses,
+                        }).replace(/^https?:\/\//, "")
+                        : "not in this deployment"}
                     </td>
                     <td>
                       {allowed
