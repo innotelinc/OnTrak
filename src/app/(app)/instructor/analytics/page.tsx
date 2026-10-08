@@ -206,7 +206,7 @@ export default async function AnalyticsPage({
                       <span className="text-xs text-ink-faint">
                         {t("analytics.mark", { score: stat.passScore })}
                       </span>
-                      <Badge tone={stat.passRate >= stat.passScore ? "teal" : "amber"}>
+                      <Badge tone={/* pass-rule-exempt: a cohort's rate, not an attempt */ stat.passRate >= stat.passScore ? "teal" : "amber"}>
                         {stat.passRate}% pass
                       </Badge>
                     </li>
