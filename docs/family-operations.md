@@ -375,8 +375,18 @@ somebody's afternoon:
   what the product is.
 - **SAML and IdP-initiated sign-on** are not implemented; the flow is
   SP-initiated OIDC only.
-- **No self-service password reset.** There is no mail server in this Network's
-  trust path, and a reset flow that cannot deliver a message is a login page that
-  lies. An administrator resets through the dashboard.
+- **OnTrak Lab is not one of the six.** It is a peer deployment — OnTrak-dev, Python,
+  on its own host — rather than a service `docker-compose.all.yml` starts, and
+  `scripts/cerulean-ontrak.py` provisions no name for it, so §1's six names are the whole
+  list this deployment serves. A deployment that *does* run a lab says so in two facts,
+  both in the root `.env` that the family stack hands to the training app and to the
+  portal: `ONTRAK_LAB_ENABLED` and `ONTRAK_LAB_URL`. Until both are set the portal draws
+  no lab tile, the training app's control room marks the lab "not deployed here", and
+  `npm run health:check` in the portal skips it — deliberately, because a link to a lab
+  nobody deployed is a dead link with a status light beside it, and the light can only
+  ever read "not answering". Setting the switch without an address is reported as a
+  misconfiguration rather than drawn as one. `ONTRAK_LAB_INTERNAL_URL` is the probe's
+  address when the lab's public name is not reachable from inside the portal container,
+  exactly as the other products have one.
 - **The portal does not sign you out of the products.** It clears its own session
   and says so; each product holds its own credential.

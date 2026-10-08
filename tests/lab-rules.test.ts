@@ -7,9 +7,19 @@
  * never claimed to be a lab is never sent to one. The one way this goes wrong that
  * matters most is a link that looks configured and goes nowhere — the same failure
  * the tile table was built to avoid.
+ *
+ * The file also holds *who may read* the lab's two variables, because restraint is not a
+ * property of one file: the control room's capabilities panel read `ONTRAK_LAB_URL` itself
+ * and offered `lab.<base domain>` as the lab's address in every deployment, which is a
+ * link to a product nobody had deployed, while this reader said the lab was off. Two
+ * files, two answers, and the panel's own comment forbids exactly that for Sentinel. So
+ * the readers are a list (`LAB_READERS`), the list is checked against the tree, and a
+ * third one has to say why it is not a second copy of the rule.
  */
 
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
 
 import {
@@ -80,6 +90,106 @@ test("lab: a scenario runs on a real machine only when it is tagged, exactly", (
   // student to a hypervisor the scenario was never written for.
   assert.equal(isLabScenario(["cyber-lab"]), false);
   assert.equal(isLabScenario(["laboratory", "windows"]), false);
+});
+
+/*
+ * ── who may read the lab's two facts ───────────────────────────────────────
+ *
+ * The lab is a peer deployment, so "does this deployment want a lab" and "where is it"
+ * are two facts that have to mean the same thing in every product that asks — and the
+ * way that stops being true is a second reader. There was one: the control room's
+ * capabilities panel read `ONTRAK_LAB_URL` itself and offered `lab.<base domain>` as the
+ * lab's address in any deployment, which is a link to a product nobody had deployed, and
+ * it is the drift the panel's own comment forbids for Sentinel ("adding it here would be
+ * a second reader of the same variable, and the two would drift"). The portal is a
+ * second reader by necessity — it is independently deployable and cannot import
+ * `src/lib/lab-rules.ts` — so the rule is not "one file", it is "one reader per package,
+ * and this list says which".
+ */
+
+/** The files that own the lab's variables: the training app's reader, and the portal's. */
+const LAB_READERS = ["src/lib/lab-rules.ts", "ontrak-portal/src/lib/config.ts"];
+
+/** What a line says when it names the lab's variables without deciding what they mean. */
+const EXEMPT = "lab-rule-exempt:";
+
+/** The two facts. Naming either outside a reader is how a second reader begins. */
+const SIGNS = [/ONTRAK_LAB_ENABLED/, /ONTRAK_LAB_URL/];
+
+/** Directories that are not application source, or are another tree's business. */
+const NOT_SOURCE = new Set([
+  "node_modules", ".git", ".next", "dist", "tests", "__pycache__", ".venv",
+]);
+
+/** Every `.ts`/`.tsx`/`.mjs`/`.js`/`.py` under a directory, minus the trees above. */
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.isDirectory()) {
+      return NOT_SOURCE.has(entry.name) ? [] : sourceFiles(path.join(dir, entry.name));
+    }
+    return /\.(tsx?|mjs|js|py)$/.test(entry.name) ? [path.join(dir, entry.name)] : [];
+  });
+}
+
+/** Prose about the variables is not a read of them. Both languages' comment markers. */
+function isComment(line: string): boolean {
+  const trimmed = line.trimStart();
+  return trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*") ||
+    trimmed.startsWith("#");
+}
+
+/** Each line that names one of the lab's variables, as `path:line: source`. */
+function namingLinesIn(file: string): string[] {
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .flatMap((line, index) =>
+      isComment(line) || !SIGNS.some((sign) => sign.test(line))
+        ? []
+        : [`${path.relative(process.cwd(), file)}:${index + 1}: ${line.trim()}`],
+    );
+}
+
+test("lab: the walk reads the tree it claims to guard", () => {
+  // A walk that silently found nothing would pass the check below by defining it away, so
+  // it has to prove it saw the source *and* both readers in it.
+  const files = sourceFiles(process.cwd());
+  assert.ok(files.length >= 400, `the walk found only ${files.length} source files`);
+
+  for (const reader of LAB_READERS) {
+    const full = path.join(process.cwd(), reader);
+    assert.ok(files.includes(full), `the walk must include ${reader}, which owns the rule`);
+    assert.ok(
+      namingLinesIn(full).length > 0,
+      `${reader} no longer names the lab's variables, so this guard would pass by finding nothing`,
+    );
+  }
+});
+
+test("lab: no package reads the lab's variables outside its own reader", () => {
+  const readers = LAB_READERS.map((file) => path.join(process.cwd(), file));
+  const offenders = sourceFiles(process.cwd())
+    .filter((file) => !readers.includes(file))
+    .flatMap(namingLinesIn)
+    .filter((line) => !line.includes(EXEMPT));
+
+  assert.deepEqual(
+    offenders,
+    [],
+    "what OnTrak Lab's variables mean is decided by `src/lib/lab-rules.ts`, and for its own " +
+      "package by `ontrak-portal/src/lib/config.ts`. A second reader drifts from the first, and " +
+      "it drifts towards drawing a link or a light for a product the deployment does not run. A " +
+      `file that genuinely must name them marks the line "${EXEMPT} <reason>":\n` +
+      offenders.join("\n"),
+  );
+});
+
+test("lab: every exemption says why it is not a second reader", () => {
+  const excuses = sourceFiles(process.cwd())
+    .flatMap(namingLinesIn)
+    .filter((line) => line.includes(EXEMPT))
+    .filter((line) => line.slice(line.indexOf(EXEMPT) + EXEMPT.length).trim().length < 10);
+
+  assert.deepEqual(excuses, [], `an exemption has to say why: ${excuses.join(", ")}`);
 });
 
 test("lab: the simulation path is unchanged for a scenario that does not claim the lab", () => {

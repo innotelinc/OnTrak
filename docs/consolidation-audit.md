@@ -559,6 +559,11 @@ Stated plainly, because the integration is **not** complete:
   `off` — marked with the reason, in a state of its own rather than the red of an address
   that was refused — and links nowhere; the row itself stays, because a product missing
   from a list of what a deployment can reach is a product nobody can reach from here.
+  Two files reading one product's variables is how that happened, so
+  `tests/lab-rules.test.ts` now holds *who* may read them: a list of the readers — one
+  per package, because the portal is independently deployable and cannot import the
+  training app's — checked against the tree, with a marker for a file that genuinely
+  must name them. A planted second reader fails it, naming the file and the line.
 - **Terminology is resolved** (§9/Q1). *OnTrak* names this repository and the family
   inside it, never one product; the product in `src/` is **OnTrak IT Support Training**,
   and the lab is **OnTrak Lab**.
