@@ -509,6 +509,23 @@ Stated plainly, because the integration is **not** complete:
   Where the lab is *hosted* is a different question with a different answer (§9/Q5): one
   lab host per deployment, single-tenant, because its VMs share one bridge, one pool and
   one store and nothing in the lab names a tenant.
+- **A suite that is not an npm package can be missed the same way.** The genie job ran
+  `npm test`, which is that package's TypeScript suite, and
+  `ontrak-genie/scripts/tests/test_verify_sso.py` — twelve offline tests of Genie's sign-in
+  posture check, deciding config precedence, the callback that has to be *this* name's, a
+  redirect handed back rather than followed, and an unset admin token as a skip rather than
+  a failure — was run by no job and named by no Makefile target, so it had only ever run on
+  the machine of whoever wrote it. That is the failure the portal's own job was added for,
+  one artifact class over, which is why the rule is general now rather than npm-shaped:
+  every directory in the tree that holds a `test_*.py` must be run by a job, derived by
+  walking the tree rather than listed, with a job's `working-directory` and a step's own
+  `cd` both counted as a job saying where it works. What "run by a job" means is the
+  narrow part, and two plants moved it: a comment that names a test directory has not run
+  it, so the job text is comment-stripped first, and Python's discovery reaches a suite one
+  level down rather than through an ancestor, so `cd scripts && … discover -s tests` counts
+  and discovering from the package root finds nothing. Seven plants fail it — a planted
+  directory, and each of the four suites losing the step or the `cd` that runs it — and the
+  first defect, the genie suite with no job at all, fails it by name.
 - **The first-sign-in table is held to the seeds now.** Which address, which account,
   which password, which join code — that table is the one page an operator reads on the
   first morning, and it was the last table in the guide held to nothing, in a document
