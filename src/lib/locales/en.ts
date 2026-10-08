@@ -237,10 +237,11 @@ export const en = {
   // calls itself the same thing everywhere.
   "admin.capabilities": "Family capabilities",
   "admin.capabilitiesHint":
-    "The OnTrak products this deployment can reach, in the family's order. Each is either named here in the environment or reached at its standard family address; nothing on this page is fetched, so a link is offered whether or not the product is running.",
+    "The OnTrak products this deployment can reach, in the family's order. Each is either named here in the environment or reached at its standard family address; nothing on this page is fetched, so a link is offered whether or not the product is running. A product this deployment does not run is marked instead of linked.",
   "admin.capability.state.named": "named here",
   "admin.capability.state.family": "family address",
   "admin.capability.state.unreachable": "no link",
+  "admin.capability.state.off": "not deployed here",
   "admin.capability.open": "Open",
   "admin.capability.training.name": "OnTrak IT Support Training",
   "admin.capability.training.tagline":

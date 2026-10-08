@@ -31,10 +31,22 @@
  * entry — the same host label, and probed at `/healthz`, the path a Python peer
  * actually serves.
  *
+ * **The lab's address is delegated too, for the same reason.** `lab-rules.ts` already
+ * reads `ONTRAK_LAB_ENABLED` and `ONTRAK_LAB_URL` for the student page's "start a real
+ * machine" link, and its rule is that **both** are required: the lab is a peer
+ * deployment on its own host, so a deployment that has not said it wants one and where
+ * it is does not have one. Reading those variables a second time here would drift from
+ * that rule, and it would drift in the direction that costs most — a link to
+ * `lab.<base domain>` is not an address for a product nobody has deployed, and the
+ * family's naming convention does not make it one. So the lab is `off` in such a
+ * deployment: marked with the reason, linked nowhere. Only "running" is a question this
+ * page does not ask — a link is offered whether or not a product is up.
+ *
  * Pure — no fetch, no clock — so every state is cheap to assert and the page is only
  * presentation.
  */
 
+import { LAB_ENABLED_ENV, LAB_URL_ENV, labConfigFromEnv } from "./lab-rules";
 import { SENTINEL_CONTROL_CENTER_PATH, sentinelStatus } from "./sentinel-status";
 
 export type CapabilityId = "training" | "tix" | "sentinel" | "sync" | "genie" | "lab";
@@ -47,6 +59,15 @@ export interface Capability {
   named: boolean;
   /** Why there is no URL, when there is none. null otherwise. */
   note: string | null;
+  /**
+   * True when this deployment does not run the product at all.
+   *
+   * A different fact from a product that is merely not answering, and from one whose
+   * address was *set and refused*: the lab is a peer deployment, so a deployment with no
+   * lab is the normal case rather than a fault, and the panel says so instead of drawing
+   * a red "no link".
+   */
+  off?: true;
 }
 
 /** The Network's real name, so an unconfigured deployment still produces a link that resolves. */
@@ -65,16 +86,17 @@ const HOSTS: Record<CapabilityId, string> = {
 /**
  * The variable that names a product's own address, per id.
  *
- * Sentinel is deliberately absent: its URL is read through `sentinelStatus`, which
- * also knows `SENTINEL_ISSUER` and which refuses a value it cannot open. Adding it
- * here would be a second reader of the same variable, and the two would drift.
+ * Sentinel and the lab are deliberately absent: each has a reader that owns its
+ * variables — `sentinelStatus` (which also knows `SENTINEL_ISSUER`) and
+ * `labConfigFromEnv` (which also knows whether the deployment wants a lab at all).
+ * Adding either here would be a second reader of the same variable, and the two would
+ * drift.
  */
-const EXPLICIT_URL_ENV: Record<Exclude<CapabilityId, "sentinel">, string> = {
+const EXPLICIT_URL_ENV: Record<Exclude<CapabilityId, "sentinel" | "lab">, string> = {
   training: "ONTRAK_TRAINING_BASE_URL",
   tix: "ONTRAK_TIX_BASE_URL",
   sync: "ONTRAK_SYNC_URL",
   genie: "ONTRAK_GENIE_URL",
-  lab: "ONTRAK_LAB_URL",
 };
 
 /** The order they are listed in: this app first, then the products, then the lab. */
@@ -116,6 +138,7 @@ export function capabilities(env: Record<string, string | undefined> = process.e
 
   const resolved = ORDER.map<Capability>((id) => {
     if (id === "sentinel") return sentinelCapability(env, scheme, baseDomain);
+    if (id === "lab") return labCapability(env);
 
     const explicit = withoutTrailingSlashes(read(env, EXPLICIT_URL_ENV[id]));
     if (explicit) return { id, url: explicit, named: true, note: null };
@@ -123,6 +146,34 @@ export function capabilities(env: Record<string, string | undefined> = process.e
   });
 
   return resolved;
+}
+
+/**
+ * The lab's row, from the reader that owns its variables.
+ *
+ * `off` is the deployment's normal state, not a fault: the lab runs on its own host and
+ * has to be asked for. A value that *was* set and refused keeps the reason as its note,
+ * the way Sentinel's does — the operator has something to fix there, and nothing to fix
+ * when the lab simply is not wanted.
+ */
+function labCapability(env: Record<string, string | undefined>): Capability {
+  const status = labConfigFromEnv(env);
+  if (!status.enabled) {
+    return {
+      id: "lab",
+      url: null,
+      named: false,
+      note: `${LAB_ENABLED_ENV} is not set, so this deployment does not run OnTrak Lab.`,
+      off: true,
+    };
+  }
+  if (!status.url) {
+    return { id: "lab", url: null, named: false, note: status.issues.join(" ") || null };
+  }
+  // The reader returns the lab's origin, so the link loses nothing and cannot double a
+  // segment — and it is `named` for the same reason an explicit URL is: an operator
+  // stated where the lab is.
+  return { id: "lab", url: status.url, named: true, note: null };
 }
 
 /**

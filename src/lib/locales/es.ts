@@ -211,10 +211,11 @@ export const es: Messages = {
   "admin.integration.notSet": "sin definir",
   "admin.capabilities": "Capacidades de la familia",
   "admin.capabilitiesHint":
-    "Los productos OnTrak a los que este despliegue puede llegar, en el orden de la familia. Cada uno está o bien nombrado aquí en el entorno, o bien se alcanza en su dirección estándar de la familia; en esta página no se consulta nada, así que se ofrece un enlace haya o no producto en marcha.",
+    "Los productos OnTrak a los que este despliegue puede llegar, en el orden de la familia. Cada uno está o bien nombrado aquí en el entorno, o bien se alcanza en su dirección estándar de la familia; en esta página no se consulta nada, así que se ofrece un enlace haya o no producto en marcha. Un producto que este despliegue no ejecuta se marca en lugar de enlazarse.",
   "admin.capability.state.named": "nombrado aquí",
   "admin.capability.state.family": "dirección familiar",
   "admin.capability.state.unreachable": "sin enlace",
+  "admin.capability.state.off": "no desplegado aquí",
   "admin.capability.open": "Abrir",
   "admin.capability.training.name": "OnTrak IT Support Training",
   "admin.capability.training.tagline":

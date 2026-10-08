@@ -549,7 +549,16 @@ Stated plainly, because the integration is **not** complete:
   run. `ontrak-portal/tests/lab-address.test.ts` and the catalogue cases in
   `portal-rules.test.ts` hold the three states — off, on-but-nowhere, on-and-located — and
   `tests/family-stack.test.ts` keeps the lab out of the stack's light list, now because
-  the stack never draws it.
+  the stack never draws it. The training app's control room panel
+  (`src/lib/capabilities.ts`) carried the same defect more quietly: it read
+  `ONTRAK_LAB_URL` itself and offered `lab.<base domain>` as the lab's "family address"
+  in any deployment that had not set one — the second reader of a variable
+  `src/lib/lab-rules.ts` already owns, which is the drift that file explicitly refuses
+  for Sentinel, and the exact "invents a link that does not resolve" its own test names.
+  The row is built from the lab's reader now, so a deployment with no lab shows it as
+  `off` — marked with the reason, in a state of its own rather than the red of an address
+  that was refused — and links nowhere; the row itself stays, because a product missing
+  from a list of what a deployment can reach is a product nobody can reach from here.
 - **Terminology is resolved** (§9/Q1). *OnTrak* names this repository and the family
   inside it, never one product; the product in `src/` is **OnTrak IT Support Training**,
   and the lab is **OnTrak Lab**.
