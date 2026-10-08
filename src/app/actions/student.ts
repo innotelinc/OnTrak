@@ -20,6 +20,7 @@ import { recordAudit } from "@/lib/audit";
 import { certificatePatchFor, readStoredCertificate } from "@/lib/certificates";
 import { announceGraded, checksFor, storedCertificateOf } from "@/lib/graded-events";
 import { gradingModeForTags } from "@/lib/grading-mode";
+import { simulatedStartRefusal } from "@/lib/lab-rules";
 import { clearLtiLaunch, readLtiLaunch } from "@/lib/lti-session";
 import type { Prisma } from "@prisma/client";
 import type { SandboxCommandResponse } from "@/lib/sim/drivers/proxy";
@@ -37,6 +38,13 @@ export async function startAttempt(formData: FormData): Promise<void> {
 
   const scenario = await prisma.scenario.findUnique({ where: { id: scenarioId }, include: SCENARIO_INCLUDE });
   if (!scenario) fail("/student", "That scenario no longer exists.");
+
+  // A scenario tagged for the lab is graded on a real machine and carries no simulated
+  // checks, so an attempt here would grade nothing and still be recorded as lab-graded —
+  // the mode comes from this same tag. Refused for every role, and before the resume
+  // check below: an attempt that should never have existed is not one to continue.
+  const labRefusal = simulatedStartRefusal(scenario.tags);
+  if (labRefusal) fail("/student", labRefusal);
 
   // An attempt already running? Resume it rather than burning a second clock.
   const running = await prisma.attempt.findFirst({

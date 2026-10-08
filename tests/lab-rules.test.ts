@@ -26,6 +26,7 @@ import {
   LAB_DASHBOARD_PATH,
   LAB_SCENARIO_TAG,
   isLabScenario,
+  simulatedStartRefusal,
   labConfigFromEnv,
   labSessionUrl,
 } from "../src/lib/lab-rules";
@@ -192,12 +193,15 @@ test("lab: every exemption says why it is not a second reader", () => {
   assert.deepEqual(excuses, [], `an exemption has to say why: ${excuses.join(", ")}`);
 });
 
-test("lab: the simulation path is unchanged for a scenario that does not claim the lab", () => {
-  // The page asks both questions independently: the lab link is drawn from the tag,
-  // and the simulated start is drawn for every scenario regardless.
+test("lab: a simulated scenario is untouched, and a lab one has exactly one door", () => {
   const config = labConfigFromEnv({ ONTRAK_LAB_ENABLED: "true", ONTRAK_LAB_URL: "https://lab.test" });
   assert.equal(isLabScenario(["linux", "basics"]), false, "no lab affordance for a simulated scenario");
+  assert.equal(simulatedStartRefusal(["linux", "basics"]), null, "and its simulated start is unchanged");
   assert.equal(isLabScenario(["lab"]), true);
+  assert.ok(simulatedStartRefusal(["lab"]), "a lab scenario has no simulated start to offer");
+  // The substring rule still holds where it matters most: a scenario that merely says
+  // "lab" in another word is not promoted onto a hypervisor, and is not refused here.
+  assert.equal(simulatedStartRefusal(["cyber-lab", "laboratory"]), null);
   // And the lab URL exists only when the deployment turned it on.
   assert.equal(labSessionUrl(config), "https://lab.test/dashboard");
 });

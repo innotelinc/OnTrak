@@ -346,12 +346,25 @@ lab's own dashboard (`<ONTRAK_LAB_URL>/dashboard`), which signs the student in a
 the same provider — the link carries **no identity**, because a subject in a query
 string would be a second, weaker identity path (§6/C5). *Verify:* `tests/lab-rules.test.ts`
 asserts off-with-no-link, enabled-with-the-right-link, and a half-configured lab that
-is reported rather than drawn as a dead link; the simulated start is unchanged. *Revert:*
-unset `ONTRAK_LAB_ENABLED`.
+is reported rather than drawn as a dead link; the simulated start is unchanged for a
+scenario that does not claim the lab. *Revert:* unset `ONTRAK_LAB_ENABLED`.
 
   *Caveat, stated plainly:* no scenario is tagged `lab` yet (that is Step 5), so in
 today's data the link renders nowhere. The reader and the gate are the deliverable;
 the affordance becomes visible when a lab scenario exists and a lab is deployed.
+
+  **One door, not two (added after the importer gained a caller).** A lab scenario
+  carries **no simulated checks** — that is Step 5's design, not an oversight — so a
+  simulated attempt at one grades nothing while `gradingModeForTags` labels the record
+  `lab`, because the mode is read from the same tag. The evidence would say a real
+  machine decided something no machine touched, which is the single failure §9/Q7
+  exists to prevent. So `simulatedStartRefusal` (`src/lib/lab-rules.ts`) is asked at
+  **both** seams: the card draws the lab door *instead of* the start button, and
+  `startAttempt` refuses the POST before creating anything, because a rule only the page
+  checks is a rule a POST walks past. *Verify:* `tests/lab-import.test.ts` holds the
+  rule and holds each seam to asking it — deleting the check from either file fails,
+  naming that file — and `tests/lab-rules.test.ts` keeps the substring rule (`cyber-lab`
+  is not `lab`). *Revert:* one identifier in two files; the tag stays the only marker.
 
 **Step 5 — Converge the scenario model, one direction.** **(done)** *Artefacts:*
 `src/lib/lab-scenario-import.ts` — a pure, one-way importer from a parsed lab
@@ -367,6 +380,16 @@ category, workloads, lessons); and the 14 lab scenarios as JSON fixtures under
 nothing in the YAML says which live condition an objective tests), so
 `validateDefinition` declines it rather than letting it pass as simulated. *Revert:*
 delete the imported rows; the source files were never touched.
+
+  **And it can be written now.** The step's own caveat was that nothing put the mapping
+  into a database, so no deployment held a `lab`-tagged scenario and the door above was
+  drawn nowhere. `src/lib/lab-import.ts` is the plan — pure, tested, all-or-nothing, and
+  a duplicate slug is refused rather than silently overwritten — and
+  `npm run lab:import` (`scripts/import-lab-scenarios.ts`) is the operator's script that
+  applies it, idempotent by slug, publishing the rows because a scenario a student cannot
+  reach is a door drawn nowhere. *Verify:* `tests/lab-import.test.ts`; and it has been run
+  against a booted family stack, where the 14 rows landed tagged `lab`, published, with no
+  checks, and a lab completion then filed an attempt against one of them.
 
 **Step 6 — Evidence at the boundary.** **(done)** *Artefacts:* `src/lib/grading-mode.ts`
 (the two modes, the task's `lab`-tag rule, and the default-to-`simulated` coercion);
@@ -436,17 +459,28 @@ Stated plainly, because the integration is **not** complete:
   tile, a gated "start a real machine" link on a `lab`-tagged scenario, a documented
   identity mapping, an importer that reads the lab's 14 scenarios into the family's shape,
   a recorded grading mode on every attempt's evidence, an instructor view that states
-  that mode, and a boundary that accepts a lab's completion and records it as a graded
-  attempt. **But no imported scenario has been written to a database, no scenario is
-  tagged `lab` in a live deployment, no lab is deployed, and nothing is graded through
-  it — so no completion has been posted and no row carries `gradingMode = 'lab'` yet.**
-  Steps 3 and 6 are the halves a live lab would exercise (identity at sign-in, and a
-  completion reported across the boundary); both exist on this side, but OnTrak-dev must
-  stay unchanged, so **OnTrak Lab's half — signing in through the family IdP, and calling
-  the completion route after a session — is drafted out of tree** in this repository
+  that mode, and a boundary that accepts a lab's completion and records it as a graded  attempt. **No lab is deployed, and nothing has been graded on a real machine.** OnTrak
+  Lab's half — signing in through the family IdP, and calling the completion route after a
+  session — is drafted out of tree in this repository
   (`integrations/lab-completion-client/`, a dependency-free Python client with its own
-  tests) **and has not been installed on a lab host.** No lab identity has been
-  exercised here.
+  tests) **and has not been installed on a lab host.** No lab identity has been exercised
+  here, and no scenario has been run on a hypervisor.
+
+  What is no longer true is the older form of that sentence, and the change is worth
+  recording precisely. **The catalogue is now in a database, and a completion has been
+  posted end to end — against a booted family stack, not against a lab.** `npm run
+  lab:import` wrote the lab's 14 scenarios into a running deployment (tagged `lab`,
+  published, no simulated checks, `labMeta` intact, idempotent on a second run), and
+  `POST /api/v1/lab/completions` — authenticated with the deployment's token — filed
+  `sess-2026-10-08-0001` against `net-dns-failure`: **201** on the first delivery and
+  **200** with the same `attemptId` on the retry, the attempt `GRADED` with
+  `gradingMode = 'lab'` and three check rows, a certificate issued whose signed content
+  carries `mode: "lab"` and the `lab` skill tag, an `attempt.lab_completion` entry in the
+  audit chain, and the same `mode` in `GET /api/v1/results` and its CSV. A completion
+  filed against a simulated scenario was refused `422`. What that proves is the *boundary*
+  and the *catalogue*; it does not prove a real session, because no lab host exists here
+  and the session id in that test was typed by hand rather than by a machine. The lab's
+  side of the wire is still unwalked.
 - **OnTrak-dev has not been modified**, as required. Its `README.md` still describes
   a standalone range; its portal still signs in only through Authentik and only as
   `instructor`/`student`.
