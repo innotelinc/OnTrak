@@ -10,67 +10,50 @@
  *   ONTRAK_BASE_DOMAIN=ontrak.innotel.us npm run health:check
  *   npm run health:check -- --json
  *
- * The "healthy" rule is the dashboard's, on purpose: any answer at all — 2xx,
- * 3xx to a sign-in, 401, 403 — means the product is serving. The question is "is
- * it there", not "am I allowed in".
+ * It asks it *the way the dashboard does*: from the same code (`probeFleet`), so the
+ * same statuses count as an answer — 2xx, 3xx to a sign-in, 401, 403 — and the same
+ * `ONTRAK_<KEY>_INTERNAL_URL` override is honoured. That second half is the one worth
+ * saying out loud. A deployment sets those addresses when the public name is not
+ * reachable from where the question is asked — hairpin NAT, or a certificate this host
+ * does not trust — which is exactly the situation a check like this one runs in, and a
+ * check that ignored them would report the whole family down while the dashboard it
+ * describes drew every light green.
+ *
+ * A product with no health path to ask is a failure, not a pass. The question this
+ * answers is "is every product answering", and "we did not look" is not a yes — the
+ * same reason the dashboard never draws a green light it did not test.
  *
  * Exit 0 when every product answered, 1 when any did not.
  */
 
-import { PRODUCTS } from "../src/lib/portal-rules";
-
-interface Probe {
-  key: string;
-  url: string;
-  status: number;
-  healthy: boolean;
-  detail?: string;
-}
-
-async function probe(key: string, url: string): Promise<Probe> {
-  try {
-    const response = await fetch(url, {
-      redirect: "manual",
-      cache: "no-store",
-      signal: AbortSignal.timeout(5_000),
-    });
-    const healthy =
-      response.ok ||
-      response.status === 401 ||
-      response.status === 403 ||
-      (response.status >= 300 && response.status < 400);
-    return { key, url, status: response.status, healthy };
-  } catch (error) {
-    return {
-      key,
-      url,
-      status: 0,
-      healthy: false,
-      detail: error instanceof Error ? error.message : "no response",
-    };
-  }
-}
+import { PRODUCTS, urlFor } from "../src/lib/portal-rules";
+import { probeFleet } from "../src/lib/sync-client";
 
 async function main(): Promise<void> {
   const asJson = process.argv.includes("--json");
   const base = process.env.ONTRAK_BASE_DOMAIN ?? "ontrak.innotel.us";
-  const scheme = process.env.ONTRAK_PORTAL_SECURE === "false" ? "http" : "https";
+  const secure = process.env.ONTRAK_PORTAL_SECURE !== "false";
 
-  const results = await Promise.all(
-    PRODUCTS.map((product) => probe(product.key, `${scheme}://${product.host}.${base}${product.health}`)),
+  const results = await probeFleet(
+    PRODUCTS.map((product) => ({
+      key: product.key,
+      url: urlFor(product, base, secure),
+      health: product.health ?? null,
+    })),
+    (key) => process.env[`ONTRAK_${key.toUpperCase()}_INTERNAL_URL`],
   );
 
   if (asJson) {
     console.log(JSON.stringify({ base, results }, null, 2));
   } else {
     for (const result of results) {
-      const label = result.healthy ? "ok  " : "DOWN";
-      const detail = result.status > 0 ? String(result.status) : result.detail ?? "no response";
-      console.log(`${label} ${result.url} — ${detail}`);
+      const label =
+        result.reachability === "up" ? "ok  " : result.reachability === "unknown" ? "none" : "DOWN";
+      console.log(`${label} ${result.url} — ${result.detail}`);
     }
   }
 
-  process.exit(results.every((result) => result.healthy) ? 0 : 1);
+  process.exit(results.every((result) => result.reachability === "up") ? 0 : 1);
 }
 
 void main();

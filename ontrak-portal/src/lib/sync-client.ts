@@ -158,6 +158,57 @@ export async function probeProduct(entry: {
   }
 }
 
+/** One product's answer, and the address it was actually asked at. */
+export interface FleetProbe extends StatusResult {
+  url: string;
+}
+
+/**
+ * A product as a caller hands it over to be asked.
+ *
+ * Both callers already have one of these without building it: the dashboard passes the
+ * tiles it is about to draw, and the check passes the catalogue, each entry carrying
+ * the public address a browser would open and the path that address answers.
+ */
+export interface FleetEntry {
+  key: string;
+  /** The public address. An override, when one is set, replaces it — never the path. */
+  url: string;
+  health?: string | null;
+}
+
+/**
+ * Probe the products given, one question each.
+ *
+ * THE ONE PLACE THIS QUESTION IS ASKED. There are two askers: the dashboard, per
+ * request, for the tiles a person can see, and `npm run health:check`, which carries
+ * the same answer out in an exit code for an operator. A second copy of the rule —
+ * which statuses count as an answer, and which address to ask — is a second thing to
+ * be wrong, and it goes wrong in the direction that costs most: the check calls the
+ * family down while the dashboard two feet away draws every light green, or the
+ * reverse, and neither is believed again.
+ *
+ * `internalUrlFor` is a function rather than a map because both callers resolve the
+ * same variable (`ONTRAK_<KEY>_INTERNAL_URL`) from wherever they happen to run: the
+ * page and the check read the process environment, and a test hands in an address of
+ * its own. A product with no health path is *unknown*, never up (see `probeProduct`).
+ */
+export async function probeFleet(
+  entries: readonly FleetEntry[],
+  internalUrlFor: (key: string) => string | undefined = () => undefined,
+): Promise<FleetProbe[]> {
+  return Promise.all(
+    entries.map(async (entry) => {
+      const internal = internalUrlFor(entry.key);
+      const base = (internal || entry.url).replace(/\/+$/, "");
+      const answer = await probeProduct(entry, internal);
+      // The address the question went to, which is the override when one was set —
+      // the link the browser is given is never the internal one.
+      return { ...answer, url: entry.health ? `${base}${entry.health}` : entry.url };
+    }),
+  );
+}
+
 /*
  * ── the account table, for administrators ──────────────────────────────────
  *
