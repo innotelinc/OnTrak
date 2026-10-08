@@ -385,7 +385,7 @@ export async function resumePreviews(): Promise<number> {
     if (isExpired(preview)) continue;
     if (children.has(preview.name)) continue;
     if (!(await portIsFree(preview.port))) continue;
-    startPreviewProcess(preview);
+    await startPreviewProcess(preview);
     started += 1;
   }
   // Only when something changed: a boot with nothing to resume must not rewrite
@@ -529,7 +529,7 @@ export async function createPreview(options: CreatePreviewOptions = {}): Promise
       // A publish is a request to have it running, so it is not the record of a
       // stop any more.
       existingPort.stopped = false;
-      startPreviewProcess(existingPort);
+      await startPreviewProcess(existingPort);
       await writeRegistry(rows);
     }
     return existingPort;
@@ -566,75 +566,83 @@ export async function createPreview(options: CreatePreviewOptions = {}): Promise
     expiresAt: ttlFor(options.ttlMs, custom),
   };
 
-  if (preview.command !== "") startPreviewProcess(preview);
+  if (preview.command !== "") await startPreviewProcess(preview);
 
   rows.push(preview);
   await writeRegistry(rows);
   return preview;
 }
 
-/** Start the preview's command as a detached process, logging beside the data. */
-function startPreviewProcess(preview: Preview): void {
+/**
+ * Start the preview's command as a detached process, logging beside the data.
+ *
+ * Awaited rather than fired and forgotten. Every caller writes this record to the
+ * registry and hands it back, and a record that says `pid: null` while a process is
+ * running is one a restarted Genie reads as "not running" — so the pid has to exist
+ * before the write. The mkdir and the open are the only asynchronous steps before
+ * the spawn, and the spawn itself is synchronous, so `pid` is set by the time this
+ * resolves.
+ */
+async function startPreviewProcess(preview: Preview): Promise<void> {
   const logDir = path.join(config.dataDir, "previews");
-  // The span between the spawn and the first write is tiny and the mkdir is
-  // idempotent, so it is deliberately synchronous-ish: the child cannot write
-  // before the descriptor exists.
   const logPath = path.join(logDir, `${preview.name}.log`);
-  void fs.mkdir(logDir, { recursive: true }).then(() => {
-    return fs.open(logPath, "a").then((handle) => {
-      const child = spawn("bash", ["-lc", preview.command], {
-        cwd: preview.cwd === "" ? config.workspace : preview.cwd,
-        env: {
-          ...process.env,
-          PORT: String(preview.port),
-          PREVIEW_PORT: String(preview.port),
-          PREVIEW_URL: previewUrl(preview.name),
-          GENIE_PREVIEW: "1",
-          HOST: "0.0.0.0",
-        },
-        // Its own process group, so stopping the preview kills the server and
-        // anything it forked rather than leaving an orphan on the port.
-        detached: true,
-        stdio: ["ignore", handle.fd, handle.fd],
-      });
-      child.unref();
-      children.set(preview.name, child);
-      preview.pid = child.pid ?? null;
-      // A spawn that never becomes a process — an unknown `cwd`, a missing
-      // interpreter — emits `error` and never `exit`. With no listener that event
-      // is an uncaught exception, and it takes the *whole hosting server* down:
-      // one preview that could not start becomes every address going dark, and
-      // the console reads the outage as "the hosting server is unreachable".
-      // Record the failure against the preview and keep this process serving the
-      // others, so a bad `cwd` is one address that does not answer rather than an
-      // outage nobody can attribute.
-      //
-      // Both handlers are guarded by identity, and that guard is load-bearing: a
-      // name can have more than one child behind it over time. Publishing an
-      // address that is registered and down starts it again, which means a stop
-      // and a spawn in quick succession under the *same* name — and the stopped
-      // child's `exit` can land after the new one has registered itself here. An
-      // unguarded `children.delete(preview.name)` would then delete the *new*
-      // child's entry, orphaning a process that is serving the port with nothing
-      // left that can kill it: the address answers, the record's pid is stale, and
-      // stopping it stops nothing. `preview.pid = null` is the same hazard from
-      // the other side — a late `error` from a child that is already forgotten
-      // must not unname the one that replaced it.
-      child.once("error", (error) => {
-        if (children.get(preview.name) === child) {
-          children.delete(preview.name);
-          preview.pid = null;
-        }
-        void fs
-          .appendFile(logPath, `\n[preview] could not start: ${error.message}\n`)
-          .catch(() => undefined);
-      });
-      child.once("exit", () => {
-        if (children.get(preview.name) === child) children.delete(preview.name);
-      });
-      void handle.close();
+  await fs.mkdir(logDir, { recursive: true });
+  const handle = await fs.open(logPath, "a");
+  try {
+    const child = spawn("bash", ["-lc", preview.command], {
+      cwd: preview.cwd === "" ? config.workspace : preview.cwd,
+      env: {
+        ...process.env,
+        PORT: String(preview.port),
+        PREVIEW_PORT: String(preview.port),
+        PREVIEW_URL: previewUrl(preview.name),
+        GENIE_PREVIEW: "1",
+        HOST: "0.0.0.0",
+      },
+      // Its own process group, so stopping the preview kills the server and
+      // anything it forked rather than leaving an orphan on the port.
+      detached: true,
+      stdio: ["ignore", handle.fd, handle.fd],
     });
-  });
+    child.unref();
+    children.set(preview.name, child);
+    preview.pid = child.pid ?? null;
+    // A spawn that never becomes a process — an unknown `cwd`, a missing
+    // interpreter — emits `error` and never `exit`. With no listener that event
+    // is an uncaught exception, and it takes the *whole hosting server* down:
+    // one preview that could not start becomes every address going dark, and
+    // the console reads the outage as "the hosting server is unreachable".
+    // Record the failure against the preview and keep this process serving the
+    // others, so a bad `cwd` is one address that does not answer rather than an
+    // outage nobody can attribute.
+    //
+    // Both handlers are guarded by identity, and that guard is load-bearing: a
+    // name can have more than one child behind it over time. Publishing an
+    // address that is registered and down starts it again, which means a stop
+    // and a spawn in quick succession under the *same* name — and the stopped
+    // child's `exit` can land after the new one has registered itself here. An
+    // unguarded `children.delete(preview.name)` would then delete the *new*
+    // child's entry, orphaning a process that is serving the port with nothing
+    // left that can kill it: the address answers, the record's pid is stale, and
+    // stopping it stops nothing. `preview.pid = null` is the same hazard from
+    // the other side — a late `error` from a child that is already forgotten
+    // must not unname the one that replaced it.
+    child.once("error", (error) => {
+      if (children.get(preview.name) === child) {
+        children.delete(preview.name);
+        preview.pid = null;
+      }
+      void fs
+        .appendFile(logPath, `\n[preview] could not start: ${error.message}\n`)
+        .catch(() => undefined);
+    });
+    child.once("exit", () => {
+      if (children.get(preview.name) === child) children.delete(preview.name);
+    });
+  } finally {
+    // The child holds the descriptor now, so the parent's copy can go.
+    await handle.close();
+  }
 }
 
 function killPreviewProcess(name: string): void {
