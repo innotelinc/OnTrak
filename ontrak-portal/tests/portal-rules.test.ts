@@ -12,12 +12,14 @@
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
 
 import {
   addressFor, asRole, canOpen, emptyStateFor, isRole, landingFor, parseRoleMappings, product,
   productsFor, roleChanged, roleForGroups, roleFromGroups, runsHere, tilesFor, urlFor,
-  PRODUCTS, ROLES,
+  PRODUCTS, ROLES, type Role,
 } from "../src/lib/portal-rules";
 import {
   checkClaims, safeReturnTo, type IdTokenClaims,
@@ -376,5 +378,69 @@ describe("a role re-derived from the groups already on the session", () => {
   it("matches group names case-insensitively, the way the provider's claim varies", () => {
     const next = roleForGroups(["OnTrak-Admins"], mappings, "STUDENT");
     assert.equal(next?.role, "ADMIN");
+  });
+});
+
+/**
+ * The README's role table, held to the catalogue it documents.
+ *
+ * That table is what a person reads to decide which group to put somebody in, and the
+ * catalogue is what the portal actually draws from, so the two disagreeing is a person
+ * given a role that cannot reach what the page promised, or denied one that could.
+ * They had: `SYSADMIN` reaches Genie (`PRODUCTS`), and the row said "the desk, Sentinel,
+ * Sync" — one product short, in the table that answers "how is this role usually
+ * granted". The table documents the catalogue itself, so unlike the operations guide it
+ * includes the optional lab: it is the portal's answer for a role, not one deployment's.
+ */
+describe("the README's role table", () => {
+  /** How the README writes each product's name, by catalogue key. */
+  const CELL_NAME: Record<string, string> = {
+    its: "training",
+    tix: "the desk",
+    sentinel: "Sentinel",
+    sync: "Sync",
+    genie: "Genie",
+    lab: "the lab",
+  };
+
+  /** The table's rows as `{ role, products }`, read from the README under `## Roles`. */
+  function rows(): { role: string; products: string }[] {
+    const readme = readFileSync(path.join(process.cwd(), "README.md"), "utf8");
+    const [, afterHeading = ""] = readme.split(/^## Roles\s*$/m);
+    const [section = ""] = afterHeading.split(/^## /m);
+    return section
+      .split("\n")
+      .filter((line) => line.trimStart().startsWith("| `"))
+      .map((line) => {
+        const cells = line.split("|").map((cell) => cell.trim());
+        return { role: (cells[1] ?? "").replace(/`/g, ""), products: cells[2] ?? "" };
+      });
+  }
+
+  it("names exactly the products the catalogue shows each role", () => {
+    const table = rows();
+    assert.ok(table.length >= ROLES.length, `the README's role table yielded ${table.length} rows`);
+
+    const unnamed = PRODUCTS.map((entry) => entry.key).filter((key) => !(key in CELL_NAME));
+    assert.deepEqual(unnamed, [], `the README's role table has no name for: ${unnamed.join(", ")}`);
+
+    const problems: string[] = [];
+    for (const row of table) {
+      const wanted = productsFor(row.role as Role).map((entry) => entry.key);
+      const cell = row.products.toLowerCase();
+      const said = PRODUCTS.filter(
+        (entry) => cell.includes("everything") || cell.includes(CELL_NAME[entry.key].toLowerCase()),
+      ).map((entry) => entry.key);
+
+      const missing = wanted.filter((key) => !said.includes(key));
+      const extra = said.filter((key) => !wanted.includes(key));
+      if (missing.length > 0) problems.push(`${row.role} does not name ${missing.join(", ")}`);
+      if (extra.length > 0) problems.push(`${row.role} names ${extra.join(", ")}, which is not shown that role`);
+    }
+
+    const absent = ROLES.filter((role) => !table.some((row) => row.role === role));
+    if (absent.length > 0) problems.push(`no row for ${absent.join(", ")}`);
+
+    assert.deepEqual(problems, [], problems.join("\n"));
   });
 });

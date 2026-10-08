@@ -10,7 +10,7 @@
  * down. This is the same failure the service map had (see `service-map.test.ts`),
  * one layer down: a document that describes a deployment has to describe *this* one.
  *
- * So three claims are checked mechanically, each settled by files:
+ * So four claims are checked mechanically, each settled by files:
  *
  *  * every port in the guide's "What runs where" table is a port the family compose
  *    publishes;
@@ -20,7 +20,12 @@
  *    `scripts/cerulean-ontrak.py` registers, each at a name that script publishes —
  *    because the guide is what an operator registers the client from while the script
  *    is what fills Cerulean's `.env`, and the two had already drifted: the page stopped
- *    at five while the client registers six, with Genie's callback missing from it.
+ *    at five while the client registers six, with Genie's callback missing from it;
+ *  * the products its role table gives each role are the ones the portal's catalogue
+ *    gives that role, because that table is where an operator decides which group to put
+ *    somebody in — and it had drifted too: `SYSADMIN` reaches Genie, and the row said
+ *    "Tix, Sentinel, Sync", four pages above a sentence saying sysadmins reach
+ *    everything.
  *
  * What it does not check is which product *should* be in the table, or whether a
  * product is worth listing: those are decisions, and the audit records them — §9/Q4
@@ -41,6 +46,8 @@ const GUIDE = path.join("docs", "family-operations.md");
 const COMPOSE = "docker-compose.all.yml";
 const MAKEFILE = "Makefile";
 const PROVISION = path.join("scripts", "cerulean-ontrak.py");
+/** The catalogue that answers which products each role is shown. */
+const PORTAL_RULES = path.join("ontrak-portal", "src", "lib", "portal-rules.ts");
 
 /** The deployments the guide says have a production overlay, and how each is started. */
 const OVERLAYS: Record<string, { compose: string; target: string }> = {
@@ -124,6 +131,65 @@ function publishedNames(): Set<string> {
   return new Set(rows.map((name) => `${name}.${zone}`));
 }
 
+/**
+ * Every product in the portal's catalogue, with the roles it is shown to.
+ *
+ * Read from the catalogue rather than listed here — a hand-kept list would be the same
+ * stale claim one level down — and cut at each product's own closing brace, so one
+ * entry's role list cannot be borrowed by the entry below it.
+ */
+function catalogue(): { key: string; roles: string[]; optional: boolean }[] {
+  const [, afterCatalogue = ""] = read(PORTAL_RULES).split(/export const PRODUCTS[\s\S]*?= \[/);
+  const [products = ""] = afterCatalogue.split(/\n\];/);
+
+  const entries: { key: string; roles: string[]; optional: boolean }[] = [];
+  for (const chunk of products.split(/key: "/).slice(1)) {
+    const key = /^([a-z]+)"/.exec(chunk)?.[1];
+    if (!key) continue;
+    const [fields = ""] = chunk.split(/\n {2}\},/);
+    const listed = /roles: \[([^\]]*)\]/.exec(fields)?.[1] ?? "";
+    entries.push({
+      key,
+      roles: [...listed.matchAll(/"([A-Z]+)"/g)].map((match) => match[1]),
+      optional: /optional: true/.test(fields),
+    });
+  }
+  return entries;
+}
+
+/**
+ * How the guide writes each product's name in a table cell.
+ *
+ * A translation, and a checked one: the test refuses a catalogue key this map does not
+ * know, so a seventh product cannot arrive in the catalogue and be missing from the
+ * guide's role table without something failing.
+ */
+const CELL_NAME: Record<string, string> = {
+  its: "training",
+  tix: "Tix",
+  sentinel: "Sentinel",
+  sync: "Sync",
+  genie: "Genie",
+  lab: "the lab",
+};
+
+/** The guide's role table: the group, the role, and the products it says that role is for. */
+function guideRoleTable(): { group: string; role: string; belongsIn: string }[] {
+  const [, afterHeading = ""] = read(GUIDE).split(/^### The role groups\s*$/m);
+  const [section = ""] = afterHeading.split(/^### /m);
+  return section
+    .split("\n")
+    .filter((line) => line.trimStart().startsWith("| `"))
+    .map((line) => {
+      const cells = line.split("|").map((cell) => cell.trim());
+      return {
+        group: cells[1] ?? "",
+        role: (cells[2] ?? "").replace(/`/g, ""),
+        belongsIn: cells[3] ?? "",
+      };
+    });
+}
+
 test("family-ops: the guide and the compose file it describes were both read", () => {
   // A parser that silently found nothing would pass the check below by defining it
   // away, so both sides have to be shown to have content first.
@@ -195,4 +261,42 @@ test("family-ops: every redirect URI is a name the script publishes", () => {
     "a callback at a name with no proxy host is a sign-in that cannot complete: " +
       `${orphans.join(", ")} (published: ${[...names].join(", ")})`,
   );
+});
+
+test("family-ops: the guide's role table is the catalogue's answer, role by role", () => {
+  const products = catalogue();
+  assert.ok(products.length >= 6, `the catalogue yielded ${products.length} products`);
+
+  const unnamed = products.map((entry) => entry.key).filter((key) => !(key in CELL_NAME));
+  assert.deepEqual(unnamed, [], `the role table has no name for: ${unnamed.join(", ")}`);
+
+  const rows = guideRoleTable();
+  assert.ok(rows.length >= 6, `the guide's role table yielded ${rows.length} rows`);
+
+  // The guide describes the deployment this repository runs — the six the family stack
+  // starts — so the catalogue's one optional product is deliberately not in its rows.
+  const shown = products.filter((entry) => !entry.optional);
+  const problems: string[] = [];
+
+  for (const row of rows) {
+    const wanted = shown.filter((entry) => entry.roles.includes(row.role)).map((entry) => entry.key);
+    const cell = row.belongsIn.toLowerCase();
+    const said = shown
+      .filter((entry) => cell.includes("everything") || cell.includes(CELL_NAME[entry.key].toLowerCase()))
+      .map((entry) => entry.key);
+
+    const missing = wanted.filter((key) => !said.includes(key));
+    const extra = said.filter((key) => !wanted.includes(key));
+    if (missing.length > 0) problems.push(`${row.group} (${row.role}) does not name ${missing.join(", ")}`);
+    if (extra.length > 0) {
+      problems.push(`${row.group} (${row.role}) names ${extra.join(", ")}, which is not shown that role`);
+    }
+  }
+
+  const absent = [...new Set(shown.flatMap((entry) => entry.roles))].filter(
+    (role) => !rows.some((row) => row.role === role),
+  );
+  if (absent.length > 0) problems.push(`no row for ${absent.join(", ")}`);
+
+  assert.deepEqual(problems, [], problems.join("\n"));
 });
