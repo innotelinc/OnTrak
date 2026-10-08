@@ -38,7 +38,7 @@ export type Role =
   | "STUDENT";
 
 /** The keys are also the subdomain labels — see `urlFor`. */
-export type ProductKey = "its" | "tix" | "sentinel" | "sync" | "genie";
+export type ProductKey = "its" | "tix" | "sentinel" | "sync" | "genie" | "lab";
 
 export interface Product {
   key: ProductKey;
@@ -122,6 +122,25 @@ export const PRODUCTS: readonly Product[] = [
     // Every product answers `/health` without a credential; the console is no
     // exception, and it reports without starting a turn or touching the gateway.
     health: "/health",
+  },
+  {
+    key: "lab",
+    name: "OnTrak Lab",
+    tagline:
+      "The hands-on platform: real Linux virtual machines and scenario instances for practical exercises, provisioned on demand.",
+    audience: "students and instructors",
+    host: "lab",
+    // The lab is the hands-on half of the same training: a student who belongs in
+    // the simulated range belongs here too, and an instructor runs both.
+    roles: ["STUDENT", "INSTRUCTOR", "ADMIN"],
+    // The one tone reused, on purpose: the lab is the training range's real-VM
+    // sibling, and the shared colour says so. The tile still carries its own name,
+    // so the tone remains a label rather than the only signal (see the theme).
+    tone: "training",
+    // The lab is the Python control plane (OnTrak-dev), a peer service rather than a
+    // Next.js app, and it answers `/healthz`. Probing it at `/health` would draw the
+    // false "not answering" the dashboard once drew for Sentinel.
+    health: "/healthz",
   },
 ];
 

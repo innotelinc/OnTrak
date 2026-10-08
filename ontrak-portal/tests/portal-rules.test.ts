@@ -73,12 +73,14 @@ describe("the catalogue", () => {
   });
 
   it("sends each role to the product it belongs in", () => {
-    assert.deepEqual(productsFor("STUDENT").map((p) => p.key), ["its"]);
-    assert.deepEqual(productsFor("INSTRUCTOR").map((p) => p.key), ["its"]);
+    // The lab is the training range's real-VM sibling, so it follows the same
+    // audience as the range rather than the operations roles.
+    assert.deepEqual(productsFor("STUDENT").map((p) => p.key), ["its", "lab"]);
+    assert.deepEqual(productsFor("INSTRUCTOR").map((p) => p.key), ["its", "lab"]);
     assert.deepEqual(productsFor("TECHNICIAN").map((p) => p.key), ["tix"]);
     assert.deepEqual(productsFor("ANALYST").map((p) => p.key), ["sentinel"]);
     assert.deepEqual(productsFor("SYSADMIN").map((p) => p.key), ["tix", "sentinel", "sync", "genie"]);
-    assert.deepEqual(productsFor("ADMIN").map((p) => p.key), ["its", "tix", "sentinel", "sync", "genie"]);
+    assert.deepEqual(productsFor("ADMIN").map((p) => p.key), ["its", "tix", "sentinel", "sync", "genie", "lab"]);
   });
 
   it("does not show a student the sysadmin's product", () => {
@@ -91,6 +93,10 @@ describe("the catalogue", () => {
     assert.equal(canOpen("SYSADMIN", "genie"), true);
     assert.equal(canOpen("SYSADMIN", "sync"), true);
     assert.equal(canOpen("ANALYST", "tix"), false);
+    // The lab is for the training audience: a student belongs in it, the desk does not.
+    assert.equal(canOpen("STUDENT", "lab"), true);
+    assert.equal(canOpen("TECHNICIAN", "lab"), false);
+    assert.equal(canOpen("ANALYST", "lab"), false);
   });
 
   it("prefers the product a person came for over the catalogue order", () => {
@@ -115,7 +121,10 @@ describe("the catalogue", () => {
     assert.equal(tiles.filter((tile) => tile.primary).length, 1);
     assert.equal(tiles.find((tile) => tile.primary)?.key, "sync");
     assert.deepEqual(tilesFor("STUDENT").map((tile) => tile.url),
-      ["https://its.ontrak.innotel.us"]);
+      ["https://its.ontrak.innotel.us", "https://lab.ontrak.innotel.us"]);
+    // Two tiles share the training tone, but only one is the landing product: the
+    // range stays where a student arrives, and the lab is the second tile beside it.
+    assert.equal(landingFor("STUDENT")?.key, "its");
   });
 
   it("says something a person can act on when a role has no product", () => {

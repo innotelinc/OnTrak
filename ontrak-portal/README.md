@@ -20,6 +20,7 @@ out by being refused something at 9am. With it, there is one address:
 | | |
 | --- | --- |
 | **Students and instructors** | [its.ontrak.innotel.us](https://its.ontrak.innotel.us) — the training range |
+| **Students and instructors** | [lab.ontrak.innotel.us](https://lab.ontrak.innotel.us) — the hands-on lab: real Linux VMs and scenario instances |
 | **Technicians** | [tix.ontrak.innotel.us](https://tix.ontrak.innotel.us) — the service desk |
 | **Analysts** | [sentinel.ontrak.innotel.us](https://sentinel.ontrak.innotel.us) — identity and intrusion detection |
 | **Sysadmins** | [sync.ontrak.innotel.us](https://sync.ontrak.innotel.us) — Network package and container updates |
@@ -51,8 +52,8 @@ account table:
 
 | Role | Products | How it is usually granted |
 | --- | --- | --- |
-| `STUDENT` | training | `ontrak-students` |
-| `INSTRUCTOR` | training | `range-instructors`, `ontrak-instructors` |
+| `STUDENT` | training, the lab | `ontrak-students` |
+| `INSTRUCTOR` | training, the lab | `range-instructors`, `ontrak-instructors` |
 | `TECHNICIAN` | the desk | `ontrak-desk` |
 | `ANALYST` | Sentinel | `ontrak-analysts` |
 | `SYSADMIN` | the desk, Sentinel, Sync | `ontrak-sysadmins` |

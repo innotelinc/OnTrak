@@ -294,23 +294,28 @@ makes a one-way import feasible and reversible by dropping the imported rows.
 
 **Baseline.** An integration branch `integration/unified-ontrak` **already exists**
 in OnTrak, and the Sentinel work has already landed on it: a NetFlow/IPFIX flow
-listener (`ontrak-sentinel/src/lib/guard-netflow.ts`), a Sentinel **control center**
-(`/console/control-center`), and a **Sentinel tile** in the training app's `/admin`
-control room (`src/lib/sentinel-status.ts`). `OnTrak-dev` is untouched. The plan
-below starts from that state.
+listener (`ontrak-sentinel/src/lib/guard-netflow.ts`), an OTLP receiver
+(`ontrak-sentinel/src/lib/telemetry-otel.ts`, `POST /guard/v1/otel`), a Sentinel
+**control center** (`/console/control-center`), and a **capabilities panel** in the
+training app's `/admin` control room (`src/lib/capabilities.ts`, which superseded the
+single Sentinel tile). `OnTrak-dev` is untouched. The plan below starts from that
+state.
 
 Each step is independently revertable: a config change, an env flag, or a commit
 that can be reverted without touching the other steps.
 
-**Step 1 — Freeze the audit (this document).** *Artefacts:* this file.
+**Step 1 — Freeze the audit (this document).** **(done)** *Artefacts:* this file.
 *Verify:* it is reviewed and referenced from the roadmap; no code changes.
 
-**Step 2 — Recognise the lab as a capability, in the UI only.** *Artefacts:* the
-Portal product catalogue (`ontrak-portal/src/lib/portal-rules.ts`) gains a `lab`
-entry; the training app's `/admin` gains a capabilities panel listing every family
-capability with its state and link, driven by env (`ONTRAK_LAB_URL`, base-domain
-derivation). *Verify:* unit tests for the catalogue/panel; no lab code runs.
-*Revert:* drop the entry; nothing else changed.
+**Step 2 — Recognise the lab as a capability, in the UI only.** **(done)**
+*Artefacts:* the Portal product catalogue (`ontrak-portal/src/lib/portal-rules.ts`)
+has a `lab` entry (host `lab`, roles STUDENT/INSTRUCTOR/ADMIN, its own `/healthz`);
+the training app's `/admin` has a capabilities panel listing every family capability
+with its state and link, driven by env (`ONTRAK_LAB_URL`, base-domain derivation)
+(`src/lib/capabilities.ts`). *Verify:* unit tests for the catalogue
+(`ontrak-portal/tests/portal-rules.test.ts`, `product-health.test.ts`) and the panel
+(`tests/capabilities.test.ts`); no lab code runs. *Revert:* drop the entry; nothing
+else changed.
 
 **Step 3 — One identity for the lab.** *Artefacts:* OnTrak-dev's
 `ONTRAK_PORTAL__OIDC_*` pointed at the family IdP; a documented
@@ -359,8 +364,9 @@ Stated plainly, because the integration is **not** complete:
 - **No database migration has been written for OnTrak-dev.** Step 5's migration is
   planned, not authored; OnTrak-dev keeps its results in SQLite and no schema change
   exists in either repository to reconcile them.
-- **Only Step 1 and the pre-existing Sentinel work are real.** Steps 2–7 are
-  planned. Nothing in §7 beyond Step 1 has been implemented.
+- **Steps 1 and 2 are real; Steps 3–7 are planned.** The lab is a catalogue entry
+  and a tile — the portal lists it and the training app's control room links to it —
+  but nothing runs, signs in, or is graded through it yet.
 - **OnTrak-dev has not been modified**, as required. Its `README.md` still describes
   a standalone range; its portal still signs in only through Authentik and only as
   `instructor`/`student`.
