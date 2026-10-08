@@ -419,6 +419,17 @@ certificate — and it removes everything it seeds, so a local run leaves no tra
 `npm test` skips it. [`docs/lab-completion.md`](docs/lab-completion.md) is the
 contract.
 
+The client the lab installs has its own live test, which answers the question
+neither of the suites above can: that the request it really sends is understood and
+mapped back to the right outcome. It boots the same app and runs
+`integrations/lab-completion-client/tests/live_probe.py`, so it needs `python3` as
+well; a machine without one skips rather than fails.
+
+```bash
+ONTRAK_LAB_CLIENT_LIVE=1 DATABASE_URL=postgresql://… \
+  npx tsx --tsconfig tests/tsconfig.json --test tests/lab-client-live.test.ts
+```
+
 The same door opens inward: `POST /api/v1/roster` imports a class spreadsheet,
 reading columns by name, refusing rows line by line while importing the rest,
 and creating accounts with **no** local password — a roster says who exists, not
@@ -541,6 +552,8 @@ tests/
   scim-live.test.ts           opt-in: the SCIM routes a real connector drives
   lti.test.ts                 LTI launch decisions, the published key set, the client seam
   lti-live.test.ts            opt-in: a scenario launched through the app's own LTI routes
+  lab-live.test.ts            opt-in: the lab-completion route, driven over HTTP
+  lab-client-live.test.ts     opt-in: the lab's own Python client against a running app
   lti-passback.test.ts        grade passback against a real AGS token endpoint
   integration-status.test.ts  what the control room reports about the three integrations
   support/local-idp.ts        a real, minimal OpenID provider for the tests above

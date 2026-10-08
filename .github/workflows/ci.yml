@@ -187,6 +187,13 @@ jobs:
       - name: Lab-completion live test
         run: ONTRAK_LAB_LIVE=1 npx tsx --tsconfig tests/tsconfig.json --test tests/lab-live.test.ts
 
+      # The step above drives the route with a body this repository wrote, and the
+      # client's unit tests stub the transport out. This is the only check that runs
+      # the client's *real* request against the route, which is the pair a lab host
+      # depends on. `python3` is already used by the structure job.
+      - name: Lab-client live test
+        run: ONTRAK_LAB_CLIENT_LIVE=1 npx tsx --tsconfig tests/tsconfig.json --test tests/lab-client-live.test.ts
+
       - name: Build
         run: npm run build
 
