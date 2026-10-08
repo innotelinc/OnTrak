@@ -27,9 +27,20 @@
 import type { HttpRequest, HttpResponse } from "./oidc-http";
 import type { ServiceResult } from "./identity-service";
 import type { RulebookEntry } from "./guard-service";
+import { toObservedEventsFromOtlp } from "./telemetry-otel";
 
 export const GUARD_PATHS = {
   events: "/guard/v1/events",
+  /**
+   * The OTLP/HTTP receiver (S3): the third way telemetry arrives, and the one an
+   * OpenTelemetry collector or agent speaks natively.
+   *
+   * A separate path from `events` because the body is not the family's own batch
+   * envelope — it is an OTLP `ExportLogsServiceRequest`/`ExportTraceServiceRequest`,
+   * which the router expands into the same normalizer payloads and hands to the same
+   * `ingest`. The token and the tenant are the ones the rest of the surface uses.
+   */
+  otel: "/guard/v1/otel",
   rules: "/guard/v1/rules",
 } as const;
 
@@ -107,6 +118,49 @@ export async function routeGuard(request: HttpRequest, endpoints: GuardEndpoints
     // the same version in two different corpora is the case a per-rule version cannot
     // describe, and the one this field exists for.
     return json(200, { rulebookVersion: endpoints.rulebookVersion(), rules: endpoints.rulebook() });
+  }
+
+  if (path === GUARD_PATHS.otel) {
+    if (method !== "POST") return json(405, { error: "method_not_allowed", allow: "POST" });
+    let body: unknown;
+    try {
+      body = request.body ? JSON.parse(request.body) : null;
+    } catch {
+      return json(400, { error: "invalid_request", error_description: "The body is not JSON." });
+    }
+
+    const read = toObservedEventsFromOtlp(body);
+    if (read.events.length === 0) {
+      return json(400, {
+        error: "invalid_request",
+        error_description: read.issues[0] ?? "The OTLP export carried no log records or spans.",
+      });
+    }
+
+    // The one call, with the source fixed to OTEL and the exporter's own name when it
+    // gave one: an OTLP body has no field for "what kind of sensor is this", so the
+    // receiver supplies what it knows and the normalizer decides the rest.
+    const result = await endpoints.ingest({
+      authorization: header(request, "authorization"),
+      organization: header(request, "x-sentinel-organization"),
+      payload: { source: "OTEL", sensor: read.sensor ?? "otel", events: read.events },
+      at: Date.now(),
+    });
+    if (!result.ok) return json(statusFor(result.error), { error: result.error });
+
+    // OTLP's own partial-success shape, so an exporter that inspects the response is not
+    // surprised, with the family's report fields beside it (a client ignores fields it
+    // does not know). A record the normalizer refused is a partial success by OTLP's
+    // definition, and saying so is the whole point of the shape.
+    const rejected = [...read.issues, ...result.value.rejected.map((entry) => entry.reason)];
+    return json(200, {
+      ...(rejected.length > 0
+        ? { partialSuccess: { rejectedLogRecords: rejected.length, errorMessage: rejected.join("; ") } }
+        : {}),
+      accepted: result.value.accepted,
+      refused: result.value.rejected,
+      alerts: result.value.alerts,
+    });
   }
 
   if (path !== GUARD_PATHS.events) return NOT_FOUND;

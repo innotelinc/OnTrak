@@ -1,0 +1,136 @@
+{
+  "id": "hw-driver-device",
+  "title": "Dock Ethernet shows a warning triangle",
+  "category": "hardware",
+  "difficulty": 3,
+  "minutes": 30,
+  "pass_score": 80,
+  "tags": [
+    "drivers",
+    "devices",
+    "device-manager",
+    "level-3"
+  ],
+  "instance_devices": [
+    {
+      "name": "eth1",
+      "type": "nic",
+      "nictype": "p2p"
+    }
+  ],
+  "ticket": {
+    "from": "Facilities helpdesk (via Sam Whitfield)",
+    "system": "WORKSTATION-042",
+    "priority": "Medium",
+    "channel": "Ticket",
+    "form": {
+      "title": "Incident write-up — docking station adapter",
+      "intro": "The next person to open this ticket will read three things: what was wrong, what you changed, and how you proved it. They are marked as part of your grade.\n",
+      "weight": 30,
+      "fields": [
+        {
+          "id": "symptom",
+          "label": "Reported symptom, in your own words",
+          "kind": "textarea",
+          "weight": 15,
+          "min_words": 8,
+          "placeholder": "What the user reported, and what you saw when you looked."
+        },
+        {
+          "id": "root_cause",
+          "label": "Root cause",
+          "kind": "textarea",
+          "weight": 30,
+          "min_words": 6,
+          "any_of": [
+            "driver",
+            "adapter",
+            "device",
+            "disabled",
+            "update"
+          ],
+          "none_of": [
+            "reinstall windows",
+            "system restore"
+          ],
+          "hint": "Name the mechanism. \"The dock was broken\" is a symptom, not a cause."
+        },
+        {
+          "id": "category",
+          "label": "Classification",
+          "kind": "select",
+          "weight": 15,
+          "options": [
+            "Driver and device",
+            "Network",
+            "Permissions",
+            "Software configuration",
+            "Account"
+          ],
+          "expected": "Driver and device"
+        },
+        {
+          "id": "action",
+          "label": "What you changed",
+          "kind": "textarea",
+          "weight": 25,
+          "min_words": 8,
+          "any_of": [
+            "enable",
+            "enabled",
+            "driver",
+            "device",
+            "reinstall",
+            "roll back"
+          ],
+          "hint": "The tool you used, the device you touched and the state you left it in."
+        },
+        {
+          "id": "verification",
+          "label": "How you verified it",
+          "kind": "textarea",
+          "weight": 15,
+          "min_words": 6,
+          "any_of": [
+            "Get-NetAdapter",
+            "Get-PnpDevice",
+            "ping",
+            "ipconfig",
+            "status",
+            "link",
+            "Up"
+          ],
+          "hint": "The command you ran and what it showed — not \"it looked fine\"."
+        }
+      ]
+    }
+  },
+  "briefing": "The docking station Ethernet port stopped working after a Windows update. The\nbuilt-in port is fine, so the machine is online, but device management shows a\nproblem with the dock adapter and Windows will not use it.\n\nOn the estate, adapters that are present must be enabled and reporting a\nhealthy status — \"disabled so it stops complaining\" is not an accepted fix, and\nneither is leaving it with a yellow warning triangle.\n\nThere is a second thing to close out: the user's notes. Support work is only\nfinished when the next person can read what you found. Write your notes to\nC:\\Users\\student\\Desktop\\ontrak-notes.txt with two labelled lines:\n\n  Evidence: <what you observed, at least a sentence>\n  Action: <what you changed to fix it, at least a sentence>\n",
+  "objectives": [
+    {
+      "id": "nic-device-ok",
+      "text": "Every network adapter is enabled and reports a healthy driver status",
+      "weight": 50,
+      "critical": true,
+      "hint": "Device Manager, or Get-PnpDevice -Class Net | Format-Table FriendlyName, Status, Problem. A problem of CM_PROB_DISABLED means somebody disabled it."
+    },
+    {
+      "id": "nic-link-up",
+      "text": "Both adapters are up and usable",
+      "weight": 30,
+      "hint": "Get-NetAdapter shows the link state; a device that is enabled but not 'Up' is not fixed."
+    },
+    {
+      "id": "cause-documented",
+      "text": "Notes written to the desktop with an Evidence and an Action line",
+      "weight": 20,
+      "hint": "Use Notepad to create C:\\Users\\student\\Desktop\\ontrak-notes.txt. Both lines need real content (15+ characters each)."
+    }
+  ],
+  "hints": [
+    "Start with Device Manager (devmgmt.msc) and look for the yellow warning triangle under Network adapters.",
+    "Right-click the adapter and choose Enable device — or use Get-PnpDevice followed by Enable-PnpDevice -InstanceId <id> -Confirm:$false.",
+    "After enabling it, check Get-NetAdapter to confirm the link is actually up, not just present."
+  ],
+  "reset_notes": "Reset re-clones the snapshot, so the adapter is disabled again. Scenarios that\nneed extra hardware declare it under instance_devices, which is applied when\nthe template is built.\n"
+}

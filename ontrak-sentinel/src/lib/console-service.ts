@@ -28,6 +28,7 @@ import {
   canAttestAccessReview,
   canManageAccessReviews,
   canManageIdentities,
+  canReadDirectory,
   DEFAULT_IDENTITY_POLICY,
   POLICY_SCOPE_ALL,
   policyForRole,
@@ -54,6 +55,7 @@ import {
   type TriageFilter,
 } from "./alert-triage-rules";
 import { coverageReport } from "./detection-coverage-rules";
+import { rulebookVersion } from "./detection-rules";
 import type { AlertRecord, DetectionService } from "./detection-service";
 // Guard's prevention service (S4): the console's half of it. Imported as a type for the
 // collaborator and as functions for the two things the page owns — reading the target box
@@ -83,7 +85,11 @@ import type {
   ConsoleSuppressionView,
   ConsoleAlertView,
   ConsoleComplianceView,
+  ConsoleControlCenterView,
   ConsoleCoverageView,
+  ControlCenterDetection,
+  ControlCenterPrevention,
+  ControlCenterRow,
   ConsoleEnforcementActionView,
   ConsoleEnforcementView,
   ConsoleSignInView,
@@ -106,7 +112,7 @@ import type {
 } from "./console-rules";
 import { policyScopeTitle, policyScopes } from "./console-rules";
 import type { DirectoryService } from "./directory-service";
-import type { ThreatIntelService } from "./threat-intel-service";
+import type { FeedStats, ThreatIntelService } from "./threat-intel-service";
 import { isActive, parseFeedLines } from "./threat-intel-rules";
 import type { ConsoleEndpoints } from "./console-http";
 import type { AuditEvent } from "./audit-chain";
@@ -1131,6 +1137,134 @@ export class ConsoleService implements ConsoleEndpoints {
         session: sessionView(session.value.session),
         report: coverageReport(),
         generatedAt: new Date().toISOString(),
+      },
+    };
+  }
+
+  /* -------------------------------------------------------- control center */
+
+  /**
+   * The control center (S3/S4): detection and prevention on one screen.
+   *
+   * Read-only by construction. It reuses the reads the other pages already make — the queue,
+   * the register, the feed stats, the chain, the rulebook — so the cockpit cannot disagree
+   * with the page it summarizes, and it adds no write of its own. The prevention half is
+   * present only for an administrator; a role that cannot approve an action is told why
+   * rather than shown a blank card, because "you cannot see this" and "there is nothing
+   * here" are different answers.
+   */
+  async controlCenter(sessionId: string): Promise<ServiceResult<ConsoleControlCenterView>> {
+    const context = await this.context(sessionId);
+    if (!context.ok) return context;
+    if (!canReadDirectory(context.value.actor.role)) {
+      return { ok: false, error: "You do not have access to the Guard console." };
+    }
+
+    const session = await this.spine.resolveOwnSession(context.value.sessionId);
+    if (!session.ok) return session;
+
+    // Detection (S3): the queue, and the corpus and gaps the queue is read against. The
+    // coverage figures come from the rulebook this build runs, derived the same way the
+    // coverage page derives them, so the cockpit cannot promise detection the pipeline does
+    // not perform. The watchlist is bounded: a cockpit that listed every open alert would be
+    // the queue page with a different title.
+    let detection: ControlCenterDetection | null = null;
+    if (this.detection) {
+      const queue = await this.detection.alerts(context.value.actor);
+      if (!queue.ok) return queue;
+      const report = coverageReport();
+      detection = {
+        summary: triageSummary(queue.value),
+        watchlist: queue.value
+          .filter((alert) => alert.state !== "CLOSED")
+          .slice()
+          .sort(
+            (a, b) =>
+              severityRank(b.severity) - severityRank(a.severity) || b.lastSeenAt.localeCompare(a.lastSeenAt),
+          )
+          .slice(0, 8)
+          .map((alert) => ({
+            id: alert.id,
+            label: alert.ruleName,
+            severity: alert.severity,
+            state: alert.state,
+            at: alert.lastSeenAt,
+            occurrences: alert.occurrences,
+            who: alert.assigneeLabel ?? alert.identityLabel,
+          })),
+        ruleCount: report.rules.length,
+        rulebookVersion: rulebookVersion(),
+        gaps: report.gaps,
+      };
+    }
+
+    // The feed (S3). A deployment with none is reported as one rather than as an empty table.
+    let intel: FeedStats | null = null;
+    if (this.threatIntel) {
+      const stats = await this.threatIntel.stats(context.value.actor);
+      if (stats.ok) intel = stats.value;
+    }
+
+    // The evidence chain, through the same permitted read the overview uses.
+    const trail = await this.spine.auditTrail(context.value.actor);
+    const chain: ConsoleControlCenterView["chain"] = trail.ok
+      ? trail.value.verification.ok
+        ? {
+            ok: true,
+            length: trail.value.verification.length,
+            detail: "The organization's evidence chain verifies end to end.",
+          }
+        : { ok: false, length: 0, detail: `The evidence chain is broken: ${trail.value.verification.reason}` }
+      : null;
+
+    // Prevention (S4): the register, only for the administrator who could act on it. The
+    // measured time-to-prevent is the register's own figure, stated here rather than
+    // recomputed, so the cockpit and the register cannot report different numbers.
+    let prevention: ControlCenterPrevention | null = null;
+    let preventionNote: string | null = null;
+    if (!canApproveEnforcement(context.value.actor.role)) {
+      preventionNote = "Prevention is an administrator's surface, so the register is not shown here.";
+    } else if (this.prevention === null) {
+      preventionNote = "This deployment runs no enforcement service, so nothing can be prevented.";
+    } else {
+      const [actions, policy, record] = await Promise.all([
+        this.prevention.list(context.value.organizationId),
+        this.prevention.policy(context.value.organizationId),
+        this.prevention.policyRecord(context.value.organizationId),
+      ]);
+      const rowOf = (action: EnforcementActionRecord): ControlCenterRow => ({
+        id: action.id,
+        label: action.reason || action.action,
+        severity: null,
+        state: action.state,
+        at: action.expiresAt ?? action.appliedAt ?? action.createdAt,
+        occurrences: action.targets.length,
+        who: action.requestedByLabel,
+      });
+      prevention = {
+        active: actions.filter((action) => action.state === "ACTIVE").length,
+        pending: actions.filter((action) => action.state === "PENDING").length,
+        refused: actions.filter((action) => action.state === "REFUSED").length,
+        lifted: actions.filter((action) => action.state === "LIFTED").length,
+        prevention: timeToPreventSummary(actions.map((action) => action.timeToPreventMs)),
+        policy,
+        policyStored: record !== null,
+        inForce: actions.filter((action) => action.state === "ACTIVE").map(rowOf),
+        waiting: actions.filter((action) => action.state === "PENDING").map(rowOf),
+      };
+    }
+
+    return {
+      ok: true,
+      value: {
+        actor: consoleActor(await this.organizationName(context.value), session.value.identity),
+        session: sessionView(session.value.session),
+        generatedAt: new Date().toISOString(),
+        detection,
+        prevention,
+        preventionNote,
+        intel,
+        chain,
       },
     };
   }

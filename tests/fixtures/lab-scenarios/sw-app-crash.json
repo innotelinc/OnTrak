@@ -1,0 +1,141 @@
+{
+  "id": "sw-app-crash",
+  "title": "The CRM app crashes on launch",
+  "category": "software",
+  "difficulty": 2,
+  "minutes": 30,
+  "pass_score": 80,
+  "tags": [
+    "application",
+    "configuration",
+    "registry",
+    "level-2"
+  ],
+  "ticket": {
+    "from": "Dana Okafor (Sales)",
+    "system": "WORKSTATION-208",
+    "priority": "Medium",
+    "channel": "Walk-up",
+    "reported": "After the power cut",
+    "form": {
+      "title": "Incident write-up — CRM client will not start",
+      "intro": "Dana wants the app back, and the next person who touches this machine wants to know why it broke. Both are on you, and both are marked.\n",
+      "weight": 30,
+      "fields": [
+        {
+          "id": "symptom",
+          "label": "Reported symptom, in your own words",
+          "kind": "textarea",
+          "weight": 15,
+          "min_words": 8,
+          "placeholder": "What the shortcut did, and what the log said."
+        },
+        {
+          "id": "root_cause",
+          "label": "Root cause",
+          "kind": "textarea",
+          "weight": 30,
+          "min_words": 6,
+          "any_of": [
+            "config",
+            "json",
+            "lock",
+            "registry",
+            "override",
+            "corrupt",
+            "crash"
+          ],
+          "none_of": [
+            "reinstall windows",
+            "the power cut broke the disk"
+          ],
+          "hint": "This app fails twice over. Name both causes, not just the first."
+        },
+        {
+          "id": "category",
+          "label": "Classification",
+          "kind": "select",
+          "weight": 15,
+          "options": [
+            "Software configuration",
+            "Driver and device",
+            "Network",
+            "Permissions",
+            "Account"
+          ],
+          "expected": "Software configuration"
+        },
+        {
+          "id": "action",
+          "label": "What you changed",
+          "kind": "textarea",
+          "weight": 25,
+          "min_words": 8,
+          "any_of": [
+            "config.json",
+            "config",
+            "registry",
+            "lock",
+            "corrected",
+            "fixed",
+            "updated",
+            "deleted"
+          ],
+          "hint": "Fixing the file is not enough on its own — think about where the app reads from."
+        },
+        {
+          "id": "verification",
+          "label": "How you verified it",
+          "kind": "textarea",
+          "weight": 15,
+          "min_words": 6,
+          "any_of": [
+            "selftest",
+            "self-test",
+            "log",
+            "SELFTEST OK",
+            "shortcut",
+            "ConvertFrom-Json",
+            "launched"
+          ],
+          "hint": "The app can test itself. Say what its own check reported."
+        }
+      ]
+    }
+  },
+  "briefing": "The CRM client on WORKSTATION-208 refuses to start. Dana clicks the desktop\nshortcut, a console flashes up and closes, and nothing else happens. It worked\nbefore the building lost power on Friday.\n\nThree things about this app:\n\n* Its deployment settings live in C:\\ProgramData\\OnTrak\\CrmApp\\config.json.\n* A per-user override is stored under HKCU\\Software\\OnTrak\\CrmApp.\n* It refuses to start while a stale lock file is present. Crashes leave one\n  behind, so a crash often needs two fixes, not one.\n\nThe approved backend is fileserver.ontrak.lab. Get the app starting cleanly\nagain. You can test it yourself from the shortcut, or by running\nC:\\Program Files\\OnTrak\\CrmApp\\CrmApp.ps1 -SelfTest and reading the log at\nC:\\ProgramData\\OnTrak\\CrmApp\\selftest.log.\n",
+  "objectives": [
+    {
+      "id": "config-valid",
+      "text": "config.json parses and points at the approved backend",
+      "weight": 25,
+      "critical": true,
+      "hint": "Validate the JSON with Get-Content config.json -Raw | ConvertFrom-Json — the error message includes the line number."
+    },
+    {
+      "id": "settings-correct",
+      "text": "The per-user override under HKCU\\Software\\OnTrak\\CrmApp points at the approved backend",
+      "weight": 20,
+      "hint": "The app prefers the per-user override over the deployment file, so fixing only config.json will not be enough."
+    },
+    {
+      "id": "lock-cleared",
+      "text": "The stale lock file blocking startup is gone",
+      "weight": 15,
+      "hint": "Look in the app's data directory: C:\\ProgramData\\OnTrak\\CrmApp."
+    },
+    {
+      "id": "app-selftest",
+      "text": "The app's self-test runs clean and writes SELFTEST OK",
+      "weight": 40,
+      "critical": true,
+      "hint": "powershell -ExecutionPolicy Bypass -File 'C:\\Program Files\\OnTrak\\CrmApp\\CrmApp.ps1' -SelfTest"
+    }
+  ],
+  "hints": [
+    "Read the log first: C:\\ProgramData\\OnTrak\\CrmApp\\selftest.log. It names the failing check.",
+    "There are three independent faults: a syntax error in config.json, a wrong value in the registry override, and a leftover lock file.",
+    "Fix the JSON syntax, set both server values to fileserver.ontrak.lab, delete crmapp.lock, then rerun the self-test."
+  ],
+  "reset_notes": "Reset re-clones the snapshot, restoring the corrupted config, the wrong registry value and the lock file."
+}

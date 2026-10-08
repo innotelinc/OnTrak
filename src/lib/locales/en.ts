@@ -222,6 +222,34 @@ export const en = {
   "admin.integration.usersPath": "Users endpoint",
   "admin.integration.groupsPath": "Groups endpoint",
   "admin.integration.tokenEnv": "Token variable",
+  // Capabilities — one list of everything this deployment can reach, mirroring the
+  // portal's catalogue. The names and taglines are the products' own, so the family
+  // calls itself the same thing everywhere.
+  "admin.capabilities": "Family capabilities",
+  "admin.capabilitiesHint":
+    "The OnTrak products this deployment can reach, in the family's order. Each is either named here in the environment or reached at its standard family address; nothing on this page is fetched, so a link is offered whether or not the product is running.",
+  "admin.capability.state.named": "named here",
+  "admin.capability.state.family": "family address",
+  "admin.capability.state.unreachable": "no link",
+  "admin.capability.open": "Open",
+  "admin.capability.training.name": "OnTrak IT Support Training",
+  "admin.capability.training.tagline":
+    "Browser-based, automatically-graded practice: fix deliberately broken Linux, Windows and Office machines.",
+  "admin.capability.tix.name": "OnTrak Tix",
+  "admin.capability.tix.tagline":
+    "The service desk: tickets, SLAs, clients, billing, and insurance-grade incident evidence.",
+  "admin.capability.sentinel.name": "OnTrak Sentinel",
+  "admin.capability.sentinel.tagline":
+    "Identity provider and intrusion detection and prevention: who somebody is, and whether they should be on the network.",
+  "admin.capability.sync.name": "OnTrak Sync",
+  "admin.capability.sync.tagline":
+    "The Network's package and container update view, and the one place that installs what a person approved.",
+  "admin.capability.genie.name": "OnTrak Genie",
+  "admin.capability.genie.tagline":
+    "The browser coding console: choose a folder, describe the change, and watch an agent read, edit and run code in it.",
+  "admin.capability.lab.name": "OnTrak Lab",
+  "admin.capability.lab.tagline":
+    "The hands-on platform: real Linux virtual machines and scenario instances for practical exercises, provisioned on demand.",
 
   // Audit log
   "audit.eyebrow": "Administration",
@@ -647,6 +675,9 @@ export const en = {
   "student.recent.viewAll": "View all",
   "student.recent.timedOut": "timed out",
   "student.startScenario": "Start scenario",
+  // The lab (real machines), offered only when a deployment configures it and the
+  // scenario is tagged for it. Absent everywhere else.
+  "student.startRealMachine": "Start a real machine",
 
   // Results index
   "results.eyebrow": "Your record",

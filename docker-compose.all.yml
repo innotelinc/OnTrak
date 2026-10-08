@@ -322,6 +322,10 @@ services:
       # deployment that is not listening should not map it (see docs).
       - "${SENTINEL_GUARD_SYSLOG_PORT:-5514}:${SENTINEL_GUARD_SYSLOG_PORT:-5514}/udp"
       - "${SENTINEL_GUARD_SYSLOG_PORT:-5514}:${SENTINEL_GUARD_SYSLOG_PORT:-5514}/tcp"
+      # Guard's flow listener (S3): NetFlow/IPFIX on one UDP collector socket. Same
+      # shape and same caveat as syslog above — off unless SENTINEL_GUARD_NETFLOW_PORT
+      # is set, so a deployment that is not collecting flows should not map it.
+      - "${SENTINEL_GUARD_NETFLOW_PORT:-2055}:${SENTINEL_GUARD_NETFLOW_PORT:-2055}/udp"
     env_file:
       - path: ontrak-sentinel/.env
         required: false
@@ -336,6 +340,8 @@ services:
       SENTINEL_GUARD_SYSLOG_PORT: ${SENTINEL_GUARD_SYSLOG_PORT:-}
       SENTINEL_GUARD_SYSLOG_HOST: ${SENTINEL_GUARD_SYSLOG_HOST:-127.0.0.1}
       SENTINEL_GUARD_SYSLOG_TRANSPORT: ${SENTINEL_GUARD_SYSLOG_TRANSPORT:-both}
+      SENTINEL_GUARD_NETFLOW_PORT: ${SENTINEL_GUARD_NETFLOW_PORT:-}
+      SENTINEL_GUARD_NETFLOW_HOST: ${SENTINEL_GUARD_NETFLOW_HOST:-127.0.0.1}
       SENTINEL_SIGNING_KEY_FILE: /run/sentinel/signing-key.pem
       NODE_ENV: production
       # The issuer, the WebAuthn origin and the seeded admin are **not** set

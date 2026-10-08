@@ -7,8 +7,9 @@ import { evaluateScenario, inventoryHealth, loadAvailabilityContext, platformLab
 import { togglePlatform } from "@/app/actions/admin";
 import { recentAudit } from "@/lib/audit";
 import { integrationStatuses } from "@/lib/integration-status";
+import { capabilities } from "@/lib/capabilities";
 import { Flash, PageHeader } from "@/components/PageHeader";
-import { Badge, Button, ButtonLink, Card, Stat } from "@/components/ui";
+import { Badge, Button, ButtonLink, buttonClass, Card, Stat } from "@/components/ui";
 import { cn, formatBytes } from "@/lib/cn";
 import { getTranslator } from "@/lib/i18n-server";
 import { maskKey } from "@/lib/storage";
@@ -50,6 +51,7 @@ export default async function AdminHome({
 
   const platforms: Platform[] = ["LINUX", "WINDOWS", "OFFICE"];
   const integrations = integrationStatuses();
+  const familyCapabilities = capabilities();
   const toggleFor = (platform: Platform) => toggles.find((toggle) => toggle.platform === platform);
   const availability = scenarios.map((scenario) => evaluateScenario(scenario, context));
   const runnable = availability.filter((entry) => entry.available).length;
@@ -183,6 +185,51 @@ export default async function AdminHome({
                     ))}
                   </ul>
                 </div>
+              ) : null}
+            </Card>
+          ))}
+        </div>
+      </section>
+
+      {/* ------------------------------------------------------ capabilities */}
+      <section className="mt-10">
+        <h2 className="font-display text-lg font-semibold text-ink">{t("admin.capabilities")}</h2>
+        <p className="text-sm text-ink-soft">{t("admin.capabilitiesHint")}</p>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {familyCapabilities.map((entry) => (
+            <Card key={entry.id}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="font-display text-base font-semibold text-ink">
+                  {t(`admin.capability.${entry.id}.name`)}
+                </h3>
+                <Badge tone={entry.url === null ? "danger" : entry.named ? "teal" : "neutral"}>
+                  {t(
+                    entry.url === null
+                      ? "admin.capability.state.unreachable"
+                      : entry.named
+                        ? "admin.capability.state.named"
+                        : "admin.capability.state.family",
+                  )}
+                </Badge>
+              </div>
+              <p className="mt-2 text-xs text-ink-soft">{t(`admin.capability.${entry.id}.tagline`)}</p>
+              {entry.url ? (
+                <a
+                  href={entry.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={cn(buttonClass("secondary", "sm"), "mt-3")}
+                >
+                  {t("admin.capability.open")}
+                </a>
+              ) : (
+                <p className="mt-3 font-mono text-[11px] text-pink">
+                  {entry.note ?? t("admin.capability.state.unreachable")}
+                </p>
+              )}
+              {entry.url ? (
+                <p className="mt-2 font-mono text-[11px] break-all text-ink-faint">{entry.url}</p>
               ) : null}
             </Card>
           ))}

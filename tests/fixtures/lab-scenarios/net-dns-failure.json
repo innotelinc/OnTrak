@@ -1,0 +1,131 @@
+{
+  "id": "net-dns-failure",
+  "title": "Nothing resolves on the intranet",
+  "category": "network",
+  "difficulty": 1,
+  "minutes": 20,
+  "pass_score": 80,
+  "tags": [
+    "dns",
+    "dhcp",
+    "resolver",
+    "level-1"
+  ],
+  "requires_internet": true,
+  "ticket": {
+    "from": "Priya Raman (Accounting)",
+    "system": "WORKSTATION-042",
+    "priority": "High",
+    "channel": "Phone",
+    "reported": "Since this morning",
+    "form": {
+      "title": "Incident write-up — name resolution",
+      "intro": "The service desk asks every ticket to end with the same three lines: what was wrong, what you changed, and how you proved it. They are what the next technician reads, and they are marked.\n",
+      "weight": 30,
+      "fields": [
+        {
+          "id": "symptom",
+          "label": "Reported symptom, in your own words",
+          "kind": "textarea",
+          "weight": 15,
+          "min_words": 8,
+          "placeholder": "What Priya reported, and what you saw when you looked."
+        },
+        {
+          "id": "root_cause",
+          "label": "Root cause",
+          "kind": "textarea",
+          "weight": 30,
+          "min_words": 6,
+          "any_of": [
+            "dns",
+            "resolver",
+            "name resolution",
+            "static",
+            "nameserver"
+          ],
+          "none_of": [
+            "reinstall windows",
+            "the file server was down"
+          ],
+          "hint": "Name the mechanism — where the name lookup was being sent, and why."
+        },
+        {
+          "id": "category",
+          "label": "Classification",
+          "kind": "select",
+          "weight": 15,
+          "options": [
+            "Network",
+            "Driver and device",
+            "Permissions",
+            "Software configuration",
+            "Account"
+          ],
+          "expected": "Network"
+        },
+        {
+          "id": "action",
+          "label": "What you changed",
+          "kind": "textarea",
+          "weight": 25,
+          "min_words": 8,
+          "any_of": [
+            "dhcp",
+            "ipconfig",
+            "renew",
+            "automatic",
+            "Set-DnsClientServerAddress",
+            "obtain"
+          ],
+          "hint": "The command, and the state you left the adapter in."
+        },
+        {
+          "id": "verification",
+          "label": "How you verified it",
+          "kind": "textarea",
+          "weight": 15,
+          "min_words": 6,
+          "any_of": [
+            "nslookup",
+            "Resolve-DnsName",
+            "ping",
+            "ipconfig",
+            "fileserver.ontrak.lab",
+            "resolved"
+          ],
+          "hint": "A name that resolves and a service that answers are two different proofs."
+        }
+      ]
+    }
+  },
+  "briefing": "Priya sits at WORKSTATION-042 and can no longer open the shared drive or the\nstaff portal. Browsing the web also fails with \"server not found\". She says she\nwas able to reach everything yesterday, and nobody else in Accounting has a\nproblem, so it is not the file server.\n\nShe also mentions that \"the IT guy from the contractor was on it yesterday\nafternoon\" adjusting network settings.\n\nYour job: get the machine resolving names on the intranet again, and leave the\nconnection configured the way the rest of the estate is (addresses come from\nDHCP, including DNS servers).\n",
+  "objectives": [
+    {
+      "id": "restore-resolver",
+      "text": "The adapter resolves through the lab DNS server again (no leftover static DNS entries)",
+      "weight": 40,
+      "critical": true,
+      "hint": "Compare `ipconfig /all` on this machine with a working one — DHCP supplies both the address and the DNS servers."
+    },
+    {
+      "id": "resolve-intranet",
+      "text": "The name fileserver.ontrak.lab resolves to an address",
+      "weight": 40,
+      "critical": true,
+      "hint": "Resolve-DnsName fileserver.ontrak.lab -DnsOnly tests the resolver itself, bypassing the hosts file and NetBIOS."
+    },
+    {
+      "id": "reach-service",
+      "text": "The file server accepts connections on port 80 by name",
+      "weight": 20,
+      "hint": "Resolving a name and actually reaching the service are two different objectives — check both."
+    }
+  ],
+  "hints": [
+    "Start with `ipconfig /all`, `Get-DnsClientServerAddress` and `Resolve-DnsName fileserver.ontrak.lab`.",
+    "A wrong DNS server is set manually on the adapter. Setting the adapter back to DHCP is the least invasive fix.",
+    "After changing DNS, clear the client cache with `Clear-DnsClientCache`, then retest."
+  ],
+  "reset_notes": "Reset re-clones the clean snapshot, so the bogus DNS server returns. Every\nattempt starts from the same fault, which keeps scores comparable between\nstudents.\n"
+}

@@ -97,6 +97,11 @@ services:
       # deployments listen the same way (see docs/guard-syslog.md).
       - "${SENTINEL_GUARD_SYSLOG_PORT:-5514}:${SENTINEL_GUARD_SYSLOG_PORT:-5514}/udp"
       - "${SENTINEL_GUARD_SYSLOG_PORT:-5514}:${SENTINEL_GUARD_SYSLOG_PORT:-5514}/tcp"
+      # The flow listener (S3), the same shape as syslog above: NetFlow v5/v9 and
+      # IPFIX (v10) on one UDP collector socket, published so a firewall or router
+      # on another host can export to it. Off unless SENTINEL_GUARD_NETFLOW_PORT is
+      # set, and a published UDP port with nothing behind it discards quietly.
+      - "${SENTINEL_GUARD_NETFLOW_PORT:-2055}:${SENTINEL_GUARD_NETFLOW_PORT:-2055}/udp"
     # Optional, and the only stack here that can say so: Sentinel boots with
     # nothing configured, so a first `up` works before anyone has copied the
     # example across. Values set in `.env` still override the defaults below.
@@ -123,6 +128,8 @@ services:
       SENTINEL_GUARD_SYSLOG_PORT: ${SENTINEL_GUARD_SYSLOG_PORT:-}
       SENTINEL_GUARD_SYSLOG_HOST: ${SENTINEL_GUARD_SYSLOG_HOST:-127.0.0.1}
       SENTINEL_GUARD_SYSLOG_TRANSPORT: ${SENTINEL_GUARD_SYSLOG_TRANSPORT:-both}
+      SENTINEL_GUARD_NETFLOW_PORT: ${SENTINEL_GUARD_NETFLOW_PORT:-}
+      SENTINEL_GUARD_NETFLOW_HOST: ${SENTINEL_GUARD_NETFLOW_HOST:-127.0.0.1}
       # The key the one-shot service just ensured. `SENTINEL_SIGNING_KEY` takes
       # precedence over this, which is how a deployment that resolves its secrets
       # before the process starts overrides the volume.
