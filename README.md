@@ -393,6 +393,23 @@ exception, so a consumer that is down can never fail a grading; and every
 delivery — refusals included — is a row an operator can list and resend instead
 of a log line nobody read. A re-grade is a *second* event, not a correction.
 
+The lab boundary's own route has a live test, which is the honest answer to "does
+a report from the lab land correctly?" — it starts the app with an API token it
+sets itself, seeds a learner and a `lab`-tagged scenario, and reports a completion
+over HTTP, checking that a retry writes nothing new, that the feed's `mode` filter
+separates the graders, and that the certificate says a live machine graded it:
+
+```bash
+ONTRAK_LAB_LIVE=1 DATABASE_URL=postgresql://… \
+  npx tsx --tsconfig tests/tsconfig.json --test tests/lab-live.test.ts
+```
+
+It is opt-in twice over — the flag says "start a server for this", and a reachable
+Postgres is required because a completion writes an attempt, a check result and a
+certificate — and it removes everything it seeds, so a local run leaves no trace.
+`npm test` skips it. [`docs/lab-completion.md`](docs/lab-completion.md) is the
+contract.
+
 The same door opens inward: `POST /api/v1/roster` imports a class spreadsheet,
 reading columns by name, refusing rows line by line while importing the rest,
 and creating accounts with **no** local password — a roster says who exists, not
