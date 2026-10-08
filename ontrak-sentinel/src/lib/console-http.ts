@@ -36,6 +36,7 @@ import {
   consoleSignedOutPage,
   renderAlerts,
   renderCompliance,
+  renderControlCenter,
   renderCoverage,
   renderDirectory,
   renderEnforcement,
@@ -48,6 +49,7 @@ import {
   renderSignIn,
   type ConsoleAlertsView,
   type ConsoleComplianceView,
+  type ConsoleControlCenterView,
   type ConsoleCoverageView,
   type ConsoleDirectoryView,
   type ConsoleEnforcementView,
@@ -221,6 +223,14 @@ export interface ConsoleEndpoints {
   ): Promise<ServiceResult<{ name: string }>>;
   /** Remove a mute (S4). The row goes; the chain keeps the fact that it existed. */
   removeSuppression(sessionId: string, ruleId: string): Promise<ServiceResult<{ name: string }>>;
+  /**
+   * The control center (S3/S4): detection and prevention on one read-only screen.
+   *
+   * Read-only like compliance, and the reason it is on the endpoints port rather than the
+   * service alone: the cockpit is one of the console's pages and has to be reachable the way
+   * the others are, from a session.
+   */
+  controlCenter(sessionId: string): Promise<ServiceResult<ConsoleControlCenterView>>;
   /** The compliance posture summary (S4). Read-only: it writes nothing and grants nothing. */
   compliance(sessionId: string): Promise<ServiceResult<ConsoleComplianceView>>;
   /**
@@ -443,6 +453,11 @@ function errorFrom(url: URL): string | null {
 async function handleHome(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
   const result = await endpoints.overview(sessionId);
   return respond(result, (view) => html(200, renderOverview(view)));
+}
+
+async function handleControlCenterPage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+  const result = await endpoints.controlCenter(sessionId);
+  return respond(result, (view) => html(200, renderControlCenter(view, flashFrom(url), errorFrom(url))));
 }
 
 async function handleProvisioningPage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
@@ -1225,6 +1240,8 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
       return get(() => handleUpstreamCallback(url, endpoints, request));
     case CONSOLE_PATHS.home:
       return get(() => handleHome(url, sessionId, endpoints));
+    case CONSOLE_PATHS.controlCenter:
+      return get(() => handleControlCenterPage(url, sessionId, endpoints));
     case CONSOLE_PATHS.provisioning:
       return get(() => handleProvisioningPage(url, sessionId, endpoints));
     case CONSOLE_PATHS.mintToken:

@@ -438,6 +438,14 @@ holds it rather than its value — and a half-wired `ONTRAK_OIDC_*` or `ONTRAK_L
 block is said out loud in the app log at boot, because a deployment that quietly
 fell back to local passwords is the failure nobody notices.
 
+Beside those three, a **Sentinel** tile links out to the family's IDS/IPS product.
+Sentinel is a separate deployment with its own console, so this app cannot report on
+its internals and does not try: the tile says where its **control center** is, from
+`SENTINEL_CONSOLE_URL` (or the `SENTINEL_ISSUER` origin), and is `off` when the
+deployment has named no console, `incomplete` when it named one the deployment
+cannot open. That control center is the one page that shows what Guard detected and
+what it blocked, together.
+
 ---
 
 ## Commands

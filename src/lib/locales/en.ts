@@ -222,6 +222,21 @@ export const en = {
   "admin.integration.usersPath": "Users endpoint",
   "admin.integration.groupsPath": "Groups endpoint",
   "admin.integration.tokenEnv": "Token variable",
+  // Sentinel — the family's IDS/IPS product, reached from this control room but
+  // deployed beside it, so the tile's job is to say where its console is rather than
+  // to re-implement it here.
+  "admin.sentinel": "Sentinel (identity & IPS)",
+  "admin.sentinelHint":
+    "OnTrak Sentinel is the family's identity provider and intrusion detection & prevention platform. This control room does not re-implement it; it links to Sentinel's own control center. Set SENTINEL_CONSOLE_URL (or SENTINEL_ISSUER) to point this deployment at it.",
+  "admin.sentinel.title": "Control center",
+  "admin.sentinel.ready":
+    "Detection, prevention, coverage and the evidence chain on one screen, on the Sentinel deployment this app is wired to.",
+  "admin.sentinel.off":
+    "No Sentinel console is configured, so there is nowhere to link. Set SENTINEL_CONSOLE_URL to this deployment's Sentinel.",
+  "admin.sentinel.incomplete": "A Sentinel URL is set but was refused, so nothing can be linked:",
+  "admin.sentinel.open": "Open control center",
+  "admin.sentinel.controlCenter": "Control center URL",
+  "admin.sentinel.issuer": "Issuer",
 
   // Audit log
   "audit.eyebrow": "Administration",

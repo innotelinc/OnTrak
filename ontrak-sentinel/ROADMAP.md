@@ -7,8 +7,8 @@
 >
 > **OnTrak family release 2026.09** ([portfolio](../INNOTEL-LABS.md)): this
 > product's slice of it is **S3 — Guard detection**, started (the normalizer, the
-> detection rules and the alert pipeline; no streaming listener yet); the others are
-> **OnTrak IT Support Training v1.2** and **OnTrak Tix M6**.
+> detection rules, the alert pipeline and the syslog **and** NetFlow/IPFIX listeners);
+> the others are **OnTrak IT Support Training v1.2** and **OnTrak Tix M6**.
 >
 > **What 1.0 is.** Sentinel 1.0 is **S0–S4**, and nothing further is needed to
 > call it finished: a standards-compliant IdP the family can rely on (OIDC, SAML
@@ -554,17 +554,27 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
   `127.0.0.1`, because syslog has no authentication to offer); a line past
   `maxLineBytes` is dropped and counted rather than buffered, so an endless TCP
   line costs a statistic and not the process; and nothing throws out of a socket
-  handler, so a malformed frame or a vanishing peer is a counter. NetFlow/IPFIX
-  and the OTel receiver remain declared vocabulary rather than readers. The
+  handler, so a malformed frame or a vanishing peer is a counter. The
+  **flow listener** (`guard-netflow.ts`) is the second protocol on that door and the
+  one an IPFIX/NetFlow-capable firewall needs: a single UDP collector socket that
+  dispatches by version across NetFlow v5 (fixed records) and v9/IPFIX
+  (template-based), keeps templates per exporter observation domain (so two devices
+  that number their template ids independently cannot decode each other's records),
+  **refuses to decode** a data set whose template it has not seen rather than
+  guessing an unknown layout (which would be fabricated telemetry), leaves the
+  direction unstated because NetFlow carries none, and hands each decoded flow to the
+  same `GuardService.ingest`. The OTel receiver remains declared vocabulary rather
+  than a reader. The
   **normalizer** is built (`telemetry-rules.ts`): a source-neutral
   `ObservedEvent` with kind (`NETWORK`/`HOST`/`HTTP`/`AUTH`), addresses and ports,
   direction, protocol, bytes and a free-form detail bag; `toObservedEvent` validates
   and narrows a JSON payload, `toObservedEventFromSyslog` reads the RFC 3164 shape,
   and `validateTelemetrySource` refuses a source the deployment has not declared. The
   ingest surface is live (`POST /guard/v1/events`, a bearer token per organization,
-  `guard-http.ts` + `guard-service.ts`) and accepts a **batch**; what is not here yet
-  is a streaming listener per protocol — a collector posts, it does not yet tail. The
-  first four sources (`SYSLOG`, `NETFLOW`, `IPFIX`, `EBPF`, `OTEL`, `PROXY`, `EDR`,
+  `guard-http.ts` + `guard-service.ts`) and accepts a **batch**, and two of the
+  sources now have a streaming listener of their own — `SYSLOG` over UDP and TCP and
+  `NETFLOW`/`IPFIX` on one UDP collector — so a detector can be pointed at a network
+  and not only at something else's feed. The rest (`EBPF`, `OTEL`, `PROXY`, `EDR`,
   `FIREWALL`) are declared vocabulary rather than implemented readers, and the roadmap
   says so on purpose.
 - `[~]` Signature + behavioural detection rules; rule versioning and test harness.
@@ -998,9 +1008,10 @@ missing rather than as a task name:
 1. ~~**Guard can only read what it is handed.**~~ **Closed (2026-10-01):**
    `guard-syslog.ts` listens — syslog over UDP and TCP, into the same ingest path
    — so a detector can be pointed at a network rather than at something else's
-   feed. What is still true: it is *one* protocol. NetFlow/IPFIX and an OTel
-   receiver are the next listeners, and a pcap reader after them, so 1.0 has a
-   listener rather than a taxonomy.
+   feed. **Extended (2026-10-08):** the **flow listener** (`guard-netflow.ts`) puts
+   NetFlow v5/v9 and IPFIX on the same door, so the device that exports flows rather
+   than logs is read too. What is still true: the OTel receiver and a pcap reader are
+   the listeners after these, so 1.0 has a listener rather than a taxonomy.
 2. **A rule change is not a version.** Detection rules are code, and the corpus
    they are judged against is not tracked, so "why did this fire last Tuesday"
    has no answer. Versioning the rule set — and recording which version an alert

@@ -61,9 +61,11 @@ first Guard slice turns telemetry into an alert that names a person; a feed of
 indicators now raises how that alert is judged; and the console works the queue
 that produces, with a posture summary beside it. What is *not* here is still
 stated: a synced group decides nothing yet (roles and groups as policy is S1's
-last bullet), Guard has no streaming listener, no
-detection-coverage map and no STIX/TAXII feed transport, and rule rotation and
-signing-key provisioning are open. The identity spine:
+last bullet), Guard listens to syslog and to NetFlow/IPFIX but not yet to OTel or a
+pcap, and there is no STIX/TAXII feed transport, no rule *editing* (the rulebook is
+code with a version) and no vendor enforcement adapter (deployments write their own
+on the `EnforcementTarget` seam). Rule rotation and signing-key provisioning are
+open. The identity spine:
 
 - `src/lib/audit-chain.ts` — the hash-chained, append-only audit log with
   tamper detection (the evidence spine). `src/lib/hash.ts` is the one SHA-256 the
@@ -511,10 +513,17 @@ ran rather than by whatever the rule says today. And **the ingest surface is not
 mounted at all when no token is configured** — an endpoint that exists only to say
 "configure me" is one somebody eventually finds a way to write to.
 
-Not here yet, and named rather than implied: no streaming listener per protocol (a
-collector posts, it does not yet tail), no detection-coverage map, and no rule
-*editing* — the rulebook is code with a version, and publishing a rule is a deploy.
-The queue is worked at `/console/alerts` (see [Working the queue](#working-the-queue)).
+Two protocols are read off the wire. **Syslog** (`guard-syslog.ts`) binds UDP and TCP
+and parses each line with the same normalizer a relay's POST uses. **NetFlow v5/v9 and
+IPFIX** (`guard-netflow.ts`) share one UDP collector socket, dispatch by version, keep
+templates per exporter, and refuse to decode a record whose layout they have not seen
+rather than guessing one — see [docs/guard-netflow.md](docs/guard-netflow.md).
+
+Not here yet, and named rather than implied: OTel and a pcap reader are declared
+sources with no reader, and there is no rule *editing* — the rulebook is code with a
+version, and publishing a rule is a deploy. The queue is worked at `/console/alerts`
+and the whole picture — detection, prevention, coverage and the chain — is read at
+`/console/control-center` (see [Working the queue](#working-the-queue)).
 
 ## Judging an alert against a feed
 
@@ -645,6 +654,15 @@ deployment with no second factor enrolled anywhere, no stored baseline, an open 
 `HIGH` or above, or no detection pipeline at all gets a `WARN` or a `FAIL` naming what is
 missing, because a green tick with a footnote is what a review is for catching.
 
+**The page that asks all of those at once is `/console/control-center`.** Detection and
+prevention on one read-only screen: the open queue loudest first, the blind spots the
+coverage map derived, the feed's counts, what prevention has in force, what is waiting on a
+second approver, the register's measured time-to-prevent, and whether the chain still
+verifies. It writes nothing and carries no control — every act stays on Alerts and
+Enforcement, where the rules that refuse actually run — so a cockpit cannot become a second,
+weaker place to block a network. The prevention half is shown only to an administrator;
+anybody else is told why rather than handed a blank card.
+
 The operator's side of it — the paths, the two POST bodies, and what each action needs to
 be permitted — is in [docs/alert-triage.md](./docs/alert-triage.md).
 
@@ -696,7 +714,11 @@ to start — every value has a working default and the stack reads `.env` when i
 exists rather than requiring one — so a first `up` works on a bare checkout. And it
 publishes its database on **5434**, because Sentinel keeps its own database and all
 three stacks can then run at once: the training app holds 5432, Tix 5433, Sentinel
-5434.
+5434. It also publishes the two Guard listener ports, `SENTINEL_GUARD_SYSLOG_PORT`
+(UDP and TCP) and `SENTINEL_GUARD_NETFLOW_PORT` (UDP), both off unless set — a
+published UDP port with nothing behind it discards quietly. See
+[docs/guard-syslog.md](./docs/guard-syslog.md) and
+[docs/guard-netflow.md](./docs/guard-netflow.md).
 
 The provider answers to the same make targets as the others: `sentinel-up`,
 `sentinel-down`, `sentinel-logs`, and `sentinel-prod-up` / `sentinel-prod-down` for

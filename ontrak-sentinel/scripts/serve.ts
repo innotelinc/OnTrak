@@ -52,6 +52,11 @@ import {
   startGuardSyslog,
   type GuardSyslogHandle,
 } from "../src/lib/guard-syslog";
+import {
+  guardNetflowConfigFromEnv,
+  startGuardNetflow,
+  type GuardNetflowHandle,
+} from "../src/lib/guard-netflow";
 import { createHttpDirectoryReader } from "../src/lib/directory-client";
 import { DirectoryService, MemoryDirectoryStore, type DirectoryReader } from "../src/lib/directory-service";
 import type { DirectorySource } from "../src/lib/directory-rules";
@@ -586,6 +591,32 @@ async function main(): Promise<void> {
     }
   }
 
+  // The flow listener (S3): NetFlow v5/v9 and IPFIX on one collector socket, fed through
+  // the same `guardService.ingest` a relay's POST takes — so a firewall's flow export and
+  // a device's syslog frame enter detection through one door. Mounted only alongside the
+  // ingest surface, for the same reason the syslog listener is: a collector on a deployment
+  // that does not accept telemetry is a socket that wastes its input.
+  let netflow: GuardNetflowHandle | null = null;
+  if (guard !== null) {
+    const netflowConfig = guardNetflowConfigFromEnv(process.env);
+    if (netflowConfig !== null) {
+      netflow = await startGuardNetflow(netflowConfig, {
+        sink: {
+          accept: async (payload, at) => {
+            const result = await guardService.ingest({
+              authorization: `Bearer ${process.env.SENTINEL_GUARD_TOKEN ?? ""}`,
+              organization: netflowConfig.organizationSlug,
+              payload,
+              at,
+            });
+            return result.ok ? { ok: true } : { ok: false, error: result.error };
+          },
+        },
+        log: (message) => console.warn(`[sentinel] netflow: ${message}`),
+      });
+    }
+  }
+
   const { actor, session, totp } = await bootstrap(spine, identities, mfa);
 
   /**
@@ -729,6 +760,11 @@ async function main(): Promise<void> {
     syslog === null
       ? `[sentinel] Guard syslog: off (set SENTINEL_GUARD_SYSLOG_PORT and SENTINEL_GUARD_ORGANIZATION to listen)`
       : `[sentinel] Guard syslog: ${syslog.config.transport} on ${syslog.config.host}:${syslog.config.port} as “${syslog.config.organizationSlug}”`,
+  );
+  console.log(
+    netflow === null
+      ? `[sentinel] Guard netflow: off (set SENTINEL_GUARD_NETFLOW_PORT and SENTINEL_GUARD_ORGANIZATION to listen)`
+      : `[sentinel] Guard netflow: udp on ${netflow.config.host}:${netflow.config.port} as “${netflow.config.organizationSlug}”`,
   );
   // Deliberately no token is minted or printed here: a provisioning credential belongs
   // to a person acting in the console (`${CONSOLE_PATHS.provisioning}`), is shown once,

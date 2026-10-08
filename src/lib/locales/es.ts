@@ -199,6 +199,18 @@ export const es: Messages = {
   "admin.integration.incompleteHint":
     "Este despliegue rechaza esas peticiones y el registro de arranque indica qué arreglar:",
   "admin.integration.notSet": "sin definir",
+  "admin.sentinel": "Sentinel (identidad e IPS)",
+  "admin.sentinelHint":
+    "OnTrak Sentinel es el proveedor de identidad y la plataforma de detección y prevención de intrusiones de la familia. Esta sala de control no lo reimplementa; enlaza al centro de control propio de Sentinel. Define SENTINEL_CONSOLE_URL (o SENTINEL_ISSUER) para apuntar este despliegue a él.",
+  "admin.sentinel.title": "Centro de control",
+  "admin.sentinel.ready":
+    "Detección, prevención, cobertura y la cadena de evidencia en una sola pantalla, en el despliegue de Sentinel al que esta aplicación está conectada.",
+  "admin.sentinel.off":
+    "No hay ninguna consola de Sentinel configurada, así que no hay a dónde enlazar. Define SENTINEL_CONSOLE_URL al Sentinel de este despliegue.",
+  "admin.sentinel.incomplete": "Se definió una URL de Sentinel pero fue rechazada, así que no se puede enlazar nada:",
+  "admin.sentinel.open": "Abrir el centro de control",
+  "admin.sentinel.controlCenter": "URL del centro de control",
+  "admin.sentinel.issuer": "Emisor",
   "admin.integration.issuer": "Emisor",
   "admin.integration.clientId": "ID de cliente",
   "admin.integration.allowedDomains": "Dominios de acceso",

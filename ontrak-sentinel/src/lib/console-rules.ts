@@ -52,7 +52,10 @@ import type { Severity } from "./detection-rules";
 import { CONFIDENCE_FLOOR, INDICATOR_KINDS } from "./threat-intel-rules";
 // The coverage map's shape, read from the module that derives it: the page renders what the
 // rulebook says, never a list kept beside it, so it cannot claim detection nothing performs.
-import type { CoverageReport } from "./detection-coverage-rules";
+import type { CoverageGap, CoverageReport } from "./detection-coverage-rules";
+// The feeder's counts, read from the service that produces them, so the cockpit's "what this
+// deployment matches against" cannot disagree with the feed page.
+import type { FeedStats } from "./threat-intel-service";
 // The enforcement page (S4): the shapes a proposal and a policy are, read from the module
 // the service decides with, so the form cannot ask for a field the decision never reads.
 // `ENFORCEMENT_TARGET_KINDS` and `ENFORCEMENT_ACTION_KINDS` are the vocabulary the form's
@@ -76,6 +79,16 @@ import { UPSTREAM_PATHS } from "./upstream-rules";
 /** Where the console lives. Named here so the router and the pages agree. */
 export const CONSOLE_PATHS = {
   home: "/console",
+  /**
+   * The control center (S3/S4): detection and prevention on one screen.
+   *
+   * The page the rest of the console is a drill-down from, and deliberately beside `home`
+   * rather than replacing it: `home` is the *account* overview — this session, this second
+   * factor, this chain — and this is the *operations* cockpit, where the queue, the coverage
+   * gaps, the prevention register and the feed are read together, because an incident is not
+   * one of them. It writes nothing; every act stays on the page that owns it.
+   */
+  controlCenter: "/console/control-center",
   /**
    * The console's own sign-in.
    *
@@ -618,6 +631,7 @@ const STYLES = `
   main { max-width: 46rem; margin: 0 auto; padding: var(--space-6) var(--space-4) 4rem; }
   h1 { font-size: 1.4rem; margin: 0 0 var(--space-1); letter-spacing: -.01em; }
   h2 { font-size: .82rem; margin: var(--space-6) 0 var(--space-2); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); }
+  h3 { font-size: .95rem; margin: var(--space-4) 0 var(--space-1); }
   p { margin: .35rem 0; }
   a { color: var(--brand); }
   code, pre { font-family: var(--mono); font-size: .85em; }
@@ -721,7 +735,8 @@ export function consolePage(input: ConsolePageInput): string {
   // The queue sits second because it is the one page an operator opens first, and the
   // posture summary sits last because it is the page that summarizes all the others.
   const nav = input.actor
-    ? `<nav class="muted"><a href="${CONSOLE_PATHS.home}">Overview</a>` +
+    ? `<nav class="muted"><a href="${CONSOLE_PATHS.controlCenter}">Control center</a>` +
+      `<a href="${CONSOLE_PATHS.home}">Overview</a>` +
       `<a href="${CONSOLE_PATHS.alerts}">Alerts</a>` +
       `<a href="${CONSOLE_PATHS.mfa}">Second factor</a>` +
       `<a href="${CONSOLE_PATHS.policies}">Policies</a>` +
@@ -2307,9 +2322,11 @@ export function renderCoverage(view: ConsoleCoverageView, flash?: string | null,
     `states, falling back to the kind its source implies. AUTH is never implied — a payload has to claim it.</p></div>` +
     `<h2>By source</h2>` +
     `<div class="card"><table><thead><tr><th>Source</th><th>Kind</th><th></th><th>Rules</th></tr></thead><tbody>${sourceRows}</tbody></table>` +
-    `<p class="muted">Every source here is declared vocabulary. The ingest surface accepts a batch a collector posts ` +
-    `(<code>POST /guard/v1/events</code>); no source has a streaming listener yet, so “read” is a statement about ` +
-    `the rules, not about a feed being live.</p></div>` +
+    `<p class="muted">The ingest surface accepts a batch a collector posts ` +
+    `(<code>POST /guard/v1/events</code>), and two sources have a streaming listener of their own — ` +
+    `<code>SYSLOG</code> over UDP and TCP, and <code>NETFLOW</code>/<code>IPFIX</code> on one UDP collector. ` +
+    `Every other source is declared vocabulary with no reader, so “read” is a statement about the ` +
+    `rules, not about a feed being live.</p></div>` +
     unreachable +
     `<h2>The rulebook</h2>` +
     `<div class="card"><table><thead><tr><th>Rule</th><th>Name</th><th>Severity</th><th>Shape</th><th>Reads</th></tr></thead><tbody>${ruleRows}</tbody></table></div>` +
@@ -2317,6 +2334,201 @@ export function renderCoverage(view: ConsoleCoverageView, flash?: string | null,
     `in this build. Adding a rule adds it here; nothing on this page is maintained by hand.</p>`;
 
   return consolePage({ title: "Coverage", actor: view.actor, body, flash, error });
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Control center                                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One row of the control center's queues.
+ *
+ * Flattened rather than carrying a whole record: the cockpit shows two short queues, and a
+ * page that shipped the full alert object would be the queue page again under a new heading.
+ * The same row shape serves detection and prevention because the columns an operator scans
+ * for — what fired, how bad, where it stands, when, who — are the same for both.
+ */
+export interface ControlCenterRow {
+  id: string;
+  /** The rule that fired, or the action that answers it. */
+  label: string;
+  /** Detection rows carry a severity; prevention rows do not. */
+  severity: Severity | null;
+  /** `NEW`/`ACKNOWLEDGED` for an alert, `ACTIVE`/`PENDING` for an action. */
+  state: AlertState | EnforcementState;
+  /** The last sighting, or the moment the action ends. ISO, or `null`. */
+  at: string | null;
+  /** Times seen, for an alert; targets named, for an action. */
+  occurrences: number;
+  /** The identity it is about, the owner, or who asked — whichever fits the row. */
+  who: string | null;
+}
+
+/** The detection half, as the cockpit summarises it. */
+export interface ControlCenterDetection {
+  summary: TriageSummary;
+  /** Open alerts, loudest first, bounded to one screen. */
+  watchlist: ControlCenterRow[];
+  ruleCount: number;
+  /** The corpus id every alert below was judged by. */
+  rulebookVersion: string;
+  /** The declared kinds and sources no rule reads — the reason the map exists. */
+  gaps: CoverageGap[];
+}
+
+/** The prevention half, as the cockpit summarises it. */
+export interface ControlCenterPrevention {
+  active: number;
+  pending: number;
+  refused: number;
+  lifted: number;
+  /** S4's own exit figure, stated rather than recomputed off the page. */
+  prevention: TimeToPreventSummary;
+  policy: EnforcementPolicy;
+  /** False until somebody writes one: the built-in default, shown as inherited. */
+  policyStored: boolean;
+  /** What is blocked, quarantined or rate-limited right now. */
+  inForce: ControlCenterRow[];
+  /** What is waiting on a second administrator. */
+  waiting: ControlCenterRow[];
+}
+
+/**
+ * Sentinel's control center (S3/S4): detection and prevention, one screen.
+ *
+ * The console has a page per question and this is the page that asks all of them together,
+ * because that is what an incident is — a `CRITICAL` alert, the coverage gap that let it
+ * through, the feed that escalated it and the block that is (or is not) in force are one
+ * picture. It is deliberately **read-only**: every act stays on the page that owns it, so a
+ * cockpit cannot become a second, weaker place to block a network. `prevention` is `null`
+ * for a reader who may not approve an action, and `preventionNote` is why.
+ */
+export interface ConsoleControlCenterView {
+  actor: ConsoleActor;
+  session: ConsoleSessionView;
+  generatedAt: string;
+  /** `null` when this deployment has no detection pipeline wired. */
+  detection: ControlCenterDetection | null;
+  prevention: ControlCenterPrevention | null;
+  /** Why the prevention half is absent: an unprivileged reader, or an unwired deployment. */
+  preventionNote: string | null;
+  /** The feed this deployment matches against, or `null` when none is configured. */
+  intel: FeedStats | null;
+  chain: { ok: boolean; length: number; detail: string } | null;
+}
+
+/** The cockpit's queue table, shared by both halves so the two read the same way. */
+function controlCenterRows(rows: ControlCenterRow[], empty: string): string {
+  if (rows.length === 0) return `<p class="muted">${escapeHtml(empty)}</p>`;
+  return (
+    `<div class="card"><table><thead><tr><th>What</th><th>Severity</th><th>State</th><th>When</th><th>Who</th></tr></thead><tbody>` +
+    rows
+      .map(
+        (row) =>
+          `<tr><td>${escapeHtml(row.label)}` +
+          (row.occurrences > 1 ? ` <span class="muted">×${escapeHtml(row.occurrences)}</span>` : "") +
+          `</td><td>${row.severity ? severityBadge(row.severity) : `<span class="muted">—</span>`}</td>` +
+          `<td class="muted">${escapeHtml(row.state)}</td>` +
+          `<td class="muted">${escapeHtml(row.at ?? "—")}</td>` +
+          `<td class="muted">${escapeHtml(row.who ?? "—")}</td></tr>`,
+      )
+      .join("") +
+    `</tbody></table></div>`
+  );
+}
+
+/**
+ * The control center (S3/S4).
+ *
+ * Read it top to bottom as an operator would during an incident: what detection raised, what
+ * it is not watching, what the feed adds, what prevention did about it and whether the record
+ * is intact. Every figure is a count from a row the product enforces; nothing here is typed
+ * in, and the page carries no form — the acts live on Alerts and Enforcement, one link away.
+ */
+export function renderControlCenter(
+  view: ConsoleControlCenterView,
+  flash?: string | null,
+  error?: string | null,
+): string {
+  const detection = view.detection;
+  const prevention = view.prevention;
+  const humanMs = (ms: number): string => (ms < 1000 ? `${ms}ms` : humanSeconds(Math.round(ms / 1000)));
+
+  const detectionCards = detection
+    ? `<div class="card"><table><thead><tr><th>Open</th><th>New</th><th>HIGH+</th><th>Unassigned</th><th>Feed-raised</th></tr></thead><tbody><tr>` +
+      `<td>${escapeHtml(detection.summary.open)}</td>` +
+      `<td>${escapeHtml(detection.summary.new)}</td>` +
+      `<td class="${detection.summary.openHighOrCritical > 0 ? "control-fail" : "control-ok"}">${escapeHtml(detection.summary.openHighOrCritical)}</td>` +
+      `<td class="${detection.summary.unassigned > 0 ? "control-warn" : "control-ok"}">${escapeHtml(detection.summary.unassigned)}</td>` +
+      `<td>${escapeHtml(detection.summary.escalated)}</td></tr></tbody></table>` +
+      `<p class="muted">${detection.summary.oldestOpenAt ? `Oldest open last seen ${escapeHtml(detection.summary.oldestOpenAt)}.` : "No open alert is waiting."} ` +
+      `Reading the ${escapeHtml(detection.ruleCount)} rule(s) of corpus <code>${escapeHtml(detection.rulebookVersion)}</code>. ` +
+      `<a href="${CONSOLE_PATHS.alerts}">Work the queue</a>.</p></div>`
+    : `<p class="muted">This deployment runs no detection pipeline, so there is no queue — an absence, not a quiet network.</p>`;
+
+  const gaps =
+    detection && detection.gaps.length
+      ? `<div class="card"><ul>${detection.gaps
+          .map(
+            (gap) =>
+              `<li><strong>${escapeHtml(gap.name)}</strong> <span class="muted">(${escapeHtml(gap.what)})</span> — ` +
+              `${escapeHtml(gap.detail)}</li>`,
+          )
+          .join("")}</ul><p class="muted"><a href="${CONSOLE_PATHS.coverage}">The full coverage map</a>.</p></div>`
+      : detection
+        ? `<p class="flash">Every declared kind and source is read by at least one rule.</p>`
+        : "";
+
+  const intel = view.intel
+    ? `<p class="muted">${escapeHtml(view.intel.active)} active indicator(s) of ${escapeHtml(view.intel.total)} across ` +
+      `${escapeHtml(Object.keys(view.intel.byFeed).length)} feed(s). <a href="${CONSOLE_PATHS.intel}">Manage the feed</a>.</p>`
+    : `<p class="muted">No threat-intelligence feed is configured. <a href="${CONSOLE_PATHS.intel}">Ingest one</a>.</p>`;
+
+  const preventionCards = prevention
+    ? `<div class="card"><table><thead><tr><th>In force</th><th>Waiting</th><th>Ended</th><th>Median to prevent</th></tr></thead><tbody><tr>` +
+      `<td class="${prevention.active > 0 ? "control-warn" : "control-ok"}">${escapeHtml(prevention.active)}</td>` +
+      `<td>${escapeHtml(prevention.pending)}</td>` +
+      `<td class="muted">${escapeHtml(prevention.lifted + prevention.refused)}</td>` +
+      `<td>${prevention.prevention.medianMs === null ? `<span class="muted">nothing measured</span>` : escapeHtml(humanMs(prevention.prevention.medianMs))}</td>` +
+      `</tr></tbody></table>` +
+      `<p class="muted">Policy: ${escapeHtml(prevention.policy.protectedTargets.length)} protected target(s), ` +
+      `≤${escapeHtml(prevention.policy.maxTargets)} targets per action, ${escapeHtml(prevention.policy.maxActionsPerHour)}/hour, ` +
+      `TTL ${escapeHtml(humanSeconds(prevention.policy.defaultTtlSeconds))}` +
+      `${prevention.policy.requireSecondApprover ? ", second approver required" : ""}. ` +
+      `${prevention.policyStored ? "" : "The built-in default governs; no policy has been stored. "}` +
+      `<a href="${CONSOLE_PATHS.enforcement}">Open the register</a>.</p></div>`
+    : `<p class="muted">${escapeHtml(view.preventionNote ?? "Prevention is not available in this deployment.")}</p>`;
+
+  const chain = view.chain
+    ? `<p class="${view.chain.ok ? "flash" : "error"}"${view.chain.ok ? "" : ` role="alert"`}>${escapeHtml(view.chain.detail)} ` +
+      `<span class="muted">(${escapeHtml(view.chain.length)} events)</span></p>`
+    : `<p class="muted">Your role may not read the evidence trail, so this screen asserts nothing about it.</p>`;
+
+  const body =
+    `<p class="muted">One screen for the two halves of Sentinel Guard: what detection <strong>raised</strong> and what ` +
+    `prevention <strong>did about it</strong>, beside the coverage that says what is watched and the evidence chain ` +
+    `that says it is all on the record. Read-only — every act stays on the page that owns it.</p>` +
+    `<h2>Detection — IDS</h2>` +
+    detectionCards +
+    `<h3>Watchlist</h3>` +
+    controlCenterRows(detection?.watchlist ?? [], detection ? "No open alert is waiting." : "No detection pipeline is wired.") +
+    `<h3>Blind spots</h3>` +
+    gaps +
+    `<h2>Threat intelligence</h2>` +
+    intel +
+    `<h2>Prevention — IPS</h2>` +
+    preventionCards +
+    `<h3>In force</h3>` +
+    controlCenterRows(prevention?.inForce ?? [], prevention ? "Nothing is blocked, quarantined or rate-limited right now." : "Not shown.") +
+    `<h3>Waiting on a second approver</h3>` +
+    controlCenterRows(prevention?.waiting ?? [], prevention ? "Nothing is waiting on approval." : "Not shown.") +
+    `<h2>Evidence integrity</h2>` +
+    chain +
+    `<p class="muted">Generated ${escapeHtml(view.generatedAt)}. This screen reads the same rows the product enforces ` +
+    `and writes nothing: every act stays on <a href="${CONSOLE_PATHS.alerts}">Alerts</a> and ` +
+    `<a href="${CONSOLE_PATHS.enforcement}">Enforcement</a>, where the rules that refuse are the ones that run.</p>`;
+
+  return consolePage({ title: "Control center", actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */
