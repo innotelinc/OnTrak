@@ -37,10 +37,17 @@ services:
       # up until somebody runs one file instead of the other.
       # `docker-compose.all.yml` overrides this with `http://sync-api:8420`.
       ONTRAK_SYNC_API_URL: ${ONTRAK_SYNC_API_URL:-http://192.168.1.21:8420}
+      # OnTrak Lab is a peer deployment, not a service in this file, so it is off until
+      # an operator sets both of these. With neither set the portal draws no lab tile at
+      # all, rather than a link that leads nowhere and a light that can only read "not
+      # answering" for a product nobody is running.
+      ONTRAK_LAB_ENABLED: ${ONTRAK_LAB_ENABLED:-}
+      ONTRAK_LAB_URL: ${ONTRAK_LAB_URL:-}
       ONTRAK_ITS_INTERNAL_URL: ${ONTRAK_ITS_INTERNAL_URL:-}
       ONTRAK_TIX_INTERNAL_URL: ${ONTRAK_TIX_INTERNAL_URL:-}
       ONTRAK_SENTINEL_INTERNAL_URL: ${ONTRAK_SENTINEL_INTERNAL_URL:-}
       ONTRAK_SYNC_INTERNAL_URL: ${ONTRAK_SYNC_INTERNAL_URL:-}
+      ONTRAK_LAB_INTERNAL_URL: ${ONTRAK_LAB_INTERNAL_URL:-}
     ports:
       - "${ONTRAK_PORTAL_BIND:-192.168.1.21}:3300:3300"
     volumes:

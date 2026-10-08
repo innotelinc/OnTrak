@@ -16,8 +16,12 @@
 
 import { parseRoleMappings, type Role } from "./portal-rules";
 
-function env(name: string, fallback = ""): string {
-  const raw = (process.env[name] ?? fallback).trim();
+function env(
+  name: string,
+  fallback = "",
+  source: Record<string, string | undefined> = process.env,
+): string {
+  const raw = (source[name] ?? fallback).trim();
   // `.env` has three readers and they do not agree about quotes: compose
   // unquotes, `docker run --env-file` does not, and a shell that sources the file
   // does. Stripping them here is what makes a quoted cron-like value or a URL with
@@ -38,6 +42,42 @@ function bool(name: string, fallback: boolean): boolean {
   return fallback;
 }
 
+/** The switch the training app also reads for the same fact. */
+export const LAB_ENABLED_ENV = "ONTRAK_LAB_ENABLED";
+/** The address the training app also reads for the same fact. */
+export const LAB_URL_ENV = "ONTRAK_LAB_URL";
+
+/** The spellings of "on" the family's switches accept. */
+const TRUTHY = ["1", "true", "yes", "on"];
+
+/**
+ * Where this deployment runs OnTrak Lab, or `null` when it does not.
+ *
+ * Two facts, both required, exactly as the training app's `src/lib/lab-rules.ts` states
+ * them: `ONTRAK_LAB_ENABLED` says the deployment wants the lab, and `ONTRAK_LAB_URL` says
+ * where it is. OnTrak Lab is OnTrak-dev's Python control plane on its own host — a peer
+ * deployment, not a directory of this repository and not a service in the family stack —
+ * so a deployment that has not said both has no lab to link to and none to watch. The
+ * portal then draws **no lab tile at all**, rather than a link that leads nowhere and a
+ * status light that could only ever read "not answering" for a product nobody is running.
+ *
+ * The origin rather than the raw value, so a base URL carrying a path or a trailing slash
+ * cannot double a segment; and `null` for anything a browser could not open, because a
+ * link the portal cannot build is worse than no link.
+ */
+export function labAddress(source: Record<string, string | undefined> = process.env): string | null {
+  if (!TRUTHY.includes(env(LAB_ENABLED_ENV, "", source).toLowerCase())) return null;
+  const raw = env(LAB_URL_ENV, "", source);
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
 export interface PortalConfig {
   /** The identity provider (Cerulean's Authentik). */
   issuer: string;
@@ -55,6 +95,11 @@ export interface PortalConfig {
   secureLinks: boolean;
   /** Secret that signs the session cookie and the SSO state. No default. */
   sessionSecret: string;
+  /**
+   * OnTrak Lab, where this deployment runs one, or `null` when it does not. No lab tile
+   * is drawn without it — see `labAddress`.
+   */
+  labUrl: string | null;
   /** OnTrak Sync, which the portal uses as the identity authority for a local sign-in. */
   syncApiUrl: string;
   /**
@@ -88,6 +133,7 @@ export function portalConfig(): PortalConfig {
     // dead link with a certificate error.
     secureLinks: publicUrl ? publicUrl.startsWith("https://") : true,
     sessionSecret: env("ONTRAK_PORTAL_SESSION_SECRET"),
+    labUrl: labAddress(),
     syncApiUrl: env("ONTRAK_SYNC_API_URL", "http://ontrak-sync-api:8420").replace(/\/+$/, ""),
     syncApiToken: env("ONTRAK_SYNC_API_TOKEN"),
     breakGlassUser: env("ONTRAK_PORTAL_ADMIN_USER"),

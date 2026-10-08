@@ -633,6 +633,13 @@ services:
       ONTRAK_SENTINEL_INTERNAL_URL: http://sentinel-app:8787
       ONTRAK_SYNC_INTERNAL_URL: http://sync-web:8421
       ONTRAK_GENIE_INTERNAL_URL: http://genie-app:3400
+      # OnTrak Lab is a peer deployment this stack does not run, so it is off unless a
+      # deployment has one to point at. The portal draws no lab tile at all until both
+      # are set, which is what keeps a stack with no lab from opening on a red light
+      # for a product nobody is running.
+      ONTRAK_LAB_ENABLED: ${ONTRAK_LAB_ENABLED:-}
+      ONTRAK_LAB_URL: ${ONTRAK_LAB_URL:-}
+      ONTRAK_LAB_INTERNAL_URL: ${ONTRAK_LAB_INTERNAL_URL:-}
     ports:
       - "${ONTRAK_PORTAL_PORT:-3300}:3300"
     healthcheck:

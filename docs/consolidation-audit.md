@@ -529,6 +529,27 @@ Stated plainly, because the integration is **not** complete:
   `ontrak-portal/tests/fleet-probe.test.ts` drives the shared answer against a real
   server — the override is a base the declared path is appended to, and a family that
   answers 404 everywhere reads down, nowhere up.
+- **The lab is a link a deployment may draw, not a light the family must watch.** The
+  dashboard gave every training-audience role a tile for OnTrak Lab and probed
+  `<ONTRAK_LAB_INTERNAL_URL, else lab.<base domain>>/healthz`, so a deployment that does
+  not run the lab — today, every deployment, since the lab is a peer Python host that
+  `docker-compose.all.yml` does not start — opened on a red "not answering" for a product
+  nobody was running, and `npm run health:check` exited 1 for the same reason. It was the
+  same class of defect as Sync's light aimed at the wrong half of Sync, and the one light
+  in the family that could never turn green. The lab is now the catalogue's only
+  **optional** product: it stays in `PRODUCTS`, because what it is for, who belongs in it
+  and the `/healthz` it answers do not change with a deployment, but `tilesFor` draws a
+  tile for it only once the deployment has supplied the same two facts the training app
+  already reads (`ONTRAK_LAB_ENABLED`, `ONTRAK_LAB_URL`; `labAddress()` in
+  `ontrak-portal/src/lib/config.ts`). Until then there is no tile, no probe and no light
+  to misread, a person who came for the lab still lands on the training range rather than
+  on a tile that is not there, and the family table on the same page says "not in this
+  deployment" instead of printing a name nothing resolves. `npm run health:check` skips
+  the lab with a line saying so rather than failing a deployment for a product it does not
+  run. `ontrak-portal/tests/lab-address.test.ts` and the catalogue cases in
+  `portal-rules.test.ts` hold the three states — off, on-but-nowhere, on-and-located — and
+  `tests/family-stack.test.ts` keeps the lab out of the stack's light list, now because
+  the stack never draws it.
 - **Terminology is resolved** (§9/Q1). *OnTrak* names this repository and the family
   inside it, never one product; the product in `src/` is **OnTrak IT Support Training**,
   and the lab is **OnTrak Lab**.
