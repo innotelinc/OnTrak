@@ -105,10 +105,14 @@ https://ontrak.innotel.us/api/auth/sso/callback       Sync (same origin as the p
 https://its.ontrak.innotel.us/api/sso/callback        training
 https://tix.ontrak.innotel.us/api/sso/callback        Tix
 https://sync.ontrak.innotel.us/api/auth/sso/callback  Sync behind the edge
+https://genie.ontrak.innotel.us/api/auth/callback     Genie, which signs in itself
 ```
 
-`./scripts/cerulean-ontrak.py --print-redirect-uris` prints the same list, so the
-script and the registered client cannot drift apart unnoticed.
+`./scripts/cerulean-ontrak.py --print-redirect-uris` prints the same list — this list,
+and not a second copy of it: `tests/family-ops.test.ts` compares the two, because they
+had drifted. The page stopped at five while the client registers six, and the one
+missing was Genie's, which is a sign-in that fails at the provider with the
+`redirect_uri mismatch` in §6 as the only clue.
 
 ## 3. Adding a hostname, or repairing one
 
