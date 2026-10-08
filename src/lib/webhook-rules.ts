@@ -134,8 +134,10 @@ export function gradedEventInput(source: GradedFactSource): GradedEventInput {
     score: source.score,
     maxScore: source.maxScore,
     passScore,
-    // A scenario worth zero points is not a pass even at zero: nothing was asked.
-    passed: source.maxScore > 0 && source.score >= passScore,
+    // The pass mark is a *percentage*, so the score is compared as one: a raw
+    // `score >= passScore` would fail an 8/10 attempt against a 70% mark. A
+    // scenario worth zero points is not a pass even at zero: nothing was asked.
+    passed: source.maxScore > 0 && percent(source.score, source.maxScore) >= passScore,
     startedAt: source.startedAt,
     submittedAt: source.submittedAt,
     gradedAt: source.gradedAt,

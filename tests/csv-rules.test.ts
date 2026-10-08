@@ -74,7 +74,7 @@ test("csv: percent and the pass mark are computed, not copied", () => {
     status: "GRADED",
     score: 1,
     maxScore: 3,
-    passScore: 2,
+    passScore: 50,
     startedAt: new Date("2026-10-05T09:00:00.000Z"),
     gradedAt: null,
     timeSpentSec: 60,
@@ -83,7 +83,9 @@ test("csv: percent and the pass mark are computed, not copied", () => {
   };
   const cells = resultCells(row);
   assert.equal(cells[9], 33);
+  // The pass mark is a percentage, so 33% fails a 50% mark and 67% clears it.
   assert.equal(cells[10], "no");
+  assert.equal(resultCells({ ...row, score: 2 })[10], "yes");
   assert.equal(cells[12], "", "an unfinished attempt has no grading instant");
   assert.equal(cells[14], "");
   assert.equal(cells[15], "lab", "the export states which grader produced the row");

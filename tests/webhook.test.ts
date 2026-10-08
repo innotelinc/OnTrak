@@ -134,13 +134,17 @@ test("webhook: the timestamp cannot be edited to widen the replay window", () =>
   assert.equal(verifySignature("s3cret", forged, body, 2_000), false);
 });
 
-test("webhook: passing is decided from the scenario's own pass mark", () => {
+test("webhook: passing compares the score as a percentage of the pass mark", () => {
   const passed = gradedEventInput(SOURCE);
   assert.equal(passed.passed, true);
   assert.equal(passed.passScore, 7);
 
-  const failed = gradedEventInput({ ...SOURCE, score: 6 });
-  assert.equal(failed.passed, false);
+  // The pass mark is a percentage, not a point total: 60% fails a 70% mark and
+  // 80% fails an 85% mark, even though the raw score is larger than the mark.
+  assert.equal(gradedEventInput({ ...SOURCE, score: 6, passScore: 70 }).passed, false);
+  assert.equal(gradedEventInput({ ...SOURCE, score: 8, passScore: 85 }).passed, false);
+  // ...and the same 60% clears a 7% mark, where a points comparison would not.
+  assert.equal(gradedEventInput({ ...SOURCE, score: 6 }).passed, true);
 
   // A scenario nobody scored has not been passed by scoring zero.
   const unscored = gradedEventInput({ ...SOURCE, score: 0, maxScore: 0, passScore: 0 });

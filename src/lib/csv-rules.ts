@@ -168,7 +168,9 @@ export function resultCells(row: ResultCsvRow): CsvCell[] {
     row.score,
     row.maxScore,
     percent,
-    row.score >= row.passScore ? "yes" : "no",
+    // The pass mark is a percentage, so compare percentages: a raw
+    // `score >= passScore` would call an 8/10 attempt a failure against a 70% mark.
+    percent >= row.passScore ? "yes" : "no",
     row.startedAt.toISOString(),
     row.gradedAt ? row.gradedAt.toISOString() : "",
     row.timeSpentSec,
