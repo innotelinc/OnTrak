@@ -499,6 +499,18 @@ Stated plainly, because the integration is **not** complete:
   dashboard answers `/health`; its API keeps `ONTRAK_SYNC_API_URL`), the job asks the
   portal container the same question on every push, and the same test refuses a light
   aimed at a service that does not answer the path the portal asks.
+- **The portal's own suite runs in CI now.** It was the one product with no job:
+  `training`, `tix`, `sentinel`, `sync` and `genie` each have one, and the family's front
+  door had none — its 45 unit tests, its typecheck and its copy check only ever ran on
+  the machine of whoever was editing it, and its TypeScript was compiled only as a side
+  effect of the `Image (portal)` build, which can say the code compiles but not that the
+  rules hold. `OnTrak Portal` installs it, typechecks it, runs `copy:check` — the one
+  that keeps the family's taglines off the sign-in gate, which no build fails and no
+  type breaks on — and runs the suite, on Node 22, which is what its image is built on.
+  `tests/ci-coverage.test.ts` holds the general claim, derived from the packages rather
+  than from a list of products: every `package.json` in this repository that declares a
+  `test` script must have a job running from its directory that runs that suite and its
+  typecheck.
 - **Terminology is resolved** (§9/Q1). *OnTrak* names this repository and the family
   inside it, never one product; the product in `src/` is **OnTrak IT Support Training**,
   and the lab is **OnTrak Lab**.
