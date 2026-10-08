@@ -17,6 +17,7 @@ import { prisma } from "@/lib/db";
 import { certificateCode } from "@/lib/credentials";
 import { readStoredCertificate } from "@/lib/certificates";
 import { normalizeGradingMode } from "@/lib/grading-mode";
+import { attemptPercent } from "@/lib/scenarios";
 import { resultWhere, type ResultFilters } from "@/lib/result-filters";
 import type { ResultCsvRow } from "@/lib/csv-rules";
 
@@ -84,7 +85,10 @@ export function toResultJson(attempt: AttemptRow) {
       : null,
     score: attempt.score,
     maxScore: attempt.maxScore,
-    passed: attempt.score >= attempt.scenario.passScore,
+    // The pass mark is a percentage, so the score is compared as one — the same
+    // rule the instructor views use. A raw `score >= passScore` would call an
+    // 8/10 attempt a failure against a 70% mark.
+    passed: attemptPercent(attempt) >= attempt.scenario.passScore,
     timeSpentSec: attempt.timeSpentSec,
     startedAt: attempt.startedAt.toISOString(),
     submittedAt: attempt.submittedAt?.toISOString() ?? null,
