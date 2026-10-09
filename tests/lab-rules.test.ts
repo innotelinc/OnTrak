@@ -249,10 +249,24 @@ test("lab: an address that was refused keeps its reason, even with an in-app lab
   });
   assert.equal(door.kind, "misconfigured");
   assert.ok(door.kind === "misconfigured" && door.issues.some((issue) => /not an http\(s\) URL/.test(issue)));
-  // A peer that is named *and* in-app is the peer: a stated address is a decision.
-  assert.equal(
-    labDoorFromEnv({ ONTRAK_LAB_ENABLED: "1", ONTRAK_LAB_URL: "https://lab.test", ONTRAK_LAB_IN_APP: "1" }).kind,
-    "external",
+});
+
+test("lab: an in-app lab wins over a stated address, so a migration is one variable", () => {
+  // The address would be handed a `/dashboard` — the *peer* lab's landing page, which this
+  // app does not have — so a deployment that says "the lab is here" is believed, and it
+  // does not have to remember to unset the variable it used last year.
+  const door = labDoorFromEnv({
+    ONTRAK_LAB_ENABLED: "1",
+    ONTRAK_LAB_URL: "https://lab.old.example.test",
+    ONTRAK_LAB_IN_APP: "1",
+  });
+  assert.deepEqual(door, { kind: "in-app", href: LAB_IN_APP_PATH });
+
+  // Without the in-app switch, the same two variables are the peer's door, exactly as
+  // they were before the port.
+  assert.deepEqual(
+    labDoorFromEnv({ ONTRAK_LAB_ENABLED: "1", ONTRAK_LAB_URL: "https://lab.old.example.test" }),
+    { kind: "external", url: `https://lab.old.example.test${LAB_DASHBOARD_PATH}` },
   );
 });
 

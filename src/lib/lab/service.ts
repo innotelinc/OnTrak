@@ -33,6 +33,7 @@
  */
 
 import { prisma } from "@/lib/db";
+import { labDoorFromEnv } from "@/lib/lab-rules";
 
 import { Catalog } from "./catalog";
 import { LabSettings, loadSettings, requireSecrets } from "./config";
@@ -178,4 +179,21 @@ export async function labRuntime(): Promise<LabRuntimeRead> {
 /** Forget the cached runtime. For tests, and for a CLI script that re-reads its env. */
 export function forgetLabRuntime(): void {
   cached = null;
+}
+
+/**
+ * The runtime a *student's* request may use, or the reason there is not one.
+ *
+ * The door and the runtime are two answers and both are asked: a deployment that links to
+ * a peer lab (`labDoorFromEnv().kind === "external"`) must not also serve sessions of its
+ * own, or a student would be handed a machine on a host the deployment never intended to
+ * use — and an operator who set both would have two labs and no way to tell which a
+ * student landed in. Every page asks this one function, so it cannot be half-checked.
+ */
+export async function labRuntimeForPage(): Promise<{ runtime: LabRuntime | null; reason: string | null }> {
+  if (labDoorFromEnv().kind !== "in-app") {
+    return { runtime: null, reason: "This deployment does not run OnTrak Lab here." };
+  }
+  const read = await labRuntime();
+  return read.ok ? { runtime: read.runtime, reason: null } : { runtime: null, reason: read.reason };
 }

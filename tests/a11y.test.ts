@@ -23,6 +23,16 @@ import axe from "axe-core";
 
 import { DesktopPane } from "../src/components/console/DesktopPane";
 import { OfficePanel } from "../src/components/console/OfficePanel";
+import { SessionConsole } from "../src/components/lab/SessionConsole";
+import { WriteUpForm } from "../src/components/lab/WriteUpForm";
+import { loadScenarios } from "../src/lib/lab/dataset";
+import { LAB_NETWORK } from "../src/lib/lab/portal";
+import {
+  loadForm,
+  ticketFieldLabel,
+  type TicketForm,
+  type TicketGrade,
+} from "../src/lib/lab/tickets";
 import { LocaleProvider } from "../src/lib/i18n-client";
 import { createInitialState } from "../src/lib/sim/state";
 import type { CommandResult } from "../src/lib/sim/types";
@@ -136,6 +146,101 @@ test("a11y: the desktop stays clean in another locale", async () => {
   const html = renderDesktop("es");
   const results = await audit(html);
   assert.equal(results.violations.length, 0, `axe violations:\n${describeViolations(results)}`);
+});
+
+/*
+ * ── the lab's surfaces ─────────────────────────────────────────────────────
+ *
+ * The lab's pages need a database, a session and a machine, so a render-and-audit sweep
+ * cannot reach them the way it reaches the simulator's panels. The two components the
+ * pages are built from are presentational on purpose (`WriteUpForm` takes its action as a
+ * prop; `SessionConsole` takes the address it draws), which is what lets them be rendered
+ * here with no server behind them — and they are where the accessibility risk actually
+ * lives: a form of rubric-driven controls, and a panel of labels and an iframe.
+ */
+
+/** The real rubric of a shipped scenario, which is what a student fills in. */
+function labForm(): TicketForm {
+  const scenario = loadScenarios().get("net-dns-failure");
+  const form = loadForm(scenario.ticket);
+  assert.ok(form, "the shipped scenario declares a ticket form");
+  return form;
+}
+
+/** A marked preview: every field failed, so the feedback rows and their hints all render. */
+function labPreview(form: TicketForm): TicketGrade {
+  return {
+    sessionId: 1,
+    scenarioId: "net-dns-failure",
+    score: 40,
+    outcomes: form.fields.map((field) => ({
+      fieldId: field.id,
+      label: ticketFieldLabel(field),
+      passed: false,
+      detail: "The answer did not name the resolver.",
+      weight: field.weight,
+    })),
+    values: {},
+    notes: [],
+    submitted: false,
+    createdAt: "2026-10-09T09:30:00.000Z",
+  };
+}
+
+function renderWriteUp(preview: TicketGrade | null): string {
+  return renderToStaticMarkup(
+    createElement(WriteUpForm, {
+      sessionId: 1,
+      form: labForm(),
+      answers: {},
+      preview,
+      action: async (): Promise<void> => undefined,
+    }),
+  );
+}
+
+test("a11y: the lab's write-up form passes WCAG A/AA, with every control named", async () => {
+  const html = renderWriteUp(labPreview(labForm()));
+  const results = await audit(html);
+  assert.equal(results.violations.length, 0, `axe violations:\n${describeViolations(results)}`);
+  assertControlsNamed(html);
+});
+
+test("a11y: the write-up form is clean with nothing marked yet", async () => {
+  const html = renderWriteUp(null);
+  const results = await audit(html);
+  assert.equal(results.violations.length, 0, `axe violations:\n${describeViolations(results)}`);
+  assertControlsNamed(html);
+});
+
+test("a11y: the lab console panel passes WCAG A/AA with and without a console", async () => {
+  const address = {
+    host: "10.20.0.9",
+    target: "10.20.0.9:3389",
+    user: "student",
+    transport: "RDP" as const,
+    reach: LAB_NETWORK,
+  };
+  const open = renderToStaticMarkup(
+    createElement(SessionConsole, { sessionId: 7, available: true, address }),
+  );
+  const closed = renderToStaticMarkup(
+    createElement(SessionConsole, {
+      sessionId: 7,
+      available: false,
+      address: { ...address, host: "", target: "", user: "", transport: "" as const },
+    }),
+  );
+
+  for (const html of [open, closed]) {
+    const results = await audit(html);
+    assert.equal(results.violations.length, 0, `axe violations:\n${describeViolations(results)}`);
+    assertControlsNamed(html);
+  }
+  // A console frame is named: a screen reader announces it, and it is how a student tells
+  // the machine apart from the page around it.
+  assert.match(open, /title="Console for session 7"/);
+  assert.match(closed, /No console for this machine/);
 });
 
 test("a11y: the Office panels pass WCAG A/AA", async () => {

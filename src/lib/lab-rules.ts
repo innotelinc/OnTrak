@@ -163,11 +163,13 @@ export type LabDoor =
  *     even when the in-app lab is on: the variable is stale, and a deployment that
  *     silently ignored it would leave an operator believing their lab is where they
  *     typed it.
- *   - **Then a stated address.** An operator who named a host means that host — a peer
- *     lab is not made redundant by this app having ported one, and a deployment can run
- *     both while it migrates.
- *   - **Then the in-app lab.** This is the switch the port added: no address, and the
- *     lab is served here.
+ *   - **Then the in-app lab**, ahead of a stated address, because it is the more specific
+ *     answer: a deployment that has said "the lab is here" means here. The path matters
+ *     too — the address would be handed a `/dashboard`, which is the *peer* lab's landing
+ *     page and not a page this app has — so a migrating deployment adds one variable and
+ *     is done, rather than having to remember to delete another.
+ *   - **Then a stated address.** With no in-app lab, an operator who named a host means
+ *     that host; that is the pre-port behaviour, unchanged.
  *   - **Then enabled with nowhere to go**, which is the old message: a lab was asked for
  *     and neither an address nor this switch was given.
  *
@@ -182,11 +184,11 @@ export function labDoor(config: LabConfig, env: Record<string, string | undefine
   const stated = read(env, LAB_URL_ENV) !== "";
   const refused = config.enabled && config.url === null && stated;
 
-  if (config.url) return { kind: "external", url: `${config.url}${LAB_DASHBOARD_PATH}` };
   if (refused) return { kind: "misconfigured", issues: config.issues };
   if (TRUTHY.includes(read(env, LAB_IN_APP_ENV).toLowerCase())) {
     return { kind: "in-app", href: LAB_IN_APP_PATH };
   }
+  if (config.url) return { kind: "external", url: `${config.url}${LAB_DASHBOARD_PATH}` };
   if (config.enabled) return { kind: "misconfigured", issues: config.issues };
   return { kind: "off" };
 }
