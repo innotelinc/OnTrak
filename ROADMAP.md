@@ -240,6 +240,20 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   (`kind: "sandbox"` blocker). Attempts in a sandbox go through a server action per command
   (`sandboxCommand`) against one sandbox per attempt, disposed of on submit, abandon and
   restart, and reaped after 30 minutes idle.
+- `[x]` **The lab's real guests, ported in.** The sandbox above runs real bash; a real
+  *machine* — a Windows or Linux guest that boots, is fault-injected and is graded — is the
+  other half, and it was OnTrak Lab's (`incus`). That control plane now lives here
+  (`src/lib/lab/`): the scenario catalogue and lesson library, the session manager and its
+  availability rule, the hypervisor seam and the host driver, the ticket rubric, the
+  in-memory store for demo mode and the Prisma store for a host, and the student (`/lab`,
+  the session page, the console route and the pollable status) and instructor (fleet, both
+  CSVs) surfaces — with `npm run lab` for an operator and `ONTRAK_LAB_IN_APP=1` for a
+  deployment that serves the lab itself rather than linking a peer's. The three conflicts a
+  port of this size creates are resolved, with their costs, in `docs/lab-port.md`: WinRM →
+  `incus-exec` (no Node WinRM client), the lab's own sign-in superseded by this app's, and
+  SQLite → the family's Postgres. Demo mode runs a whole class with no hypervisor and is
+  what the suite exercises; a real guest booting, being fault-injected and being graded is
+  still a lab host's job to verify.
 - **Exit:** `[x]` a scenario authored for real bash runs in a sandbox and grades identically
   to the simulated driver on the bundled checks — `tests/sim-container.test.ts` grades the same
   five-check scenario twice, once simulated and once under real bash in a process sandbox, and

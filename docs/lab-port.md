@@ -380,6 +380,89 @@ table are untouched and the migration is forgotten in `_prisma_migrations`, and 
 `migrate deploy` restores it. The development database on this machine was then left
 migrated, which is the state `npm run db:deploy` is expected to produce.
 
+### Stage 3 — the surfaces, and stage 4 — the CLI and the deployment
+
+Stages 1–3a produced a control plane nothing could reach: no route in the app imported
+`src/lib/lab/`. Stage 3 connected it, and stage 4 gave an operator a way to work the
+range without a browser. Six decisions are worth stating out loud.
+
+**A third fact about the lab: it can be *here*.** `ONTRAK_LAB_ENABLED` plus `ONTRAK_LAB_URL`
+meant "somebody else's lab"; the port means a deployment can serve the lab itself, and
+that is a different question, so it is a different variable (`ONTRAK_LAB_IN_APP`).
+`labDoor()` combines all three into one answer a page can draw — off, a peer's link, this
+app's `/lab`, or a refusal that names the variable to fix — and the in-app answer wins over
+a stated address, because a stated address would be handed a `/dashboard`, which is the
+*peer* lab's landing page and not a page this app has. A deployment migrating off
+OnTrak-dev therefore adds one variable and does not have to remember to delete another. A
+deployment that wants the family's portal tile to point at the in-app lab sets
+`ONTRAK_LAB_URL` to this app's origin; that keeps the portal's own light working, which is
+what `/healthz` is for.
+
+**One runtime, opened once.** `src/lib/lab/service.ts` is the only place that reads the
+environment, opens the store and loads the data: demo mode (the ported in-memory range, no
+hypervisor and no secrets) or a host (Prisma and `incus`). A lab that will not open is a
+*value* with a sentence naming what to fix, never a 500 from whichever page loaded first,
+and a host with no `incus` still opens and reports `hypervisor: false`, which is what the
+ported availability checks are for.
+
+**The app's identity, the lab's names.** §3/C2 said the lab's own sign-in is not ported;
+the port is therefore concrete about it — the lab's "student" *is* the family's email,
+lowercased, because that is the unique key the completions door files results against. A
+session a student starts and the attempt they are credited with cannot disagree about who
+they are.
+
+**The grade is filed once, by whichever half graded it.** The write moved out of the HTTP
+route into `src/lib/lab-completion-record.ts`, and the in-app flow calls it too, so the
+attempt, its check results, its certificate, its evidence and its audit entry are identical
+whether a peer lab reported over `POST /api/v1/lab/completions` or this app graded the
+session itself. The session key is prefixed `in-app:` for one reason: a deployment running
+both would otherwise let one lab's session id be answered as a duplicate of the other's.
+
+**A check is a preview, and a preview is not a result.** `runChecks(session, false)` for
+"check my work", and a write-up can be marked before it is handed in; both are held in
+process memory (`src/lib/lab/preview.ts`) with a lifetime and a cap, and neither reaches a
+table. This is the Python's own `preview_reports`/`preview_tickets` ("shown, never stored"),
+and it is what makes the lab results-only rather than "results plus whatever was clicked".
+The cost is stated: an action's redirect and the page render that follows are not guaranteed
+to be the same process, so a deployment with several instances shows the grade summary from
+the action's own message and may not have the per-field detail until the session is handed
+in. What is *stored* is unaffected.
+
+**Stage 4 retires two kinds of command rather than losing them.** `serve` was uvicorn and
+this app is the server; `user` was the lab's own account table, which §3/C2 supersedes. Both
+refuse with the reason and the replacement (`npm start` with `ONTRAK_LAB_IN_APP=1`; the
+family's own user administration). The three host commands — `image build`, `media fetch`,
+`catalog refresh` — are refused the same way, because they need a hypervisor, gigabytes of
+media or an Incus remote, and a command that half-runs on the wrong machine is worse than
+one that says where it belongs.
+
+**A container is not a lab host, and the wiring says so.** `docker-compose.all.yml` passes
+the lab's switches through to the training app and deliberately does **not** mount an Incus
+socket: the image has neither `incus` nor `/dev/kvm`, so a mounted socket would produce a
+worker that fails later and more confusingly than one that never started. The two honest
+deployments are a container in demo mode (`ONTRAK_DEMO__ENABLED=1`) and the app started
+where a hypervisor lives; `.env.example` documents both, with the lab's own settings tree.
+
+**Verified:** `tsc --noEmit` clean. `npm run build` exit 0, with `/lab`,
+`/lab/sessions/[id]`, its console route, `/api/v1/lab/sessions/[id]/status` and `/healthz`
+in the route table. The whole app suite **921 tests / 916 pass / 0 fail / 5 skipped** (the
+skips are the opt-in live-boundary tests), including the ported read models, the completion
+mapper, the runtime seam — which drives a whole session through a demo runtime — the CLI run
+as an operator runs it, and three new a11y audits: the write-up form and the console panel
+are presentational precisely so an axe sweep can reach them with no server, database or
+machine behind them. The CLI was exercised on this host: `doctor` reports the three missing
+secrets and exits 1, `scenario validate` clears all 14 scenarios, and `demo run --students 3`
+provisions, checks, writes up, hands in and tears down a class with no hypervisor and exits 0.
+`npm run lab -- help` lists the surface a Python operator already knows.
+
+**Not verified here, and unchanged from §4:** a real Windows or Linux guest booting, being
+fault-injected and graded; the console websocket tunnel; and the browser suite
+(`npm run test:a11y`, Playwright) against these pages, which needs a running app and a
+database. The page-level walkthroughs the Python asserted through rendered HTML are covered
+here at the layer below — `tests/lab-portal.test.ts` asserts the address, the status body,
+the catalogue groups and both CSVs directly — and the browser pass remains the honest last
+step before a class uses it.
+
 ## 3. Architectural conflicts, and how each is resolved
 
 The brief says to identify and resolve conflicts rather than ignore them. These are the
@@ -484,10 +567,13 @@ verifiable the same way the Python's is, and the same residue stays honestly unp
 | **2c** (landed) | `store`'s **contract** + the in-memory implementation, and the guest-transport repairs below | typecheck clean; the store, memory, incus and guest suites green; the whole app suite and the build unchanged and green |
 | **2d** (landed) | `sessions`'s four behaviours resolved, the Prisma store + reversible migration, the `scenarios/` tree, `demo`, `primitives`, `generator` (§2d) | the ported demo flow runs a full class with no hypervisor, as `demo.py` does (`tests/lab-demo.test.ts`), and the store round-trips a session and a report (against a real database) |
 | **3a** (landed) | `tickets` — the form, the rubric, the grader and the blend — plus the ticket half of the store (`LabTicket` + migration) and the demo's write-up synthesis (stage 3a) | every shipped rubric validates and is satisfiable; a completed session blends the two halves and an unsubmitted one cannot resolve; the ticket half of the store contract holds against both implementations, and against a real Postgres |
-| **3** | the portal surface (`app` + `admin`) on the app's identity, the lab scenario/lesson pages, the console iframe | a student starts, checks, completes; an instructor reads the results; the routes keep their contracts; a11y sweep passes |
-| **4** | the CLI as `tsx` scripts, compose/Docker deployment, and the `infra/**` shell kept as shell with its entry points documented | the stack builds and reports healthy with no Incus socket mounted; the boundary tests still pass |
+| **3** (landed) | the student surface (`/lab`, the session page, the console route, the pollable status), the instructor fleet and both CSVs, the in-app door and the lab's `/healthz` | a student starts, checks and hands in; an instructor reads the class; `results.csv` keeps its path, name and header row; three new a11y audits pass |
+| **3 (rest)** | the admin panel's pages (users, platforms, tickets, schedule, audit) and a lessons browse page | named work, and pages over modules that stage 2 already ported — the read models and the CLI are in place, so this is presentation |
+| **4** (landed) | the CLI as `scripts/lab/cli.ts` (`npm run lab`), the settings documentation, and the deployment wiring in `.env.example` / `docker-compose.all.yml` | `doctor` names what a host is missing; `scenario`, `catalog`, `lesson` and `generate` read the shipped data with no host at all; `demo run` drives a whole class with none; the Python commands that a *server* or an account table used to provide refuse, in words, with the code that replaced them |
+| **4 (rest)** | the `infra/**` host shell (not in this repository; OnTrak-dev's) and the three host commands — `image build`, `media fetch` and `catalog refresh` | they run where the hypervisor and the media live, and each says so rather than half-running |
 
-Stages 1, 2a, 2b, 2c, 2d and 3a are complete and verified — the whole control plane, its data,
-its store, its demo and its write-up. Stage 3's remaining half (the portal surface) and stage 4
-are named work with a stated order; nothing in this document should be read as claiming they are
-done, and no route in the app imports `src/lib/lab/` yet, so deployed behaviour is unchanged.
+Stages 1, 2a, 2b, 2c, 2d, 3a, 3 and 4 are complete and verified — the control plane, its data,
+its store, its demo, its write-up, its surfaces and its CLI. What remains is the *rest of* the
+portal surface (an admin panel and a lessons browse page, both over modules already ported) and
+the host-side commands, and neither is a prerequisite for a class: `/lab` serves one today, from
+a host or from demo mode.

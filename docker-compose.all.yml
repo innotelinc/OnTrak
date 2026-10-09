@@ -140,6 +140,20 @@ services:
       # Its own address, for the SSO redirect URI. Defaults to the host port this
       # file publishes, which is right for a browser on this machine.
       ONTRAK_TRAINING_BASE_URL: ${ONTRAK_TRAINING_BASE_URL:-http://127.0.0.1:3000}
+      # OnTrak Lab, served by this app (`/lab`). Passed through rather than
+      # defaulted on: a deployment that has not asked for a lab gets exactly the
+      # behaviour it had before the port. The lab's own settings
+      # (`ONTRAK_<SECTION>__<KEY>`) arrive through the env file above.
+      #
+      # This container is **not** a lab host — the image has neither `incus` nor
+      # `/dev/kvm` — so either run it in demo mode (`ONTRAK_DEMO__ENABLED=1`,
+      # which needs no host at all), or deploy the app where a hypervisor lives.
+      # Mounting the host's Incus socket is deliberately not done here: a worker
+      # that cannot schedule the processes it spawns fails later and more
+      # confusingly than one that never started.
+      ONTRAK_LAB_ENABLED: ${ONTRAK_LAB_ENABLED:-}
+      ONTRAK_LAB_URL: ${ONTRAK_LAB_URL:-}
+      ONTRAK_LAB_IN_APP: ${ONTRAK_LAB_IN_APP:-}
       # Single sign-on, off until a client id is supplied (see the header).
       ONTRAK_OIDC_ISSUER: ${ONTRAK_OIDC_ISSUER:-}
       ONTRAK_OIDC_CLIENT_ID: ${ONTRAK_OIDC_CLIENT_ID:-}
