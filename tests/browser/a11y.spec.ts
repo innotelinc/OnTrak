@@ -159,5 +159,5 @@ test.describe("student attempt report", () => {
   });
 });
 
-roleSuite("instructor", ["/instructor", "/instructor/scenarios", "/instructor/cohorts", "/instructor/analytics"]);
+roleSuite("instructor", ["/instructor", "/instructor/scenarios", "/instructor/cohorts", "/instructor/analytics", "/instructor/skills"]);
 roleSuite("admin", ["/admin", "/admin/users", "/admin/software", "/admin/audit"]);

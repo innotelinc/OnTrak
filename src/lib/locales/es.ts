@@ -11,6 +11,7 @@ export const es: Messages = {
   "nav.classes": "Clases",
   "nav.attempts": "Intentos",
   "nav.analytics": "Analítica",
+  "nav.skills": "Matriz de competencias",
   "nav.practice": "Práctica",
   "nav.controlRoom": "Sala de control",
   "nav.software": "Software y SO",
@@ -144,6 +145,34 @@ export const es: Messages = {
     "Aprobar en el simulador y aprobar en una máquina real no son la misma afirmación, así que cada cifra aquí indica quién la calificó.",
   "analytics.mode.summary": "{passed} de {total} aprobados, frente a un umbral del {mark}%",
   "analytics.mode.median": "mediana {time} en la tarea",
+
+  // Matriz de competencias (qué demuestran los certificados)
+  "skills.eyebrow": "Competencia",
+  "skills.title": "Quién puede hacer qué",
+  "skills.description":
+    "Cada competencia certificada por este despliegue, frente a las personas que la tienen. Se construye con los registros de finalización guardados en los intentos: un certificado revocado retira su competencia con él.",
+  "skills.empty.title": "Aún no hay certificados",
+  "skills.empty.description":
+    "La matriz se llena cuando los estudiantes superan la nota de aprobación y obtienen un registro de finalización.",
+  "skills.stat.skills": "Competencias",
+  "skills.hint.skills": "competencias distintas que alguien tiene",
+  "skills.stat.learners": "Personas certificadas",
+  "skills.hint.learners": "con al menos un registro de finalización",
+  "skills.stat.certificates": "Certificados vigentes",
+  "skills.hint.certificates": "contados en esta matriz",
+  "skills.stat.revoked": "Revocados",
+  "skills.hint.revoked": "competencias retiradas tras una recalificación",
+  "skills.revocationNote":
+    "Un certificado revocado no demuestra nada: sus competencias se retiran aquí, y la persona conserva su fila para que la retirada siga siendo visible.",
+  "skills.noSkills":
+    "Ningún certificado vigente incluye todavía una competencia. Etiqueta los escenarios con las competencias que demuestran y aparecerán aquí como columnas.",
+  "skills.caption": "Competencias de cada persona y cuándo se demostró cada una por primera vez.",
+  "skills.learner": "Persona",
+  "skills.holders": "Personas que la tienen",
+  "skills.revokedBadge": "{count} revocado(s)",
+  "skills.heldAria": "{name} está certificado en {skill}",
+  "skills.notHeldAria": "{name} no está certificado en {skill}",
+  "skills.unreadable": "{count} registro(s) de finalización no se pudieron leer y no se cuentan.",
 
   // Modo de calificación (quién produjo la puntuación)
   "grading.mode.simulated": "Simulado",
