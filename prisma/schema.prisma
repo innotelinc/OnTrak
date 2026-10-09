@@ -402,11 +402,11 @@ model Setting {
 // The lab (`OnTrak-dev`) kept a SQLite file of its own: sessions, results, events,
 // tickets and a small meta table, created and migrated by hand inside
 // `ontrak/store.py`. The port keeps the contract and moves the engine here
-// (docs/lab-port.md §3/C3), so a student's lab machine, the grade it produced and
-// the evidence behind it live in the same database, backup and migration history
-// as the rest of their training. `tickets` is absent on purpose: the lab's ticket
-// form is stage 3, and declaring a shape nobody has agreed to yet is how two
-// generations of a schema start disagreeing.
+// (docs/lab-port.md §3/C3), so a student's lab machine, the grade it produced, the
+// write-up they handed in and the evidence behind it all live in the same database,
+// backup and migration history as the rest of their training. What is *not* here is
+// the lab's `users` table: identity is this app's (§3/C2), and a lab account beside it
+// would be a second place to revoke someone from.
 // ---------------------------------------------------------------------------
 
 /// Lifecycle of one student's lab VM, in the lab's own vocabulary
@@ -464,6 +464,7 @@ model LabSession {
   completedAt       DateTime?
 
   results           LabResult[]
+  tickets           LabTicket[]
   events            LabEvent[]
 
   /// The two queries the portal and the sweeps actually run: one student's live
@@ -492,6 +493,35 @@ model LabResult {
 
   @@index([sessionId])
   @@index([student, scenarioId])
+}
+
+/// One handed-in incident write-up and the mark it earned.
+///
+/// Kept apart from `LabResult` on purpose, and for two different reasons. The grade is
+/// stored as JSONB through the lab's own `to_dict`, so a ticket this port writes is one
+/// the lab's tools can read and a row written by an older version degrades a field at a
+/// time rather than throwing where a student's own words are being rendered. And the
+/// answers are stored beside it (`values`), because the session page shows a student what
+/// they wrote — which is a read of the ticket, not of a score report.
+///
+/// A **draft** is deliberately not a row here: an unsubmitted write-up lives in
+/// `LabMeta` under `ticket_draft:<sessionId>`, because the lab is results-only and a draft
+/// in this table would appear in a marking record as if it had been handed in.
+model LabTicket {
+  id         Int        @id @default(autoincrement())
+  sessionId  Int
+  student    String
+  scenarioId String
+  grade      Json
+  values     Json
+  score      Float      @default(0)
+  submitted  Boolean    @default(false)
+  createdAt  DateTime   @default(now())
+
+  session    LabSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([student])
 }
 
 /// The lab's audit trail: append-only, and read newest-first (the lab reads it

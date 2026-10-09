@@ -42,6 +42,12 @@ import {
   type ScenarioEntry,
 } from "../src/lib/lab/scenarios";
 import { InMemoryLabStore } from "../src/lib/lab/store";
+import type { TicketForm } from "../src/lib/lab/tickets";
+// The demo's write-up synthesiser, used here because a scenario that asks for a write-up
+// cannot be completed without one: the answers are built from the rubric itself (and
+// `tests/lab-tickets.test.ts` proves they satisfy every shipped rubric), so this suite is
+// not the second place that decides what a passing write-up looks like.
+import { synthesiseTicket } from "../src/lib/lab/demo";
 
 /** The 14 real scenarios, from the tree a deployment reads (`scenarios/<id>/scenario.json`). */
 function repository(): ScenarioRepository {
@@ -345,14 +351,23 @@ test("sessions: complete records one result, ends the session and removes the ma
 
   const session = await h.manager.allocate("Ada", "net-dns-failure");
   const instance = session.instance;
-  const report = await h.manager.complete(session);
+  // The scenario asks for a write-up, so one is handed in: a scenario with a form treats
+  // documentation as part of the work (see the two tests below).
+  const form = h.manager.ticketFormFor(session) as TicketForm;
+  const report = await h.manager.complete(session, synthesiseTicket(form));
 
   assert.equal(report.resolved, true);
+  assert.equal(report.score, 100, "the machine passed, so the blend is a hundred");
+  assert.equal(report.ticketScore, 100, "and the write-up half is kept, not just mixed in");
+  assert.equal(report.ticketWeight, form.weight);
   assert.equal(session.state, "passed");
   assert.equal(session.instance, "", "the machine is gone");
   assert.equal([...h.incus.liveNames()].includes(instance), false);
   assert.equal(await h.store.attemptCounts(session.id ?? 0), 1, "exactly one stored attempt");
-  assert.ok((await eventsFor(h, session)).includes("completed"));
+  assert.equal((await h.store.ticketsForSession(session.id ?? 0)).length, 1, "and one write-up");
+  const events = await eventsFor(h, session);
+  assert.ok(events.includes("completed"));
+  assert.ok(events.includes("ticket_graded"), "the write-up's own mark is in the audit trail");
 
   await assert.rejects(
     () => h.manager.complete(session),
@@ -360,7 +375,43 @@ test("sessions: complete records one result, ends the session and removes the ma
   );
 });
 
-test("sessions: a scenario with a write-up says the write-up was not blended", async () => {
+test("sessions: a write-up is blended into the grade, and the two halves stay apart", async () => {
+  const h = harness();
+  builtTemplate(h, "net-dns-failure");
+  const scenario = h.repo.get("net-dns-failure");
+  h.driver.answers.set("check.ps1", passingCheck(scenario));
+
+  const session = await h.manager.allocate("Ada", "net-dns-failure");
+  // Marking the draft is what the portal's Preview does, and it is what `complete` is
+  // handed if the student does not submit values with the button.
+  const form = h.manager.ticketFormFor(session) as TicketForm;
+  const answers = synthesiseTicket(form);
+  await h.manager.saveTicketDraft(session, answers);
+  assert.deepEqual(await h.manager.ticketAnswers(session), answers, "the draft is kept");
+  const preview = await h.manager.gradeTicket(session);
+  assert.equal(preview?.score, 100, "and marks full marks without recording anything");
+
+  const report = await h.manager.complete(session);
+  assert.equal(report.resolved, true);
+  assert.equal(report.machineScore, 100, "the machine half is what the script reported");
+  assert.equal(report.score, 100, "machine 100 and write-up 100, whatever the weight is");
+  assert.ok(
+    report.notes.some((note) => /machine 100% x 70% \+ ticket 100% x 30%/.test(note)),
+    `the report breaks the blend down: ${report.notes.join(" | ")}`,
+  );
+  assert.deepEqual(
+    await h.store.ticketDraft(session.id ?? 0),
+    {},
+    "handing the write-up in forgets the draft it came from",
+  );
+  assert.deepEqual(
+    await h.store.ticketValues(session.id ?? 0),
+    answers,
+    "and the answers are stored beside the mark",
+  );
+});
+
+test("sessions: an unsubmitted write-up is a zero and the attempt cannot resolve", async () => {
   const h = harness();
   builtTemplate(h, "net-dns-failure");
   const scenario = h.repo.get("net-dns-failure");
@@ -369,9 +420,18 @@ test("sessions: a scenario with a write-up says the write-up was not blended", a
 
   const session = await h.manager.allocate("Ada", "net-dns-failure");
   const report = await h.manager.complete(session);
+
+  // The machine was fixed — the script says so — and the work was not documented, so the
+  // ticket counts as zero and the attempt does not resolve. That is the lab's own rule:
+  // "the fix nobody recorded" is not a finished job.
+  assert.equal(report.machineScore, 100, "the machine half is marked honestly");
+  assert.equal(report.ticketScore, 0);
+  assert.equal(report.score, 70, "a hundred machine marks, discounted by the write-up's weight");
+  assert.equal(report.resolved, false);
+  assert.equal(session.state, "failed");
   assert.ok(
-    report.notes.some((note) => /write-up form/.test(note)),
-    "the grade must say what it did not include rather than quietly drop it",
+    report.notes.some((note) => /no ticket was submitted/.test(note)),
+    "and the report says which half was missing rather than just showing a lower number",
   );
 });
 

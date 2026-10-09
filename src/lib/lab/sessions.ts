@@ -43,11 +43,12 @@
  * tests take minutes. They take milliseconds here, which is what makes the sweeps
  * worth testing at all.
  *
- * **Tickets are not in this file.** Python's `complete` blended the write-up with the
- * machine grade through `tickets.py`, which is a later stage of this port. A scenario
- * that declares a write-up form still grades correctly here — the machine half is real
- * — and the report says in a note that the write-up was not blended, rather than
- * quietly scoring the student on half the work.
+ * **The ticket is marked here, and the two halves are blended.** `complete` is the one
+ * place the write-up counts: a scenario with a form treats documentation as part of the
+ * work, an unsubmitted write-up scores zero and the attempt cannot resolve, and a
+ * scenario with no form grades exactly as it always did. The rubric itself lives in
+ * `tickets.ts`; what is here is the policy — when to blend, what to log, and the one case
+ * where blending would be dishonest (a machine that could not be graded at all).
  *
  * The audit trail is `store.logEvent`, and it fires at the same points with the same
  * kinds as the Python's, because that log is what an instructor reads when a class
@@ -83,6 +84,8 @@ import {
   newLabSession,
   newScoreReport,
   parseIso,
+  scoreReportBreakdown,
+  scoreReportSummaryLine,
   secondsSince,
   sessionExtend,
   sessionIsExpired,
@@ -106,7 +109,19 @@ import {
   type Platform,
   type Scenario,
 } from "./scenarios";
-import { evaluate } from "./scoring";
+import { clearedPassMark } from "../score-rules";
+import { evaluate, formatFixed, roundHalfEven } from "./scoring";
+import {
+  asText,
+  blend,
+  grade as markTicket,
+  loadForm,
+  ticketGradePassedCount,
+  ticketGradeSummaryLine,
+  ticketOutcomeToDict,
+  type TicketForm,
+  type TicketGrade,
+} from "./tickets";
 import type { LabStore } from "./store";
 import type { LabEvent } from "./store";
 
@@ -127,15 +142,6 @@ export const SETUP_ATTEMPTS = 3;
 export const SETUP_RETRY_DELAY_SECONDS = 5;
 /** How long the dashboard's unavailability map is reused, in seconds. */
 export const UNAVAILABLE_TTL_SECONDS = 30;
-/**
- * What `complete` says when a scenario carries a write-up form this port cannot mark
- * yet. Named rather than written twice, and visible to the student, because a grade
- * that silently lost a share of its marks would be a lie the report tells about itself.
- */
-export const TICKETS_NOT_PORTED =
-  "this scenario carries a write-up form, and marking write-ups is not part of this port " +
-  "yet, so the grade above is the machine half only";
-
 /** Workload id prefixes that mean "a Linux guest"; used only to label pool rows. */
 export const LINUX_TAG_PREFIXES: readonly string[] = [
   "alpine",
@@ -1750,27 +1756,53 @@ export class SessionManager {
   }
 
   /* ------------------------------------------------------------------ */
-  /*  the in-house ticket (stage 3)                                      */
+  /*  the in-house ticket                                                */
   /* ------------------------------------------------------------------ */
 
   /**
    * The write-up rubric for a scenario, or `null` when it has no ticket.
    *
    * A form with no fields is treated as "no ticket" rather than as a rubric the student
-   * can never satisfy. Marking a write-up is `tickets.py`'s job and is a later stage of
-   * this port, so what is here is the part the session flow needs: does this scenario ask
-   * for one?
+   * can never satisfy — the Python's rule, and the reason a scenario written before the
+   * ticket existed needs no change to keep grading as it always did.
    */
-  ticketForm(scenario: Scenario): Record<string, unknown> | null {
-    const form = scenario.ticketForm;
-    if (!isRecord(form)) return null;
-    const fields = form.fields;
-    if (!Array.isArray(fields) || fields.length === 0) return null;
-    return form;
+  ticketForm(scenario: Scenario): TicketForm | null {
+    const form = loadForm(scenario.ticket);
+    if (form === null) return null;
+    return form.fields.length === 0 ? null : form;
   }
 
-  ticketFormFor(session: LabSession): Record<string, unknown> | null {
+  ticketFormFor(session: LabSession): TicketForm | null {
     return this.ticketForm(this.repo().get(session.scenarioId));
+  }
+
+  /** Keep the student's work in progress so a page reload does not lose it. */
+  async saveTicketDraft(
+    session: LabSession,
+    values: Record<string, unknown>,
+  ): Promise<Record<string, string>> {
+    const stored = Object.fromEntries(
+      Object.entries(values ?? {}).map(([key, value]) => [String(key), asText(value)]),
+    );
+    if (session.id !== null) await this.store.saveTicketDraft(session.id, stored);
+    return stored;
+  }
+
+  /** What the student has typed so far, or `{}`. */
+  async ticketAnswers(session: LabSession): Promise<Record<string, string>> {
+    return await this.store.ticketDraft(session.id ?? 0);
+  }
+
+  /** Mark the write-up without recording it (the preview a student sees). */
+  async gradeTicket(
+    session: LabSession,
+    values?: Record<string, unknown>,
+  ): Promise<TicketGrade | null> {
+    const scenario = this.repo().get(session.scenarioId);
+    const form = this.ticketForm(scenario);
+    if (form === null) return null;
+    const answers = values !== undefined ? values : await this.ticketAnswers(session);
+    return markTicket(form, answers, { sessionId: session.id ?? 0, scenarioId: scenario.id });
   }
 
   /* ------------------------------------------------------------------ */
@@ -1845,16 +1877,22 @@ export class SessionManager {
   /**
    * The student's "Complete & End": grade once, keep the result, destroy the VM.
    *
-   * This is the only grading run whose outcome is stored. After it the session is
-   * terminal, the instance is gone, and the student gets a fresh machine next time —
-   * which is also what makes a reset unnecessary to be perfectly clean.
+   * This is the only grading run whose outcome is stored. It marks two things and blends
+   * them: the **machine**, from the scenario's check script, and the **ticket**, from the
+   * write-up the student handed in. A scenario with no form grades exactly as it always
+   * did; one with a form treats documentation as part of the work — an unsubmitted
+   * write-up scores zero and the attempt cannot be marked resolved, which is the honest
+   * reading of "the fix nobody recorded".
    *
-   * **The write-up is not blended here.** Python marked the ticket and mixed it into the
-   * score; `tickets.py` is a later stage of this port. A scenario that asks for one still
-   * grades its machine half honestly — and the report says so in a note, so a student is
-   * never shown a number that quietly dropped part of their work.
+   * After it the session is terminal, the instance is gone, and the student gets a fresh
+   * machine next time — which is also what makes a reset unnecessary to be perfectly clean.
+   *
+   * One case needs care and is therefore spelled out: when the machine could not be graded
+   * at all, a good write-up must not manufacture a passing score for an unverified machine.
+   * The ticket is still marked, stored and logged — the work happened — but it is left out
+   * of the number and the report says so.
    */
-  async complete(session: LabSession): Promise<ScoreReport> {
+  async complete(session: LabSession, values?: Record<string, unknown>): Promise<ScoreReport> {
     if (isTerminal(session.state)) {
       throw new SessionError(
         `session ${session.id} is already ${session.state}; there is nothing to complete`,
@@ -1873,21 +1911,83 @@ export class SessionManager {
     }
     const scenario = this.repo().get(session.scenarioId);
 
-    // Machine first, not recorded yet: the grade that gets stored is the final one, and
+    // Machine first, not recorded yet: the grade that gets stored is the blend, and
     // storing the machine half separately would put two rows in the results table for one
     // submission.
     const report = await this.runChecks(session, false);
-    const form = this.ticketForm(scenario);
-    if (form !== null) {
-      // If the machine could not be graded at all, a write-up that a later stage marks
-      // must not be able to manufacture a pass for an unverified machine — so the note
-      // says the grade is the machine half, and nothing here invents a blend.
-      report.notes.push(report.error === "" ? TICKETS_NOT_PORTED : `${TICKETS_NOT_PORTED} (and the machine could not be graded)`);
-    }
-    report.resolved = Boolean(report.resolved);
-    report.notes.push(`final submission judged against ${scenario.title}`);
+    if (values !== undefined) await this.saveTicketDraft(session, values);
     report.machineScore = report.machineScore || report.score;
 
+    const form = this.ticketForm(scenario);
+    let ticket: TicketGrade | null = null;
+
+    // A machine that could not be graded: mark the write-up, keep it, log it, but leave the
+    // attempt at zero. Blending a good write-up into an unverified machine would manufacture
+    // a pass, which is the one thing the score must never do.
+    if (form !== null && report.error !== "") {
+      report.notes.push(
+        "machine grading failed, so the write-up was marked but not blended into the score",
+      );
+      ticket = await this.gradeTicket(session);
+      report.ticketScore = ticket === null ? 0 : ticket.score;
+      report.ticketWeight = form.weight;
+      report.ticketOutcomes = ticket === null ? [] : ticket.outcomes.map(ticketOutcomeToDict);
+      report.resolved = false;
+      return await this.finishSubmission(session, report, ticket);
+    }
+
+    if (form !== null) {
+      ticket = await this.gradeTicket(session);
+      report.ticketScore = ticket === null ? 0 : ticket.score;
+      report.ticketWeight = form.weight;
+      report.ticketOutcomes = ticket === null ? [] : ticket.outcomes.map(ticketOutcomeToDict);
+      report.score = blend(report.machineScore, ticket, form.weight);
+      if (ticket === null || !ticket.submitted) {
+        report.notes.push(
+          `no ticket was submitted; the write-up is ${formatFixed(form.weight, 0)}% of this ` +
+            "grade and counts as zero",
+        );
+        report.resolved = false;
+      } else if (
+        // The write-up's own mark is judged by the app's one rule, the same way the machine
+        // half is (§3/C5): a rubric's pass mark is a percentage, and asking the module that
+        // owns "did this clear the bar" is what stops a lab verdict and a simulated one
+        // from disagreeing about the same number. Its cost is the same as C5's — the verdict
+        // is taken at the whole-percent boundary, so a 59.6% write-up clears a 60% mark
+        // where the Python called it short.
+        !clearedPassMark({ score: ticket.score, maxScore: 100, passScore: form.passScore })
+      ) {
+        report.notes.push(
+          `the write-up scored ${formatFixed(ticket.score, 0)}% (pass mark ${formatFixed(form.passScore, 0)}%)`,
+        );
+        report.resolved = false;
+      } else {
+        report.notes.push(
+          `write-up: ${formatFixed(ticket.score, 0)}% ` +
+            `(${ticketGradePassedCount(ticket)}/${ticket.outcomes.length} fields)`,
+        );
+      }
+    }
+
+    report.resolved = Boolean(report.resolved);
+    report.notes.push(`final submission judged against ${scenario.title}`);
+    if (report.ticketScore !== null) report.notes.push(scoreReportBreakdown(report));
+    return await this.finishSubmission(session, report, ticket);
+  }
+
+  /**
+   * The half of `complete` both paths share: mark the session done, store the result, log
+   * it, destroy the VM.
+   *
+   * Split out because the ticket branch and the machine-only branch differ only in the
+   * report they arrive with — and a second copy of "set the state, save, add the result,
+   * log the ticket, log completion, destroy" is where the two would drift apart.
+   */
+  private async finishSubmission(
+    session: LabSession,
+    report: ScoreReport,
+    ticket: TicketGrade | null,
+  ): Promise<ScoreReport> {
     session.state = report.resolved ? "passed" : "failed";
     session.resolved = Boolean(report.resolved);
     session.bestScore = Math.max(session.bestScore, report.score);
@@ -1896,7 +1996,12 @@ export class SessionManager {
     await this.store.saveSession(session);
 
     await this.store.addResult(report, session.student);
-    await this.store.logEvent("completed", `${Math.round(report.score)}%`, session.id);
+    if (ticket !== null) {
+      await this.store.saveTicket(ticket, session.student);
+      await this.store.clearTicketDraft(session.id ?? 0);
+      await this.store.logEvent("ticket_graded", ticketGradeSummaryLine(ticket), session.id);
+    }
+    await this.store.logEvent("completed", scoreReportSummaryLine(report), session.id);
 
     if (this.settings.session.destroyOnComplete) {
       await this.destroyInstance(session.instance);

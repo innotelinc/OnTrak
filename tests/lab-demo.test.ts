@@ -26,8 +26,10 @@ import {
   runDemo,
   seedPool,
   seedRange,
+  synthesiseTicket,
   type DemoEnvironment,
 } from "../src/lib/lab/demo";
+import { grade as gradeTicket } from "../src/lib/lab/tickets";
 import { JSON_BEGIN } from "../src/lib/lab/models";
 import { InMemoryLabStore } from "../src/lib/lab/store";
 import { choose } from "../src/lib/lab/selection";
@@ -256,7 +258,12 @@ test("demo: the run renders as a report", async () => {
   assert.match(text, /OnTrak demo run/);
   assert.match(text, /student1/);
   assert.match(text, /Only the submitted grade is stored/);
-  assert.match(text, /the ticket module is stage 3/, "what it did not do is stated, not implied");
+  assert.match(
+    text,
+    /the write-up each student handed in was synthesised from the scenario's rubric/,
+    "what the run did is stated, not implied",
+  );
+  assert.match(text, /blend of the machine check and that write-up/);
 });
 
 test("demo: the same selection API the portal uses works against the demo catalogue", () => {
@@ -269,4 +276,60 @@ test("demo: the same selection API the portal uses works against the demo catalo
     entry.scenarioFamilies.includes(choice.scenario.category),
     `the demo assignment respects the workload's families (got ${choice.scenario.category})`,
   );
+});
+
+test("demo: the submitted grade is the blend, so the write-up is exercised too", async () => {
+  // `net-dns-failure` asks for a write-up, and the demo answers it from the rubric. Without
+  // that, a run would show every scenario that asks for one scoring a zero on half its
+  // rubric — which is what the port did while `tickets.py` was still unported.
+  const summary = await runDemo({
+    settings: demoSettings(),
+    scenarioIds: ["net-dns-failure"],
+    students: 3,
+    successRate: 1,
+    verbose: false,
+  });
+  assert.equal(summary.completed.length, 3);
+  for (const row of summary.completed) {
+    assert.equal(row.machineScore, 100, `${row.student}: the simulated guest passed everything`);
+    assert.equal(row.ticketScore, 100, `${row.student}: and the synthesised write-up scored full marks`);
+    assert.equal(row.score, 100, `${row.student}: the blend of two hundreds is a hundred`);
+    assert.equal(row.resolved, true, row.student);
+  }
+  assert.match(summary.notes.join("\n"), /write-up each student handed in was synthesised/);
+});
+
+test("demo: writeUps false leaves the write-up out, and a scenario asking for one fails", async () => {
+  const summary = await runDemo({
+    settings: demoSettings(),
+    scenarioIds: ["net-dns-failure"],
+    students: 2,
+    successRate: 1,
+    writeUps: false,
+    verbose: false,
+  });
+  assert.equal(summary.completed.length, 2);
+  for (const row of summary.completed) {
+    assert.equal(row.machineScore, 100, row.student);
+    assert.equal(row.ticketScore, 0, `${row.student}: nothing was handed in`);
+    assert.ok(row.score < 100, `${row.student}: so the blend is discounted, not the machine mark`);
+    assert.equal(row.resolved, false, `${row.student}: an undocumented fix is not a resolved ticket`);
+  }
+  assert.match(summary.notes.join("\n"), /write-ups were left out/);
+});
+
+test("demo: the scenario's write-up rubric is answered from the rubric, field by field", () => {
+  const env = environment({ successRate: 1 });
+  const scenario = env.repository.get("net-dns-failure");
+  const form = env.manager.ticketForm(scenario);
+  assert.notEqual(form, null, "the fixture asks for a write-up");
+  if (form === null) return;
+  const answers = synthesiseTicket(form);
+  assert.deepEqual(
+    Object.keys(answers).sort(),
+    form.fields.map((field) => field.id).sort(),
+    "every field is answered, and nothing else is sent",
+  );
+  const marked = gradeTicket(form, answers, { scenarioId: scenario.id });
+  assert.equal(marked.score, 100, "and the rubric is satisfied");
 });

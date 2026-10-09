@@ -41,7 +41,7 @@ beside it. Module by module, with its disposition:
 | `generator.py` | 306 | `src/lib/lab/generator.ts` | 2d | landed — generates and validates against the shipped tree |
 | `sessions.py` | 1638 | `src/lib/lab/sessions.ts` | 2d | landed — 18 lifecycle tests, the four disagreements diagnosed and resolved, see §2d |
 | `store.py` | 709 | `src/lib/lab/store.ts` (contract + in-memory), `store-prisma.ts` + `prisma/` models | 2c/2d | landed — the contract and the in-memory store in 2c, the Postgres/Prisma one and its reversible migration in 2d |
-| `tickets.py` | 534 | `src/lib/lab/tickets.ts` | 3 | not started |
+| `tickets.py` | 534 | `src/lib/lab/tickets.ts` | 3a | landed — the rubric, the grader and the blend; checked against the Python form for form |
 | `auth.py` + `oidc.py` | 73 + 325 | *not ported* — superseded | 3 | see §3 |
 | `demo.py` | 474 | `src/lib/lab/demo.ts` | 2d | landed — a whole class runs with no hypervisor; see §2d |
 | `portal/app.py` | 1101 | `src/app/(app)/lab/**` + `src/app/api/v1/lab/**` | 3 | not started |
@@ -284,10 +284,11 @@ same data all along and the change was about *where* it lives.
 Four divergences in the demo are named in the module and worth repeating here, because each
 is the port's own decision showing through: the store is in-memory by default (the port has
 no SQLite), there is no lab user table to seed (§3/C2 — `demoAccounts` returns the roster and
-creating accounts is the app's business), write-ups are not synthesised yet (`tickets.py` is
-stage 3, and `complete` already says the write-up was not blended), and the simulated guest's
-dice are deterministic but explicitly **not** the Python's (`random.Random` seeded with a
-string cannot be reproduced, so the port's own small PRNG is seeded with the same facts).
+creating accounts is the app's business), the simulated guest's dice are deterministic but
+explicitly **not** the Python's (`random.Random` seeded with a string cannot be reproduced, so
+the port's own small PRNG is seeded with the same facts), and — since stage 3a — the write-up
+*is* synthesised, from the same rubric a student's is marked with (stage 3a, below;
+`writeUps: false` turns it off, which is how the unsubmitted case is demonstrated).
 
 **`primitives` and `generator`, and 2d is done.** The nine fault primitives are the reviewed
 building blocks a generated scenario composes, and they were checked rather than eyeballed: the
@@ -309,6 +310,75 @@ the record's. The whole matrix (one scenario per primitive) validates cleanly, a
 refusals are all covered: an empty list, an unknown primitive, an id that is not
 lowercase-dashed, clobbering without `--force`, and the same objective id twice (which the
 lab's own self-pair combination is the real case of).
+
+### Stage 3a — the in-house ticket, and the write-up in the grade
+
+`src/lib/lab/tickets.ts` is `tickets.py` field for field: the form a student fills in, the
+rubric that marks it, and the blend that mixes it with the machine grade. Landing it turned the
+two placeholders stage 2d left behind into the real thing — `DEFAULT_TICKET_RULES` in
+`scenarios.ts` is no longer "finds the form and validates none of it", and `complete` no longer
+says the write-up was left out.
+
+**The rubric was checked, not eyeballed.** The Python module was imported, all 14 shipped
+forms were dumped with every field's attributes, and the port's own loader was run over the
+same records and compared: **identical**, every form and every field, attribute for attribute.
+The *grader* was then checked the same way, on 125 submissions across those 14 rubrics — the
+synthesised write-up, an empty submission, a one-word answer per field, an answer built from the
+terms a rubric rejects, and each single field left blank in turn — comparing the score, the submitted flag, the
+notes and every field's `passed` **and** its `detail` line against the Python's. All identical.
+That matters more than it sounds: the `detail` is the feedback a student reads, and a port that
+scored the same while telling them something different would have silently rewritten the course.
+
+**What the port adds is the policy, and the policy is the Python's.** `complete` marks the
+machine and the ticket and blends them (`ticket.weight` is capped at 60, so the machine state is
+always the larger part); an unsubmitted write-up scores zero **and the attempt cannot resolve**,
+because "the fix nobody recorded" is not a finished job; and the one case where blending would
+lie is spelled out instead — if the machine could not be graded at all, the write-up is marked,
+stored and logged but left out of the number, so a good write-up cannot manufacture a pass for
+an unverified machine. The draft the student was typing is forgotten once the write-up is handed
+in, and `ticket_graded` joins `completed` in the audit trail.
+
+**The ticket verdict goes through the app's own rule.** `scoring.ts` already asked
+`clearedPassMark` for the machine half (§3/C5); the write-up's own rubric mark now does too,
+which is C5's convergence applied one level down and carries C5's cost: the verdict is taken at
+the whole-percent boundary, so a 59.6% write-up clears a 60% rubric where the Python called it
+short.
+
+**The store's ticket half, in both implementations.** `LabTicket` is a table of its own rather
+than a column on `LabResult` — the write-up is read on its own (the session page shows the
+student what they wrote) and the admin view lists tickets without unpacking a report — and the
+migration that adds it (`20261110000000_add_lab_ticket`) is additive, with a hand-written
+`down.sql` in the directory. A **draft is not a grade**: an unsubmitted write-up lives in
+`LabMeta` under `ticket_draft:<sessionId>`, the lab's own key, so a half-written answer cannot
+appear in a marking record. `tests/lab-store-prisma.test.ts` runs the ticket half of the
+contract against both the in-memory store and the Prisma one, and against a real Postgres when
+one is reachable — including the two facts a fake cannot prove, the foreign key and the
+`ON DELETE CASCADE` that takes a session's tickets with it while its events stay behind.
+
+**One consequence worth stating, because it changed existing tests rather than being hidden:**
+all 14 shipped scenarios declare a `ticket.form`, so a *completed* session now requires a
+write-up. The session suite hands one in (built from the rubric by the demo's own synthesiser,
+so there is one definition of what a passing write-up looks like), and the demo hands one in for
+every student — which is also what makes the blended grade visible in a run of the demo.
+
+**Verified:** `tsc --noEmit` clean; the lab suites **451 tests / 449 pass / 0 fail / 2 skipped**
+(the skips are the opt-in live-boundary tests); the whole app suite **887 / 879 pass / 5
+skipped / 3 fail**, the three being the pre-existing `family-*` failures caused by an
+uncommitted local edit to `docker-compose.all.yml` (binding the published ports to
+`192.168.104.129`), which are green with that edit stashed; `npm run build` exit 0. The
+differential checks above (14 forms, 125 graded submissions) were run against `OnTrak-dev`
+read-only.
+
+The migration was verified the way the lab's runtime one was, and with the same three
+checks: `prisma migrate diff` between the migrated database and `schema.prisma` reports an
+**empty migration** (so the SQL and the models agree); the store's integration test runs
+against a **real Postgres** and now covers the write-up as well — the JSONB grade and the
+answers beside it, the drafts in `LabMeta`, and the `ON DELETE CASCADE` that takes a
+deleted session's tickets with it; and `down.sql` was **applied** in a throwaway database,
+after which `LabTicket` is gone while `LabSession`, `LabResult` and the app's own `User`
+table are untouched and the migration is forgotten in `_prisma_migrations`, and re-running
+`migrate deploy` restores it. The development database on this machine was then left
+migrated, which is the state `npm run db:deploy` is expected to produce.
 
 ## 3. Architectural conflicts, and how each is resolved
 
@@ -361,7 +431,9 @@ adds only the condition that rule does not contain (every critical objective pas
 app's whole-percent boundary, so a 79.6% weighted score clears an 80% mark where the
 Python's one-decimal comparison called it short. That convergence is the point — a lab
 result and a simulated result quoting the same percentage must agree about what a pass
-is — but it is a divergence from `scoring.py` and it is recorded as one.
+is — but it is a divergence from `scoring.py` and it is recorded as one. Stage 3a applies
+the same rule to the write-up's own rubric mark, and carries the same cost with it: a
+59.6% ticket clears a 60% rubric here where the Python called it short.
 
 **C6 — YAML: the app has no YAML parser, and the lab's data is YAML.**
 `config.py` reads `config/ontrak.yaml`; `catalog.py` and `lessons.py` read 1,467 lines
@@ -395,6 +467,7 @@ verifiable the same way the Python's is, and the same residue stays honestly unp
 | Claim | How it is verified in this repository |
 | --- | --- |
 | grading, weighting, criticals, refusals | unit tests, ported from `test_scoring.py` |
+| the write-up rubric, the feedback and the blend | unit tests ported from `test_tickets.py`, run over all 14 shipped rubrics; the demo's write-up makes the blended grade visible end to end |
 | the console payload is one Guacamole accepts | fixed vectors + `openssl` cross-check |
 | hypervisor command construction and error mapping | a scripted runner; no `incus` needed |
 | the whole class flow (assign → provision → grade → destroy) | stage 2, against the ported in-memory hypervisor |
@@ -410,10 +483,11 @@ verifiable the same way the Python's is, and the same residue stays honestly unp
 | **2b** (landed) | `catalog`, `lessons` — 52 tests — plus the lab's data converted to JSON (`src/lib/lab/data/`) | the real catalogue and lesson library load and validate with no YAML parser; the grader takes the catalogue's own object; suite and build green |
 | **2c** (landed) | `store`'s **contract** + the in-memory implementation, and the guest-transport repairs below | typecheck clean; the store, memory, incus and guest suites green; the whole app suite and the build unchanged and green |
 | **2d** (landed) | `sessions`'s four behaviours resolved, the Prisma store + reversible migration, the `scenarios/` tree, `demo`, `primitives`, `generator` (§2d) | the ported demo flow runs a full class with no hypervisor, as `demo.py` does (`tests/lab-demo.test.ts`), and the store round-trips a session and a report (against a real database) |
-| **3** | the portal surface (`app` + `admin`) on the app's identity, `tickets`, the lab scenario/lesson pages, the console iframe | a student starts, checks, completes; an instructor reads the results; the routes keep their contracts; a11y sweep passes |
+| **3a** (landed) | `tickets` — the form, the rubric, the grader and the blend — plus the ticket half of the store (`LabTicket` + migration) and the demo's write-up synthesis (stage 3a) | every shipped rubric validates and is satisfiable; a completed session blends the two halves and an unsubmitted one cannot resolve; the ticket half of the store contract holds against both implementations, and against a real Postgres |
+| **3** | the portal surface (`app` + `admin`) on the app's identity, the lab scenario/lesson pages, the console iframe | a student starts, checks, completes; an instructor reads the results; the routes keep their contracts; a11y sweep passes |
 | **4** | the CLI as `tsx` scripts, compose/Docker deployment, and the `infra/**` shell kept as shell with its entry points documented | the stack builds and reports healthy with no Incus socket mounted; the boundary tests still pass |
 
-Stages 1, 2a, 2b, 2c and 2d are complete and verified — the whole control plane, its data, its
-store and its demo. Stages 3 and 4 are named work with a stated order; nothing in this document
-should be read as claiming they are done, and no route in the app imports `src/lib/lab/` yet, so
-deployed behaviour is unchanged.
+Stages 1, 2a, 2b, 2c, 2d and 3a are complete and verified — the whole control plane, its data,
+its store, its demo and its write-up. Stage 3's remaining half (the portal surface) and stage 4
+are named work with a stated order; nothing in this document should be read as claiming they are
+done, and no route in the app imports `src/lib/lab/` yet, so deployed behaviour is unchanged.

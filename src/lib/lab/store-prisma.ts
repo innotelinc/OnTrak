@@ -39,7 +39,16 @@ import {
   reportFromDict,
   reportToDict,
 } from "./models";
-import type { LabEvent, LabStore, SessionQuery } from "./store";
+import {
+  draftFrom,
+  ticketDraftKey,
+  type LabEvent,
+  type LabStore,
+  type LabTicketRow,
+  type SessionQuery,
+} from "./store";
+import { roundHalfEven } from "./scoring";
+import { ticketGradeFromDict, ticketGradeToDict, type TicketGrade } from "./tickets";
 
 /* -------------------------------------------------------------------------- */
 /*  Row shapes                                                                */
@@ -90,6 +99,26 @@ export interface LabEventRow {
   createdAt: Date;
 }
 
+/**
+ * A `LabTicket` row as Prisma returns it.
+ *
+ * Named `…DbRow` rather than `LabTicketRow` because the store's contract has a
+ * `LabTicketRow` of its own: that one is the trimmed view a list page draws, and this one
+ * is the whole table row. Two shapes with one name is how a list ends up loading every
+ * answer and every outcome it will not render.
+ */
+export interface LabTicketDbRow {
+  id: number;
+  sessionId: number;
+  student: string;
+  scenarioId: string;
+  grade: unknown;
+  values: unknown;
+  score: number;
+  submitted: boolean;
+  createdAt: Date;
+}
+
 export interface LabMetaRow {
   key: string;
   value: unknown;
@@ -121,6 +150,20 @@ export interface LabPrismaClient {
     create(args: { data: unknown }): Promise<LabEventRow>;
     findMany(args: unknown): Promise<LabEventRow[]>;
     count(args?: unknown): Promise<number>;
+  };
+  labTicket: {
+    create(args: { data: unknown }): Promise<LabTicketDbRow>;
+    findFirst(args: unknown): Promise<LabTicketDbRow | null>;
+    findMany(args: unknown): Promise<LabTicketDbRow[]>;
+    count(args?: unknown): Promise<number>;
+    /**
+     * The ticket statistics, as one query rather than a scan of every row.
+     *
+     * COUNT and AVG, which is what the Python's `count_tickets` asked SQLite for; the
+     * submitted half is a `count({ where: { submitted: true } })` because Prisma will not
+     * SUM a boolean the way SQLite summed an INTEGER column.
+     */
+    aggregate(args: unknown): Promise<{ _count: number; _avg: { score: number | null } }>;
   };
   labMeta: {
     findUnique(args: { where: { key: string } }): Promise<LabMetaRow | null>;
@@ -277,6 +320,31 @@ export function fromResultRow(row: LabResultRow): ScoreReport {
   return reportFromDict(row.report);
 }
 
+/**
+ * A ticket row as the domain's grade.
+ *
+ * Read through the lab's own `from_dict`, so a `grade` column written by an older version
+ * (or by the lab's tools) degrades a field at a time instead of throwing where a student's
+ * own words are being rendered — the same reason `fromResultRow` goes through
+ * `reportFromDict`.
+ */
+export function fromTicketRow(row: LabTicketDbRow): TicketGrade {
+  const grade = asJsonRecord(row.grade);
+  return ticketGradeFromDict(grade);
+}
+
+/** `LabTicket.values`: the answers, as the form reads them back. */
+export function valuesFromTicketRow(row: LabTicketDbRow): Record<string, string> {
+  return draftFrom(row.values);
+}
+
+/** A JSONB column arrives as `unknown`; a value that is not a record reads as `{}`. */
+function asJsonRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 /* -------------------------------------------------------------------------- */
 /*  The store                                                                 */
 /* -------------------------------------------------------------------------- */
@@ -371,6 +439,106 @@ export class PrismaLabStore implements LabStore {
 
   async attemptCounts(sessionId: number): Promise<number> {
     return await this.db.labResult.count({ where: { sessionId } });
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  the in-house ticket                                             */
+  /* ---------------------------------------------------------------- */
+
+  async saveTicket(grade: TicketGrade, student: string): Promise<void> {
+    await this.db.labTicket.create({
+      data: {
+        sessionId: grade.sessionId,
+        student,
+        scenarioId: grade.scenarioId,
+        grade: ticketGradeToDict(grade),
+        // Stored beside the grade rather than derived from it: the session page shows the
+        // student what they wrote, and a read of the answers should not have to unpack a
+        // mark to find them.
+        values: { ...grade.values },
+        score: grade.score,
+        submitted: grade.submitted,
+      },
+    });
+  }
+
+  async latestTicket(sessionId: number): Promise<TicketGrade | null> {
+    const row = await this.db.labTicket.findFirst({
+      where: { sessionId },
+      orderBy: { id: "desc" },
+    });
+    return row === null ? null : fromTicketRow(row);
+  }
+
+  async ticketValues(sessionId: number): Promise<Record<string, string>> {
+    const row = await this.db.labTicket.findFirst({
+      where: { sessionId },
+      orderBy: { id: "desc" },
+    });
+    return row === null ? {} : valuesFromTicketRow(row);
+  }
+
+  /**
+   * A draft is a meta row, not a ticket row.
+   *
+   * That is the lab's own split and it is load-bearing: `LabTicket` means "a marked
+   * submission", so a half-written write-up cannot appear in a marking record. The key is
+   * the lab's (`ticket_draft:<sessionId>`), in the lab's own namespace in `LabMeta`.
+   */
+  async saveTicketDraft(sessionId: number, values: Record<string, string>): Promise<void> {
+    await this.setMeta(ticketDraftKey(sessionId), { ...values });
+  }
+
+  async ticketDraft(sessionId: number): Promise<Record<string, string>> {
+    return draftFrom(await this.getMeta(ticketDraftKey(sessionId), {}));
+  }
+
+  async clearTicketDraft(sessionId: number): Promise<void> {
+    await this.setMeta(ticketDraftKey(sessionId), {});
+  }
+
+  async ticketsForSession(sessionId: number): Promise<TicketGrade[]> {
+    const rows = await this.db.labTicket.findMany({
+      where: { sessionId },
+      orderBy: { id: "asc" },
+    });
+    return rows.map(fromTicketRow);
+  }
+
+  async ticketsForStudent(student: string, limit = 50): Promise<TicketGrade[]> {
+    if (limit <= 0) return [];
+    const rows = await this.db.labTicket.findMany({
+      where: { student },
+      orderBy: { id: "desc" },
+      take: limit,
+    });
+    return rows.map(fromTicketRow);
+  }
+
+  async listTickets(limit = 200): Promise<LabTicketRow[]> {
+    if (limit <= 0) return [];
+    const rows = await this.db.labTicket.findMany({ orderBy: { id: "desc" }, take: limit });
+    return rows.map((row) => ({
+      id: row.id,
+      sessionId: row.sessionId,
+      student: row.student,
+      scenarioId: row.scenarioId,
+      score: row.score,
+      submitted: row.submitted,
+      createdAt: dateToIso(row.createdAt),
+    }));
+  }
+
+  async countTickets(): Promise<{ count: number; average: number; submitted: number }> {
+    const stats = await this.db.labTicket.aggregate({ _count: true, _avg: { score: true } });
+    const submitted = await this.db.labTicket.count({ where: { submitted: true } });
+    return {
+      count: stats._count,
+      // Rounded the way the Python rounded it (`round(avg, 1)`), so a stats page and the
+      // lab that used to serve it agree about an average.
+      average: roundHalfEven(stats._avg.score ?? 0, 1),
+      submitted,
+    };
   }
 
   async logEvent(kind: string, detail = "", sessionId: number | null = null): Promise<void> {

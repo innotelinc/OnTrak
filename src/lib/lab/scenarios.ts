@@ -28,12 +28,12 @@
  *   repository's own JSON data files carry no scripts, so the record rules and the
  *   script contract are separate entry points — see below — rather than one
  *   validator that quietly checks less than it claims.
- * - **The ticket rubric.** `tickets.py` (the write-up form's loader and validator)
- *   is ported in a later stage. `TicketRules` is that seam, and the default
- *   supplied here is honest about being partial: it reads whether a form exists —
- *   which is the fact `has_ticket` and the public view depend on — and performs no
- *   rubric validation at all. It says so in its own doc comment rather than
- *   leaving a reader to discover that the rules are missing.
+ * - **The ticket rubric.** `tickets.ts` (the write-up form's loader, validator and
+ *   grader) is a separate module, and `TicketRules` is the two-function seam it is
+ *   injected through: this module loads scenarios and never marks a write-up, but it does
+ *   need to know whether one *exists* for `has_ticket` and the public view, and it has to
+ *   report a broken rubric before a student meets it. `DEFAULT_TICKET_RULES` is the real
+ *   thing; the seam stays because a test (and stage 3's portal) can pass its own rules in.
  *
  * `validateRecords` checks everything that can be checked from the record alone.
  * `validate` checks that **and** the script contract, and it reports a scenario it
@@ -46,6 +46,11 @@
  * `scoring.py`; this port inverts that, and `docs/lab-port.md` says why.
  */
 
+import {
+  loadForm,
+  validateForm,
+  type TicketForm,
+} from "./tickets";
 import type { LabScenario as ScenarioRecord } from "../lab-scenario-import";
 import {
   CATEGORIES,
@@ -310,10 +315,11 @@ export function publicView(scenario: Scenario, hintLevel = 0): Record<string, un
 /* -------------------------------------------------------------------------- */
 
 /**
- * `tickets.py`'s two entry points, injected.
+ * `tickets.ts`'s two entry points, injected.
  *
- * Ported in a later stage; the seam exists now so that adding it later does not
- * change this module's shape, and so the missing half is visible in one place.
+ * Kept a seam rather than imported inline so a caller can substitute its own rules — the
+ * scenario suite does exactly that to prove the seam is used — and so this module stays
+ * readable as "loads and validates a scenario" rather than "and also marks write-ups".
  */
 export interface TicketRules {
   /** The parsed write-up form, or `null` when the scenario is graded on machine state alone. */
@@ -323,24 +329,19 @@ export interface TicketRules {
 }
 
 /**
- * The default rules: the form is *found*, and **not** validated.
+ * The rules the lab actually runs: `loadForm` and `validateForm` from `tickets.ts`.
  *
- * `has_ticket` and the public view only need to know whether a form exists, and
- * that is what this preserves. The rubric checks — weights totalling 100, every
- * field's `min_words`/`any_of`/`options`/`expected` being satisfiable — are
- * `tickets.py`'s, and they are **not applied here**. That is stated rather than
- * implied: a validator that silently checks half a contract is worse than one that
- * says which half it checks. Stage 3 replaces this object, and the tests below
- * prove the seam is used by passing a double that does object.
+ * `loadForm` parses the manifest's `ticket.form` into a `TicketForm` — which is then the
+ * object `has_ticket`, the public view and the grader all read, so there is one parse and
+ * no second shape to disagree with — and `validateForm` enforces the rubric's own rules
+ * (field ids, kinds, weights totalling 100, the reserved control names) at load time.
  */
 export const DEFAULT_TICKET_RULES: TicketRules = {
   loadForm(ticket) {
-    const form = ticket.form;
-    if (typeof form !== "object" || form === null || Array.isArray(form)) return null;
-    return form;
+    return loadForm(ticket);
   },
-  validateForm() {
-    return [];
+  validateForm(form, prefix) {
+    return validateForm(form as TicketForm | null, prefix);
   },
 };
 

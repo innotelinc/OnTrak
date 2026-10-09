@@ -24,15 +24,22 @@
  *   `users` table; this app's identity supersedes it (§3/C2), and a second account table is
  *   a second place to revoke someone from. `demoAccounts` returns the roster of names the
  *   demo's students are, and creating real accounts is the app's own business (stage 3).
- * - **Write-ups are not synthesised yet.** `synthesise_ticket` reads a scenario's ticket
- *   rubric with `tickets.py`, which is stage 3's module; `complete` already says in the
- *   report that the write-up was not blended, so the demo runs the machine half honestly
- *   and the summary says so rather than inventing a blended score.
+ * - **The write-up is synthesised from the rubric, as the Python's was.**
+ *   `synthesiseTicket` reads the same `tickets.ts` a student's submission is marked with
+ *   and answers each field so the rubric is satisfied — which is what makes the blended
+ *   score visible in a demo run, and what turns a rubric nobody can score into a failed
+ *   assertion here rather than a surprised class. `writeUps: false` leaves it out, so the
+ *   un-submitted case can be demonstrated too.
  * - **The guest's dice are deterministic, but they are not the Python's.** `random.Random`
  *   seeded with a string cannot be reproduced from TypeScript, so the demo uses its own
  *   small PRNG seeded with `(seed, scenario id)`. Same property that matters — a run is
  *   reproducible, and `success_rate` is what decides pass or partial credit — without
  *   pretending the sequence matches.
+ *
+ * `synthesiseTicket` is the one thing here a real deployment never calls. Its answers are
+ * deliberately visible as answers ("Answered: dns, resolver."), because a demo that
+ * produced prose indistinguishable from a student's would be teaching the wrong lesson
+ * about what the rubric checks.
  */
 
 import { BaseDriver, type CommandResult, type DriverOptions, type GuestSettings, type RunOptions } from "./guest";
@@ -45,6 +52,7 @@ import { SETUP_OK_MARKER, type Scenario, type ScenarioRepository } from "./scena
 import { choose } from "./selection";
 import { CONSOLE_SETUP_MARKER, SessionManager } from "./sessions";
 import { InMemoryLabStore, type LabStore } from "./store";
+import { ticketFieldIsChoice, type TicketForm } from "./tickets";
 
 /** The lab's demo roster. Six is what the Python shipped and what the portal offers. */
 export const DEMO_STUDENTS: readonly string[] = [
@@ -322,6 +330,49 @@ export async function seedPool(
   return built;
 }
 
+/**
+ * Write a plausible incident write-up that satisfies a ticket rubric.
+ *
+ * Demo mode pretends a student did the work; pretending they also *documented* it is what
+ * makes the blended grade visible — and it is what turns a rubric that asks for terms
+ * nobody can guess into a failure in the demo rather than in a class. Each field is
+ * answered with a sentence containing the terms its rubric asks for, padded past
+ * `min_words` with a sentence that is true of any repair and that no rubric rejects.
+ *
+ * The answers are deliberately legible as answers ("Answered: dns, resolver."), so nobody
+ * mistakes a demo submission for a student's prose.
+ */
+export function synthesiseTicket(form: TicketForm): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const field of form.fields) {
+    if (ticketFieldIsChoice(field)) {
+      values[field.id] = field.expected || field.options[0] || "";
+      continue;
+    }
+    if (field.kind.toLowerCase() === "number") {
+      values[field.id] = "1";
+      continue;
+    }
+    const terms = [...field.allOf, ...field.anyOf.slice(0, 1)];
+    let text = terms.length > 0 ? `Answered: ${terms.join(", ")}.` : "Recorded the incident.";
+    // Pad to the minimum length with a sentence that is true of any repair, and never with
+    // a phrase the rubric rejects. The loop is bounded on length as well, so a rubric with
+    // an absurd `min_words` cannot run away.
+    const filler = " Verified on the machine before handing the session in.";
+    const fillerSentence = filler.trim();
+    while (splitWordCount(text) < Math.max(field.minWords, 1) + 1 && text.length < 1200) {
+      text = !text.endsWith(fillerSentence) ? `${text}${filler}` : `${text} Confirmed.`;
+    }
+    values[field.id] = text;
+  }
+  return values;
+}
+
+/** Python's `len(text.split())`: whitespace-separated tokens, empty runs dropped. */
+function splitWordCount(text: string): number {
+  return text.trim() === "" ? 0 : text.trim().split(/\s+/).length;
+}
+
 /* -------------------------------------------------------------------------- */
 /*  The run                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -370,7 +421,7 @@ export interface RunDemoOptions extends DemoOptions {
   scenarioIds?: readonly string[];
   /** Check every session, then hand it in. `false` stops after the preview check. */
   completeSessions?: boolean;
-  /** Synthesising a write-up needs the ticket module (stage 3); see the header. */
+  /** Answer each scenario's write-up rubric, so the blended grade is what is stored. */
   writeUps?: boolean;
   verbose?: boolean;
   /** Where the rendered summary goes. Defaults to `process.stdout`. */
@@ -398,6 +449,7 @@ export async function runDemo(options: RunDemoOptions = {}): Promise<DemoSummary
   const students = names.filter((name) => name !== DEMO_INSTRUCTOR);
 
   const completeSessions = options.completeSessions ?? true;
+  const writeUps = options.writeUps ?? true;
   const summary: DemoSummary = {
     students: [],
     scenarios: chosen,
@@ -450,12 +502,18 @@ export async function runDemo(options: RunDemoOptions = {}): Promise<DemoSummary
     });
     if (session.state === "error") continue;
 
-    // A student checks their work (not recorded), then hands it in (recorded). The write-up
-    // is not synthesised yet (stage 3), so the submitted grade is the machine half and the
-    // report says so — see the header.
+    // A student checks their work (not recorded), writes up the ticket, then hands it in
+    // (recorded). The write-up is synthesised from the rubric, so the demo exercises the
+    // ticket grading and the blended score rather than leaving that half at zero.
     const preview = await env.manager.runChecks(session);
     if (completeSessions) {
-      const final = await env.manager.complete(session);
+      let ticketValues: Record<string, string> | undefined;
+      const ticketForm = env.manager.ticketFormFor(session);
+      if (ticketForm !== null && writeUps) {
+        ticketValues = synthesiseTicket(ticketForm);
+        await env.manager.saveTicketDraft(session, ticketValues);
+      }
+      const final = await env.manager.complete(session, ticketValues);
       summary.completed.push({
         student,
         scenarioId,
@@ -485,7 +543,9 @@ export async function runDemo(options: RunDemoOptions = {}): Promise<DemoSummary
   }
   summary.notes.push(
     completeSessions
-      ? "write-ups were not synthesised (the ticket module is stage 3), so each submitted grade is the machine half"
+      ? writeUps
+        ? "the write-up each student handed in was synthesised from the scenario's rubric; the submitted grade is the blend of the machine check and that write-up"
+        : "write-ups were left out (writeUps: false), so each submitted grade is the machine half and any scenario that asks for one scores zero on it"
       : "sessions were checked but not handed in; only a submission is stored",
   );
 

@@ -44,7 +44,9 @@ import {
   type LabPrismaClient,
   type LabResultRow,
   type LabSessionRow,
+  type LabTicketDbRow,
 } from "../src/lib/lab/store-prisma";
+import { grade as markTicket, loadForm, type TicketGrade } from "../src/lib/lab/tickets";
 
 const ALL_STATES: readonly SessionState[] = [
   "requested",
@@ -77,9 +79,11 @@ class FakeLabDb implements LabPrismaClient {
   private nextSessionId = 1;
   private nextResultId = 1;
   private nextEventId = 1;
+  private nextTicketId = 1;
   readonly sessions = new Map<number, LabSessionRow>();
   readonly results: LabResultRow[] = [];
   readonly events: LabEventRow[] = [];
+  readonly tickets: LabTicketDbRow[] = [];
   readonly meta = new Map<string, LabMetaRow>();
   /** Set to make the next `create` on a delegate throw, for error-path tests. */
   failNextCreate: Error | null = null;
@@ -183,6 +187,68 @@ class FakeLabDb implements LabPrismaClient {
     },
   };
 
+  labTicket = {
+    create: async (args: { data: unknown }): Promise<LabTicketDbRow> => {
+      this.guard();
+      const data = args.data as Record<string, unknown>;
+      const sessionId = Number(data.sessionId);
+      if (!this.sessions.has(sessionId)) {
+        // The migration's foreign key, which the real database enforces.
+        throw new Error("foreign key violated: LabTicket_sessionId_fkey");
+      }
+      const row: LabTicketDbRow = {
+        id: this.nextTicketId++,
+        sessionId,
+        student: String(data.student),
+        scenarioId: String(data.scenarioId),
+        grade: data.grade,
+        values: data.values,
+        score: Number(data.score),
+        submitted: Boolean(data.submitted),
+        createdAt: new Date(),
+      };
+      this.tickets.push(row);
+      return row;
+    },
+    findFirst: async (args: unknown): Promise<LabTicketDbRow | null> => {
+      const where = ((args ?? {}) as { where?: { sessionId?: number } }).where ?? {};
+      const mine = this.tickets
+        .filter((row) => row.sessionId === where.sessionId)
+        .sort((left, right) => right.id - left.id);
+      return mine[0] ?? null;
+    },
+    findMany: async (args: unknown): Promise<LabTicketDbRow[]> => {
+      const query = (args ?? {}) as {
+        where?: { sessionId?: number; student?: string };
+        orderBy?: { id?: "asc" | "desc" };
+        take?: number;
+      };
+      const where = query.where ?? {};
+      let rows = this.tickets.filter(
+        (row) =>
+          (where.sessionId === undefined || row.sessionId === where.sessionId) &&
+          (where.student === undefined || row.student === where.student),
+      );
+      rows = [...rows].sort((left, right) =>
+        query.orderBy?.id === "asc" ? left.id - right.id : right.id - left.id,
+      );
+      if (query.take !== undefined) rows = rows.slice(0, Math.max(0, query.take));
+      return rows;
+    },
+    count: async (args?: unknown): Promise<number> => {
+      const where = ((args ?? {}) as { where?: { submitted?: boolean } }).where ?? {};
+      return this.tickets.filter((row) => where.submitted === undefined || row.submitted === where.submitted)
+        .length;
+    },
+    aggregate: async (): Promise<{ _count: number; _avg: { score: number | null } }> => {
+      const total = this.tickets.reduce((sum, row) => sum + row.score, 0);
+      return {
+        _count: this.tickets.length,
+        _avg: { score: this.tickets.length === 0 ? null : total / this.tickets.length },
+      };
+    },
+  };
+
   labEvent = {
     create: async (args: { data: unknown }): Promise<LabEventRow> => {
       this.guard();
@@ -259,6 +325,39 @@ function populatedSession(student: string, index: number): LabSession {
   session.lastActivityAt = "2026-10-09T09:30:00.000Z";
   session.completedAt = "2026-10-09T09:31:00.000Z";
   return session;
+}
+
+/**
+ * A marked write-up, built by the real ticket module rather than typed out.
+ *
+ * A fixture written by hand would let the store's round-trip pass against a shape nothing
+ * produces; grading a real rubric means the JSONB this test stores is the JSONB a session
+ * stores.
+ */
+function ticketGrade(sessionId: number): TicketGrade {
+  const form = loadForm({
+    form: {
+      weight: 30,
+      pass_score: 60,
+      fields: [
+        { id: "cause", label: "Root cause", weight: 60, min_words: 3, any_of: ["dns", "resolver"] },
+        {
+          id: "class",
+          label: "Classification",
+          kind: "select",
+          weight: 40,
+          options: ["Network", "Permissions"],
+          expected: "Network",
+        },
+      ],
+    },
+  });
+  if (form === null) throw new Error("the fixture rubric must load");
+  return markTicket(
+    form,
+    { cause: "the dns resolver address was set by hand", class: "Network" },
+    { sessionId, scenarioId: "net-dns-failure" },
+  );
 }
 
 function fullReport(sessionId: number): ScoreReport {
@@ -343,6 +442,52 @@ test("store-prisma: both implementations satisfy the same contract", async () =>
     );
     await store.setMeta("ticket_draft:1", { steps: "and restart" });
     assert.deepEqual(await store.getMeta("ticket_draft:1"), { steps: "and restart" }, `${name}: upsert`);
+
+    // The ticket: a marked write-up is a row, and it round-trips whole — the marks, the
+    // feedback the student saw, and the answers they typed.
+    const marked = ticketGrade(created.id ?? 0);
+    await store.saveTicket(marked, "ada");
+    const latest = await store.latestTicket(created.id ?? 0);
+    assert.equal(latest?.score, 100, `${name}: the write-up score is stored`);
+    assert.equal(latest?.outcomes.length, 2, `${name}: every field's outcome is stored`);
+    assert.equal(latest?.outcomes[1]?.fieldId, "class", `${name}: and which field it was`);
+    assert.equal(
+      latest?.values.cause,
+      "the dns resolver address was set by hand",
+      `${name}: the answers are stored with the grade`,
+    );
+    assert.deepEqual(
+      await store.ticketValues(created.id ?? 0),
+      latest?.values,
+      `${name}: and are readable on their own`,
+    );
+    assert.equal((await store.ticketsForSession(created.id ?? 0)).length, 1, `${name}: one attempt`);
+    assert.equal((await store.ticketsForStudent("ada")).length, 1, `${name}: one for ada`);
+    assert.deepEqual(await store.ticketsForStudent("grace"), [], `${name}: none for grace`);
+
+    // The admin list: the facts a table draws, and not the whole grade.
+    const ticketRows = await store.listTickets();
+    assert.equal(ticketRows.length, 1, `${name}: the admin list sees it`);
+    assert.equal(ticketRows[0]?.student, "ada", `${name}: with its author`);
+    assert.equal(ticketRows[0]?.sessionId, created.id, `${name}: and the session it belongs to`);
+    assert.equal(ticketRows[0]?.submitted, true, `${name}: and that it was handed in`);
+    assert.deepEqual(await store.listTickets(0), [], `${name}: a page of zero is empty`);
+    assert.deepEqual(
+      await store.countTickets(),
+      { count: 1, average: 100, submitted: 1 },
+      `${name}: the statistics`,
+    );
+
+    // A draft is not a grade: it lives in meta and never becomes a ticket row.
+    await store.saveTicketDraft(created.id ?? 0, { cause: "half a thought" });
+    assert.deepEqual(
+      await store.ticketDraft(created.id ?? 0),
+      { cause: "half a thought" },
+      `${name}: the draft round-trips`,
+    );
+    assert.equal((await store.listTickets()).length, 1, `${name}: and is not a marked ticket`);
+    await store.clearTicketDraft(created.id ?? 0);
+    assert.deepEqual(await store.ticketDraft(created.id ?? 0), {}, `${name}: clearing forgets it`);
   }
 });
 
@@ -474,6 +619,15 @@ test("store-prisma: a result cannot name a session that does not exist", async (
   );
 });
 
+test("store-prisma: a ticket cannot name a session that does not exist either", async () => {
+  const store = new PrismaLabStore(new FakeLabDb());
+  await assert.rejects(
+    () => store.saveTicket(ticketGrade(1234), "ada"),
+    /foreign key/,
+    "a write-up belongs to a session, and the migration is what enforces it",
+  );
+});
+
 /* -------------------------------------------------------------------------- */
 /*  The real database                                                         */
 /* -------------------------------------------------------------------------- */
@@ -508,7 +662,7 @@ async function hasLabTables(db: PrismaClient): Promise<boolean> {
  * It writes only rows belonging to a unique student key of its own and removes them in
  * `finally`, so it never touches a deployment's seeded data.
  */
-test("postgres: the lab store round-trips a session, a result and its events", async (t) => {
+test("postgres: the lab store round-trips a session, a result, a write-up and its events", async (t) => {
   const db = await connect();
   if (db === null) {
     t.skip("no Postgres reachable — set DATABASE_URL and run npm run db:deploy");
@@ -559,6 +713,23 @@ test("postgres: the lab store round-trips a session, a result and its events", a
     assert.equal(await store.attemptCounts(sessionId), 1);
     assert.equal((await store.resultsForStudent(student)).length, 1);
 
+    // The write-up: JSONB in, the lab's own shape out, and the answers beside it.
+    await store.saveTicket(ticketGrade(sessionId), student);
+    const storedTicket = await store.latestTicket(sessionId);
+    assert.equal(storedTicket?.score, 100, "the marked write-up survives JSONB");
+    assert.equal(storedTicket?.outcomes[1]?.fieldId, "class", "its outcomes come back whole");
+    assert.equal(
+      storedTicket?.values.cause,
+      "the dns resolver address was set by hand",
+      "and so do the answers the student typed",
+    );
+    assert.equal((await store.ticketsForSession(sessionId)).length, 1);
+    assert.equal((await store.countTickets()).submitted, 1);
+    await store.saveTicketDraft(sessionId, { cause: "still typing" });
+    assert.deepEqual(await store.ticketDraft(sessionId), { cause: "still typing" });
+    await store.clearTicketDraft(sessionId);
+    assert.deepEqual(await store.ticketDraft(sessionId), {}, "clearing a draft forgets it");
+
     // Events, newest first, scoped to this session.
     await store.logEvent("requested", "asked for a machine", sessionId);
     await store.logEvent("ready", "running", sessionId);
@@ -581,9 +752,15 @@ test("postgres: the lab store round-trips a session, a result and its events", a
     // ones an operator needs after a botched teardown are exactly those.
     const doomed = await store.createSession(populatedSession(student, 2));
     await store.addResult(fullReport(doomed.id ?? 0), student);
+    await store.saveTicket(ticketGrade(doomed.id ?? 0), student);
     await store.logEvent("destroy_failed", "the instance would not stop", doomed.id ?? 0);
     await db.labSession.delete({ where: { id: doomed.id ?? 0 } });
     assert.equal(await store.attemptCounts(doomed.id ?? 0), 0, "the results went with the session");
+    assert.equal(
+      (await store.ticketsForSession(doomed.id ?? 0)).length,
+      0,
+      "and so did the write-up it was handed with",
+    );
     const orphaned = await db.labEvent.findMany({
       where: { kind: "destroy_failed", detail: "the instance would not stop" },
     });
@@ -592,6 +769,7 @@ test("postgres: the lab store round-trips a session, a result and its events", a
     await db.labEvent.deleteMany({ where: { id: { in: orphaned.map((row) => row.id) } } });
   } finally {
     // Ordered so the foreign keys are satisfied whatever the test did before it failed.
+    await db.labTicket.deleteMany({ where: { student } });
     await db.labResult.deleteMany({ where: { student } });
     await db.labEvent.deleteMany({ where: { sessionId } });
     await db.labSession.deleteMany({ where: { student } });

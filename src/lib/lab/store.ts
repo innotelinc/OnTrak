@@ -37,6 +37,8 @@
  */
 
 import { type LabSession, type ScoreReport, type SessionState, isLive } from "./models";
+import { roundHalfEven } from "./scoring";
+import type { TicketGrade } from "./tickets";
 
 /** One audit-trail entry. Append-only: nothing here is ever updated or removed. */
 export interface LabEvent {
@@ -63,10 +65,15 @@ export interface SessionQuery {
 /**
  * The lab's persistence, as its callers use it.
  *
- * Scoped to the half the session manager and the demo need: sessions, results, events
- * and the small meta table. The lab's `users` and `tickets` tables are **not** here on
- * purpose — the user table is superseded by the app's identity (§3/C2) and tickets are
- * stage 3's, so declaring them now would be declaring a shape nobody has agreed to.
+ * Scoped to the half the session manager, the ticket and the demo need: sessions,
+ * results, tickets, events and the small meta table. The lab's `users` table is **not**
+ * here on purpose — it is superseded by the app's identity (§3/C2), and a second account
+ * table would be a second place to revoke someone from.
+ *
+ * **A draft is not a grade**, and the ticket half of the contract says so twice: a marked
+ * write-up goes in the ticket table through `saveTicket`, while what the student has typed
+ * so far lives in meta under `ticket_draft:<sessionId>`. The lab is results-only, and an
+ * unsubmitted draft appearing in a report is exactly the leak the split prevents.
  */
 export interface LabStore {
   /** Save a new session and return it with the id the store assigned. */
@@ -91,6 +98,28 @@ export interface LabStore {
   recentEvents(limit?: number): Promise<LabEvent[]>;
   countEvents(): Promise<number>;
 
+  /**
+   * One marked write-up, stored apart from the score report so it can be read back
+   * without unpacking a report — and so the student can be shown what they wrote.
+   */
+  saveTicket(grade: TicketGrade, student: string): Promise<void>;
+  /** The newest marked write-up for a session, or `null`. */
+  latestTicket(sessionId: number): Promise<TicketGrade | null>;
+  /** The answers last *submitted* for a session, to re-populate the form. */
+  ticketValues(sessionId: number): Promise<Record<string, string>>;
+  /** Remember what the student has typed so far. Not a grade; kept in meta. */
+  saveTicketDraft(sessionId: number, values: Record<string, string>): Promise<void>;
+  /** The draft in progress, or `{}`. */
+  ticketDraft(sessionId: number): Promise<Record<string, string>>;
+  /** Forget a draft once its write-up has been handed in. */
+  clearTicketDraft(sessionId: number): Promise<void>;
+  /** Every marked write-up for a session, oldest first (the attempt history). */
+  ticketsForSession(sessionId: number): Promise<TicketGrade[]>;
+  ticketsForStudent(student: string, limit?: number): Promise<TicketGrade[]>;
+  /** Ticket rows plus the student who wrote them (the admin ticket view). */
+  listTickets(limit?: number): Promise<LabTicketRow[]>;
+  countTickets(): Promise<{ count: number; average: number; submitted: number }>;
+
   getMeta(key: string, fallback?: unknown): Promise<unknown>;
   setMeta(key: string, value: unknown): Promise<void>;
 }
@@ -99,6 +128,30 @@ export interface LabStore {
 export interface StoredResult {
   readonly student: string;
   readonly report: ScoreReport;
+}
+
+/** A stored ticket: the grade plus the two facts a list needs (its id and its author). */
+export interface StoredTicket {
+  readonly id: number;
+  readonly student: string;
+  readonly grade: TicketGrade;
+}
+
+/**
+ * One ticket row as a list shows it: the marked grade plus who wrote it.
+ *
+ * Deliberately **not** the whole grade — `latestTicket` is how a full one is read. The
+ * admin table needs a score, a name and a date per row, and loading every outcome and
+ * every answer to draw it would be the shape a list page regrets.
+ */
+export interface LabTicketRow {
+  readonly id: number;
+  readonly sessionId: number;
+  readonly student: string;
+  readonly scenarioId: string;
+  readonly score: number;
+  readonly submitted: boolean;
+  readonly createdAt: string;
 }
 
 /**
@@ -120,8 +173,10 @@ export class InMemoryLabStore implements LabStore {
   private readonly results: StoredResult[] = [];
   private readonly events: LabEvent[] = [];
   private readonly meta = new Map<string, unknown>();
+  private readonly tickets: StoredTicket[] = [];
   private nextSessionId = 1;
   private nextEventId = 1;
+  private nextTicketId = 1;
   /** Injected so a test can pin an instant; the store never reads the clock itself. */
   private readonly now: () => Date;
 
@@ -257,4 +312,114 @@ export class InMemoryLabStore implements LabStore {
   async setMeta(key: string, value: unknown): Promise<void> {
     this.meta.set(key, value);
   }
+
+  /* ---------------------------------------------------------------- */
+  /*  the in-house ticket                                             */
+  /* ---------------------------------------------------------------- */
+
+  // Deep-copied in both directions, like a session: a caller that keeps marking into the
+  // same grade object cannot rewrite a stored submission.
+  private copyTicket(grade: TicketGrade): TicketGrade {
+    return {
+      ...grade,
+      values: { ...grade.values },
+      notes: [...grade.notes],
+      outcomes: grade.outcomes.map((outcome) => ({ ...outcome })),
+    };
+  }
+
+  async saveTicket(grade: TicketGrade, student: string): Promise<void> {
+    this.tickets.push({ id: this.nextTicketId++, student, grade: this.copyTicket(grade) });
+  }
+
+  async latestTicket(sessionId: number): Promise<TicketGrade | null> {
+    for (let index = this.tickets.length - 1; index >= 0; index -= 1) {
+      const stored = this.tickets[index];
+      if (stored && stored.grade.sessionId === sessionId) return this.copyTicket(stored.grade);
+    }
+    return null;
+  }
+
+  async ticketValues(sessionId: number): Promise<Record<string, string>> {
+    const latest = await this.latestTicket(sessionId);
+    return latest === null ? {} : latest.values;
+  }
+
+  async saveTicketDraft(sessionId: number, values: Record<string, string>): Promise<void> {
+    this.meta.set(ticketDraftKey(sessionId), { ...values });
+  }
+
+  async ticketDraft(sessionId: number): Promise<Record<string, string>> {
+    return draftFrom(await this.getMeta(ticketDraftKey(sessionId), {}));
+  }
+
+  async clearTicketDraft(sessionId: number): Promise<void> {
+    this.meta.set(ticketDraftKey(sessionId), {});
+  }
+
+  async ticketsForSession(sessionId: number): Promise<TicketGrade[]> {
+    return this.tickets
+      .filter((stored) => stored.grade.sessionId === sessionId)
+      .sort((left, right) => left.id - right.id)
+      .map((stored) => this.copyTicket(stored.grade));
+  }
+
+  async ticketsForStudent(student: string, limit = 50): Promise<TicketGrade[]> {
+    if (limit <= 0) return [];
+    return this.tickets
+      .filter((stored) => stored.student === student)
+      .sort((left, right) => right.id - left.id)
+      .slice(0, limit)
+      .map((stored) => this.copyTicket(stored.grade));
+  }
+
+  async listTickets(limit = 200): Promise<LabTicketRow[]> {
+    if (limit <= 0) return [];
+    return this.tickets
+      .slice()
+      .sort((left, right) => right.id - left.id)
+      .slice(0, limit)
+      .map((stored) => ({
+        id: stored.id,
+        sessionId: stored.grade.sessionId,
+        student: stored.student,
+        scenarioId: stored.grade.scenarioId,
+        score: stored.grade.score,
+        submitted: stored.grade.submitted,
+        createdAt: stored.grade.createdAt,
+      }));
+  }
+
+  async countTickets(): Promise<{ count: number; average: number; submitted: number }> {
+    const scores = this.tickets.map((stored) => stored.grade.score);
+    const total = scores.reduce((sum, score) => sum + score, 0);
+    return {
+      count: this.tickets.length,
+      average: this.tickets.length === 0 ? 0 : roundHalfEven(total / this.tickets.length, 1),
+      submitted: this.tickets.filter((stored) => stored.grade.submitted).length,
+    };
+  }
+}
+
+/**
+ * The meta key a draft lives under.
+ *
+ * One function rather than a template string at four call sites, because a draft written
+ * under one spelling and read under another is a student's work silently disappearing.
+ * The key is the Python's (`ticket_draft:<sessionId>`), so a row written by the lab's own
+ * tools is found by this port.
+ */
+export function ticketDraftKey(sessionId: number): string {
+  return `ticket_draft:${Math.trunc(sessionId)}`;
+}
+
+/** A stored draft, coerced: anything that is not a record of scalars reads as `{}`. */
+export function draftFrom(value: unknown): Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+      String(key),
+      entry === null || entry === undefined ? "" : String(entry),
+    ]),
+  );
 }

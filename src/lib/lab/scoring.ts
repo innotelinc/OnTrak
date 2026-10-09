@@ -136,8 +136,12 @@ function asBool(value: unknown): boolean {
  * scored 12.2, and a lab host moving to this stack would see two figures for the
  * same attempt. The epsilon band absorbs the float error that a scaled value like
  * `0.5000000001` carries, which is the case that actually occurs.
+ *
+ * Exported because the ticket's own arithmetic (`tickets.ts`) rounds the same way — a
+ * write-up's score and its blend are Python `round(x, 1)` calls too — and two spellings
+ * of "half to even" would be two answers to the same question.
  */
-function roundHalfEven(value: number, digits: number): number {
+export function roundHalfEven(value: number, digits: number): number {
   const factor = 10 ** digits;
   const scaled = value * factor;
   if (!Number.isFinite(scaled)) return value;
@@ -149,7 +153,7 @@ function roundHalfEven(value: number, digits: number): number {
 }
 
 /** `{value:.{digits}f}` — the display form of a score, a pass mark or a weight. */
-function formatFixed(value: number, digits: number): string {
+export function formatFixed(value: number, digits: number): string {
   return roundHalfEven(value, digits).toFixed(digits);
 }
 
