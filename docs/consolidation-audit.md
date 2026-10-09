@@ -56,7 +56,7 @@ host), and does not claim to have measured runtime behaviour of anything.
 | `src/` + `prisma/` (root) | **OnTrak IT Support Training (ITS)** — browser simulations, graded attempts, certificates | Next.js 15, React 19, TS, Prisma 6, PostgreSQL, Tailwind 4, xterm.js | `npm run dev`/`build`/`start`; `prisma/seed.ts` | App | `tests/*.test.ts` (tsx, ~379); Playwright a11y + Tix e2e |
 | `ontrak-sentinel/` | **Sentinel** — IdP (OIDC/SAML/SCIM/MFA) **+ Guard IDS/IPS** | Node/TS + Prisma + PostgreSQL; framework-free server-rendered console | `npm run serve` (`scripts/serve.ts`) | App | `tests/*.test.ts` (~538) |
 | `ontrak-tix/` | **Tix** — service desk, SLAs, billing, incident assurance | Next.js 15, React 19, TS, Prisma, PostgreSQL | `npm run dev`/`build` | App | ~844 tests |
-| `ontrak-sync/` | **Sync** — fleet package/container update view; owns the family's **local account table** | Python 3.12 + FastAPI + SQLite (API); Next.js 16 dashboard | `make up`; `web/` | App (two processes) | 406 (plain `unittest`) |
+| `ontrak-sync/` | **Sync** — fleet package/container update view; owns the family's **local account table** | Python 3.12 + FastAPI + SQLite (API); Next.js 16 dashboard | `make up`; `web/` | App (two processes) | 415 (plain `unittest`) |
 | `ontrak-genie/` | **Genie** — browser/CLI coding-agent console | Node/TS, SSE, sandboxed workspace | `npm run build && npm start` | App | `src/test/**` (`node --test`) |
 | `ontrak-portal/` | **Portal (Unity)** — the family front door; routes by role, holds no data | Next.js 15, React 19, TS, **no database** | `npm run dev` (port 3300) | App | 4 test files |
 | `theme/` | **Unity** shared palette + copy checks | CSS + TS (and Python copy guard) | — | Shared library | `theme/tests/test_theme_copies.py` |
