@@ -37,8 +37,8 @@ beside it. Module by module, with its disposition:
 | `memory.py` | 203 | `src/lib/lab/memory.ts` | 2a | **done** |
 | `catalog.py` | 741 | `src/lib/lab/catalog.ts` | 2b | **done** (its 4 manifests converted to `data/catalog.json`) |
 | `lessons.py` | 348 | `src/lib/lab/lessons.ts` | 2b | **done** (its 7 lessons converted to `data/lessons.json`) |
-| `primitives.py` | 536 | `src/lib/lab/primitives.ts` | 2b | not started |
-| `generator.py` | 306 | `src/lib/lab/generator.ts` | 2b | not started |
+| `primitives.py` | 536 | `src/lib/lab/primitives.ts` | 2d | landed — all nine primitives, compared against the Python field for field |
+| `generator.py` | 306 | `src/lib/lab/generator.ts` | 2d | landed — generates and validates against the shipped tree |
 | `sessions.py` | 1638 | `src/lib/lab/sessions.ts` | 2d | landed — 18 lifecycle tests, the four disagreements diagnosed and resolved, see §2d |
 | `store.py` | 709 | `src/lib/lab/store.ts` (contract + in-memory), `store-prisma.ts` + `prisma/` models | 2c/2d | landed — the contract and the in-memory store in 2c, the Postgres/Prisma one and its reversible migration in 2d |
 | `tickets.py` | 534 | `src/lib/lab/tickets.ts` | 3 | not started |
@@ -289,6 +289,27 @@ stage 3, and `complete` already says the write-up was not blended), and the simu
 dice are deterministic but explicitly **not** the Python's (`random.Random` seeded with a
 string cannot be reproduced, so the port's own small PRNG is seeded with the same facts).
 
+**`primitives` and `generator`, and 2d is done.** The nine fault primitives are the reviewed
+building blocks a generated scenario composes, and they were checked rather than eyeballed: the
+lab's own module was imported and its fields dumped, and the port's output compared against
+them field for field — **identical**, scripts included, character for character. That matters
+more than it sounds: a primitive's check decides whether a student's fix counts, so paraphrasing
+one would change what a student is graded on. `tests/lab-primitives.test.ts` then holds the
+contract the generator depends on — a check must report *exactly* the objectives the primitive
+declares, no more and no fewer, because an unreported objective scores zero for ever and an
+invented one grades work the ticket never asked for.
+
+The generator writes a scenario record plus its two scripts and then **validates what it
+wrote**, which is the lab's own rule ("a generated scenario that would always score zero fails
+generation instead of failing a student"). Two adaptations were needed and both are named in
+the module: the record is JSON and the target tree is a parameter (the port's repository is pure
+and has no root), and validation re-reads the tree with `scenarioEntriesFrom` and hands the
+validator each new scenario's `ScenarioFiles` — so the *script* contract is checked, not just
+the record's. The whole matrix (one scenario per primitive) validates cleanly, and the
+refusals are all covered: an empty list, an unknown primitive, an id that is not
+lowercase-dashed, clobbering without `--force`, and the same objective id twice (which the
+lab's own self-pair combination is the real case of).
+
 ## 3. Architectural conflicts, and how each is resolved
 
 The brief says to identify and resolve conflicts rather than ignore them. These are the
@@ -388,10 +409,11 @@ verifiable the same way the Python's is, and the same residue stays honestly unp
 | **2a** (landed) | `config`, `scenarios`, `media`, `memory` — 76 tests | typecheck clean, suites green, the 14 real lab scenarios validate, full suite and build unchanged and green |
 | **2b** (landed) | `catalog`, `lessons` — 52 tests — plus the lab's data converted to JSON (`src/lib/lab/data/`) | the real catalogue and lesson library load and validate with no YAML parser; the grader takes the catalogue's own object; suite and build green |
 | **2c** (landed) | `store`'s **contract** + the in-memory implementation, and the guest-transport repairs below | typecheck clean; the store, memory, incus and guest suites green; the whole app suite and the build unchanged and green |
-| **2d** (in progress — `sessions`, the Postgres store, the shipped data and `demo` landed) | `sessions`'s four behaviours resolved, the Prisma store + reversible migration, the `scenarios/` tree, and the demo (§2d); remaining: `primitives`, `generator` | the ported demo flow runs a full class with no hypervisor, as `demo.py` does (done: `tests/lab-demo.test.ts`), and the store round-trips a session and a report (done, against a real database) |
+| **2d** (landed) | `sessions`'s four behaviours resolved, the Prisma store + reversible migration, the `scenarios/` tree, `demo`, `primitives`, `generator` (§2d) | the ported demo flow runs a full class with no hypervisor, as `demo.py` does (`tests/lab-demo.test.ts`), and the store round-trips a session and a report (against a real database) |
 | **3** | the portal surface (`app` + `admin`) on the app's identity, `tickets`, the lab scenario/lesson pages, the console iframe | a student starts, checks, completes; an instructor reads the results; the routes keep their contracts; a11y sweep passes |
 | **4** | the CLI as `tsx` scripts, compose/Docker deployment, and the `infra/**` shell kept as shell with its entry points documented | the stack builds and reports healthy with no Incus socket mounted; the boundary tests still pass |
 
-Stage 1, 2a, 2b and 2c are complete and verified, and 2d has landed its largest module
-(`sessions`). The rest of 2d and stages 3–4 are named work with a stated order; nothing in
-this document should be read as claiming they are done.
+Stages 1, 2a, 2b, 2c and 2d are complete and verified — the whole control plane, its data, its
+store and its demo. Stages 3 and 4 are named work with a stated order; nothing in this document
+should be read as claiming they are done, and no route in the app imports `src/lib/lab/` yet, so
+deployed behaviour is unchanged.
