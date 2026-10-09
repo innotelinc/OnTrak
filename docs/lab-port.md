@@ -35,8 +35,8 @@ beside it. Module by module, with its disposition:
 | `scenarios.py` | 534 | `src/lib/lab/scenarios.ts` | 2a | **done** |
 | `media.py` | 203 | `src/lib/lab/media.ts` | 2a | **done** |
 | `memory.py` | 203 | `src/lib/lab/memory.ts` | 2a | **done** |
-| `catalog.py` | 741 | `src/lib/lab/catalog.ts` | 2b | not started (needs the JSON data conversion) |
-| `lessons.py` | 348 | `src/lib/lab/lessons.ts` | 2b | not started (same conversion) |
+| `catalog.py` | 741 | `src/lib/lab/catalog.ts` | 2b | **done** (its 4 manifests converted to `data/catalog.json`) |
+| `lessons.py` | 348 | `src/lib/lab/lessons.ts` | 2b | **done** (its 7 lessons converted to `data/lessons.json`) |
 | `primitives.py` | 536 | `src/lib/lab/primitives.ts` | 2b | not started |
 | `generator.py` | 306 | `src/lib/lab/generator.ts` | 2b | not started |
 | `sessions.py` | 1638 | `src/lib/lab/sessions.ts` | 2b | not started |
@@ -109,7 +109,34 @@ Stage 2's first slice, landed and verified the same way:
 suite validates **all 14 real lab scenarios** from `tests/fixtures/lab-scenarios/` — the
 lab's own data, so a rejection there would have meant the port was wrong, not the data.
 
-Two things this slice confirmed by measurement rather than by reading:
+### Stage 2b — the catalogue, the lessons, and the data they read (including the conversion)
+
+`catalog.ts` and `lessons.ts`, with **52 tests**, and the one-off data conversion
+§3/C6 called for. The lab's YAML is read once, with the lab's own parser, and written as
+JSON into `src/lib/lab/data/`:
+
+| Converted | From | Shape |
+| --- | --- | --- |
+| `catalog.json` (4 manifests) | `catalog/*.yaml` | keyed by file name, each holding that manifest's group, defaults and entries |
+| `lessons.json` (7 lessons) | `lessons/*.yaml` | keyed by file name, one lesson each |
+| `config.json` | `config/ontrak.yaml` | the config record `config.ts` takes as its file half |
+
+The conversion is lossless (`yaml.safe_load` → `json.dumps`) and was run against
+`OnTrak-dev` read-only — nothing in that repository is written, which is why the YAML
+stays its source of truth and a change there has to be re-converted.
+
+**Verified:** `tsc --noEmit` clean; the two suites **52/52**; the whole app suite
+**770 tests / 765 pass / 0 fail / 5 skipped**; `npm run build` exit 0. The catalogue and
+lesson suites run against the **lab's real data** — 4 manifests, 7 lessons — so the
+loader is proven on the actual range rather than on fixtures written to suit it, and the
+planner is proven pure by testing every ranked strategy with host facts as arguments.
+Two behaviours were found by reading the Python rather than assuming: the planner
+accepts `poolReady`/`templateReady` and **never reads them**, so `warm-pool` and
+`clone-template` are unreachable in the lab today (kept as-is and documented rather than
+quietly "fixed" in a port), and `Media.from_dict` lowercases the checksum, which the
+catalogue keeps doing because `media.ts` compares it exactly.
+
+Two things stage 2a confirmed by measurement rather than by reading:
 
 - **The JSON decision is not a loss.** The lab's `scenario.yaml` was already converted
 to JSON in this repository, field for field, when the family's importer was written, so
@@ -217,7 +244,8 @@ verifiable the same way the Python's is, and the same residue stays honestly unp
 | --- | --- | --- |
 | **1** (this commit) | the pure core: 8 modules, 176 ported tests | typecheck clean, ported suites green, full app suite unchanged and green |
 | **2a** (landed) | `config`, `scenarios`, `media`, `memory` — 76 tests | typecheck clean, suites green, the 14 real lab scenarios validate, full suite and build unchanged and green |
-| **2b** | `catalog`, `lessons` (with the JSON conversion), `primitives`, `generator`, `sessions`, `store` + Prisma models and a reversible migration | the ported demo flow runs a full class with no hypervisor, as `demo.py` does, and the store round-trips a session and a report |
+| **2b** (landed) | `catalog`, `lessons` — 52 tests — plus the lab's data converted to JSON (`src/lib/lab/data/`) | the real catalogue and lesson library load and validate with no YAML parser; the grader takes the catalogue's own object; suite and build green |
+| **2c** | `primitives`, `generator`, `sessions`, `store` + Prisma models and a reversible migration, `demo` | the ported demo flow runs a full class with no hypervisor, as `demo.py` does, and the store round-trips a session and a report |
 | **3** | the portal surface (`app` + `admin`) on the app's identity, `tickets`, the lab scenario/lesson pages, the console iframe | a student starts, checks, completes; an instructor reads the results; the routes keep their contracts; a11y sweep passes |
 | **4** | the CLI as `tsx` scripts, compose/Docker deployment, and the `infra/**` shell kept as shell with its entry points documented | the stack builds and reports healthy with no Incus socket mounted; the boundary tests still pass |
 

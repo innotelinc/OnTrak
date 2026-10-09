@@ -1,0 +1,1709 @@
+{
+  "linux.yaml": {
+    "defaults": {
+      "automation": "ssh",
+      "device_profile": "linux-container",
+      "family": "linux",
+      "install": {
+        "recipe": "container-image"
+      },
+      "kind": "container",
+      "media": {
+        "kind": "image",
+        "source": "free"
+      },
+      "scenario_families": [
+        "network",
+        "software",
+        "os",
+        "security",
+        "identity"
+      ]
+    },
+    "description": "Server and desktop Linux. Container entries come straight from the image server and are the fastest thing OnTrak can hand a student; VM entries are for exercises that touch boot, kernel or driver behaviour.\n",
+    "entries": [
+      {
+        "id": "ubuntu-24.04",
+        "install": {
+          "alias": "images:ubuntu/24.04",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:ubuntu/24.04",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Ubuntu 24.04 LTS",
+        "notes": "Current LTS; the default Linux student platform.",
+        "released": "2024-04",
+        "support": "supported",
+        "tags": [
+          "lts",
+          "common",
+          "debian-family"
+        ]
+      },
+      {
+        "id": "ubuntu-22.04",
+        "install": {
+          "alias": "images:ubuntu/22.04",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:ubuntu/22.04",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Ubuntu 22.04 LTS",
+        "notes": "Still the most common production Ubuntu in the field.",
+        "released": "2022-04",
+        "support": "supported",
+        "tags": [
+          "lts",
+          "common",
+          "debian-family"
+        ]
+      },
+      {
+        "id": "ubuntu-20.04",
+        "install": {
+          "alias": "images:ubuntu/20.04",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:ubuntu/20.04",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Ubuntu 20.04 LTS",
+        "notes": "Standard support ended; a realistic \"stuck on an old release\" platform.",
+        "released": "2020-04",
+        "support": "extended",
+        "tags": [
+          "lts",
+          "debian-family"
+        ]
+      },
+      {
+        "id": "ubuntu-18.04",
+        "install": {
+          "alias": "images:ubuntu/18.04",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:ubuntu/18.04",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Ubuntu 18.04 LTS",
+        "notes": "End-of-life; apt endpoints are archived, which is itself a useful exercise.",
+        "released": "2018-04",
+        "support": "eol",
+        "tags": [
+          "lts",
+          "legacy",
+          "debian-family"
+        ]
+      },
+      {
+        "id": "ubuntu-16.04",
+        "install": {
+          "alias": "images:ubuntu/16.04",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:ubuntu/16.04",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Ubuntu 16.04 LTS",
+        "notes": "Old glibc and Python 3.5 \u2014 good for \"this app will not install here\" tickets.",
+        "released": "2016-04",
+        "support": "eol",
+        "tags": [
+          "lts",
+          "legacy",
+          "debian-family"
+        ]
+      },
+      {
+        "id": "debian-12",
+        "install": {
+          "alias": "images:debian/12",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:debian/12",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Debian 12 (Bookworm)",
+        "notes": "Stable baseline for server exercises.",
+        "released": "2023-06",
+        "support": "supported",
+        "tags": [
+          "stable",
+          "common",
+          "debian-family"
+        ]
+      },
+      {
+        "id": "debian-11",
+        "install": {
+          "alias": "images:debian/11",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:debian/11",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Debian 11 (Bullseye)",
+        "notes": "Previous stable.",
+        "released": "2021-08",
+        "support": "extended",
+        "tags": [
+          "stable",
+          "debian-family"
+        ]
+      },
+      {
+        "id": "debian-10",
+        "install": {
+          "alias": "images:debian/10",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:debian/10",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Debian 10 (Buster)",
+        "notes": "End-of-life; archived repositories.",
+        "released": "2019-07",
+        "support": "eol",
+        "tags": [
+          "legacy",
+          "debian-family"
+        ]
+      },
+      {
+        "id": "raspios-12",
+        "install": {
+          "alias": "images:raspios/12",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:raspios/12",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Raspberry Pi OS 12 (arm64)",
+        "notes": "Useful wherever students support small-site or kiosk devices.",
+        "released": "2023-10",
+        "support": "supported",
+        "tags": [
+          "arm64",
+          "debian-family",
+          "edge-device"
+        ]
+      },
+      {
+        "id": "fedora-41",
+        "install": {
+          "alias": "images:fedora/41",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:fedora/41",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Fedora 41",
+        "notes": "Newest userland features and SELinux defaults.",
+        "released": "2024-10",
+        "support": "supported",
+        "tags": [
+          "rpm-family",
+          "fast-moving"
+        ]
+      },
+      {
+        "id": "fedora-40",
+        "install": {
+          "alias": "images:fedora/40",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:fedora/40",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Fedora 40",
+        "notes": "Previous Fedora release.",
+        "released": "2024-04",
+        "support": "extended",
+        "tags": [
+          "rpm-family"
+        ]
+      },
+      {
+        "id": "rockylinux-9",
+        "install": {
+          "alias": "images:rockylinux/9",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:rockylinux/9",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Rocky Linux 9",
+        "notes": "RHEL-compatible rebuild; common in enterprise estates.",
+        "released": "2022-05",
+        "support": "supported",
+        "tags": [
+          "rpm-family",
+          "rhel-compatible",
+          "common"
+        ]
+      },
+      {
+        "id": "rockylinux-8",
+        "install": {
+          "alias": "images:rockylinux/8",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:rockylinux/8",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Rocky Linux 8",
+        "notes": "RHEL 8-era exercises.",
+        "released": "2021-06",
+        "support": "extended",
+        "tags": [
+          "rpm-family",
+          "rhel-compatible"
+        ]
+      },
+      {
+        "id": "almalinux-9",
+        "install": {
+          "alias": "images:almalinux/9",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:almalinux/9",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "AlmaLinux 9",
+        "notes": "Second RHEL-compatible rebuild.",
+        "released": "2022-05",
+        "support": "supported",
+        "tags": [
+          "rpm-family",
+          "rhel-compatible"
+        ]
+      },
+      {
+        "id": "oracle-linux-9",
+        "install": {
+          "alias": "images:oracle/9",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:oracle/9",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Oracle Linux 9",
+        "notes": "Includes the UEK kernel variant.",
+        "released": "2022-06",
+        "support": "supported",
+        "tags": [
+          "rpm-family",
+          "rhel-compatible"
+        ]
+      },
+      {
+        "id": "centos-stream-9",
+        "install": {
+          "alias": "images:centos/9-Stream",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:centos/9-Stream",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "CentOS Stream 9",
+        "notes": "Upstream of RHEL 9.",
+        "released": "2021-12",
+        "support": "supported",
+        "tags": [
+          "rpm-family",
+          "rhel-upstream"
+        ]
+      },
+      {
+        "id": "rhel-9",
+        "install": {
+          "alias": "images:rhel/9",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:rhel/9",
+          "kind": "image",
+          "notes": "Subscription-licensed in production; the image server copy is for lab use.",
+          "source": "free"
+        },
+        "name": "Red Hat Enterprise Linux 9",
+        "notes": "Requires an active Red Hat subscription for real use; keep lab copies isolated.",
+        "released": "2022-05",
+        "support": "supported",
+        "tags": [
+          "rpm-family",
+          "enterprise"
+        ]
+      },
+      {
+        "id": "opensuse-leap-15.6",
+        "install": {
+          "alias": "images:opensuse/15.6",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:opensuse/15.6",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "openSUSE Leap 15.6",
+        "notes": "zypper/YaST exercises; SUSE-specific config layout.",
+        "released": "2024-06",
+        "support": "supported",
+        "tags": [
+          "suse-family",
+          "zypper"
+        ]
+      },
+      {
+        "id": "opensuse-tumbleweed",
+        "install": {
+          "alias": "images:opensuse/tumbleweed",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:opensuse/tumbleweed",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "openSUSE Tumbleweed",
+        "notes": "Rolling release; good for upgrade-path tickets.",
+        "released": "rolling",
+        "support": "supported",
+        "tags": [
+          "suse-family",
+          "rolling"
+        ]
+      },
+      {
+        "id": "alpine-3.21",
+        "install": {
+          "alias": "images:alpine/3.21",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:alpine/3.21",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Alpine Linux 3.21",
+        "notes": "apk/BusyBox and musl-vs-glibc incompatibility tickets.",
+        "released": "2024-12",
+        "support": "supported",
+        "tags": [
+          "musl",
+          "busybox",
+          "minimal"
+        ]
+      },
+      {
+        "id": "alpine-edge",
+        "install": {
+          "alias": "images:alpine/edge",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:alpine/edge",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Alpine Linux edge",
+        "notes": "Rolling Alpine for the newest packages.",
+        "released": "rolling",
+        "support": "supported",
+        "tags": [
+          "musl",
+          "rolling"
+        ]
+      },
+      {
+        "id": "archlinux",
+        "install": {
+          "alias": "images:archlinux",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:archlinux",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Arch Linux",
+        "notes": "Manual-configuration culture; good for \"the user changed everything\" tickets.",
+        "released": "rolling",
+        "support": "supported",
+        "tags": [
+          "rolling",
+          "diy"
+        ]
+      },
+      {
+        "id": "gentoo",
+        "install": {
+          "alias": "images:gentoo",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:gentoo",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Gentoo",
+        "notes": "Source-based; USE-flag and rebuild exercises.",
+        "released": "rolling",
+        "support": "supported",
+        "tags": [
+          "source-based",
+          "rolling"
+        ]
+      },
+      {
+        "id": "voidlinux",
+        "install": {
+          "alias": "images:voidlinux",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:voidlinux",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Void Linux",
+        "notes": "runit instead of systemd, which reframes service troubleshooting.",
+        "released": "rolling",
+        "support": "supported",
+        "tags": [
+          "runit",
+          "rolling"
+        ]
+      },
+      {
+        "id": "nixos",
+        "install": {
+          "alias": "images:nixos",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:nixos",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "NixOS",
+        "notes": "Declarative configuration; excellent for \"prove the config matches the system\".",
+        "released": "rolling",
+        "support": "supported",
+        "tags": [
+          "declarative",
+          "rolling"
+        ]
+      },
+      {
+        "id": "kali-rolling",
+        "install": {
+          "alias": "images:kali",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:kali",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Kali Linux",
+        "notes": "Security-tooling platform for red/blue exercises on an isolated network.",
+        "released": "rolling",
+        "support": "supported",
+        "tags": [
+          "security-tooling",
+          "rolling"
+        ]
+      },
+      {
+        "id": "ubuntu-core-24",
+        "install": {
+          "alias": "images:ubuntu-core/24",
+          "recipe": "container-image"
+        },
+        "media": {
+          "filename": "images:ubuntu-core/24",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Ubuntu Core 24 (snap-based)",
+        "notes": "Immutable image-based OS; IoT/edge appliance support tickets.",
+        "released": "2024-05",
+        "support": "supported",
+        "tags": [
+          "immutable",
+          "iot"
+        ]
+      },
+      {
+        "device_profile": "linux-vm",
+        "id": "ubuntu-vm-24.04",
+        "install": {
+          "alias": "images:ubuntu/24.04/cloud",
+          "recipe": "image-alias"
+        },
+        "kind": "vm",
+        "media": {
+          "filename": "images:ubuntu/24.04/cloud",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Ubuntu 24.04 LTS (VM)",
+        "notes": "Use for boot loader, kernel module, fstab and driver exercises.",
+        "released": "2024-04",
+        "resources": {
+          "cpu": 2,
+          "disk": "16GiB",
+          "memory": "2GiB"
+        },
+        "support": "supported",
+        "tags": [
+          "vm",
+          "boot",
+          "kernel"
+        ]
+      },
+      {
+        "device_profile": "linux-vm",
+        "id": "debian-vm-12",
+        "install": {
+          "alias": "images:debian/12/cloud",
+          "recipe": "image-alias"
+        },
+        "kind": "vm",
+        "media": {
+          "filename": "images:debian/12/cloud",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Debian 12 (VM)",
+        "notes": "VM Debian for GRUB and initramfs exercises.",
+        "released": "2023-06",
+        "resources": {
+          "cpu": 2,
+          "disk": "16GiB",
+          "memory": "2GiB"
+        },
+        "support": "supported",
+        "tags": [
+          "vm",
+          "boot",
+          "kernel"
+        ]
+      },
+      {
+        "device_profile": "linux-vm",
+        "id": "ubuntu-desktop-24.04",
+        "install": {
+          "alias": "images:ubuntu/24.04/desktop",
+          "recipe": "image-alias"
+        },
+        "kind": "vm",
+        "media": {
+          "filename": "images:ubuntu/24.04/desktop",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Ubuntu 24.04 Desktop (VM)",
+        "notes": "Desktop GUI for printer, display, audio and Wi-Fi-style support tickets.",
+        "released": "2024-04",
+        "resources": {
+          "cpu": 4,
+          "disk": "32GiB",
+          "memory": "4GiB"
+        },
+        "scenario_families": [
+          "hardware",
+          "software",
+          "network",
+          "os"
+        ],
+        "support": "supported",
+        "tags": [
+          "vm",
+          "desktop",
+          "gui"
+        ]
+      },
+      {
+        "device_profile": "linux-vm",
+        "id": "ubuntu-desktop-22.04",
+        "install": {
+          "alias": "images:ubuntu/22.04/desktop",
+          "recipe": "image-alias"
+        },
+        "kind": "vm",
+        "media": {
+          "filename": "images:ubuntu/22.04/desktop",
+          "kind": "image",
+          "source": "free"
+        },
+        "name": "Ubuntu 22.04 Desktop (VM)",
+        "notes": "Older GNOME for comparison exercises.",
+        "released": "2022-04",
+        "resources": {
+          "cpu": 4,
+          "disk": "32GiB",
+          "memory": "4GiB"
+        },
+        "scenario_families": [
+          "hardware",
+          "software",
+          "network",
+          "os"
+        ],
+        "support": "supported",
+        "tags": [
+          "vm",
+          "desktop",
+          "gui"
+        ]
+      }
+    ],
+    "era": "1991-present",
+    "family": "linux",
+    "group": "linux",
+    "label": "Linux"
+  },
+  "office.yaml": {
+    "defaults": {
+      "device_profile": "vista-era",
+      "family": "microsoft-office",
+      "kind": "vm",
+      "resources": {
+        "cpu": 2,
+        "disk": "60GiB",
+        "memory": "4GiB"
+      },
+      "scenario_families": [
+        "software",
+        "os",
+        "security"
+      ]
+    },
+    "description": "Office suites from Office 97 to Microsoft 365 Apps, each layered onto a compatible Windows base. Repair-install, corrupt-profile, add-in conflict, activation and Outlook mail-profile scenarios all live here.\n",
+    "entries": [
+      {
+        "automation": "none",
+        "device_profile": "legacy-9x",
+        "id": "office97-on-win95",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "office97.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Microsoft Office 97",
+        "notes": "Historical reference only; grading is manual.",
+        "released": "1996-11",
+        "requires": [
+          "win95-osr2"
+        ],
+        "resources": {
+          "cpu": 1,
+          "disk": "6GiB",
+          "memory": "256MiB"
+        },
+        "support": "eol",
+        "tags": [
+          "legacy",
+          "dos-era"
+        ]
+      },
+      {
+        "automation": "none",
+        "device_profile": "legacy-9x",
+        "id": "office2000-on-win98",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "office2000.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Microsoft Office 2000",
+        "notes": "Manual grading; useful for \"install from a corporate administrative point\".",
+        "released": "1999-06",
+        "requires": [
+          "win98se"
+        ],
+        "resources": {
+          "cpu": 1,
+          "disk": "8GiB",
+          "memory": "256MiB"
+        },
+        "support": "eol",
+        "tags": [
+          "legacy"
+        ]
+      },
+      {
+        "automation": "winrm-ps2",
+        "device_profile": "legacy-xp",
+        "id": "office-xp-on-win2000",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "officexp.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Microsoft Office XP",
+        "notes": "First Office with a usable crash-recovery workflow; Outlook profile repairs.",
+        "released": "2001-05",
+        "requires": [
+          "win2000-pro"
+        ],
+        "resources": {
+          "cpu": 1,
+          "disk": "12GiB",
+          "memory": "1GiB"
+        },
+        "support": "eol",
+        "tags": [
+          "legacy",
+          "outlook"
+        ]
+      },
+      {
+        "automation": "winrm-ps2",
+        "device_profile": "legacy-xp",
+        "id": "office2003-on-xp",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "office2003.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Microsoft Office 2003 Professional",
+        "notes": "The estate most legacy-support tickets still reference.",
+        "released": "2003-10",
+        "requires": [
+          "win-xp-sp3"
+        ],
+        "resources": {
+          "cpu": 1,
+          "disk": "20GiB",
+          "memory": "2GiB"
+        },
+        "support": "eol",
+        "tags": [
+          "legacy",
+          "outlook",
+          "common"
+        ]
+      },
+      {
+        "automation": "winrm-ps2",
+        "id": "office2007-on-vista",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "office2007.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Microsoft Office 2007 Enterprise",
+        "notes": "Ribbon-era file-format conversion issues.",
+        "released": "2007-01",
+        "requires": [
+          "win-vista-sp2"
+        ],
+        "resources": {
+          "cpu": 2,
+          "disk": "30GiB",
+          "memory": "2GiB"
+        },
+        "support": "eol",
+        "tags": [
+          "ribbon",
+          "docx"
+        ]
+      },
+      {
+        "automation": "winrm-ps51",
+        "id": "office2010-on-win7",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "office2010.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Microsoft Office 2010 Professional Plus",
+        "notes": "Volume activation and KMS exercises.",
+        "released": "2010-05",
+        "requires": [
+          "win7-sp1"
+        ],
+        "resources": {
+          "cpu": 2,
+          "disk": "40GiB",
+          "memory": "3GiB"
+        },
+        "support": "eol",
+        "tags": [
+          "common",
+          "outlook",
+          "activation"
+        ]
+      },
+      {
+        "automation": "winrm-ps51",
+        "id": "office2013-on-win81",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "office2013.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Microsoft Office 2013 Professional Plus",
+        "notes": "Click-to-run vs MSI comparison exercises.",
+        "released": "2013-01",
+        "requires": [
+          "win81"
+        ],
+        "resources": {
+          "cpu": 2,
+          "disk": "40GiB",
+          "memory": "4GiB"
+        },
+        "support": "eol",
+        "tags": [
+          "click-to-run-era"
+        ]
+      },
+      {
+        "automation": "agent",
+        "device_profile": "modern",
+        "id": "office2016-on-win10",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "office2016.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Microsoft Office 2016 Professional Plus",
+        "notes": "Good default Office scenario platform.",
+        "released": "2015-09",
+        "requires": [
+          "win10-22h2"
+        ],
+        "resources": {
+          "cpu": 4,
+          "disk": "64GiB",
+          "memory": "6GiB"
+        },
+        "support": "extended",
+        "tags": [
+          "common",
+          "outlook"
+        ]
+      },
+      {
+        "automation": "agent",
+        "device_profile": "modern",
+        "id": "office2019-on-win10",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "office2019.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Microsoft Office 2019 Professional Plus",
+        "notes": "Requires a licensed volume or retail key at image build time.",
+        "released": "2018-09",
+        "requires": [
+          "win10-22h2"
+        ],
+        "resources": {
+          "cpu": 4,
+          "disk": "64GiB",
+          "memory": "6GiB"
+        },
+        "support": "extended",
+        "tags": [
+          "common"
+        ]
+      },
+      {
+        "automation": "agent",
+        "device_profile": "modern",
+        "id": "office2021-on-win11",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "office2021-ltsc.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Microsoft Office LTSC 2021",
+        "notes": "LTSC channel; the supported perpetual release.",
+        "released": "2021-10",
+        "requires": [
+          "win11-24h2"
+        ],
+        "resources": {
+          "cpu": 4,
+          "disk": "64GiB",
+          "memory": "8GiB"
+        },
+        "support": "supported",
+        "tags": [
+          "ltsc",
+          "supported"
+        ]
+      },
+      {
+        "automation": "agent",
+        "device_profile": "modern",
+        "id": "office2024-on-win11",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "office2024-ltsc.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Microsoft Office LTSC 2024",
+        "notes": "Newest perpetual release.",
+        "released": "2024-09",
+        "requires": [
+          "win11-24h2"
+        ],
+        "resources": {
+          "cpu": 4,
+          "disk": "64GiB",
+          "memory": "8GiB"
+        },
+        "support": "supported",
+        "tags": [
+          "ltsc",
+          "newest"
+        ]
+      },
+      {
+        "automation": "agent",
+        "device_profile": "modern",
+        "id": "m365-apps-on-win11",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "m365-apps-c2r.zip",
+          "kind": "archive",
+          "notes": "Deployment Tool download from your tenant; OnTrak never fetches it.",
+          "source": "operator"
+        },
+        "name": "Microsoft 365 Apps for enterprise",
+        "notes": "Click-to-run with the Office Deployment Tool; the ordinary current-workplace platform.",
+        "released": "2017-07",
+        "requires": [
+          "win11-24h2"
+        ],
+        "resources": {
+          "cpu": 4,
+          "disk": "64GiB",
+          "memory": "8GiB"
+        },
+        "support": "supported",
+        "tags": [
+          "subscription",
+          "newest"
+        ]
+      }
+    ],
+    "era": "1997-present",
+    "family": "microsoft-office",
+    "group": "office",
+    "label": "Microsoft Office"
+  },
+  "windows-desktop.yaml": {
+    "defaults": {
+      "family": "windows",
+      "kind": "vm",
+      "resources": {
+        "cpu": 2,
+        "disk": "48GiB",
+        "memory": "4GiB"
+      },
+      "scenario_families": [
+        "hardware",
+        "software",
+        "network",
+        "os",
+        "security"
+      ]
+    },
+    "description": "Every Windows desktop release from Windows 95 to Windows 11. Builders: `incus-windows` drives the unattended install used for Windows 10/11 (virtio, WinRM, the Incus agent); `answer-file` renders our own autounattend.xml for Vista-8.1 and XP/2000; `manual` means the operator installs once by hand and publishes the image \u2014 unavoidable before Windows 2000, which has no answer-file automation worth relying on.\n",
+    "entries": [
+      {
+        "automation": "none",
+        "device_profile": "legacy-9x",
+        "id": "win95-osr2",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "win95-osr2.iso",
+          "kind": "iso",
+          "notes": "Retail/OEM media; the publisher no longer distributes it.",
+          "source": "operator"
+        },
+        "name": "Windows 95 OSR2",
+        "notes": "Needs a real IDE/PCI-era device profile and a FAT16 disk under 2 GB. No guest automation exists, so scenarios on this platform are instructor-observed: Device Manager conflicts, Control Panel, config.sys/autoexec.bat editing.\n",
+        "released": "1996-08",
+        "resources": {
+          "cpu": 1,
+          "disk": "4GiB",
+          "memory": "256MiB"
+        },
+        "support": "eol",
+        "tags": [
+          "dos-era",
+          "legacy-hardware"
+        ]
+      },
+      {
+        "automation": "none",
+        "device_profile": "legacy-9x",
+        "id": "win98se",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "win98se.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Windows 98 Second Edition",
+        "notes": "Good for driver-conflict and startup-configuration exercises. Grading is manual.",
+        "released": "1999-05",
+        "resources": {
+          "cpu": 1,
+          "disk": "8GiB",
+          "memory": "256MiB"
+        },
+        "support": "eol",
+        "tags": [
+          "dos-era",
+          "legacy-hardware"
+        ]
+      },
+      {
+        "automation": "none",
+        "device_profile": "legacy-9x",
+        "id": "win-me",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "winme.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Windows Millennium Edition",
+        "notes": "The first consumer Windows with System Restore, which makes it the classic \"roll back a bad driver\" scenario. No automation; grading is manual.\n",
+        "released": "2000-09",
+        "resources": {
+          "cpu": 1,
+          "disk": "8GiB",
+          "memory": "512MiB"
+        },
+        "support": "eol",
+        "tags": [
+          "dos-era",
+          "system-restore"
+        ]
+      },
+      {
+        "automation": "none",
+        "device_profile": "legacy-xp",
+        "edition": "SP6a",
+        "id": "win-nt4-workstation",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "winnt4wks-sp6a.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Windows NT 4.0 Workstation",
+        "notes": "Permission and profile exercises (NTFS ACLs, local groups). Manual grading.",
+        "released": "1996-07",
+        "resources": {
+          "cpu": 1,
+          "disk": "8GiB",
+          "memory": "512MiB"
+        },
+        "support": "eol",
+        "tags": [
+          "nt-era",
+          "permissions"
+        ]
+      },
+      {
+        "automation": "winrm-ps2",
+        "device_profile": "legacy-xp",
+        "edition": "SP4",
+        "id": "win2000-pro",
+        "install": {
+          "builder": "answer-file",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "win2000pro-sp4.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Windows 2000 Professional",
+        "notes": "Answer-file setup is possible but fragile; this build expects an operator-built image. PowerShell 2.0 can be added for automated grading.\n",
+        "released": "2000-02",
+        "resources": {
+          "cpu": 1,
+          "disk": "16GiB",
+          "memory": "1GiB"
+        },
+        "support": "eol",
+        "tags": [
+          "nt-era"
+        ]
+      },
+      {
+        "automation": "winrm-ps2",
+        "device_profile": "legacy-xp",
+        "edition": "SP3",
+        "id": "win-xp-sp3",
+        "install": {
+          "builder": "answer-file",
+          "recipe": "iso-unattended",
+          "unattended": "winnt.sif"
+        },
+        "media": {
+          "filename": "winxp-sp3.iso",
+          "kind": "iso",
+          "sha256": "",
+          "source": "operator"
+        },
+        "name": "Windows XP Professional",
+        "notes": "Still the reference for \"legacy environment\" support tickets. Enable Remote Desktop and install PowerShell 2.0 at image build time so scenarios can be graded; without that, a scenario must mark itself manual.\n",
+        "released": "2001-10",
+        "resources": {
+          "cpu": 2,
+          "disk": "24GiB",
+          "memory": "2GiB"
+        },
+        "support": "eol",
+        "tags": [
+          "nt-era",
+          "classic"
+        ]
+      },
+      {
+        "automation": "winrm-ps2",
+        "device_profile": "vista-era",
+        "edition": "SP2",
+        "id": "win-vista-sp2",
+        "install": {
+          "builder": "answer-file",
+          "recipe": "iso-unattended",
+          "unattended": "autounattend.xml"
+        },
+        "media": {
+          "filename": "vista-sp2.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Windows Vista Business",
+        "notes": "UAC and driver-store exercises. Vista needs VirtIO drivers during setup.",
+        "released": "2007-01",
+        "resources": {
+          "cpu": 2,
+          "disk": "32GiB",
+          "memory": "2GiB"
+        },
+        "support": "eol",
+        "tags": [
+          "uac",
+          "driver-store"
+        ]
+      },
+      {
+        "automation": "winrm-ps51",
+        "device_profile": "vista-era",
+        "edition": "SP1",
+        "id": "win7-sp1",
+        "install": {
+          "builder": "answer-file",
+          "recipe": "iso-unattended",
+          "unattended": "autounattend.xml"
+        },
+        "media": {
+          "filename": "win7-sp1-enterprise.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Windows 7 Enterprise",
+        "notes": "The most common legacy estate in the field. PowerShell 5.1 needs the WMF 5.1 package at image build time.",
+        "released": "2009-10",
+        "resources": {
+          "cpu": 2,
+          "disk": "40GiB",
+          "memory": "3GiB"
+        },
+        "support": "eol",
+        "tags": [
+          "common",
+          "wsus"
+        ]
+      },
+      {
+        "automation": "winrm-ps51",
+        "device_profile": "vista-era",
+        "id": "win81",
+        "install": {
+          "builder": "answer-file",
+          "recipe": "iso-unattended",
+          "unattended": "autounattend.xml"
+        },
+        "media": {
+          "filename": "win81-ent.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Windows 8.1 Enterprise",
+        "notes": "Fast boot and WinRE exercises.",
+        "released": "2013-10",
+        "resources": {
+          "cpu": 2,
+          "disk": "40GiB",
+          "memory": "4GiB"
+        },
+        "support": "eol",
+        "tags": [
+          "modern"
+        ]
+      },
+      {
+        "automation": "agent",
+        "device_profile": "modern",
+        "edition": "22H2",
+        "id": "win10-22h2",
+        "install": {
+          "builder": "incus-windows",
+          "recipe": "iso-unattended",
+          "target": "win10"
+        },
+        "media": {
+          "filename": "Win10_22H2_English_x64.iso",
+          "kind": "iso",
+          "notes": "Microsoft evaluation media; 90-day activation. Replace with your own licensed media for long-lived images.",
+          "source": "free",
+          "url": "https://software-download.microsoft.com/download/Win10_22H2_English_x64.iso"
+        },
+        "name": "Windows 10 Enterprise",
+        "notes": "The default student platform. Built by antifob/incus-windows (virtio drivers, WinRM, Incus agent).",
+        "released": "2022-10",
+        "resources": {
+          "cpu": 4,
+          "disk": "64GiB",
+          "memory": "6GiB"
+        },
+        "support": "extended",
+        "tags": [
+          "common",
+          "primary"
+        ]
+      },
+      {
+        "automation": "agent",
+        "device_profile": "modern",
+        "edition": "24H2",
+        "id": "win11-24h2",
+        "install": {
+          "builder": "incus-windows",
+          "recipe": "iso-unattended",
+          "target": "win11"
+        },
+        "media": {
+          "filename": "Win11_24H2_English_x64.iso",
+          "kind": "iso",
+          "notes": "Microsoft evaluation media; 90-day activation.",
+          "source": "free",
+          "url": "https://software-download.microsoft.com/download/Win11_24H2_English_x64.iso"
+        },
+        "name": "Windows 11 Enterprise",
+        "notes": "Requires Secure Boot and a virtual TPM, which the `modern` device profile provides.",
+        "released": "2024-10",
+        "resources": {
+          "cpu": 4,
+          "disk": "64GiB",
+          "memory": "8GiB"
+        },
+        "support": "supported",
+        "tags": [
+          "common",
+          "primary",
+          "tpm"
+        ]
+      }
+    ],
+    "era": "1995-present",
+    "family": "windows",
+    "group": "windows-desktop",
+    "label": "Windows desktop"
+  },
+  "windows-server.yaml": {
+    "defaults": {
+      "family": "windows",
+      "kind": "vm",
+      "resources": {
+        "cpu": 2,
+        "disk": "60GiB",
+        "memory": "4GiB"
+      },
+      "scenario_families": [
+        "hardware",
+        "software",
+        "network",
+        "os",
+        "security"
+      ]
+    },
+    "description": "Server releases for AD/DNS/DHCP/gpo, file-service and IIS exercises. Server guests are the natural home for the network and security scenario families, because DNS and DHCP can be broken *at the server* rather than on the client.\n",
+    "entries": [
+      {
+        "automation": "none",
+        "device_profile": "legacy-xp",
+        "edition": "SP6a",
+        "id": "win-nt4-server",
+        "install": {
+          "builder": "manual",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "winnt4srv-sp6a.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Windows NT 4.0 Server",
+        "notes": "Historical NT domain exercises. Manual grading only.",
+        "released": "1996-07",
+        "resources": {
+          "cpu": 1,
+          "disk": "12GiB",
+          "memory": "512MiB"
+        },
+        "support": "eol",
+        "tags": [
+          "nt-era",
+          "legacy-domain"
+        ]
+      },
+      {
+        "automation": "winrm-ps2",
+        "device_profile": "legacy-xp",
+        "edition": "SP4",
+        "id": "win2000-server",
+        "install": {
+          "builder": "answer-file",
+          "recipe": "manual"
+        },
+        "media": {
+          "filename": "win2000srv-sp4.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Windows 2000 Server",
+        "notes": "Active Directory and DFS at their earliest usable form.",
+        "released": "2000-02",
+        "resources": {
+          "cpu": 2,
+          "disk": "20GiB",
+          "memory": "1GiB"
+        },
+        "support": "eol",
+        "tags": [
+          "nt-era",
+          "active-directory"
+        ]
+      },
+      {
+        "automation": "winrm-ps2",
+        "device_profile": "legacy-xp",
+        "edition": "Standard",
+        "id": "win2003-r2",
+        "install": {
+          "builder": "answer-file",
+          "recipe": "iso-unattended",
+          "unattended": "winnt.sif"
+        },
+        "media": {
+          "filename": "win2003r2.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Windows Server 2003 R2",
+        "notes": "IIS 6 and group-policy exercises. Install PowerShell 2.0 for grading.",
+        "released": "2005-12",
+        "resources": {
+          "cpu": 2,
+          "disk": "24GiB",
+          "memory": "2GiB"
+        },
+        "support": "eol",
+        "tags": [
+          "active-directory",
+          "iis6"
+        ]
+      },
+      {
+        "automation": "winrm-ps51",
+        "device_profile": "vista-era",
+        "edition": "Standard",
+        "id": "win2008-r2",
+        "install": {
+          "builder": "answer-file",
+          "recipe": "iso-unattended",
+          "unattended": "autounattend.xml"
+        },
+        "media": {
+          "filename": "win2008r2.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Windows Server 2008 R2",
+        "notes": "The classic DNS/DHCP/GPO lab platform, still widely deployed.",
+        "released": "2009-10",
+        "resources": {
+          "cpu": 2,
+          "disk": "60GiB",
+          "memory": "4GiB"
+        },
+        "support": "eol",
+        "tags": [
+          "active-directory",
+          "dns",
+          "common"
+        ]
+      },
+      {
+        "automation": "winrm-ps51",
+        "device_profile": "vista-era",
+        "edition": "Standard",
+        "id": "win2012-r2",
+        "install": {
+          "builder": "answer-file",
+          "recipe": "iso-unattended",
+          "unattended": "autounattend.xml"
+        },
+        "media": {
+          "filename": "win2012r2.iso",
+          "kind": "iso",
+          "source": "operator"
+        },
+        "name": "Windows Server 2012 R2",
+        "notes": "Server Core and full-desktop variants are both useful; this entry is the full install.",
+        "released": "2013-10",
+        "resources": {
+          "cpu": 2,
+          "disk": "60GiB",
+          "memory": "4GiB"
+        },
+        "support": "eol",
+        "tags": [
+          "active-directory",
+          "dns",
+          "dhcp"
+        ]
+      },
+      {
+        "automation": "agent",
+        "device_profile": "modern",
+        "edition": "Standard",
+        "id": "win2016",
+        "install": {
+          "builder": "incus-windows",
+          "recipe": "iso-unattended",
+          "target": "win2016"
+        },
+        "media": {
+          "filename": "Windows_Server_2016_Eval.iso",
+          "kind": "iso",
+          "notes": "Microsoft evaluation media (180 days).",
+          "source": "free",
+          "url": "https://software-download.microsoft.com/download/Windows_Server_2016_Evaluation.iso"
+        },
+        "name": "Windows Server 2016",
+        "notes": "Recommended general-purpose server platform.",
+        "released": "2016-10",
+        "support": "extended",
+        "tags": [
+          "dns",
+          "dhcp",
+          "gpo",
+          "common"
+        ]
+      },
+      {
+        "automation": "agent",
+        "device_profile": "modern",
+        "edition": "Standard",
+        "id": "win2019",
+        "install": {
+          "builder": "incus-windows",
+          "recipe": "iso-unattended",
+          "target": "win2019"
+        },
+        "media": {
+          "filename": "Windows_Server_2019_Eval.iso",
+          "kind": "iso",
+          "notes": "Microsoft evaluation media (180 days).",
+          "source": "free",
+          "url": "https://software-download.microsoft.com/download/Windows_Server_2019_Evaluation.iso"
+        },
+        "name": "Windows Server 2019",
+        "notes": "Widely deployed; good default for AD/DNS scenarios.",
+        "released": "2018-10",
+        "support": "extended",
+        "tags": [
+          "dns",
+          "dhcp",
+          "gpo",
+          "common",
+          "iis"
+        ]
+      },
+      {
+        "automation": "agent",
+        "device_profile": "modern",
+        "edition": "Standard",
+        "id": "win2022",
+        "install": {
+          "builder": "incus-windows",
+          "recipe": "iso-unattended",
+          "target": "win2022"
+        },
+        "media": {
+          "filename": "Windows_Server_2022_Eval.iso",
+          "kind": "iso",
+          "notes": "Microsoft evaluation media (180 days).",
+          "source": "free",
+          "url": "https://software-download.microsoft.com/download/Windows_Server_2022_Evaluation.iso"
+        },
+        "name": "Windows Server 2022",
+        "notes": "Current-generation server platform.",
+        "released": "2021-08",
+        "support": "supported",
+        "tags": [
+          "dns",
+          "dhcp",
+          "gpo",
+          "iis",
+          "common"
+        ]
+      },
+      {
+        "automation": "agent",
+        "device_profile": "modern",
+        "edition": "Standard",
+        "id": "win2025",
+        "install": {
+          "builder": "incus-windows",
+          "recipe": "iso-unattended",
+          "target": "win2025"
+        },
+        "media": {
+          "filename": "Windows_Server_2025_Eval.iso",
+          "kind": "iso",
+          "notes": "Microsoft evaluation media (180 days).",
+          "source": "free",
+          "url": "https://software-download.microsoft.com/download/Windows_Server_2025_Evaluation.iso"
+        },
+        "name": "Windows Server 2025",
+        "notes": "Newest server platform; useful for \"what changed\" exercises.",
+        "released": "2024-11",
+        "support": "supported",
+        "tags": [
+          "dns",
+          "dhcp",
+          "gpo",
+          "iis",
+          "newest"
+        ]
+      }
+    ],
+    "era": "1996-present",
+    "family": "windows",
+    "group": "windows-server",
+    "label": "Windows Server"
+  }
+}
