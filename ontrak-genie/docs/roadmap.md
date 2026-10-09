@@ -156,12 +156,12 @@ happens to be in the repo.
   estate's wildcard certificate (NPM hosts 195 and 197, certificates
   `*.ontrak.innotel.us` and `*.innotel.us`), and both sit behind the same
   Authentik sign-in as the rest of the estate.
-- `[x]` **A published image and a stack entry.** Genie is `0.2.0` and publishes to
+- `[x]` **A published image and a stack entry.** Genie publishes to
   `ghcr.io/innotelinc/ontrak-genie` as its `runtime` stage — one image and no
   `-migrate` twin, because it has no database — from the same `publish.yml` /
   `scripts/publish-images.sh` list the other products use. Beside the product
   compose sits `docker-compose.prod.yml`, the pull-only overlay
-  (`make genie-prod-up`, `ONTRAK_GENIE_IMAGE_TAG`), and the family stack's
+  (`make genie-prod-up`, `ONTRAK_IMAGE_TAG`), and the family stack's
   `genie-app` entry names the same version, so a deploy is a pull rather than a
   build.
 - `[x]` **Model-chain health on the deployment.** The chain is pinned in the

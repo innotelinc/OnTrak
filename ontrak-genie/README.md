@@ -153,8 +153,8 @@ repo:
   the server starts, so `.env` is a reference file rather than the store.
 - **Delivery** is a pull: the image publishes to
   `ghcr.io/innotelinc/ontrak-genie`, and `docker-compose.prod.yml` beside the
-  product compose names a version instead of building one
-  (`make genie-prod-up`, `ONTRAK_GENIE_IMAGE_TAG`).
+  product compose names a release instead of building one
+  (`make genie-prod-up`, `ONTRAK_IMAGE_TAG`).
 
 ## License
 

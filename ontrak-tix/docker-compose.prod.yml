@@ -18,9 +18,12 @@
 #     and `build: !reset null` removes the build context the development file
 #     declares, so a deployment needs no source tree, no toolchain and no minutes
 #     of CPU on the host — it fetches the artifact that was built and tested once,
-#     somewhere with the memory to do it. `ONTRAK_TIX_IMAGE_TAG` chooses the
-#     release (defaulting to the version this file was written against); set it in
-#     `.env.production` to move the deployment. Both the app and the schema push
+#     somewhere with the memory to do it. `ONTRAK_IMAGE_TAG` chooses the release, and
+#     it is one variable for all four product overlays, because a release publishes
+#     a single version for all of them. It defaults to `latest` — the build the
+#     last release published — and setting it in `.env.production` holds a
+#     deployment on one version instead. There is no per-product default left to
+#     drift out of step. Both the app and the schema push
 #     need an image, because the push runs `prisma db push` in the builder stage,
 #     and that stage is not in the app image by design.
 #   * The database is no longer published. Only the app needs it, and it reaches
@@ -51,7 +54,7 @@ services:
 
   migrate:
     restart: "no"
-    image: ghcr.io/innotelinc/ontrak-tix-migrate:${ONTRAK_TIX_IMAGE_TAG:-0.1.0}
+    image: ghcr.io/innotelinc/ontrak-tix-migrate:${ONTRAK_IMAGE_TAG:-latest}
     build: !reset null
     pull_policy: always
     environment:
@@ -59,7 +62,7 @@ services:
 
   app:
     restart: always
-    image: ghcr.io/innotelinc/ontrak-tix:${ONTRAK_TIX_IMAGE_TAG:-0.1.0}
+    image: ghcr.io/innotelinc/ontrak-tix:${ONTRAK_IMAGE_TAG:-latest}
     build: !reset null
     pull_policy: always
     # The whole configuration comes from the production file, exactly as `.env`
@@ -81,7 +84,7 @@ services:
     # The builder-stage image the `migrate` service uses above: the demo tenant is
     # created by a script in the source tree, which the running app image
     # deliberately does not carry. Reused rather than published as a third image.
-    image: ghcr.io/innotelinc/ontrak-tix-migrate:${ONTRAK_TIX_IMAGE_TAG:-0.1.0}
+    image: ghcr.io/innotelinc/ontrak-tix-migrate:${ONTRAK_IMAGE_TAG:-latest}
     build: !reset null
     pull_policy: always
     env_file: !override [.env.production]

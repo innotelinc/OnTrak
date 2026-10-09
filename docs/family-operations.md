@@ -174,9 +174,12 @@ name a published image and reset the build context, so starting one is a pull:
 make sentinel-prod-up                    # or prod-up / tix-prod-up / genie-prod-up
 ```
 
-`ONTRAK_TRAINING_IMAGE_TAG`, `ONTRAK_TIX_IMAGE_TAG`, `ONTRAK_SENTINEL_IMAGE_TAG`
-and `ONTRAK_GENIE_IMAGE_TAG` in that product's `.env.production` choose the release;
-each defaults to the version its overlay was written against. Images come from `ghcr.io/innotelinc/ontrak-*`,
+`ONTRAK_IMAGE_TAG` in that product's `.env.production` chooses the release. It is one
+variable rather than four, because a release publishes a single version for every
+image — four per-product defaults could only drift apart, and did: Genie's overlay
+was left pinning `0.2.0` while the others pinned `0.1.0`, a combination no release
+could satisfy. It defaults to `latest`, the build the last release published.
+Images come from `ghcr.io/innotelinc/ontrak-*`,
 published either by `make publish-images` or by cutting a release, which runs
 `publish.yml`. So a deployment needs registry access and a credential
 (`gh auth token | docker login ghcr.io -u <user> --password-stdin`) rather than a
@@ -192,7 +195,8 @@ beside it with nothing on screen showing it. So every build also stamps the comm
 is the one tag a later build cannot overwrite. `make images`, `make family-image`
 and the per-product `-images` targets apply it as part of the build rather than
 leaving it to be remembered. To pin a development stack to one build instead, set
-the same variable the overlays use — `ONTRAK_GENIE_IMAGE_TAG=0.2.0 make family-image`.
+that product's development variable — `ONTRAK_GENIE_IMAGE_TAG=sha-<commit> make
+family-image`. The overlays no longer share it: they read `ONTRAK_IMAGE_TAG`.
 
 One thing to know before publishing by hand: the migration image is **separate and
 required**. Each migration runs in its Dockerfile's `builder` stage — the stage that

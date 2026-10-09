@@ -41,9 +41,9 @@ cd <stack> && docker compose -f docker-compose.all.yml up -d --no-deps genie-app
 ```
 
 The image is `ghcr.io/innotelinc/ontrak-genie:<tag>`, one image and no `-migrate`
-twin — there is no database to migrate. `ONTRAK_GENIE_IMAGE_TAG` picks the tag;
-the group compose names the same version, so a deploy is a pull rather than a
-build.
+twin — there is no database to migrate. `ONTRAK_IMAGE_TAG` picks the tag, the same
+variable the other three overlays read; it defaults to `latest`, the build the last
+release published, so a deploy is a pull rather than a build.
 
 **A deploy that stops instead of starting is the Vault resolver working.** The
 entrypoint resolves every `vault://` reference before the server runs, and a
@@ -86,7 +86,7 @@ trusting the exit code.
 **Pulled** — the family stack, which takes a tag:
 
 ```bash
-ONTRAK_GENIE_IMAGE_TAG=<previous-tag> make genie-prod-up
+ONTRAK_IMAGE_TAG=<previous-tag> make genie-prod-up
 ```
 
 A rollback does **not** touch three things, and each of them is a reason not to

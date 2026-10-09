@@ -126,7 +126,7 @@ cat <<DONE
 ==> done
 Run on a deployment, in the product's own directory:
 
-  ONTRAK_<PRODUCT>_IMAGE_TAG=<version>   # e.g. ONTRAK_SENTINEL_IMAGE_TAG=0.1.0
+  ONTRAK_IMAGE_TAG=<version>   # one variable; every product overlay reads it
 
 then \`make <product>-prod-up\`, which pulls these images instead of building them.
 DONE

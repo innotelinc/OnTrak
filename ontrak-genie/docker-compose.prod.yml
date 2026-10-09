@@ -18,9 +18,12 @@
 #     `build: !reset null` removes the build context the development file
 #     declares, so a deployment needs no source tree, no Node toolchain and no
 #     minutes of CPU on the host — it fetches the artifact that was built and
-#     tested once, somewhere with the memory to do it. `ONTRAK_GENIE_IMAGE_TAG`
-#     chooses the release (defaulting to the version this file was written
-#     against); set it in `.env.production` to move the deployment.
+#     tested once, somewhere with the memory to do it. `ONTRAK_IMAGE_TAG` chooses
+#     the release, and it is one variable for all four product overlays, because a
+#     release publishes a single version for all of them. It defaults to `latest`
+#     — the build the last release published — and setting it in
+#     `.env.production` holds a deployment on one version instead. There is no
+#     per-product default left to drift out of step.
 #   * The workspace and the data directory are **named volumes**. Development
 #     binds `./workspace` beside the compose file, which only works where the
 #     source tree is; a deployment has no tree to bind, and the chats and the
@@ -46,7 +49,7 @@
 services:
   agent:
     restart: always
-    image: ghcr.io/innotelinc/ontrak-genie:${ONTRAK_GENIE_IMAGE_TAG:-0.2.0}
+    image: ghcr.io/innotelinc/ontrak-genie:${ONTRAK_IMAGE_TAG:-latest}
     build: !reset null
     pull_policy: always
     env_file: !override [.env.production]
