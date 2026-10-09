@@ -21,7 +21,16 @@
 # building the migration on the host, which is the thing pulling was meant to stop.
 # Sentinel is here rather than only in the host-built stack because its overlay
 # pulls too. `scripts/publish-images.sh` mirrors this list exactly, so a release cut
-# here and an image pushed by hand are the same artifact under the same name.
+# here and an image pushed by hand are the same artifact under the same name —
+# but a hand-pushed one is not linked to this repository, and that is why the
+# registry login below uses GHCR_TOKEN rather than GITHUB_TOKEN. A
+# repository-scoped token is refused for an unlinked package with
+# `denied: permission_denied: write_package`, which is what left five of these
+# seven images unpublishable on the v0.1.0 release. The PAT owns the packages, so
+# it can push to the linked and the unlinked ones alike. Linking each package to
+# this repository (package settings → Manage Actions access) is the eventual fix
+# and would let GITHUB_TOKEN take over again; until then this secret is what
+# publishes, and removing it re-breaks the five.
 #
 # A release tags them `latest` plus the version and its major.minor; a manual
 # run tags them by commit, so it can prove the pipeline without minting a
@@ -37,9 +46,8 @@ on:
 
 permissions:
   contents: read
-  # The only elevated permission any workflow here asks for, and it is scoped to
-  # this job: pushing to GHCR needs `packages: write`.
-  packages: write
+  # No `packages: write`: the registry login uses the GHCR_TOKEN PAT, so this
+  # job no longer needs a package-scoped GITHUB_TOKEN.
 
 concurrency:
   group: publish-${{ github.ref }}
@@ -91,8 +99,10 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          # The PAT's owner, not the actor: the token is what authorises the
+          # push, and it has to be presented as the account that owns it.
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_TOKEN }}
 
       - name: Work out the tags
         id: meta
