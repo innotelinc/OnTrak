@@ -766,7 +766,8 @@ test("incus: a detached command is not waited on, and its exit is not raised", a
   const runner = new ScriptedRunner([{ code: 1, stdout: "", stderr: "detached" }]);
   const client = new IncusClient(SETTINGS, { runner });
   const result = await client.execIn("x", ["/bin/true"], { detach: true });
-  assert.equal(result.code, 1);
+  // `returncode`, the guest transport contract every driver reads — see GuestExecOutput.
+  assert.equal(result.returncode, 1);
   assert.deepEqual(firstCall(runner).argv, ["incus", "exec", "x", "-T", "--mode=detach", "--", "/bin/true"]);
 });
 
@@ -775,7 +776,7 @@ test("incus: a graded check can read its own failure", async () => {
   const runner = new ScriptedRunner([{ code: 3, stdout: "###ONTRAK-JSON-BEGIN###{}###ONTRAK-JSON-END###", stderr: "" }]);
   const client = new IncusClient(SETTINGS, { runner });
   const result = await client.execIn("x", ["powershell", "-EncodedCommand", "AA=="], { check: false, timeout: 90 });
-  assert.equal(result.code, 3);
+  assert.equal(result.returncode, 3);
   assert.equal(firstCall(runner).timeoutSeconds, 90);
 });
 

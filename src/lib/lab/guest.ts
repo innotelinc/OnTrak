@@ -177,13 +177,17 @@ export interface GuestExecClient {
   guestShell(
     instance: string,
     script: string,
-    options?: { timeoutSeconds?: number; user?: string | null },
+    // `timeout`, `user` — the real client's own spelling (`incus.ts`). Not
+    // `timeoutSeconds`: that name belongs to the process runner seam below, and a
+    // driver handing `timeoutSeconds` to a client that reads `timeout` gets the client's
+    // default instead, so a scenario's timeout would be silently ignored.
+    options?: { timeout?: number; user?: string | null },
   ): Promise<GuestCommandOutput>;
   /** Run an argv inside a guest (this is how Windows is reached, via the agent). */
   execIn(
     instance: string,
     argv: readonly string[],
-    options?: { timeoutSeconds?: number },
+    options?: { timeout?: number },
   ): Promise<GuestCommandOutput>;
 }
 
@@ -625,7 +629,7 @@ export class IncusShellDriver extends ShellRunner {
     }
     const started = this.clock.now();
     const proc = await client.guestShell(instance, script, {
-      timeoutSeconds: options.timeoutSeconds ?? 120,
+      timeout: options.timeoutSeconds ?? 120,
       user: this.settings.linuxUser || null,
     });
     return newCommandResult(proc.returncode, {
@@ -706,7 +710,7 @@ export class IncusExecDriver extends BaseDriver {
       );
     }
     try {
-      const proc = await client.execIn(instance, argv, { timeoutSeconds });
+      const proc = await client.execIn(instance, argv, { timeout: timeoutSeconds });
       return newCommandResult(proc.returncode, {
         stdout: proc.stdout,
         stderr: proc.stderr,

@@ -109,14 +109,14 @@ test("memory: the readiness probe is answered and nothing else is", async () => 
 
   // The one thing the lifecycle genuinely needs from a machine with no guest.
   const ready = await client.guestShell("a", "echo ontrak-ready; exit 0");
-  assert.equal(ready.code, 0);
+  assert.equal(ready.returncode, 0);
   assert.match(ready.stdout, /ontrak-ready/);
 
   // Anything else is empty on purpose: a script run through a fake hypervisor graded
   // nothing, so a grading call must see "no grading payload" rather than a pass.
   const other = await client.guestShell("a", "Get-Date");
   assert.equal(other.stdout, "");
-  assert.equal(other.code, 0);
+  assert.equal(other.returncode, 0);
   // The ledger keeps only the head of the script, as the Python double did.
   assert.deepEqual(client.calls.at(-1), ["guest_shell", "a", "Get-Date"]);
 });

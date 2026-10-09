@@ -63,6 +63,24 @@ export interface CommandResult {
   stderr: string;
 }
 
+/**
+ * What a guest-exec call returns.
+ *
+ * `returncode`, not `code`, and the difference is not cosmetic. This is the **guest
+ * transport contract** that `guest.ts` defines and every driver reads, mirroring the
+ * Python client's `CompletedProcess` usage; the client's own CLI result
+ * (`CommandResult`, above) keeps `code` for the hypervisor calls. A driver reading
+ * `returncode` from a result that carried `code` gets `undefined`, which is falsy — so
+ * a failing check would read as a passing one and a readiness probe would never
+ * succeed. Two shapes for two calls is fine; one shape borrowed for the other is how
+ * that happens, which is why this is a separate interface rather than a reuse.
+ */
+export interface GuestExecOutput {
+  returncode: number;
+  stdout: string;
+  stderr: string;
+}
+
 export interface Runner {
   run(
     argv: readonly string[],
@@ -611,7 +629,7 @@ export class IncusClient {
       input?: string | undefined;
       user?: string | null;
     } = {},
-  ): Promise<CommandResult> {
+  ): Promise<GuestExecOutput> {
     const args = ["exec", instance, "-T"];
     const uid = await this.uidArgument(instance, options.user);
     if (uid) args.push("--user", uid);
@@ -619,7 +637,8 @@ export class IncusClient {
     args.push("--");
     args.push(...command);
     const check = options.check == null ? !options.detach : options.check;
-    return this.run(args, { timeout: options.timeout ?? 60, check, input: options.input });
+    const result = await this.run(args, { timeout: options.timeout ?? 60, check, input: options.input });
+    return { returncode: result.code, stdout: result.stdout, stderr: result.stderr };
   }
 
   /**
@@ -667,7 +686,7 @@ export class IncusClient {
     instance: string,
     script: string,
     options: { timeout?: number; user?: string | null } = {},
-  ): Promise<CommandResult> {
+  ): Promise<GuestExecOutput> {
     return this.execIn(instance, ["bash", "-s"], {
       timeout: options.timeout ?? 120,
       check: false,

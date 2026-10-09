@@ -33,7 +33,13 @@
  * so a grading call still fails with "no grading payload" rather than passing.
  */
 
-import { IncusError, IncusNotFound, type CommandResult, type InstanceInfo } from "./incus";
+import {
+  IncusError,
+  IncusNotFound,
+  type CommandResult,
+  type GuestExecOutput,
+  type InstanceInfo,
+} from "./incus";
 
 const RUNNING = "RUNNING";
 const STOPPED = "STOPPED";
@@ -345,7 +351,7 @@ export class InMemoryIncus {
       input?: string | undefined;
       user?: string | null | undefined;
     } = {},
-  ): Promise<CommandResult> {
+  ): Promise<GuestExecOutput> {
     throw new IncusError([...command], 1, "the in-memory client has no guest agent");
   }
 
@@ -361,13 +367,13 @@ export class InMemoryIncus {
     instance: string,
     script: string,
     _options: { timeout?: number | undefined; user?: string | null | undefined } = {},
-  ): Promise<CommandResult> {
+  ): Promise<GuestExecOutput> {
     this.calls.push(["guest_shell", instance, script.slice(0, 120)]);
     if (!this.instances.has(instance)) {
       throw new IncusNotFound(["exec", instance], 1, "instance not found");
     }
     return {
-      code: 0,
+      returncode: 0,
       stdout: script.includes("ontrak-ready") ? "ontrak-ready\n" : "",
       stderr: "",
     };

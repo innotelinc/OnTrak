@@ -39,11 +39,11 @@ beside it. Module by module, with its disposition:
 | `lessons.py` | 348 | `src/lib/lab/lessons.ts` | 2b | **done** (its 7 lessons converted to `data/lessons.json`) |
 | `primitives.py` | 536 | `src/lib/lab/primitives.ts` | 2b | not started |
 | `generator.py` | 306 | `src/lib/lab/generator.ts` | 2b | not started |
-| `sessions.py` | 1638 | `src/lib/lab/sessions.ts` | 2b | not started |
-| `store.py` | 709 | Prisma models + `src/lib/lab/store.ts` | 2b | not started |
+| `sessions.py` | 1638 | `src/lib/lab/sessions.ts` | 2d | **not landed** — ported and reviewed, but four lifecycle behaviours disagree with the lab's; parked, see §2c |
+| `store.py` | 709 | `src/lib/lab/store.ts` (contract + in-memory) + Prisma models | 2c | **partial** — the contract and the in-memory store landed; the Postgres/Prisma implementation is 2d |
 | `tickets.py` | 534 | `src/lib/lab/tickets.ts` | 3 | not started |
 | `auth.py` + `oidc.py` | 73 + 325 | *not ported* — superseded | 3 | see §3 |
-| `demo.py` | 474 | `src/lib/lab/demo.ts` | 2 | not started |
+| `demo.py` | 474 | `src/lib/lab/demo.ts` | 2d | not started |
 | `portal/app.py` | 1101 | `src/app/(app)/lab/**` + `src/app/api/v1/lab/**` | 3 | not started |
 | `portal/admin.py` | 511 | `src/app/(app)/lab/admin/**` | 3 | not started |
 | `cli.py` | 1373 | `scripts/lab-*.ts` (`tsx`) | 4 | not started |
@@ -135,6 +135,40 @@ accepts `poolReady`/`templateReady` and **never reads them**, so `warm-pool` and
 `clone-template` are unreachable in the lab today (kept as-is and documented rather than
 quietly "fixed" in a port), and `Media.from_dict` lowercases the checksum, which the
 catalogue keeps doing because `media.ts` compares it exactly.
+
+### Stage 2c — the store's contract, and two real defects the composition exposed
+
+Two things landed, and one of them is worth more than the module it came with.
+
+**`store.ts`** is the lab's persistence as an interface plus `InMemoryLabStore`, the
+reference implementation the tests and the demo use (the Postgres/Prisma one is 2d, per
+§3/C3). Writing the tests for it found two defects in the store, both fixed at the cause
+rather than asserted around:
+
+- the event readers returned **insertion order** where the lab reads `ORDER BY id DESC` —
+  an audit trail shown backwards, and the lab's own suite asserts the direction;
+- `slice(-0)` is `slice(0)`, which returns the **whole array**, so a caller asking for
+  zero events was handed every event ever logged. `LIMIT 0` returned nothing.
+
+**The guest transport had never composed.** Three modules landed in stage 1 that were each
+internally consistent and wrong together: `guest.ts` defines the transport contract every
+driver reads (`returncode`, mirroring the Python's `CompletedProcess`), while `incus.ts`
+and `memory.ts` handed back a result carrying `code`. A driver reading `returncode` from it
+gets `undefined` — which is **falsy** — so a failing check would have read as a passing
+one and no readiness probe could ever succeed. The second half of the same seam: the
+driver interface named its timeout `timeoutSeconds` while the real client takes `timeout`,
+so every scenario timeout was silently replaced by the client's default. Both are fixed,
+with `GuestExecOutput` as the guest-exec shape and the reason stated on it, and the two
+`sessions.ts` declarations that had grown the invented shapes are gone with the file.
+
+**The session manager is ported but not landed.** `sessions.ts` (2,236 lines) and its
+18-test suite were written and reviewed, and **four lifecycle behaviours still disagree
+with the lab's**: the event sequence a provision writes, a Linux scenario landing in
+`error` instead of `ready` through the shell transport, a second `complete` not being
+refused, and the idle sweep recycling nothing. Each is a diagnosis against
+`sessions.py`, not a guess — so the file is parked at `/root/lab-wip/sessions.ts`
+(with its suite) rather than committed, because committing it would leave a suite that
+fails, and "the largest module ports last" is the honest order for it.
 
 Two things stage 2a confirmed by measurement rather than by reading:
 
@@ -245,7 +279,8 @@ verifiable the same way the Python's is, and the same residue stays honestly unp
 | **1** (this commit) | the pure core: 8 modules, 176 ported tests | typecheck clean, ported suites green, full app suite unchanged and green |
 | **2a** (landed) | `config`, `scenarios`, `media`, `memory` — 76 tests | typecheck clean, suites green, the 14 real lab scenarios validate, full suite and build unchanged and green |
 | **2b** (landed) | `catalog`, `lessons` — 52 tests — plus the lab's data converted to JSON (`src/lib/lab/data/`) | the real catalogue and lesson library load and validate with no YAML parser; the grader takes the catalogue's own object; suite and build green |
-| **2c** | `primitives`, `generator`, `sessions`, `store` + Prisma models and a reversible migration, `demo` | the ported demo flow runs a full class with no hypervisor, as `demo.py` does, and the store round-trips a session and a report |
+| **2c** (landed) | `store`'s **contract** + the in-memory implementation, and the guest-transport repairs below | typecheck clean; the store, memory, incus and guest suites green; the whole app suite and the build unchanged and green |
+| **2d** | `sessions` (re-review against the four behaviours in §2c), the Prisma store + a reversible migration, `demo`, `primitives`, `generator` | the ported demo flow runs a full class with no hypervisor, as `demo.py` does, and the store round-trips a session and a report |
 | **3** | the portal surface (`app` + `admin`) on the app's identity, `tickets`, the lab scenario/lesson pages, the console iframe | a student starts, checks, completes; an instructor reads the results; the routes keep their contracts; a11y sweep passes |
 | **4** | the CLI as `tsx` scripts, compose/Docker deployment, and the `infra/**` shell kept as shell with its entry points documented | the stack builds and reports healthy with no Incus socket mounted; the boundary tests still pass |
 
