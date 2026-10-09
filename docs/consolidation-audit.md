@@ -516,9 +516,11 @@ Stated plainly, because the integration is **not** complete:
   and the image it produced logs in as the training account over WinRM and answers RDP.
   Twenty-one templates have been built from it, each with its `clean` snapshot, and a
   warm pool machine reaches a session in about two seconds. The image is published to
-  `ghcr.io/innotelinc/ontrak-golden` (`win11e-2026-10-06` was the pullable tag when this
-  was written), so another lab host adopts it with `make golden-import` rather than
-  repeating the build. Its accelerator detection is unchanged and still resolves `tcg`,
+  `ghcr.io/innotelinc/ontrak-golden`, so another lab host adopts it with `make golden-pull`
+  and `make golden-import` rather than repeating the build. `win11e-2026-10-09` is the
+  newest tag and holds the compressed export (the disk layer's digest matched the verified
+  local file byte for byte when it was pulled back); `win11e-2026-10-06` is still
+  pullable. Its accelerator detection is unchanged and still resolves `tcg`,
   because the rule reads `systemd-detect-virt` = `vmware`, so a range there sets
   `ONTRAK_QEMU_ACCEL=kvm` explicitly for the builder, the templates and the pool — a
   setting, not a hardware limit.
