@@ -233,3 +233,76 @@ test("postgres: the retention sweep purges a closed window and leaves a held art
     await db.$disconnect().catch(() => undefined);
   }
 });
+
+/**
+ * The M7 load rehearsal's first finding, as a test that can fail.
+ *
+ * Sixteen writers at once on one tenant is what the rehearsal does at its
+ * default concurrency, and at that level every write used to be refused twice
+ * over: the audit append lost its `@@unique([tenantId, seq])` race, and the
+ * reference lost `@@unique([tenantId, ref])`. Both are invisible in a
+ * single-writer test, so this one is deliberately simultaneous — and it asserts
+ * the two things a desk would notice: no write is refused, and the evidence of
+ * every write is on the chain, in one piece.
+ */
+test("postgres: concurrent writes to one tenant are all accepted and all on the chain", async (t) => {
+  const db = await connect();
+  if (!db) {
+    t.skip("no Postgres reachable — set DATABASE_URL and run npm run setup");
+    return;
+  }
+
+  const slug = `itest-conc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  try {
+    const tenant = await db.tenant.create({ data: { name: "Concurrency Test", slug } });
+    const requester = await db.user.create({
+      data: { tenantId: tenant.id, email: `req-${slug}@test`, displayName: "Rita Requester", role: "REQUESTER" },
+    });
+    const agent = await db.user.create({
+      data: { tenantId: tenant.id, email: `agent-${slug}@test`, displayName: "Sam Agent", role: "AGENT" },
+    });
+
+    const client = db as unknown as TicketPrismaClient;
+    const { service } = createTicketServices(client);
+    const actor: Actor = { id: agent.id, tenantId: tenant.id, role: "AGENT" };
+
+    const writers = 16;
+    const rounds = 3;
+
+    for (let round = 0; round < rounds; round += 1) {
+      const created = await Promise.all(
+        Array.from({ length: writers }, (_unused, n) =>
+          service.createTicket(actor, {
+            subject: `Concurrent create ${round}-${n}`,
+            description: "Written by the audit-chain concurrency test.",
+            type: "INCIDENT",
+            priority: "NORMAL",
+            requesterId: requester.id,
+          }),
+        ),
+      );
+      assert.deepEqual(
+        created.filter((result) => !result.ok).map((result) => (result.ok ? "" : result.error)),
+        [],
+        `every create in round ${round} is accepted`,
+      );
+    }
+
+    const writes = writers * rounds;
+
+    // Every accepted write left exactly one audit event, and the chain verifies
+    // end to end — so nothing was lost by the race and nothing was written twice.
+    const events = await db.auditEvent.count({ where: { tenantId: tenant.id } });
+    assert.equal(events, writes, "one audit event per accepted write");
+    assert.deepEqual(await new PrismaAuditSink(client).verify(tenant.id), { ok: true, length: writes });
+
+    // And the references issued under that pressure are all distinct.
+    const refs = (await db.ticket.findMany({ where: { tenantId: tenant.id }, select: { ref: true } })).map((row) => row.ref);
+    assert.equal(refs.length, writes);
+    assert.equal(new Set(refs).size, writes, "no reference was issued twice");
+  } finally {
+    await db.tenant.delete({ where: { slug } }).catch(() => undefined);
+    await db.$disconnect().catch(() => undefined);
+  }
+});

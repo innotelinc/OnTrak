@@ -444,6 +444,23 @@ export interface TicketStore {
   deleteTicket(tenantId: string, ticketId: string): Promise<void>;
 }
 
+/** How many times a create re-plans its reference before giving up. */
+const CREATE_ATTEMPTS = 8;
+
+/**
+ * Did the store refuse this row because its reference was already taken?
+ *
+ * `@@unique([tenantId, ref])` is the only unique constraint a ticket insert can
+ * meet, and the reference is the single field this service allocates from shared
+ * state — so a unique violation on this write means "somebody else took that
+ * number", not "this ticket is invalid". Recognised structurally (Prisma reports
+ * a unique violation as `P2002`) so the rules layer keeps no database import,
+ * matching how `PrismaAuditSink` recognises its own collision.
+ */
+export function isReferenceConflict(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "P2002";
+}
+
 export class TicketService {
   constructor(
     private readonly store: TicketStore,
@@ -469,6 +486,9 @@ export class TicketService {
     private readonly forms: TicketFormGate | null = null,
   ) {}
 
+  /** In-flight create queues, one per tenant — see `serializeCreate`. */
+  private readonly createQueues = new Map<string, Promise<unknown>>();
+
   /**
    * Raise a ticket, applying the desk's `ticket.created` rules to it.
    *
@@ -490,27 +510,78 @@ export class TicketService {
       validated = { ...input, customFields: values.value };
     }
 
-    const plan = planTicketCreation(actor, validated, await this.store.nextTicketSeq(actor.tenantId), this.ids);
-    if (!plan.ok) return plan;
+    return this.serializeCreate(actor.tenantId, () => this.planAndCreate(actor, validated));
+  }
 
-    const applied = await this.runRules(plan.value.ticket, "ticket.created");
-    const ticket = applied?.ticket ?? plan.value.ticket;
+  /**
+   * One create at a time, per tenant.
+   *
+   * The reference is allocated from the highest one already issued, which is
+   * shared state: sixteen creates that read that mark in the same instant plan
+   * the *same* number, and all but one are refused by
+   * `@@unique([tenantId, ref])` — so with N writers the last one needs N rounds
+   * to win, and no retry count is the answer. The M7 load rehearsal found exactly
+   * that. Queuing the allocation and the insert behind the previous create for the
+   * same tenant makes the mark advance one writer at a time inside this process;
+   * the retry in `planAndCreate` still covers a collision that came from *another*
+   * process.
+   *
+   * Keyed by tenant, because it is one desk's references that are contended: two
+   * tenants must never wait on each other for a reason that is not theirs. A
+   * create that fails does not block the ones behind it — each is handed the
+   * previous result, failure or not, and starts from the mark as it stands.
+   */
+  private serializeCreate<T>(tenantId: string, run: () => Promise<T>): Promise<T> {
+    const previous = this.createQueues.get(tenantId) ?? Promise.resolve();
+    const queued = previous.then(run, run);
+    this.createQueues.set(tenantId, queued.catch(() => undefined));
+    return queued;
+  }
 
-    await this.store.insertTicket(ticket);
-    // The create event carries the queue the ticket actually landed in, so the
-    // chain never claims it was filed somewhere the rules moved it out of — and it names
-    // the desk's own fields the ticket answered, so "who filled this in, and when did the
-    // form change?" is answerable from the chain without replaying the values themselves.
-    await this.audit.append({
-      ...plan.value.audit,
-      detail: {
-        ref: ticket.ref,
-        queueId: ticket.queueId,
-        ...(ticket.customFields ? { customFields: Object.keys(ticket.customFields) } : {}),
-      },
-    });
-    await this.settle(applied);
-    return { ok: true, value: ticket };
+  /**
+   * Plan the ticket against the current mark, write it, and put it on the chain.
+   *
+   * A refusal **about the reference** is retried — the same write, a fresh
+   * number — because that is the one failure here that says nothing about whether
+   * the work itself was valid.
+   */
+  private async planAndCreate(
+    actor: Actor,
+    validated: TicketCreationInput,
+  ): Promise<ServiceResult<TicketRecord>> {
+    for (let attempt = 1; ; attempt += 1) {
+      const plan = planTicketCreation(actor, validated, await this.store.nextTicketSeq(actor.tenantId), this.ids);
+      if (!plan.ok) return plan;
+
+      const applied = await this.runRules(plan.value.ticket, "ticket.created");
+      const ticket = applied?.ticket ?? plan.value.ticket;
+
+      try {
+        await this.store.insertTicket(ticket);
+      } catch (error) {
+        if (!isReferenceConflict(error) || attempt >= CREATE_ATTEMPTS) throw error;
+        // Wait a little before asking again: every writer that lost this race is
+        // about to re-read the same mark, and a shared retry instant would just
+        // re-create the collision. The jitter spreads them out.
+        await new Promise((resolve) => setTimeout(resolve, attempt * 2 + Math.random() * 15));
+        continue;
+      }
+
+      // The create event carries the queue the ticket actually landed in, so the
+      // chain never claims it was filed somewhere the rules moved it out of — and it names
+      // the desk's own fields the ticket answered, so "who filled this in, and when did the
+      // form change?" is answerable from the chain without replaying the values themselves.
+      await this.audit.append({
+        ...plan.value.audit,
+        detail: {
+          ref: ticket.ref,
+          queueId: ticket.queueId,
+          ...(ticket.customFields ? { customFields: Object.keys(ticket.customFields) } : {}),
+        },
+      });
+      await this.settle(applied);
+      return { ok: true, value: ticket };
+    }
   }
 
   async reply(actor: Actor, ticketId: string, body: string, kind: MessageKind = "PUBLIC_REPLY"): Promise<ServiceResult<TicketMessage>> {
