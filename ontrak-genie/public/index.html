@@ -434,9 +434,22 @@
         <div class="files-projects">
           <div class="files-projects-head">
             <span class="muted">projects</span>
-            <button id="project-new" class="btn-ghost mini" title="Create and open a new project">
-              new project
-            </button>
+            <span class="files-projects-actions">
+              <button id="project-import" class="btn-ghost mini" title="Load a project bundle (.json) as a new project">
+                import
+              </button>
+              <button id="project-new" class="btn-ghost mini" title="Create and open a new project">
+                new project
+              </button>
+            </span>
+            <!-- Hidden until asked for: the bundle is read in the page and POSTed back. -->
+            <input
+              id="project-import-file"
+              class="hidden"
+              type="file"
+              accept=".json,application/json"
+              aria-label="Choose a project bundle to load"
+            />
           </div>
           <div id="projects-list" class="projects-list" aria-label="Saved workspace projects"></div>
         </div>

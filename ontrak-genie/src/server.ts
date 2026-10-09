@@ -68,11 +68,18 @@ import {
 import {
   createProject as createWorkspaceProject,
   deleteProject as deleteWorkspaceProject,
+  getProject,
   listProjects,
   openProject as openWorkspaceProject,
   ProjectError,
   updateProject as updateWorkspaceProject,
 } from "./projects.js";
+import {
+  exportProject,
+  importProject,
+  parseArchive,
+  ProjectArchiveError,
+} from "./project-archive.js";
 import {
   cloneRepository,
   createBranch,
@@ -1189,6 +1196,67 @@ async function handleApi(
       cwd: workspaceRoot(),
       dirs: await listWorkspaceDirs(),
     });
+  }
+
+  /*
+   * A project as one portable file, and back again (`src/project-archive.ts`).
+   *
+   * Export hands back the encoded bundle as a string rather than streaming a
+   * download, so the same bytes can be written to a file, kept in a chat, or
+   * POSTed straight back to import on another deployment. Import takes that text
+   * and creates a *new* project from it: a name already in use gets a count, so
+   * loading the same bundle twice is two projects rather than one overwritten.
+   */
+  const projectExportMatch = /^\/api\/projects\/([^/]+)\/export$/.exec(pathname);
+  if (projectExportMatch && method === "GET") {
+    const id = decodeURIComponent(projectExportMatch[1] ?? "");
+    const project = await getProject(id);
+    if (project === null) throw new HttpError(404, "project not found");
+    try {
+      const exported = await exportProject(project);
+      return sendJson(res, 200, {
+        filename: exported.filename,
+        content: exported.content,
+        files: exported.archive.files.length,
+        skipped: exported.archive.skipped,
+      });
+    } catch (error) {
+      if (error instanceof ProjectArchiveError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  if (pathname === "/api/projects/import" && method === "POST") {
+    // The bundle *is* the body — it is posted as the file's own text, so nothing
+    // re-escapes it on the way in. The name can be overridden with `?name=` and
+    // `?open=1` opens the loaded project. The ceiling is the bundle's own, since
+    // a bundle carries the bytes of every file in the project.
+    const raw = await readBody(req, 128_000_000);
+    let input: unknown;
+    try {
+      input = raw.trim() === "" ? null : (JSON.parse(raw) as unknown);
+    } catch (error) {
+      throw new HttpError(400, `invalid JSON: ${(error as Error).message}`);
+    }
+    const nameParam = url.searchParams.get("name");
+    const openParam = url.searchParams.get("open");
+    try {
+      const archive = parseArchive(input);
+      const imported = await importProject(archive, {
+        name: nameParam ?? undefined,
+        open: openParam === "1" || openParam === "true",
+      });
+      return sendJson(res, 201, {
+        project: imported.project,
+        files: imported.files,
+        skipped: imported.skipped,
+        dirs: await listWorkspaceDirs(),
+      });
+    } catch (error) {
+      if (error instanceof ProjectArchiveError) throw new HttpError(400, error.message);
+      if (error instanceof ProjectError) throw new HttpError(400, error.message);
+      throw error;
+    }
   }
 
   /*

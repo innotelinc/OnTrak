@@ -2748,6 +2748,20 @@ function projectRow(project) {
   }
   open.addEventListener("click", () => void openProjectById(project.id));
 
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "btn-ghost mini";
+  save.textContent = "export";
+  save.title = project.exists
+    ? `Save “${project.name}” as one portable file`
+    : `“${project.name}” has no folder left to export`;
+  // Nothing to export once the directory is gone; the row already says so.
+  save.disabled = !project.exists;
+  save.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void exportProjectById(project);
+  });
+
   const rename = document.createElement("button");
   rename.type = "button";
   rename.className = "btn-ghost mini";
@@ -2795,7 +2809,7 @@ function projectRow(project) {
     await loadFiles(".");
   });
 
-  row.append(open, rename, remove);
+  row.append(open, save, rename, remove);
   return row;
 }
 
@@ -2829,6 +2843,86 @@ async function openProjectById(id) {
   }
   // A different working directory is a different tree and a different app, so
   // start both at the top rather than leaving them on the old one's paths.
+  unloadPreviewFrame();
+  await loadProjects();
+  await loadWorkspace();
+  await loadFiles(".");
+  await refreshPreviewApp();
+}
+
+/**
+ * Save a project as one portable file, and load one back.
+ *
+ * The export is the bundle the server encodes (`src/project-archive.ts`), handed
+ * to the browser as a download; the import reads a chosen file in the page and
+ * POSTs its text back, so nothing has to be streamed and the same bytes load on
+ * another deployment. A loaded bundle becomes a *new* project and opens, because
+ * a project you just loaded is one you meant to work in.
+ */
+async function exportProjectById(project) {
+  let payload;
+  try {
+    payload = await api(`/api/projects/${encodeURIComponent(project.id)}/export`);
+  } catch (error) {
+    addErrorMessage(error.message);
+    return;
+  }
+
+  const filename = typeof payload.filename === "string" ? payload.filename : "project.genie-project.json";
+  saveTextFile(filename, typeof payload.content === "string" ? payload.content : "");
+  const skipped = Array.isArray(payload.skipped) ? payload.skipped : [];
+  const files = Number(payload.files ?? 0);
+  addNotice(
+    `Exported “${project.name}” — ${files} ${files === 1 ? "file" : "files"} saved to ${filename}` +
+      (skipped.length > 0 ? ` (left out: ${skipped.join(", ")}).` : "."),
+  );
+}
+
+/** Hand the browser a file to download. */
+function saveTextFile(filename, text) {
+  const blob = new Blob([text], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function importProjectFromFile(file) {
+  let text;
+  try {
+    text = await file.text();
+  } catch (error) {
+    addErrorMessage(error.message);
+    return;
+  }
+
+  let payload;
+  try {
+    // The bundle is posted as its own text, so it is not re-escaped on the way in.
+    payload = await api("/api/projects/import?open=1", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: text,
+    });
+  } catch (error) {
+    addErrorMessage(error.message);
+    return;
+  }
+
+  const project = payload.project;
+  const skipped = Array.isArray(payload.skipped) ? payload.skipped : [];
+  const files = Number(payload.files ?? 0);
+  addNotice(
+    `Loaded “${project.name}” — ${files} ${files === 1 ? "file" : "files"} written to ${project.dir}.` +
+      (skipped.length > 0 ? ` The bundle had left out: ${skipped.join(", ")}.` : ""),
+  );
+
+  // A loaded project is a different working directory, so the tree, the picker
+  // and the preview all start from the top exactly as opening one does.
   unloadPreviewFrame();
   await loadProjects();
   await loadWorkspace();
@@ -3900,6 +3994,13 @@ function wire() {
   $("#files-new").addEventListener("click", () => void newWorkspaceFolder());
   $("#files-clear").addEventListener("click", () => armClear());
   $("#project-new").addEventListener("click", () => void createProject());
+  $("#project-import").addEventListener("click", () => $("#project-import-file").click());
+  $("#project-import-file").addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    // Reset the value so choosing the same file again still fires `change`.
+    event.target.value = "";
+    if (file) void importProjectFromFile(file);
+  });
 
   $("#terminal-open").addEventListener("click", () => toggleTerminal());
   $("#terminal-close").addEventListener("click", () => toggleTerminal(false));

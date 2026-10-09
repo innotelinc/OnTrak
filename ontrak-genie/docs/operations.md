@@ -976,6 +976,28 @@ A single-page app with no build step (`public/`), served by the agent itself.
   so `..` and absolute paths are refused before anything is written, and the
   browser cannot be talked into handing the agent the host. With tenancy on the
   sandbox is the account's own directory, so the choice is scoped to that account.
+- **Saved projects, and taking one with you.** A project is a named directory the
+  account keeps: the panel lists them, and opening one drives the same workspace
+  picker the folder chooser above uses, so the agent, the tree and the preview all
+  follow it without knowing a project exists. Creating one makes the directory and
+  opens it. Removing one is two decisions in one click — the first asks whether to
+  keep the files, and the folder is only deleted when told to, so "stop listing
+  this" never quietly becomes "throw this away". A project whose directory has
+  been deleted out from under it is shown as `folder is gone` rather than invented.
+
+  `export` writes a project — its name, its note and every file beneath it — to a
+  single JSON bundle, and `import` loads one back as a *new* project, so a project
+  can be handed to a colleague, carried to another deployment, or kept somewhere
+  the sandbox is not. A bundle is a document rather than an opaque archive: text
+  stays text and binary is base64, so it can be read, diffed and kept in version
+  control. The heavy directories the tree already ignores (`.git`, `node_modules`,
+  build output) are left out and *named* in the bundle's `skipped` list rather than
+  silently dropped, and symlinks are skipped because a link is a promise about
+  where something is, not the thing itself. Nothing is overwritten: a name already
+  in use gets a count, so loading the same bundle twice leaves two projects. Paths
+  inside a bundle are data, not trust — they are re-checked when the bundle is read
+  and again, per file, against the sandbox fence, so a hand-edited bundle cannot
+  write outside its own project.
 - **Accessibility.** Landmarks and labelled controls, a skip link, visible focus
   rings, `aria-expanded` on the panel toggle, a dialog role with focus handling
   for the file viewer, and a polite live region that announces tool results,
@@ -1500,6 +1522,12 @@ All optional — see `.env.example`.
 | `GET`    | `/api/file/diff?path=`| Current file vs. the last version the agent changed |
 | `POST`   | `/api/file/diff`      | Diff a body still being written (`{ path, content }`) against the file on disk |
 | `GET`    | `/api/workspace`      | The directory the agent works in, the sandbox around it, and every folder inside it that can be chosen |
+| `GET`    | `/api/projects`       | Saved workspace projects, the sandbox they live in, and which one is open |
+| `POST`   | `/api/projects`       | Create one (`{ name, description?, open? }`) |
+| `PATCH`  | `/api/projects/:id`   | Rename or re-note one |
+| `DELETE` | `/api/projects/:id`   | Forget one; `?files=delete` also removes its directory (the default keeps the files) |
+| `GET`    | `/api/projects/:id/export` | One project as a portable bundle: `{ filename, content, files, skipped }` |
+| `POST`   | `/api/projects/import` | Load a bundle as a *new* project. The body is the bundle itself; `?name=` overrides its name, `?open=1` opens it. `400` for anything that is not a bundle |
 | `POST`   | `/api/workspace`      | Choose the working directory (`{ path }`, sandbox-relative; `400` if it escapes the sandbox) |
 | `POST`   | `/api/workspace/mkdir`| Create a folder in the working directory (`{ name }`; `400` for a name that is a path, `409` if it is taken) |
 | `GET`    | `/api/preview`        | The app preview: running or not, the command, the port, the tail of its output, the command that would be detected for this project, and `address` — the LAN URL it answers at, or `null` when the deployment does not publish it |
@@ -1523,7 +1551,7 @@ same `POST /api/approvals/:id` the browser card uses.
 ```bash
 npm run dev           # tsx watch (reload on change)
 npm run typecheck     # tsc --noEmit
-npm test              # node:test — 566 tests, no browser needed
+npm test              # node:test — 573 tests, no browser needed
 npm run ui:smoke      # drives the real UI in a headless Chromium
 npm run layout:check  # phone, tablet and desktop sizes, in a headless Chromium
 npm run model:health  # which advertised models really do tool calling

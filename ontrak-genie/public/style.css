@@ -744,6 +744,7 @@ pre.code {
   border-bottom: 1px solid var(--border);
 }
 .files-projects-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.files-projects-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 .projects-list { display: flex; flex-direction: column; gap: 2px; max-height: 34vh; overflow-y: auto; }
 .projects-list:empty::after {
   content: "No projects yet — make one to keep a workspace and its history together.";
