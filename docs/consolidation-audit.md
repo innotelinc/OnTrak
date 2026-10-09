@@ -448,8 +448,17 @@ hypervisor tooling. See §6.
 
 Stated plainly, because the integration is **not** complete:
 
-- **No OnTrak-dev code has been ported or merged.** Not one Python module has been
-  re-implemented in TypeScript, and no lab route is served by the family stack.
+- **OnTrak-dev is not merged — but it is now being ported, and that distinction
+  supersedes part of this section.** The recommendation here was to keep the lab a
+  separately deployed Python peer (§6/C1); the product decision has since gone the other
+  way. Stage 1 of the port — the lab's pure core, eight modules (`models`, `scoring`,
+  `guac`, `guest`, `incus`, `qemu`, `selection`, `scheduler`) with 176 tests ported from
+  the lab's own suites — is in `src/lib/lab/` and green. **[lab-port.md](lab-port.md) is
+  the plan**: the module-by-module mapping, the staging, and the seven architectural
+  conflicts it resolves (WinRM, identity, SQLite→Postgres, blocking subprocesses, the
+  single pass rule, YAML, and the portal's HTTP surface). **OnTrak-dev itself is
+  untouched, no lab route is served by the family stack yet, and stages 2–4 are not
+  started.**
 - **Nothing has been migrated in OnTrak-dev.** Its schema is created on first use and
   this work adds no change there. Steps 5–6 add two nullable columns on *this* side
   (`Scenario.labMeta` and `Attempt.gradingMode`, each with its migration), and no attempt
