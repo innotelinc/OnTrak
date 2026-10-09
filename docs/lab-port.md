@@ -43,7 +43,7 @@ beside it. Module by module, with its disposition:
 | `store.py` | 709 | `src/lib/lab/store.ts` (contract + in-memory), `store-prisma.ts` + `prisma/` models | 2c/2d | landed — the contract and the in-memory store in 2c, the Postgres/Prisma one and its reversible migration in 2d |
 | `tickets.py` | 534 | `src/lib/lab/tickets.ts` | 3 | not started |
 | `auth.py` + `oidc.py` | 73 + 325 | *not ported* — superseded | 3 | see §3 |
-| `demo.py` | 474 | `src/lib/lab/demo.ts` | 2d | not started |
+| `demo.py` | 474 | `src/lib/lab/demo.ts` | 2d | landed — a whole class runs with no hypervisor; see §2d |
 | `portal/app.py` | 1101 | `src/app/(app)/lab/**` + `src/app/api/v1/lab/**` | 3 | not started |
 | `portal/admin.py` | 511 | `src/app/(app)/lab/admin/**` | 3 | not started |
 | `cli.py` | 1373 | `scripts/lab-*.ts` (`tsx`) | 4 | not started |
@@ -258,6 +258,37 @@ enum, `timestamp(3)` keeping milliseconds through the ISO round-trip, the JSONB 
 the two `ON DELETE` clauses (a deleted session takes its results and leaves its events behind
 naming no session — the events an operator needs after a botched teardown).
 
+**A whole class, with no hypervisor — and a data gap found by trying it.** `demo.ts` is the
+lab's demo mode: an in-memory hypervisor, a simulated guest that answers with plausible
+grading, and a flow that assigns, provisions, checks, submits and tears down a class in
+seconds. It is the only end-to-end proof of the port available here, for the reason §4
+gives — and its two suites (16 tests, ported from `test_demo.py`) run it against the real
+manager, the real scoring and the real store.
+
+Trying to run it surfaced the most consequential gap of the whole port: **the lab's scenario
+data and scripts had never been shipped.** The 14 records existed only as flat JSON test
+fixtures, with no `setup.ps1`/`check.ps1`/`setup.sh`/`check.sh` anywhere — so a deployment
+had nothing to inject a fault with and nothing to grade against, which is a fact only an
+end-to-end run can reveal. The fix is `scenarios/`: the lab's own tree, one directory per
+scenario, the scripts copied from `OnTrak-dev` unchanged beside the `scenario.json` converted
+from its YAML, plus the shared `_lib` libraries. `src/lib/lab/dataset.ts` is the one module
+in the port that reads a disk (which is the other half of the pure modules' injected-file
+contract), and `tests/lab-dataset.test.ts` asserts the tree is *complete* — all 14 records,
+the script each platform runs, and the other platform's script absent — because a missing
+`check.sh` is otherwise discovered by a student whose work cannot be graded.
+
+The conversion was checked rather than trusted: every regenerated record equals the record
+the previous fixtures held, field for field, so the fixtures and the shipped tree were the
+same data all along and the change was about *where* it lives.
+
+Four divergences in the demo are named in the module and worth repeating here, because each
+is the port's own decision showing through: the store is in-memory by default (the port has
+no SQLite), there is no lab user table to seed (§3/C2 — `demoAccounts` returns the roster and
+creating accounts is the app's business), write-ups are not synthesised yet (`tickets.py` is
+stage 3, and `complete` already says the write-up was not blended), and the simulated guest's
+dice are deterministic but explicitly **not** the Python's (`random.Random` seeded with a
+string cannot be reproduced, so the port's own small PRNG is seeded with the same facts).
+
 ## 3. Architectural conflicts, and how each is resolved
 
 The brief says to identify and resolve conflicts rather than ignore them. These are the
@@ -357,7 +388,7 @@ verifiable the same way the Python's is, and the same residue stays honestly unp
 | **2a** (landed) | `config`, `scenarios`, `media`, `memory` — 76 tests | typecheck clean, suites green, the 14 real lab scenarios validate, full suite and build unchanged and green |
 | **2b** (landed) | `catalog`, `lessons` — 52 tests — plus the lab's data converted to JSON (`src/lib/lab/data/`) | the real catalogue and lesson library load and validate with no YAML parser; the grader takes the catalogue's own object; suite and build green |
 | **2c** (landed) | `store`'s **contract** + the in-memory implementation, and the guest-transport repairs below | typecheck clean; the store, memory, incus and guest suites green; the whole app suite and the build unchanged and green |
-| **2d** (in progress — `sessions`, the Postgres store and the shipped data landed) | `sessions`'s four behaviours resolved and the Prisma store + reversible migration (§2d); remaining: `demo`, `primitives`, `generator` | the ported demo flow runs a full class with no hypervisor, as `demo.py` does, and the store round-trips a session and a report (the Postgres store does this against a real database today) |
+| **2d** (in progress — `sessions`, the Postgres store, the shipped data and `demo` landed) | `sessions`'s four behaviours resolved, the Prisma store + reversible migration, the `scenarios/` tree, and the demo (§2d); remaining: `primitives`, `generator` | the ported demo flow runs a full class with no hypervisor, as `demo.py` does (done: `tests/lab-demo.test.ts`), and the store round-trips a session and a report (done, against a real database) |
 | **3** | the portal surface (`app` + `admin`) on the app's identity, `tickets`, the lab scenario/lesson pages, the console iframe | a student starts, checks, completes; an instructor reads the results; the routes keep their contracts; a11y sweep passes |
 | **4** | the CLI as `tsx` scripts, compose/Docker deployment, and the `infra/**` shell kept as shell with its entry points documented | the stack builds and reports healthy with no Incus socket mounted; the boundary tests still pass |
 
