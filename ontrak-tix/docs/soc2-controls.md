@@ -57,7 +57,7 @@
 
 | Ref | Control | Where | Evidence |
 | --- | --- | --- | --- |
-| A1.1 | Capacity and performance targets are stated and measured. | §10 of `ROADMAP.md` (p95 read < 300 ms, write < 500 ms; 10k agents / 1M tickets per tenant). | Load-test result recorded at the target load. |
+| A1.1 | Capacity and performance targets are stated and measured. | §10 of `ROADMAP.md` (p95 read < 300 ms, write < 500 ms; 10k agents / 1M tickets per tenant). | The recorded result at the target load — [`docs/load-test.md`](./load-test.md) and `docs/load-test-2026-10-09.json` (`npm run load-test`). It records both halves: a ticket read and a reply write meet the stated p95, and the whole-worklist read and a create write **do not**, with the cause of each named. |
 | A1.2 | Backups are taken, verified and restorable to a stated RPO/RTO. | [`docs/disaster-recovery.md`](./disaster-recovery.md), `scripts/backup.sh`, `scripts/restore.sh`. | The quarterly rehearsal record (§6 of the runbook). |
 | A1.3 | A failed backup is distinguishable from a good one. | `backup.sh` exit code `2` = written but did not verify. | The backup log; a `2` is an alert, not a warning. |
 

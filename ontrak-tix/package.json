@@ -21,6 +21,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "backup": "scripts/backup.sh",
     "restore": "scripts/restore.sh",
+    "load-test": "tsx scripts/load-test.ts",
     "verify:packet": "tsx scripts/verify-packet.ts",
     "sweep:retention": "tsx scripts/retention-sweep.ts",
     "sweep:scim": "tsx scripts/scim-sweep.ts",
