@@ -504,16 +504,31 @@ Stated plainly, because the integration is **not** complete:
   scenarios and linked it at the lab host's own dashboard, and the portal's health check
   reported the lab as part of the deployment.
 
+  **The Windows half of that has since been walked on the same host, and the reason it was
+  open was not the one the doctor gave.** The lab reported nested AMD KVM unable to
+  virtualise SMM — which a Windows 11 guest needs — and the limit turned out to be
+  **Hyper-V on the host itself**, not the CPU. Switched off, the same machine, nested
+  under VMware on an AMD Ryzen AI 7 350, has real nested virtualisation (`/dev/kvm`
+  present, `svm` and `nested=1`), and an OVMF/Secure-Boot `q35` guest with `smm = "on"`
+  boots under `accel = "kvm"`. `make golden` then ran to completion under KVM in about 35
+  minutes — Windows Setup, boot from disk, specialize, `post-install.ps1` over WinRM,
+  publish — with no `KVM: entry failed` or `SMM=1` anywhere in the build VM's qemu log,
+  and the image it produced logs in as the training account over WinRM and answers RDP.
+  Twenty-one templates have been built from it, each with its `clean` snapshot, and a
+  warm pool machine reaches a session in about two seconds. The image is published to
+  `ghcr.io/innotelinc/ontrak-golden` (`win11e-2026-10-06` was the pullable tag when this
+  was written), so another lab host adopts it with `make golden-import` rather than
+  repeating the build. Its accelerator detection is unchanged and still resolves `tcg`,
+  because the rule reads `systemd-detect-virt` = `vmware`, so a range there sets
+  `ONTRAK_QEMU_ACCEL=kvm` explicitly for the builder, the templates and the pool — a
+  setting, not a hardware limit.
+
   **What that still is not.** It is not the Network: this lab host is a machine built for
   the exercise, and `its.ontrak.innotel.us` remains without one. **No Windows or Office
-  scenario ran**, because the golden image needs Microsoft evaluation media the operator
-  supplies and a build that takes 30–60 minutes — and the lab's own doctor reports that
-  this host's nested AMD KVM cannot virtualise SMM, so a Windows guest takes the
-  `ONTRAK_QEMU_ACCEL=tcg` path the lab reserves for hosts that cannot help it. Two of the
-  lab's 14 templates exist, both for one Linux scenario. The console half is up (the
-  lab's portal and Guacamole on one port, `/` and `/guacamole/`) but no browser has driven
-  it here, so the websocket tunnel Q4 named as the first thing a real host owes is still
-  unmeasured.
+  scenario has been graded**, and none of it has been reached through the console. The
+  console half is up (the lab's portal and Guacamole on one port, `/` and `/guacamole/`)
+  but no browser has driven it here, so the websocket tunnel Q4 named as the first thing a
+  real host owes is still unmeasured.
 - **OnTrak-dev has not been modified**, as required. Its `README.md` still describes
   a standalone range; its portal still signs in only through Authentik and only as
   `instructor`/`student`.
