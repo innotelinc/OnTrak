@@ -136,7 +136,8 @@ npm run load-test -- --json out.json   # keep the raw result
 afterwards); without it the tenant is deleted. Expect the database to grow by
 roughly 600 MB while the rehearsal runs, and expect **the cleanup to outlast the
 rehearsal itself**: deleting a million tickets means a million deletes, each
-checking the dozen tables that reference a ticket, and on the host above it ran
-for well over ten minutes after the measurements were done. That is not a bug in
+checking the dozen tables that reference a ticket, and the rehearsal prints the
+number itself: **587.5 s (9.8 minutes)** on the host above, after the last
+measurement had been taken. That is not a bug in
 the rehearsal — it is what removing a tenant that size costs in this schema, and
 worth knowing before somebody schedules a job that does it.
