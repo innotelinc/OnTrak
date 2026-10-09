@@ -463,7 +463,16 @@ export class SessionManager {
     const workloads = this.catalog === null ? [] : [...this.catalog.load().keys()];
     this.incusConfig = new IncusConfig({ ...options.settings.incus, knownWorkloads: workloads });
 
-    this.driver = options.driver ?? buildDriver(options.settings.guest);
+    // Both transports get the hypervisor, and the Windows one is the reason it matters:
+    // `incus-exec` *is* the agent on the other end of the Incus socket, so a driver built
+    // without a client cannot execute anything — every command comes back as a failure, and
+    // a real Windows guest is ungradeable while every unit test still passes (the tests
+    // inject their own drivers). The shell transport is built only when there is a client to
+    // give it, because a scenario that names Linux is graded over the agent or SSH and a
+    // manager with neither has no answer for it.
+    this.driver =
+      options.driver ??
+      buildDriver(options.settings.guest, this.incus === null ? {} : { client: this.incus });
     this.shellDriver =
       options.shellDriver ??
       (this.incus === null

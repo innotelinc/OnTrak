@@ -514,6 +514,53 @@ test("sessions: a session cannot be handed to another student", async () => {
   assert.equal(asInstructor.id, session.id, "an instructor may act on any session");
 });
 
+/*
+ * ── the transports a manager builds for itself ──────────────────────────────
+ *
+ * Every other test in this file injects its drivers, which is what keeps them fast — and
+ * what hid this one. A manager built with nothing but its settings built the **Windows**
+ * transport without the hypervisor, and `incus-exec` *is* the agent on the other end of the
+ * Incus socket, so on a real host every command came back as "the incus-exec driver has no
+ * Incus client" and no Windows guest could be graded at all. It was found by running
+ * `session check` against a live Windows VM; this pins it, because a host is not what should
+ * have to catch it.
+ */
+
+test("sessions: the transports a manager builds itself are given the hypervisor", async () => {
+  const config = settings({ ONTRAK_GUEST__DRIVER: "incus-exec" });
+  const incus = new InMemoryIncus(config.incus.imageAlias, true);
+  const store = new InMemoryLabStore();
+  const time = testClock();
+  // No `driver`, no `shellDriver`: the manager builds both from the settings, which is the
+  // path a deployment — and the CLI on a real host — actually takes.
+  const manager = new SessionManager({
+    settings: config,
+    store,
+    repository: repository(),
+    catalog: catalog(),
+    incus,
+    clock: time.clock,
+    sleep: time.sleep,
+  });
+
+  // A Windows scenario, graded on a machine the in-memory hypervisor knows about. The
+  // session is set up rather than provisioned because there is no guest agent to wait for
+  // here; what is under test is the transport `runChecks` picks, not the wait.
+  const session = await manager.createSession("ada", "net-dns-failure");
+  session.instance = config.incus.sessionName("net-dns-failure", session.id ?? 0, "");
+  incus.addInstance(session.instance, { running: true });
+
+  const report = await manager.runChecks(session);
+  assert.ok(report.error !== "", "the fake has no guest to run the check in, so this is a refusal");
+  assert.ok(
+    !/no Incus client/.test(report.error),
+    `the driver must have reached the hypervisor, not been built without it: ${report.error}`,
+  );
+  // And the refusal is the *fake's* own, which is the positive half: the command got as far
+  // as `execIn` on the client the manager was given.
+  assert.match(report.error, /guest agent/, report.error);
+});
+
 test("sessions: the template a scenario clones is keyed by its workload too", async () => {
   const h = harness();
   const template = builtTemplate(h, "net-dns-failure");

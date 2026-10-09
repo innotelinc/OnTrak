@@ -252,8 +252,16 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   port of this size creates are resolved, with their costs, in `docs/lab-port.md`: WinRM →
   `incus-exec` (no Node WinRM client), the lab's own sign-in superseded by this app's, and
   SQLite → the family's Postgres. Demo mode runs a whole class with no hypervisor and is
-  what the suite exercises; a real guest booting, being fault-injected and being graded is
-  still a lab host's job to verify.
+  what the suite exercises, and a real guest has now been run on a lab host: a Linux container
+  cloned in 4.4s, faulted, graded **0%**, repaired, graded **80% resolved**, written up and
+  handed in at **87%**, with the attempt in the ledger and the machine destroyed
+  (`docs/lab-port.md` §5). The Windows half took two things: the image, which clears
+  `requirements.cdrom_agent` and so attaches no `agent:config` disk — the agent comes up in
+  ~90s once one is attached, which is proven — and a real port defect the run exposed: the
+  manager built the Windows `incus-exec` driver with no Incus client, so no Windows guest
+  could ever be graded. That is fixed and pinned by a test that fails on the old
+  construction. A graded Windows session is still owed a host run, on a machine with the
+  disk for it.
 - **Exit:** `[x]` a scenario authored for real bash runs in a sandbox and grades identically
   to the simulated driver on the bundled checks — `tests/sim-container.test.ts` grades the same
   five-check scenario twice, once simulated and once under real bash in a process sandbox, and

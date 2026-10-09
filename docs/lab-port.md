@@ -445,23 +445,100 @@ where a hypervisor lives; `.env.example` documents both, with the lab's own sett
 
 **Verified:** `tsc --noEmit` clean. `npm run build` exit 0, with `/lab`,
 `/lab/sessions/[id]`, its console route, `/api/v1/lab/sessions/[id]/status` and `/healthz`
-in the route table. The whole app suite **921 tests / 916 pass / 0 fail / 5 skipped** (the
+in the route table. The whole app suite **924 tests / 919 pass / 0 fail / 5 skipped** (the
 skips are the opt-in live-boundary tests), including the ported read models, the completion
 mapper, the runtime seam — which drives a whole session through a demo runtime — the CLI run
-as an operator runs it, and three new a11y audits: the write-up form and the console panel
-are presentational precisely so an axe sweep can reach them with no server, database or
-machine behind them. The CLI was exercised on this host: `doctor` reports the three missing
+as an operator runs it (`session start` must allocate a machine, the write-up must have the
+five actions the Python had, and the transports a manager builds for itself must be given the
+hypervisor), and three new a11y audits: the write-up form and the console panel are
+presentational precisely so an axe sweep can reach them with no server, database or machine
+behind them. The CLI was exercised on this host: `doctor` reports the three missing
 secrets and exits 1, `scenario validate` clears all 14 scenarios, and `demo run --students 3`
 provisions, checks, writes up, hands in and tears down a class with no hypervisor and exits 0.
 `npm run lab -- help` lists the surface a Python operator already knows.
 
-**Not verified here, and unchanged from §4:** a real Windows or Linux guest booting, being
-fault-injected and graded; the console websocket tunnel; and the browser suite
-(`npm run test:a11y`, Playwright) against these pages, which needs a running app and a
-database. The page-level walkthroughs the Python asserted through rendered HTML are covered
-here at the layer below — `tests/lab-portal.test.ts` asserts the address, the status body,
-the catalogue groups and both CSVs directly — and the browser pass remains the honest last
-step before a class uses it.
+**And then it was run on a real lab host, which is the check this document had been
+waiting for.** A machine with `incus` 7.5.1, `/dev/kvm`, a prepared `ontrak` project and the
+21 built templates was pointed at with the settings tree above, and the whole student flow
+went through the ported control plane rather than the Python's:
+
+| Step | What came back |
+| --- | --- |
+| `doctor` | `ok` on all eight lines and exit 0 — settings, secrets, `incus`, 14 scenarios, 63 catalogue entries, 7 lessons, the gateway, and "served here at /lab" |
+| `pool status` | 21 rows, every one with its template present |
+| `session start --scenario linux-sudo-delegation` | **4.4 seconds** to a `ready` session on a real container, `10.20.0.168` |
+| the guest itself | `visudo -c` exit 1, `/etc/sudoers.d/50-helpdesk` at mode 0644, `dana.ops` in `ops` — the fault injected by `setup.sh` is really there |
+| `session check` | **0%**, four objectives failed, with the guest's own words for each — the `^` under the invalid line, the 0644 drop-in, the blanket rule |
+| the repair | a fresh 0440 drop-in; `visudo -c` parses; `sudo -l -U dana.ops` shows `(root) NOPASSWD: /usr/bin/systemctl restart nginx` |
+| `session check` again | **80%, resolved** |
+| `ticket grade` | 100%, 5/5 fields, and "nothing stored" |
+| `ticket complete` | `machine 80% x 65% + ticket 100% x 35% = 87%`, resolved, exit 0 |
+| `results` | one attempt, best 87, resolved — the attempt really is in the ledger, and the machine was destroyed on submission |
+
+**That run found two real defects in this port, and both are fixed.** `session start` called
+`createSession` where the Python called `allocate`: it filed a row at `requested` and returned,
+so the `check` an operator would type next had nothing to grade and no amount of waiting would
+have changed that. And the write-up answered `form`, `show` and `grade` while its own error
+message advertised `save` and `complete` — two of the Python's five actions absent, and the
+message listing them as if they were there. `allocate` also brings the range's own selector
+with it (`selection.choose` over the whole range's history), which is what makes
+`--scenario` optional when `selection.auto_assign` is on, as it was in the Python.
+`tests/lab-cli.test.ts` now pins both seams against a demo runtime, so they are checked on a
+laptop as well as a host.
+
+**One finding that is not this port's, and should be said plainly.** `no-blanket-rule` fails on
+a machine nobody has touched: the template's stock `/etc/sudoers` carries `%admin ALL=(ALL) ALL`
+on line 50, and the check's own regex matches `(ALL) ALL`. So that objective costs 20 points
+whatever the student does, and the scenario is only resolvable with a perfect score on the
+two criticals and `dropin-hygiene` — which is exactly what happened above. `check.sh` is
+byte-for-byte the Python lab's (verified with `diff`), so this is inherited with the scenario
+rather than introduced by the port; it is a bug in the scenario's grading, and fixing it
+belongs with the scenario, not here.
+
+**The Windows half needed two things, and only one of them was the image.** A Windows session
+(`net-dns-failure`) cloned, booted and took an address, but its Incus agent never came up — an
+hour of polling, with the VM at ~74% CPU the whole time. The cause was in the host's own build
+scripts: `build-golden-image.sh` and `import-golden-image.sh` **clear**
+`requirements.cdrom_agent` on `ontrak-win-base` (they say so, for WinRM), so no `agent:config`
+disk is attached to the instance or to the templates — and that disk is where an Incus agent in
+a Windows guest reads the host configuration it needs. Attaching it to the running instance and
+restarting brought the agent up in **about ninety seconds** (`incus exec … cmd /c echo`
+answered), and the guest's fault was then visible from the outside: a static DNS entry on the
+adapter, and `Resolve-DnsName fileserver.ontrak.lab` reporting "DNS name does not exist". So the
+diagnosis is proven rather than guessed, and the repair is host work: re-publish the image with
+the requirement intact, or attach the disk **before** the `clean` snapshot is taken, because
+this port clones `template/clean` and a device added to the instance afterwards is not in it.
+
+**With the agent up, the graded Windows session failed — and that was this port's fault.**
+`session check` against the live guest returned `cannot prepare C:\ProgramData\OnTrak\lib: the
+incus-exec driver has no Incus client`. The manager gave its **shell** transport the hypervisor
+but built its **Windows** transport with settings alone, and `incus-exec` is the agent on the
+other end of the Incus socket: with no client, every command the driver runs comes back as a
+failure, so no Windows guest could ever have been graded. Every unit test passed because every
+one of them injects its drivers — the default construction was the untested path, which is
+exactly the kind of hole a host run exists to find. It is fixed (`the driver now gets the
+client, as the shell transport already did`) and pinned by a test that fails on the old
+construction with the live error's own words.
+
+**The fixed path has not been re-run against a live Windows guest, and the reason is disk.**
+The first attempt filled the host's filesystem — the 6 GiB golden image, a 3.4 GiB clone and
+its boot writes on a volume that was already at 92% — and took the deployment's Postgres down
+with it. Space was recovered and the database restarted, and the Windows VM was deleted to
+give the space back rather than booted again: a second attempt on a full volume would have been
+the same outage twice. So the honest state of the Windows half is: **the agent comes up once
+the config disk is attached, and the driver defect it exposed is fixed and unit-tested, but a
+graded Windows session is still owed a host run** on a machine with the headroom for it. The
+host's volume should be sized for the images and snapshots the lab keeps — this document
+records the limit it has, which is the finding an operator most needs.
+
+**Not verified here, and unchanged from §4:** a real *Windows* guest booting, being
+fault-injected and **graded** (the three paragraphs above are where that stands: the agent is
+the image's job, the driver defect is fixed, and the graded run is owed a host with disk); the
+console websocket tunnel; and the browser suite (`npm run test:a11y`, Playwright) against these
+pages, which needs a running app and a database. The page-level walkthroughs the Python
+asserted through rendered HTML are covered here at the layer below — `tests/lab-portal.test.ts`
+asserts the address, the status body, the catalogue groups and both CSVs directly — and the
+browser pass remains the honest last step before a class uses it.
 
 ## 3. Architectural conflicts, and how each is resolved
 
@@ -540,12 +617,17 @@ operators and the family's portal probe those paths.
 
 ## 4. What cannot be verified here, and how it will be
 
-This environment has **no hypervisor, no `/dev/kvm`, no Windows media and no browser**.
-That is not a new problem: it is exactly why the lab itself ships `memory.py` (an
-in-memory hypervisor) and `demo.py` (a whole class run with no hypervisor at all), and
-why its own roadmap marks the Windows paths "built, but not proven on real hardware".
-The port inherits that structure, and stage 2 ports both — so the port's behaviour is
-verifiable the same way the Python's is, and the same residue stays honestly unproven:
+This was written when the machine doing the port had **no hypervisor, no `/dev/kvm`, no
+Windows media and no browser** — which is not a new problem: it is exactly why the lab itself
+ships `memory.py` (an in-memory hypervisor) and `demo.py` (a whole class run with no hypervisor
+at all), and why its own roadmap marks the Windows paths "built, but not proven on real
+hardware". The port inherits that structure, and stage 2 ports both — so the port's behaviour
+is verifiable the same way the Python's is.
+
+**Half of that paragraph stopped being true, and the row changed with it.** The host this work
+finished on *is* a lab host — `incus` 7.5.1, `/dev/kvm`, a prepared project and 21 built
+templates — so the Linux guest row below is no longer "not verifiable here": it was run, on a
+real machine, end to end (§5, with the numbers). What is left is narrower and stated exactly:
 
 | Claim | How it is verified in this repository |
 | --- | --- |
@@ -554,7 +636,8 @@ verifiable the same way the Python's is, and the same residue stays honestly unp
 | the console payload is one Guacamole accepts | fixed vectors + `openssl` cross-check |
 | hypervisor command construction and error mapping | a scripted runner; no `incus` needed |
 | the whole class flow (assign → provision → grade → destroy) | stage 2, against the ported in-memory hypervisor |
-| a real Windows VM boots, is fault-injected and is graded | **not verifiable here** — a lab host's job, as before |
+| a real Linux guest boots, is fault-injected and is graded | **verified on a lab host** — clone → boot → 0% → repair → 80% resolved → a write-up blended to 87% → a `results` row and the machine destroyed (§5) |
+| a real Windows guest is driven through the Incus agent (`incus-exec`) | **half verified, and it found a port defect**: no `agent:config` disk exists on `ontrak-win-base` (the host's build scripts clear `requirements.cdrom_agent`), so the agent never starts until one is attached — proven, it comes up in ~90s once it is. With the agent up, `check.ps1` grading failed on a real bug: the manager built the Windows driver with no Incus client. Fixed, and pinned by a test that fails on the old construction; **the graded re-run is owed a host with disk** (§5) |
 | the console websocket tunnel | **not verifiable here** — no browser |
 
 ## 5. Staging, and what "done" means

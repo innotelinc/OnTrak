@@ -36,10 +36,20 @@ import { renderDemoSummary, runDemo } from "../../src/lib/lab/demo";
 import { listPrimitives } from "../../src/lib/lab/primitives";
 import { generate, primitiveMatrix, suggestedCombinations } from "../../src/lib/lab/generator";
 import { IncusClient } from "../../src/lib/lab/incus";
-import { validateForm, loadForm, grade, renderFeedback, ticketGradeSummaryLine } from "../../src/lib/lab/tickets";
+import {
+  missingRequired,
+  validateForm,
+  loadForm,
+  grade,
+  renderFeedback,
+  ticketGradeSummaryLine,
+  TicketError,
+  type TicketForm,
+} from "../../src/lib/lab/tickets";
 import { scheduleToSchedule } from "../../src/lib/lab/config";
 import { classResults } from "../../src/lib/lab/reporting";
 import { leaderboardRows, resultsCsv } from "../../src/lib/lab/portal";
+import { choose, historyFromSessions } from "../../src/lib/lab/selection";
 import { forgetLabRuntime, openLabRuntime, type LabRuntime } from "../../src/lib/lab/service";
 import { LAB_IN_APP_ENV, labDoorFromEnv } from "../../src/lib/lab-rules";
 import { SessionError } from "../../src/lib/lab/sessions";
@@ -406,13 +416,44 @@ async function cmdSession(runtime: LabRuntime, args: Args): Promise<number> {
       return 0;
     }
     case "start": {
-      const scenario = option(args, "scenario") ?? "";
-      if (student === "" || scenario === "") throw new SessionError("pass --student and --scenario");
-      const session = await runtime.manager.createSession(student, scenario, {
+      if (student === "") throw new SessionError("pass --student");
+      let scenario = option(args, "scenario") ?? "";
+      // No scenario named: the range's own selector, exactly as the portal's start uses it
+      // (`selection.choose` over the whole range's history, `selection.auto_assign` as the
+      // switch). The Python's CLI did this too, and said which one it picked — without it
+      // `--scenario` would be mandatory and the switch would mean nothing from a shell.
+      if (scenario === "") {
+        if (!runtime.settings.selection.autoAssign) {
+          throw new SessionError("pass --scenario (selection.auto_assign is off)");
+        }
+        const sessions = await runtime.store.listSessions({ limit: 500 });
+        const choice = choose(
+          runtime.repository.list(),
+          null,
+          historyFromSessions(sessions.map((row) => ({ scenario_id: row.scenarioId }))),
+          runtime.settings.selection.strategy,
+          runtime.settings.selection.maxDifficulty,
+          runtime.settings.selection.seed,
+        );
+        scenario = choice.scenario.id;
+        say("ok", `auto-assigned ${scenario} (${choice.explain()})`);
+      }
+      // `allocate`, not `createSession`: the machine has to exist before `check` can grade
+      // it, and a row left at `requested` is only useful to a request that provisions it
+      // afterwards — which a shell has none of.
+      const session = await runtime.manager.allocate(student, scenario, {
         workload: option(args, "workload"),
         timeLimitMinutes: option(args, "time-limit") === null ? null : Number(option(args, "time-limit")),
       });
-      say("ok", `session ${String(session.id)} for ${session.student}: ${session.state}`);
+      if (session.state === "error") {
+        say("fail", `session ${String(session.id)} failed: ${session.error}`);
+        return 1;
+      }
+      say(
+        "ok",
+        `session ${String(session.id)} ready on ${session.instance || "—"} ` +
+          `(${session.hostIp || "no address"}) for ${String(session.timeLimitMinutes)} minutes`,
+      );
       return 0;
     }
     case "complete": {
@@ -532,13 +573,20 @@ async function cmdTicket(runtime: LabRuntime, args: Args): Promise<number> {
   const action = args.words[0] ?? "form";
 
   if (action === "form") {
-    const scenario = runtime.repository.get(option(args, "scenario") ?? "");
-    const form = loadForm(scenario.ticket);
-    if (form === null) {
-      say("fail", `${scenario.id} declares no ticket form`);
-      return 1;
+    const wanted = option(args, "scenario");
+    if (wanted === null || wanted === "") {
+      // The Python's own refusal, and code: a missing scenario is a usage error rather
+      // than the exception an unknown id raises.
+      console.error("specify --scenario (see `ontrak scenario list`)");
+      return 2;
     }
-    console.log(`${form.title} — ${form.weight}% of the grade`);
+    const scenario = runtime.repository.get(wanted);
+    const form = loadForm(scenario.ticket);
+    if (form === null || form.fields.length === 0) {
+      say("note", `${scenario.id} declares no ticket form; it is graded on machine state alone`);
+      return 0;
+    }
+    console.log(`${form.title} — ${form.weight}% of the grade, pass mark ${form.passScore}%`);
     for (const field of form.fields) {
       console.log(`  ${field.id} (${field.kind}${field.required ? ", required" : ""}, ${field.weight} pts): ${field.label}`);
     }
@@ -568,37 +616,109 @@ async function cmdTicket(runtime: LabRuntime, args: Args): Promise<number> {
     return 0;
   }
 
+  const scenario = runtime.repository.get(session.scenarioId);
+  const form = loadForm(scenario.ticket);
+  if (form === null || form.fields.length === 0) {
+    say("note", `${scenario.id} declares no ticket form; it is graded on machine state alone`);
+    return 0;
+  }
+
+  const values = valuesFrom(args, form);
+
+  if (action === "save") {
+    await runtime.manager.saveTicketDraft(session, values);
+    say("ok", `saved a draft for session ${String(sessionId)} (${String(Object.keys(values).length)} field(s))`);
+    return 0;
+  }
+
   if (action === "grade") {
-    const scenario = runtime.repository.get(session.scenarioId);
-    const form = loadForm(scenario.ticket);
-    if (form === null) {
-      say("fail", `${scenario.id} declares no ticket form`);
-      return 1;
-    }
-    const values = valuesFrom(args);
+    // The Python's own last line, kept because it is the difference between a mark and a
+    // submission: this preview never reaches a table (the lab is results-only).
+    await runtime.manager.saveTicketDraft(session, values);
     const result = grade(form, values, { sessionId, scenarioId: scenario.id });
     console.log(ticketGradeSummaryLine(result));
     for (const row of renderFeedback(form, result)) {
       console.log(`  [${row.passed === true ? "PASS" : "FAIL"}] ${String(row.label)} ${String(row.detail ?? "")}`);
     }
+    say("note", "preview only — nothing stored; `ontrak ticket complete` hands it in");
     return 0;
   }
 
-  console.error(`error unknown action ${JSON.stringify(action)}: form, show, grade, save, complete`);
+  if (action === "complete") {
+    // A blank required field is refused *before* the machine is re-graded, so a half-filled
+    // form cannot burn the one submission a session gets (`completedAt`).
+    const missing = missingRequired(form, values);
+    if (missing.length > 0) {
+      say("fail", `required field(s) still blank: ${missing.join(", ")}`);
+      return 1;
+    }
+    const report = await runtime.manager.complete(session, values);
+    const ticket = grade(form, values, { sessionId, scenarioId: scenario.id });
+    console.log(ticketGradeSummaryLine(ticket));
+    for (const row of renderFeedback(form, ticket)) {
+      console.log(`  [${row.passed === true ? "PASS" : "FAIL"}] ${String(row.label)} ${String(row.detail ?? "")}`);
+    }
+    for (const note of report.notes) console.log(`  note: ${note}`);
+    const split =
+      report.ticketScore === null
+        ? `machine ${String(report.machineScore)}%`
+        : `machine ${String(report.machineScore)}%, write-up ${String(report.ticketScore)}% ` +
+          `at ${String(report.ticketWeight)}% of the grade`;
+    say(
+      report.error === "" ? (report.resolved ? "ok" : "fail") : "fail",
+      `session ${String(sessionId)} submitted: ${String(report.score)}% (${split})` +
+        `${report.resolved ? " — resolved" : " — not resolved"}` +
+        `${report.error === "" ? "" : ` — ${report.error}`}`,
+    );
+    return report.error === "" ? (report.resolved ? 0 : 1) : 1;
+  }
+
+  console.error(`error unknown action ${JSON.stringify(action)}: form, show, save, grade, complete`);
   return 2;
 }
 
-/** `--field id=value` repeated, or `--json '{"id": "value"}'`. */
-function valuesFrom(args: Args): Record<string, string> {
-  const json = option(args, "json");
-  if (json !== null) return JSON.parse(readFileSync(json, "utf8")) as Record<string, string>;
+/**
+ * `--field id=value` repeated, or `--json <file>`.
+ *
+ * Unknown ids are refused rather than dropped: a typo'd field would otherwise be stored,
+ * never marked, and read to the operator as an answer that scored nothing — the Python
+ * named the offending ids for the same reason.
+ */
+function valuesFrom(args: Args, form: TicketForm): Record<string, string> {
   const values: Record<string, string> = {};
+  const json = option(args, "json");
+  if (json !== null) {
+    valuesFromJson(json, values);
+  }
   for (const entry of all(args, "field")) {
     const split = entry.indexOf("=");
-    if (split === -1) continue;
-    values[entry.slice(0, split)] = entry.slice(split + 1);
+    if (split === -1) throw new TicketError(`--field expects id=value, got ${JSON.stringify(entry)}`);
+    values[entry.slice(0, split).trim()] = entry.slice(split + 1);
+  }
+  const known = new Set(form.fields.map((field) => field.id));
+  const unknown = Object.keys(values).filter((id) => !known.has(id)).sort();
+  if (unknown.length > 0) {
+    throw new TicketError(
+      `unknown ticket field(s): ${unknown.join(", ")}; this form has: ${[...known].sort().join(", ")}`,
+    );
   }
   return values;
+}
+
+/** A JSON file of answers, merged into `into`; a non-object is the operator's mistake. */
+function valuesFromJson(file: string, into: Record<string, string>): void {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    throw new TicketError(`--json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new TicketError("--json must be an object of field id to answer");
+  }
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    into[String(key)] = value === null || value === undefined ? "" : String(value);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -759,7 +879,7 @@ const USAGE = `ontrak — the lab's control plane, on the command line
   template build [ids…] [--all]     build scenario templates
   pool status|prewarm|refill|drain  the warm pool
   session list|start|show|check|reset|extend|limit|complete|end|console
-  ticket form|show|grade            the in-house incident write-up
+  ticket form|show|save|grade|complete  the in-house incident write-up
   reap [--loop]                     expire sessions and refill pools
   stats                             a JSON status snapshot
   results [--csv]                   the class's marks
