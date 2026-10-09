@@ -39,7 +39,7 @@ beside it. Module by module, with its disposition:
 | `lessons.py` | 348 | `src/lib/lab/lessons.ts` | 2b | **done** (its 7 lessons converted to `data/lessons.json`) |
 | `primitives.py` | 536 | `src/lib/lab/primitives.ts` | 2b | not started |
 | `generator.py` | 306 | `src/lib/lab/generator.ts` | 2b | not started |
-| `sessions.py` | 1638 | `src/lib/lab/sessions.ts` | 2d | **not landed** — ported and reviewed, but four lifecycle behaviours disagree with the lab's; parked, see §2c |
+| `sessions.py` | 1638 | `src/lib/lab/sessions.ts` | 2d | landed — 18 lifecycle tests, the four disagreements diagnosed and resolved, see §2d |
 | `store.py` | 709 | `src/lib/lab/store.ts` (contract + in-memory) + Prisma models | 2c | **partial** — the contract and the in-memory store landed; the Postgres/Prisma implementation is 2d |
 | `tickets.py` | 534 | `src/lib/lab/tickets.ts` | 3 | not started |
 | `auth.py` + `oidc.py` | 73 + 325 | *not ported* — superseded | 3 | see §3 |
@@ -161,14 +161,10 @@ so every scenario timeout was silently replaced by the client's default. Both ar
 with `GuestExecOutput` as the guest-exec shape and the reason stated on it, and the two
 `sessions.ts` declarations that had grown the invented shapes are gone with the file.
 
-**The session manager is ported but not landed.** `sessions.ts` (2,236 lines) and its
-18-test suite were written and reviewed, and **four lifecycle behaviours still disagree
-with the lab's**: the event sequence a provision writes, a Linux scenario landing in
-`error` instead of `ready` through the shell transport, a second `complete` not being
-refused, and the idle sweep recycling nothing. Each is a diagnosis against
-`sessions.py`, not a guess — so the file is parked at `/root/lab-wip/sessions.ts`
-(with its suite) rather than committed, because committing it would leave a suite that
-fails, and "the largest module ports last" is the honest order for it.
+**The session manager is ported but not landed yet** at this point in the work: the file
+and its 18-test suite were written and reviewed but four lifecycle behaviours disagreed
+with the lab's, so they were parked rather than committed. Each is diagnosed in §2d and all
+four are now resolved.
 
 Two things stage 2a confirmed by measurement rather than by reading:
 
@@ -180,6 +176,50 @@ the same one-off conversion, which is why they are 2b and not 2a.
 - **`guest.driver` defaults to `incus-exec`, not the Python's `winrm`** — required by
 §3/C1, and asserted by a test, since keeping the lab's default would make a default
 deployment throw on its first Windows session.
+
+### Stage 2d — the session manager, and the four disagreements resolved
+
+`src/lib/lab/sessions.ts` — the largest module in the lab, and the one every other moving
+part goes through — lands with `tests/lab-sessions.test.ts`, 18 tests that drive the whole
+lifecycle (request, claim or clone, wait for the transport, grade, reset, complete, sweep)
+against `InMemoryIncus`, `InMemoryLabStore` and a driver that records rather than pretends.
+The clock and the sleep are injected, so a 90-minute TTL and a 20-minute idle sweep happen
+in milliseconds, and the scenarios and catalogue are the ported real ones.
+
+Four behaviours disagreed when the suite first ran. None was a test-only problem and none
+was fixed by loosening an assertion — each was traced to the lab:
+
+- **The event sequence.** The port wrote `allocating` into the log and the test read the
+trail oldest-first. The lab's reader is `ORDER BY id DESC` (newest first) and the lab logs
+`requested`, `cloned`, `ready` — **there is no `allocating` event**; the intermediate states
+are what the session *row* says. The test was wrong on both counts, and is now written the
+way the lab reads its own audit trail.
+- **A Linux scenario landed in `error`.** The manager resolved the scenario's *first
+declared workload* (`ubuntu-24.04`) and refused the bare golden-image template by name,
+with the command to fix it — exactly the lab's `_resolve_workload` rule, where an unset
+workload means `platform_workloads[0]`. The fixture had built the wrong template. Behind
+that sat a second, worse defect: the fake handed in as the **shell** transport inherited
+`BaseDriver.runScriptFile`, which composes PowerShell — so a test that believed it was
+watching the Linux path was watching the Windows path and passing. `RecordingDriver` now
+takes the transport it stands in for, and the Linux assertion is made against `check.sh`
+arriving over the shell transport with no PowerShell run at the guest.
+- **A second `complete` was not refused.** The lab refuses on `is_terminal`, which is only
+`destroyed`/`error` — `passed` is deliberately *not* terminal there, because a check that
+resolves leaves the machine in the student's hands. So "passed a check" and "handed the
+work in" are two different facts, and the port had only the first. `LabSession` now carries
+`completedAt`, set at completion, and `complete` refuses a session that already has one:
+the portal's Complete button is a POST, and a double submit would otherwise grade a VM that
+no longer exists and **store a 0 % attempt over a pass**. This is a divergence from the lab
+(the Python only appends `[completed]` to the notes), and it is recorded as one.
+- **The idle sweep recycled nothing.** It measured idle with `secondsSince`, which read the
+**real** clock, against stamps written by the **injected** one — with a fixture clock a day
+away from wall-clock time the window came out negative and every session was skipped. Fixed
+at the root: `secondsSince(value, now)` takes the clock and `reap` passes the injected one,
+which is what the lab does by comparing against the clock its sessions were stamped with.
+
+Two of the four are therefore port defects and two were the suite's — which is the useful
+split, because the suite was written against the lab rather than against the port, and it is
+what caught the fake that was not shaped like the transport it stood in for.
 
 ## 3. Architectural conflicts, and how each is resolved
 
@@ -280,9 +320,10 @@ verifiable the same way the Python's is, and the same residue stays honestly unp
 | **2a** (landed) | `config`, `scenarios`, `media`, `memory` — 76 tests | typecheck clean, suites green, the 14 real lab scenarios validate, full suite and build unchanged and green |
 | **2b** (landed) | `catalog`, `lessons` — 52 tests — plus the lab's data converted to JSON (`src/lib/lab/data/`) | the real catalogue and lesson library load and validate with no YAML parser; the grader takes the catalogue's own object; suite and build green |
 | **2c** (landed) | `store`'s **contract** + the in-memory implementation, and the guest-transport repairs below | typecheck clean; the store, memory, incus and guest suites green; the whole app suite and the build unchanged and green |
-| **2d** | `sessions` (re-review against the four behaviours in §2c), the Prisma store + a reversible migration, `demo`, `primitives`, `generator` | the ported demo flow runs a full class with no hypervisor, as `demo.py` does, and the store round-trips a session and a report |
+| **2d** (in progress — `sessions` landed) | `sessions`'s four behaviours resolved (§2d); remaining: the Prisma store + a reversible migration, `demo`, `primitives`, `generator` | the ported demo flow runs a full class with no hypervisor, as `demo.py` does, and the store round-trips a session and a report |
 | **3** | the portal surface (`app` + `admin`) on the app's identity, `tickets`, the lab scenario/lesson pages, the console iframe | a student starts, checks, completes; an instructor reads the results; the routes keep their contracts; a11y sweep passes |
 | **4** | the CLI as `tsx` scripts, compose/Docker deployment, and the `infra/**` shell kept as shell with its entry points documented | the stack builds and reports healthy with no Incus socket mounted; the boundary tests still pass |
 
-Stage 1 is complete and verified. Stages 2–4 are named work with a stated order; none of
-them is started, and nothing in this document should be read as claiming they are.
+Stage 1, 2a, 2b and 2c are complete and verified, and 2d has landed its largest module
+(`sessions`). The rest of 2d and stages 3–4 are named work with a stated order; nothing in
+this document should be read as claiming they are done.

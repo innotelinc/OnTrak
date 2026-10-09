@@ -55,9 +55,9 @@ export function parseIso(value: string | null | undefined): Date | null {
 }
 
 /** Seconds between a stored instant and now, or `null` when there is no instant. */
-export function secondsSince(value: string | null | undefined): number | null {
+export function secondsSince(value: string | null | undefined, now: Date = new Date()): number | null {
   const parsed = parseIso(value);
-  return parsed === null ? null : (Date.now() - parsed.getTime()) / 1000;
+  return parsed === null ? null : (now.getTime() - parsed.getTime()) / 1000;
 }
 
 /**
@@ -409,6 +409,13 @@ export interface LabSession {
   readyAt: string;
   expiresAt: string;
   lastActivityAt: string;
+  /**
+   * When the student handed the work in ("Complete & End"), or empty while the session is
+   * still open. `passed`/`failed` cannot carry this on their own: the machine stays usable
+   * after a check that resolved — that is what makes resolution sticky — so a student sits
+   * in `passed` both before and after the submission.
+   */
+  completedAt: string;
   lastReport: ScoreReport | null;
   /**
    * The catalog entry the student picked. Empty means "the scenario's own default",
@@ -449,6 +456,7 @@ export function newLabSession(fields: {
     readyAt: "",
     expiresAt: "",
     lastActivityAt: now,
+    completedAt: "",
     lastReport: null,
     workload: "",
     timeLimitMinutes: 0,
@@ -519,6 +527,7 @@ export function sessionToDict(session: LabSession, includeSecrets = false): Reco
     ready_at: session.readyAt,
     expires_at: session.expiresAt,
     last_activity_at: session.lastActivityAt,
+    completed_at: session.completedAt,
     seconds_remaining: sessionSecondsRemaining(session),
     workload: session.workload,
     time_limit_minutes: session.timeLimitMinutes,
