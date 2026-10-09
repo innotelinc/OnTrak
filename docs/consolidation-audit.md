@@ -373,8 +373,8 @@ pass mark, tags incl. `lab`, the briefing as `description`/`brief`, and the obje
 as the task list), with `exportLabScenario` for the return trip; one nullable column,
 `Scenario.labMeta` (+ `prisma/migrations/20261106000000_add_scenario_lab_meta`), for the
 facts the family's model has no column for (objective ids/weights/critical flags,
-category, workloads, lessons); and the 14 lab scenarios as JSON fixtures under
-`tests/fixtures/lab-scenarios/`. *Verify:* `tests/lab-scenario-import.test.ts` holds all
+category, workloads, lessons); and the 14 lab scenarios as JSON records in the shipped
+`scenarios/<id>/scenario.json` tree. *Verify:* `tests/lab-scenario-import.test.ts` holds all
 14 to a field-for-field round trip, and asserts that the **simulator refuses every one**
 — the imported definition carries no checks (the lab grades against a live machine, and
 nothing in the YAML says which live condition an objective tests), so

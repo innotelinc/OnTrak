@@ -4,9 +4,10 @@
  * Ported from `OnTrak-dev/tests/test_scenarios.py`, with the two things this
  * repository changes kept visible rather than glossed:
  *
- * **The data is the lab's own.** These tests read the 14 real scenarios from
- * `tests/fixtures/lab-scenarios/` — the same files the family's lab-scenario
- * importer round-trips — so a rejection here means the port is wrong, not the data.
+ * **The data is the lab's own.** These tests read the 14 real scenarios from the
+ * shipped `scenarios/` tree — the same records the family's lab-scenario importer
+ * round-trips, beside the scripts a host runs — so a rejection here means the port is
+ * wrong, not the data, and a missing file is a deployment fault rather than a test one.
  * They carry no `setup`/`check` scripts, which is why the catalogue has two doors:
  * `validateRecords` for what a record can prove, and `validate` for the script
  * contract, which is proven here against inline script text instead.
@@ -22,10 +23,10 @@
  */
 
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
-import path from "node:path";
+import { join } from "node:path";
 import { test } from "node:test";
 
+import { scenarioEntriesFrom, scenarioRoot } from "../src/lib/lab/dataset";
 import type { LabScenario as ScenarioRecord } from "../src/lib/lab-scenario-import";
 import { CATEGORIES } from "../src/lib/lab/models";
 import {
@@ -51,20 +52,15 @@ import {
   type TicketRules,
 } from "../src/lib/lab/scenarios";
 
-const DIR = path.join(process.cwd(), "tests", "fixtures", "lab-scenarios");
+/** The tree a deployment reads: `scenarios/<id>/scenario.json` beside its scripts. */
+const DIR = scenarioRoot();
 
-/** The 14 real lab scenarios, read from the JSON the catalogue consumes. */
-function fixtureEntries(dir: string = DIR): ScenarioEntry[] {
-  return readdirSync(dir)
-    .filter((name) => name.endsWith(".json"))
-    .sort()
-    .map((fileName) => ({
-      fileName,
-      record: parseScenarioRecord(readFileSync(path.join(dir, fileName), "utf8"), fileName),
-    }));
+/** The 14 real lab scenarios, read from the shipped tree rather than a copy of it. */
+function scenarioEntries(dir: string = DIR): ScenarioEntry[] {
+  return scenarioEntriesFrom(dir);
 }
 
-function repository(entries: readonly ScenarioEntry[] = fixtureEntries()): ScenarioRepository {
+function repository(entries: readonly ScenarioEntry[] = scenarioEntries()): ScenarioRepository {
   return new ScenarioRepository(entries);
 }
 
@@ -119,10 +115,11 @@ test("scenarios: weights total 100 and the critical flags stay selective", () =>
   }
 });
 
-test("scenarios: an id matches the file it came from", () => {
-  const fileNames = new Set(fixtureEntries().map((candidate) => candidate.fileName));
+test("scenarios: an id matches the directory it came from", () => {
+  const fileNames = new Set(scenarioEntries().map((candidate) => candidate.fileName));
   for (const scenario of repository().list()) {
-    assert.ok(fileNames.has(`${scenario.id}.json`), `${scenario.id} came from ${scenario.id}.json`);
+    const expected = join(scenario.id, "scenario.json");
+    assert.ok(fileNames.has(expected), `${scenario.id} came from ${expected}`);
   }
 });
 
@@ -141,7 +138,9 @@ test("scenarios: the hardware scenario's extra adapter is unmanaged", () => {
 });
 
 test("scenarios: an extra NIC on the lab network is refused at validate time", () => {
-  const original = fixtureEntries().find((candidate) => candidate.fileName === "hw-driver-device.json");
+  const original = scenarioEntries().find(
+    (candidate) => candidate.fileName === join("hw-driver-device", "scenario.json"),
+  );
   assert.ok(original, "the device fixture must exist");
   const broken = JSON.parse(JSON.stringify(original.record)) as Record<string, unknown>;
   const devices = (broken.instance_devices ?? []) as Record<string, unknown>[];
@@ -406,10 +405,10 @@ test("scenarios: the default ticket rules find the form and validate none of it"
     loadForm: () => ({ fields: [] }),
     validateForm: (form, prefix) => (form === null ? [`${prefix} no write-up form`] : []),
   };
-  const withRules = new ScenarioRepository(fixtureEntries(), { ticketRules: rules });
+  const withRules = new ScenarioRepository(scenarioEntries(), { ticketRules: rules });
   assert.deepEqual(withRules.validateRecords(["linux-dir-tree-build"]), []);
 
-  const complaining = new ScenarioRepository(fixtureEntries(), {
+  const complaining = new ScenarioRepository(scenarioEntries(), {
     ticketRules: {
       loadForm: () => null,
       validateForm: (_form, prefix) => [`${prefix} the rubric was refused`],

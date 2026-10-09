@@ -13,8 +13,9 @@
  * YAML parser and does not want one, and it does not need one: the lab's 14
  * scenarios were already converted field-for-field to JSON, and the shape is
  * defined once in `src/lib/lab-scenario-import.ts` (`LabScenario`). That is the
- * shape loaded here, the files in `tests/fixtures/lab-scenarios/` are the real
- * lab data, and `docs/lab-port.md` §3/C6 records the decision. A second definition
+ * shape loaded here, the real lab data is the `scenarios/` tree this repository ships —
+ * each scenario's `scenario.json` beside the scripts a host runs (`src/lib/lab/dataset.ts`
+ * is the module that reads it) — and `docs/lab-port.md` §3/C6 records the decision. A second definition
  * of the on-disk shape, or a second YAML dialect in one tree, is exactly the drift
  * this module refuses.
  *
@@ -635,6 +636,24 @@ function catalogEntries(catalog: CatalogFacts | null | undefined): Set<string> |
 const WORKLOAD_ID = /^[a-z0-9][a-z0-9.-]*$/;
 const LESSON_ID = /^[a-z0-9][a-z0-9-]*$/;
 
+/**
+ * The id a record's label implies.
+ *
+ * Two layouts are in use because two are real: the lab's flat `net-dns-failure.json`, and
+ * the shipped tree's `net-dns-failure/scenario.json`, where the *directory* is the scenario
+ * and the file name is fixed by the loader (`src/lib/lab/dataset.ts`). Reading only a stem
+ * would make the second layout's every record disagree with a file called `scenario`, which
+ * is a rule about the data being renamed, not about the file being named `scenario.json`.
+ */
+export function idFromLabel(label: string): string {
+  const parts = label.replace(/\\/g, "/").split("/");
+  const stem = (parts[parts.length - 1] ?? "").replace(/\.json$/i, "");
+  if (stem.toLowerCase() === "scenario" && parts.length >= 2) {
+    return parts[parts.length - 2] ?? stem;
+  }
+  return stem;
+}
+
 /** The record rules, ported one for one from `ScenarioRepository.validate`. */
 function recordProblems(
   scenario: Scenario,
@@ -645,8 +664,9 @@ function recordProblems(
   const problems: string[] = [];
   const ticketRules = options.ticketRules ?? DEFAULT_TICKET_RULES;
 
-  // The id is checked against the file, which is what a renamed manifest breaks.
-  const expectedName = scenario.fileName.replace(/\.json$/i, "");
+  // The id is checked against the file it came from, which is what a renamed manifest
+  // breaks.
+  const expectedName = idFromLabel(scenario.fileName);
   if (scenario.id !== expectedName) {
     problems.push(`${prefix} id does not match the file name ${JSON.stringify(scenario.fileName)}`);
   }

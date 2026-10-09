@@ -106,8 +106,10 @@ Stage 2's first slice, landed and verified the same way:
 
 **Verified:** `tsc --noEmit` clean; the four suites **76/76**; the whole app suite
 **718 tests / 713 pass / 0 fail / 5 skipped**; `npm run build` exit 0. The scenario
-suite validates **all 14 real lab scenarios** from `tests/fixtures/lab-scenarios/` — the
-lab's own data, so a rejection there would have meant the port was wrong, not the data.
+suite validates **all 14 real lab scenarios** — the lab's own data, so a rejection there
+would have meant the port was wrong, not the data. (At this point the records lived under
+`tests/fixtures/lab-scenarios/`; stage 2d moved them to the `scenarios/` tree a host
+actually reads, see below.)
 
 ### Stage 2b — the catalogue, the lessons, and the data they read (including the conversion)
 
@@ -313,7 +315,7 @@ is — but it is a divergence from `scoring.py` and it is recorded as one.
 `config.py` reads `config/ontrak.yaml`; `catalog.py` and `lessons.py` read 1,467 lines
 of YAML. OnTrak has no YAML dependency. **Resolved — the data becomes JSON.** The lab's
 scenario YAML was already converted to JSON in this repository when the family's importer
-was written (`tests/fixtures/lab-scenarios/`, all 14 scenarios, field for field), so the
+was written (all 14 scenarios, field for field), so the
 scenario loader ports onto data that is already here; `config.ts` takes an
 already-parsed record and does not choose a parser; and `catalog`/`lessons` get the same
 one-off conversion, with a checked script rather than by hand. **Cost:** the lab's YAML
@@ -355,7 +357,7 @@ verifiable the same way the Python's is, and the same residue stays honestly unp
 | **2a** (landed) | `config`, `scenarios`, `media`, `memory` — 76 tests | typecheck clean, suites green, the 14 real lab scenarios validate, full suite and build unchanged and green |
 | **2b** (landed) | `catalog`, `lessons` — 52 tests — plus the lab's data converted to JSON (`src/lib/lab/data/`) | the real catalogue and lesson library load and validate with no YAML parser; the grader takes the catalogue's own object; suite and build green |
 | **2c** (landed) | `store`'s **contract** + the in-memory implementation, and the guest-transport repairs below | typecheck clean; the store, memory, incus and guest suites green; the whole app suite and the build unchanged and green |
-| **2d** (in progress — `sessions` and the Postgres store landed) | `sessions`'s four behaviours resolved and the Prisma store + reversible migration (§2d); remaining: `demo`, `primitives`, `generator` | the ported demo flow runs a full class with no hypervisor, as `demo.py` does, and the store round-trips a session and a report (the Postgres store does this against a real database today) |
+| **2d** (in progress — `sessions`, the Postgres store and the shipped data landed) | `sessions`'s four behaviours resolved and the Prisma store + reversible migration (§2d); remaining: `demo`, `primitives`, `generator` | the ported demo flow runs a full class with no hypervisor, as `demo.py` does, and the store round-trips a session and a report (the Postgres store does this against a real database today) |
 | **3** | the portal surface (`app` + `admin`) on the app's identity, `tickets`, the lab scenario/lesson pages, the console iframe | a student starts, checks, completes; an instructor reads the results; the routes keep their contracts; a11y sweep passes |
 | **4** | the CLI as `tsx` scripts, compose/Docker deployment, and the `infra/**` shell kept as shell with its entry points documented | the stack builds and reports healthy with no Incus socket mounted; the boundary tests still pass |
 

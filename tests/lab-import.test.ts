@@ -24,23 +24,21 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
+import { scenarioEntriesFrom, scenarioRoot } from "../src/lib/lab/dataset";
 import { labScenarioUpdate, labScenarioWrite, planLabImport, type LabImportSource } from "../src/lib/lab-import";
 import { LAB_SCENARIO_TAG, simulatedStartRefusal } from "../src/lib/lab-rules";
 import type { LabScenario } from "../src/lib/lab-scenario-import";
 import { expectedEngine } from "../src/lib/validate";
 
-const DIR = path.join(process.cwd(), "tests", "fixtures", "lab-scenarios");
+const DIR = scenarioRoot();
 const AUTHOR = "author-under-test";
 
-/** The real catalogue, as the script reads it. */
+/** The real catalogue, as the script reads it: the shipped tree, not a copy of it. */
 function sources(): LabImportSource[] {
-  return readdirSync(DIR)
-    .filter((file) => file.endsWith(".json"))
-    .sort()
-    .map((file) => ({
-      name: file,
-      raw: JSON.parse(readFileSync(path.join(DIR, file), "utf8")) as LabScenario,
-    }));
+  return scenarioEntriesFrom(DIR).map((entry) => ({
+    name: entry.fileName,
+    raw: entry.record as LabScenario,
+  }));
 }
 
 test("lab import: the whole catalogue plans, and every row is what the importer produced", () => {

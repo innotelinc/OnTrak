@@ -23,7 +23,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { catalogFromManifests, type Catalog } from "../src/lib/lab/catalog";
+import type { Catalog } from "../src/lib/lab/catalog";
+import { loadCatalog, loadScenarios } from "../src/lib/lab/dataset";
 import { loadSettings, type LabSettings } from "../src/lib/lab/config";
 import { InMemoryIncus } from "../src/lib/lab/memory";
 import { JSON_BEGIN, JSON_END, parseIso, type LabSession } from "../src/lib/lab/models";
@@ -42,26 +43,14 @@ import {
 } from "../src/lib/lab/scenarios";
 import { InMemoryLabStore } from "../src/lib/lab/store";
 
-const FIXTURES = join(process.cwd(), "tests", "fixtures", "lab-scenarios");
-const CATALOG = join(process.cwd(), "src", "lib", "lab", "data", "catalog.json");
-
-/** The lab's converted scenarios: the real tickets, objectives and hints. */
+/** The 14 real scenarios, from the tree a deployment reads (`scenarios/<id>/scenario.json`). */
 function repository(): ScenarioRepository {
-  const entries: ScenarioEntry[] = readdirSync(FIXTURES)
-    .filter((name) => name.endsWith(".json"))
-    .sort()
-    .map((name) => ({
-      fileName: name,
-      record: parseScenarioRecord(readFileSync(join(FIXTURES, name), "utf8"), name),
-    }));
-  return new ScenarioRepository(entries);
+  return loadScenarios();
 }
 
 /** The ported catalogue manifests, which is what makes `workload:` resolution real. */
 function catalog(): Catalog {
-  const raw: unknown = JSON.parse(readFileSync(CATALOG, "utf8"));
-  assert.ok(typeof raw === "object" && raw !== null, "the catalogue data must be an object");
-  return catalogFromManifests(raw as Record<string, unknown>);
+  return loadCatalog();
 }
 
 function settings(env: Record<string, string> = {}): LabSettings {

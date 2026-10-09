@@ -1,7 +1,7 @@
 /**
  * Put the lab's scenarios into this deployment.
  *
- *   npm run lab:import                       # the 14 fixtures in this repository
+ *   npm run lab:import                       # the 14 scenarios shipped in scenarios/
  *   npm run lab:import -- --from <dir>       # a lab checkout, converted to JSON
  *   npm run lab:import -- --author someone@example.com
  *   npm run lab:import -- --dry-run          # plan and report, write nothing
@@ -14,8 +14,8 @@
  * page's lab door was drawn nowhere, and the completion boundary had no task to file a
  * result against. This is that missing half.
  *
- * The fixtures are the lab's real `scenario.yaml` files converted once to JSON, and they
- * are the whole catalogue rather than a sample (`tests/fixtures/lab-scenarios/`). A lab
+ * The records are the lab's real `scenario.yaml` files converted once to JSON, and they
+ * are the whole catalogue rather than a sample (`scenarios/<id>/scenario.json`). A lab
  * checkout can be used directly once its YAML is converted, because this repository has no
  * YAML reader and adding one to a deploy path for a single use would be a dependency for
  * nothing; `--from` takes the converted directory.
@@ -27,17 +27,15 @@
  * makes a lab-tagged scenario exist, which is the precondition for both.
  */
 
-import { readFileSync, readdirSync } from "node:fs";
-import path from "node:path";
-
 import { PrismaClient } from "@prisma/client";
 
+import { scenarioEntriesFrom, scenarioRoot } from "../src/lib/lab/dataset";
 import { labScenarioUpdate, labScenarioWrite, planLabImport, type LabImportSource } from "../src/lib/lab-import";
 import { labConfigFromEnv, labSessionUrl } from "../src/lib/lab-rules";
 
 const prisma = new PrismaClient();
 
-const DEFAULT_FROM = path.join("tests", "fixtures", "lab-scenarios");
+const DEFAULT_FROM = scenarioRoot();
 
 function flag(name: string): string | null {
   const index = process.argv.indexOf(`--${name}`);
@@ -46,17 +44,15 @@ function flag(name: string): string | null {
   return value && !value.startsWith("--") ? value : "";
 }
 
+/**
+ * The records to import, from the tree a host reads.
+ *
+ * `scenarioEntriesFrom` rather than a directory listing, so the script and a deployment
+ * agree about the layout: this used to read a flat directory of `.json` files, which was
+ * the test-fixture shape and not the shape `scenarios/` has.
+ */
 function readSources(directory: string): LabImportSource[] {
-  const files = readdirSync(directory)
-    .filter((file) => file.endsWith(".json"))
-    .sort();
-  if (files.length === 0) {
-    throw new Error(`${directory} holds no .json scenarios — point --from at the converted lab scenarios.`);
-  }
-  return files.map((file) => ({
-    name: path.posix.join(directory, file),
-    raw: JSON.parse(readFileSync(path.join(directory, file), "utf8")) as unknown,
-  }));
+  return scenarioEntriesFrom(directory).map((entry) => ({ name: entry.fileName, raw: entry.record }));
 }
 
 async function main(): Promise<void> {
