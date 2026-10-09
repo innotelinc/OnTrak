@@ -504,6 +504,85 @@ export function sessionSetTimeLimit(session: LabSession, minutes: number, now: D
 }
 
 /**
+ * A graded report as the wire carries it and the database stores it.
+ *
+ * Ported from the Python's `to_dict`/`from_dict` pair rather than invented as camelCase
+ * JSON, for two reasons that both matter at the storage boundary. The first is
+ * interoperability: `report_json` in the lab's own SQLite is this exact shape, so a
+ * report this port writes can be read by the lab's tools (and a report the lab wrote can
+ * be read here) — which is the whole point of a port that is expected to run beside the
+ * original for a while. The second is that reading a `JSONB` column is parsing untrusted
+ * input: the lab's `from_dict` coerces every field with a default, so a row written by an
+ * older version, or by hand, degrades a field at a time instead of throwing where a
+ * results page is being rendered.
+ */
+export function reportToDict(report: ScoreReport): Record<string, unknown> {
+  return {
+    session_id: report.sessionId,
+    scenario_id: report.scenarioId,
+    score: report.score,
+    resolved: report.resolved,
+    outcomes: report.outcomes.map(checkOutcomeToDict),
+    created_at: report.createdAt,
+    error: report.error,
+    notes: [...report.notes],
+    machine_score: report.machineScore,
+    ticket_score: report.ticketScore,
+    ticket_weight: report.ticketWeight,
+    ticket_outcomes: report.ticketOutcomes.map((row) => ({ ...row })),
+  };
+}
+
+/**
+ * A stored report, read back with the lab's own defaults.
+ *
+ * `machine_score` falls back to `score` (the Python's `data.get("machine_score",
+ * data.get("score", 0.0))`) because a report written before the ticket blend existed
+ * has no separate machine half, and calling that a zero would turn every historical pass
+ * into a fail.
+ */
+export function reportFromDict(data: unknown): ScoreReport {
+  const row = asRecord(data);
+  const score = toNumber(row.score, 0);
+  const outcomes = Array.isArray(row.outcomes) ? row.outcomes : [];
+  const ticketOutcomes = Array.isArray(row.ticket_outcomes) ? row.ticket_outcomes : [];
+  return {
+    sessionId: Math.trunc(toNumber(row.session_id, 0)),
+    scenarioId: String(row.scenario_id ?? ""),
+    score,
+    resolved: Boolean(row.resolved ?? false),
+    outcomes: outcomes.map((entry) => checkOutcomeFromDict(asRecord(entry))),
+    createdAt: String(row.created_at ?? iso()),
+    error: String(row.error ?? ""),
+    notes: (Array.isArray(row.notes) ? row.notes : []).map((note) => String(note)),
+    machineScore: toNumber(row.machine_score, score),
+    ticketScore: row.ticket_score === null || row.ticket_score === undefined ? null : toNumber(row.ticket_score, 0),
+    ticketWeight: toNumber(row.ticket_weight, 0),
+    // `if isinstance(o, dict)`: anything else in the list would have to be an index, and a
+    // field list with a number in it is a bug in whatever wrote the row, not a field.
+    ticketOutcomes: ticketOutcomes.filter(isRecord).map((entry) => ({ ...entry })),
+  };
+}
+
+/** A JSON column arrives as `unknown`; every reader here has to say what it accepts. */
+function asRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toNumber(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+/**
  * The session as the portal and the CLI show it.
  *
  * `rdpUser`/`rdpPassword` are the guest credentials and are only included when a

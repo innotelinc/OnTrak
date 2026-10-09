@@ -40,7 +40,7 @@ beside it. Module by module, with its disposition:
 | `primitives.py` | 536 | `src/lib/lab/primitives.ts` | 2b | not started |
 | `generator.py` | 306 | `src/lib/lab/generator.ts` | 2b | not started |
 | `sessions.py` | 1638 | `src/lib/lab/sessions.ts` | 2d | landed — 18 lifecycle tests, the four disagreements diagnosed and resolved, see §2d |
-| `store.py` | 709 | `src/lib/lab/store.ts` (contract + in-memory) + Prisma models | 2c | **partial** — the contract and the in-memory store landed; the Postgres/Prisma implementation is 2d |
+| `store.py` | 709 | `src/lib/lab/store.ts` (contract + in-memory), `store-prisma.ts` + `prisma/` models | 2c/2d | landed — the contract and the in-memory store in 2c, the Postgres/Prisma one and its reversible migration in 2d |
 | `tickets.py` | 534 | `src/lib/lab/tickets.ts` | 3 | not started |
 | `auth.py` + `oidc.py` | 73 + 325 | *not ported* — superseded | 3 | see §3 |
 | `demo.py` | 474 | `src/lib/lab/demo.ts` | 2d | not started |
@@ -221,6 +221,41 @@ Two of the four are therefore port defects and two were the suite's — which is
 split, because the suite was written against the lab rather than against the port, and it is
 what caught the fake that was not shaped like the transport it stood in for.
 
+**The store on Postgres, and a migration that reverses.** The Python's `store.py` *is* a
+SQLite file it creates and migrates by hand. The port keeps the contract and moves the engine
+to the database this deployment already runs (§3/C3): four models in `prisma/schema.prisma`
+(`LabSession`, `LabResult`, `LabEvent`, `LabMeta`), a migration that only *adds*, and
+`store-prisma.ts` implementing the same interface as the in-memory store — so nothing above
+the store knows which one it is holding, and a test asserts exactly that by running one
+script against both.
+
+Three things are worth stating because each is where an adapter like this goes wrong. The
+Prisma client is described **structurally** (`LabPrismaClient`), so the conversions can be
+unit-tested with no database and the one call site that owns a real client does the cast.
+Timestamps cross the boundary in named functions, because `""` means *no such moment* for
+`readyAt`/`expiresAt`/`completedAt` and has to become NULL rather than 1970. And a stored
+report is read back through the lab's own `to_dict`/`from_dict` coercions, so a JSONB column
+written by an older version degrades one field at a time instead of throwing inside a results
+page — and a report this port writes stays readable by the lab's own tools.
+
+**The migration reverses, and that was checked rather than asserted.** `migrate dev` is
+forward-only; the brief asks for reversible migrations, so
+`prisma/migrations/20261109000000_add_lab_runtime/down.sql` is hand-written and *applied* in a
+throwaway database after the up migration: the four tables, the enum and the migration's own
+row in `_prisma_migrations` are removed, the app's other fifteen tables are untouched, and
+re-running the up migration restores everything. The migrations directory also shipped
+without a `migration_lock.toml`, which is why `migrate diff` could not tell which connector
+the history was built for; that file is now committed.
+
+The up migration was verified two ways rather than one: `prisma migrate diff` between the
+migration history and `schema.prisma` reports an empty migration (so the SQL and the models
+agree), and the schema was applied to a real Postgres 16 — which is also where the integration
+test runs, skipped rather than failed when no database is reachable. That test is the only
+place the things a fake cannot express are checked: the sequence behind the id, the state
+enum, `timestamp(3)` keeping milliseconds through the ISO round-trip, the JSONB report, and
+the two `ON DELETE` clauses (a deleted session takes its results and leaves its events behind
+naming no session — the events an operator needs after a botched teardown).
+
 ## 3. Architectural conflicts, and how each is resolved
 
 The brief says to identify and resolve conflicts rather than ignore them. These are the
@@ -320,7 +355,7 @@ verifiable the same way the Python's is, and the same residue stays honestly unp
 | **2a** (landed) | `config`, `scenarios`, `media`, `memory` — 76 tests | typecheck clean, suites green, the 14 real lab scenarios validate, full suite and build unchanged and green |
 | **2b** (landed) | `catalog`, `lessons` — 52 tests — plus the lab's data converted to JSON (`src/lib/lab/data/`) | the real catalogue and lesson library load and validate with no YAML parser; the grader takes the catalogue's own object; suite and build green |
 | **2c** (landed) | `store`'s **contract** + the in-memory implementation, and the guest-transport repairs below | typecheck clean; the store, memory, incus and guest suites green; the whole app suite and the build unchanged and green |
-| **2d** (in progress — `sessions` landed) | `sessions`'s four behaviours resolved (§2d); remaining: the Prisma store + a reversible migration, `demo`, `primitives`, `generator` | the ported demo flow runs a full class with no hypervisor, as `demo.py` does, and the store round-trips a session and a report |
+| **2d** (in progress — `sessions` and the Postgres store landed) | `sessions`'s four behaviours resolved and the Prisma store + reversible migration (§2d); remaining: `demo`, `primitives`, `generator` | the ported demo flow runs a full class with no hypervisor, as `demo.py` does, and the store round-trips a session and a report (the Postgres store does this against a real database today) |
 | **3** | the portal surface (`app` + `admin`) on the app's identity, `tickets`, the lab scenario/lesson pages, the console iframe | a student starts, checks, completes; an instructor reads the results; the routes keep their contracts; a11y sweep passes |
 | **4** | the CLI as `tsx` scripts, compose/Docker deployment, and the `infra/**` shell kept as shell with its entry points documented | the stack builds and reports healthy with no Incus socket mounted; the boundary tests still pass |
 

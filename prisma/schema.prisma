@@ -396,6 +396,132 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
+// ---------------------------------------------------------------------------
+// Lab runtime
+//
+// The lab (`OnTrak-dev`) kept a SQLite file of its own: sessions, results, events,
+// tickets and a small meta table, created and migrated by hand inside
+// `ontrak/store.py`. The port keeps the contract and moves the engine here
+// (docs/lab-port.md §3/C3), so a student's lab machine, the grade it produced and
+// the evidence behind it live in the same database, backup and migration history
+// as the rest of their training. `tickets` is absent on purpose: the lab's ticket
+// form is stage 3, and declaring a shape nobody has agreed to yet is how two
+// generations of a schema start disagreeing.
+// ---------------------------------------------------------------------------
+
+/// Lifecycle of one student's lab VM, in the lab's own vocabulary
+/// (`SessionState` in `src/lib/lab/models.ts`). An enum rather than a string so a
+/// stray value cannot be written by a bug that a `where state = 'readyy'` would
+/// then never find.
+enum LabSessionState {
+  REQUESTED
+  ALLOCATING
+  PROVISIONING
+  READY
+  IN_USE
+  CHECKING
+  PASSED
+  FAILED
+  RECYCLING
+  DESTROYED
+  ERROR
+}
+
+/// One student's lab session: the machine, the clock it was given, and where the
+/// work got to.
+///
+/// `student` is the app's own identifier for the student, not a second user row:
+/// the lab's `users` table is superseded by this app's identity (§3/C2), and a lab
+/// account that shadowed it would be a second place to revoke someone from.
+model LabSession {
+  id                Int              @id @default(autoincrement())
+  student           String
+  scenarioId        String
+  state             LabSessionState  @default(REQUESTED)
+  instance          String           @default("")
+  hostIp            String           @default("")
+  /// Guest credentials for the console. Never rendered to a student-facing page
+  /// (see `sessionToDict`, which omits them unless a console link is being minted).
+  rdpUser           String           @default("")
+  rdpPassword       String           @default("")
+  hintLevel         Int              @default(0)
+  checksRun         Int              @default(0)
+  bestScore         Float            @default(0)
+  resolved          Boolean          @default(false)
+  notes             String           @default("")
+  error             String           @default("")
+  /// The catalogue entry the session was built on; empty means the scenario's own
+  /// default, which is what scenarios written before the catalogue rely on.
+  workload          String           @default("")
+  timeLimitMinutes  Int              @default(0)
+  createdAt         DateTime         @default(now())
+  readyAt           DateTime?
+  expiresAt         DateTime?
+  lastActivityAt    DateTime         @default(now())
+  /// When the work was handed in. NULL while the session is open: `PASSED` means
+  /// both "resolved a check" and "submitted", and this is the column that tells
+  /// them apart (so a double submit cannot grade a machine that is already gone).
+  completedAt       DateTime?
+
+  results           LabResult[]
+  events            LabEvent[]
+
+  /// The two queries the portal and the sweeps actually run: one student's live
+  /// sessions, and every session in a given state (the reaper's watch list).
+  @@index([student, state])
+  @@index([state])
+  @@index([lastActivityAt])
+}
+
+/// One graded attempt, with the whole report as JSON.
+///
+/// The report is stored rather than recomputed so a results page renders the same
+/// outcome rows the student saw, even after a scenario's weights are edited — the
+/// alternative is a past grade that quietly changes its mind.
+model LabResult {
+  id         Int        @id @default(autoincrement())
+  sessionId  Int
+  student    String
+  scenarioId String
+  score      Float
+  resolved   Boolean    @default(false)
+  report     Json
+  createdAt  DateTime   @default(now())
+
+  session    LabSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([student, scenarioId])
+}
+
+/// The lab's audit trail: append-only, and read newest-first (the lab reads it
+/// `ORDER BY id DESC`).
+///
+/// `sessionId` is nullable and `SetNull` on delete: an event about a session that
+/// has since been removed — a failed destroy, a recycling — has to survive the row
+/// it describes, because that is exactly the one an operator needs to read.
+model LabEvent {
+  id        Int         @id @default(autoincrement())
+  kind      String
+  detail    String      @default("")
+  sessionId Int?
+  createdAt DateTime    @default(now())
+
+  session   LabSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([kind])
+  @@index([sessionId, id])
+}
+
+/// The lab's small key-value table. Separate from `Setting` because these are the
+/// lab's own keys (`ticket_draft:<sessionId>`) and folding them into the app's
+/// settings namespace would let an operator's edit to one collide with the other.
+model LabMeta {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
 model AuditLog {
   id         String   @id @default(cuid())
   actorId    String?
