@@ -687,6 +687,19 @@ export class SSHDriver extends ShellRunner {
 export class IncusExecDriver extends BaseDriver {
   readonly name = "incus-exec" as const;
 
+  /**
+   * The narrow chunk width, because this transport rides a Windows command line too.
+   *
+   * The agent runs each call as `incus exec … powershell -EncodedCommand <base64>`,
+   * and Windows caps that command line long before `UPLOAD_CHUNK`'s 32,000 base64
+   * characters once the wrapper, the remote paths and `Add-Content`'s own arguments
+   * are counted. Found on a real Windows guest: uploading `OnTrak.Common.ps1` failed at
+   * offset 0 with "The filename or extension is too long". `WINRM_UPLOAD_CHUNK` is the
+   * width the Python lab measured for exactly this path — and since WinRM is not
+   * ported, this is the driver that has to carry it rather than only the tests.
+   */
+  override uploadChunk = WINRM_UPLOAD_CHUNK;
+
   private readonly client: GuestExecClient | null;
 
   constructor(settings: GuestSettings, options: DriverOptions = {}) {

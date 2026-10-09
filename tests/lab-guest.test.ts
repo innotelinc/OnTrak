@@ -204,6 +204,28 @@ test("the command-line transport is the narrower one", () => {
   assert.ok(WINRM_UPLOAD_CHUNK < UPLOAD_CHUNK);
 });
 
+test("the production Windows transport carries the narrow width, not just the recording one", () => {
+  // The gap this closes, found on a real Windows guest: the width rules above were
+  // proven only against `RecordingDriver`, which sets `uploadChunk` itself. The one
+  // Windows transport the port actually builds — `incus-exec`, which the agent runs as
+  // `incus exec … powershell -EncodedCommand` — kept the roomy 32,000 and overflowed
+  // the guest's command line uploading `OnTrak.Common.ps1` ("The filename or extension
+  // is too long"). So the width is asserted of the driver the factory returns.
+  const driver = buildDriver(settings());
+  assert.equal(driver.name, "incus-exec");
+  assert.equal(driver.uploadChunk, WINRM_UPLOAD_CHUNK);
+
+  const worstChunk = "A".repeat(driver.uploadChunk);
+  const script =
+    `Add-Content -Path 'C:\\ProgramData\\OnTrak\\OnTrak.Common.ps1.b64' ` +
+    `-Value '${worstChunk}' -NoNewline -Encoding Ascii`;
+  const commandLine = powershellArgv(script).join(" ");
+  assert.ok(
+    commandLine.length < COMMAND_LINE_LIMIT,
+    `the built driver yields a ${commandLine.length}-character command line, over the guest's limit`,
+  );
+});
+
 test("a payload of several chunks arrives byte for byte, every command line fitting", async () => {
   const driver = new RecordingDriver(settings());
   const payload = Buffer.alloc(256 * 60);

@@ -25,7 +25,7 @@ const ACCOUNTS = {
   admin: process.env.ONTRAK_A11Y_ADMIN_EMAIL ?? "admin@ontrak.local",
 };
 
-const PUBLIC_PATHS = ["/", "/login", "/register", "/verify"];
+const PUBLIC_PATHS = ["/", "/login", "/login/break-glass", "/register", "/verify"];
 
 /** Run the WCAG A/AA rule set — including the paint-dependent rules. */
 async function audit(page: Page) {
@@ -51,9 +51,18 @@ async function auditPath(page: Page, path: string): Promise<void> {
   expectAccessible(await audit(page), path);
 }
 
-/** Sign in as one of the seeded demo accounts. Returns false if rejected. */
+/**
+ * Sign in as one of the seeded demo accounts. Returns false if rejected.
+ *
+ * Through `/login/break-glass`, not `/login`: OnTrak is single sign-on only, and
+ * `/login` carries the one control that hands the browser to the identity provider.
+ * The email-and-password form — the only way a *seeded local account* can be driven
+ * from a test — lives behind the break-glass door, deliberately unlinked. Pointing
+ * this at `/login` waited for an "Email" field that page does not draw, so every
+ * signed-in audit failed on a timeout rather than skipping.
+ */
 async function signIn(page: Page, email: string): Promise<boolean> {
-  await page.goto("/login", { waitUntil: "networkidle" });
+  await page.goto("/login/break-glass", { waitUntil: "networkidle" });
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(PASSWORD);
   await page.getByRole("button", { name: /sign in/i }).click();
@@ -82,7 +91,11 @@ function roleSuite(role: keyof typeof ACCOUNTS, paths: string[]): void {
   });
 }
 
-roleSuite("student", ["/student", "/student/results", "/dashboard"]);
+// `/lab` is the lab's student surface (v1.2). It renders the dashboard when the lab is
+// served in-app and the "not running on this deployment" panel otherwise; either way it is
+// a page a student lands on, so it is audited here rather than left to the jsdom pass,
+// which cannot see contrast.
+roleSuite("student", ["/student", "/student/results", "/dashboard", "/lab"]);
 
 // The attempt workspace is reached through the catalogue; start one if needed.
 test.describe("student attempt workspace", () => {
@@ -159,5 +172,5 @@ test.describe("student attempt report", () => {
   });
 });
 
-roleSuite("instructor", ["/instructor", "/instructor/scenarios", "/instructor/cohorts", "/instructor/analytics", "/instructor/skills"]);
+roleSuite("instructor", ["/instructor", "/instructor/scenarios", "/instructor/cohorts", "/instructor/analytics", "/instructor/skills", "/instructor/lab"]);
 roleSuite("admin", ["/admin", "/admin/users", "/admin/software", "/admin/audit"]);

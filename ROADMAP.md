@@ -261,7 +261,17 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   manager built the Windows `incus-exec` driver with no Incus client, so no Windows guest
   could ever be graded. That is fixed and pinned by a test that fails on the old
   construction. A graded Windows session is still owed a host run, on a machine with the
-  disk for it.
+  disk for it. The console's websocket tunnel was verified without a browser — a link the
+  app mints is accepted by a live Guacamole gateway and the tunnel relays guacd's own
+  frames, with a tampered link refused (`tests/lab-guac-tunnel-live.test.ts`). The browser
+  sweep was run here too — `npm run test:a11y` audited the lab's `/lab` and
+  `/instructor/lab` alongside the rest: 21 passed, 0 failed, in both the in-app and
+  peer-lab renderings, which also turned up a stale sign-in target in the spec now fixed. And
+  the graded Windows session has been run: with the agent up, `session check` graded
+  `net-dns-failure` **inside the guest** over the agent — 0% unresolved, with the guest's own
+  DNS evidence — which found a second port defect, the upload using the roomy chunk width on
+  a Windows command line. Fixed and pinned. What is still not shown is the *repair* half on
+  Windows (a fixed guest graded back to `resolved`), which needs the lab's own intranet DNS.
 - **Exit:** `[x]` a scenario authored for real bash runs in a sandbox and grades identically
   to the simulated driver on the bundled checks — `tests/sim-container.test.ts` grades the same
   five-check scenario twice, once simulated and once under real bash in a process sandbox, and

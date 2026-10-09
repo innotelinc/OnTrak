@@ -525,20 +525,62 @@ The first attempt filled the host's filesystem — the 6 GiB golden image, a 3.4
 its boot writes on a volume that was already at 92% — and took the deployment's Postgres down
 with it. Space was recovered and the database restarted, and the Windows VM was deleted to
 give the space back rather than booted again: a second attempt on a full volume would have been
-the same outage twice. So the honest state of the Windows half is: **the agent comes up once
-the config disk is attached, and the driver defect it exposed is fixed and unit-tested, but a
-graded Windows session is still owed a host run** on a machine with the headroom for it. The
-host's volume should be sized for the images and snapshots the lab keeps — this document
-records the limit it has, which is the finding an operator most needs.
+the same outage twice. The host's volume should be sized for the images and snapshots the lab
+keeps — this document records the limit it has, which is the finding an operator most needs.
 
-**Not verified here, and unchanged from §4:** a real *Windows* guest booting, being
-fault-injected and **graded** (the three paragraphs above are where that stands: the agent is
-the image's job, the driver defect is fixed, and the graded run is owed a host with disk); the
-console websocket tunnel; and the browser suite (`npm run test:a11y`, Playwright) against these
-pages, which needs a running app and a database. The page-level walkthroughs the Python
-asserted through rendered HTML are covered here at the layer below — `tests/lab-portal.test.ts`
-asserts the address, the status body, the catalogue groups and both CSVs directly — and the
-browser pass remains the honest last step before a class uses it.
+**The graded Windows session has since been run, on a host with the headroom, and it went
+through:**
+
+| Step | What came back |
+| --- | --- |
+| `session start --scenario net-dns-failure` | the VM cloned in seconds — a btrfs reflink, so it cost almost no space — and took `10.20.0.177` |
+| the template's missing `agent:config` | the session sat in `allocating`: the template still has no config disk, so the agent never starts. Adding `agent:config` to the instance and restarting brought the Incus agent up in **70 seconds** — §2's diagnosis, reproduced |
+| `session check` | **0%, unresolved, and genuinely graded**: `check.ps1` ran *inside the guest* over the agent, and each objective came back in the guest's own words — `adapter=Ethernet; dns servers=10.20.0.1; lookup works=False`, `Resolve-DnsName fileserver.ontrak.lab -DnsOnly -> False`, `TCP fileserver.ontrak.lab:80 -> False` |
+
+**That run found a second real defect, and it was this port's.** The first `check` failed before
+it graded anything: `upload of C:\ProgramData\OnTrak\lib\OnTrak.Common.ps1 failed at offset 0:
+… The filename or extension is too long`. The upload is chunked, and the module defines two
+widths — a roomy 32,000 where the payload rides stdin, and a narrow 2,000 where each chunk rides
+a Windows command line (`Add-Content`, wrapped in `powershell -EncodedCommand`). But only the
+*test's* recording driver ever set the narrow one: `IncusExecDriver` — the only Windows transport
+the port has, since WinRM is not ported — inherited 32,000, and the first real file overflowed
+the guest's command line. It now carries the narrow width, and `tests/lab-guest.test.ts` asserts
+that width, and the command line a full chunk produces against the guest's own 8,191-character
+limit, **of the driver `buildDriver` returns** — so the rule can no longer live only in the
+tests. What is still not shown is the *repair* half on Windows: the fixed guest graded back to
+`resolved` needs the lab's own intranet DNS, which this host does not provide, so the Windows
+result stands at "the fault is present and honestly graded", not "the fault was repaired".
+
+**The console websocket tunnel was verified without a browser, and that row changed with it.**
+A raw client — no browser, no Guacamole JavaScript — minted a link with the app's own
+`buildPayload`/`encodePayload`, exchanged it at `/guacamole/api/tokens` (HTTP 200,
+`dataSource: json`), then upgraded `/guacamole/websocket-tunnel` carrying the token. The
+gateway logged `User "…" connected to connection "OnTrak #…"`, and guacd's own protocol
+frames — `size`, `move`, `rect`, `cfill` — came back over the socket. A tampered copy of the
+same link was refused (`403 Permission denied.`), so the acceptance is the signature being
+checked rather than a gateway that answers everything the same way. The whole flow is pinned as
+`tests/lab-guac-tunnel-live.test.ts` (`ONTRAK_GUAC_LIVE=1` with the gateway's own base URL and
+key). What that still does not cover is the *browser* half — the iframe a student actually
+clicks — which is the browser suite below.
+
+**The browser sweep was run, and running it found a real defect in the sweep itself.**
+`npm run test:a11y` (Playwright + axe in a real Chromium) audited the public pages, the
+signed-in student, instructor and admin surfaces, and — added here — the lab's own `/lab` and
+`/instructor/lab`: **21 passed, 0 failed, 0 skipped**, under the strict WCAG A/AA set with
+`color-contrast` included, and covering both states the lab pages can be in — the in-app
+dashboard and the peer-lab "not running on this deployment" panel. Its *signed-in* half had been dead code:
+it signed in at `/login`, which since the single-sign-on front door took over no longer draws an
+Email field at all, so every signed-in case waited on a label that does not exist. The form a
+*seeded local account* can be driven through is `/login/break-glass`, the deliberately-unlinked
+fallback door, which is where the sweep now signs in (and which is audited as a public path).
+The page-level walkthroughs the Python asserted through rendered HTML remain covered at the
+layer below, too — `tests/lab-portal.test.ts` asserts the address, the status body, the
+catalogue groups and both CSVs directly — so the browser pass and that suite now agree.
+
+**Not verified here, and unchanged from §4:** the *repair* half on Windows — a fixed Windows
+guest graded back to `resolved`. The graded Windows session itself has now been run (§5): the
+fault is present and honestly graded at 0%, and what is left is the lab's own intranet DNS,
+which this host does not provide.
 
 ## 3. Architectural conflicts, and how each is resolved
 
@@ -637,8 +679,9 @@ real machine, end to end (§5, with the numbers). What is left is narrower and s
 | hypervisor command construction and error mapping | a scripted runner; no `incus` needed |
 | the whole class flow (assign → provision → grade → destroy) | stage 2, against the ported in-memory hypervisor |
 | a real Linux guest boots, is fault-injected and is graded | **verified on a lab host** — clone → boot → 0% → repair → 80% resolved → a write-up blended to 87% → a `results` row and the machine destroyed (§5) |
-| a real Windows guest is driven through the Incus agent (`incus-exec`) | **half verified, and it found a port defect**: no `agent:config` disk exists on `ontrak-win-base` (the host's build scripts clear `requirements.cdrom_agent`), so the agent never starts until one is attached — proven, it comes up in ~90s once it is. With the agent up, `check.ps1` grading failed on a real bug: the manager built the Windows driver with no Incus client. Fixed, and pinned by a test that fails on the old construction; **the graded re-run is owed a host with disk** (§5) |
-| the console websocket tunnel | **not verifiable here** — no browser |
+| a real Windows guest is driven through the Incus agent (`incus-exec`) | **verified on a lab host** — the agent comes up once an `agent:config` disk is attached (~70s), and `session check` then grades *inside the guest* over the agent: `net-dns-failure` returns **0%, unresolved**, with the guest's own DNS evidence. Two port defects were found and fixed on the way (the manager built the Windows driver with no Incus client; the upload used the roomy 32,000 chunk on a command-line transport), each pinned by a test that fails on the old construction (§5). Not shown: the repaired guest graded back to `resolved`, which needs the lab's own intranet DNS |
+| the console websocket tunnel | **verified without a browser** — a link minted with `buildPayload` is accepted at `/guacamole/api/tokens` and the websocket tunnel relays guacd's own frames; a tampered link is refused. Pinned by `tests/lab-guac-tunnel-live.test.ts` (`ONTRAK_GUAC_LIVE=1`, §5) |
+| the browser sweep (`npm run test:a11y`, Playwright + axe) | **verified on this host** — 21 passed / 0 failed / 0 skipped over the public, signed-in and lab pages, in both the in-app and the peer-lab renderings; running it exposed a stale sign-in target in the spec (§5) |
 
 ## 5. Staging, and what "done" means
 
