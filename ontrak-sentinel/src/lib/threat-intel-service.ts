@@ -24,7 +24,9 @@
  *    deployment stops a false positive, so it belongs on the chain next to every other
  *    decision — and the read path never mutates, so a feed cannot quietly un-list itself.
  *  - **The detector is handed active indicators only.** Expiry is applied where the list is
- *    read, in one place, so there is no window in which a sweep has not run yet.
+ *    read, in one place, so there is no window in which a sweep has not run yet — and the
+ *    sweep (`sweepExpired`) prunes rows whose date has passed without being the thing that
+ *    enforces the date. A deployment that never runs it detects exactly the same things.
  */
 
 import { randomUUID } from "node:crypto";
@@ -54,6 +56,16 @@ export interface IndicatorStore {
   upsertIndicator(record: StoredIndicator): Promise<{ indicator: StoredIndicator; created: boolean }>;
   listIndicators(organizationId: string): Promise<StoredIndicator[]>;
   findIndicator(organizationId: string, indicatorId: string): Promise<StoredIndicator | null>;
+  /**
+   * Every organization's indicators whose own expiry is at or before `atMs`.
+   *
+   * Deployment-wide rather than per-organization, which is what lets the sweep's timer be
+   * wired without a list of the deployment's tenants — the same reason `expiringBefore` sits
+   * on the enforcement port. An indicator with **no** expiry is never answered: it is the
+   * row only a person can withdraw, and a sweep that guessed at one would be pruning by
+   * opinion.
+   */
+  expiredBefore(atMs: number): Promise<StoredIndicator[]>;
   deleteIndicator(organizationId: string, indicatorId: string): Promise<void>;
 }
 
@@ -188,6 +200,54 @@ export class ThreatIntelService {
     return { ok: true, value: found };
   }
 
+  /**
+   * Prune every organization's indicators whose own expiry has passed.
+   *
+   * The counterpart of `withdraw` for the entries nobody will come back for: an expiry is
+   * curation with a date on it, and this is what makes the date mean something to the *list*
+   * rather than only to the matcher. Three properties, each of them the reason it is safe to
+   * run on a timer:
+   *
+   *  - **It is hygiene, not the safety property.** `matchEvent` already refuses an expired
+   *    indicator at read time, so a deployment whose sweep has never run detects exactly the
+   *    same things — it merely keeps rows that the console's counts still report. Running it
+   *    cannot change what is detected, which is why it defaults to on where scheduled
+   *    attestation defaults to off.
+   *  - **Idempotent.** The store is asked for rows that are expired *and still present*, and
+   *    a row already pruned is not answered again, so a sweep that runs twice, or runs late,
+   *    writes one withdrawal per indicator and never a second.
+   *  - **Audited as a withdrawal, marked automatic.** The chain gets the value, the kind and
+   *    the feed — the same detail an operator's withdrawal carries, because "was this address
+   *    ever watched, and when did we stop?" has the same answer to give — plus
+   *    `automatic: true`, which is how the enforcement sweep spells its own lifts. Without
+   *    it the only way to tell a prune from a person's decision would be the absence of an
+   *    actor.
+   */
+  async sweepExpired(): Promise<{ pruned: string[] }> {
+    const at = this.ids.nowMs();
+    const due = await this.store.expiredBefore(at);
+    const pruned: string[] = [];
+    for (const row of due) {
+      await this.store.deleteIndicator(row.organizationId, row.id);
+      await this.append(
+        { id: "scheduler", organizationId: row.organizationId },
+        "guard.intel.withdrawn",
+        "Indicator",
+        {
+          indicatorId: row.id,
+          kind: row.kind,
+          value: row.value,
+          source: row.source,
+          automatic: true,
+          reason: "Its own expiry was reached.",
+        },
+        row.id,
+      );
+      pruned.push(row.id);
+    }
+    return { pruned };
+  }
+
   /** Counts for the console: what is watched, by whom, and how much of it has no expiry. */
   async stats(actor: IdentityActor): Promise<ServiceResult<FeedStats>> {
     if (!canReadDirectory(actor.role)) return { ok: false, error: "You do not have access to threat intelligence." };
@@ -222,8 +282,16 @@ export class ThreatIntelService {
 
   /* ----------------------------------------------------------- internals */
 
+  /**
+   * One row on the organization's chain.
+   *
+   * The actor is `{ id, organizationId }` rather than a whole `IdentityActor` because the
+   * sweep's actor is a loop and not a person: asking for a role here would have a machine
+   * writing itself onto the chain as an administrator. Every other caller passes an
+   * `IdentityActor`, which satisfies this shape.
+   */
   private async append(
-    actor: IdentityActor,
+    actor: { id: string; organizationId: string },
     action: string,
     targetType: string,
     detail: Record<string, unknown>,
@@ -279,6 +347,13 @@ export class MemoryIndicatorStore implements IndicatorStore {
   async findIndicator(organizationId: string, indicatorId: string): Promise<StoredIndicator | null> {
     const found = this.indicators.get(this.key(organizationId, indicatorId));
     return found ? structuredClone(found) : null;
+  }
+
+  async expiredBefore(atMs: number): Promise<StoredIndicator[]> {
+    // Every organization's rows, as the port says: the sweep has no tenant list.
+    return [...this.indicators.values()]
+      .filter((entry) => entry.expiresAt !== null && entry.expiresAt <= atMs)
+      .map((entry) => structuredClone(entry));
   }
 
   async deleteIndicator(organizationId: string, indicatorId: string): Promise<void> {

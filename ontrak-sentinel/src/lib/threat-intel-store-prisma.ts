@@ -176,6 +176,24 @@ export class PrismaIndicatorStore implements IndicatorStore {
     return row ? toStoredIndicator(row) : null;
   }
 
+  /**
+   * The sweep's query: expired, still present, in every organization.
+   *
+   * Narrowed in the database rather than by reading every indicator back and filtering in
+   * the service, for the reason the enforcement store gives about its own sweep: this runs
+   * on a timer and reads across tenants, so it must not be a query that grows with the size
+   * of the feeds. An indicator with no expiry has a `null` deadline and the `lte`
+   * comparison never matches it.
+   */
+  async expiredBefore(atMs: number): Promise<StoredIndicator[]> {
+    const rows = await this.db.indicator.findMany({
+      where: { expiresAt: { not: null, lte: new Date(atMs) } },
+    });
+    return rows
+      .map(toStoredIndicator)
+      .filter((indicator): indicator is StoredIndicator => indicator !== null);
+  }
+
   async deleteIndicator(organizationId: string, indicatorId: string): Promise<void> {
     await this.db.indicator.deleteMany({ where: { organizationId, id: indicatorId } });
   }
