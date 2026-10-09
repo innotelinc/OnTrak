@@ -185,7 +185,7 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   would cascade away; and re-grading refuses `IN_PROGRESS`/`ABANDONED` work
   instead of quietly marking it `GRADED`. Covered by new tests for the attempt
   scope, the admin guards and the validator's edge cases.
-- `[~]` Verifiable completion records reach the product surface: clearing the
+- `[x]` Verifiable completion records reach the product surface: clearing the
   pass mark issues a **certificate** — a tamper-evident completion record — shown
   on the attempt report with its code and competency tags, listed on the results
   index, printable as its own sheet, and checkable by anyone at the public
@@ -203,9 +203,10 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   string — and a non-English locale ships (`[x]`); the a11y implementation, the
   automated axe/keyboard audit (`npm test`) and the browser paint-rule sweep
   (`npm run test:a11y`) have all landed and pass (`[x]`).
-  The one bullet above that is not `[x]` is the certificate *cohort packet*,
-  which its own text defers to v1.5: everything v1.1 asked of verifiable
-  completion records has shipped.
+  The one bullet above that was left open is the certificate *cohort packet*,
+  which its own text deferred to v1.5 — and it has since shipped there
+  (`/instructor/cohorts/<id>/packet`, `[x]` under v1.5): everything v1.1 asked of
+  verifiable completion records has shipped, so v1.1 is closed.
 
 ### v1.2 — Real drivers `[x]`
 **Goal:** higher-fidelity practice behind the existing seam.
@@ -248,7 +249,7 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   seed → `chmod` → harvest → grade, with the mode change read back and no container left
   behind.
 
-### v1.3 — Identity & integrations `[~]`
+### v1.3 — Identity & integrations `[x]`
 **Goal:** fit into an organisation.
 
 - SSO via the **OnTrak Sentinel** IdP (OIDC/SAML), with SCIM roster sync; keep a
@@ -424,12 +425,21 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
 **Goal:** turn results into credible, portable proof of competence.
 
 - `[ ]` Rubrics beyond pass/fail; partial-credit and competency tagging per check.
-- `[~]` Certificates and a skills matrix (who is competent in what), with
+- `[x]` Certificates and a skills matrix (who is competent in what), with
   verifiable completion records. A pass issues a certificate and the record is
   **stored immutably** on the attempt (`certificate`/`certificateIssuedAt`/
   `certificateRevokedAt`), presented on the report with its code and
   competencies, printable as its own sheet (`/certificate/<attempt>`), and
-  verifiable without an account (see v1.1). Still to come: the skills matrix.
+  verifiable without an account (see v1.1). The matrix is `/instructor/skills`
+  over `src/lib/skills-rules.ts`: a column per competency the issued records
+  demonstrate, a row per person certified, scoped by the same `attemptScopeFor`
+  the attempts list and the analytics dashboard use. It reads the certificate's
+  own rules rather than defining competence again — a revoked certificate takes
+  its competency away with it while the person keeps their row, so a withdrawal
+  shows as a withdrawal instead of as an absence; two spellings of one competency
+  are one column; a record with no competencies contributes nothing; and the same
+  competency earned twice is one, dated from the first pass. Covered by
+  `tests/skills-matrix.test.ts`.
 - `[x]` **Auditable training evidence**: immutable completion records and an
   exportable proof-of-training packet per class — every live certificate its
   members hold, bundled into one signed document at
