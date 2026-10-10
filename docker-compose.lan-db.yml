@@ -1,0 +1,52 @@
+# ============================================================================
+# OnTrak — publish each database on loopback *as well as* on this deployment's
+# LAN address.
+#
+#   docker compose -f docker-compose.all.yml -f docker-compose.lan-db.yml up -d
+#   make all-up-lan
+#
+# The family stack publishes each database once, on
+# `${ONTRAK_<PRODUCT>_DB_BIND_HOST}` (`.env.example` has the group). That is one
+# address, and a database has two callers: a client on this host — the repo's own
+# `npm run db:*`, a dev server started directly, `psql` from a shell — and a client
+# on the LAN. `localhost` is the first caller's address in `DATABASE_URL`, so a
+# deployment that publishes on its LAN address alone takes its own tooling away
+# from the database it just started.
+#
+# This file is the pair, and it is a file rather than two lines in the family
+# stack because of a rule of dockerd rather than a preference: two mappings of one
+# host port are accepted only when the two addresses are **specific and
+# different**. The wildcard against a specific address, or one address twice,
+# fails with "failed to listen on TCP socket: address already in use" — and since
+# the family stack's default is the wildcard, "loopback and the deployment's
+# address" written there is exactly the case that fails, on whichever database
+# loses the race to bind. Loopback and a named LAN address are different addresses
+# and both are specific, so this file's pair is legal where the family stack's
+# default pair was not.
+#
+# `!override` (Compose 2.24+) *replaces* the family stack's `ports` list for these
+# three services instead of appending to it, so the wildcard mapping this file is
+# meant to avoid cannot survive underneath it. The `:?` form is the other half of
+# the same intent: an operator who writes this file's name without naming the
+# three addresses gets one line saying which variable is missing, rather than a
+# database quietly bound to `0.0.0.0` under a family that reports itself up.
+#
+# Name an address that is neither `0.0.0.0` (the wildcard, which is the overlap
+# this file exists to avoid) nor `127.0.0.1` (the other half of the pair, which
+# would publish one address twice).
+# ============================================================================
+services:
+  training-db:
+    ports: !override
+      - "127.0.0.1:${ONTRAK_DB_PORT:-5432}:5432"
+      - "${ONTRAK_DB_BIND_HOST:?name this deployment's LAN address (not 0.0.0.0 or 127.0.0.1)}:${ONTRAK_DB_PORT:-5432}:5432"
+
+  tix-db:
+    ports: !override
+      - "127.0.0.1:${ONTRAK_TIX_DB_PORT:-5433}:5432"
+      - "${ONTRAK_TIX_DB_BIND_HOST:?name this deployment's LAN address (not 0.0.0.0 or 127.0.0.1)}:${ONTRAK_TIX_DB_PORT:-5433}:5432"
+
+  sentinel-db:
+    ports: !override
+      - "127.0.0.1:${ONTRAK_SENTINEL_DB_PORT:-5434}:5432"
+      - "${ONTRAK_SENTINEL_DB_BIND_HOST:?name this deployment's LAN address (not 0.0.0.0 or 127.0.0.1)}:${ONTRAK_SENTINEL_DB_PORT:-5434}:5432"

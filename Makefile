@@ -171,6 +171,15 @@ lan: ## Detect this host's LAN address and write the builder network into an env
 all-up: workspace lan ## Build and start all six products together (:3400, :3300, :3000, :3001, :8787, :8420/8421)
 	docker compose -f docker-compose.all.yml up -d --build
 
+# The same stack with each database published on loopback *and* on this
+# deployment's LAN address — the two callers a database has. It is a second file
+# because dockerd refuses two mappings of one host port when the addresses
+# overlap: the family stack defaults to the wildcard, and a wildcard beside a
+# named address is exactly that. See docker-compose.lan-db.yml.
+.PHONY: all-up-lan
+all-up-lan: workspace lan ## Start the family stack with each database on loopback and this deployment's LAN address
+	docker compose -f docker-compose.all.yml -f docker-compose.lan-db.yml up -d --build
+
 .PHONY: all-down
 all-down: ## Stop the family stack (keeps every volume)
 	docker compose -f docker-compose.all.yml down
@@ -242,6 +251,14 @@ check-compose: ## Validate every development compose file against its .env.examp
 	# The family stack reads the other four `.env` files, which the lines above
 	# have just made sure exist.
 	docker compose -f docker-compose.all.yml config --quiet && echo "compose: family ok"
+	# The database overlay replaces the family stack's own mappings rather than
+	# adding to them, and it refuses to render without a named address, so it is
+	# rendered with a throwaway one here. (192.0.2.0/24 is TEST-NET-1: an address
+	# no host has, which is what makes it safe to write into a check.)
+	ONTRAK_DB_BIND_HOST=192.0.2.10 ONTRAK_TIX_DB_BIND_HOST=192.0.2.10 \
+	  ONTRAK_SENTINEL_DB_BIND_HOST=192.0.2.10 \
+	  docker compose -f docker-compose.all.yml -f docker-compose.lan-db.yml config --quiet \
+	  && echo "compose: family lan-db ok"
 
 .PHONY: prod-check
 prod-check: ## Validate all four deployment overlays (throwaway secrets, cleaned up)
