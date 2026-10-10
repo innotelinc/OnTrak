@@ -234,6 +234,32 @@ test("store: the readers return the newest first, as the lab's SQL does", async 
   assert.equal((await store.recentEvents())[0]?.kind, "checked", "the newest event is first");
 });
 
+test("store: the audit reader narrows by kind in the store, not in a page's window", async () => {
+  // The claim this reader makes is "that kind's newest N", not "the newest N, filtered by
+  // kind". Those differ as soon as enough other kinds exist to push one out of the window,
+  // which is what this fixture arranges: 500 `prewarmed` events logged *after* the single
+  // `checked` one, so a page-side filter over the newest 300 would show no `checked` event
+  // while the store's own narrowing still finds it — the reason the reader is on the store.
+  const store = new InMemoryLabStore();
+  const session = await store.createSession(sessionFor());
+  assert.ok(session.id !== null);
+
+  await store.logEvent("checked", "buried", session.id);
+  for (let index = 0; index < 500; index += 1) {
+    await store.logEvent("prewarmed", `warm ${index}`, null);
+  }
+
+  assert.deepEqual(
+    (await store.listEvents({ kind: "checked" })).map((event) => event.detail),
+    ["buried"],
+    "the kind's own newest, however far back it is",
+  );
+  assert.deepEqual(await store.listEvents({ kind: "checked", limit: 0 }), [], "zero is empty here too");
+  assert.equal((await store.listEvents({ limit: 5 })).length, 5, "the whole trail is still bounded");
+  assert.deepEqual(await store.eventKinds(), ["checked", "prewarmed"], "the kinds, sorted");
+  assert.deepEqual(await store.listEvents({ kind: "no-such-kind" }), [], "an unknown kind is empty");
+});
+
 /* -------------------------------------------------------------------------- */
 /*  Meta                                                                      */
 /* -------------------------------------------------------------------------- */

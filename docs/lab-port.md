@@ -44,9 +44,9 @@ beside it. Module by module, with its disposition:
 | `tickets.py` | 534 | `src/lib/lab/tickets.ts` | 3a | landed — the rubric, the grader and the blend; checked against the Python form for form |
 | `auth.py` + `oidc.py` | 73 + 325 | *not ported* — superseded | 3 | see §3 |
 | `demo.py` | 474 | `src/lib/lab/demo.ts` | 2d | landed — a whole class runs with no hypervisor; see §2d |
-| `portal/app.py` | 1101 | `src/app/(app)/lab/**` + `src/app/api/v1/lab/**` | 3 | not started |
-| `portal/admin.py` | 511 | `src/app/(app)/lab/admin/**` | 3 | not started |
-| `cli.py` | 1373 | `scripts/lab-*.ts` (`tsx`) | 4 | not started |
+| `portal/app.py` | 1101 | `src/app/(app)/lab/**` + `src/app/api/v1/lab/**` | 3 | **done** (including the lessons browse: `/lab/lessons`, `/lab/lessons/[id]`) |
+| `portal/admin.py` | 511 | `src/app/(app)/lab/admin/**` | 3 | **done**, with two parts deliberately left to the CLI — see §5, stage 3 (rest) |
+| `cli.py` | 1373 | `scripts/lab/cli.ts` (`tsx`) | 4 | **done** (the host commands refuse by name — see stage 4) |
 
 The non-Python surface, which the port inherits rather than rewrites where it is data
 or shell:
@@ -694,12 +694,29 @@ real machine, end to end (§5, with the numbers). What is left is narrower and s
 | **2d** (landed) | `sessions`'s four behaviours resolved, the Prisma store + reversible migration, the `scenarios/` tree, `demo`, `primitives`, `generator` (§2d) | the ported demo flow runs a full class with no hypervisor, as `demo.py` does (`tests/lab-demo.test.ts`), and the store round-trips a session and a report (against a real database) |
 | **3a** (landed) | `tickets` — the form, the rubric, the grader and the blend — plus the ticket half of the store (`LabTicket` + migration) and the demo's write-up synthesis (stage 3a) | every shipped rubric validates and is satisfiable; a completed session blends the two halves and an unsubmitted one cannot resolve; the ticket half of the store contract holds against both implementations, and against a real Postgres |
 | **3** (landed) | the student surface (`/lab`, the session page, the console route, the pollable status), the instructor fleet and both CSVs, the in-app door and the lab's `/healthz` | a student starts, checks and hands in; an instructor reads the class; `results.csv` keeps its path, name and header row; three new a11y audits pass |
-| **3 (rest)** | the admin panel's pages (users, platforms, tickets, schedule, audit) and a lessons browse page | named work, and pages over modules that stage 2 already ported — the read models and the CLI are in place, so this is presentation |
+| **3 (rest)** (landed) | the admin panel — overview, accounts, platforms, tickets (+ one write-up), schedule and audit under `/lab/admin/**` — and the lessons browse (`/lab/lessons`, `/lab/lessons/[id]`) | every page renders for staff and refuses a student (307 to their own home); a real graded ticket renders from the database, an unknown id is a 404, and the two readings that shell out to `incus` report a failure line instead of a 500. `tests/lab-admin.test.ts` holds the read models. Two parts of `admin.py` are deliberately **not** here: the accounts page is **read-only** (§3/C2 — the writable surface stays the app's own `/admin/users`), and the maintenance form and the schedule **tick** are the CLI's, because a panel is a report rather than a remote control and §3/C4 keeps hypervisor work where the machines live |
 | **4** (landed) | the CLI as `scripts/lab/cli.ts` (`npm run lab`), the settings documentation, and the deployment wiring in `.env.example` / `docker-compose.all.yml` | `doctor` names what a host is missing; `scenario`, `catalog`, `lesson` and `generate` read the shipped data with no host at all; `demo run` drives a whole class with none; the Python commands that a *server* or an account table used to provide refuse, in words, with the code that replaced them |
 | **4 (rest)** | the `infra/**` host shell (not in this repository; OnTrak-dev's) and the three host commands — `image build`, `media fetch` and `catalog refresh` | they run where the hypervisor and the media live, and each says so rather than half-running |
 
-Stages 1, 2a, 2b, 2c, 2d, 3a, 3 and 4 are complete and verified — the control plane, its data,
-its store, its demo, its write-up, its surfaces and its CLI. What remains is the *rest of* the
-portal surface (an admin panel and a lessons browse page, both over modules already ported) and
-the host-side commands, and neither is a prerequisite for a class: `/lab` serves one today, from
-a host or from demo mode.
+**The port is complete.** Stages 1, 2a, 2b, 2c, 2d, 3a, 3, 3 (rest), 4 and 4 (rest) are all
+landed: the control plane, its data, its store, its demo, its write-up, its student and
+instructor surfaces, its admin panel, its lessons browse and its CLI. Every Python module in
+§1 now has a TypeScript home or a stated reason for not needing one, and `portal/app.py`,
+`portal/admin.py` and `cli.py` — the three the table listed as *not started* — are the last of
+them.
+
+What remains is two things, and both are named rather than hidden: the `infra/**` host shell,
+which stays shell and stays OnTrak-dev's (it builds a Windows image with `incus`, `qemu-img`
+and `oras`, and a Node rewrite would be a worse version of the same script — §1), and the
+host-side commands that need a hypervisor or gigabytes of media, which refuse by name and point
+at the CLI. Neither is a prerequisite for a class: `/lab` serves one today, from a host or from
+demo mode, and `/lab/admin` reports on it.
+
+The one check this stage did **not** run is the browser sweep. `npm run test:a11y` (Playwright +
+axe) is the a11y pass over these pages, and no Chromium is installed in the environment this
+stage was built in — so the pages were verified over HTTP instead (a real session, each page
+fetched, a student redirected out of the panel, a real graded ticket rendered from the
+database, unknown ids 404). The seven new paths *are* in `tests/browser/a11y.spec.ts` now, so
+the sweep covers the panel and the lesson library rather than the two lab pages it covered
+before; running it is what the machine with a browser owes this stage, and a violation it finds
+there is a finding this environment could not have produced.

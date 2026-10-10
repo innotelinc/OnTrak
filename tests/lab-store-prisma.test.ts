@@ -265,16 +265,37 @@ class FakeLabDb implements LabPrismaClient {
     },
     findMany: async (args: unknown): Promise<LabEventRow[]> => {
       const query = (args ?? {}) as {
-        where?: { sessionId?: number };
-        orderBy?: { id?: "asc" | "desc" };
+        where?: { sessionId?: number; kind?: string };
+        orderBy?: { id?: "asc" | "desc"; kind?: "asc" | "desc" };
         take?: number;
+        distinct?: string[];
       };
       let rows = this.events.filter(
-        (row) => query.where?.sessionId === undefined || row.sessionId === query.where.sessionId,
+        (row) =>
+          (query.where?.sessionId === undefined || row.sessionId === query.where.sessionId) &&
+          (query.where?.kind === undefined || row.kind === query.where.kind),
       );
-      rows = [...rows].sort((left, right) =>
-        query.orderBy?.id === "asc" ? left.id - right.id : right.id - left.id,
-      );
+      if (query.orderBy?.kind !== undefined) {
+        const direction = query.orderBy.kind;
+        rows = [...rows].sort((left, right) =>
+          direction === "asc"
+            ? left.kind.localeCompare(right.kind)
+            : right.kind.localeCompare(left.kind),
+        );
+        // `distinct: ["kind"]` keeps one row per kind, as Prisma's does.
+        if (query.distinct?.includes("kind")) {
+          const seen = new Set<string>();
+          rows = rows.filter((row) => {
+            if (seen.has(row.kind)) return false;
+            seen.add(row.kind);
+            return true;
+          });
+        }
+      } else {
+        rows = [...rows].sort((left, right) =>
+          query.orderBy?.id === "asc" ? left.id - right.id : right.id - left.id,
+        );
+      }
       if (query.take !== undefined) rows = rows.slice(0, Math.max(0, query.take));
       return rows;
     },
@@ -431,6 +452,21 @@ test("store-prisma: both implementations satisfy the same contract", async () =>
     );
     assert.deepEqual(await store.eventsFor(created.id ?? 0, 0), [], `${name}: limit 0 is empty`);
     assert.equal(await store.countEvents(), 2, `${name}: both events are counted`);
+
+    // The admin audit reader: the same trail, narrowed *in the store* rather than in the
+    // page, and the kind list the filter is drawn from.
+    assert.deepEqual(
+      (await store.listEvents({ kind: "ready" })).map((event) => event.kind),
+      ["ready"],
+      `${name}: the audit trail narrows by kind`,
+    );
+    assert.deepEqual(
+      (await store.listEvents()).map((event) => event.kind),
+      ["ready", "requested"],
+      `${name}: unfiltered it is the whole trail, newest first`,
+    );
+    assert.deepEqual(await store.listEvents({ limit: 0 }), [], `${name}: a page of zero is empty`);
+    assert.deepEqual(await store.eventKinds(), ["ready", "requested"], `${name}: the kinds, sorted`);
 
     // Meta: a missing key falls back, a written one is read back, and a write replaces.
     assert.equal(await store.getMeta("ticket_draft:1", "none"), "none", `${name}: the fallback`);

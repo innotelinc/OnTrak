@@ -95,7 +95,9 @@ function roleSuite(role: keyof typeof ACCOUNTS, paths: string[]): void {
 // served in-app and the "not running on this deployment" panel otherwise; either way it is
 // a page a student lands on, so it is audited here rather than left to the jsdom pass,
 // which cannot see contrast.
-roleSuite("student", ["/student", "/student/results", "/dashboard", "/lab"]);
+// The lesson library is a student page too: the walkthrough a student opens mid-session has
+// to be as readable as the session it explains.
+roleSuite("student", ["/student", "/student/results", "/dashboard", "/lab", "/lab/lessons"]);
 
 // The attempt workspace is reached through the catalogue; start one if needed.
 test.describe("student attempt workspace", () => {
@@ -174,3 +176,17 @@ test.describe("student attempt report", () => {
 
 roleSuite("instructor", ["/instructor", "/instructor/scenarios", "/instructor/cohorts", "/instructor/analytics", "/instructor/skills", "/instructor/lab"]);
 roleSuite("admin", ["/admin", "/admin/users", "/admin/software", "/admin/audit"]);
+
+// The lab's admin panel and the lesson library (stage 3 rest). Both render whether or not this
+// deployment serves the lab in-app — the panel says which — so each path is audited in whatever
+// state the deployment it runs against is in, which is the point: a "not running here" panel is
+// still a page people read.
+roleSuite("admin", [
+  "/lab/admin",
+  "/lab/admin/users",
+  "/lab/admin/platforms",
+  "/lab/admin/tickets",
+  "/lab/admin/schedule",
+  "/lab/admin/audit",
+  "/lab/lessons",
+]);

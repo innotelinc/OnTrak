@@ -190,6 +190,8 @@ export interface SessionIncus extends GuestExecClient {
   instanceStatus(name: string): Promise<string | null>;
   instanceIp(name: string): Promise<string | null>;
   imageExists(alias: string): Promise<boolean>;
+  /** Every image alias the host holds — what the platforms page plans a catalogue entry against. */
+  imageAliases(): Promise<string[]>;
   listInstances(): Promise<InstanceInfo[]>;
   getInstance(name: string): Promise<InstanceInfo | null>;
   createInstance(name: string, image: string, profiles?: readonly string[]): Promise<unknown>;
@@ -501,6 +503,22 @@ export class SessionManager {
       throw new SessionError("this session manager was built without a scenario repository");
     }
     return this.repository;
+  }
+
+  /**
+   * The image aliases the host holds, or none.
+   *
+   * The platforms page is the reader: `Catalog.plan` takes `imageReady` so a catalogue entry
+   * whose image is not published reads as "not provisionable yet" with the reason, rather
+   * than as a name and a hope. A manager with no hypervisor answers `[]` instead of throwing
+   * — the Python's own guard (`manager.incus.image_aliases() if manager.incus is not None
+   * else []`) — because the panel is exactly where an operator looks when Incus *is* the
+   * problem, and a page that says "no images" tells them where to look while one that 500s
+   * tells them nothing.
+   */
+  async imageAliases(): Promise<string[]> {
+    if (this.incus === null) return [];
+    return await this.incus.imageAliases();
   }
 
   /** Is this session manager able to reach a hypervisor at all? */

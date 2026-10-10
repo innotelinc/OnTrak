@@ -42,6 +42,7 @@ import {
 import {
   draftFrom,
   ticketDraftKey,
+  type EventQuery,
   type LabEvent,
   type LabStore,
   type LabTicketRow,
@@ -562,6 +563,29 @@ export class PrismaLabStore implements LabStore {
     if (limit <= 0) return [];
     const rows = await this.db.labEvent.findMany({ orderBy: { id: "desc" }, take: limit });
     return rows.map(fromEventRow);
+  }
+
+  /** The audit trail, newest first, narrowed by kind — the same claim `recentEvents` makes. */
+  async listEvents(query: EventQuery = {}): Promise<LabEvent[]> {
+    const limit = query.limit ?? 300;
+    if (limit <= 0) return [];
+    const rows = await this.db.labEvent.findMany({
+      where: query.kind ? { kind: query.kind } : undefined,
+      orderBy: { id: "desc" },
+      take: limit,
+    });
+    return rows.map(fromEventRow);
+  }
+
+  /**
+   * Every distinct kind in the log, sorted.
+   *
+   * Prisma's `distinct` narrows *rows*, not fields, so each row still carries every
+   * column and `kind` is read off the same row shape the other readers map.
+   */
+  async eventKinds(): Promise<string[]> {
+    const rows = await this.db.labEvent.findMany({ distinct: ["kind"], orderBy: { kind: "asc" } });
+    return rows.map((row) => row.kind);
   }
 
   async countEvents(): Promise<number> {
