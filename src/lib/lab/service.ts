@@ -162,7 +162,22 @@ export async function openLabRuntime(options: OpenLabOptions = {}): Promise<LabR
   };
 }
 
-let cached: Promise<LabRuntimeRead> | null = null;
+/**
+ * Where the process's one runtime is kept.
+ *
+ * On `globalThis`, not in a module-level `let`, and that is a defect this file used to
+ * have rather than a style: `next dev` compiles the pages, the server actions and the
+ * route handlers into **separate bundles**, and a module-level cache is copied into each
+ * of them — so one process opened three labs. In demo mode that is three in-memory
+ * ranges, and the symptom is a student starting a machine and being told *session not
+ * found* on the next request, because the page that renders the session has never heard
+ * of the store the action wrote it to. The same reason a Prisma client is parked here.
+ * (`next build` happens to put this module in one shared chunk, which is why the bug
+ * only ever showed in development.)
+ */
+const RUNTIME_SLOT = "__ontrakLabRuntime" as const;
+
+type LabGlobal = typeof globalThis & { [RUNTIME_SLOT]?: Promise<LabRuntimeRead> };
 
 /**
  * The process's lab, opened once.
@@ -172,13 +187,14 @@ let cached: Promise<LabRuntimeRead> | null = null;
  * that true without a lock.
  */
 export async function labRuntime(): Promise<LabRuntimeRead> {
-  cached ??= openLabRuntime();
-  return await cached;
+  const global = globalThis as LabGlobal;
+  global[RUNTIME_SLOT] ??= openLabRuntime();
+  return await global[RUNTIME_SLOT];
 }
 
 /** Forget the cached runtime. For tests, and for a CLI script that re-reads its env. */
 export function forgetLabRuntime(): void {
-  cached = null;
+  delete (globalThis as LabGlobal)[RUNTIME_SLOT];
 }
 
 /**
