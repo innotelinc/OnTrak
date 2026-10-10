@@ -43,6 +43,15 @@
 # know, and a machine that cannot bind the address brings the whole family up
 # "healthy" with nothing reachable.
 #
+# The three databases are the one deliberate exception, and each is published
+# **twice**: on loopback, and on `${ONTRAK_<PRODUCT>_DB_BIND_HOST}`. A database is
+# dialled by a client on the machine that runs this stack — the repo's own
+# `npm run db:*`, a dev server started directly — *and* by one on the LAN, and one
+# address alone loses a caller: the LAN address takes it away from the host's own
+# tooling, and a bare `"5432:5432"` (which is what an unset `0.0.0.0` default
+# becomes) also opens it on this daemon's docker bridges, whose `172.x` addresses
+# nothing but the containers on them can dial.
+#
 # ## What is wired up for you
 #
 #  - Each app talks to its own database over the network, never to 127.0.0.1 —
@@ -95,7 +104,10 @@ services:
       POSTGRES_PASSWORD: ontrak
       POSTGRES_DB: ontrak
     ports:
-      - "${ONTRAK_DB_PORT:-5432}:5432"
+      # Loopback for this host's own tooling, the deployment's address for the LAN. See
+      # the header.
+      - "127.0.0.1:${ONTRAK_DB_PORT:-5432}:5432"
+      - "${ONTRAK_DB_BIND_HOST:-0.0.0.0}:${ONTRAK_DB_PORT:-5432}:5432"
     volumes:
       - ontrak-family-training-db:/var/lib/postgresql/data
     healthcheck:
@@ -195,7 +207,9 @@ services:
       POSTGRES_PASSWORD: ontrak
       POSTGRES_DB: ontrak_tix
     ports:
-      - "${ONTRAK_TIX_DB_PORT:-5433}:5432"
+      # Loopback and the deployment's address, as training-db. See the header.
+      - "127.0.0.1:${ONTRAK_TIX_DB_PORT:-5433}:5432"
+      - "${ONTRAK_TIX_DB_BIND_HOST:-0.0.0.0}:${ONTRAK_TIX_DB_PORT:-5433}:5432"
     volumes:
       - ontrak-family-tix-db:/var/lib/postgresql/data
     healthcheck:
@@ -290,7 +304,9 @@ services:
       POSTGRES_PASSWORD: ontrak
       POSTGRES_DB: sentinel
     ports:
-      - "${ONTRAK_SENTINEL_DB_PORT:-5434}:5432"
+      # Loopback and the deployment's address, as training-db. See the header.
+      - "127.0.0.1:${ONTRAK_SENTINEL_DB_PORT:-5434}:5432"
+      - "${ONTRAK_SENTINEL_DB_BIND_HOST:-0.0.0.0}:${ONTRAK_SENTINEL_DB_PORT:-5434}:5432"
     volumes:
       - ontrak-family-sentinel-db:/var/lib/postgresql/data
     healthcheck:
