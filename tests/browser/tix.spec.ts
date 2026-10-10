@@ -12,6 +12,26 @@
  * a checkout that never launched the second app.
  *
  *   ONTRAK_TIX_BASE_URL=http://127.0.0.1:3001 npm run test:e2e:tix
+ *
+ * Three things about *where* it runs, each learned by running it:
+ *
+ *   - **A trustworthy origin.** The session cases assert that a cookie the app marks
+ *     `Secure` is still there on the next request, and a browser discards such a
+ *     cookie when it arrives over plain HTTP from anywhere but localhost — so a run
+ *     against a LAN address (`http://192.168.1.100:3001`) fails that one case for
+ *     reasons the app has nothing to do with. Point this at `127.0.0.1` or an https
+ *     name, which is what `npm run test:e2e:tix` defaults to.
+ *   - **The local sign-in door, left open.** Tix is single sign-on only, so the spec
+ *     signs in through `/sign-in/break-glass` — the unlinked fallback for the day the
+ *     provider is down. A deployment that set `ONTRAK_TIX_ALLOW_LOCAL_SIGN_IN=0` has
+ *     closed it, and there is then no seeded account this file can drive: the SSO hand-
+ *     off needs the identity provider and a browser that follows it.
+ *   - **The deployment's signing key, for the packet cases.** They export an Assurance
+ *     Packet and verify it in the app's own verifier, which checks the signature against
+ *     the key the deployment signed with. `ONTRAK_TIX_ASSURANCE_KEY` is how the runner
+ *     supplies it; without it the default below is a dev key that only matches a
+ *     deployment configured with the same one, and that case fails on a signature
+ *     mismatch rather than on anything the code did.
  */
 
 import { test, expect, type Page } from "@playwright/test";
@@ -42,12 +62,21 @@ async function auditPath(page: Page, path: string): Promise<void> {
   expect(results.violations, `violations on ${path}:\n${report(results.violations)}`).toEqual([]);
 }
 
-/** Sign in as the seeded agent, failing (not skipping) if the account is missing. */
+/**
+ * Sign in as the seeded agent, failing (not skipping) if the account is missing.
+ *
+ * Through `/sign-in/break-glass`, not `/sign-in`: Tix is single sign-on only and its
+ * sign-in page draws a Workspace box that hands the browser to the identity provider.
+ * The email-and-password form — the only way a seeded local account can be driven from
+ * a test — lives behind the unlinked break-glass door, which is the same door the
+ * training app's sweeps use. Pointing this at `/sign-in` waited for a field that page
+ * does not draw, so every signed-in test here timed out instead of running.
+ */
 async function signIn(page: Page, email: string = EMAIL): Promise<void> {
-  await page.goto(url("/sign-in"), { waitUntil: "load" });
+  await page.goto(url("/sign-in/break-glass"), { waitUntil: "networkidle" });
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(PASSWORD);
-  await page.getByRole("button", { name: /sign in/i }).click();
+  await page.getByRole("button", { name: /sign in locally/i }).click();
   await page.waitForURL((next) => !next.pathname.startsWith("/sign-in"), { timeout: 20_000 });
 }
 
@@ -925,13 +954,11 @@ test.describe("OnTrak Tix desk", () => {
   });
 
   test("inbox: a requester cannot reach the staff worklist", async ({ page }) => {
-    await page.goto(url("/notifications"), { waitUntil: "load" });
-    await page.getByRole("button", { name: /sign out/i }).click();
-    await page.waitForURL(/\/sign-in/, { timeout: 20_000 });
-
-    await page.getByLabel("Email").fill(process.env.ONTRAK_TIX_REQUESTER_EMAIL ?? "requester@acme.test");
-    await page.getByLabel("Password").fill(PASSWORD);
-    await page.getByRole("button", { name: /sign in/i }).click();
+    // Through the shared helper rather than a second copy of the form: this test used
+    // to hand the browser to `/sign-in` and fill an email into a page that draws only
+    // the workspace box, which is the same stale target the helper above was repaired
+    // for — a copy of a sign-in is a copy of its bugs.
+    await switchUser(page, REQUESTER);
     await page.waitForURL(/\/portal/, { timeout: 20_000 });
 
     await page.goto(url("/inbox"), { waitUntil: "load" });
@@ -1079,7 +1106,13 @@ test.describe("OnTrak Tix integrations administration", () => {
     expect(await page.getByRole("heading", { name: "Integrations" }).count()).toBe(1);
     await expect(page.getByRole("heading", { name: "API tokens" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Webhook endpoints" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Delivery log" })).toBeVisible();
+    // Two panels below share every event name — the webhook section's "Delivery log"
+    // and the chat section's "Chat delivery log", and an `Events` list in each form —
+    // so the heading is matched exactly and the checkboxes are scoped to the section
+    // that owns them rather than to `.first()`, which would be a coin toss.
+    const endpointSection = page.locator("section[aria-labelledby='webhook-endpoints']");
+    const deliverySection = page.locator("section[aria-labelledby='deliveries']");
+    await expect(page.getByRole("heading", { name: "Delivery log", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Chat notifications" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Monitoring conditions" })).toBeVisible();
     // The monitoring webhook and its secret are named, so the RMM seam is
@@ -1116,7 +1149,7 @@ test.describe("OnTrak Tix integrations administration", () => {
     const endpointName = `Sweep endpoint ${stamp}`;
     await page.getByLabel("Name", { exact: true }).last().fill(endpointName);
     await page.getByLabel("URL").fill("https://example.test/hooks/tickets");
-    await page.getByRole("checkbox", { name: "ticket.created" }).check();
+    await endpointSection.getByRole("checkbox", { name: "ticket.created" }).check();
     await page.getByRole("button", { name: "Register endpoint" }).click();
     await page.waitForURL(/registered=/, { timeout: 20_000 });
     await expect(page.locator("body")).toContainText("Copy this signing secret now");
@@ -1132,13 +1165,13 @@ test.describe("OnTrak Tix integrations administration", () => {
     // A plain-http address is refused before it is stored, with the rule named.
     await page.getByLabel("Name", { exact: true }).last().fill(`Sweep insecure ${stamp}`);
     await page.getByLabel("URL").fill("http://example.test/hooks/tickets");
-    await page.getByRole("checkbox", { name: "ticket.created" }).check();
+    await endpointSection.getByRole("checkbox", { name: "ticket.created" }).check();
     await page.getByRole("button", { name: "Register endpoint" }).click();
     await page.waitForURL(/error=/, { timeout: 20_000 });
     await expect(page.locator("body")).toContainText("https, or http on a loopback address");
 
     // The sweep is a button as well as a schedule; with nothing due it says 0.
-    await page.getByRole("button", { name: "Deliver what is due now" }).click();
+    await deliverySection.getByRole("button", { name: "Deliver what is due now" }).click();
     await page.waitForURL(/flash=/, { timeout: 20_000 });
     await expect(page.locator("body")).toContainText(/Swept \d+: \d+ delivered, \d+ retrying, \d+ exhausted/);
   });
@@ -1169,7 +1202,10 @@ test.describe("OnTrak Tix integrations administration", () => {
     // And an endpoint can be removed without losing its delivery history.
     await page.getByLabel("Name", { exact: true }).last().fill(endpointName);
     await page.getByLabel("URL").fill("https://example.test/hooks/removed");
-    await page.getByRole("checkbox", { name: "ticket.updated" }).check();
+    await page
+      .locator("section[aria-labelledby='webhook-endpoints']")
+      .getByRole("checkbox", { name: "ticket.updated" })
+      .check();
     await page.getByRole("button", { name: "Register endpoint" }).click();
     await page.waitForURL(/registered=/, { timeout: 20_000 });
     await page.getByRole("button", { name: /I have stored it/ }).click();
@@ -1193,7 +1229,10 @@ test.describe("OnTrak Tix integrations administration", () => {
     // nothing is sent, because registering is not the same as posting.
     await page.getByLabel("Room name").fill(roomName);
     await page.getByLabel("Webhook address").fill("https://hooks.slack.com/services/T000/B000/SWEEP");
-    await page.getByRole("checkbox", { name: "ticket.replied" }).check();
+    await page
+      .locator("section[aria-labelledby='chat-channels']")
+      .getByRole("checkbox", { name: "ticket.replied" })
+      .check();
     await page.getByRole("button", { name: "Register room" }).click();
     await page.waitForURL(/flash=/, { timeout: 20_000 });
 
@@ -1206,7 +1245,10 @@ test.describe("OnTrak Tix integrations administration", () => {
     // A URL that merely *contains* the provider's name is not the provider's.
     await page.getByLabel("Room name").fill(`Sweep impostor ${stamp}`);
     await page.getByLabel("Webhook address").fill("https://hooks.slack.com.evil.test/services/T/B/X");
-    await page.getByRole("checkbox", { name: "ticket.created" }).check();
+    await page
+      .locator("section[aria-labelledby='chat-channels']")
+      .getByRole("checkbox", { name: "ticket.created" })
+      .check();
     await page.getByRole("button", { name: "Register room" }).click();
     await page.waitForURL(/error=/, { timeout: 20_000 });
     await expect(page.locator("body")).toContainText("hooks.slack.com");

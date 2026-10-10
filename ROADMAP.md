@@ -246,12 +246,17 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   (`src/lib/lab/`): the scenario catalogue and lesson library, the session manager and its
   availability rule, the hypervisor seam and the host driver, the ticket rubric, the
   in-memory store for demo mode and the Prisma store for a host, and the student (`/lab`,
-  the session page, the console route and the pollable status) and instructor (fleet, both
-  CSVs) surfaces — with `npm run lab` for an operator and `ONTRAK_LAB_IN_APP=1` for a
-  deployment that serves the lab itself rather than linking a peer's. The three conflicts a
+  the session page, the console route and the pollable status), instructor (fleet, both
+  CSVs), admin (`/lab/admin` — overview, accounts, platforms, tickets and one write-up,
+  schedule and audit) and lessons (`/lab/lessons`, `/lab/lessons/[id]`) surfaces — with
+  `npm run lab` for an operator and `ONTRAK_LAB_IN_APP=1` for a deployment that serves the
+  lab itself rather than linking a peer's. The port is complete and on `main`, its last
+  surface (the admin panel and the lesson library) merged in PR #37. The seven conflicts a
   port of this size creates are resolved, with their costs, in `docs/lab-port.md`: WinRM →
-  `incus-exec` (no Node WinRM client), the lab's own sign-in superseded by this app's, and
-  SQLite → the family's Postgres. Demo mode runs a whole class with no hypervisor and is
+  `incus-exec` (no Node WinRM client), the lab's own sign-in superseded by this app's,
+  SQLite → the family's Postgres, blocking subprocesses made async, one pass rule for both
+  graders, the lab's YAML data converted to JSON, and the portal's HTTP surface as app
+  routes. Demo mode runs a whole class with no hypervisor and is
   what the suite exercises, and a real guest has now been run on a lab host: a Linux container
   cloned in 4.4s, faulted, graded **0%**, repaired, graded **80% resolved**, written up and
   handed in at **87%**, with the attempt in the ledger and the machine destroyed
@@ -264,9 +269,14 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   disk for it. The console's websocket tunnel was verified without a browser — a link the
   app mints is accepted by a live Guacamole gateway and the tunnel relays guacd's own
   frames, with a tampered link refused (`tests/lab-guac-tunnel-live.test.ts`). The browser
-  sweep was run here too — `npm run test:a11y` audited the lab's `/lab` and
-  `/instructor/lab` alongside the rest: 21 passed, 0 failed, in both the in-app and
-  peer-lab renderings, which also turned up a stale sign-in target in the spec now fixed. And
+  sweep covers the lab's pages and was run here: `tests/browser/a11y.spec.ts` came back **29
+  passed / 0 failed / 0 skipped, exit 0** over the published, signed-in and lab pages —
+  `/lab`, `/instructor/lab`, the admin panel's six pages and the lesson library — in both the
+  in-app and the peer-lab renderings. Running the whole directory is what found the **two**
+  stale sign-in targets in this app's own specs (the a11y sweep's, and then the re-grade
+  spec's), each signing in
+  at a page that draws the single-sign-on hand-off rather than an email form; both use
+  `/login/break-glass` now, and the re-grade spec passes. And
   the graded Windows session has been run: with the agent up, `session check` graded
   `net-dns-failure` **inside the guest** over the agent — 0% unresolved, with the guest's own
   DNS evidence — which found a second port defect, the upload using the roomy chunk width on

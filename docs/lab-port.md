@@ -741,9 +741,22 @@ a11y spec already carried the repair for. It uses `/login/break-glass` now and i
 in 6.8s, asserting the wiring it exists to cover — an instructor re-grades a certified attempt
 and the certificate is revoked, with the revocation stored and drawn on the report.
 
-One thing the sweep still does **not** cover, named rather than counted as green: the Tix
-browser spec in the same directory (`tests/browser/tix.spec.ts`). Those tests sign in to *Tix*
-through an email form that app no longer draws either — it serves a Workspace + Continue
-single-sign-on gate, which is what a request to it returns here — so they time out instead of
-skipping. That is a finding about the Tix spec, not about any page this stage added, and it is
-left unfixed because it belongs to Tix's own sweep, not to the lab's.
+The same directory holds another product's sweep, and running everything is what turned it up:
+`tests/browser/tix.spec.ts` had the **third** stale sign-in. It logged in at `/sign-in`, the
+workspace box that hands the browser to the identity provider, so its 45 cases had not run
+either; it uses `/sign-in/break-glass` now (the door this app's sweeps already use, in the spec's
+one sign-in helper and in the second copy of it the requester case carried). Two of its locators
+were ambiguous against a page that renders two event lists and two delivery-log headings, and
+are scoped to their sections now. It passes end to end against the family's own Tix app:
+**45 passed / 0 failed, exit 0** — and it cannot pass against a LAN address, for a reason that is
+the browser's and not the app's (one case asserts a `Secure` cookie survives the next request,
+which no browser allows over plain HTTP from a non-localhost origin); `127.0.0.1` or an https
+name is the address it wants, and both are now said in the spec's header.
+
+That run also found a real defect in Tix itself, which is worth recording here because the sweep
+is what surfaced it: `assuranceSecret` read `ONTRAK_TIX_ASSURANCE_SECRET` with `??`, so the empty
+value the shipped `.env.example` sets — and the one the family stack passes — **shadowed** the
+documented fallback to `TIX_AUTH_SECRET`, and every assurance-packet export was a 500 naming a
+variable the operator had deliberately left blank. Blank is absent now, matching what the
+verifier already did, pinned by `ontrak-tix/tests/tix-m3-assurance.test.ts`; the deployment's
+image was rebuilt to prove it, and the packet cases pass against the running app.
