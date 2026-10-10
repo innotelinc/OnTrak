@@ -57,8 +57,8 @@ function read(file: string): string {
 }
 
 /** The `services:` block, one entry per service, as the raw lines under it. */
-function serviceBlocks(): Map<string, string[]> {
-  const lines = read(COMPOSE).split("\n");
+function serviceBlocks(file: string = COMPOSE): Map<string, string[]> {
+  const lines = read(file).split("\n");
   const start = lines.indexOf("services:");
   assert.notEqual(start, -1, `${COMPOSE} has no top-level services: line`);
 
@@ -126,6 +126,60 @@ function publishedPorts(block: string[]): { host: string; container: string }[] 
 
 function isPort(field: string | undefined): boolean {
   return field !== undefined && /^\d+$/.test(field);
+}
+
+/** A `${VAR:?message}` whose value is the operator's, and is required to be there. */
+const REQUIRED = "<required>";
+
+/** An address that overlaps every other address on the host. */
+function isWildcard(address: string): boolean {
+  return address === "" || address === "0.0.0.0";
+}
+
+/**
+ * Every published mapping in a compose file, with the address it is published on.
+ *
+ * Separate from `publishedPorts` above, which answers *which port* a service
+ * serves and therefore drops the bind host: here the bind host is the whole
+ * question. The address is the first field of a three-field entry, and a two-field
+ * entry (`"5432:5432"`) has none — which is the wildcard, written as the empty
+ * string so the rule below reads the same either way. The protocol is kept, because
+ * one host port on TCP beside the same port on UDP is two listeners rather than one
+ * published twice (`sentinel-app` is exactly that: syslog on 5514/tcp and on
+ * 5514/udp). `${VAR:-default}` expands to its default — a default is what an
+ * unconfigured deployment gets — while `${VAR:?message}` is left as a marker, since
+ * that value belongs to the operator and is required to be named.
+ */
+function bindings(file: string): { service: string; address: string; port: string; protocol: string }[] {
+  const found: { service: string; address: string; port: string; protocol: string }[] = [];
+  for (const [service, block] of serviceBlocks(file)) {
+    let inside = false;
+    for (const line of block) {
+      // `!override` rides on the `ports:` line, and a file that replaces the stack's
+      // mappings is exactly the one this rule must still read.
+      if (/^ {4}ports:\s*(!override)?\s*$/.test(line)) {
+        inside = true;
+        continue;
+      }
+      if (/^ {4}\S/.test(line)) inside = false;
+      if (!inside) continue;
+      const entry = /^\s*-\s*"?(.+?)"?\s*$/.exec(line)?.[1];
+      if (!entry) continue;
+      const protocol = /\/(tcp|udp)$/.exec(entry)?.[1] ?? "tcp";
+      const expanded = entry
+        .replace(/\/\w+$/, "")
+        .replace(/\$\{[A-Z0-9_]+:?[^}]*\}/g, (match) =>
+          match.includes(":?") ? REQUIRED : /:-(.*)\}$/.exec(match)?.[1] ?? match,
+        );
+      const fields = expanded.split(":");
+      if (fields.length === 3 && isPort(fields[1]) && isPort(fields[2])) {
+        found.push({ service, address: fields[0], port: fields[1], protocol });
+      } else if (fields.length === 2 && isPort(fields[0]) && isPort(fields[1])) {
+        found.push({ service, address: "", port: fields[0], protocol });
+      }
+    }
+  }
+  return found;
 }
 
 /** The `family` job's text, from its name to the next job. */
@@ -318,6 +372,73 @@ test("family-stack: the job asks the portal about every light it draws", () => {
   for (const key of lights.keys()) {
     if (NOT_IN_FAMILY_STACK.has(key.toLowerCase())) continue;
     if (!probed.has(key)) problems.push(`the portal draws a ${key} light that the job never asks about`);
+  }
+
+  assert.deepEqual(problems, [], problems.join("\n"));
+});
+
+/**
+ * One host port, published twice, must be published on two specific addresses that
+ * differ — and a compose file that cannot promise that must publish it once.
+ *
+ * The rule is dockerd's, and it is not a preference: given two mappings of one host
+ * port, the daemon refuses the pair whenever the addresses overlap. The wildcard
+ * beside a specific address, or one address twice, both fail with "failed to listen
+ * on TCP socket: address already in use" — `docker run -p 127.0.0.1:80:80 -p
+ * 0.0.0.0:80:80` is the two-line form of it — and `up -d` then aborts on whichever
+ * container lost the race to bind. The family stack's three databases were published
+ * on loopback *and* on `${ONTRAK_<PRODUCT>_DB_BIND_HOST}`, which defaults to
+ * `0.0.0.0`: a wildcard beside a named address, so the `Family stack` job could not
+ * boot the stack at all — while the machine the file was written on names a LAN
+ * address and saw nothing wrong.
+ *
+ * Two claims are checked over every compose file at the root, the family stack and
+ * the overlay that replaces its database mappings:
+ *
+ *  * no service may publish one host port twice on addresses that overlap (the
+ *    wildcard, or the same address again);
+ *  * a service that does publish one port twice must name two different addresses —
+ *    which is why the loopback pair is a file of its own,
+ *    `docker-compose.lan-db.yml`, whose addresses are required (`:?`) rather than
+ *    defaulted to the wildcard the pair cannot have.
+ *
+ * What it cannot check is what an operator's variable holds at runtime, so a
+ * required address counts as a specific one: refusing the wildcard there is the job
+ * of the file that reads it, and that file says so in its header and in the
+ * message the `${VAR:?}` prints.
+ */
+test("family-stack: no compose file publishes one host port on two overlapping addresses", () => {
+  const files = readdirSync(process.cwd()).filter((name) => /^docker-compose.*\.ya?ml$/.test(name));
+  assert.ok(files.includes(COMPOSE), `the walk did not find ${COMPOSE}: ${files.join(", ")}`);
+  assert.ok(
+    files.includes("docker-compose.lan-db.yml"),
+    `the loopback pair is not a file of its own: ${files.join(", ")}`,
+  );
+
+  const problems: string[] = [];
+  for (const file of files) {
+    const byPort = new Map<string, { service: string; address: string }[]>();
+    for (const binding of bindings(file)) {
+      const key = `${binding.port}/${binding.protocol}`;
+      if (!byPort.has(key)) byPort.set(key, []);
+      byPort.get(key)!.push({ service: binding.service, address: binding.address });
+    }
+
+    for (const [key, mappings] of byPort) {
+      if (mappings.length < 2) continue;
+      const where = `${file}: ${[...new Set(mappings.map((mapping) => mapping.service))].join(", ")} publish ${key}`;
+      const addresses = mappings.map((mapping) => mapping.address);
+      if (addresses.some(isWildcard)) {
+        problems.push(`${where} on the wildcard beside another address, and dockerd refuses that pair`);
+      }
+      const seen = new Set<string>();
+      for (const address of addresses) {
+        if (seen.has(address)) {
+          problems.push(`${where} twice on ${address === "" ? "the wildcard" : address}, which is one address twice`);
+        }
+        seen.add(address);
+      }
+    }
   }
 
   assert.deepEqual(problems, [], problems.join("\n"));
