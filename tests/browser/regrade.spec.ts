@@ -26,8 +26,17 @@ const SEEDED_SCENARIO = "first-line-mailbox-triage";
 
 const prisma = new PrismaClient();
 
+/**
+ * Sign in as one of the seeded demo accounts. Returns false if rejected.
+ *
+ * Through `/login/break-glass`, for the same reason the a11y sweep is: OnTrak is
+ * single sign-on only and `/login` draws the control that hands the browser to the
+ * identity provider, not an email-and-password form. Pointing this at `/login` waited
+ * for a field that page does not draw, so the spec failed on a timeout instead of
+ * running — or skipping — the re-grade it exists to cover.
+ */
 async function signIn(page: Page, email: string): Promise<boolean> {
-  await page.goto("/login", { waitUntil: "networkidle" });
+  await page.goto("/login/break-glass", { waitUntil: "networkidle" });
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(PASSWORD);
   await page.getByRole("button", { name: /sign in/i }).click();

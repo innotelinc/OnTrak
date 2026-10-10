@@ -681,7 +681,7 @@ real machine, end to end (§5, with the numbers). What is left is narrower and s
 | a real Linux guest boots, is fault-injected and is graded | **verified on a lab host** — clone → boot → 0% → repair → 80% resolved → a write-up blended to 87% → a `results` row and the machine destroyed (§5) |
 | a real Windows guest is driven through the Incus agent (`incus-exec`) | **verified on a lab host** — the agent comes up once an `agent:config` disk is attached (~70s), and `session check` then grades *inside the guest* over the agent: `net-dns-failure` returns **0%, unresolved**, with the guest's own DNS evidence. Two port defects were found and fixed on the way (the manager built the Windows driver with no Incus client; the upload used the roomy 32,000 chunk on a command-line transport), each pinned by a test that fails on the old construction (§5). Not shown: the repaired guest graded back to `resolved`, which needs the lab's own intranet DNS |
 | the console websocket tunnel | **verified without a browser** — a link minted with `buildPayload` is accepted at `/guacamole/api/tokens` and the websocket tunnel relays guacd's own frames; a tampered link is refused. Pinned by `tests/lab-guac-tunnel-live.test.ts` (`ONTRAK_GUAC_LIVE=1`, §5) |
-| the browser sweep (`npm run test:a11y`, Playwright + axe) | **verified on this host** — 21 passed / 0 failed / 0 skipped over the public, signed-in and lab pages, in both the in-app and the peer-lab renderings; running it exposed a stale sign-in target in the spec (§5) |
+| the browser sweep (`tests/browser/a11y.spec.ts`, Playwright + axe in Chromium) | **verified, on the merged tree and in both renderings** — 29 passed / 0 failed / 0 skipped, exit 0: the public pages, the student, instructor and admin surfaces, the lab dashboard, the admin panel's six pages and the lesson library, run once against a peer-lab deployment (`ONTRAK_LAB_ENABLED` + `ONTRAK_LAB_URL`) and once with `ONTRAK_LAB_IN_APP=1`. Running the whole directory also exposed a second stale sign-in target, in `tests/browser/regrade.spec.ts`; it is repaired and that spec passes, 1/1 (§5) |
 
 ## 5. Staging, and what "done" means
 
@@ -705,6 +705,14 @@ instructor surfaces, its admin panel, its lessons browse and its CLI. Every Pyth
 `portal/admin.py` and `cli.py` — the three the table listed as *not started* — are the last of
 them.
 
+**And all of it is on `main`.** Every stage above landed as its own change on the mainline,
+and the last of them — the admin panel and the lesson library — merged as **PR #37** on
+2026-10-10, so the port is a finished record rather than a branch somebody has to keep alive.
+The consolidation audit's account of the integration is corrected to match
+([consolidation-audit.md](consolidation-audit.md) §6/C1, §7 and §8), because that document
+recommended the opposite and a reader who opened only one of the two should not have to guess
+which is current.
+
 What remains is two things, and both are named rather than hidden: the `infra/**` host shell,
 which stays shell and stays OnTrak-dev's (it builds a Windows image with `incus`, `qemu-img`
 and `oras`, and a Node rewrite would be a worse version of the same script — §1), and the
@@ -712,11 +720,29 @@ host-side commands that need a hypervisor or gigabytes of media, which refuse by
 at the CLI. Neither is a prerequisite for a class: `/lab` serves one today, from a host or from
 demo mode, and `/lab/admin` reports on it.
 
-The one check this stage did **not** run is the browser sweep. `npm run test:a11y` (Playwright +
-axe) is the a11y pass over these pages, and no Chromium is installed in the environment this
-stage was built in — so the pages were verified over HTTP instead (a real session, each page
-fetched, a student redirected out of the panel, a real graded ticket rendered from the
-database, unknown ids 404). The seven new paths *are* in `tests/browser/a11y.spec.ts` now, so
-the sweep covers the panel and the lesson library rather than the two lab pages it covered
-before; running it is what the machine with a browser owes this stage, and a violation it finds
-there is a finding this environment could not have produced.
+The one check this stage did **not** run at the time was the browser sweep, and it has since
+been run — so the record moves from *owed* to *done*, with what the run cost stated. Chromium
+was installed, the app was booted on the family's own database with the seeded demo accounts,
+and `tests/browser/a11y.spec.ts` came back **29 passed / 0 failed / 0 skipped** (exit 0) twice:
+once as this deployment stands — lab enabled, a peer address named, no in-app lab — and once
+with `ONTRAK_LAB_IN_APP=1`, so `/lab` was audited both as the peer door a deployment draws and
+as the dashboard the port serves. That is the public pages, the student, instructor and admin
+surfaces, the lab dashboard, the admin panel's six pages and the lesson library, with
+`color-contrast` and the rest of the paint-dependent rules actually evaluated rather than
+assumed.
+
+Running the whole directory turned up something this stage could not have known, and it is a
+real defect rather than a flake: **the re-grade spec's sign-in was stale too.**
+`tests/browser/regrade.spec.ts` logged in through `/login`, the page that draws the
+single-sign-on hand-off rather than an email form, so it waited for a field that is not there
+and timed out — that spec had not run since the app went SSO-only, and it is the same defect the
+a11y spec already carried the repair for. It uses `/login/break-glass` now and it passes: 1/1,
+in 6.8s, asserting the wiring it exists to cover — an instructor re-grades a certified attempt
+and the certificate is revoked, with the revocation stored and drawn on the report.
+
+One thing the sweep still does **not** cover, named rather than counted as green: the Tix
+browser spec in the same directory (`tests/browser/tix.spec.ts`). Those tests sign in to *Tix*
+through an email form that app no longer draws either — it serves a Workspace + Continue
+single-sign-on gate, which is what a request to it returns here — so they time out instead of
+skipping. That is a finding about the Tix spec, not about any page this stage added, and it is
+left unfixed because it belongs to Tix's own sweep, not to the lab's.

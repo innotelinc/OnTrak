@@ -10,7 +10,12 @@
 > reversible plan for getting from here to one product.
 >
 > It is a plan and a record, not a claim of completion. Read §8 before believing the
-> integration is finished.
+> integration is finished. One entry has since been overtaken by the product's own decision
+> rather than carried out as written: this audit recommended keeping the lab a separately
+> deployed Python peer (§6/C1) and the lab has instead been **ported into this repository as
+> TypeScript**, a plan and a record of its own in [lab-port.md](lab-port.md). The correction
+> is carried where each claim was made — §6/C1, §7 and §8 — rather than left to a reader to
+> infer from that file.
 
 Status legend used below: **done** · **planned** · **open** (a decision, not a task).
 
@@ -248,6 +253,17 @@ is integrated as a deployable peer (a "Lab" product), reached by the family UI. 
 family already accepts this shape — OnTrak Sync is deliberately Python for exactly
 this reason.
 
+*Superseded — by a product decision, not by the reasoning here.* The port was commissioned
+anyway, and this entry is kept because its cost estimate is the bill that port then paid:
+WinRM was **not** re-implemented (a Windows guest is driven through the Incus agent,
+`incus-exec`, instead), while Guacamole signing, the PowerShell generation and the Incus
+client were; the control plane is this app's own routes now, behind the same sign-in,
+rather than a peer's. [lab-port.md](lab-port.md) is the plan and the record — §3 of it the
+seven conflicts and their costs, §5 the staging and its exit checks. What survives from
+this entry is its *shape* (one product, one front door) and one fact it did not know it was
+recording: the exception ran the other way too, so "one language" was never the family's
+rule — OnTrak Sync is still deliberately Python — only the port's direction.
+
 **C2 — Simulation vs real VM.** The two graders disagree about what "resolved"
 means: OnTrak grades simulator state in-process; OnTrak-dev runs `check.ps1` against
 a live guest. They are complementary, not alternatives, but they cannot both own the
@@ -440,25 +456,46 @@ family's instructor view is ready to show lab results the moment a lab reports t
 
 **Not in this plan, deliberately:** porting OnTrak-dev to TypeScript; merging the
 two databases; deleting either scenario representation; retiring the lab's
-hypervisor tooling. See §6.
+hypervisor tooling. See §6. Two of the four were overtaken by later decisions and are
+corrected in place rather than deleted: the **port** was commissioned afterwards, so the
+first item stands only as what this plan did *not* propose (§6/C1,
+[lab-port.md](lab-port.md)); and the ported lab keeps its sessions, tickets and audit trail
+in **this deployment's Postgres** (`src/lib/lab/store-prisma.ts`, migration
+`20261109000000_add_lab_runtime`), so the second is now true of OnTrak-dev's own SQLite —
+which stays its operational record (§6/C4) — and no longer of the lab the family runs.
 
 ---
 
 ## 8. What remains
 
-Stated plainly, because the integration is **not** complete:
+Stated plainly. The integration is **not** complete — but the largest item that used to be
+on this list is finished, so the list is both shorter and harder than it was:
 
-- **OnTrak-dev is not merged — but it is now being ported, and that distinction
-  supersedes part of this section.** The recommendation here was to keep the lab a
-  separately deployed Python peer (§6/C1); the product decision has since gone the other
-  way. Stage 1 of the port — the lab's pure core, eight modules (`models`, `scoring`,
-  `guac`, `guest`, `incus`, `qemu`, `selection`, `scheduler`) with 176 tests ported from
-  the lab's own suites — is in `src/lib/lab/` and green. **[lab-port.md](lab-port.md) is
-  the plan**: the module-by-module mapping, the staging, and the seven architectural
-  conflicts it resolves (WinRM, identity, SQLite→Postgres, blocking subprocesses, the
-  single pass rule, YAML, and the portal's HTTP surface). **OnTrak-dev itself is
-  untouched, no lab route is served by the family stack yet, and stages 2–4 are not
-  started.**
+- **OnTrak-dev is not merged — it was ported instead, and the port is done and on
+  `main`.** The recommendation here was to keep the lab a separately deployed Python peer
+  (§6/C1); the product decision went the other way, and the work it commissioned is
+  complete. Stages 1, 2a, 2b, 2c, 2d, 3a, 3, 3 (rest), 4 and 4 (rest) all landed — the
+  lab's core, its data, its store, its demo, its write-up, its student and instructor
+  surfaces, its admin panel and lesson library, and its CLI — with the last of them merged
+  as **PR #37** on 2026-10-10. **[lab-port.md](lab-port.md) is the plan and the record**:
+  the module-by-module mapping, the staging, and the seven architectural conflicts it
+  resolves (WinRM, identity, SQLite→Postgres, blocking subprocesses, the single pass rule,
+  YAML, and the portal's HTTP surface). Every Python module this audit compared now has a
+  TypeScript home or a stated reason for not needing one. What the port did *not* take: the
+  `infra/**` host shell, which stays shell and stays OnTrak-dev's, and the three host
+  commands that need a hypervisor or gigabytes of media — each refuses by name and points
+  at the CLI instead (lab-port.md §5). **OnTrak-dev itself is untouched.**
+- **A deployment can now *be* the lab rather than link to one, and that is a third door.**
+  The port made the state possible; `src/lib/lab-rules.ts` is the one reader and `labDoor`
+  the one answer: `off`; `external`, from the same two facts as before
+  (`ONTRAK_LAB_ENABLED`, `ONTRAK_LAB_URL`); or `in-app`, from `ONTRAK_LAB_IN_APP`, pointing
+  at this app's own `/lab`. A value that was stated and refused still outranks both, so a
+  stale address is reported with its reason rather than quietly ignored — this document's
+  stance everywhere. The in-app switch is stepped *over* a stated address rather than
+  replacing it, which is what makes a deployment migrating off OnTrak-dev a one-variable
+  change: add `ONTRAK_LAB_IN_APP=1`, and the address keeps its own answer until an operator
+  removes it. `tests/lab-rules.test.ts` holds all four answers, and the guard there keeps
+  this file the only reader of the three variables in the training app.
 - **Nothing has been migrated in OnTrak-dev.** Its schema is created on first use and
   this work adds no change there. Steps 5–6 add two nullable columns on *this* side
   (`Scenario.labMeta` and `Attempt.gradingMode`, each with its migration), and no attempt
@@ -751,7 +788,7 @@ Stated plainly, because the integration is **not** complete:
 | --- | --- | --- |
 | Q1 | **What is the merged product called, and what is the lab called?** | **Resolved.** *OnTrak* is this repository and the family of products inside it, never one product on its own. The product in `src/` keeps the name it already serves and issues certificates under, **OnTrak IT Support Training** (capability id `training`, host label `its`), and what was called "the lab" is **OnTrak Lab** (capability id and host label `lab`). Keeping the training product's name is the decision that costs nothing: it is already in `NEXT_PUBLIC_APP_NAME`, in the default certificate issuer and in every host label, and the collision was never between those two names, it was between a *family* and a *product* that were both called OnTrak. The source repository keeps its own name, `OnTrak-dev`. |
 | Q2 | **Does the lab become a product or a mode of ITS?** | **Resolved — both, at different layers.** The lab stays a **product** in the family catalogue (its own origin, roles, health and deployment, Step 2), because that is *where the service lives*; and a training task carries a **mode** (`simulated` \| `lab`, Step 6), because that is *how one attempt was graded*. "Where is it" and "who graded this" are different questions, and treating them as one is what made this look open. Removing the mode would not remove the product; removing the catalogue entry would not change a grade. |
-| Q3 | **Who owns the real-VM grading record?** | **Resolved — the family owns the graded `Attempt`; the lab owns only its operational session.** One ledger means one certificate path, one analytics query and one assurance packet; the lab's SQLite row is operational, like Sentinel's raw events, and stays labelled as such (§6/C4). The cross-language write is accepted and made **one-directional and idempotent**: `POST /api/v1/lab/completions` writes one family attempt per lab session id (unique `Attempt.labSessionId`), with `mode = lab`, its check results and a `mode`-carrying certificate ([lab-completion.md](lab-completion.md)). The family's half is built and unit-tested; **OnTrak Lab's half — calling it after a session, with the deployment token — is drafted out of tree** in `integrations/lab-completion-client/`, because OnTrak-dev must stay unchanged, and has not been installed on a lab host. |
+| Q3 | **Who owns the real-VM grading record?** | **Resolved — the family owns the graded `Attempt`; the lab owns only its operational session.** One ledger means one certificate path, one analytics query and one assurance packet; the lab's SQLite row is operational, like Sentinel's raw events, and stays labelled as such (§6/C4). The cross-language write is accepted and made **one-directional and idempotent**: `POST /api/v1/lab/completions` writes one family attempt per lab session id (unique `Attempt.labSessionId`), with `mode = lab`, its check results and a `mode`-carrying certificate ([lab-completion.md](lab-completion.md)). The family's half is built and unit-tested; **OnTrak Lab's half — calling it after a session, with the deployment token — is drafted out of tree** in `integrations/lab-completion-client/`, because OnTrak-dev must stay unchanged. It has since been installed at `/opt/ontrak-lab-client` on a lab host and walked end to end — a session allocated, graded and completed there, then reported and answered **201**, with the retry **200** on the same attempt id (§8). |
 | Q4 | **Can the family edge serve the lab?** | **Resolved on paper — yes, as one name instead of three, with the lab's own gateway kept.** The edge forwards one *host* to one *port* and passes the path through unchanged, which is exactly the shape the lab publishes: a single port on which its own nginx serves the portal at `/` and the console at `/guacamole/` (`OnTrak-dev/deploy/gateway/nginx.conf`). So a deployment that runs a lab gives it one family name — `lab.<base domain>` → the lab host's published port — with the websocket upgrade the console tunnel needs, which the family's host map sets per product (`scripts/cerulean-ontrak.py`, `allow_websocket_upgrade`) and the lab's own provisioner never mentions. DNS and TLS need nothing new either: the name is one label under the Network's `*.ontrak` wildcard, put there by the same Cerulean/NPM that already provisions the six. **What does not carry over is the lab's three names, and that is where the two models genuinely collide:** the lab publishes `ontrak.`, `student.` and `admin.` (`OnTrak-dev/scripts/cerulean-provision.py`) and the family publishes `ontrak.` for the **portal**, so the two provisioners claim one name for two different apps. NPM refuses the second claim ("already in use"), which is the loud failure — the quiet one would have repointed the family's front door at the lab. The lab's other two names go with it, and what is lost with them is per-name edge treatment (the student name on the internet, the staff name behind a VPN), because the family's edge authorizes nobody: identity comes from the provider and each product decides who the caller is. Role-gating does not disappear — the lab's own portal still decides from the group claim at sign-in. R7's "retire the gateway" is answered in the same breath: the lab's *public* names retire, its inner router stays, because the console is served at `/guacamole/` inside its container and generates base-relative URLs from that path, so giving the console a name of its own means changing OnTrak-dev — which is frozen. Sign-in costs one line rather than saving one: the lab picks its callback by the origin the browser started on and falls back to the canonical (first) entry for anything unregistered, so it registers `https://lab.<base domain>/oidc/callback` on the provider **and lists it first**. **The residue is this work's usual one: none of it has been run here** (no lab, no hypervisor), and the thing an edge change can break is the console tunnel — a websocket through NPM into the lab's inner nginx into guacd is the first measurement a real host owes. |
 | Q5 | **Hypervisor capacity under the family's tenancy** | **Resolved on paper — the lab stays single-tenant, one host per deployment, and the family's tenancy is not extended to it.** The family is multi-tenant in its *database*: Tix carries `tenantId` on every domain row and Sentinel keeps one evidence chain per organization, both "single-tenant self-hosted and hosted multi-tenant from one image". The lab's isolation is a different thing wearing the same word: one Incus project (`ontrak`), one `ontrak0` bridge, one SQLite store, one warm pool, and a portal container that is a hypervisor administrator by design — `OnTrak-dev/docs/operations.md` says in as many words never to put the portal on that bridge. Nothing in the lab names a tenant, so two tenants sharing a hypervisor would share a bridge (their VMs mutually reachable), one pool and one results store: a boundary with nothing inside it. What sharing would cost comes from the lab's own sizing — 2 vCPU and 4 GiB per student VM (`infra/incus/profile.yaml`), a 16 vCPU / 64 GiB host sized at **8–12 students** with 4–6 prewarmed, pool targets defaulting to 0 with scheduled windows filling only a genuine deficit, and `pool.max_total` (60) bounding the *pool* rather than concurrent sessions — so the ceiling that decides anything is RAM at the peak of a class window, and two tenants whose windows overlap share it invisibly. **The decision, stated rather than assumed:** a deployment that runs a lab runs one lab host; the lab is advertised as single-tenant; multi-tenant hosting stays out of scope until it is measured — and "measured" is specific, namely peak RAM at a real class's prewarm-plus-session peak on the target host, whether two tenants' class windows can overlap at all, and, if they can, a per-tenant isolation design (its own project, bridge, pool and store) that the lab does not have today. **The residue is this work's usual one: none of it is a measurement.** No hypervisor exists in the environment this audit was written in, so every figure above is the lab's own published guidance read out of its repository, not a number anybody took here. It is also why the family side needs no new guard: its half of the claim is a single address (`ONTRAK_LAB_URL`), which `src/lib/lab-rules.ts` already holds to one reader per package. |
 | Q6 | **Licensing** | **Kept where a reader will meet it.** OnTrak-dev uses Microsoft evaluation media (90 days for desktop, 180 for Server) and never redistributes retail media; the family's own documentation now says so in `docs/stack.md` (Licences), naming the lab's repository as the source, so the responsibility is inherited as a statement rather than as a surprise. It stays the operator's either way, which is the point: a product that quietly stopped saying it would be the one that broke it. |
