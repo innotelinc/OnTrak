@@ -725,8 +725,9 @@ been run — so the record moves from *owed* to *done*, with what the run cost s
 was installed, the app was booted on the family's own database with the seeded demo accounts,
 and `tests/browser/a11y.spec.ts` came back **29 passed / 0 failed / 0 skipped** (exit 0) twice:
 once as this deployment stands — lab enabled, a peer address named, no in-app lab — and once
-with `ONTRAK_LAB_IN_APP=1`, so `/lab` was audited both as the peer door a deployment draws and
-as the dashboard the port serves. That is the public pages, the student, instructor and admin
+with `ONTRAK_LAB_IN_APP=1`, so both states of the lab were audited: the peer rendering a
+deployment draws — a door to somebody else's dashboard, on the student page — and the in-app
+dashboard the port serves at `/lab`. That is the public pages, the student, instructor and admin
 surfaces, the lab dashboard, the admin panel's six pages and the lesson library, with
 `color-contrast` and the rest of the paint-dependent rules actually evaluated rather than
 assumed.
