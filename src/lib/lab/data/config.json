@@ -1,0 +1,91 @@
+{
+  "demo": {
+    "enabled": false,
+    "reset_state": true,
+    "students": 6,
+    "success_rate": 1.0
+  },
+  "guac": {
+    "base_url": "http://127.0.0.1:8080/guacamole/",
+    "keyboard_layout": "en-us-qwerty",
+    "link_ttl_minutes": 480,
+    "recording": false,
+    "recording_path": "/recordings",
+    "secret_key": "",
+    "server_layout": "en-us-qwerty"
+  },
+  "guest": {
+    "admin_group": "Administrators",
+    "boot_timeout_seconds": 300,
+    "driver": "winrm",
+    "password": "",
+    "rdp_port": 3389,
+    "ready_timeout_seconds": 420,
+    "static_host": "",
+    "user": "student",
+    "winrm_port": 5985,
+    "winrm_transport": "ntlm",
+    "winrm_use_ssl": false,
+    "work_dir": "C:\\ProgramData\\OnTrak"
+  },
+  "incus": {
+    "image_alias": "ontrak-win-base",
+    "network": "ontrak0",
+    "operation_timeout_seconds": 300,
+    "pool_prefix": "ontrak-pool",
+    "profile": "ontrak-student",
+    "project": "ontrak",
+    "remote": "local",
+    "session_prefix": "ontrak-sess",
+    "storage_pool": "default",
+    "template_prefix": "tpl"
+  },
+  "paths": {
+    "catalog": "catalog",
+    "lessons": "lessons",
+    "media": "media",
+    "scenarios": "scenarios",
+    "state": "state"
+  },
+  "pool": {
+    "claim_timeout_seconds": 90,
+    "default_target": 0,
+    "enabled": true,
+    "max_total": 60,
+    "refill_interval_seconds": 120,
+    "targets": {}
+  },
+  "portal": {
+    "allow_self_reset": true,
+    "brand_note": "IT support training range \u2014 powered by Innotel OnTrak",
+    "hints_require_attempt": true,
+    "host": "0.0.0.0",
+    "port": 8080,
+    "secret": "",
+    "title": "OnTrak"
+  },
+  "schedule": {
+    "enabled": false,
+    "windows": []
+  },
+  "selection": {
+    "auto_assign": true,
+    "max_difficulty": 4,
+    "seed": 0,
+    "strategy": "balanced"
+  },
+  "session": {
+    "check_timeout_seconds": 240,
+    "destroy_on_complete": true,
+    "idle_recycle_minutes": 20,
+    "max_per_student": 1,
+    "persist_progress": false,
+    "randomize_credentials": false,
+    "time_limit_choices": [
+      45,
+      90,
+      180
+    ],
+    "ttl_minutes": 90
+  }
+}

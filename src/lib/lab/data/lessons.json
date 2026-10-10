@@ -1,0 +1,800 @@
+{
+  "identity-directory-admin.yaml": {
+    "category": "identity",
+    "commands": [
+      {
+        "command": "python3 lib/idp.py --state /var/lib/ontrak-idp/directory.json list-users",
+        "what": "Every account with its status, failed-attempt count and group memberships."
+      },
+      {
+        "command": "python3 lib/idp.py --state /var/lib/ontrak-idp/directory.json show-user aisha.khan",
+        "what": "One account in full, as the directory sees it."
+      },
+      {
+        "command": "python3 lib/idp.py --state <file> --actor helpdesk --reason 'user verified by phone' unlock aisha.khan",
+        "what": "Unlock an account and reset its failed attempts, recording who asked and why."
+      },
+      {
+        "command": "python3 lib/idp.py --state <file> lock aisha.khan",
+        "what": "Lock an account without deleting it \u2014 a security hold while an incident is investigated."
+      },
+      {
+        "command": "python3 lib/idp.py --state <file> disable c.nguyen --reason 'contract ended 2026-08-31'",
+        "what": "Disable an account for good (leaver, contractor expiry). Disabled is a status, not a lock."
+      },
+      {
+        "command": "python3 lib/idp.py --state <file> add-member marco.silva finance",
+        "what": "Add a group membership. Nothing else about the account changes."
+      },
+      {
+        "command": "python3 lib/idp.py --state <file> remove-member marco.silva warehouse",
+        "what": "Remove the membership that is no longer needed \u2014 least privilege is a removal, not a promise."
+      },
+      {
+        "command": "python3 lib/idp.py --state <file> list-sessions",
+        "what": "Live sessions with the device they were issued to."
+      },
+      {
+        "command": "python3 lib/idp.py --state <file> revoke-session aisha.khan-laptop --reason 'device not seen for 30 days'",
+        "what": "Kill one session by id. This is the step students most often forget."
+      },
+      {
+        "command": "python3 lib/idp.py --state <file> audit",
+        "what": "The last 20 changes with actor, action, target and reason \u2014 your evidence."
+      },
+      {
+        "command": "curl -s localhost:8081/users | jq '.[] | {id, status, groups}'",
+        "what": "The same data over HTTP, if the service is running. This is what a real integration would call."
+      }
+    ],
+    "difficulty": 2,
+    "docs": [
+      "curl -s localhost:8081/healthz"
+    ],
+    "exercises": [
+      {
+        "id": "unlock-with-evidence",
+        "prompt": "Aisha Khan is locked out after failed attempts and has telephoned the service desk. Unlock her account and show the audit entry that proves the change.\n",
+        "solution": "python3 lib/idp.py --state /var/lib/ontrak-idp/directory.json \\\n  --actor helpdesk --reason \"caller verified: aisha.khan, staff id 4711\" unlock aisha.khan\npython3 lib/idp.py --state /var/lib/ontrak-idp/directory.json audit\n",
+        "verify": "python3 lib/idp.py --state /var/lib/ontrak-idp/directory.json show-user aisha.khan"
+      },
+      {
+        "id": "team-move",
+        "prompt": "Marco Silva moves to finance. He needs finance and must keep finance-reporting, but must lose warehouse.\n",
+        "solution": "python3 lib/idp.py --state <file> add-member marco.silva finance\npython3 lib/idp.py --state <file> remove-member marco.silva warehouse\n",
+        "verify": "python3 lib/idp.py --state <file> show-user marco.silva"
+      },
+      {
+        "id": "contractor-offboarding",
+        "prompt": "A contractor's agreement ended last month and their account is still active in two groups. Close it down and record why.\n",
+        "solution": "python3 lib/idp.py --state <file> disable c.nguyen --reason \"contract ended 2026-08-31\"\npython3 lib/idp.py --state <file> list-sessions\n",
+        "verify": "python3 lib/idp.py --state <file> list-users | grep c.nguyen"
+      },
+      {
+        "id": "kill-the-stale-session",
+        "prompt": "A laptop that has not been seen for a month still holds an active session for Aisha Khan. End it.\n",
+        "solution": "python3 lib/idp.py --state <file> list-sessions\npython3 lib/idp.py --state <file> revoke-session <session-id> --reason \"device not seen for 30 days\"\n",
+        "verify": "python3 lib/idp.py --state <file> list-sessions"
+      }
+    ],
+    "id": "identity-directory-admin",
+    "minutes": 20,
+    "objectives": [
+      "Read an account's status, groups and failed attempts from the directory",
+      "Unlock, disable and re-enable accounts, and understand when each is right",
+      "Add and remove group membership without accidentally widening access",
+      "Revoke a live session and record the reason"
+    ],
+    "platform": "linux",
+    "prerequisites": [
+      "linux-users-and-groups"
+    ],
+    "steps": [
+      {
+        "body": "A locked account keeps every group membership it had; it just cannot authenticate. A disabled account is out of service entirely. An account whose memberships are wrong is a third, separate problem \u2014 and the three have three different fixes. Read the account before you change anything: the wrong fix here either leaves the user unable to work or leaves access open.\n",
+        "command": "python3 lib/idp.py --state /var/lib/ontrak-idp/directory.json show-user aisha.khan",
+        "title": "Status is not the same as membership"
+      },
+      {
+        "body": "Lockouts from failed attempts are routine and are undone with an unlock, which also clears the counter. Disabling is a deliberate removal of access (a leaver, an expired contract) and should never be used to fix a typo'd password.\n",
+        "command": "python3 lib/idp.py --state <file> unlock aisha.khan --reason 'verified by phone'",
+        "title": "Unlocking is a fix; disabling is a decision"
+      },
+      {
+        "body": "When somebody moves team, the new membership is the visible half of the ticket. The other half is that their old access goes away \u2014 otherwise access only ever grows, and the audit becomes worthless. Name both in the same change.\n",
+        "command": "python3 lib/idp.py --state <file> remove-member marco.silva warehouse",
+        "title": "Least privilege means removing the old one"
+      },
+      {
+        "body": "Changing a status or a password does not necessarily end a session that is already open \u2014 a laptop that signed in last week stays signed in. If the ticket says the device is gone, revoking the session is part of the job.\n",
+        "command": "python3 lib/idp.py --state <file> list-sessions",
+        "title": "Sessions outlive password changes"
+      },
+      {
+        "body": "Every command above records an actor, an action, a target and a reason. Use --reason for anything that grants or removes access: it is the difference between \"someone changed it\" and a change you can defend a month later.\n",
+        "command": "python3 lib/idp.py --state <file> audit",
+        "title": "The audit trail is the deliverable"
+      }
+    ],
+    "summary": "Work the three identity tickets a service desk gets every week \u2014 an account locked out, somebody moving team, and a session that should no longer be alive \u2014 against a directory service, leaving an audit trail that shows what you did and why.\n",
+    "tags": [
+      "identity",
+      "accounts",
+      "groups",
+      "sessions",
+      "audit",
+      "cli"
+    ],
+    "title": "Account administration: locks, groups and sessions"
+  },
+  "linux-files-and-dirs.yaml": {
+    "category": "software",
+    "commands": [
+      {
+        "command": "pwd",
+        "example": "pwd",
+        "what": "Print the directory you are currently in."
+      },
+      {
+        "command": "ls -la",
+        "example": "ls -la /srv/app",
+        "what": "List everything, including dotfiles, with permissions, owner, size and date."
+      },
+      {
+        "command": "mkdir -p /srv/app/{src,tests,docs}",
+        "example": "mkdir -p /srv/projects/alpha/{src,tests,docs}",
+        "what": "Create directories, and their parents, in one step. Brace expansion builds the whole tree."
+      },
+      {
+        "command": "touch /srv/app/README.md",
+        "what": "Create an empty file, or update the timestamp of an existing one."
+      },
+      {
+        "command": "cp -a src/ dst/",
+        "example": "cp -a /srv/projects/alpha /srv/projects/alpha-backup",
+        "what": "Copy, preserving permissions, ownership and timestamps (the \"right\" way for a tree)."
+      },
+      {
+        "command": "mv old.txt new.txt",
+        "danger": "mv silently replaces the destination. Use `mv -n` to refuse instead.",
+        "what": "Rename, or move to another directory. Silent overwrite if the target exists."
+      },
+      {
+        "command": "rm -r dir/",
+        "danger": "There is no recycle bin. `rm -rf /` is unrecoverable \u2014 check your path with pwd first.",
+        "what": "Delete a directory and everything inside it."
+      },
+      {
+        "command": "find /srv -name '*.log' -mtime -1",
+        "example": "find /srv -type f -user root",
+        "what": "Find files by name, owner, permissions or age. Far faster than guessing."
+      },
+      {
+        "command": "file archive.dat",
+        "what": "Ask what a file actually is, rather than trusting its extension."
+      },
+      {
+        "command": "du -sh /srv/* | sort -h",
+        "what": "See what is eating disk space, largest last."
+      }
+    ],
+    "difficulty": 1,
+    "docs": [
+      "man 1 find",
+      "man 1 ls"
+    ],
+    "exercises": [
+      {
+        "id": "build-tree",
+        "prompt": "Create /srv/projects/bravo with src, tests and docs subdirectories, and an empty README.md at the top of it.\n",
+        "solution": "mkdir -p /srv/projects/bravo/{src,tests,docs}\ntouch /srv/projects/bravo/README.md\n",
+        "verify": "find /srv/projects/bravo -maxdepth 2 | sort"
+      },
+      {
+        "id": "find-and-remove",
+        "prompt": "Something is filling /var/log with files named *.old. Find them and delete only those.\n",
+        "solution": "find /var/log -type f -name '*.old' -print\nfind /var/log -type f -name '*.old' -delete\n",
+        "verify": "find /var/log -type f -name '*.old' | wc -l"
+      }
+    ],
+    "id": "linux-files-and-dirs",
+    "minutes": 15,
+    "objectives": [
+      "Create and remove directories, including parents in one step",
+      "Inspect file contents and metadata without an editor",
+      "Find a file by name, owner or age"
+    ],
+    "platform": "linux",
+    "prerequisites": [],
+    "steps": [
+      {
+        "body": "Linux has no drive letters. One tree starts at /, and every file lives somewhere in it. /srv is conventionally where a site puts services, /etc is configuration, /var is changing data such as logs, and /tmp is disposable. When a ticket says \"the app cannot write its uploads\", the question is always *which path* and *who owns it*.\n",
+        "command": "ls -la /",
+        "title": "Everything is a path"
+      },
+      {
+        "body": "Before creating or deleting anything under a path, confirm what is already there and who owns it. `ls -la` answers all of that in one line, and reading it is a habit that prevents most self-inflicted outages.\n",
+        "command": "ls -la /srv",
+        "title": "Look before you write"
+      },
+      {
+        "body": "Brace expansion plus -p means a whole project skeleton in a single step, and it is idempotent: running it again changes nothing.\n",
+        "command": "mkdir -p /srv/projects/alpha/{src,tests,docs}",
+        "title": "Create the tree in one command"
+      },
+      {
+        "body": "In a real incident you are rarely handed the path. `find` with -name, -user or -mtime is how you locate \"the log that was written yesterday\" without walking the tree by hand.\n",
+        "command": "find /srv -type f -newermt '-1 day'",
+        "title": "Find it again"
+      }
+    ],
+    "summary": "Create, inspect, move and delete files and directories from the shell, and find them again afterwards \u2014 the four commands every other Linux ticket depends on.\n",
+    "tags": [
+      "cli",
+      "files",
+      "directories",
+      "basics"
+    ],
+    "title": "Files, directories and finding things"
+  },
+  "linux-ownership.yaml": {
+    "category": "software",
+    "commands": [
+      {
+        "command": "ls -l",
+        "what": "Third and fourth columns are the owner and the group."
+      },
+      {
+        "command": "chown www-data:www-data /srv/www/site",
+        "example": "chown -R www-data:www-data /srv/www/site/uploads",
+        "what": "Set owner and group together. Prefix with -R to recurse."
+      },
+      {
+        "command": "chgrp developers /srv/projects/alpha",
+        "what": "Change only the group, leaving the owner alone."
+      },
+      {
+        "command": "chown -h user file",
+        "danger": "Without -h as root, chown follows the link and changes the target.",
+        "what": "Change a symlink itself rather than what it points at."
+      },
+      {
+        "command": "chown --from=root www-data data/",
+        "what": "Only change the entries still owned by root, so a repair is repeatable."
+      },
+      {
+        "command": "find /srv -not -user www-data -ls",
+        "what": "List everything under a path that is not owned by the expected account \u2014 the audit query."
+      },
+      {
+        "command": "namei -l path",
+        "what": "Show ownership and permissions for every component of a path."
+      }
+    ],
+    "difficulty": 2,
+    "docs": [
+      "man 1 chown",
+      "man 1 chgrp"
+    ],
+    "exercises": [
+      {
+        "id": "hand-over-site",
+        "prompt": "/srv/www/site, and everything below it, is owned by root. The web service runs as www-data and must own the whole tree.\n",
+        "solution": "chown -R www-data:www-data /srv/www/site",
+        "verify": "find /srv/www/site -not -user www-data | head"
+      },
+      {
+        "id": "shared-group",
+        "prompt": "The developers group needs read and write access to /srv/projects/alpha, and nobody else should have any. Keep the owner as-is.\n",
+        "solution": "chgrp -R developers /srv/projects/alpha\nchmod -R g+rwX,o-rwx /srv/projects/alpha\n",
+        "verify": "stat -c '%a %U %G' /srv/projects/alpha"
+      },
+      {
+        "id": "symlink-owner",
+        "prompt": "/srv/www/current is a symlink to /srv/www/releases/v3 and must be owned by www-data without touching the release.",
+        "solution": "chown -h www-data /srv/www/current",
+        "verify": "ls -l /srv/www/current"
+      }
+    ],
+    "id": "linux-ownership",
+    "minutes": 20,
+    "objectives": [
+      "Read owner and group and explain which bits they select",
+      "Change ownership of a file, a tree and a symlink correctly",
+      "Recognise when the right fix is a group, not a wider permission"
+    ],
+    "platform": "linux",
+    "prerequisites": [
+      "linux-permissions"
+    ],
+    "steps": [
+      {
+        "body": "A mode of 640 means: owner rw, group r, everyone else nothing. *Which* triples you get depends on who you are and which group you are in \u2014 so the same file can be writable for one engineer and read-only for another. Ownership is how you give a service access without opening the file to the world.\n",
+        "command": "stat -c '%a %U %G %n' /srv/www/site",
+        "title": "Ownership selects which bits apply"
+      },
+      {
+        "body": "A daemon runs as the account named in its unit file, very often www-data or nginx. If the upload directory is owned by root, the daemon cannot create files there \u2014 and the log will say \"permission denied\", not \"wrong owner\". Check with `ps -o user= -p $(pgrep -f nginx | head -1)`.\n",
+        "command": "ps -eo user,comm | grep -E 'nginx|apache|www-data'",
+        "title": "Services run as their own user"
+      },
+      {
+        "body": "When three engineers need write access, adding them to a shared group and setting g+w on the directory is the fix. Widening to 777 is not: it grants the same access to every process on the machine.\n",
+        "command": "chgrp -R developers /srv/projects/alpha && chmod -R g+rwX /srv/projects/alpha",
+        "title": "The right repair is usually a group"
+      },
+      {
+        "body": "-R applies the change to every entry below the path. Do it knowingly: a recursive chown on / will make the machine unbootable, and there is no undo.\n",
+        "command": "chown -R --from=root www-data /srv/www/site/uploads",
+        "danger": "chown -R on the wrong path (especially /) can leave a host unbootable.",
+        "title": "Recursion, but deliberately"
+      }
+    ],
+    "summary": "Who a file belongs to decides which permission bits apply to you. Change ownership safely, including recursively, and diagnose the \"the app runs but cannot write its own directory\" class of ticket.\n",
+    "tags": [
+      "cli",
+      "ownership",
+      "chown",
+      "chgrp",
+      "services"
+    ],
+    "title": "Ownership with chown and chgrp"
+  },
+  "linux-permissions.yaml": {
+    "category": "software",
+    "commands": [
+      {
+        "command": "ls -l file",
+        "example": "ls -l /srv/app/deploy.sh",
+        "what": "Show the mode, owner and group. First column is type + 9 permission bits."
+      },
+      {
+        "command": "stat -c '%a %U %G %n' file",
+        "example": "stat -c '%a %U %G %n' /srv/app/payroll-export.csv",
+        "what": "Print the mode in octal plus owner and group \u2014 the form you can compare in a script."
+      },
+      {
+        "command": "chmod 640 file",
+        "what": "Set the mode by octal. 6=rw for the owner, 4=r for the group, 0=nothing for everyone else."
+      },
+      {
+        "command": "chmod u+x script.sh",
+        "what": "Add the execute bit for the owner only, leaving every other bit alone."
+      },
+      {
+        "command": "chmod -R g+rX docs/",
+        "example": "chmod -R g+rX /srv/www/site",
+        "what": "Recurse. Capital X adds execute only to directories (and to files that already had it)."
+      },
+      {
+        "command": "chmod 750 dir/",
+        "what": "Traversable and readable by the owner and the group, closed to everyone else."
+      },
+      {
+        "command": "umask",
+        "what": "Show the bits stripped from newly created files and directories."
+      },
+      {
+        "command": "namei -l /srv/app/deploy.sh",
+        "what": "Print the permissions of *every* directory on the path. Diagnoses \"permission denied\" that has nothing to do with the file itself."
+      }
+    ],
+    "difficulty": 2,
+    "docs": [
+      "man 1 chmod",
+      "man 7 path_resolution"
+    ],
+    "exercises": [
+      {
+        "id": "fix-deploy",
+        "prompt": "/srv/app/deploy.sh must be runnable by its owner and by members of its group, but not by anyone else. Nothing else about the file should change.\n",
+        "solution": "chmod 750 /srv/app/deploy.sh",
+        "verify": "stat -c '%a' /srv/app/deploy.sh"
+      },
+      {
+        "id": "lock-export",
+        "prompt": "A payroll export at /srv/app/payroll-export.csv is world-readable. Lock it down.",
+        "solution": "chmod 600 /srv/app/payroll-export.csv",
+        "verify": "stat -c '%a %U %G' /srv/app/payroll-export.csv"
+      },
+      {
+        "id": "traverse-dir",
+        "prompt": "A service running as its own user cannot read /srv/app/config, and the files inside are already world-readable. What is wrong, and what do you change?\n",
+        "solution": "# The directory itself is not traversable:\nnamei -l /srv/app/config\nchmod 755 /srv/app/config\n",
+        "verify": "namei -l /srv/app/config"
+      }
+    ],
+    "id": "linux-permissions",
+    "minutes": 20,
+    "objectives": [
+      "Read the 10-character permission string and the octal equivalent",
+      "Set a file private, shared or executable on purpose",
+      "Understand why a directory needs the execute bit to be usable"
+    ],
+    "platform": "linux",
+    "prerequisites": [
+      "linux-files-and-dirs"
+    ],
+    "steps": [
+      {
+        "body": "`-rwxr-x---` is: type (one character), then owner, group, other \u2014 each three bits of read (4), write (2) and execute (1). rwxr-x--- is 7, 5, 0, so the octal form is 750. Reading it the other way round is the single most common reason a \"fixed\" permission is still wrong.\n",
+        "command": "ls -l /etc/shadow",
+        "title": "Read the mode as three triples"
+      },
+      {
+        "body": "A .sh file that is not +x cannot be run, no matter what it is called. The usual cause of \"the deployment script broke overnight\" is a copy or an extraction that dropped the bit.\n",
+        "command": "chmod u+x,g+x,o-x /srv/app/deploy.sh",
+        "title": "Executable is a permission, not a name"
+      },
+      {
+        "body": "Data about people \u2014 payroll, exports, keys \u2014 belongs at 600 or 640. The question is never \"can I read it\", it is \"who else can\". `find / -perm -o+r` finds the readable-by-the-world cases in an audit.\n",
+        "command": "chmod 600 /srv/app/payroll-export.csv",
+        "title": "Private means nobody else"
+      },
+      {
+        "body": "On a directory, r lists names and x lets you traverse into it. That is why a 750 directory is usable and a 640 directory is not, even though both look restrictive. `namei -l` shows the whole path at once.\n",
+        "command": "chmod 750 /srv/app",
+        "title": "Directories need execute to be entered"
+      },
+      {
+        "body": "777 removes the question instead of answering it, and later looks like a security finding. Decide who needs access \u2014 owner, group, or other \u2014 and grant exactly that.\n",
+        "danger": "chmod -R 777 hides the real failure and is a finding in any audit.",
+        "title": "Do not fix a permission error with 777"
+      }
+    ],
+    "summary": "Read a permission string, turn it into octal, and set it correctly with chmod \u2014 including the executable, private-file and directory-crawl cases that cause most service failures.\n",
+    "tags": [
+      "cli",
+      "permissions",
+      "chmod",
+      "security",
+      "basics"
+    ],
+    "title": "File permissions with chmod"
+  },
+  "linux-sudo.yaml": {
+    "category": "security",
+    "commands": [
+      {
+        "command": "sudo -l",
+        "what": "List the current user's allowed commands. The fastest way to answer \"can they sudo?\"."
+      },
+      {
+        "command": "sudo -l -U ops",
+        "what": "Check another user's policy. Works without being that user."
+      },
+      {
+        "command": "sudo -n true",
+        "what": "Non-interactive check \u2014 succeeds only if the command would not prompt for a password."
+      },
+      {
+        "command": "visudo -f /etc/sudoers.d/ops",
+        "danger": "Editing sudoers with a normal editor and a typo locks everyone out of sudo.",
+        "what": "Edit a drop-in file with a syntax check. Always edit through visudo."
+      },
+      {
+        "command": "visudo -c",
+        "what": "Validate every sudoers file on the box and report the first error."
+      },
+      {
+        "command": "echo 'ops ALL=(root) NOPASSWD: /bin/systemctl restart nginx' > /etc/sudoers.d/ops",
+        "what": "One command, one group, no password. This is the shape of a real delegation."
+      },
+      {
+        "command": "chmod 440 /etc/sudoers.d/ops",
+        "what": "Drop-in files must be 0440 and owned by root, or sudo ignores them."
+      },
+      {
+        "command": "grep -rn '' /etc/sudoers.d/",
+        "what": "Read every delegation currently in force."
+      }
+    ],
+    "difficulty": 3,
+    "docs": [
+      "man 5 sudoers",
+      "man 8 visudo"
+    ],
+    "exercises": [
+      {
+        "id": "delegate-restart",
+        "prompt": "The ops group must be able to restart nginx without a password, and nothing else. Implement it as a drop-in file and show the resulting policy.\n",
+        "solution": "printf '%s\\n' 'ops ALL=(root) NOPASSWD: /bin/systemctl restart nginx' > /etc/sudoers.d/ops\nchmod 440 /etc/sudoers.d/ops\nvisudo -c\nsudo -l -U ops\n",
+        "verify": "sudo -l -U ops"
+      },
+      {
+        "id": "spot-overgrant",
+        "prompt": "A colleague proposed `/etc/sudoers.d/helpdesk` containing `helpdesk ALL=(ALL) NOPASSWD: ALL`. Explain in one line why a training lab rejects it, and write the narrow alternative for resetting one user's password.\n",
+        "solution": "# It grants full root with no password to everyone in the group, so a single\n# compromised helpdesk account owns the estate.\nprintf '%s\\n' 'helpdesk ALL=(root) NOPASSWD: /usr/bin/passwd [a-z]*' > /etc/sudoers.d/helpdesk\n",
+        "verify": "visudo -c && sudo -l -U helpdesk"
+      },
+      {
+        "id": "recover-sudoers",
+        "prompt": "sudo now prints \"syntax error\" and nobody can escalate. You still have a root shell on another tty. Recover the machine.\n",
+        "solution": "# visudo refuses to save a broken file, so recover by naming the bad file:\nvisudo -c\nrm /etc/sudoers.d/<the-broken-file>\nvisudo -c\n",
+        "verify": "sudo -n true && echo 'sudo works'"
+      }
+    ],
+    "id": "linux-sudo",
+    "minutes": 25,
+    "objectives": [
+      "Explain the difference between su and sudo, and why sudo is auditable",
+      "Delegate one command to one group with a drop-in file",
+      "Validate sudoers syntax before it takes effect"
+    ],
+    "platform": "linux",
+    "prerequisites": [
+      "linux-users-and-groups"
+    ],
+    "steps": [
+      {
+        "body": "`su -` gives you a root shell and an audit trail that says \"someone became root\". `sudo <command>` gives one command the privilege it needs and logs which command, as whom, on which host. For a support team, the second is what you want: it is least privilege *and* the evidence you need afterwards.",
+        "command": "sudo -l",
+        "title": "sudo is privilege per command, su is privilege for a session"
+      },
+      {
+        "body": "`ops ALL=(ALL) NOPASSWD: ALL` is indistinguishable from giving out the root password, except that nobody remembers they did it. Delegate the specific commands an operational role actually runs, and keep /etc/sudoers for the distribution's own defaults.\n",
+        "danger": "A blanket NOPASSWD:ALL rule is the finding auditors look for first.",
+        "title": "Never hand out a blanket rule"
+      },
+      {
+        "body": "/etc/sudoers.d/<name> keeps delegations reviewable and removable: delete the file and the privilege is gone. The filename must not contain a dot or end in ~, and the file must be mode 0440 owned by root, or sudo silently skips it.\n",
+        "command": "printf '%s\n' 'ops ALL=(root) NOPASSWD: /bin/systemctl restart nginx' > /etc/sudoers.d/ops && chmod 440 /etc/sudoers.d/ops",
+        "title": "Drop-in files, one per delegation"
+      },
+      {
+        "body": "`visudo -c` parses the whole policy and names the first broken file. This is the single most valuable habit in this lesson: a syntax error in sudoers can take away your own root access, and if you are already root over SSH you cannot fix it from the console.\n",
+        "command": "visudo -c",
+        "title": "Validate before you walk away"
+      },
+      {
+        "body": "A delegation is only finished when you have confirmed both halves: the intended user can run the intended command without a password, and the same user cannot run anything else.\n",
+        "command": "sudo -l -U ops",
+        "title": "Prove it works, and that it does not over-grant"
+      }
+    ],
+    "summary": "Grant a user or group exactly the privilege they need \u2014 and no more \u2014 through /etc/sudoers.d, verify it with sudo -l, and repair sudoers without locking everybody out of the machine.\n",
+    "tags": [
+      "cli",
+      "sudo",
+      "sudoers",
+      "least-privilege",
+      "security"
+    ],
+    "title": "Delegating privilege with sudo"
+  },
+  "linux-users-and-groups.yaml": {
+    "category": "security",
+    "commands": [
+      {
+        "command": "id aisha.khan",
+        "what": "Show a user's uid, primary group and every group they are in."
+      },
+      {
+        "command": "useradd -m -s /bin/bash -G support aisha.khan",
+        "example": "useradd -m -s /bin/bash -c 'Aisha Khan' -G support,developers aisha.khan",
+        "what": "Create the account with a home directory, a login shell, and group membership."
+      },
+      {
+        "command": "passwd aisha.khan",
+        "what": "Set or reset a password interactively. Use `chpasswd` for non-interactive scripts."
+      },
+      {
+        "command": "passwd -l aisha.khan",
+        "what": "Lock the account (the hash is prefixed with !) without deleting it."
+      },
+      {
+        "command": "usermod -aG developers aisha.khan",
+        "danger": "usermod -G without -a silently removes every other group membership.",
+        "what": "Add to a supplementary group. Without -a, -G *replaces* the whole list."
+      },
+      {
+        "command": "groupadd supporters",
+        "what": "Create a group before adding anyone to it."
+      },
+      {
+        "command": "userdel -r tom.reeves",
+        "danger": "-r deletes files. Confirm the account is the leaver's before running it.",
+        "what": "Delete the account and its home directory and mail spool."
+      },
+      {
+        "command": "getent passwd | cut -d: -f1,3",
+        "what": "List every account and uid from the system database."
+      },
+      {
+        "command": "lastlog | grep -v Never",
+        "what": "Show who has actually logged in \u2014 the fastest way to spot stale accounts."
+      },
+      {
+        "command": "chage -l aisha.khan",
+        "what": "Show password and account expiry dates."
+      }
+    ],
+    "difficulty": 2,
+    "docs": [
+      "man 8 useradd",
+      "man 8 userdel",
+      "man 5 shadow"
+    ],
+    "exercises": [
+      {
+        "id": "onboard",
+        "prompt": "Aisha Khan joins the support team. Create her account with a home directory and a bash shell, in the supplementary group support (creating the group if needed), and give it a password.\n",
+        "solution": "groupadd -f support\nuseradd -m -s /bin/bash -c 'Aisha Khan' -G support aisha.khan\necho 'aisha.khan:ChangeMe!23' | chpasswd\n",
+        "verify": "id aisha.khan && getent passwd aisha.khan"
+      },
+      {
+        "id": "promote",
+        "prompt": "Aisha also needs the developers group. Add it without losing the support group.",
+        "solution": "usermod -aG developers aisha.khan",
+        "verify": "id -nG aisha.khan"
+      },
+      {
+        "id": "offboard",
+        "prompt": "Tom Reeves has left. Remove his account completely, including his home directory, and show that nothing is left behind.\n",
+        "solution": "userdel -r tom.reeves\nfind /home -maxdepth 1 -name 'tom.reeves' -print\nfind / -xdev -nouser 2>/dev/null | head\n",
+        "verify": "id tom.reeves || echo 'gone'"
+      },
+      {
+        "id": "audit-stale",
+        "prompt": "Find every account that has never logged in, excluding system accounts below uid 1000.",
+        "solution": "awk -F: '$3 >= 1000 {print $1}' /etc/passwd | while read -r u; do\n  lastlog -u \"$u\" | tail -n1 | grep -q 'Never' && echo \"$u\"\ndone\n",
+        "verify": "lastlog | grep -i never"
+      }
+    ],
+    "id": "linux-users-and-groups",
+    "minutes": 25,
+    "objectives": [
+      "Create a user with a home directory, shell and supplementary group",
+      "Reset and lock a password, and understand where the hash lives",
+      "Remove a leaver completely, including their home directory"
+    ],
+    "platform": "linux",
+    "prerequisites": [
+      "linux-files-and-dirs"
+    ],
+    "steps": [
+      {
+        "body": "/etc/passwd holds the public record \u2014 name, uid, gid, home, shell \u2014 and is readable by everyone. /etc/shadow holds the password hash and is readable only by root. When a ticket says \"the user says their password is wrong\", the answer is in the second file: `passwd -S` prints the state without exposing the hash.\n",
+        "command": "passwd -S aisha.khan",
+        "title": "Two files, two halves of the story"
+      },
+      {
+        "body": "A new starter needs an account, a group, and access. Create the group first if it does not exist, then the user with -m so the home directory and skel files appear, then set a password. Everything above is one line in an onboarding script, and running it twice should be harmless.\n",
+        "command": "groupadd -f support && useradd -m -s /bin/bash -G support aisha.khan",
+        "title": "Joiner"
+      },
+      {
+        "body": "Moving teams changes group membership, not the account. -a is mandatory: `usermod -G` replaces the list, which is how people quietly lose access they still need.\n",
+        "command": "usermod -aG developers aisha.khan",
+        "title": "Mover"
+      },
+      {
+        "body": "Offboarding is a removal, not a lock, once the person has left: a locked account still owns files and still appears in audits. Delete the account with -r, then check for leftovers with `find / -nouser` \u2014 files owned by a uid that no longer exists.\n",
+        "command": "find /srv -xdev -nouser -o -xdev -nogroup",
+        "title": "Leaver"
+      },
+      {
+        "body": "\"I removed the user\" is a claim. The evidence is: id fails, the home directory is gone, and no files reference the old uid.\n",
+        "command": "id tom.reeves || echo 'account gone'",
+        "title": "Prove it"
+      }
+    ],
+    "summary": "Create and remove accounts and groups, set and lock passwords, and run the joiner/mover/leaver tasks a support desk gets weekly \u2014 including removing the home directory and checking nothing was left behind.\n",
+    "tags": [
+      "cli",
+      "users",
+      "groups",
+      "useradd",
+      "offboarding",
+      "security"
+    ],
+    "title": "Local users and groups \u2014 joiners, movers, leavers"
+  },
+  "win-network-diagnostics.yaml": {
+    "category": "network",
+    "commands": [
+      {
+        "command": "Get-NetAdapter | Format-Table Name,Status,LinkSpeed",
+        "what": "Every NIC and whether it is Up. Physical up + no address is a different fault from \"adapters missing\"."
+      },
+      {
+        "command": "ipconfig /all",
+        "what": "The full picture \u2014 address, DHCP, DNS servers, gateway \u2014 in one command every technician recognises."
+      },
+      {
+        "command": "Get-NetIPConfiguration",
+        "example": "Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway }",
+        "what": "The same information as objects, so you can pipe it to Where-Object."
+      },
+      {
+        "command": "Test-NetConnection 10.20.0.1",
+        "what": "Ping plus route plus interface selection in one object. Substitute for a bare ping."
+      },
+      {
+        "command": "Resolve-DnsName fileserver.ontrak.lab -DnsOnly",
+        "example": "Resolve-DnsName fileserver.ontrak.lab -Server 10.20.0.53",
+        "what": "Test the DNS resolver itself, bypassing the hosts file and NetBIOS."
+      },
+      {
+        "command": "Test-NetConnection fileserver.ontrak.lab -Port 80",
+        "what": "Prove the service is reachable by name, not just that the name resolves."
+      },
+      {
+        "command": "Get-DnsClientServerAddress -AddressFamily IPv4",
+        "what": "Which resolvers each adapter is actually using."
+      },
+      {
+        "command": "Clear-DnsClientCache",
+        "what": "Drop the client cache after any resolver change, so the next test tells the truth."
+      },
+      {
+        "command": "Get-Content $env:SystemRoot\\System32\\drivers\\etc\\hosts",
+        "what": "Check for a manual override that makes a name resolve even when DNS is broken."
+      }
+    ],
+    "difficulty": 2,
+    "docs": [
+      "Get-Help Test-NetConnection -Full"
+    ],
+    "exercises": [
+      {
+        "id": "no-address",
+        "prompt": "A laptop shows \"no internet\". It has address 169.254.43.7 and no gateway. Say what the fault is and what you check next.\n",
+        "solution": "# 169.254.x.x is APIPA: the machine never got a DHCP lease, so this is not a\n# DNS problem. Check the link/switch port, then the DHCP scope:\nGet-NetAdapter | Format-Table Name,Status\nipconfig /release; ipconfig /renew\n",
+        "verify": "Get-NetIPAddress -AddressFamily IPv4 | Format-Table InterfaceAlias,IPAddress,PrefixOrigin"
+      },
+      {
+        "id": "name-only",
+        "prompt": "A workstation can reach 10.20.0.10 on port 80 but cannot reach fileserver.ontrak.lab on port 80. Which layer is broken, and what is the fastest confirmation?\n",
+        "solution": "Resolve-DnsName fileserver.ontrak.lab -DnsOnly\nGet-DnsClientServerAddress -AddressFamily IPv4\n",
+        "verify": "Resolve-DnsName fileserver.ontrak.lab -DnsOnly"
+      }
+    ],
+    "id": "win-network-diagnostics",
+    "minutes": 20,
+    "objectives": [
+      "Read the desktop network status and adapter list without a browser",
+      "Separate address, gateway, name-resolution and service failures",
+      "Collect the four commands of evidence a ticket needs"
+    ],
+    "platform": "windows",
+    "prerequisites": [],
+    "steps": [
+      {
+        "body": "The taskbar indicator and Settings > Network answer \"is there a link and an address\" in two clicks. It is not a substitute for the command line, but it tells you which branch to take, and a user can be talked through it on the phone.\n",
+        "command": "Get-NetAdapter | Format-Table Name,Status,MediaConnectionState",
+        "title": "Start at the desktop"
+      },
+      {
+        "body": "If the adapter has an address in 169.254.x.x it never reached DHCP, and name resolution cannot be the fix yet. Fix the link, the DHCP scope or the switch port first. Only once there is a real address do DNS tests mean anything.\n",
+        "command": "Get-NetIPAddress -AddressFamily IPv4 | Format-Table InterfaceAlias,IPAddress,PrefixOrigin",
+        "title": "Address before names"
+      },
+      {
+        "body": "Ping the default gateway by address. Success means routing works and the fault is further out; failure means the fault is here. Test the remote service by IP *and* by name: works by IP but not by name is, by definition, a name-resolution fault.\n",
+        "command": "Test-NetConnection 10.20.0.1; Test-NetConnection fileserver.ontrak.lab -Port 80",
+        "title": "Gateway, then the far side"
+      },
+      {
+        "body": "-DnsOnly forces a real DNS query. Without it, a hosts entry or a cached answer can make a broken resolver look healthy \u2014 which is exactly how \"it works for me\" tickets happen.\n",
+        "command": "Resolve-DnsName fileserver.ontrak.lab -DnsOnly; Get-DnsClientServerAddress -AddressFamily IPv4",
+        "title": "Name resolution, tested honestly"
+      },
+      {
+        "body": "A ticket needs the client (hostname), the address it has, the resolver it is using, and the test result. Four lines. Whoever picks the ticket up next should not have to repeat your work.\n",
+        "command": "hostname; ipconfig | Select-String IPv4; Get-DnsClientServerAddress -AddressFamily IPv4",
+        "title": "Write the four lines down"
+      }
+    ],
+    "summary": "Work a \"I have no network\" ticket in the order that costs the least time: the desktop indicators first, then address, then name resolution, then the far end \u2014 in both the GUI and PowerShell, so the same evidence comes out either way.\n",
+    "tags": [
+      "cli",
+      "gui",
+      "network",
+      "dns",
+      "powershell",
+      "level-1"
+    ],
+    "title": "Windows network diagnostics: from the desktop to the command line"
+  }
+}

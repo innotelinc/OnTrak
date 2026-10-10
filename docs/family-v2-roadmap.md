@@ -15,15 +15,17 @@
 | Product | Roadmap line | State | What remains for 1.0 |
 | --- | --- | --- | --- |
 | **OnTrak ITS** (TrainingOps) | `v1.0` milestone | `[x]` complete | Nothing — v1.0, v1.1, v1.2 and v1.6 all `[x]`. v1.3's exit is met; v1.4/v1.5 are post-1.0 depth, not blockers. |
-| **OnTrak Tix** (ServiceOps) | `M0–M6` | `[x]` complete | Nothing — M0–M6 all `[x]`. M7 (intelligence & scale) is `[~]`: assist and analytics shipped, only non-functional hardening remains. |
-| **OnTrak Sentinel** (IdP + Guard) | `S0–S4` | `[~]` **effectively done** | Every S4 enforcement item is `[x]` (policy gate, approvals, safe-lists, TTL rollback, enforcement plane, alert delivery, mute, measured time-to-prevent, compliance packet). Only compliance *extras* remain (retention windows, control history, CSV/PDF). |
+| **OnTrak Tix** (ServiceOps) | `M0–M6` | `[x]` complete | Nothing — M0–M6 all `[x]`. M7 (intelligence & scale) is `[~]`: assist and analytics shipped, and the **load rehearsal at the stated target is now recorded** — it meets the target for a ticket read (p95 3.8 ms) and a reply write (p95 18.9 ms), and misses it for the inbox's whole-worklist read (which does not return at a million tickets) and for a create (p95 18.7 s, nearly all of it deriving the next reference from every reference already issued). The two changes it names — page the worklist at the database, hold the reference mark in a row — are the remaining work, and they are code, not documentation. |
+| **OnTrak Sentinel** (IdP + Guard) | `S0–S4` | `[x]` complete | Nothing — S0–S4 all `[x]` (policy gate, approvals, safe-lists, TTL rollback, enforcement plane, alert delivery, mute, measured time-to-prevent, compliance packet, and the scheduled intel expiry sweep). The compliance *extras* (retention windows, control history, CSV/PDF) are declared exclusions in S4's own text — the signed packet is the artefact the family agreed on — and a vendor adapter is deliberately a deployment's own. |
 | **OnTrak Sync** | shipped console | `[x]` | Nothing — the estate updater runs end to end (Scan → Findings → Apply), with SSO and break-glass. |
 | **OnTrak Portal** (Unity) | shipped front door | `[x]` | Nothing — one sign-in, role-scoped tiles, product health, group answer-back. |
 | **OnTrak Genie** (CodeOps) | `v1.0` milestone | `[x]` complete | Nothing — v1.0 is `[x]`. v0.4's three `[ ]` items (repo-aware workspaces, propose-then-commit review, ONYX hand-off) are pre-1.0 *breadth*, not blockers. |
 
 **Conclusion:** the family is at its **v1.0 line**. The `[~]` markers that remain are
-honest "last mile" notes — non-functional hardening (Tix M7), compliance extras
-(Sentinel S4), and optional breadth (Genie v0.4) — not missing capability. No
+honest "last mile" notes — non-functional hardening (Tix M7) and optional breadth
+(Genie v0.4) — not missing capability. Sentinel is no longer one of them: S0–S4 is
+complete, and what its S4 text excludes (retention windows, control history, CSV/PDF)
+is an agreement about the artefact the family ships rather than outstanding work. No
 product is blocked from being called 1.0.
 
 ---
@@ -49,8 +51,9 @@ The family's front doors are now **one screen wearing one theme**.
   (`ontrak-genie/scripts/copy-check.mjs`, `ontrak-tix` `copy:check`,
   `ontrak-sync/web` `copy:check`) keep taglines and sales copy off the door.
 - **Verified:** ITS typecheck + 370 tests; Tix typecheck + 844 tests; Sentinel
-  typecheck + 520 tests (including the full upstream SSO handshake); Sync typecheck
-  + copy-check; Genie copy-check; the 17-file theme-copy guard.
+  typecheck + 556 tests, 553 passing and 3 skipped (including the full upstream SSO
+  handshake and the scheduled intel expiry sweep); Sync typecheck + copy-check;
+  Genie copy-check; the 17-file theme-copy guard.
 
 ---
 
@@ -63,8 +66,12 @@ Real code, each verified by its own suite:
   verifies before it drops anything and refuses without an explicit `--yes`,
   `docs/disaster-recovery.md` states the RPO/RTO per asset and a rehearsal
   cadence, and `docs/soc2-controls.md` maps the CC/A/C criteria to the control,
-  its location and its evidence. The one M7 item left is a recorded load test at
-  the stated target.
+  its location and its evidence. The M7 load test is now **recorded** rather than
+  outstanding — and it is a result, not a pass: `npm run load-test` seeded 10,000
+  staff, 1,000,000 tickets and 600,000 messages and measured the app's own read and
+  write paths, meeting §10's p95 for a ticket read and a reply write and missing it
+  for the inbox's whole-worklist read and for a create. The run and the two named
+  fixes are in `ontrak-tix/docs/load-test.md`.
 - **Genie (v0.4) — propose then commit `[x]`.** `AGENT_WRITE_MODE=propose` holds
   file writes in a change set; `GET /api/changes` lists it and
   `POST /api/changes/apply` commits the whole set (or `/discard` drops it). Rules
@@ -78,9 +85,12 @@ Real code, each verified by its own suite:
   probed is never "up"), drawn above the tiles from the same map they are drawn
   from. Covered by `tests/fleet-summary.test.ts`.
 
-Still open from the last-mile notes: Tix's load-test evidence, Sentinel S4's
-compliance extras (retention windows, control history, CSV/PDF), and Genie's
-repository-aware workspaces.
+Still open from the last-mile notes: the two scale changes Tix's recorded load
+rehearsal asks for — page the whole-worklist read at the database, and hold the
+reference mark in a row instead of deriving it from every reference already issued
+— and Genie's repository-aware workspaces. Sentinel's S4 compliance extras are no
+longer on this list — they are declared out of S4's scope in its own text, which is
+why S4 closed without them.
 
 ## 3. v2.0 — the enterprise line
 
@@ -149,8 +159,10 @@ those sketches into one v2.0 portfolio.
 
 ## 4. Suggested sequencing
 
-1. **Close the last-mile 1.0 notes** — Tix M7 hardening, Sentinel S4 compliance
-   extras. These are documentation and controls, not new capability.
+1. **Close the last-mile 1.0 notes** — Tix M7's two named scale changes and
+   Genie's repository-aware workspaces. Tix's half is no longer "documentation and
+   controls": the recorded rehearsal found that a million-row tenant cannot open
+   its inbox and that a create takes ~1.9 s, so this is code.
 2. **Cross-cutting first** — identity-at-scale and the state board on Unity, because
    every product's v2.0 leans on them.
 3. **Per-product v2.0** — Sentinel S5/S6 and Tix scale are the heaviest; ITS

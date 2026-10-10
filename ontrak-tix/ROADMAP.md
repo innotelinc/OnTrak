@@ -1323,9 +1323,30 @@ up to an adjuster or auditor.
     that answers each, the module or table it lives in, and how a run evidences it,
     and states plainly which controls are the operator's rather than the
     product's.
-  - `[~]` **Performance under a stated load** — the targets are in §10; the open
-    item is a recorded load-test result at the 10k-agent / 1M-ticket target, which
-    is a rehearsal on real hardware rather than a code change.
+  - `[~]` **Performance under a stated load** — the targets are in §10, and the
+    rehearsal has now been run at them: `npm run load-test`, recorded in
+    [docs/load-test.md](./docs/load-test.md) with the raw result in
+    [docs/load-test-2026-10-09.json](./docs/load-test-2026-10-09.json). **Two of
+    the four operations meet the target and two do not**, and both misses are the
+    same shape of bug — an operation that reads the whole tenant instead of a
+    bounded slice. At **10,000 staff / 1,000,000 tickets / 600,000 messages** on
+    one node: a ticket *detail* read is p95 **3.8 ms** (64,901 samples) and a
+    *reply* is p95 **18.9 ms** at 597 writes/s, both comfortably inside 300/500 ms;
+    a *create* is p95 **18.7 s**, almost all of it `nextTicketSeq` reading every
+    reference in the tenant to find the highest; and the inbox's **whole-worklist
+    read did not return at all** — `listTickets` loads every ticket with its
+    thread, which at a million rows the engine refuses to hand to JavaScript. So
+    the milestone is not met, and the two changes it asks for are named: page (or
+    filter) the worklist at the database, and hold the reference mark in a row
+    rather than deriving it from a million refs.
+  - `[x]` **Concurrent writes hold up** — the rehearsal's first round found that
+    they did not: under eight concurrent writers the audit append lost
+    `@@unique([tenantId, seq])` *after* its row was written, and the reference lost
+    `@@unique([tenantId, ref])`, so a desk would see an error for work that had
+    applied with no evidence of it on the chain. Both are fixed (per-tenant
+    serialisation in `PrismaAuditSink` and `TicketService`, with the retry kept
+    for a second process) and covered by the concurrency case in
+    `tests/tix-db.test.ts`.
 
 > The desk's memory of its own work is usable now. A ticket can be read by an
 > assistant that proposes a classification, a one-paragraph summary, a draft reply
@@ -1345,7 +1366,9 @@ up to an adjuster or auditor.
 > but may never supply the hit list: similarity is a fact about this desk, and an
 > assistant must not be able to point an agent at a ticket that does not exist.
 
-- **Exit:** documented scale targets met under load test; AI suggestions are
+- **Exit:** documented scale targets met under load test (**not yet** — the load
+  test is recorded and it says which two operations miss, and why; see
+  [docs/load-test.md](./docs/load-test.md)); AI suggestions are
   measurable, reversible and never auto-send (**done** for the assist — a decision is
   recorded on the audit chain and the only write is a classification through the
   ticket service; see [docs/assist.md](./docs/assist.md)).
@@ -1377,6 +1400,15 @@ audit chain, third-party timestamping.
 - **Availability:** 99.9% for hosted; no maintenance windows for ticket writes.
 - **Latency:** p95 ticket read < 300 ms, p95 write < 500 ms at target load.
 - **Scale:** 10,000 agents / 1,000,000 tickets per tenant without re-platforming.
+
+> **Measured, not assumed** (2026-10-09): both targets were rehearsed at the
+> stated scale and **the read target is currently missed** — a single ticket read
+> and a reply write are well inside it (p95 3.8 ms and 18.9 ms), but the inbox's
+> whole-worklist read does not return at a million tickets at all, and a create is
+> p95 18.7 s because the next reference is derived from every reference already
+> issued. The recorded run, the two named changes and the boundary of what was
+> measured are in [docs/load-test.md](./docs/load-test.md). Treat the line above
+> as the target it is, not as a description of today.
 - **Security:** tenant isolation tests in CI; encryption at rest and in transit;
   least-privilege roles; secrets never logged.
 - **Audit integrity:** hash-chained append-only log, daily signed checkpoints,

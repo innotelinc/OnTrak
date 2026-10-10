@@ -6,7 +6,7 @@ import { requireSession } from "@/lib/auth";
 import { evaluateScenario, loadAvailabilityContext, platformLabel } from "@/lib/availability";
 import { sweepExpiredAttempts } from "@/lib/scenarios";
 import { startAttempt } from "@/app/actions/student";
-import { isLabScenario, labConfigFromEnv, labSessionUrl, simulatedStartRefusal } from "@/lib/lab-rules";
+import { isLabScenario, labDoorFromEnv, simulatedStartRefusal } from "@/lib/lab-rules";
 import { clearedPassMark, scorePercent } from "@/lib/score-rules";
 import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, Button, Card, EmptyState, ProgressBar } from "@/components/ui";
@@ -37,9 +37,13 @@ export default async function StudentHome({
   const user = await requireSession();
   const t = await getTranslator();
 
-  // The lab is off unless this deployment turned it on and named it; when it is off
-  // this is `null` and every card renders exactly as it did before the lab existed.
-  const labUrl = labSessionUrl(labConfigFromEnv());
+  // Where a student runs a lab-tagged scenario. One reader decides, and it answers three
+  // ways: a link to a peer deployment (the old behaviour), this app's own `/lab` (the
+  // port, stage 3), or nothing at all — in which case every card renders exactly as it did
+  // before the lab existed. A configured-but-refused address is also nothing here, and the
+  // control room's capabilities panel is where an operator reads why.
+  const door = labDoorFromEnv();
+  const labUrl = door.kind === "external" ? door.url : door.kind === "in-app" ? door.href : null;
 
   // Reconcile clocks first so the page never shows a stale "in progress" card.
   await sweepExpiredAttempts(user.id);

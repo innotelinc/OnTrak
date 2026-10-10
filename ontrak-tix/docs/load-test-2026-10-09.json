@@ -1,0 +1,98 @@
+{
+  "label": "target (10k agents / 1M tickets, one node, Postgres 16 in the family stack)",
+  "startedAt": "2026-10-09T05:34:04.907Z",
+  "finishedAt": "2026-10-09T05:38:54.850Z",
+  "host": {
+    "platform": "linux x64",
+    "node": "v26.11.0",
+    "cpus": 16,
+    "memoryGb": 22.9,
+    "heapLimitMb": 12384
+  },
+  "dataset": {
+    "agents": 10000,
+    "tickets": 1000000,
+    "messages": 600000,
+    "seedMs": 92397,
+    "seedStageMs": {
+      "agents": 470,
+      "tickets": 63413,
+      "messages": 28514,
+      "seededTickets": 1000000,
+      "seededMessages": 600000,
+      "seededStaff": 10000
+    }
+  },
+  "options": {
+    "concurrency": 8,
+    "seconds": 20,
+    "inboxReads": 3
+  },
+  "targets": {
+    "readMs": 300,
+    "writeMs": 500
+  },
+  "stages": [
+    {
+      "name": "read: ticket detail",
+      "attempts": 64901,
+      "ok": 64901,
+      "failed": 0,
+      "errors": [],
+      "elapsedMs": 20002,
+      "throughput": 3244.72,
+      "p50": 2.2,
+      "p95": 3.8,
+      "p99": 7,
+      "max": 83.8
+    },
+    {
+      "name": "read: inbox worklist",
+      "attempts": 3,
+      "ok": 0,
+      "failed": 3,
+      "errors": [
+        "read: inbox worklist: \nInvalid `this.db.ticket.findMany()` invocation in\n/root/ontrak/OnTrak/ontrak-tix/src/lib/ticket-store-prisma.ts:331:39\n\n  328 }\n  329 \n  330 async listTickets(tenantId: string): Promise<TicketRecord[]> {\n→ 331   const rows = await this.db.ticket.findMany(\nFailed to convert rust `String` into napi `string`",
+        "read: inbox worklist: \nInvalid `this.db.ticket.findMany()` invocation in\n/root/ontrak/OnTrak/ontrak-tix/src/lib/ticket-store-prisma.ts:331:39\n\n  328 }\n  329 \n  330 async listTickets(tenantId: string): Promise<TicketRecord[]> {\n→ 331   const rows = await this.db.ticket.findMany(\nFailed to convert rust `String` into napi `string`",
+        "read: inbox worklist: \nInvalid `this.db.ticket.findMany()` invocation in\n/root/ontrak/OnTrak/ontrak-tix/src/lib/ticket-store-prisma.ts:331:39\n\n  328 }\n  329 \n  330 async listTickets(tenantId: string): Promise<TicketRecord[]> {\n→ 331   const rows = await this.db.ticket.findMany(\nFailed to convert rust `String` into napi `string`"
+      ],
+      "elapsedMs": 0,
+      "throughput": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+    },
+    {
+      "name": "write: create ticket",
+      "attempts": 16,
+      "ok": 16,
+      "failed": 0,
+      "errors": [],
+      "elapsedMs": 33503.5,
+      "throughput": 0.48,
+      "p50": 15118.7,
+      "p95": 18706.7,
+      "p99": 18706.7,
+      "max": 18706.7
+    },
+    {
+      "name": "write: reply",
+      "attempts": 11945,
+      "ok": 11945,
+      "failed": 0,
+      "errors": [],
+      "elapsedMs": 20008.4,
+      "throughput": 597,
+      "p50": 12.4,
+      "p95": 18.9,
+      "p99": 33.1,
+      "max": 86.8
+    }
+  ],
+  "met": false,
+  "misses": [
+    "read: inbox worklist: no successful sample",
+    "write: create ticket: 18706.7 ms > 500 ms"
+  ]
+}

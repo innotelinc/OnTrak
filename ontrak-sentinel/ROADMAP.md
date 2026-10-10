@@ -109,7 +109,7 @@ are Guard's v1, split at the point where it stops observing and starts acting.
 S5 and S6 are post-1.0 and are marked as such below, which is a statement about
 scope rather than about order — neither is a prerequisite for shipping 1.0.
 
-### S0 — Foundations `[~]`
+### S0 — Foundations `[x]`
 **Goal:** the identity spine and the evidence log.
 
 - Org/tenant model, users, sessions, credentials; append-only hash-chained audit
@@ -159,7 +159,9 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
     the tokens it minted. Server-rendered from data through one escaping function, so
     an identity's own display name cannot become markup on its own page. The image
     and compose stack this bullet owed have since landed — see
-    [Containers](./README.md#containers) — with a published registry still to come.
+    [Containers](./README.md#containers) — and it publishes: the family's `publish.yml`
+    pushes this product as `ghcr.io/<owner>/ontrak-sentinel`, and the registry carries
+    `latest` beside a per-commit tag, so a deployment pulls rather than builds.
 - Admin console shell; APIs; policy skeleton.
 - **Exit:** an admin creates an identity, sees every action in the tamper-evident
   log, and tenant isolation is covered by CI tests.
@@ -587,10 +589,15 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
   `CREDENTIAL_STUFFING_RULE`) with a pure `evaluateRules` that is nothing but a fold
   over events and rules, which is what makes the harness trivial: a case is a list of
   events and the alerts it must produce. `inCidr` handles the address math so a rule
-  is a sentence about traffic rather than a parser. **Versioning is not started**: a
-  rule carries an id and a version today, and a rulebook endpoint
-  (`GET /guard/v1/rules`) reports what the deployment runs so a sensor platform can
-  be reconciled against it.
+  is a sentence about traffic rather than a parser. **Versioning is shipped**, and it is
+  a fingerprint rather than a promise: `rulebookVersion` (`detection-rules.ts`) hashes the
+  corpus — every rule's `id@version`, severity, kind and match, sorted — and
+  `GET /guard/v1/rules` answers with that version first and the rules behind it, so a
+  sensor platform is reconciled against what this deployment actually runs rather than
+  against a list kept beside it. `tests/sentinel-rulebook-version.test.ts` pins what makes
+  it usable (the same corpus hashes the same whatever the order, and a version bump, a
+  match edit or a rule added each change it), and `tests/sentinel-guard.test.ts` holds the
+  endpoint to the function.
 - `[~]` Alert triage, correlation, dedupe and enrichment; detection-coverage map.
   **Dedupe, correlation and triage are built**: `dedupeKey` buckets an event, so the
   same scan seen by two sensors is one alert (the store's `created` flag says whether
@@ -636,10 +643,14 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
   first, because they are the answer — so a source being *declared* is never mistaken for
   a source being *watched*. It reports what the rules read, not what arrives: every source
   is still declared vocabulary rather than a running collector, and the page says so. What
-  is still not here is suppression and notification: one alert is acted on at a time, and
-  nothing is sent anywhere when a CRITICAL is raised. Assignment gives an alert an owner, not
-  a way of reaching them, and there is no shift view — a queue can be narrowed to *mine* and
-  to *unassigned*, but an alert somebody holds overnight stays theirs until they hand it on.
+  is missing is a shift view. **Suppression and delivery have both shipped since this was
+  written**, which S4's own items below record: `alert-suppression-rules.ts` decides what a
+  silenced window means and `detection-service.ts` consults it inside the pipeline *before*
+  an alert is stored, and `alert-notify.ts` carries an alert to a configured transport
+  (`docs/alert-delivery.md` is the operator's half), so an alert now has a way of reaching
+  the person holding it. What a queue still cannot do is hand one on when a shift ends: it
+  narrows to *mine* and to *unassigned*, and an alert somebody holds overnight stays theirs
+  until they hand it over by hand.
 
   The join is only as good as the address a session carries, and today none do:
   `issueSession` records the address its caller supplies, and the only caller in this
@@ -684,20 +695,29 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
     named indicator at a time — both writes land on the organization's evidence
     chain (`guard.intel.ingested`, `guard.intel.withdrawn`). Covered by
     `tests/sentinel-threat-intel.test.ts` and the second live-Postgres test in
-    `tests/sentinel-postgres-live.test.ts`. **Not here yet: STIX/TAXII transport,
-    automatic feed refresh and a scheduled expiry sweep** — a feed is text pasted
-    by a person today, and expiry is enforced where the list is read. Triaging an
-    alert from the console is done (see the triage bullet above).
+    `tests/sentinel-postgres-live.test.ts`. **A scheduled expiry sweep is in**
+    (`threat-intel-scheduler.ts`, mirroring the enforcement sweep: an injectable clock
+    and timer, non-overlapping runs, a failed run logged with the loop carried on, and
+    `SENTINEL_INTEL_SWEEP_INTERVAL_MINUTES` where unset means hourly and `0` turns it
+    off). It prunes what has passed in every organization and writes one
+    `guard.intel.withdrawn` row per indicator, marked `automatic` the way the
+    enforcement sweep marks its own lifts — and it is **not** what enforces the date: the
+    matcher still refuses an expired indicator while its row is in the store, which is
+    what makes the sweep pruning and observability rather than the safety property.
+    `tests/sentinel-intel-sweep.test.ts` drives both. **Still not here: STIX/TAXII
+    transport and automatic feed refresh** — a feed is text pasted by a person today.
+    Triaging an alert from the console is done (see the triage bullet above).
 - **Exit:** a known-bad pattern is detected from live telemetry, deduped and
   correlated into one alert linked to an identity, device and asset. Reached in the
-  service and in `tests/sentinel-guard.test.ts` (events in, one deduped alert out, tied
-  to the session's identity) — *live* telemetry means a collector posting, not yet a
-  protocol listener.
+  service and in  `tests/sentinel-guard.test.ts` (events in, one deduped alert out, tied
+  to the session's identity) — *live* telemetry means a collector posting, which is now
+  also a protocol listener: the SYSLOG, NETFLOW/IPFIX and OTLP readers above take the
+  telemetry directly rather than through something else's feed.
 
-### S4 — Sentinel Guard v1 (prevention) `[~]` — **the last 1.0 milestone**
+### S4 — Sentinel Guard v1 (prevention) `[x]` — **the last 1.0 milestone**
 **Goal:** act — safely and accountably.
 
-- `[~]` **Compliance reporting and posture summary** — the reviewer's half of the
+- `[x]` **Compliance reporting and posture summary** — the reviewer's half of the
   work, and the first S4 item to land because it writes nothing. `/console/compliance`
   reports six controls (a second factor required before any session; every active
   identity enrolled; an active administrator exists; the session policy *stored*

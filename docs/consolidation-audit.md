@@ -56,7 +56,7 @@ host), and does not claim to have measured runtime behaviour of anything.
 | `src/` + `prisma/` (root) | **OnTrak IT Support Training (ITS)** — browser simulations, graded attempts, certificates | Next.js 15, React 19, TS, Prisma 6, PostgreSQL, Tailwind 4, xterm.js | `npm run dev`/`build`/`start`; `prisma/seed.ts` | App | `tests/*.test.ts` (tsx, ~379); Playwright a11y + Tix e2e |
 | `ontrak-sentinel/` | **Sentinel** — IdP (OIDC/SAML/SCIM/MFA) **+ Guard IDS/IPS** | Node/TS + Prisma + PostgreSQL; framework-free server-rendered console | `npm run serve` (`scripts/serve.ts`) | App | `tests/*.test.ts` (~538) |
 | `ontrak-tix/` | **Tix** — service desk, SLAs, billing, incident assurance | Next.js 15, React 19, TS, Prisma, PostgreSQL | `npm run dev`/`build` | App | ~844 tests |
-| `ontrak-sync/` | **Sync** — fleet package/container update view; owns the family's **local account table** | Python 3.12 + FastAPI + SQLite (API); Next.js 16 dashboard | `make up`; `web/` | App (two processes) | 406 (plain `unittest`) |
+| `ontrak-sync/` | **Sync** — fleet package/container update view; owns the family's **local account table** | Python 3.12 + FastAPI + SQLite (API); Next.js 16 dashboard | `make up`; `web/` | App (two processes) | 415 (plain `unittest`) |
 | `ontrak-genie/` | **Genie** — browser/CLI coding-agent console | Node/TS, SSE, sandboxed workspace | `npm run build && npm start` | App | `src/test/**` (`node --test`) |
 | `ontrak-portal/` | **Portal (Unity)** — the family front door; routes by role, holds no data | Next.js 15, React 19, TS, **no database** | `npm run dev` (port 3300) | App | 4 test files |
 | `theme/` | **Unity** shared palette + copy checks | CSS + TS (and Python copy guard) | — | Shared library | `theme/tests/test_theme_copies.py` |
@@ -373,8 +373,8 @@ pass mark, tags incl. `lab`, the briefing as `description`/`brief`, and the obje
 as the task list), with `exportLabScenario` for the return trip; one nullable column,
 `Scenario.labMeta` (+ `prisma/migrations/20261106000000_add_scenario_lab_meta`), for the
 facts the family's model has no column for (objective ids/weights/critical flags,
-category, workloads, lessons); and the 14 lab scenarios as JSON fixtures under
-`tests/fixtures/lab-scenarios/`. *Verify:* `tests/lab-scenario-import.test.ts` holds all
+category, workloads, lessons); and the 14 lab scenarios as JSON records in the shipped
+`scenarios/<id>/scenario.json` tree. *Verify:* `tests/lab-scenario-import.test.ts` holds all
 14 to a field-for-field round trip, and asserts that the **simulator refuses every one**
 — the imported definition carries no checks (the lab grades against a live machine, and
 nothing in the YAML says which live condition an objective tests), so
@@ -448,8 +448,17 @@ hypervisor tooling. See §6.
 
 Stated plainly, because the integration is **not** complete:
 
-- **No OnTrak-dev code has been ported or merged.** Not one Python module has been
-  re-implemented in TypeScript, and no lab route is served by the family stack.
+- **OnTrak-dev is not merged — but it is now being ported, and that distinction
+  supersedes part of this section.** The recommendation here was to keep the lab a
+  separately deployed Python peer (§6/C1); the product decision has since gone the other
+  way. Stage 1 of the port — the lab's pure core, eight modules (`models`, `scoring`,
+  `guac`, `guest`, `incus`, `qemu`, `selection`, `scheduler`) with 176 tests ported from
+  the lab's own suites — is in `src/lib/lab/` and green. **[lab-port.md](lab-port.md) is
+  the plan**: the module-by-module mapping, the staging, and the seven architectural
+  conflicts it resolves (WinRM, identity, SQLite→Postgres, blocking subprocesses, the
+  single pass rule, YAML, and the portal's HTTP surface). **OnTrak-dev itself is
+  untouched, no lab route is served by the family stack yet, and stages 2–4 are not
+  started.**
 - **Nothing has been migrated in OnTrak-dev.** Its schema is created on first use and
   this work adds no change there. Steps 5–6 add two nullable columns on *this* side
   (`Scenario.labMeta` and `Attempt.gradingMode`, each with its migration), and no attempt
@@ -504,16 +513,33 @@ Stated plainly, because the integration is **not** complete:
   scenarios and linked it at the lab host's own dashboard, and the portal's health check
   reported the lab as part of the deployment.
 
+  **The Windows half of that has since been walked on the same host, and the reason it was
+  open was not the one the doctor gave.** The lab reported nested AMD KVM unable to
+  virtualise SMM — which a Windows 11 guest needs — and the limit turned out to be
+  **Hyper-V on the host itself**, not the CPU. Switched off, the same machine, nested
+  under VMware on an AMD Ryzen AI 7 350, has real nested virtualisation (`/dev/kvm`
+  present, `svm` and `nested=1`), and an OVMF/Secure-Boot `q35` guest with `smm = "on"`
+  boots under `accel = "kvm"`. `make golden` then ran to completion under KVM in about 35
+  minutes — Windows Setup, boot from disk, specialize, `post-install.ps1` over WinRM,
+  publish — with no `KVM: entry failed` or `SMM=1` anywhere in the build VM's qemu log,
+  and the image it produced logs in as the training account over WinRM and answers RDP.
+  Twenty-one templates have been built from it, each with its `clean` snapshot, and a
+  warm pool machine reaches a session in about two seconds. The image is published to
+  `ghcr.io/innotelinc/ontrak-golden`, so another lab host adopts it with `make golden-pull`
+  and `make golden-import` rather than repeating the build. `win11e-2026-10-09` is the
+  newest tag and holds the compressed export (the disk layer's digest matched the verified
+  local file byte for byte when it was pulled back); `win11e-2026-10-06` is still
+  pullable. Its accelerator detection is unchanged and still resolves `tcg`,
+  because the rule reads `systemd-detect-virt` = `vmware`, so a range there sets
+  `ONTRAK_QEMU_ACCEL=kvm` explicitly for the builder, the templates and the pool — a
+  setting, not a hardware limit.
+
   **What that still is not.** It is not the Network: this lab host is a machine built for
   the exercise, and `its.ontrak.innotel.us` remains without one. **No Windows or Office
-  scenario ran**, because the golden image needs Microsoft evaluation media the operator
-  supplies and a build that takes 30–60 minutes — and the lab's own doctor reports that
-  this host's nested AMD KVM cannot virtualise SMM, so a Windows guest takes the
-  `ONTRAK_QEMU_ACCEL=tcg` path the lab reserves for hosts that cannot help it. Two of the
-  lab's 14 templates exist, both for one Linux scenario. The console half is up (the
-  lab's portal and Guacamole on one port, `/` and `/guacamole/`) but no browser has driven
-  it here, so the websocket tunnel Q4 named as the first thing a real host owes is still
-  unmeasured.
+  scenario has been graded**, and none of it has been reached through the console. The
+  console half is up (the lab's portal and Guacamole on one port, `/` and `/guacamole/`)
+  but no browser has driven it here, so the websocket tunnel Q4 named as the first thing a
+  real host owes is still unmeasured.
 - **OnTrak-dev has not been modified**, as required. Its `README.md` still describes
   a standalone range; its portal still signs in only through Authentik and only as
   `instructor`/`student`.

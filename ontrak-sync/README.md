@@ -196,7 +196,7 @@ writes to it.
 ## Tests
 
 ```bash
-make test        # 406 tests, no Network required
+make test        # 415 tests, no Network required
 ```
 
 The suite covers the parsers, the cron arithmetic, the finding lifecycle, the scan engine (against

@@ -16,6 +16,7 @@ export const en = {
   "nav.classes": "Classes",
   "nav.attempts": "Attempts",
   "nav.analytics": "Analytics",
+  "nav.skills": "Skills matrix",
   "nav.practice": "Practice",
   "nav.controlRoom": "Control room",
   "nav.software": "Software & OS",
@@ -154,6 +155,34 @@ export const en = {
     "A simulator's pass and a live machine's are different claims, so every figure here states the grader that produced it.",
   "analytics.mode.summary": "{passed} of {total} passed, against a {mark}% bar",
   "analytics.mode.median": "median {time} on task",
+
+  // Skills matrix (which competencies the certificates demonstrate)
+  "skills.eyebrow": "Competence",
+  "skills.title": "Who can do what",
+  "skills.description":
+    "Every competency this deployment has certified, against the people who hold it. Built from the completion records stored on attempts — a revoked certificate takes its skill away with it.",
+  "skills.empty.title": "No certificates yet",
+  "skills.empty.description":
+    "The matrix fills as students clear a scenario's pass mark and earn a completion record.",
+  "skills.stat.skills": "Competencies",
+  "skills.hint.skills": "distinct competencies somebody holds",
+  "skills.stat.learners": "People certified",
+  "skills.hint.learners": "with at least one completion record",
+  "skills.stat.certificates": "Live certificates",
+  "skills.hint.certificates": "counted into this matrix",
+  "skills.stat.revoked": "Revoked",
+  "skills.hint.revoked": "skills withdrawn after a re-grade",
+  "skills.revocationNote":
+    "A revoked certificate demonstrates nothing: its skills are removed here, and the person keeps their row so the withdrawal stays visible.",
+  "skills.noSkills":
+    "No live certificate carries a competency yet. Tag scenarios with the skills they demonstrate and they appear here as columns.",
+  "skills.caption": "Competencies held by each person, and when each was first demonstrated.",
+  "skills.learner": "Person",
+  "skills.holders": "People with it",
+  "skills.revokedBadge": "{count} revoked",
+  "skills.heldAria": "{name} is certified in {skill}",
+  "skills.notHeldAria": "{name} is not certified in {skill}",
+  "skills.unreadable": "{count} completion record(s) could not be read and are not counted.",
 
   // Grading mode (who produced a score)
   "grading.mode.simulated": "Simulated",

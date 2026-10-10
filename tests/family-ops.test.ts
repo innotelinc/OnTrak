@@ -67,17 +67,51 @@ function read(file: string): string {
 /**
  * The host ports the family stack publishes.
  *
- * Matches `- "3000:3000"` and `- "${ONTRAK_SYNC_API_PORT:-8420}:8420"` alike: the
- * left side is what a browser on the host reaches, and a variable's default is what
- * the guide can promise without knowing the deployment.
+ * Three shapes are written in this file, and all three are read:
+ *
+ *   - `"3000:3000"` — the ordinary mapping;
+ *   - `"${ONTRAK_SYNC_API_PORT:-8420}:8420"` — a port the deployment may move, where
+ *     the variable's default is what the guide can promise without knowing it;
+ *   - `"${ONTRAK_TRAINING_BIND_HOST:-0.0.0.0}:3000:3000"` — the same mapping pinned
+ *     to a *host interface*, which is what a deployment that keeps the family off
+ *     its public address sets in `.env`. The bind host is an address (or a variable
+ *     holding one), so it is dropped: the field a browser on the host dials is the
+ *     middle one, and it is the one the guide names.
  */
 function publishedPorts(): Set<string> {
   const ports = new Set<string>();
   for (const line of read(COMPOSE).split("\n")) {
-    const match = /^\s+- "?(?:\$\{[A-Z0-9_]+:-)?(\d+)\}?:(\d+)"?\s*$/.exec(line);
-    if (match) ports.add(match[1]);
+    const entry = /^\s+- "?([^"\s]+)"?\s*$/.exec(line)?.[1];
+    if (entry === undefined) continue;
+    const fields = fieldsOf(entry);
+    // A single-field entry is dropped: compose reads `"3000"` as "publish this
+    // container port on whatever host port is free", which is nothing the guide can
+    // promise a reader. Two and three fields are the two mappings that can be read
+    // off the file. A healthcheck's `fetch(...)` list never splits into port fields.
+    if (fields.length === 2 && isPort(fields[0]) && isPort(fields[1])) ports.add(fields[0]);
+    else if (fields.length === 3 && isPort(fields[1]) && isPort(fields[2])) ports.add(fields[1]);
   }
   return ports;
+}
+
+/**
+ * One published-port entry as its fields, with `${VAR:-default}` read as the default.
+ *
+ * The protocol suffix goes first (`"...:5514/udp"` is a port, not a four-field
+ * mapping), then the substitution: `field` here is never a nested expression, only the
+ * single-level `${…}` compose allows.
+ */
+function fieldsOf(entry: string): string[] {
+  return entry
+    .replace(/\/\w+$/, "")
+    // Expanded **before** splitting, because a substitution holds a colon of its own
+    // (`${ONTRAK_DB_PORT:-5432}`) and splitting first would shear it in two fields.
+    .replace(/\$\{[A-Z0-9_]+:-([^}]*)\}/g, (_match, fallback: string) => fallback)
+    .split(":");
+}
+
+function isPort(field: string | undefined): boolean {
+  return field !== undefined && /^\d+$/.test(field);
 }
 
 /** Every port the guide's "What runs where" table names in its port column. */

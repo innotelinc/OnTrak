@@ -40,6 +40,7 @@ const STAFF_NAV: NavItem[] = [
   { href: "/instructor/cohorts", label: "nav.classes", icon: ICONS.classes, group: "nav.teaching" },
   { href: "/instructor/attempts", label: "nav.attempts", icon: ICONS.attempts, group: "nav.teaching" },
   { href: "/instructor/analytics", label: "nav.analytics", icon: ICONS.chart, group: "nav.teaching" },
+  { href: "/instructor/skills", label: "nav.skills", icon: ICONS.users, group: "nav.teaching" },
   { href: "/student", label: "nav.practice", icon: ICONS.play, group: "nav.teaching" },
 ];
 

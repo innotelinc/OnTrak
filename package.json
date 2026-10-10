@@ -20,6 +20,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:reset-demo": "tsx prisma/reset-demo.ts",
+    "lab": "tsx scripts/lab/cli.ts",
     "lab:import": "tsx scripts/import-lab-scenarios.ts",
     "db:studio": "prisma studio",
     "theme:verify": "python3 theme/tests/test_theme_copies.py",

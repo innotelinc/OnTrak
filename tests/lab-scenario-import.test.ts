@@ -5,9 +5,9 @@
  * scenario models are a mapping, not a merge, and the mapping is one-directional and
  * lossless *for the fields it claims to carry*. So the tests are:
  *
- *  - **Every one of the 14 imports.** The fixtures are the real `scenario.yaml` files,
- *    converted once to JSON (`tests/fixtures/lab-scenarios/`), so this is the whole
- *    catalogue and not a sample that happens to be easy.
+ *  - **Every one of the 14 imports.** The records are the real `scenario.yaml` files,
+ *    converted once to JSON and shipped as `scenarios/<id>/scenario.json`, so this is
+ *    the whole catalogue and not a sample that happens to be easy.
  *  - **Every one round-trips.** `exportLabScenario(importLabScenario(x))` equals the
  *    original for every field the import preserves — which is what turns "we did not
  *    lose anything" from a comment into a check.
@@ -23,6 +23,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
+import { scenarioEntriesFrom, scenarioRoot } from "../src/lib/lab/dataset";
 import {
   exportLabScenario,
   importLabScenario,
@@ -31,16 +32,14 @@ import {
 } from "../src/lib/lab-scenario-import";
 import { expectedEngine, validateDefinition } from "../src/lib/validate";
 
-const DIR = path.join(process.cwd(), "tests", "fixtures", "lab-scenarios");
+const DIR = scenarioRoot();
 
+/** The 14 records, straight from the tree a host reads (`scenarios/<id>/scenario.json`). */
 function fixtures(): { name: string; raw: LabScenario }[] {
-  return readdirSync(DIR)
-    .filter((file) => file.endsWith(".json"))
-    .sort()
-    .map((file) => ({
-      name: file.replace(/\.json$/, ""),
-      raw: JSON.parse(readFileSync(path.join(DIR, file), "utf8")) as LabScenario,
-    }));
+  return scenarioEntriesFrom(DIR).map((entry) => ({
+    name: entry.fileName,
+    raw: entry.record as LabScenario,
+  }));
 }
 
 /**

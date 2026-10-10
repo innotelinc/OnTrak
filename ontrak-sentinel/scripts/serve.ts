@@ -91,6 +91,7 @@ import {
   type AlertSuppressionPrismaClient,
 } from "../src/lib/alert-suppression-store-prisma";
 import { enforcementSweepIntervalMs, startEnforcementScheduler } from "../src/lib/enforcement-scheduler";
+import { intelSweepIntervalMs, startThreatIntelScheduler } from "../src/lib/threat-intel-scheduler";
 import { PrismaIndicatorStore, type IndicatorPrismaClient } from "../src/lib/threat-intel-store-prisma";
 import {
   configureDirectories,
@@ -719,6 +720,22 @@ async function main(): Promise<void> {
     startEnforcementScheduler(enforcement, {
       intervalMs: sweepIntervalMs,
       log: (message) => console.log(`[sentinel] enforcement: ${message}`),
+    });
+  }
+  // The indicator sweep (S3): the one clock here whose running cannot change what is
+  // detected, because the matcher already refuses an expired indicator at read time. It
+  // prunes the list the console counts, so it is on by default at an hour —
+  // `SENTINEL_INTEL_SWEEP_INTERVAL_MINUTES=0` turns it off — and a row with no expiry is
+  // never touched by it either way.
+  const intelSweepMs = intelSweepIntervalMs(process.env);
+  if (intelSweepMs === null) {
+    console.log(
+      "[sentinel] threat intel: the indicator sweep is off (SENTINEL_INTEL_SWEEP_INTERVAL_MINUTES is 0)",
+    );
+  } else {
+    startThreatIntelScheduler(threatIntel, {
+      intervalMs: intelSweepMs,
+      log: (message) => console.log(`[sentinel] threat intel: ${message}`),
     });
   }
   console.log(

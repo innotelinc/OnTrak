@@ -88,6 +88,13 @@ function serviceBlocks(): Map<string, string[]> {
  * which is what the portal's probe does). A variable's default is what a deployment
  * gets without being told otherwise: `"3000:3000"`,
  * `"${ONTRAK_SYNC_WEB_PORT:-8421}:8421"` and `"${PORT:-5514}:${PORT:-5514}/udp"`.
+ *
+ * A fourth shape is the same mapping pinned to a host interface —
+ * `"${ONTRAK_TRAINING_BIND_HOST:-0.0.0.0}:3000:3000"` — where the *bind host* is the
+ * first field. It is dropped rather than read: it is an address, not a port, and the
+ * two ports that matter are the two after it. (Reading numbers out of the entry
+ * instead would find `0` in the address and call it the host port, which is how a
+ * check like this reports a product as unpublished while it sits there answering.)
  */
 function publishedPorts(block: string[]): { host: string; container: string }[] {
   const ports: { host: string; container: string }[] = [];
@@ -101,10 +108,24 @@ function publishedPorts(block: string[]): { host: string; container: string }[] 
     if (!inside) continue;
     const entry = /^\s*-\s*"?(.+?)"?\s*$/.exec(line)?.[1];
     if (!entry) continue;
-    const [host, ...others] = entry.match(/\d+/g) ?? [];
-    if (host) ports.push({ host, container: others.at(-1) ?? host });
+    // The protocol suffix goes first, then the substitutions are expanded *before* the
+    // split: a `${VAR:-5432}` holds a colon of its own, and splitting first would shear
+    // it into two fields and read neither port.
+    const fields = entry
+      .replace(/\/\w+$/, "")
+      .replace(/\$\{[A-Z0-9_]+:-([^}]*)\}/g, (_match, fallback: string) => fallback)
+      .split(":");
+    if (fields.length === 3 && isPort(fields[1]) && isPort(fields[2])) {
+      ports.push({ host: fields[1], container: fields[2] });
+    } else if (fields.length === 2 && isPort(fields[0]) && isPort(fields[1])) {
+      ports.push({ host: fields[0], container: fields[1] });
+    }
   }
   return ports;
+}
+
+function isPort(field: string | undefined): boolean {
+  return field !== undefined && /^\d+$/.test(field);
 }
 
 /** The `family` job's text, from its name to the next job. */

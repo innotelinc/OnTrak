@@ -378,15 +378,52 @@ export class PrismaTicketStore implements TicketStore {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * How many times an append re-reads a tenant's chain before giving up.
+ *
+ * A collision is expected whenever a second process writes the same tenant, and
+ * each retry re-reads the chain, so the first is normally the only one needed.
+ */
+const APPEND_ATTEMPTS = 5;
+
+/**
+ * Is this a `@@unique([tenantId, seq])` collision?
+ *
+ * Checked structurally rather than by importing `PrismaClientKnownRequestError`:
+ * this adapter deliberately describes the client (see the header) so it works
+ * against a real client, a fake or a repository layer, and an import would put
+ * the generated client back in the way. Prisma's code for a unique violation is
+ * `P2002`.
+ */
+function isSequenceConflict(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "P2002";
+}
+
+/**
  * A per-tenant, hash-chained audit sink backed by Prisma.
  *
  * Each tenant's chain is loaded once, verified on load (a tampered history is
  * refused rather than extended), then extended one record at a time. The new
  * row is written before the in-memory chain advances, so a failed write cannot
  * leave the cache ahead of the database.
+ *
+ * **One append at a time, per tenant.** The position in the chain is derived
+ * from the cached chain, so two appends racing for the same tenant both compute
+ * the *same* `seq` and one of them loses the insert to
+ * `@@unique([tenantId, seq])` — which is what the M7 load rehearsal found: under
+ * eight concurrent writers, replies failed with
+ * `Unique constraint failed on the fields: (tenantId, seq)` *after* their row
+ * had already been written, so the desk saw an error for work that had applied
+ * and no evidence of it existed on the chain. Neither half is acceptable.
+ *
+ * So an append is queued behind the previous one for that tenant, and the queue
+ * is keyed by tenant rather than held process-wide: two tenants must not wait on
+ * each other for a reason that is not theirs. A queued append that fails does
+ * not stop the ones behind it — each re-reads the chain, so the next one repairs
+ * the position rather than inheriting it.
  */
 export class PrismaAuditSink implements AuditSink {
   private readonly chains = new Map<string, AuditChain>();
+  private readonly tails = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly db: TicketPrismaClient,
@@ -394,11 +431,38 @@ export class PrismaAuditSink implements AuditSink {
   ) {}
 
   async append(event: AuditEventInput): Promise<void> {
-    const chain = await this.chainFor(event.tenantId);
-    const next = appendAuditEvent(chain, event, this.hash);
-    const record = next.events[next.events.length - 1];
-    await this.db.auditEvent.create({ data: toAuditRow(record) });
-    this.chains.set(event.tenantId, next);
+    const previous = this.tails.get(event.tenantId) ?? Promise.resolve();
+    // The queue continues past a failure: `appendNow` re-reads the chain from the
+    // database, so the next append starts from what is actually stored.
+    const queued = previous.then(
+      () => this.appendNow(event),
+      () => this.appendNow(event),
+    );
+    this.tails.set(event.tenantId, queued.catch(() => undefined));
+    await queued;
+  }
+
+  /**
+   * One append, retried if another process took this position first.
+   *
+   * The retry drops the cached chain before re-reading it: the whole point is
+   * that the cache is what went stale, so asking it again would recompute the
+   * same doomed `seq`.
+   */
+  private async appendNow(event: AuditEventInput): Promise<void> {
+    for (let attempt = 1; ; attempt += 1) {
+      const chain = await this.chainFor(event.tenantId);
+      const next = appendAuditEvent(chain, event, this.hash);
+      const record = next.events[next.events.length - 1];
+      try {
+        await this.db.auditEvent.create({ data: toAuditRow(record) });
+        this.chains.set(event.tenantId, next);
+        return;
+      } catch (error) {
+        this.chains.delete(event.tenantId);
+        if (!isSequenceConflict(error) || attempt >= APPEND_ATTEMPTS) throw error;
+      }
+    }
   }
 
   /** A detached copy of a tenant's chain, loading it from the database on first use. */

@@ -185,7 +185,7 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   would cascade away; and re-grading refuses `IN_PROGRESS`/`ABANDONED` work
   instead of quietly marking it `GRADED`. Covered by new tests for the attempt
   scope, the admin guards and the validator's edge cases.
-- `[~]` Verifiable completion records reach the product surface: clearing the
+- `[x]` Verifiable completion records reach the product surface: clearing the
   pass mark issues a **certificate** — a tamper-evident completion record — shown
   on the attempt report with its code and competency tags, listed on the results
   index, printable as its own sheet, and checkable by anyone at the public
@@ -203,9 +203,10 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   string — and a non-English locale ships (`[x]`); the a11y implementation, the
   automated axe/keyboard audit (`npm test`) and the browser paint-rule sweep
   (`npm run test:a11y`) have all landed and pass (`[x]`).
-  The one bullet above that is not `[x]` is the certificate *cohort packet*,
-  which its own text defers to v1.5: everything v1.1 asked of verifiable
-  completion records has shipped.
+  The one bullet above that was left open is the certificate *cohort packet*,
+  which its own text deferred to v1.5 — and it has since shipped there
+  (`/instructor/cohorts/<id>/packet`, `[x]` under v1.5): everything v1.1 asked of
+  verifiable completion records has shipped, so v1.1 is closed.
 
 ### v1.2 — Real drivers `[x]`
 **Goal:** higher-fidelity practice behind the existing seam.
@@ -239,6 +240,38 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   (`kind: "sandbox"` blocker). Attempts in a sandbox go through a server action per command
   (`sandboxCommand`) against one sandbox per attempt, disposed of on submit, abandon and
   restart, and reaped after 30 minutes idle.
+- `[x]` **The lab's real guests, ported in.** The sandbox above runs real bash; a real
+  *machine* — a Windows or Linux guest that boots, is fault-injected and is graded — is the
+  other half, and it was OnTrak Lab's (`incus`). That control plane now lives here
+  (`src/lib/lab/`): the scenario catalogue and lesson library, the session manager and its
+  availability rule, the hypervisor seam and the host driver, the ticket rubric, the
+  in-memory store for demo mode and the Prisma store for a host, and the student (`/lab`,
+  the session page, the console route and the pollable status) and instructor (fleet, both
+  CSVs) surfaces — with `npm run lab` for an operator and `ONTRAK_LAB_IN_APP=1` for a
+  deployment that serves the lab itself rather than linking a peer's. The three conflicts a
+  port of this size creates are resolved, with their costs, in `docs/lab-port.md`: WinRM →
+  `incus-exec` (no Node WinRM client), the lab's own sign-in superseded by this app's, and
+  SQLite → the family's Postgres. Demo mode runs a whole class with no hypervisor and is
+  what the suite exercises, and a real guest has now been run on a lab host: a Linux container
+  cloned in 4.4s, faulted, graded **0%**, repaired, graded **80% resolved**, written up and
+  handed in at **87%**, with the attempt in the ledger and the machine destroyed
+  (`docs/lab-port.md` §5). The Windows half took two things: the image, which clears
+  `requirements.cdrom_agent` and so attaches no `agent:config` disk — the agent comes up in
+  ~90s once one is attached, which is proven — and a real port defect the run exposed: the
+  manager built the Windows `incus-exec` driver with no Incus client, so no Windows guest
+  could ever be graded. That is fixed and pinned by a test that fails on the old
+  construction. A graded Windows session is still owed a host run, on a machine with the
+  disk for it. The console's websocket tunnel was verified without a browser — a link the
+  app mints is accepted by a live Guacamole gateway and the tunnel relays guacd's own
+  frames, with a tampered link refused (`tests/lab-guac-tunnel-live.test.ts`). The browser
+  sweep was run here too — `npm run test:a11y` audited the lab's `/lab` and
+  `/instructor/lab` alongside the rest: 21 passed, 0 failed, in both the in-app and
+  peer-lab renderings, which also turned up a stale sign-in target in the spec now fixed. And
+  the graded Windows session has been run: with the agent up, `session check` graded
+  `net-dns-failure` **inside the guest** over the agent — 0% unresolved, with the guest's own
+  DNS evidence — which found a second port defect, the upload using the roomy chunk width on
+  a Windows command line. Fixed and pinned. What is still not shown is the *repair* half on
+  Windows (a fixed guest graded back to `resolved`), which needs the lab's own intranet DNS.
 - **Exit:** `[x]` a scenario authored for real bash runs in a sandbox and grades identically
   to the simulated driver on the bundled checks — `tests/sim-container.test.ts` grades the same
   five-check scenario twice, once simulated and once under real bash in a process sandbox, and
@@ -248,7 +281,7 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   seed → `chmod` → harvest → grade, with the mode change read back and no container left
   behind.
 
-### v1.3 — Identity & integrations `[~]`
+### v1.3 — Identity & integrations `[x]`
 **Goal:** fit into an organisation.
 
 - SSO via the **OnTrak Sentinel** IdP (OIDC/SAML), with SCIM roster sync; keep a
@@ -424,12 +457,21 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
 **Goal:** turn results into credible, portable proof of competence.
 
 - `[ ]` Rubrics beyond pass/fail; partial-credit and competency tagging per check.
-- `[~]` Certificates and a skills matrix (who is competent in what), with
+- `[x]` Certificates and a skills matrix (who is competent in what), with
   verifiable completion records. A pass issues a certificate and the record is
   **stored immutably** on the attempt (`certificate`/`certificateIssuedAt`/
   `certificateRevokedAt`), presented on the report with its code and
   competencies, printable as its own sheet (`/certificate/<attempt>`), and
-  verifiable without an account (see v1.1). Still to come: the skills matrix.
+  verifiable without an account (see v1.1). The matrix is `/instructor/skills`
+  over `src/lib/skills-rules.ts`: a column per competency the issued records
+  demonstrate, a row per person certified, scoped by the same `attemptScopeFor`
+  the attempts list and the analytics dashboard use. It reads the certificate's
+  own rules rather than defining competence again — a revoked certificate takes
+  its competency away with it while the person keeps their row, so a withdrawal
+  shows as a withdrawal instead of as an absence; two spellings of one competency
+  are one column; a record with no competencies contributes nothing; and the same
+  competency earned twice is one, dated from the first pass. Covered by
+  `tests/skills-matrix.test.ts`.
 - `[x]` **Auditable training evidence**: immutable completion records and an
   exportable proof-of-training packet per class — every live certificate its
   members hold, bundled into one signed document at

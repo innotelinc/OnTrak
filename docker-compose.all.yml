@@ -32,6 +32,26 @@
 # Ports are the ones the family already reserves: 3000/5432 training,
 # 3001/5433 Tix, 8787/5434 Sentinel, 3400 Genie (which has no database).
 #
+# ## Which interface a port is published on
+#
+# Every app's port is written `<host>:<port>:<port>`, where the host is
+# `${ONTRAK_<PRODUCT>_BIND_HOST:-0.0.0.0}` — so the default is the same "reachable
+# from anywhere" a bare `"3000:3000"` gave, and a deployment that wants the stack
+# only on its LAN sets the host in `.env` (`.env.example` has the group).
+# Binding to a fixed address in this file would be a default that fails on every
+# host without it: CI boots this stack on a runner whose interfaces the file cannot
+# know, and a machine that cannot bind the address brings the whole family up
+# "healthy" with nothing reachable.
+#
+# The three databases are the one deliberate exception, and each is published
+# **twice**: on loopback, and on `${ONTRAK_<PRODUCT>_DB_BIND_HOST}`. A database is
+# dialled by a client on the machine that runs this stack — the repo's own
+# `npm run db:*`, a dev server started directly — *and* by one on the LAN, and one
+# address alone loses a caller: the LAN address takes it away from the host's own
+# tooling, and a bare `"5432:5432"` (which is what an unset `0.0.0.0` default
+# becomes) also opens it on this daemon's docker bridges, whose `172.x` addresses
+# nothing but the containers on them can dial.
+#
 # ## What is wired up for you
 #
 #  - Each app talks to its own database over the network, never to 127.0.0.1 —
@@ -84,7 +104,10 @@ services:
       POSTGRES_PASSWORD: ontrak
       POSTGRES_DB: ontrak
     ports:
-      - "${ONTRAK_DB_PORT:-5432}:5432"
+      # Loopback for this host's own tooling, the deployment's address for the LAN. See
+      # the header.
+      - "127.0.0.1:${ONTRAK_DB_PORT:-5432}:5432"
+      - "${ONTRAK_DB_BIND_HOST:-0.0.0.0}:${ONTRAK_DB_PORT:-5432}:5432"
     volumes:
       - ontrak-family-training-db:/var/lib/postgresql/data
     healthcheck:
@@ -119,7 +142,7 @@ services:
       training-migrate:
         condition: service_completed_successfully
     ports:
-      - "3000:3000"
+      - "${ONTRAK_TRAINING_BIND_HOST:-0.0.0.0}:3000:3000"
     env_file:
       - .env
     environment:
@@ -129,6 +152,20 @@ services:
       # Its own address, for the SSO redirect URI. Defaults to the host port this
       # file publishes, which is right for a browser on this machine.
       ONTRAK_TRAINING_BASE_URL: ${ONTRAK_TRAINING_BASE_URL:-http://127.0.0.1:3000}
+      # OnTrak Lab, served by this app (`/lab`). Passed through rather than
+      # defaulted on: a deployment that has not asked for a lab gets exactly the
+      # behaviour it had before the port. The lab's own settings
+      # (`ONTRAK_<SECTION>__<KEY>`) arrive through the env file above.
+      #
+      # This container is **not** a lab host — the image has neither `incus` nor
+      # `/dev/kvm` — so either run it in demo mode (`ONTRAK_DEMO__ENABLED=1`,
+      # which needs no host at all), or deploy the app where a hypervisor lives.
+      # Mounting the host's Incus socket is deliberately not done here: a worker
+      # that cannot schedule the processes it spawns fails later and more
+      # confusingly than one that never started.
+      ONTRAK_LAB_ENABLED: ${ONTRAK_LAB_ENABLED:-}
+      ONTRAK_LAB_URL: ${ONTRAK_LAB_URL:-}
+      ONTRAK_LAB_IN_APP: ${ONTRAK_LAB_IN_APP:-}
       # Single sign-on, off until a client id is supplied (see the header).
       ONTRAK_OIDC_ISSUER: ${ONTRAK_OIDC_ISSUER:-}
       ONTRAK_OIDC_CLIENT_ID: ${ONTRAK_OIDC_CLIENT_ID:-}
@@ -170,7 +207,9 @@ services:
       POSTGRES_PASSWORD: ontrak
       POSTGRES_DB: ontrak_tix
     ports:
-      - "${ONTRAK_TIX_DB_PORT:-5433}:5432"
+      # Loopback and the deployment's address, as training-db. See the header.
+      - "127.0.0.1:${ONTRAK_TIX_DB_PORT:-5433}:5432"
+      - "${ONTRAK_TIX_DB_BIND_HOST:-0.0.0.0}:${ONTRAK_TIX_DB_PORT:-5433}:5432"
     volumes:
       - ontrak-family-tix-db:/var/lib/postgresql/data
     healthcheck:
@@ -204,7 +243,7 @@ services:
       tix-migrate:
         condition: service_completed_successfully
     ports:
-      - "3001:3000"
+      - "${ONTRAK_TIX_BIND_HOST:-0.0.0.0}:3001:3000"
     env_file:
       - ontrak-tix/.env
     environment:
@@ -265,7 +304,9 @@ services:
       POSTGRES_PASSWORD: ontrak
       POSTGRES_DB: sentinel
     ports:
-      - "${ONTRAK_SENTINEL_DB_PORT:-5434}:5432"
+      # Loopback and the deployment's address, as training-db. See the header.
+      - "127.0.0.1:${ONTRAK_SENTINEL_DB_PORT:-5434}:5432"
+      - "${ONTRAK_SENTINEL_DB_BIND_HOST:-0.0.0.0}:${ONTRAK_SENTINEL_DB_PORT:-5434}:5432"
     volumes:
       - ontrak-family-sentinel-db:/var/lib/postgresql/data
     healthcheck:
@@ -312,7 +353,7 @@ services:
       sentinel-signing-key:
         condition: service_completed_successfully
     ports:
-      - "${ONTRAK_SENTINEL_HTTP_PORT:-8787}:8787"
+      - "${ONTRAK_SENTINEL_BIND_HOST:-0.0.0.0}:${ONTRAK_SENTINEL_HTTP_PORT:-8787}:8787"
       # Guard's syslog listener (S3): the one port here that is not HTTP, and the
       # only one that is deliberately unauthenticated — syslog has no
       # authentication to offer, so the bind address is the access control. It is
@@ -320,12 +361,12 @@ services:
       # listener itself is off unless SENTINEL_GUARD_SYSLOG_PORT is set, and a
       # published UDP port with nothing behind it discards quietly, so a
       # deployment that is not listening should not map it (see docs).
-      - "${SENTINEL_GUARD_SYSLOG_PORT:-5514}:${SENTINEL_GUARD_SYSLOG_PORT:-5514}/udp"
-      - "${SENTINEL_GUARD_SYSLOG_PORT:-5514}:${SENTINEL_GUARD_SYSLOG_PORT:-5514}/tcp"
+      - "${SENTINEL_GUARD_BIND_HOST:-0.0.0.0}:${SENTINEL_GUARD_SYSLOG_PORT:-5514}:${SENTINEL_GUARD_SYSLOG_PORT:-5514}/udp"
+      - "${SENTINEL_GUARD_BIND_HOST:-0.0.0.0}:${SENTINEL_GUARD_SYSLOG_PORT:-5514}:${SENTINEL_GUARD_SYSLOG_PORT:-5514}/tcp"
       # Guard's flow listener (S3): NetFlow/IPFIX on one UDP collector socket. Same
       # shape and same caveat as syslog above — off unless SENTINEL_GUARD_NETFLOW_PORT
       # is set, so a deployment that is not collecting flows should not map it.
-      - "${SENTINEL_GUARD_NETFLOW_PORT:-2055}:${SENTINEL_GUARD_NETFLOW_PORT:-2055}/udp"
+      - "${SENTINEL_GUARD_BIND_HOST:-0.0.0.0}:${SENTINEL_GUARD_NETFLOW_PORT:-2055}:${SENTINEL_GUARD_NETFLOW_PORT:-2055}/udp"
     env_file:
       - path: ontrak-sentinel/.env
         required: false
@@ -426,7 +467,7 @@ services:
       - ${ONTRAK_SSH_KEY:-/root/.ssh/id_ed25519}:/root/.ssh/id_ed25519:ro
       - ${ONTRAK_SSH_KNOWN_HOSTS:-/root/.ssh/known_hosts}:/root/.ssh/known_hosts
     ports:
-      - "${ONTRAK_SYNC_API_PORT:-8420}:8420"
+      - "${ONTRAK_SYNC_BIND_HOST:-0.0.0.0}:${ONTRAK_SYNC_API_PORT:-8420}:8420"
     healthcheck:
       # Unauthenticated on purpose: /api/health is the one route that answers
       # without a credential, so a healthcheck never needs the secret in a file.
@@ -453,7 +494,7 @@ services:
     environment:
       ONTRAK_API_INTERNAL: http://sync-api:8420
     ports:
-      - "${ONTRAK_SYNC_WEB_PORT:-8421}:8421"
+      - "${ONTRAK_SYNC_BIND_HOST:-0.0.0.0}:${ONTRAK_SYNC_WEB_PORT:-8421}:8421"
     healthcheck:
       test: ["CMD", "node", "-e",
              "fetch('http://127.0.0.1:8421/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -571,12 +612,12 @@ services:
       # cerulean.token.
       - ./data/vault/token/ontrak.token:/vault/token/ontrak.token:ro
     ports:
-      - "${ONTRAK_GENIE_PORT:-3400}:3400"
+      - "${ONTRAK_GENIE_BIND_HOST:-0.0.0.0}:${ONTRAK_GENIE_PORT:-3400}:3400"
       # The preview. One published port, because the app is one app: a second
       # project previewed at the same time lands on a free port of its own, is
       # still visible in the pane, and is honestly reported as *not* on the
       # network rather than given an address nothing forwards.
-      - "${ONTRAK_GENIE_PREVIEW_PORT:-5173}:${ONTRAK_GENIE_PREVIEW_PORT:-5173}"
+      - "${ONTRAK_GENIE_BIND_HOST:-0.0.0.0}:${ONTRAK_GENIE_PREVIEW_PORT:-5173}:${ONTRAK_GENIE_PREVIEW_PORT:-5173}"
     healthcheck:
       test:
         - CMD
@@ -641,7 +682,7 @@ services:
       ONTRAK_LAB_URL: ${ONTRAK_LAB_URL:-}
       ONTRAK_LAB_INTERNAL_URL: ${ONTRAK_LAB_INTERNAL_URL:-}
     ports:
-      - "${ONTRAK_PORTAL_PORT:-3300}:3300"
+      - "${ONTRAK_PORTAL_BIND_HOST:-0.0.0.0}:${ONTRAK_PORTAL_PORT:-3300}:3300"
     healthcheck:
       test:
         - CMD

@@ -579,9 +579,17 @@ The operator's side of it — the exact paste format, how a value is classified,
 action needs to be permitted, and how to drive it from a script — is in
 [docs/threat-intelligence.md](./docs/threat-intelligence.md).
 
+Expiry is enforced where the list is read — the matcher refuses an expired indicator
+whether or not its row is still stored — and a scheduled sweep
+(`threat-intel-scheduler.ts`, hourly by default,
+`SENTINEL_INTEL_SWEEP_INTERVAL_MINUTES=0` to turn it off) prunes what has passed in every
+organization, writing one `guard.intel.withdrawn` audit row per indicator marked
+`automatic`. The sweep is housekeeping, not the safety property: an expired indicator is
+refused at match time, so a deployment that has switched the sweep off is still correct,
+just carrying rows it will never match.
+
 Not here yet, and named rather than implied: no STIX/TAXII transport and no automatic
-refresh — a feed is pasted by a person today — and no scheduled expiry sweep (the
-matcher enforces expiry itself).
+refresh — a feed is pasted by a person today.
 
 ## Working the queue
 

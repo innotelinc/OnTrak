@@ -18,6 +18,14 @@
  * render. `enabled` without a URL is reported as an issue rather than silently
  * drawing a dead link, which is the same stance the integrations panel takes.
  *
+ * **And there is now a third fact: the lab can be here.** The port (stage 3) moved the
+ * lab's control plane into this app, so a deployment can serve the whole thing itself
+ * and has no peer address to give. `ONTRAK_LAB_IN_APP` says so, and `labDoor` is the one
+ * place all three facts are combined into the single answer a page needs — off, a link
+ * to the peer, this app's own routes, or a refusal that names the variable to fix. The
+ * two older facts keep their meaning exactly: a stated address is still the door, so a
+ * deployment migrating off OnTrak-dev links to it until it says otherwise.
+ *
  * **The link carries no identity, on purpose.** The lab authenticates a student
  * through the family's own sign-in (see §6/C5 of the audit) — the deep link only
  * puts them in front of it. A query parameter carrying a subject or an address
@@ -41,6 +49,19 @@ export const LAB_URL_ENV = "ONTRAK_LAB_URL";
 export const LAB_SCENARIO_TAG = "lab";
 /** Where a student lands in the lab: its dashboard, which lists and starts sessions. */
 export const LAB_DASHBOARD_PATH = "/dashboard";
+/**
+ * The switch that makes **this app** the lab, rather than a link to somebody else's.
+ *
+ * A separate variable from `ONTRAK_LAB_ENABLED`, on purpose, because it answers a
+ * different question. That one says the deployment wants a lab and where it is; this
+ * one says the lab is *here* — the ported control plane, serving its own routes. They
+ * are not two spellings of one fact: a deployment still running OnTrak-dev on its own
+ * host keeps `ONTRAK_LAB_URL` and never sets this, and a deployment that has ported the
+ * lab sets this and has no peer address to give.
+ */
+export const LAB_IN_APP_ENV = "ONTRAK_LAB_IN_APP";
+/** Where this app serves the lab. The portal's own dashboard path, under it. */
+export const LAB_IN_APP_PATH = "/lab";
 
 export interface LabConfig {
   /** Whether a lab affordance may be drawn at all. */
@@ -115,6 +136,66 @@ export function labSessionUrl(config: LabConfig): string | null {
 export function isLabScenario(tags: readonly string[] | null | undefined): boolean {
   if (!tags) return false;
   return tags.some((tag) => tag.trim().toLowerCase() === LAB_SCENARIO_TAG);
+}
+
+/**
+ * Which door a student is offered, and what is behind it.
+ *
+ * The lab can be somewhere else (a peer OnTrak-dev deployment, linked to) or be *this*
+ * app (the ported control plane, served at `/lab`), and the two are one question to the
+ * page that draws the door. Four answers, and the fourth is the one worth having: a
+ * stated address that was refused is reported with its reason rather than quietly
+ * replaced by something else, which is this file's stance everywhere — a value that was
+ * set and refused is an operator's to fix, not a deployment's to ignore.
+ */
+export type LabDoor =
+  | { kind: "off" }
+  | { kind: "external"; url: string }
+  | { kind: "in-app"; href: string }
+  | { kind: "misconfigured"; issues: string[] };
+
+/**
+ * The door, from the two facts (wanted, located) plus the third (here).
+ *
+ * The order is the decision, and each step has a reason:
+ *
+ *   - **A refusal first.** `ONTRAK_LAB_URL` that was set and refused keeps its reason
+ *     even when the in-app lab is on: the variable is stale, and a deployment that
+ *     silently ignored it would leave an operator believing their lab is where they
+ *     typed it.
+ *   - **Then the in-app lab**, ahead of a stated address, because it is the more specific
+ *     answer: a deployment that has said "the lab is here" means here. The path matters
+ *     too — the address would be handed a `/dashboard`, which is the *peer* lab's landing
+ *     page and not a page this app has — so a migrating deployment adds one variable and
+ *     is done, rather than having to remember to delete another.
+ *   - **Then a stated address.** With no in-app lab, an operator who named a host means
+ *     that host; that is the pre-port behaviour, unchanged.
+ *   - **Then enabled with nowhere to go**, which is the old message: a lab was asked for
+ *     and neither an address nor this switch was given.
+ *
+ * Pure, and the only reader: `ONTRAK_LAB_ENABLED`, `ONTRAK_LAB_URL` and
+ * `ONTRAK_LAB_IN_APP` are all read in this file, which is what the guard in
+ * `tests/lab-rules.test.ts` protects.
+ */
+export function labDoor(config: LabConfig, env: Record<string, string | undefined> = process.env): LabDoor {
+  // Whether an address was *stated and refused*, which is a different thing from
+  // "none was given" — `labConfigFromEnv` reports both as one issue list, so the two
+  // are told apart where they are still distinct: the variable itself.
+  const stated = read(env, LAB_URL_ENV) !== "";
+  const refused = config.enabled && config.url === null && stated;
+
+  if (refused) return { kind: "misconfigured", issues: config.issues };
+  if (TRUTHY.includes(read(env, LAB_IN_APP_ENV).toLowerCase())) {
+    return { kind: "in-app", href: LAB_IN_APP_PATH };
+  }
+  if (config.url) return { kind: "external", url: `${config.url}${LAB_DASHBOARD_PATH}` };
+  if (config.enabled) return { kind: "misconfigured", issues: config.issues };
+  return { kind: "off" };
+}
+
+/** The door, read straight from the environment. One call, so no caller can half-read it. */
+export function labDoorFromEnv(env: Record<string, string | undefined> = process.env): LabDoor {
+  return labDoor(labConfigFromEnv(env), env);
 }
 
 /**

@@ -24,10 +24,13 @@ import { test } from "node:test";
 
 import {
   LAB_DASHBOARD_PATH,
+  LAB_IN_APP_PATH,
   LAB_SCENARIO_TAG,
   isLabScenario,
   simulatedStartRefusal,
   labConfigFromEnv,
+  labDoor,
+  labDoorFromEnv,
   labSessionUrl,
 } from "../src/lib/lab-rules";
 
@@ -115,7 +118,7 @@ const LAB_READERS = ["src/lib/lab-rules.ts", "ontrak-portal/src/lib/config.ts"];
 const EXEMPT = "lab-rule-exempt:";
 
 /** The two facts. Naming either outside a reader is how a second reader begins. */
-const SIGNS = [/ONTRAK_LAB_ENABLED/, /ONTRAK_LAB_URL/];
+const SIGNS = [/ONTRAK_LAB_ENABLED/, /ONTRAK_LAB_URL/, /ONTRAK_LAB_IN_APP/];
 
 /** Directories that are not application source, or are another tree's business. */
 const NOT_SOURCE = new Set([
@@ -191,6 +194,87 @@ test("lab: every exemption says why it is not a second reader", () => {
     .filter((line) => line.slice(line.indexOf(EXEMPT) + EXEMPT.length).trim().length < 10);
 
   assert.deepEqual(excuses, [], `an exemption has to say why: ${excuses.join(", ")}`);
+});
+
+/*
+ * ── which door, from three facts ───────────────────────────────────────────
+ *
+ * The lab's address used to be all there was: a peer deployment on its own host, linked
+ * to. The port put the control plane *here*, so "a lab" and "somebody else's lab" came
+ * apart and the page that draws the door needs one answer rather than three variables.
+ * `labDoor` is that answer, and these are its cases — including the one that matters
+ * most: a stated address that was refused is still a refusal, even when this app could
+ * serve a lab of its own, because an operator who set a variable and was told nothing
+ * about it will believe it took effect.
+ */
+
+test("lab: the door is off until a deployment asks for a lab at all", () => {
+  assert.deepEqual(labDoorFromEnv({}), { kind: "off" });
+  // An address without the switch asks for nothing: it is where a lab *would* be.
+  assert.deepEqual(labDoorFromEnv({ ONTRAK_LAB_URL: "https://lab.example.test" }), { kind: "off" });
+  // The two switches answer two questions, so a contradictory pair resolves toward the
+  // one that names *this* app rather than the one that names somebody else's host.
+  assert.deepEqual(
+    labDoorFromEnv({ ONTRAK_LAB_ENABLED: "false", ONTRAK_LAB_IN_APP: "1" }),
+    { kind: "in-app", href: LAB_IN_APP_PATH },
+  );
+});
+
+test("lab: a named peer is the door, address for address", () => {
+  const door = labDoorFromEnv({ ONTRAK_LAB_ENABLED: "1", ONTRAK_LAB_URL: "https://lab.example.test/" });
+  assert.deepEqual(door, { kind: "external", url: `https://lab.example.test${LAB_DASHBOARD_PATH}` });
+});
+
+test("lab: with no address, the in-app switch serves this app's own lab", () => {
+  const door = labDoorFromEnv({ ONTRAK_LAB_ENABLED: "on", ONTRAK_LAB_IN_APP: "true" });
+  assert.deepEqual(door, { kind: "in-app", href: LAB_IN_APP_PATH });
+  assert.equal(LAB_IN_APP_PATH, "/lab");
+  // Enabled and in-app, so no issue is left over from the missing address.
+  assert.deepEqual(labDoorFromEnv({ ONTRAK_LAB_IN_APP: "yes" }), { kind: "in-app", href: "/lab" });
+});
+
+test("lab: enabled with no address and no in-app lab is still an issue, never a dead link", () => {
+  const door = labDoorFromEnv({ ONTRAK_LAB_ENABLED: "1" });
+  assert.equal(door.kind, "misconfigured");
+  assert.ok(door.kind === "misconfigured" && door.issues.length > 0, "the operator is told why");
+});
+
+test("lab: an address that was refused keeps its reason, even with an in-app lab", () => {
+  // The stale variable is the point: silently serving the in-app lab would leave an
+  // operator believing their deployment points at `ftp://lab.test`.
+  const door = labDoorFromEnv({
+    ONTRAK_LAB_ENABLED: "1",
+    ONTRAK_LAB_URL: "ftp://lab.test",
+    ONTRAK_LAB_IN_APP: "1",
+  });
+  assert.equal(door.kind, "misconfigured");
+  assert.ok(door.kind === "misconfigured" && door.issues.some((issue) => /not an http\(s\) URL/.test(issue)));
+});
+
+test("lab: an in-app lab wins over a stated address, so a migration is one variable", () => {
+  // The address would be handed a `/dashboard` — the *peer* lab's landing page, which this
+  // app does not have — so a deployment that says "the lab is here" is believed, and it
+  // does not have to remember to unset the variable it used last year.
+  const door = labDoorFromEnv({
+    ONTRAK_LAB_ENABLED: "1",
+    ONTRAK_LAB_URL: "https://lab.old.example.test",
+    ONTRAK_LAB_IN_APP: "1",
+  });
+  assert.deepEqual(door, { kind: "in-app", href: LAB_IN_APP_PATH });
+
+  // Without the in-app switch, the same two variables are the peer's door, exactly as
+  // they were before the port.
+  assert.deepEqual(
+    labDoorFromEnv({ ONTRAK_LAB_ENABLED: "1", ONTRAK_LAB_URL: "https://lab.old.example.test" }),
+    { kind: "external", url: `https://lab.old.example.test${LAB_DASHBOARD_PATH}` },
+  );
+});
+
+test("lab: the door is read from one place, so no page half-reads the three facts", () => {
+  // `labDoor` and `labDoorFromEnv` are the same rule; asserting it means a caller that
+  // reads the variables itself is a caller the guard below can also see.
+  const env = { ONTRAK_LAB_ENABLED: "1", ONTRAK_LAB_URL: "https://lab.test" };
+  assert.deepEqual(labDoor(labConfigFromEnv(env), env), labDoorFromEnv(env));
 });
 
 test("lab: a simulated scenario is untouched, and a lab one has exactly one door", () => {
