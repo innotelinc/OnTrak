@@ -19,9 +19,26 @@ import type { SignFn } from "./assurance-rules";
 
 export const ASSURANCE_SECRET_ENV = "ONTRAK_TIX_ASSURANCE_SECRET";
 
-/** The key packets are signed with. Throws when it is missing or too short. */
+/**
+ * The key packets are signed with. Throws when it is missing or too short.
+ *
+ * **Blank is absent, not a value.** `.env.example` ships
+ * `ONTRAK_TIX_ASSURANCE_SECRET=""` and says in as many words that it "falls back to
+ * `TIX_AUTH_SECRET`", and a compose file that passes the variable through unset gives a
+ * container the same empty string — so reading it with `??` made the documented
+ * fresh-checkout path the one configuration that could not export a packet at all: the
+ * empty value shadowed the fallback and every export was a 500 naming a variable the
+ * operator had deliberately left blank. The verifier already reads it this way
+ * (`candidateSecrets` drops empty strings); this is the signer agreeing with it.
+ *
+ * A value that is *set* and short still throws — that is a decision to be told about,
+ * not one to route around.
+ */
 export function assuranceSecret(env: Record<string, string | undefined> = process.env): string {
-  const value = env[ASSURANCE_SECRET_ENV] ?? env.TIX_AUTH_SECRET ?? env.AUTH_SECRET ?? "";
+  const value =
+    [env[ASSURANCE_SECRET_ENV], env.TIX_AUTH_SECRET, env.AUTH_SECRET].find(
+      (candidate) => typeof candidate === "string" && candidate.trim() !== "",
+    ) ?? "";
   if (value.length < 16) {
     throw new Error(
       `${ASSURANCE_SECRET_ENV} (or TIX_AUTH_SECRET) is missing or too short. Set a long random value before exporting assurance packets.`,

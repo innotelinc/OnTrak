@@ -278,6 +278,25 @@ test("the signing key comes from the environment and refuses a weak one", () => 
   assert.throws(() => assuranceSecret({ ONTRAK_TIX_ASSURANCE_SECRET: "short" }), /missing or too short/);
   assert.throws(() => assuranceSecret({}), /missing or too short/);
 
+  // Blank is absent, as `.env.example` documents: it ships the variable empty and
+  // promises the session secret signs instead. The browser sweep found the difference
+  // the hard way — a deployment configured exactly as the example says answered 500 on
+  // every packet export, while the error named a variable that deployment had left blank.
+  assert.equal(
+    assuranceSecret({ ONTRAK_TIX_ASSURANCE_SECRET: "", TIX_AUTH_SECRET: "y".repeat(24) }),
+    "y".repeat(24),
+  );
+  assert.equal(
+    assuranceSecret({ ONTRAK_TIX_ASSURANCE_SECRET: "   ", AUTH_SECRET: "z".repeat(24) }),
+    "z".repeat(24),
+  );
+  assert.throws(() => assuranceSecret({ ONTRAK_TIX_ASSURANCE_SECRET: "" }), /missing or too short/);
+  // Set but weak is still refused, rather than quietly falling through to another key.
+  assert.throws(
+    () => assuranceSecret({ ONTRAK_TIX_ASSURANCE_SECRET: "short", TIX_AUTH_SECRET: "y".repeat(24) }),
+    /missing or too short/,
+  );
+
   // The signer is deterministic: the same digest always signs the same way.
   const signer = hmacSigner("a-long-enough-test-key");
   assert.equal(signer("abc"), signer("abc"));
