@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 
-import { requireSession } from "@/lib/auth";
+import { isStaff, requireSession } from "@/lib/auth";
 import { startLabSession } from "@/app/actions/lab";
 import { isLive, scoreReportSummaryLine, type LabSession } from "@/lib/lab/models";
 import { catalogueByCategory, workloadGroups } from "@/lib/lab/portal";
@@ -46,9 +46,19 @@ export default async function LabHome({
         title="Real machines, real faults"
         description="Stand up a machine, break nothing on your own laptop, and hand in the write-up."
         actions={
-          <Link href="/student" className="text-sm font-semibold text-brand hover:underline">
-            Simulated scenarios →
-          </Link>
+          <>
+            <Link href="/lab/lessons" className="text-sm font-semibold text-brand hover:underline">
+              Lessons
+            </Link>
+            {isStaff(user) ? (
+              <Link href="/lab/admin" className="text-sm font-semibold text-brand hover:underline">
+                Admin
+              </Link>
+            ) : null}
+            <Link href="/student" className="text-sm font-semibold text-brand hover:underline">
+              Simulated scenarios →
+            </Link>
+          </>
         }
       />
       <Flash flash={flash} error={error} />

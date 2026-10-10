@@ -62,6 +62,14 @@ export interface SessionQuery {
   limit?: number;
 }
 
+/** How a caller asks for audit events: one kind, at most `limit` of them. */
+export interface EventQuery {
+  /** Only events of this kind. Omit (or `null`) for the whole trail. */
+  kind?: string | null;
+  /** How many of the newest to return. */
+  limit?: number;
+}
+
 /**
  * The lab's persistence, as its callers use it.
  *
@@ -96,6 +104,17 @@ export interface LabStore {
   logEvent(kind: string, detail?: string, sessionId?: number | null): Promise<void>;
   eventsFor(sessionId: number, limit?: number): Promise<LabEvent[]>;
   recentEvents(limit?: number): Promise<LabEvent[]>;
+  /**
+   * The audit trail, newest first, narrowed by kind.
+   *
+   * This is the admin panel's reader — the Python's `list_events(kind, limit)` — and the
+   * narrowing happens *here* rather than in the page. Filtering the newest N in a read
+   * model would show a kind's events from an arbitrary window, which is a different claim
+   * from "that kind's newest N" on any deployment whose log has more than N entries.
+   */
+  listEvents(query?: EventQuery): Promise<LabEvent[]>;
+  /** Every distinct kind in the log, sorted — the audit page's filter list. */
+  eventKinds(): Promise<string[]>;
   countEvents(): Promise<number>;
 
   /**
@@ -303,6 +322,23 @@ export class InMemoryLabStore implements LabStore {
 
   async countEvents(): Promise<number> {
     return this.events.length;
+  }
+
+  // `limit <= 0` is answered before the slice for the same reason `eventsFor` is:
+  // `slice(-0)` is `slice(0)`, so a caller asking for zero events would get every one.
+  async listEvents(query: EventQuery = {}): Promise<LabEvent[]> {
+    const limit = query.limit ?? 300;
+    if (limit <= 0) return [];
+    const kind = query.kind ?? null;
+    return this.events
+      .filter((event) => kind === null || event.kind === kind)
+      .slice(-limit)
+      .reverse()
+      .map((event) => ({ ...event }));
+  }
+
+  async eventKinds(): Promise<string[]> {
+    return [...new Set(this.events.map((event) => event.kind))].sort();
   }
 
   async getMeta(key: string, fallback: unknown = null): Promise<unknown> {

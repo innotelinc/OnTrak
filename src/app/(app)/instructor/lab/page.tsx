@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 
 import { requireSession } from "@/lib/auth";
+import { guardedRead } from "@/lib/lab/admin";
 import { isLive, scoreReportSummaryLine, type LabSession } from "@/lib/lab/models";
 import { consoleUrl, leaderboardRows } from "@/lib/lab/portal";
 import { classResults } from "@/lib/lab/reporting";
@@ -80,9 +81,13 @@ async function Fleet({
 
   // The two readings that shell out, and the console-key probe. Neither may stop the page.
   const problems: string[] = [];
-  const pool = await read("warm pool", () => runtime.manager.poolStatus(), problems);
-  const templates = await read("templates", () => runtime.manager.templateStatus(), problems);
-  const unavailable = await read("range availability", () => runtime.manager.unavailableScenarios(), problems);
+  const pool = await guardedRead("warm pool", () => runtime.manager.poolStatus(), problems);
+  const templates = await guardedRead("templates", () => runtime.manager.templateStatus(), problems);
+  const unavailable = await guardedRead(
+    "range availability",
+    () => runtime.manager.unavailableScenarios(),
+    problems,
+  );
   const events = await runtime.store.recentEvents(40);
 
   const live = sessions.filter((session) => isLive(session.state));
@@ -261,21 +266,12 @@ async function Fleet({
   );
 }
 
-/**
- * Read something that may be unavailable, and report it rather than fail the page.
- *
- * `poolStatus` and `templateStatus` shell out to `incus`; a host that has not been prepared
- * yet is a normal place for an instructor to open this page. The Python learned that the
- * hard way — the unguarded template read answered 500 and said nothing.
+/*
+ * The guarded host reads this page needed first — `poolStatus`, `templateStatus` and
+ * `unavailableScenarios` all shell out, and a host that has not been prepared yet is a normal
+ * place for an instructor to open it — now live in `@/lib/lab/admin` as `guardedRead`, so the
+ * admin panel and this page cannot drift into two versions of "a report must not raise".
  */
-async function read<T>(label: string, call: () => Promise<T>, problems: string[]): Promise<T | []> {
-  try {
-    return await call();
-  } catch (error) {
-    problems.push(`could not read the ${label}: ${error instanceof Error ? error.message : String(error)}`);
-    return [];
-  }
-}
 
 /** Whether a machine has a console at all: an address *and* a gateway key. */
 function hasConsole(
