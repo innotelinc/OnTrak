@@ -233,9 +233,16 @@ def test_server_info_reports_the_version(client):
     assert client.server_info()["environment"]["server_version"] == "7.4"
 
 
-def test_storage_info_reports_the_pool_driver(client):
-    """The driver decides whether clones are cheap, so an empty answer is a lie."""
-    assert client.storage_info("default")["driver"] == "zfs"
+def test_storage_info_reports_the_pool_driver(client, settings):
+    """The driver decides whether clones are cheap, so an empty answer is a lie.
+
+    Asked of the pool this deployment is configured to use, not of one named
+    `default`: the `client` fixture answers for the configured pool on purpose, so a
+    hardcoded name makes this pass only on a host that happens to use it — which is
+    how it read the day a range was pointed at a btrfs pool, and the answer it got
+    was an empty dict rather than a driver.
+    """
+    assert client.storage_info(settings.incus.storage_pool)["driver"] == "zfs"
 
 
 def test_storage_info_defaults_to_the_configured_pool(client, settings):
@@ -330,6 +337,32 @@ def test_the_source_of_a_copy_is_never_an_image_alias(client, argv_log):
     """A reminder in a test rather than a comment: `copy` here is always a template."""
     client.copy_instance("tpl-x/clean", "ontrak-copy")
     assert "copy tpl-x/clean" in argv_log.read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- #
+# creating a template: the pool it is born on
+# --------------------------------------------------------------------------- #
+def test_a_template_is_created_on_the_pool_it_was_asked_for(client, argv_log):
+    """A VM template has to be born on a pool that can snapshot it.
+
+    On the `dir` driver Incus snapshots a VM by copying the guest's disk with
+    `dd --direct`, and a filesystem that refuses `O_DIRECT` reads refuses that
+    outright — so the template is imported, unsnapshotted, and no student can start
+    it. The pool is therefore a fact the caller states, not one the daemon picks.
+    """
+    client.create_instance(
+        "tpl-sw-app-crash", "ontrak-win-base", ["default"], pool="ontrak-btrfs"
+    )
+    asked = argv_log.read_text(encoding="utf-8")
+    assert "init ontrak-win-base tpl-sw-app-crash -s ontrak-btrfs" in asked, asked
+
+
+def test_creating_an_instance_without_a_pool_leaves_it_to_the_daemon(client, argv_log):
+    """The behaviour every caller without an opinion still gets."""
+    client.create_instance("ontrak-probe", "images:ubuntu/24.04")
+    asked = argv_log.read_text(encoding="utf-8")
+    assert "init images:ubuntu/24.04 ontrak-probe" in asked, asked
+    assert "-s" not in asked, asked
 
 
 # --------------------------------------------------------------------------- #

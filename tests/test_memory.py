@@ -61,7 +61,7 @@ def test_calls_are_recorded_for_assertions():
     client.create_instance("a", IMAGE, ["default", "ontrak-student"])
     client.add_device("a", "disk", "root", bus="ide", size="8GiB")
     client.set_config("a", "limits.memory", "512MiB")
-    assert ("create_instance", "a", IMAGE, ("default", "ontrak-student")) in client.calls
+    assert ("create_instance", "a", IMAGE, ("default", "ontrak-student"), None) in client.calls
     assert ("a", "disk", "root", {"bus": "ide", "size": "8GiB"}) in client.devices
     assert ("a", "limits.memory", "512MiB") in client.configs
 

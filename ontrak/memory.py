@@ -101,8 +101,14 @@ class InMemoryIncus:
         names.add(self.image_alias)
         return sorted(names)
 
-    def create_instance(self, name: str, image: str, profiles: Sequence[str] | None = None) -> None:
-        self.calls.append(("create_instance", name, image, tuple(profiles or ())))
+    def create_instance(
+        self,
+        name: str,
+        image: str,
+        profiles: Sequence[str] | None = None,
+        pool: str | None = None,
+    ) -> None:
+        self.calls.append(("create_instance", name, image, tuple(profiles or ()), pool))
         if not self.image_exists(image):
             raise IncusNotFound(["init", image, name], 1, f"image {image} not found")
         self.instances[name] = {"status": "STOPPED", "ip": self._next_ip()}

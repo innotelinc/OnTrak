@@ -28,6 +28,9 @@
 #                               (default: ghcr.io/innotelinc/ontrak-template)
 #   ONTRAK_TEMPLATE_TAG_PREFIX  tag prefix used at publish time (default: empty)
 #   ONTRAK_INCUS_PROJECT        Incus project to restore into (default: ontrak)
+#   ONTRAK_TEMPLATE_POOL        pool to restore into. Default: the pool this range is
+#                               configured to use, because the restore has to reach a
+#                               snapshot — see "which pool" below.
 #   ONTRAK_TEMPLATE_SNAPSHOT    snapshot to take after the restore (default: clean)
 #   ONTRAK_TEMPLATE_WORKDIR     where the backups are pulled to. Default: a directory
 #                               on the project's own storage pool.
@@ -102,6 +105,42 @@ if [[ -z "$WORKDIR" ]]; then
 fi
 mkdir -p "$WORKDIR"
 
+# --------------------------------------------------------------- which pool ----
+# A template has to be restored onto a pool that can snapshot it. On the ``dir``
+# driver Incus takes a **virtual machine's** snapshot by copying the guest's disk with
+# ``dd --direct``, and a filesystem that refuses ``O_DIRECT`` reads refuses that
+# outright: the import succeeds, the snapshot dies, and what is left behind is an
+# unsnapshotted instance named like a template — a Windows scenario no student can
+# start, with nothing in its name that says so. So the restore names the pool, and
+# because a clone stays on its source's pool it is also what puts every student's own
+# machine somewhere its snapshots are native. Read with the same precedence as
+# ``ontrak/config.py``: the environment, then ``config/local.yaml``, then the shipped
+# ``config/ontrak.yaml``.
+configured_pool() {
+  local value file
+  if [[ -n "${ONTRAK_INCUS__STORAGE_POOL:-}" ]]; then
+    printf '%s' "$ONTRAK_INCUS__STORAGE_POOL"
+    return
+  fi
+  for file in "$PROJECT_ROOT/config/local.yaml" "$PROJECT_ROOT/config/ontrak.yaml"; do
+    [[ -f "$file" ]] || continue
+    value="$(sed -n 's/^[[:space:]]*storage_pool:[[:space:]]*//p' "$file" | head -1 \
+      | sed 's/#.*//' | tr -d '\042\047[:space:]')"
+    if [[ -n "$value" ]]; then
+      printf '%s' "$value"
+      return
+    fi
+  done
+}
+
+POOL="${ONTRAK_TEMPLATE_POOL:-$(configured_pool)}"
+POOL_DRIVER=""
+if [[ -n "$POOL" ]]; then
+  POOL_DRIVER="$(incus storage list --format csv 2>/dev/null | awk -F, -v p="$POOL" '$1==p {print $2}')"
+else
+  warn "no pool is configured for this range: restoring into whatever pool each backup was taken from"
+fi
+
 log_in
 
 # ------------------------------------------------------------------- restore ----
@@ -129,7 +168,9 @@ for name in "${NAMES[@]}"; do
     || die "oras pull of $REPOSITORY:$tag failed"
 
   log "$name: importing (this is the whole disk: expect minutes, not seconds)"
-  incus --project "$PROJECT" import "$tarball" "$name"
+  import_args=("import" "$tarball" "$name")
+  [[ -n "$POOL" ]] && import_args+=(-s "$POOL")
+  incus --project "$PROJECT" "${import_args[@]}"
 
   # The accelerator is a host fact. Re-asked here, on the instance, because a guest
   # built where KVM works carries no override and its clones would ask for KVM on a
@@ -138,6 +179,13 @@ for name in "${NAMES[@]}"; do
   kind="$(incus --project "$PROJECT" list "$name" --format=csv -c t 2>/dev/null | head -1)"
   if [[ "$kind" == "virtual-machine" ]]; then
     "$PROJECT_ROOT/infra/qemu-accel.sh" --apply "$name" "$PROJECT" >/dev/null
+  fi
+
+  # Named before it happens rather than left as a `dd` error two minutes from now.
+  if [[ "$kind" == "virtual-machine" && "$POOL_DRIVER" == "dir" ]]; then
+    warn "$name is a VM on pool '$POOL', which uses dir: the '$SNAPSHOT' snapshot is a"
+    warn "  full copy of the guest's disk made with dd --direct, and a filesystem that"
+    warn "  refuses O_DIRECT reads refuses that. Restore onto a ZFS or btrfs pool."
   fi
 
   incus --project "$PROJECT" snapshot create "$name" "$SNAPSHOT" >/dev/null
@@ -151,6 +199,6 @@ cat <<EOF
 $(log "restored $restored template(s), skipped $skipped")
 
 Next
-  * Confirm the range can serve them:  .venv/bin/ontrak template status
-  * See it the way an instructor does: .venv/bin/ontrak doctor
+  * Confirm the range can serve them:  .venv/bin/ontrak doctor
+  * See what it has to work with:     make check
 EOF

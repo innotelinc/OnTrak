@@ -532,7 +532,15 @@ class SessionManager:
             incus.delete_instance(name, force=True)
 
         profiles = [p for p in ("default", self.settings.incus.profile) if p]
-        incus.create_instance(name, base_image, profiles)
+        # The pool is stated rather than left to the daemon's default, because it
+        # decides whether this template can be snapshotted at all: on the `dir` driver
+        # Incus takes a VM's snapshot by copying the guest's disk with `dd --direct`,
+        # which fails outright on a filesystem that refuses `O_DIRECT` reads — the
+        # failure that left a VM template imported and unsnapshotted on a host whose
+        # default pool was `dir`. A clone stays on its source's pool, so naming the
+        # pool the range is configured to use here is also what puts every student's
+        # machine on a pool whose snapshots are native.
+        incus.create_instance(name, base_image, profiles, pool=self.settings.incus.storage_pool)
         # The workload decides the hardware profile (legacy guests cannot use VirtIO
         # and need different disks/NICs), then the scenario layers on any extra
         # hardware it needs: hardware cannot be added from inside the guest, so it

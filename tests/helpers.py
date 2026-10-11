@@ -95,8 +95,8 @@ class FakeIncus:
     def image_aliases(self) -> list[str]:
         return sorted(self.images | {self.image_alias})
 
-    def create_instance(self, name: str, image: str, profiles=None) -> None:
-        self.calls.append(("create_instance", name, image, tuple(profiles or ())))
+    def create_instance(self, name: str, image: str, profiles=None, pool=None) -> None:
+        self.calls.append(("create_instance", name, image, tuple(profiles or ()), pool))
         if not self.image_exists(image):
             raise IncusNotFound(["init", image, name], 1, f"image {image} not found")
         self.instances[name] = {"status": "STOPPED", "ip": self._next_ip()}

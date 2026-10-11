@@ -262,8 +262,28 @@ class IncusClient:
     # ------------------------------------------------------------------
     # mutation
     # ------------------------------------------------------------------
-    def create_instance(self, name: str, image: str, profiles: Sequence[str] | None = None) -> None:
+    def create_instance(
+        self,
+        name: str,
+        image: str,
+        profiles: Sequence[str] | None = None,
+        pool: str | None = None,
+    ) -> None:
+        """Create an instance from an image, on ``pool`` when one is named.
+
+        The pool is not decoration for a **virtual machine**: a template exists to be
+        snapshotted, and on the ``dir`` driver Incus takes a VM's snapshot by copying
+        the guest's disk with ``dd --direct`` — which a filesystem that refuses
+        ``O_DIRECT`` reads refuses outright. Naming the pool is what puts a Windows
+        template somewhere its ``clean`` snapshot can be taken at all.
+
+        Left unset, the daemon chooses, which is what every caller without an opinion
+        wants. A clone stays on its source's pool, so the pool a template is created
+        on is also the pool each student's machine is cloned onto.
+        """
         args = ["init", image, name]
+        if pool:
+            args += ["-s", pool]
         for profile in profiles or []:
             if profile:
                 args += ["-p", profile]

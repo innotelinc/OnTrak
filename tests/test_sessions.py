@@ -117,6 +117,19 @@ def test_template_build_can_be_forced(manager, incus, settings):
     assert incus.has_snapshot(settings.incus.template_name(SCENARIO), POOL_SNAPSHOT)
 
 
+def test_a_template_is_built_on_the_pool_this_range_is_configured_to_use(manager, incus, settings):
+    """The pool is a fact about the range, not the daemon's default.
+
+    A template exists to be snapshotted, and on a `dir` pool Incus takes a VM's
+    snapshot by copying the guest's disk with `dd --direct` — so a build that let the
+    daemon choose could produce a Windows template that can never be snapshotted.
+    """
+    manager.ensure_template(SCENARIO)
+    created = [call for call in incus.calls if call[0] == "create_instance"]
+    assert created, incus.calls
+    assert created[-1][-1] == settings.incus.storage_pool, created[-1]
+
+
 def test_template_build_fails_loudly_when_setup_does_not_confirm(settings, store, repo, incus):
     manager = manager_with(settings, store, repo, incus, responses={})  # no ONTRAK-SETUP-OK
     with pytest.raises(SessionError, match="ONTRAK-SETUP-OK"):
