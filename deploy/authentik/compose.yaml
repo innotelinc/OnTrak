@@ -45,14 +45,19 @@ services:
       retries: 5
       timeout: 5s
     environment:
+      TZ: ${TZ:-America/New_York}
       POSTGRES_PASSWORD: ${PG_PASS:?run deploy/authentik/setup.sh first — it writes .env}
       POSTGRES_USER: ${PG_USER:-authentik}
       POSTGRES_DB: ${PG_DB:-authentik}
     volumes:
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      - /etc/localtime:/etc/localtime:ro
       - database:/var/lib/postgresql/data
     networks: [authentik]
 
   redis:
+    environment:
+      TZ: ${TZ:-America/New_York}
     image: ${AUTHENTIK_REDIS_IMAGE:-docker.io/library/redis:alpine}
     container_name: ontrak-authentik-redis
     restart: unless-stopped
@@ -64,6 +69,8 @@ services:
       retries: 5
       timeout: 3s
     volumes:
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      - /etc/localtime:/etc/localtime:ro
       - redis:/data
     networks: [authentik]
 
@@ -78,6 +85,7 @@ services:
     restart: unless-stopped
     command: server
     environment: &authentik-env
+      TZ: ${TZ:-America/New_York}
       AUTHENTIK_REDIS__HOST: redis
       AUTHENTIK_POSTGRESQL__HOST: postgresql
       AUTHENTIK_POSTGRESQL__USER: ${PG_USER:-authentik}
@@ -120,6 +128,8 @@ services:
       - "127.0.0.1:${AUTHENTIK_HTTP_PORT:-9000}:9000"
       - "${AUTHENTIK_BIND_ADDR:?set AUTHENTIK_BIND_ADDR in deploy/authentik/.env to this host's own address — the wildcard cannot be published beside the loopback mapping above}:${AUTHENTIK_HTTP_PORT:-9000}:9000"
     volumes:
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      - /etc/localtime:/etc/localtime:ro
       # uploads (avatars, icons) and the templates directory the image expects.
       - media:/media
       - templates:/templates
@@ -138,6 +148,8 @@ services:
     user: root
     environment: *authentik-env
     volumes:
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      - /etc/localtime:/etc/localtime:ro
       - media:/media
       - templates:/templates
       # the worker's own CA bundle, so a certificate added here is trusted by the

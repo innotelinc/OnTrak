@@ -74,6 +74,7 @@ services:
     privileged: true
     pid: host
     environment:
+      TZ: ${TZ:-America/New_York}
       # auto  = set up the host when it is not ready yet (the default)
       # force = re-run the host bootstrap even if Incus answers
       # off   = secrets only (a remote cluster, or demo mode)
@@ -107,6 +108,8 @@ services:
       ONTRAK_PROJECT_DIR_HOST: ${PWD:-}
       ONTRAK_SECRETS_FILE: /run/ontrak/secrets.env
     volumes:
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      - /etc/localtime:/etc/localtime:ro
       # The checkout, twice: at /project for this container's own use, and at
       # the path it has on the host so the bootstrap can be run in place.
       #
@@ -154,6 +157,7 @@ services:
     # is reached at / on that one address and never directly. Publishing it too
     # would mean two addresses serving the same app, one of which has no console.
     environment:
+      TZ: ${TZ:-America/New_York}
       # ── identity and secrets ──
       ONTRAK_PORTAL__TITLE: ${ONTRAK_PORTAL__TITLE:-OnTrak}
       ONTRAK_PORTAL__BRAND_NOTE: ${ONTRAK_PORTAL__BRAND_NOTE:-IT support training range — powered by Innotel OnTrak}
@@ -232,6 +236,8 @@ services:
       # ── demo mode (no hypervisor, no Windows, no secrets) ──
       ONTRAK_DEMO__ENABLED: ${ONTRAK_DEMO__ENABLED:-false}
     volumes:
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      - /etc/localtime:/etc/localtime:ro
       # Durable portal state: accounts, sessions, submitted results, tickets,
       # audit log. This is the only thing in the stack that matters after a
       # class — the machines are disposable by design.
@@ -259,11 +265,15 @@ services:
 
   # ── Guacamole: the browser console ────────────────────────────────────────
   guacd:
+    environment:
+      TZ: ${TZ:-America/New_York}
     image: guacamole/guacd:1.6.0
     container_name: ontrak-guacd
     restart: unless-stopped
     init: true
     volumes:
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      - /etc/localtime:/etc/localtime:ro
       - ./deploy/guacamole/recordings:/recordings
     networks: [ontrak]
 
@@ -279,6 +289,7 @@ services:
         condition: service_started
     # Reached through `gateway` at /guacamole/, not on a port of its own.
     environment:
+      TZ: ${TZ:-America/New_York}
       GUACD_HOSTNAME: guacd
       GUACD_PORT: "4822"
       # guacamole-auth-json: the portal hands the browser a signed, encrypted,
@@ -290,6 +301,8 @@ services:
       JSON_SECRET_KEY: ${ONTRAK_GUAC__SECRET_KEY:-}
       LOG_LEVEL: ${ONTRAK_GUAC__LOG_LEVEL:-info}
     volumes:
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      - /etc/localtime:/etc/localtime:ro
       - ontrak-secrets:/run/ontrak:ro
     # The stock entrypoint (`/opt/guacamole/bin/entrypoint.sh`, run as the
     # unprivileged `guacamole` user) with one step in front of it: read the
@@ -328,6 +341,8 @@ services:
   # Set ONTRAK_BIND_ADDR=0.0.0.0 in .env for a lab where students reach this host
   # directly — and then make ONTRAK_GUAC__BASE_URL the URL their browsers use.
   gateway:
+    environment:
+      TZ: ${TZ:-America/New_York}
     image: ${ONTRAK_GATEWAY_IMAGE:-nginx:1.27-alpine}
     container_name: ontrak-gateway
     restart: unless-stopped
@@ -339,6 +354,8 @@ services:
     ports:
       - "${ONTRAK_BIND_ADDR:-127.0.0.1}:${ONTRAK_PORTAL__PORT:-8080}:8080"
     volumes:
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      - /etc/localtime:/etc/localtime:ro
       - ./deploy/gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks: [ontrak]
 
