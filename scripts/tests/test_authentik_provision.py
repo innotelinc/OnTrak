@@ -13,6 +13,9 @@ looks correct from the outside and signs nobody in:
 * a provider created without `grant_types` refuses `authorization_code` with
   "Invalid grant_type for provider", which reaches the browser as
   `error=invalid_request` and reads as a callback problem;
+* a provider is identified by `name`, and the match is made here rather than by
+  asking the API to filter (see `one_where`) — so a row that is not ours must not
+  be adopted and rewritten, whatever its `client_id` says;
 * the REST API moved from `/api/v2` to `/api/v3`, so the version is probed and
   not assumed.
 
@@ -53,6 +56,9 @@ def provider(**overrides):
     """A provider object as the API returns one, when everything is right."""
     value = {
         "pk": "provider-1",
+        # The identity `ensure_provider` looks the row up by; a provider row from the
+        # API always carries it, and one with a different name is somebody else's.
+        "name": provision.PROVIDER_NAME,
         "authorization_flow": "flow-authorize",
         "grant_types": ["authorization_code", "refresh_token"],
         "client_id": "ontrak",
@@ -79,6 +85,7 @@ def ensure(api):
     with redirect_stdout(io.StringIO()):  # the provisioner reports what it corrects
         return provision.ensure_provider(
             api,
+            name=provision.PROVIDER_NAME,
             flows=FLOWS,
             mappings=MAPPINGS,
             key=KEY,
@@ -157,16 +164,20 @@ class ProviderDriftTest(unittest.TestCase):
 
 
 class EnsureProviderTest(unittest.TestCase):
+    # The rows arrive from `api.all` rather than `api.one`, and that is the point of
+    # `one_where`: a filtered list endpoint on the release this range runs against
+    # answers "nothing matched" with the unfiltered page, so the match is made here.
+
     def test_a_correct_provider_is_returned_without_writing_to_it(self):
         api = mock.Mock()
-        api.one.return_value = provider()
+        api.all.return_value = [provider()]
         api.send.side_effect = AssertionError("a correct provider must not be rewritten")
         found = ensure(api)
         self.assertEqual(found["pk"], "provider-1")
 
     def test_a_provider_missing_grant_types_is_corrected_in_place(self):
         api = mock.Mock()
-        api.one.return_value = provider(grant_types=[])
+        api.all.return_value = [provider(grant_types=[])]
         api.send.return_value = {"pk": "provider-1"}
         ensure(api)
         method, path, body = api.send.call_args[0]
@@ -176,14 +187,31 @@ class EnsureProviderTest(unittest.TestCase):
 
     def test_a_missing_provider_is_created(self):
         api = mock.Mock()
-        api.one.return_value = None
+        api.all.return_value = []
         api.send.return_value = {"pk": "provider-new"}
         ensure(api)
         method, path, body = api.send.call_args[0]
         self.assertEqual(method, "POST")
         self.assertEqual(path, "/providers/oauth2/")
+        self.assertEqual(body["name"], provision.PROVIDER_NAME)
         self.assertEqual(body["client_id"], "ontrak")
         self.assertEqual(body["redirect_uris"], [{"matching_mode": "strict", "url": CALLBACK}])
+
+    def test_a_provider_under_another_name_is_not_adopted(self):
+        """The name is the identity: adopting a neighbour would rewrite their provider.
+
+        This is the failure the lookup exists to prevent — a range whose provider is
+        missing must create its own, not find somebody else's and "correct" it into
+        the range's client.
+        """
+        api = mock.Mock()
+        api.all.return_value = [provider(name="OnTrak Family", grant_types=[])]
+        api.send.return_value = {"pk": "provider-new"}
+        ensure(api)
+        method, path, body = api.send.call_args[0]
+        self.assertEqual(method, "POST", "another product's provider was rewritten")
+        self.assertEqual(path, "/providers/oauth2/")
+        self.assertEqual(body["name"], provision.PROVIDER_NAME)
 
 
 class ApiVersionTest(unittest.TestCase):
