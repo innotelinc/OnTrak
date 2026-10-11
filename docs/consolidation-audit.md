@@ -571,12 +571,72 @@ on this list is finished, so the list is both shorter and harder than it was:
   `ONTRAK_QEMU_ACCEL=kvm` explicitly for the builder, the templates and the pool — a
   setting, not a hardware limit.
 
-  **What that still is not.** It is not the Network: this lab host is a machine built for
-  the exercise, and `its.ontrak.innotel.us` remains without one. **No Windows or Office
-  scenario has been graded**, and none of it has been reached through the console. The
-  console half is up (the lab's portal and Guacamole on one port, `/` and `/guacamole/`)
-  but no browser has driven it here, so the websocket tunnel Q4 named as the first thing a
-  real host owes is still unmeasured.
+  **What that still was not, at that point.** It is not the Network: this lab host is a
+  machine built for the exercise, and `its.ontrak.innotel.us` remains without one. **No
+  Windows or Office scenario had been graded there**, and none of it had been reached
+  through the console: the console half was up (the lab's portal and Guacamole on one port,
+  `/` and `/guacamole/`) but no browser had driven it, so the websocket tunnel Q4 named as
+  the first thing a real host owes was unmeasured. **Both of those have since been walked on
+  the same host, and what stood in the way was the template rather than the hypervisor or
+  the storage** — the bullet that follows.
+
+- **The Windows half has since been graded on that host, and reached through the console
+  there — the blocker was the template, not the machine.** The scenario template carried no
+  fault, and its training account carried the *image builder's* password, because
+  `post-install.ps1` had never completed on it: `student` existed and
+  `C:\ProgramData\OnTrak\config.json` did not. The two symptoms are the ones the lab's own
+  tooling already names. Allocation succeeded while the lab's own `student` logon was
+  refused with WinRM answering, which reads as a firewall and is not —
+  `infra/windows/apply-postinstall.py`'s docstring describes that exact failure. And a
+  session that did reach READY (once the deployment's password was given to the bare CLI,
+  whose `.env` is a compose-only file — the row `docs/operations.md` already keeps) graded
+  **0%**, because both adapters were `Up` and the template's fault manifest was
+  zero-filled. The repair used the repository's own steps rather than new ones:
+  `apply-postinstall.py` against the template (`[postinstall] updated local user student`,
+  `ONTRAK-POSTINSTALL-OK`), then the scenario's own `setup.ps1` inside the guest to inject
+  the fault (`Ethernet 2` disabled, a real `CM_PROB_DISABLED` manifest, `ONTRAK-SETUP-OK`),
+  then a fresh `clean` snapshot — on the pool whose snapshots are native (`ontrak-btrfs`, a
+  btrfs image file inside the host's own root, which this host's filesystem had room for),
+  so the copy-snapshot `O_DIRECT` failure the second host below hit does not arise here —
+  that host's blocker was free space, and this one had some.
+
+  **A real session then ran Windows end to end.** Session 7 cloned `tpl-hw-driver-device`
+  from its `clean` snapshot, booted and reached READY in **189 seconds** (the lab's own two
+  instants), and `session check` read **0%**, naming the fault on the live machine. The fix
+  was made in the guest with `Enable-PnpDevice`, the write-up was filed, and the same check
+  returned **100%, RESOLVED**, machine destroyed. The completion was posted by the shipped
+  client — **201**, then **200** on the retry — as attempt `cmv38kfzr000gur01nwp09hya`:
+  `GRADED`, `gradingMode = 'lab'`, `labSessionId = 7`, `timeSpentSec 686` derived from the
+  lab's two instants, three `CheckResult` rows carrying the lab's own objective ids, weights
+  and evidence text (`nic-device-ok` 50/50, `nic-link-up` 30/30, `cause-documented` 20/20),
+  a certificate whose signed content carries `mode: "lab"` and the scenario's own tags plus
+  `lab`, and `attempt.lab_completion` in the audit chain naming `sessionId 7`. The lab's own
+  store holds the same session as `passed`, 100%, `resolved`, with the write-up at 100%
+  (`submitted`).
+
+  **And the console's RDP half was driven the way a browser would, with none.** The lab
+  minted the link for a live Windows session (`session console`), the gateway answered
+  **200** with an `authToken` for it and **403** for a tampered copy, the tunnel upgraded
+  **101**, and `guacd` relayed the *guest's desktop*: a `size` of 1024x768 and PNG `img`
+  tiles, which the frames were composited back into as the artifact — a 1024x768 PNG of
+  4,586 colours, a black desktop under a light taskbar, black because the lab's own RDP
+  parameters suppress wallpaper. That the desktop was the *guest's* is in the guest:
+  `qwinsta` while the tunnel was open reads `rdp-tcp#0 student 2 Active`, and the gateway's
+  log reads `User "student@ontrak.local" connected to connection "OnTrak #8 - …"` for
+  that session's own 30 seconds. Three details cost time and are recorded so they cost
+  nothing again: the link's payload is signed *and* AES-encrypted (`guacamole-auth-json`),
+  so it cannot be decoded without the key — the gateway will *enumerate* the connection
+  identifier at `api/session/data/json/connections`, and that identifier is the scenario's
+  title **without the YAML's quotes**; a client that stops answering `sync` is dropped by
+  `guacd` with `error,Aborted. See logs.,776` (`CLIENT_TIMEOUT`), so the window to capture
+  is short; and the gateway bans an address after five failed token posts, so the tampered
+  negative control is worth spending once. Every command that touched a machine ran with
+  `ONTRAK_DEMO__ENABLED=false`.
+
+  Two limits of that walk, stated rather than implied: no *browser* rendered that console
+  here — the tunnel was driven without one, as on the second host below — and the family
+  edge's NPM hop is still not in front of the lab's gateway. **No Office scenario has been
+  graded**: this host's Windows coverage is now one hardware scenario, graded and reported.
 - **The host half has since been walked on a second host, as far as that host's storage
   allows — and the console tunnel Q4 named was measured there, without a browser.** A
   family-side host (16 vCPU, 25 GiB, nested VMware/AMD, a working `/dev/kvm`) reaches the
@@ -638,8 +698,14 @@ on this list is finished, so the list is both shorter and harder than it was:
 - **OnTrak-dev has not been modified**, as required. Its `README.md` still describes
   a standalone range; its portal still signs in only through Authentik and only as
   `instructor`/`student`.
-- **The lab's host-half has never been verified in this environment** (no
-  hypervisor), and this audit did not run either application.
+- **The lab's host-half had never been verified in this environment when this audit was
+  written** (no hypervisor), and this audit ran neither application. **That limit has since
+  been retired by hand rather than by this document**: the host walks recorded above in this
+  section — a Linux session, a graded Windows scenario, and the console's tunnel driven
+  across both — ran on this repository's own host, where the family stack is also deployed.
+  What remains of the original claim is its scope, which is still worth stating: the
+  comparison below is a reading of two repositories and has not been repeated, and the
+  Network (`its.ontrak.innotel.us`) still has no lab.
 - **The family landing page still lists six products, without OnTrak Lab.** It lists
   what the family site links to and serves, and OnTrak Lab is a peer product with its
   own repository, its own host and no deployment in this family running one — Q4 below
