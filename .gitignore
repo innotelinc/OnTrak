@@ -8,6 +8,9 @@ __pycache__/
 # build/packaging artifacts
 *.egg-info/
 build/
+# the golden image export: what `make golden` writes and `make golden-pull` fetches,
+# and what `make golden-import` reads. A 6.4 GB disk does not belong in the tree.
+golden-export/
 
 # local state / secrets
 state/

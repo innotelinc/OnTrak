@@ -176,13 +176,16 @@ $(log "pulled $REPOSITORY:$TAG")
 
 Next
   * Import it, which verifies the disk first:  make golden-import ARGS=$DIR
-  * Then build the scenario templates:         make templates
+  * Then restore the scenario templates:       infra/import-templates.sh
+    (a host that cannot reach the registry builds them instead: make templates)
   * And confirm the range is happy:            make check
 
 Notes
   * \`make golden-import\` reads the disk to check it is a finished install, and that
     check converts it to a raw copy inside TMPDIR — about 17 GiB for the 32 GiB
     Windows image. If /tmp is a tmpfs, point TMPDIR at a filesystem with room first.
-  * \`make templates\` is still required on this host: templates are snapshots built
-    where they will run, not files that can be shipped.
+  * The templates are published too, so getting them is minutes rather than the hours a
+    build costs: \`infra/import-templates.sh\` pulls each one and takes the \`clean\`
+    snapshot again here. What is *not* shipped is the accelerator, which is a fact about
+    the host rather than the template — the importer re-asks for every one it restores.
 EOF
