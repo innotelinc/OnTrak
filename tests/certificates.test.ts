@@ -15,6 +15,8 @@ import {
   attemptPercentOf,
   certificateCodeForAttempt,
   certificateForAttempt,
+  certificateNumberFor,
+  certificateNumberVerdictFor,
   certificatePatchFor,
   certificateViewFor,
   completionInputFor,
@@ -28,7 +30,11 @@ import {
 import { buildAssurancePacket, certificateCode, verifyCompletionRecord } from "../src/lib/credentials";
 import {
   certificateAction,
+  certificateNumberProblem,
+  certificateNumberVerdict,
+  normaliseCertificateNumber,
   readStoredCertificate,
+  MAX_CERTIFICATE_NUMBER_CHARS,
   MAX_EVIDENCE_CHARS,
   verifyInputProblem,
   type CertificateColumns,
@@ -335,4 +341,73 @@ test("verify: pasted evidence has a size ceiling so hashing cannot be weaponised
   const huge = `{"pad":"${"x".repeat(MAX_EVIDENCE_CHARS)}"}`;
   assert.match(verifyInputProblem(huge) ?? "", /far larger than/);
   assert.equal(interpretEvidence(huge).status, "error");
+});
+
+/* -------------------------------------------------------------------------- */
+/*  Verifying a printed number                                                */
+/* -------------------------------------------------------------------------- */
+
+/** A number in the shape `certificateCode` prints, for the shape tests. */
+const NUMBER = "ONTRAK-4F1C-9AB2-07DE";
+
+test("verify: a typed number folds to the printed spelling", () => {
+  assert.equal(normaliseCertificateNumber(NUMBER), NUMBER);
+  // Lower case, stray spaces, en dashes and no dashes at all are all the same
+  // number: none of them is a reason to tell somebody their certificate is bad.
+  assert.equal(normaliseCertificateNumber("  ontrak-4f1c-9ab2-07de  "), NUMBER);
+  assert.equal(normaliseCertificateNumber("ONTRAK 4F1C 9AB2 07DE"), NUMBER);
+  assert.equal(normaliseCertificateNumber("ONTRAK–4F1C–9AB2–07DE"), NUMBER);
+  assert.equal(normaliseCertificateNumber("ontrak4f1c9ab207de"), NUMBER);
+
+  // And anything that cannot be one is not silently folded into one.
+  assert.equal(normaliseCertificateNumber("ONTRAK-4F1C-9AB2-07D"), null);
+  assert.equal(normaliseCertificateNumber("ONTRAK-4F1C-9AB2-07DEG"), null);
+  assert.equal(normaliseCertificateNumber("4F1C-9AB2-07DE"), null);
+  assert.equal(normaliseCertificateNumber("ONTRAK-4F1C-9AB2-07GZ"), null);
+  assert.equal(normaliseCertificateNumber(""), null);
+});
+
+test("verify: unusable input is reported as input, not as a bad certificate", () => {
+  assert.equal(certificateNumberProblem(NUMBER), null);
+  assert.match(certificateNumberProblem("") ?? "", /Type the certificate number/);
+  assert.match(certificateNumberProblem("   ") ?? "", /Type the certificate number/);
+  assert.match(certificateNumberProblem("ONTRAK-123") ?? "", /not a certificate number/);
+  assert.match(
+    certificateNumberProblem("x".repeat(MAX_CERTIFICATE_NUMBER_CHARS + 1)) ?? "",
+    /a certificate number is 19/,
+  );
+});
+
+test("verify: a number stands only when it was issued, revoked never, and intact", () => {
+  assert.equal(certificateNumberVerdict(stored(), true), "verified");
+
+  // A number nobody issued.
+  assert.equal(certificateNumberVerdict(null, false), "unverified");
+  assert.equal(certificateNumberVerdict(undefined, true), "unverified");
+  // A re-grade that dropped the attempt below the pass mark takes it back.
+  assert.equal(certificateNumberVerdict(stored({ revokedAt: "2026-10-01T00:00:00.000Z" }), true), "unverified");
+  // And stored content that no longer matches its own digest does not stand.
+  assert.equal(certificateNumberVerdict(stored(), false), "unverified");
+});
+
+test("verify: the number is recomputed from the stored record", () => {
+  // `certificateCodeForAttempt` and the row read agree: one code, one record.
+  assert.equal(certificateNumberFor(columns()), certificateCodeForAttempt(attempt()));
+  assert.equal(certificateNumberVerdictFor(columns()), "verified");
+
+  // Junk in the column is no number at all rather than a number of its own.
+  assert.equal(certificateNumberFor(columns({ certificate: "ONTRAK-1234-5678-9ABC" })), null);
+  assert.equal(certificateNumberVerdictFor(columns({ certificate: null })), "unverified");
+  // A revoked row keeps its record but no longer verifies.
+  assert.equal(
+    certificateNumberVerdictFor(columns({ certificateRevokedAt: new Date("2026-10-01T00:00:00.000Z") })),
+    "unverified",
+  );
+  // And content edited after it was stored fails the re-hash.
+  assert.equal(
+    certificateNumberVerdictFor(
+      columns({ certificate: { ...certificateForAttempt(attempt()), score: 10 } }),
+    ),
+    "unverified",
+  );
 });

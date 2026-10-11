@@ -99,3 +99,72 @@ export function verifyInputProblem(raw: string): string | null {
   }
   return null;
 }
+
+/* -------------------------------------------------------------------------- */
+/*  The printed certificate number                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The shape ``certificateCode`` prints: ``ONTRAK-XXXX-XXXX-XXXX``.
+ *
+ * Twelve hex characters of the record's own digest — the part a learner reads
+ * off the certificate and types back in. It is an *identifier*, not a signature:
+ * the digest it is cut from cannot be recovered from it, so a number is only ever
+ * checked against the records this deployment issued (see `/verify`).
+ */
+export const CERTIFICATE_NUMBER_PATTERN = /^ONTRAK-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/;
+
+/** How many characters a typed number may have before it is clearly not one. */
+export const MAX_CERTIFICATE_NUMBER_CHARS = 64;
+
+/**
+ * A typed certificate number folded to the printed spelling, or `null`.
+ *
+ * People retype these with the wrong case, with spaces where the dashes go, or
+ * with the dashes dropped entirely, and none of that is a reason to tell them
+ * their certificate is bad. All of it folds to ``ONTRAK-XXXX-XXXX-XXXX``; what
+ * is left that still cannot be a number returns `null`, which the caller reports
+ * as unusable *input* rather than as an unverified certificate.
+ */
+export function normaliseCertificateNumber(raw: string): string | null {
+  const compact = raw.trim().toUpperCase().replace(/[\s\-–—]/g, "");
+  if (!/^ONTRAK[0-9A-F]{12}$/.test(compact)) return null;
+  const hex = compact.slice("ONTRAK".length);
+  return `ONTRAK-${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}`;
+}
+
+/** Why this typed number cannot be checked, or `null` when it can. */
+export function certificateNumberProblem(raw: string): string | null {
+  const text = raw.trim();
+  if (!text) return "Type the certificate number first.";
+  if (text.length > MAX_CERTIFICATE_NUMBER_CHARS) {
+    return `That is ${text.length} characters — a certificate number is 19.`;
+  }
+  if (!normaliseCertificateNumber(text)) {
+    return "That is not a certificate number. They are printed as ONTRAK-XXXX-XXXX-XXXX, in A–F and 0–9.";
+  }
+  return null;
+}
+
+/** What `/verify` prints. Two words, and nothing else: whether the number stands. */
+export type CertificateNumberStatus = "verified" | "unverified";
+
+/**
+ * Whether a number stands, given the record issued under it.
+ *
+ * Verified needs all three of: this deployment has a record printed under that
+ * number, a later re-grade has not revoked it, and the stored content still
+ * matches its own digest. A number nobody issued, a revoked one and an edited
+ * record all print the same word — "unverified" — because to the person doing
+ * the checking they are the same answer.
+ *
+ * `intact` is passed in rather than computed here so this stays pure, and so the
+ * caller cannot report a verdict that no digest backs.
+ */
+export function certificateNumberVerdict(
+  issued: StoredCertificate | null | undefined,
+  intact: boolean,
+): CertificateNumberStatus {
+  if (!issued || issued.revokedAt) return "unverified";
+  return intact ? "verified" : "unverified";
+}

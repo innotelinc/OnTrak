@@ -30,8 +30,11 @@ import {
 } from "./credentials";
 import {
   certificateAction,
+  certificateNumberVerdict,
   readStoredCertificate,
   verifyInputProblem,
+  type CertificateColumns,
+  type CertificateNumberStatus,
   type StoredCertificate,
 } from "./certificate-rules";
 import { normalizeGradingMode, type GradingMode } from "./grading-mode";
@@ -311,4 +314,32 @@ export function interpretEvidence(raw: string): EvidenceVerdict {
     status: "error",
     error: "That JSON is neither a completion record nor an assurance packet.",
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Checking a printed certificate number                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The number a stored row is printed under, or `null` when it holds no record.
+ *
+ * The number is not a column: it is cut from the record's digest, so it is
+ * recomputed from whatever the row actually holds. A row whose `certificate` is
+ * junk yields `null` rather than a number nothing was ever printed under.
+ */
+export function certificateNumberFor(row: CertificateColumns): string | null {
+  const stored = readStoredCertificate(row);
+  return stored ? certificateCode(stored.record) : null;
+}
+
+/**
+ * Whether the record printed under this row's number still stands.
+ *
+ * The digest is recomputed here rather than taken on trust, so a verdict cannot
+ * be reported that no record backs — a row whose stored content has been edited
+ * is unverified, not verified-by-default.
+ */
+export function certificateNumberVerdictFor(row: CertificateColumns): CertificateNumberStatus {
+  const stored = readStoredCertificate(row);
+  return certificateNumberVerdict(stored, stored ? recordIntact(stored.record) : false);
 }

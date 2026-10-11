@@ -766,23 +766,23 @@ export const es: Messages = {
   "results.certificate": "Certificado {code}",
   "verify.title": "Verificar un certificado",
   "verify.description":
-    "Pega un registro de finalización o un paquete de aseguramiento y esta página volverá a calcular su hash. Cualquier edición posterior a la emisión no supera la comprobación.",
-  "verify.label": "Registro de finalización o paquete de aseguramiento (JSON)",
-  "verify.hint": "Copiado del informe de un certificado, o enviado por el estudiante.",
-  "verify.placeholder": '{ "format": "ontrak.training.completion/v1", … }',
-  "verify.submit": "Comprobar este registro",
-  "verify.valid.title": "Válido",
-  "verify.valid.body": "El resumen coincide con el contenido, así que este registro no se ha alterado.",
-  "verify.invalid.title": "No válido",
-  "verify.invalid.body":
-    "El contenido no coincide con su resumen: se ha editado, o no fue emitido por esta instalación.",
-  "verify.kind.record": "registro de finalización",
-  "verify.kind.packet": "paquete de aseguramiento",
+    "Escribe el número de certificado impreso en el certificado y esta página dirá si sigue vigente.",
+  "verify.label": "Número de certificado",
+  "verify.hint": "Impreso en el certificado, después de ONTRAK-.",
+  "verify.placeholder": "ONTRAK-XXXX-XXXX-XXXX",
+  "verify.submit": "Verificar este certificado",
+  "verify.valid.title": "Verificado",
+  "verify.valid.body":
+    "Esta instalación emitió este número de certificado y el registro bajo el que se imprime sigue vigente.",
+  "verify.unverified.title": "No verificado",
+  "verify.unverified.body":
+    "Ningún certificado emitido por esta instalación se imprime con ese número, o el registro ya no está vigente.",
+  "verify.invalid.title": "No es un número de certificado",
+  "verify.invalid.body": "Compruébalo con el certificado e inténtalo de nuevo.",
   "verify.how": "Cómo funciona",
   "verify.howBody":
-    "Un registro incluye un resumen SHA-256 de su propio contenido canónico. Comprobarlo consiste en recalcular ese resumen: no se necesita cuenta, ni base de datos, ni confiar en los datos de esta página. Un paquete de aseguramiento añade un resumen sobre todo su conjunto de registros, de modo que quitar o reordenar registros también lo invalida.",
-  "verify.format.record": "Registro de finalización",
-  "verify.format.packet": "Paquete de aseguramiento",
+    "El número de un certificado se recorta de un resumen SHA-256 de su propio registro, así que identifica exactamente un registro y nada más. Verificar un número busca ese registro en el archivo de esta instalación y vuelve a calcular su resumen: un número que nadie emitió, uno revocado por una reevaluación posterior y un registro cuyo contenido guardado se editó responden igual: no verificado.",
+  "verify.format.number": "Número de certificado",
   "verify.signIn": "Inicia sesión en tu cuenta de formación",
 
   // Superficies del simulador: terminal, paneles de Office y escritorio Windows

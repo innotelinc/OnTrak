@@ -798,23 +798,23 @@ export const en = {
   "results.certificate": "Certificate {code}",
   "verify.title": "Verify a certificate",
   "verify.description":
-    "Paste a completion record or an assurance packet and this page will re-hash it. Anything edited after it was issued fails the check.",
-  "verify.label": "Completion record or assurance packet (JSON)",
-  "verify.hint": "Copied from a certificate report, or sent to you by the learner.",
-  "verify.placeholder": '{ "format": "ontrak.training.completion/v1", … }',
-  "verify.submit": "Check this record",
-  "verify.valid.title": "Valid",
-  "verify.valid.body": "The digest matches the content, so this record has not been altered.",
-  "verify.invalid.title": "Not valid",
-  "verify.invalid.body":
-    "The content does not match its digest — it has been edited, or it was never issued by this deployment.",
-  "verify.kind.record": "completion record",
-  "verify.kind.packet": "assurance packet",
+    "Type the certificate number printed on the certificate and this page will say whether it stands.",
+  "verify.label": "Certificate number",
+  "verify.hint": "Printed on the certificate, after ONTRAK-.",
+  "verify.placeholder": "ONTRAK-XXXX-XXXX-XXXX",
+  "verify.submit": "Verify this certificate",
+  "verify.valid.title": "Verified",
+  "verify.valid.body":
+    "This deployment issued this certificate number, and the record it is printed under still stands.",
+  "verify.unverified.title": "Unverified",
+  "verify.unverified.body":
+    "No certificate this deployment issued is printed under that number, or the record no longer stands.",
+  "verify.invalid.title": "Not a certificate number",
+  "verify.invalid.body": "Check it against the certificate and try again.",
   "verify.how": "How this works",
   "verify.howBody":
-    "A record carries a SHA-256 digest over its own canonical content. Checking it means recomputing that digest — no account, no database and no trust in this page's data is required. An assurance packet adds a digest over its whole record set, so removing or reordering records invalidates it too.",
-  "verify.format.record": "Completion record",
-  "verify.format.packet": "Assurance packet",
+    "A certificate's number is cut from a SHA-256 digest of its own record, so it identifies exactly one record and nothing else. Verifying a number finds that record in this deployment's own register and re-hashes it: a number nobody issued, one revoked by a later re-grade, and a record whose stored content was edited all answer the same way — unverified.",
+  "verify.format.number": "Certificate number",
   "verify.signIn": "Sign in to your training account",
 
   // Simulator surfaces — terminal chrome, Office panels and Windows desktop

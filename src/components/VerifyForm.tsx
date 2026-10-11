@@ -2,8 +2,8 @@
 
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
-import { verifyEvidence, type VerifyState } from "@/app/actions/certificates";
-import { Alert, Badge, Button, Field, Textarea } from "@/components/ui";
+import { verifyCertificateNumber, type VerifyState } from "@/app/actions/certificates";
+import { Alert, Button, Field, Input } from "@/components/ui";
 import { useTranslator } from "@/lib/i18n-client";
 
 /** A `"use server"` module may only export async functions, so the empty
@@ -22,13 +22,15 @@ function SubmitButton({ label }: { label: string }) {
 /**
  * The verification form.
  *
- * A client component because the result belongs beside the text the user just
- * pasted — a redirect round-trip would throw that paste away, which is exactly
- * what someone re-checking a suspicious record needs to look at again.
+ * One field, and two possible answers: the certificate number printed on the
+ * certificate goes in, and the page says whether it stands. A client component
+ * because the answer belongs beside the number just typed — a redirect round trip
+ * would throw it away, which is what somebody checking a second certificate wants
+ * to keep.
  */
 export function VerifyForm() {
   const t = useTranslator();
-  const [state, action] = useActionState(verifyEvidence, EMPTY_VERIFY_STATE);
+  const [state, action] = useActionState(verifyCertificateNumber, EMPTY_VERIFY_STATE);
 
   return (
     <form action={action} className="space-y-4">
@@ -38,34 +40,35 @@ export function VerifyForm() {
         </Alert>
       ) : null}
 
-      {state.status === "valid" ? (
+      {state.status === "verified" ? (
         <Alert tone="teal" title={t("verify.valid.title")}>
           <p>{t("verify.valid.body")}</p>
-          {state.code ? (
-            <p className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="font-mono text-sm font-semibold">{state.code}</span>
-              <Badge tone="teal">{state.kind === "packet" ? t("verify.kind.packet") : t("verify.kind.record")}</Badge>
-            </p>
+          {state.number ? (
+            <p className="mt-2 font-mono text-sm font-semibold">{state.number}</p>
           ) : null}
           {state.summary ? <p className="mt-1 text-sm">{state.summary}</p> : null}
         </Alert>
       ) : null}
 
-      {state.status === "invalid" ? (
-        <Alert tone="danger" title={t("verify.invalid.title")}>
-          <p>{t("verify.invalid.body")}</p>
-          {state.code ? <p className="mt-2 font-mono text-sm font-semibold">{state.code}</p> : null}
-          {state.summary ? <p className="mt-1 text-sm">{state.summary}</p> : null}
+      {state.status === "unverified" ? (
+        <Alert tone="danger" title={t("verify.unverified.title")}>
+          <p>{t("verify.unverified.body")}</p>
+          {state.number ? (
+            <p className="mt-2 font-mono text-sm font-semibold">{state.number}</p>
+          ) : null}
         </Alert>
       ) : null}
 
-      <Field label={t("verify.label")} htmlFor="evidence" hint={t("verify.hint")}>
-        <Textarea
-          id="evidence"
-          name="evidence"
-          rows={10}
+      <Field label={t("verify.label")} htmlFor="number" hint={t("verify.hint")}>
+        <Input
+          id="number"
+          name="number"
+          type="text"
+          inputMode="text"
+          autoComplete="off"
+          autoCapitalize="characters"
           spellCheck={false}
-          className="font-mono text-xs"
+          className="font-mono uppercase"
           placeholder={t("verify.placeholder")}
           required
         />

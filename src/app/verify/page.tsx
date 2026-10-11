@@ -5,7 +5,6 @@ import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Card } from "@/components/ui";
 import { getTranslator } from "@/lib/i18n-server";
-import { COMPLETION_FORMAT, ASSURANCE_PACKET_FORMAT } from "@/lib/credentials";
 
 export const metadata: Metadata = { title: "Verify a certificate" };
 
@@ -13,6 +12,10 @@ export const metadata: Metadata = { title: "Verify a certificate" };
  * Public verification, deliberately outside the signed-in shell: the person
  * checking a certificate is usually an auditor, an employer or an admissions
  * office, not somebody with an account here.
+ *
+ * What they have in their hand is the number printed on the certificate, so that
+ * is what this asks for — one field, and the answer is `verified` or
+ * `unverified`.
  */
 export default async function VerifyPage() {
   const t = await getTranslator();
@@ -39,12 +42,8 @@ export default async function VerifyPage() {
           <p className="mt-2 text-sm text-ink-soft">{t("verify.howBody")}</p>
           <dl className="mt-3 space-y-1.5 text-xs text-ink-faint">
             <div className="flex flex-wrap gap-2">
-              <dt className="font-semibold">{t("verify.format.record")}</dt>
-              <dd className="font-mono">{COMPLETION_FORMAT}</dd>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <dt className="font-semibold">{t("verify.format.packet")}</dt>
-              <dd className="font-mono">{ASSURANCE_PACKET_FORMAT}</dd>
+              <dt className="font-semibold">{t("verify.format.number")}</dt>
+              <dd className="font-mono">{t("verify.placeholder")}</dd>
             </div>
           </dl>
           <p className="mt-4 text-sm text-ink-soft">
