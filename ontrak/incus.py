@@ -13,6 +13,7 @@ how many machines are behind it.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -82,14 +83,37 @@ class IncusClient:
     # ------------------------------------------------------------------
     def _base(self, project: bool = True) -> list[str]:
         cmd = [self.binary]
-        if self.incus.remote and self.incus.remote != "local":
-            cmd += ["--remote", self.incus.remote]
+        # The remote is *not* a flag. `--remote` is LXD's spelling and this CLI has
+        # never had it: `incus list --remote lab` is `Error: unknown flag: --remote`,
+        # exit 1, on Incus 6 and 7 alike — so a range pointed at a cluster endpoint
+        # failed every call it made. Incus selects a remote from the client's own
+        # configuration, and the one way a *caller* selects it is the `INCUS_REMOTE`
+        # environment variable, which is what `_env` sets; the `[<remote>:]` prefix
+        # stays available per-command for the callers that name it themselves
+        # (`incus list lab:`).
+        #
         # `incus query` is a raw API call and refuses `--project` outright
         # (`Error: --project cannot be used with the query command`), because the
         # project belongs in the path instead. Callers that use it say so.
         if project and self.incus.project:
             cmd += ["--project", self.incus.project]
         return cmd
+
+    def _env(self) -> dict[str, str] | None:
+        """The environment the CLI needs to reach the configured remote.
+
+        ``None`` means "inherit ours", and that is the local case: a host driving its
+        own daemon talks over the Unix socket and has no remote to select. A named
+        remote is one `INCUS_REMOTE` assignment — the only way the CLI takes it, for
+        the reason in `_base` — so it travels in the subprocess environment rather
+        than on the command line.
+        """
+        remote = self.incus.remote
+        if not remote or remote == "local":
+            return None
+        env = os.environ.copy()
+        env["INCUS_REMOTE"] = remote
+        return env
 
     def run(
         self,
@@ -115,6 +139,7 @@ class IncusClient:
                 capture_output=capture,
                 text=True,
                 input=input_data,
+                env=self._env(),
                 timeout=effective_timeout,
                 check=False,
             )

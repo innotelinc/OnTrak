@@ -303,6 +303,21 @@ export ONTRAK_INCUS__REMOTE=lab
 Keep the portal, Guacamole and SQLite on one control node, and prewarm enough VMs
 for the whole class: a cluster does not make a cold Windows boot faster.
 
+The control node takes on two obligations the moment the machines are somewhere
+else, and both fail quietly rather than loudly:
+
+* **It has to reach them.** Provisioning is WinRM to the guest's address and the
+  console is `guacd` opening RDP to the same address, so the control node needs a
+  route into the lab network. A guest that is up, with an address, that no session
+  ever becomes ready against is this, not a bad template: `ip route replace
+  10.20.0.0/24 via <machines-host>` and make it survive a reboot.
+* **It has to answer for their accelerator.** KVM-versus-TCG is decided from
+  `/dev/kvm` on the machine the CLI runs on, which for a remote range is the control
+  node — so either give the portal container a usable device or settle it by hand
+  with `ONTRAK_QEMU_ACCEL`. See [Running the stack in
+  Docker](docker.md) for both, and for the CLI's trust configuration, which the
+  portal needs mounted read-only to know the remote at all.
+
 ## Maintenance
 
 | Task | Command / approach |
@@ -478,6 +493,21 @@ image stores and transfers perfectly well, and then hangs every template built f
 it — publishing one hands that to every host at once. It then pushes the two files
 the build wrote (`incus.tar.xz` and `disk.qcow2`) as a single OCI artifact, using
 `oras`, which it needs on `PATH` or pointed at with `ONTRAK_ORAS`.
+
+**One thing travels with a published image: its password.** The training account was
+created by `post-install.ps1` at build time with the *building* range's
+`ONTRAK_GUEST__PASSWORD`, and nothing in the artifact says so. A host that pulls the
+image and builds templates from it inherits that password, so its own
+`guest.password` — the value every logon it makes uses — is a different secret, and
+the range cannot provision a single Windows guest until the two agree: the guest
+boots, takes an address, answers on 3389 and 5985, and refuses every logon with
+`the specified credentials were rejected by the server`, which a session reports as
+`never became reachable over the winrm transport`. The account name is baked in the
+same way. Either set `ONTRAK_GUEST__PASSWORD` (and `ONTRAK_GUEST__USER`) to what the
+image was built with before building templates, or build the image on this host
+(`make golden`) so its password is this range's own. `admin`/`changeme` is the
+*image's* account, not the training one, and post-install does not remove it — see
+`infra/windows/apply-postinstall.py` for which of the two a step should connect as.
 
 A pulling host needs one step more than an importing one, and `make golden-pull` is
 that step: it asks the registry what it holds, takes the newest `win11e-*` tag unless

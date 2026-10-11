@@ -13,9 +13,13 @@ separate mistakes shipped, each of which stopped the platform dead on a real hos
   * `exec --user` takes a *numeric* uid and refuses an account name —
     `invalid argument "root" for "--user" flag: strconv.ParseUint: parsing "root":
     invalid syntax`. `root` is the platform's default Linux account, so *every*
-    shell call failed and no machine ever looked ready.
+    shell call failed and no machine ever looked ready;
+  * a remote is selected by the `INCUS_REMOTE` environment variable, and there is
+    no `--remote` flag at all — that spelling is LXD's. A range pointed at a
+    cluster endpoint sent the flag on *every* call and got `Error: unknown flag:
+    --remote`, exit 1, so driving a remote host never worked.
 
-The stand-in reproduces all three rules, so these tests assert behaviour rather than
+The stand-in reproduces all four rules, so these tests assert behaviour rather than
 argv, and putting any of them back has to fail them. The last test names each rule
 directly, for whoever arrives here from a failure.
 """
@@ -40,6 +44,8 @@ STUB = r'''#!/usr/bin/env python3
   * `copy --instance-only` means "the instance without its snapshots", so the CLI
     refuses it when the source is a snapshot — which is how a student's machine is
     cloned from the template's clean snapshot.
+  * `--remote` does not exist: it is LXD's spelling. A remote is selected with the
+    `INCUS_REMOTE` environment variable, so that is recorded beside the command.
 """
 import json
 import os
@@ -57,16 +63,24 @@ POOL = {
 raw = list(sys.argv[1:])
 
 # Recorded whole, global flags included: the invariants are about what is *asked*.
+# The remote is the one thing that is not an argument — this CLI takes it from
+# `INCUS_REMOTE` — so it is recorded beside the command as a `[remote]` prefix, and
+# a remote that arrived as a flag is refused below rather than obeyed.
+remote = os.environ.get("INCUS_REMOTE", "")
 log = os.environ.get("ONTRAK_INCUS_STUB_LOG")
 if log:
     with open(log, "a", encoding="utf-8") as handle:
-        handle.write(" ".join(raw) + "\n")
+        handle.write(("[" + remote + "] " if remote else "") + " ".join(raw) + "\n")
 
 argv = list(raw)
 project = None
-while argv and argv[0] in {"--project", "--remote"}:
-    if argv[0] == "--project":
-        project = argv[1]
+while argv and (argv[0] == "--project" or argv[0].startswith("--remote")):
+    if argv[0].startswith("--remote"):
+        # LXD's spelling, and this CLI has never had it — on either the client's
+        # global position or a subcommand's flags.
+        sys.stderr.write("Error: unknown flag: --remote\n")
+        raise SystemExit(1)
+    project = argv[1]
     argv = argv[2:]
 
 
@@ -366,6 +380,35 @@ def test_creating_an_instance_without_a_pool_leaves_it_to_the_daemon(client, arg
 
 
 # --------------------------------------------------------------------------- #
+# the endpoint a cluster endpoint is reached over
+# --------------------------------------------------------------------------- #
+def test_a_configured_remote_is_delivered_in_the_environment(
+    settings, stub_bin, argv_log, monkeypatch
+):
+    """A named remote travels as `INCUS_REMOTE`, because there is no flag for it.
+
+    This is the whole point of a range that drives a cluster endpoint: on a host
+    whose own daemon is not the lab's, every call has to reach the named remote. The
+    flag that used to carry it (`--remote`) is LXD's spelling — `incus list --remote
+    lab` is `Error: unknown flag: --remote`, exit 1 — so the stand-in refuses it and
+    records the variable instead, and this fails if the flag comes back.
+    """
+    monkeypatch.setattr(settings.incus, "remote", "lab")
+    client = IncusClient(settings, binary=str(stub_bin))
+    client.list_instances()
+    asked = [line for line in argv_log.read_text(encoding="utf-8").splitlines() if line]
+    assert asked, "the stand-in recorded no commands"
+    assert all(line.startswith("[lab] ") for line in asked), asked
+
+
+def test_a_local_host_is_told_about_no_remote(client, argv_log):
+    """`local` is the host's own daemon over its socket: nothing to select."""
+    client.list_instances()
+    asked = argv_log.read_text(encoding="utf-8")
+    assert not asked.startswith("["), asked
+
+
+# --------------------------------------------------------------------------- #
 # the invariants, stated directly
 # --------------------------------------------------------------------------- #
 def test_the_client_asks_nothing_the_cli_refuses(client, argv_log):
@@ -386,6 +429,9 @@ def test_the_client_asks_nothing_the_cli_refuses(client, argv_log):
         if line.startswith("exec"):
             assert "--user root" not in line, f"--user wants a uid, not a name: {line}"
             assert "--user student" not in line, f"--user wants a uid, not a name: {line}"
+        assert "--remote" not in line, (
+            f"the CLI has no --remote flag; the remote is INCUS_REMOTE: {line}"
+        )
         if line.startswith("copy"):
             source = line.split()[1]
             body = source.split(":", 1)[1] if ":" in source else source

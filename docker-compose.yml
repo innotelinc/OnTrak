@@ -194,6 +194,16 @@ services:
       # "The student's console: RDP for Windows, SSH for Linux").
       ONTRAK_GUAC__LINUX_SSH: ${ONTRAK_GUAC__LINUX_SSH:-false}
       ONTRAK_GUEST__RDP_PORT: ${ONTRAK_GUEST__RDP_PORT:-3389}
+      # The guest's readiness budget, forwarded for the same reason the console
+      # settings above are: it is read *inside this container*, so a value compose
+      # does not pass is a value the range ignores — silently, and in the direction
+      # that hurts. 420 s is a budget for guests that answer in a few minutes; a cold
+      # Windows boot on a busier host outlives it, and the wait does not fail
+      # quietly: it retries a logon every 5 s until the budget is spent, and those
+      # retries are what trip the guest's own lockout policy, so the machine is left
+      # looking broken even once it is up. Raise it where Windows is slow.
+      ONTRAK_GUEST__READY_TIMEOUT_SECONDS: ${ONTRAK_GUEST__READY_TIMEOUT_SECONDS:-420}
+      ONTRAK_GUEST__BOOT_TIMEOUT_SECONDS: ${ONTRAK_GUEST__BOOT_TIMEOUT_SECONDS:-300}
       ONTRAK_SECRETS_FILE: /run/ontrak/secrets.env
 
       # ── hypervisor ──

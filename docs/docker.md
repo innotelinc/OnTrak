@@ -102,18 +102,44 @@ directory rather than the socket file (a host without Incus yet gets an empty
 directory instead of Docker creating a stray file where the daemon will later
 want its own socket).
 
-**2. A remote Incus cluster over HTTPS.** `docker-compose.remote.yml` turns the
-host step off (nothing to install here) and points the portal at a named remote,
-with the CLI's trust config mounted read-only:
+**2. A remote Incus host or cluster over HTTPS.** `docker-compose.remote.yml` turns
+the host step off (nothing to install here) and points the portal at a named
+remote:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.remote.yml up -d   # or: make up-remote
 ```
 
 Set `ONTRAK_INCUS__REMOTE` to the remote's name (and `ONTRAK_INCUS__PROJECT`) in
-`.env`; uncomment the trust-config mounts at the bottom of that file for your
-operator account. A cluster also removes the single-host ceiling: placement
-across hosts is the daemon's problem, not the portal's.
+`.env`. The CLI's trust config is mounted into the portal read-only, from
+`ONTRAK_INCUS_TRUST_DIR` (default `/root/.config/incus`, on the host running
+compose). That directory is the client certificate the remote has trusted plus the
+remote entries that name it, and it is not optional: a container whose CLI knows no
+remote answers `The remote "…" doesn't exist` to every call, which is how a remote
+range fails every check `doctor` makes while the stack itself looks healthy. Give
+the remote a certificate of its own rather than reusing another host's, because the
+host you borrowed it from is usually the host you are retiring.
+
+Two things a remote range has to be given that a single-host one does not:
+
+* **A route to the machines.** Nothing in the stack forwards for you: the portal
+  provisions over WinRM, and `guacd` opens the console, *to the guest's own
+  address*, so the host running the portal must be able to reach the lab network
+  the guests are on. On a range whose pool is a remote host's bridge that is one
+  route on the portal host — `ip route replace 10.20.0.0/24 via 192.168.1.52`, in a
+  unit so it survives a reboot. Without it a session clones, starts, takes an
+  address and then never becomes ready, which reads as a broken template rather
+  than as a missing route.
+* **An accelerator answer.** `ontrak/qemu.py` decides KVM-versus-TCG from the
+  `/dev/kvm` of the machine it runs on — deliberately, and that is why this overlay
+  still passes the device into the container, so the host running the portal needs a
+  KVM device it can open even though the guests run elsewhere. Where that host would
+  answer for machines it does not run, state it: `ONTRAK_QEMU_ACCEL=kvm` (or `tcg`).
+  `doctor` prints which accelerator it chose and, in a container, says that the
+  package and firmware lists it can see are not the guest host's.
+
+A cluster also removes the single-host ceiling: placement across hosts is the
+daemon's problem, not the portal's.
 
 **3. No hypervisor at all.** Demo mode runs an entire class against an
 in-memory Incus — no socket, no Windows, no guests:

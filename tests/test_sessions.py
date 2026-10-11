@@ -376,6 +376,54 @@ def test_allocate_marks_a_failed_guest_handshake(settings, store, repo, incus, b
     assert "never became reachable" in session.error
 
 
+def test_a_failed_provisioning_takes_its_machine_away_again(
+    settings, store, repo, incus, built_template
+):
+    """A guest that never answered is a whole Windows VM, still burning the host.
+
+    Leaving it is how one failed session becomes several: the next clone boots on a
+    host that now has to serve the corpse too, so the readiness budget that was
+    already tight runs out on that one as well.
+    """
+
+    class NeverReady(NullDriver):
+        def wait_ready(self, session, timeout=None):  # noqa: D102 - test double
+            return False
+
+    manager = SessionManager(
+        settings, store, repo=repo, incus=incus, driver=NeverReady(settings, responses={})
+    )
+    session = manager.allocate("alice", SCENARIO)
+    assert session.state is SessionState.ERROR
+    assert session.instance == "" and session.host_ip == ""
+    assert incus.live_names() == {settings_template(manager)}, "the VM was left running"
+
+
+def test_a_failed_reset_takes_its_machine_away_again(settings, store, repo, incus, built_template):
+    """The same contract one method over: reset throws the VM away first, so a reset
+    that then fails owes the host the replacement it cloned."""
+
+    class ReadyOnce(NullDriver):
+        def __init__(self, *args, **kwargs):  # noqa: D107 - test double
+            super().__init__(*args, **kwargs)
+            self.calls = 0
+
+        def wait_ready(self, session, timeout=None):  # noqa: D102 - test double
+            self.calls += 1
+            return self.calls == 1
+
+    manager = SessionManager(
+        settings, store, repo=repo, incus=incus, driver=ReadyOnce(settings, responses={})
+    )
+    session = manager.allocate("alice", SCENARIO)
+    assert session.state is SessionState.READY
+
+    session = manager.reset(session)
+    assert session.state is SessionState.ERROR
+    assert "reset failed" in session.error
+    assert incus.live_names() == {settings_template(manager)}, "the VM was left running"
+
+
 def test_randomised_credentials_are_applied_when_enabled(settings, store, repo, incus, built_template):
     settings.session.randomize_credentials = True
     manager = manager_with(settings, store, repo, incus, {"setup.ps1": "ONTRAK-SETUP-OK"})
@@ -601,6 +649,31 @@ def test_reap_clears_stuck_provisioning_rows(manager, store, incus, built_templa
     reloaded = store.get_session(session.id)
     assert reloaded.state is SessionState.ERROR
     assert "timed out" in reloaded.error
+
+
+def test_reap_also_reclaims_what_a_failed_session_left_behind(
+    manager, store, incus, built_template
+):
+    """A row that failed *after* its machine was cloned holds the VM this sweep is for.
+
+    Rows the current code creates no longer leave one behind, which is exactly why
+    this is tested through the store: a range whose database already has one of these
+    needs the sweep to be what frees the host, not the next deploy.
+    """
+    session = manager.allocate("alice", SCENARIO)
+    instance = session.instance
+    store.update_session(
+        session.id,
+        state=SessionState.ERROR,
+        error="provisioning timed out",
+        created_at=iso(utcnow() - timedelta(hours=1)),
+    )
+
+    manager.reap()
+    reloaded = store.get_session(session.id)
+    assert reloaded.state is SessionState.ERROR, "the instructor can no longer see the failure"
+    assert reloaded.instance == "" and reloaded.host_ip == "", "the row still names a dead machine"
+    assert not incus.exists(instance), "the failed session's VM is still on the host"
 
 
 # --------------------------------------------------------------------------- #

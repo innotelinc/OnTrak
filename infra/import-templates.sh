@@ -23,6 +23,11 @@
 #      needed the import in the first place cannot give. ``infra/qemu-accel.sh``
 #      points it at the accelerator this host actually has.
 #
+# A failure is reported per template and the run continues, because a registry answers
+# a multi-gigabyte pull with a transient HTTP/2 error now and then: one template that
+# could not be restored is worth a line and a non-zero exit, not the abandonment of
+# every template behind it.
+#
 # Environment:
 #   ONTRAK_TEMPLATE_REPOSITORY  source repository
 #                               (default: ghcr.io/innotelinc/ontrak-template)
@@ -146,6 +151,7 @@ log_in
 # ------------------------------------------------------------------- restore ----
 restored=0
 skipped=0
+failed=0
 for name in "${NAMES[@]}"; do
   tag="${TAG_PREFIX}${name}"
   tarball="$WORKDIR/$name.tar.gz"
@@ -164,13 +170,26 @@ for name in "${NAMES[@]}"; do
 
   log "$name: pulling $REPOSITORY:$tag"
   rm -f "$tarball"
-  ( cd "$WORKDIR" && "$ORAS" pull "$REPOSITORY:$tag" >/dev/null ) \
-    || die "oras pull of $REPOSITORY:$tag failed"
+  # One template's failure is that template's, not the run's. A registry answers a
+  # large artifact pull with a transient HTTP/2 error now and then, and aborting here
+  # used to abandon every template after it — having already deleted the ones named
+  # with ONTRAK_TEMPLATE_FORCE, so the run that failed to replace a template left the
+  # range with one fewer than it started with.
+  if ! ( cd "$WORKDIR" && "$ORAS" pull "$REPOSITORY:$tag" >/dev/null ); then
+    warn "$name: pull failed — left out of this run; the others still restore"
+    failed=$((failed + 1))
+    continue
+  fi
 
   log "$name: importing (this is the whole disk: expect minutes, not seconds)"
   import_args=("import" "$tarball" "$name")
   [[ -n "$POOL" ]] && import_args+=(-s "$POOL")
-  incus --project "$PROJECT" "${import_args[@]}"
+  if ! incus --project "$PROJECT" "${import_args[@]}"; then
+    warn "$name: import failed — left out of this run; the others still restore"
+    rm -f "$tarball"
+    failed=$((failed + 1))
+    continue
+  fi
 
   # The accelerator is a host fact. Re-asked here, on the instance, because a guest
   # built where KVM works carries no override and its clones would ask for KVM on a
@@ -188,17 +207,32 @@ for name in "${NAMES[@]}"; do
     warn "  refuses O_DIRECT reads refuses that. Restore onto a ZFS or btrfs pool."
   fi
 
-  incus --project "$PROJECT" snapshot create "$name" "$SNAPSHOT" >/dev/null
+  if ! incus --project "$PROJECT" snapshot create "$name" "$SNAPSHOT" >/dev/null; then
+    # An instance without its snapshot is not a template: `ontrak` refuses it, and it
+    # is left here rather than deleted so the disk it holds can be inspected — the
+    # usual cause is a pool whose driver cannot snapshot a VM.
+    warn "$name: imported, but its '$SNAPSHOT' snapshot failed, so it is not a"
+    warn "  template yet. Fix the pool, then run this again with ONTRAK_TEMPLATE_FORCE=1."
+    failed=$((failed + 1))
+    continue
+  fi
   rm -f "$tarball"
   log "$name: restored ($kind, snapshot '$SNAPSHOT')"
   restored=$((restored + 1))
 done
 
+if [[ $failed -gt 0 ]]; then
+  log "restored $restored template(s), skipped $skipped, failed $failed"
+else
+  log "restored $restored template(s), skipped $skipped"
+fi
+
 cat <<EOF
-
-$(log "restored $restored template(s), skipped $skipped")
-
 Next
   * Confirm the range can serve them:  .venv/bin/ontrak doctor
   * See what it has to work with:     make check
 EOF
+
+# Non-zero when a template was asked for and is not here: a run that restored three of
+# five has not done its job, however clearly it said so line by line.
+[[ $failed -eq 0 ]] || exit 1

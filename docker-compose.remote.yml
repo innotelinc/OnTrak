@@ -27,10 +27,13 @@ services:
     environment:
       ONTRAK_INCUS__REMOTE: ${ONTRAK_INCUS__REMOTE:-ontrak-remote}
     volumes:
-      # The CLI's trust config, mounted read-only. Uncomment and adjust for your
-      # operator account, or point ONTRAK_INCUS__REMOTE at a configured remote
-      # that the image already knows:
-      #   - ${HOME}/.config/incus:/root/.config/incus:ro
+      # The CLI's trust config, mounted read-only: the client certificate the remote
+      # has trusted, and the remote entries that name it. Without this the container's
+      # own CLI knows no remote at all and every call answers `The remote "…"
+      # doesn't exist`. Set ONTRAK_INCUS_TRUST_DIR to your operator account's Incus
+      # config directory when it is not root's; a deployment that keeps the
+      # certificate somewhere else instead can mount the two files by hand:
       #   - /etc/incus/client.crt:/etc/incus/client.crt:ro
       #   - /etc/incus/client.key:/etc/incus/client.key:ro
+      - ${ONTRAK_INCUS_TRUST_DIR:-/root/.config/incus}:/root/.config/incus:ro
       - /var/lib/incus:/var/lib/incus

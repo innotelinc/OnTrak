@@ -22,7 +22,19 @@ $configPath = 'C:\ProgramData\OnTrak\config.json'
 $markerChars = 'ONTRAK-POSTINSTALL-OK'
 
 function Step { param([string] $Message) Write-Output ('[postinstall] ' + $Message) }
-function StepFail { param([string] $Message) Write-Output ('[postinstall][error] ' + $Message) }
+# A failure is remembered, not just printed. Everything in this file is applied
+# *before* the image is published, so a step that failed leaves a published image
+# that boots and then refuses the range's own credentials -- and the caller's only
+# evidence is the marker at the bottom of this file. An unconditional marker is
+# therefore a lie that costs a rebuild every time: `apply-postinstall.py`
+# ("ok: golden image customised") and `infra/build-golden-image.sh` both decide on
+# it, and neither can see a failure it was never told about.
+$global:stepFailed = $false
+function StepFail {
+    param([string] $Message)
+    Write-Output ('[postinstall][error] ' + $Message)
+    $global:stepFailed = $true
+}
 
 # --------------------------------------------------------------- credentials --
 $userName = 'student'
@@ -152,4 +164,8 @@ Step ('RDP: ' + (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Termin
 Step ('Defender real-time: ' + (Get-MpComputerStatus -ErrorAction SilentlyContinue).RealTimeProtectionEnabled)
 
 Remove-Item -Path $configPath -Force -ErrorAction SilentlyContinue
+if ($global:stepFailed) {
+    Write-Output '[postinstall][error] a step above failed: not reporting success'
+    exit 1
+}
 Write-Output $markerChars

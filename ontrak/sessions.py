@@ -1197,6 +1197,16 @@ class SessionManager:
             self.store.save_session(session)
             self.store.log_event("ready", f"{session.instance} at {session.host_ip}", session.id)
         except Exception as exc:  # noqa: BLE001 - surfaced to the student verbatim
+            # A machine that did not come up is taken away again. It is a whole
+            # Windows guest, so one that never answered is still holding a core and
+            # gigabytes of the host's RAM for as long as it runs -- and the *next*
+            # provisioning on that host is slower for sharing with it. That is how a
+            # single failed session turns into several: leave the corpse running and
+            # the readiness budget that was already tight is spent on a busier host.
+            # The row keeps the failure; only the machine goes.
+            self._destroy_instance(session.instance)
+            session.instance = ""
+            session.host_ip = ""
             session.state = SessionState.ERROR
             session.error = str(exc)
             self.store.save_session(session)
@@ -1545,6 +1555,11 @@ class SessionManager:
             session.last_activity_at = iso()
             self.store.log_event("reset", f"{session.instance} at {session.host_ip}", session.id)
         except Exception as exc:  # noqa: BLE001
+            # Same contract as provisioning: a reset that failed leaves no machine
+            # behind (the old one was already destroyed above).
+            self._destroy_instance(session.instance)
+            session.instance = ""
+            session.host_ip = ""
             session.state = SessionState.ERROR
             session.error = f"reset failed: {exc}"
             self.store.log_event("reset_failed", str(exc), session.id)
@@ -1604,13 +1619,22 @@ class SessionManager:
                 recycled.append(session.id or 0)
 
         # Stale ERROR/ALLOCATING rows: surface them for the instructor but do not
-        # keep half-built instances around forever.
-        for session in self.store.list_sessions(states=[SessionState.ALLOCATING, SessionState.PROVISIONING]):
+        # keep half-built instances around forever. ERROR belongs in this list as much
+        # as the two in-flight states do -- a row that failed *after* its machine was
+        # cloned is the one whose VM is left running, and the sweep is what a range
+        # with an older row in it needs.
+        for session in self.store.list_sessions(
+            states=[SessionState.ALLOCATING, SessionState.PROVISIONING, SessionState.ERROR]
+        ):
             if (seconds_since(session.created_at) or 0) > self.settings.pool.claim_timeout_seconds * 4:
                 self._destroy_instance(session.instance)
                 session.state = SessionState.ERROR
                 session.error = session.error or "provisioning timed out"
+                # Both pointers go, not just the name: a row that keeps an address
+                # for a machine that is no longer there reads as a live session in
+                # `session list`.
                 session.instance = ""
+                session.host_ip = ""
                 self.store.save_session(session)
 
         refilled = {} if not self.settings.pool.enabled else self.refill_pool()

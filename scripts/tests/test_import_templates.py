@@ -36,7 +36,9 @@ SCRIPT = ROOT / "infra" / "import-templates.sh"
 
 # Stands in for oras. `repo tags` answers with what the registry holds; `pull` writes
 # the layer the way a real pull names it -- after the tag's title -- so the script has
-# the `<name>.tar.gz` it goes on to import. Every call is recorded.
+# the `<name>.tar.gz` it goes on to import. Every call is recorded. STUB_ORAS_FAIL_TAG
+# names a template whose pull fails, the way a registry answers a large artifact with a
+# transient error now and then.
 ORAS_STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$STUB_RECORD"
 case "${1:-}" in
@@ -45,6 +47,10 @@ case "${1:-}" in
     printf 'cwd=%s\n' "$PWD" >> "$STUB_RECORD"
     ref="${2:-}"
     name="${ref##*:}"
+    if [ -n "${STUB_ORAS_FAIL_TAG:-}" ] && [ "$name" = "$STUB_ORAS_FAIL_TAG" ]; then
+      echo "error: transient failure pulling $name" >&2
+      exit 1
+    fi
     printf 'a backup of %s\\n' "$name" > "$name.tar.gz"
     ;;
 esac
@@ -58,7 +64,9 @@ exit 1
 
 # The hypervisor. Answers what the script asks: whether an instance is already here
 # (STUB_INCUS_INFO_EXIT: 0 present, 1 absent), what kind it is, and the import and
-# snapshot calls themselves, which are only recorded.
+# snapshot calls themselves, which are only recorded. STUB_INCUS_FAIL_IMPORT and
+# STUB_INCUS_FAIL_SNAPSHOT name a template whose import, or whose `clean` snapshot,
+# fails: the two ways a restore half-succeeds on a pool that cannot hold a snapshot.
 INCUS_STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$STUB_INCUS_RECORD"
 args=""
@@ -77,6 +85,18 @@ case "$cmd" in
   list)
     if [ -n "${1:-}" ] && [ "${1#--format}" = "$1" ]; then
       cat "$STUB_INCUS_KIND"
+    fi
+    ;;
+  import)
+    # `import <tarball> <name> [-s <pool>]`: the name is the second argument, and a
+    # failed import is the case where the half-pulled tarball is thrown away.
+    if [ -n "${STUB_INCUS_FAIL_IMPORT:-}" ] && [ "${2:-}" = "$STUB_INCUS_FAIL_IMPORT" ]; then
+      exit 1
+    fi
+    ;;
+  snapshot)
+    if [ -n "${STUB_INCUS_FAIL_SNAPSHOT:-}" ] && [ "${2:-}" = "$STUB_INCUS_FAIL_SNAPSHOT" ]; then
+      exit 1
     fi
     ;;
 esac
@@ -211,6 +231,61 @@ class ImportTemplatesTests(unittest.TestCase):
         self.assertIn("delete tpl-alpha", calls)
         self.assertIn("import", calls)
         self.assertIn("restored 1", result.stdout)
+
+    # -- one template's failure is not the run's ----------------------------
+
+    def test_a_template_that_cannot_be_pulled_does_not_abandon_the_rest(self):
+        """A transient registry error used to take every template behind it with it.
+
+        The pull is the step a registry answers with an HTTP/2 error now and then,
+        and the run has already deleted whatever ONTRAK_TEMPLATE_FORCE named, so
+        dying here leaves the range with fewer templates than it started with.
+        """
+        result = self._import(STUB_ORAS_FAIL_TAG="tpl-alpha")
+        self.assertNotEqual(
+            result.returncode, 0, "a template that never arrived exited zero"
+        )
+        self.assertIn("tpl-alpha: pull failed", result.stdout)
+        self.assertIn("failed 1", result.stdout)
+        self.assertIn("restored 1", result.stdout)
+        self.assertIn(
+            f"import {self.workdir}/tpl-beta.tar.gz tpl-beta",
+            self._incus_calls(),
+            "the template behind the failed pull was abandoned",
+        )
+
+    def test_a_template_that_cannot_be_imported_does_not_abandon_the_rest(self):
+        """Same contract one step later, where the half-written tarball is removed."""
+        result = self._import(STUB_INCUS_FAIL_IMPORT="tpl-alpha")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("tpl-alpha: import failed", result.stdout)
+        self.assertIn("failed 1", result.stdout)
+        self.assertIn("restored 1", result.stdout)
+        self.assertIn(
+            f"import {self.workdir}/tpl-beta.tar.gz tpl-beta",
+            self._incus_calls(),
+            "the template behind the failed import was abandoned",
+        )
+        self.assertFalse(
+            (self.workdir / "tpl-alpha.tar.gz").exists(),
+            "a tarball that failed to import was left in the working directory",
+        )
+
+    def test_a_template_whose_snapshot_failed_is_reported_as_incomplete(self):
+        """An instance without its `clean` snapshot is not a template: `ontrak` refuses
+        it, and it is left here rather than deleted so the disk can be inspected — the
+        usual cause is a pool whose driver cannot snapshot a virtual machine.
+        """
+        result = self._import("tpl-alpha", STUB_INCUS_FAIL_SNAPSHOT="tpl-alpha")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("template yet", result.stdout)
+        self.assertIn("failed 1", result.stdout)
+        self.assertIn("restored 0", result.stdout)
+        self.assertNotIn(
+            "delete tpl-alpha",
+            self._incus_calls(),
+            "the instance was deleted, leaving nothing to inspect",
+        )
 
     # -- the part that is a fact about this host ----------------------------
 
