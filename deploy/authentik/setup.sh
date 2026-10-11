@@ -87,7 +87,10 @@ generate_env() {
 # ── the local Authentik itself ──
 AUTHENTIK_TAG=${ONTRAK_LOCAL_AUTHENTIK_TAG:-2026.8.3}
 AUTHENTIK_HTTP_PORT=$port
-AUTHENTIK_BIND_ADDR=${ONTRAK_LOCAL_AUTHENTIK_BIND:-0.0.0.0}
+# This host's own address, never the wildcard: the compose file publishes the port
+# on loopback too, and two mappings of one port may not overlap. See the check that
+# reads this value back after `load_env`.
+AUTHENTIK_BIND_ADDR=${ONTRAK_LOCAL_AUTHENTIK_BIND:-$host}
 PG_PASS=$(rand 36)
 AUTHENTIK_SECRET_KEY=$(rand 60)
 # The admin account's password (UI) and API token (provisioning). akadmin.
@@ -123,18 +126,49 @@ compose() {
   docker compose --env-file "$ENV_FILE" -f "$HERE/compose.yaml" "$@"
 }
 
+# Does this authenticated API query answer *rows* yet? An empty `"results":[]` is
+# what an Authentik whose worker has not applied its default blueprints answers, and
+# what `provision.py` reads as "not there" (it raises rather than waiting).
+api_has_results() { # api_has_results <path>
+  local body
+  body="$(curl -fsS --max-time 4 -H "Authorization: Bearer ${AUTHENTIK_BOOTSTRAP_TOKEN}" \
+    "http://127.0.0.1:${AUTHENTIK_HTTP_PORT}$1" 2>/dev/null)" || return 1
+  [ -n "$body" ] && ! printf '%s' "$body" | grep -q '"results":\[\]'
+}
+
 wait_for_ready() {
-  local port="$1" deadline=$((SECONDS + 300)) url
+  local port="$1" deadline=$((SECONDS + 300)) url answered=0
   for url in "http://127.0.0.1:$port/-/health/ready/" "http://127.0.0.1:$port/-/health/live/" "http://127.0.0.1:$port/"; do
     while [ "$SECONDS" -lt "$deadline" ]; do
       if curl -fsS -o /dev/null --max-time 4 "$url" 2>/dev/null; then
         ok "Authentik is answering at $url"
-        return 0
+        answered=1
+        break 2
       fi
       sleep 3
     done
   done
-  return 1
+  [ "$answered" = 1 ] || return 1
+
+  # Answering is not the same as provisionable, and the gap is the first boot's:
+  # the provider's authorization flow, the signing key it signs with and the OAuth
+  # scope mappings all come from the worker applying Authentik's default blueprints,
+  # which happens *after* `/-/health/ready/` starts returning 200. Declared ready and
+  # then provisioned from, a first run dies on the first lookup it makes — "neither
+  # default provider authorization flow is present" — with the IdP up and healthy,
+  # which reads like a broken script rather than an early one. So readiness here means
+  # the two artefacts `provision.py` reads by name are readable, not merely that the
+  # server answers.
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if api_has_results "/api/v3/flows/instances/?slug=default-provider-authorization-implicit-consent" \
+      && api_has_results "/api/v3/crypto/certificatekeypairs/?has_key=true"; then
+      ok "Authentik's default flows and signing key are in place"
+      return 0
+    fi
+    sleep 3
+  done
+  warn "Authentik is answering but its default flows are still missing — provisioning will report it"
+  return 0
 }
 
 
@@ -243,6 +277,21 @@ else
 fi
 
 load_env
+
+# The one value here that cannot be defaulted into working. The compose file
+# publishes this port twice — once on loopback, which is where this script's own
+# readiness wait and `provision.py` call it, and once on `AUTHENTIK_BIND_ADDR` — and
+# dockerd accepts two mappings of one host port only when the addresses are specific
+# and *different*. The wildcard beside loopback, or loopback twice, is refused with
+# an "address already in use" that names neither the file nor the rule, and every
+# path below would present that as a failure to start; so it is asked about here,
+# where the answer is still a sentence. A host with nothing but loopback has no
+# address the portal container and a browser can both use, which is what this says.
+case "${AUTHENTIK_BIND_ADDR:-}" in
+  "" | 0.0.0.0 | :: | 127.0.0.1 | localhost)
+    die "AUTHENTIK_BIND_ADDR=${AUTHENTIK_BIND_ADDR:-} cannot be published beside the loopback mapping of the same port. Set it in $ENV_FILE to an address both this host and a browser can use — '$(detect_host)' is this host's — or delete $ENV_FILE and run this script again."
+    ;;
+esac
 
 log "starting Authentik (${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG}) on port ${AUTHENTIK_HTTP_PORT}"
 compose up -d

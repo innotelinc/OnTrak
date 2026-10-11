@@ -39,6 +39,18 @@ secrets: ## Create .env from .env.example and fill in the generated local secret
 	bash scripts/secrets.sh
 
 check: ## Preflight: Python, Incus, KVM, storage and secrets
+	@# The CLI reads settings from the *environment* (ontrak/config.py), and `.env` is
+	@# a compose env file: values are unquoted and some contain spaces, so sourcing it
+	@# runs "support" as a command and sets the variable to a fragment (see the
+	@# `golden` target, which extracts its one value for the same reason). The three
+	@# secrets doctor asks about are extracted here and exported, so that README's
+	@# "declare -x … # or set it in .env" means what it says: without this the
+	@# preflight reports secrets `.env` already holds as missing — the one answer a
+	@# preflight must not give, and the one that makes a restored host look broken.
+	@for key in ONTRAK_GUEST__PASSWORD ONTRAK_PORTAL__SECRET ONTRAK_GUAC__SECRET_KEY; do \
+	  value="$$(sed -n "s/^$$key=//p" .env 2>/dev/null | head -1)"; \
+	  [ -z "$$value" ] || export "$$key=$$value"; \
+	done; \
 	$(PY) -m ontrak doctor
 
 doctor: check ## Alias for `check`

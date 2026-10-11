@@ -306,6 +306,7 @@ log "image tag  $TAG in $REGISTRY"
 step "3/8 the family stack's .env"
 
 ENV_FILE="$FAMILY_DIR/.env"
+TIX_ENV_FILE="$FAMILY_DIR/ontrak-tix/.env"
 if [[ ! -f "$ENV_FILE" ]]; then
   run cp "$FAMILY_DIR/.env.example" "$ENV_FILE"
   log "created .env from the template"
@@ -318,6 +319,19 @@ fi
 # loopback, never 172.x), so this asks it rather than repeating it.
 if [[ $DRY = 0 ]]; then
   ( cd "$FAMILY_DIR" && scripts/lan-env.sh --file .env ) || warn "lan-env.sh did not provision an address"
+fi
+
+# The family stack names two environment files as *required*: the root `.env`
+# above, and `ontrak-tix/.env`. The desk's is a `.env` like the root one, so a
+# fresh checkout does not have it, and compose refuses to start at all when a
+# required `env_file` is missing. `make lan` provisions exactly these two, through
+# this same script, before `make all-up-lan` starts the stack — this is that
+# second call. (The other four products name theirs `required: false`, so they are
+# left to the product that owns them.)
+if [[ $DRY = 1 ]]; then
+  printf '    would run: (cd %s && scripts/lan-env.sh --file ontrak-tix/.env)\n' "$FAMILY_DIR"
+else
+  ( cd "$FAMILY_DIR" && scripts/lan-env.sh --file ontrak-tix/.env ) || warn "lan-env.sh did not provision ontrak-tix/.env"
 fi
 
 LAN_IP="${ONTRAK_LAN_IP:-$(cd "$FAMILY_DIR" && bash -c '. scripts/stack-lib.sh; stack_lib_lan_ip' 2>/dev/null || true)}"
@@ -344,8 +358,20 @@ fi
 secret() { openssl rand -base64 48 | tr -d '\n=+/' | cut -c1-48; }
 ensure_secret() { # ensure_secret <file> <key>
   local file="$1" key="$2"
-  local current
-  current="$(sed -n "s/^${key}=//p" "$file" | head -1)"
+  local current=""
+  # A file that is not there holds the value nowhere, and one of the two files
+  # below is created a step above this: asked of the filesystem, a dry run plans
+  # that step instead of failing to read a file the run itself would have made.
+  if [[ -f "$file" ]]; then
+    current="$(sed -n "s/^${key}=//p" "$file" | head -1)"
+  fi
+  # A quoted placeholder is still a placeholder. `.env.example` ships
+  # `AUTH_SECRET="change-me-to-a-long-random-string"`, and the quotes put that value
+  # out of reach of the `change-me*` test below — while compose's `env_file` strips
+  # them, so the stack would sign its sessions with a string anyone can read. One
+  # pair of surrounding quotes comes off before the question is asked, which is the
+  # shape the template uses; a real secret is unchanged either way.
+  current="${current%\"}"; current="${current#\"}"
   if [[ -n "$current" && "$current" != change-me* && "$current" != "vault://"* ]]; then
     return 0
   fi
@@ -353,13 +379,25 @@ ensure_secret() { # ensure_secret <file> <key>
     printf '    would generate: %s in %s\n' "$key" "${file##*/}"
     return 0
   fi
-  ( cd "$FAMILY_DIR" && bash -c '. scripts/stack-lib.sh; stack_lib_env_set "$1" "$2" "$3" --force"' _ "$file" "$key" "$(secret)" )
+  if [[ ! -f "$file" ]]; then
+    warn "$file is not there, so $key cannot be generated in it"
+    return 0
+  fi
+  ( cd "$FAMILY_DIR" && bash -c '. scripts/stack-lib.sh; stack_lib_env_set "$1" "$2" "$3" --force' _ "$file" "$key" "$(secret)" )
   log "generated $key"
 }
 command -v openssl >/dev/null 2>&1 || command -v node >/dev/null 2>&1 || warn "neither openssl nor node is here: the secrets below cannot be generated"
 ensure_secret "$ENV_FILE" AUTH_SECRET          # signs the training app's session cookies
 ensure_secret "$ENV_FILE" TIX_AUTH_SECRET      # signs the desk's
 ensure_secret "$ENV_FILE" ONTRAK_API_TOKEN     # Sync's API refuses to start without one
+
+# The desk's key in the desk's own file too, and the reason it is generated in
+# both: `tix-app`'s `env_file` is `ontrak-tix/.env`, not the root `.env`, so a key
+# generated only in the root one never reaches the process that signs the desk's
+# sessions — it would go on signing them with the template's published placeholder.
+# The two are independent keys; Tix falls back to AUTH_SECRET only when its own is
+# unset, which is what the standalone stack relies on.
+ensure_secret "$TIX_ENV_FILE" TIX_AUTH_SECRET
 
 # ═══ 4. the images ═════════════════════════════════════════════════════════
 step "4/8 the product images"
@@ -463,6 +501,21 @@ step "6/8 the lab control plane"
 if [[ $WITH_LAB != 1 ]]; then
   log "skipped — pass --with-lab to bring up the local Authentik and the lab stack"
 else
+  # The lab's own bootstrap first, and only when it has never run: `make setup` is
+  # what creates `.venv` and writes the lab's `.env` (its `secret` step). Neither is
+  # optional here — `make catalog-validate` in step 7 runs `.venv/bin/python`, which
+  # on a host that never bootstrapped the lab does not exist, and the `--connect`
+  # below hands `docker compose` the checkout's `.env` as its first `--env-file`. A
+  # venv is the same signal as "the lab was bootstrapped": the one step that makes
+  # it also writes that `.env`, so asking for one asks about both. It installs the
+  # lab's Python dependencies, which is the lab half's slow step and the reason it
+  # is skipped rather than repeated when they are already there.
+  if [[ -d "$LAB_DIR/.venv" ]]; then
+    log "$LAB_DIR/.venv exists — the lab was bootstrapped here"
+  else
+    run_in "$LAB_DIR" make setup
+  fi
+
   # The lab's portal is SSO-only, so its IdP comes up first: `setup.sh` is
   # idempotent, keeps its own .env, and is the step that registers the OIDC client.
   run_in "$LAB_DIR" ./deploy/authentik/setup.sh
@@ -490,6 +543,17 @@ else
   else
     run_in "$LAB_DIR" docker compose up -d --build
   fi
+
+  # Then the range is pointed at that IdP, which is the lab's own `make local-auth`
+  # (`setup.sh --connect`) and the half that makes the line above useful: the portal
+  # reads its issuer, client id and secret from the *environment*, and only this
+  # gives it the local Authentik's — as `ontrak-local.env`, a second `--env-file`
+  # that wins over the checkout's own. A bare `docker compose up -d` resolves those
+  # from a `.env` that, on a restored host, has no IdP in it at all, so the portal
+  # this doc calls "the IdP the *lab* portal signs in through" would come up with no
+  # way to sign anyone in. It runs *here*, after the stack above, because it
+  # recreates the portal and the gateway to pick the values up.
+  run_in "$LAB_DIR" ./deploy/authentik/setup.sh --connect
 
   if [[ $WITH_TEMPLATES = 1 ]]; then
     # The golden image is the expensive half and the one worth pulling: it is

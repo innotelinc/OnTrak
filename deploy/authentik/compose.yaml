@@ -96,21 +96,29 @@ services:
       AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_BOOTSTRAP_TOKEN:?run deploy/authentik/setup.sh first — it writes .env}
       AUTHENTIK_BOOTSTRAP_EMAIL: ${AUTHENTIK_BOOTSTRAP_EMAIL:-}
     ports:
-      # 0.0.0.0 by default: the portal container reaches the issuer through this
-      # port too, and so does a browser on another machine. 127.0.0.1 is not
-      # enough — the issuer URL has to be one address that both can use, which is
-      # the host's own, and a container calling that address needs it published.
+      # The host's own address, which `setup.sh` writes as `AUTHENTIK_BIND_ADDR`:
+      # the portal container reaches the issuer through this port too, and so does
+      # a browser on another machine. 127.0.0.1 is not enough — the issuer URL has
+      # to be one address that both can use, which is the host's own, and a
+      # container calling that address needs it published.
       #
       # Published on loopback as well, and that is not belt-and-braces: `setup.sh`
       # waits on `127.0.0.1:<port>/-/health/ready/` and `provision.py` calls the API
       # there, so a deployment that pins `AUTHENTIK_BIND_ADDR` to its own address —
       # which is what a range keeping itself on its LAN does — used to be refused
       # by both, wait out the readiness deadline and give up before provisioning
-      # the application it was run for. A bare `"9000:9000"` (the 0.0.0.0 default)
-      # also opens this port on the docker bridges, which nothing off this host can
-      # dial; loopback and the host's own address is the pair that has callers.
+      # the application it was run for.
+      #
+      # Which is also why the wildcard cannot stand in for that address: dockerd
+      # accepts two mappings of one host port only when the addresses are specific
+      # and *different*, and `0.0.0.0` beside `127.0.0.1` — or `127.0.0.1` twice —
+      # is that overlap. The container does not start at all, with an "address
+      # already in use" that says nothing about its cause. Loopback and the host's
+      # own address is the pair that has callers, `setup.sh` refuses to write the
+      # wildcard, and the `:?` below is what turns a missing value into a sentence
+      # rather than a bind error.
       - "127.0.0.1:${AUTHENTIK_HTTP_PORT:-9000}:9000"
-      - "${AUTHENTIK_BIND_ADDR:-0.0.0.0}:${AUTHENTIK_HTTP_PORT:-9000}:9000"
+      - "${AUTHENTIK_BIND_ADDR:?set AUTHENTIK_BIND_ADDR in deploy/authentik/.env to this host's own address — the wildcard cannot be published beside the loopback mapping above}:${AUTHENTIK_HTTP_PORT:-9000}:9000"
     volumes:
       # uploads (avatars, icons) and the templates directory the image expects.
       - media:/media
