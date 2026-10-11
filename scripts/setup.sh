@@ -37,7 +37,16 @@ fi
 
 if [ ! -d "$VENV" ]; then
   echo "==> creating ${VENV}"
-  "$PYTHON" -m venv "$VENV"
+  # The `venv` module is stdlib; its *bootstrap* is a separate package, and on
+  # Debian/Ubuntu `python3 -m venv` fails outright without it. Nothing below can
+  # recover from that — the ensurepip step needs the same package — so it is named
+  # here rather than left to the traceback's apt hint. A host being stood up for
+  # the first time is exactly where this happens.
+  if ! "$PYTHON" -m venv "$VENV"; then
+    echo "!! ${PYTHON} cannot create a virtualenv: it has no venv bootstrap." >&2
+    echo "   Install it (Debian/Ubuntu: apt install python3-venv) and run this again." >&2
+    exit 1
+  fi
 fi
 
 # Go through `python -m pip`, never ${VENV}/bin/pip. The launcher script is not
