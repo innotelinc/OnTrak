@@ -10,6 +10,9 @@
 #
 #   deploy/authentik/setup.sh              # start Authentik and provision OnTrak
 #   deploy/authentik/setup.sh --connect    # ... and point the local portal at it
+#   deploy/authentik/setup.sh --family     # ... and point the whole family stack
+#                                          #     at it too (../OnTrak, or
+#                                          #     ONTRAK_FAMILY_DIR)
 #   deploy/authentik/setup.sh --down       # stop it (the database is kept)
 #
 # What it does, in order:
@@ -21,9 +24,15 @@
 #      OIDC client secret, and the seed accounts' password. Never overwrites.
 #   3. starts the stack and waits for Authentik to report ready
 #   4. runs provision.py, which creates the OnTrak application, its OIDC
-#      provider, the groups and the seed accounts through the API
+#      provider, the groups and the seed accounts through the API — and, when
+#      the family's client secret exists, a second application for the family
+#      stack
 #   5. writes deploy/authentik/ontrak-local.env — the four ONTRAK_PORTAL__OIDC_*
 #      values, the instructor group, and the address students are sent to
+#   6. writes deploy/authentik/family-local.env, the same four ideas for the
+#      family stack, and with --family recreates that stack against this
+#      Authentik — including Tix's identity connection, which lives in Tix's own
+#      database rather than in its environment
 #
 # Why the host address and not `localhost`: the issuer URL has to resolve, and
 # give the same answer, for two different clients — the student's browser and the
@@ -40,6 +49,17 @@ ENV_FILE="$HERE/.env"
 # whose members are instructors, and the address students are sent to. Written
 # last on the compose command line so it wins over the checkout's own .env.
 LOCAL_ENV_FILE="$HERE/ontrak-local.env"
+# The family's half of the same idea. Not a second file beside this one: the
+# family stack is a different compose project in a different checkout, and a
+# file that only counts when it is passed on the command line is a stack that
+# silently loses its sign-in the next time somebody runs a bare `docker compose
+# up`. So these values go into that checkout's own .env, inside a marked block
+# that this script owns and rewrites — everything around it is the operator's and
+# is left alone.
+FAMILY_DIR="${ONTRAK_FAMILY_DIR:-$(cd "$REPO_ROOT/.." && pwd)/OnTrak}"
+FAMILY_ENV_FILE="$FAMILY_DIR/.env"
+FAMILY_MARK_BEGIN="# >>> ontrak-local-family (deploy/authentik/setup.sh)"
+FAMILY_MARK_END="# <<< ontrak-local-family"
 
 log()  { printf '\033[36m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[32m  ✓\033[0m %s\n' "$*"; }
@@ -103,6 +123,28 @@ ONTRAK_LOCAL_OIDC_CLIENT_ID=ontrak
 ONTRAK_LOCAL_OIDC_CLIENT_SECRET=$(openssl rand -hex 32)
 ONTRAK_LOCAL_OIDC_REDIRECT_URI=http://localhost:8080/oidc/callback,http://127.0.0.1:8080/oidc/callback,http://$host:8080/oidc/callback
 
+# ── the family stack's own client (docker-compose.all.yml) ──
+# One client for the whole family, for the reason provision.py gives where it is
+# registered: an issuer is an application in Authentik and an application has one
+# front-channel provider, while the family compose carries a single
+# ONTRAK_OIDC_ISSUER for every product. The provider's redirect URIs are the
+# products' published callbacks, which provision.py derives rather than reads.
+ONTRAK_LOCAL_FAMILY_OIDC_CLIENT_ID=ontrak-family
+ONTRAK_LOCAL_FAMILY_OIDC_CLIENT_SECRET=$(rand 32)
+# The family's published ports, which are both the addresses its products are
+# reached on and the ports their callbacks are registered under — one list, in
+# one place, because a callback the provider was not given is a sign-in that dies
+# at its door. `docker-compose.all.yml` publishes exactly these, and it is the
+# file to change if any of them ever moves.
+ONTRAK_LOCAL_FAMILY_TRAINING_PORT=3000
+ONTRAK_LOCAL_FAMILY_TIX_PORT=3001
+ONTRAK_LOCAL_FAMILY_PORTAL_PORT=3300
+ONTRAK_LOCAL_FAMILY_GENIE_PORT=3400
+ONTRAK_LOCAL_FAMILY_SYNC_PORT=8420
+# The one desk Tix serves, so its sign-in page shows the SSO button without
+# asking for an internal tenant slug (ONTRAK_TIX_DEFAULT_TENANT in the compose).
+ONTRAK_LOCAL_FAMILY_TIX_TENANT=acme
+
 # ── the seed accounts provision.py creates ──
 ONTRAK_LOCAL_INSTRUCTOR=instructor@ontrak.lab
 ONTRAK_LOCAL_STUDENT_DOMAIN=ontrak.lab
@@ -118,6 +160,49 @@ load_env() {
   # shellcheck disable=SC1090  # a generated env file, by design
   . "$ENV_FILE"
   set +a
+}
+
+# The family's values, added after the first release of this script. An .env
+# written before them has none of them, and re-running generate_env over it would
+# rotate the portal's client secret as well — a range that signed people in
+# yesterday and refuses them today, over a change nobody asked for. So the
+# missing ones are appended, once, and nothing that is already there is touched.
+ensure_family_secrets() {
+  local keys=(
+    ONTRAK_LOCAL_FAMILY_OIDC_CLIENT_ID
+    ONTRAK_LOCAL_FAMILY_OIDC_CLIENT_SECRET
+    ONTRAK_LOCAL_FAMILY_TRAINING_PORT
+    ONTRAK_LOCAL_FAMILY_TIX_PORT
+    ONTRAK_LOCAL_FAMILY_PORTAL_PORT
+    ONTRAK_LOCAL_FAMILY_GENIE_PORT
+    ONTRAK_LOCAL_FAMILY_SYNC_PORT
+    ONTRAK_LOCAL_FAMILY_TIX_TENANT
+  )
+  local missing=() key
+  for key in "${keys[@]}"; do
+    grep -q "^$key=" "$ENV_FILE" || missing+=("$key")
+  done
+  [ "${#missing[@]}" -gt 0 ] || return 0
+
+  log "adding the family stack's client to $ENV_FILE (${#missing[@]} value(s) missing)"
+  umask 077
+  {
+    printf '\n# ── the family stack (docker-compose.all.yml) ──\n'
+    for key in "${missing[@]}"; do
+      case "$key" in
+        *_OIDC_CLIENT_ID)     printf '%s=ontrak-family\n' "$key" ;;
+        *_OIDC_CLIENT_SECRET) printf '%s=%s\n' "$key" "$(rand 32)" ;;
+        *_TRAINING_PORT)      printf '%s=3000\n' "$key" ;;
+        *_TIX_PORT)           printf '%s=3001\n' "$key" ;;
+        *_PORTAL_PORT)        printf '%s=3300\n' "$key" ;;
+        *_GENIE_PORT)         printf '%s=3400\n' "$key" ;;
+        *_SYNC_PORT)          printf '%s=8420\n' "$key" ;;
+        *_TIX_TENANT)         printf '%s=acme\n' "$key" ;;
+        *)                    printf '%s=\n' "$key" ;;
+      esac
+    done
+  } >>"$ENV_FILE"
+  ok "family client: ${ONTRAK_LOCAL_FAMILY_OIDC_CLIENT_ID:-ontrak-family}"
 }
 
 
@@ -194,8 +279,206 @@ provision() {
 # the only place these can be set. A service's `env_file:` is read later and
 # loses to the compose file's own `environment:` block, so it cannot override a
 # declared variable — and the portal declares all of these.
+# ------------------------------------------------------------------ the family --
+# Everything `docker-compose.all.yml` needs to sign people in through this
+# Authentik, as a marked block in the family checkout's .env. Values rather than
+# a paragraph: the products read the same names they would read in the estate, so
+# nothing about them is special-cased for a local IdP except the addresses.
+write_family_env() {
+  [ -d "$FAMILY_DIR" ] || die "the family checkout is not at $FAMILY_DIR — set ONTRAK_FAMILY_DIR to where it is"
+  [ -f "$FAMILY_ENV_FILE" ] || die "$FAMILY_ENV_FILE is missing — copy .env.example in the family checkout first"
+
+  local host="$ONTRAK_LOCAL_HOST"
+  local issuer="http://$host:$AUTHENTIK_HTTP_PORT/application/o/${FAMILY_APPLICATION_SLUG:-ontrak-family}/"
+  local client_id="${ONTRAK_LOCAL_FAMILY_OIDC_CLIENT_ID:-ontrak-family}"
+  local secret="$ONTRAK_LOCAL_FAMILY_OIDC_CLIENT_SECRET"
+  # The products' own addresses. A redirect URI is built from these and compared
+  # byte for byte by the provider, which is the single most common way a
+  # handshake "just does not work": the container's own name is not registered
+  # and never can be.
+  local training="http://$host:${ONTRAK_LOCAL_FAMILY_TRAINING_PORT:-3000}"
+  local tix="http://$host:${ONTRAK_LOCAL_FAMILY_TIX_PORT:-3001}"
+  local portal="http://$host:${ONTRAK_LOCAL_FAMILY_PORTAL_PORT:-3300}"
+  local genie="http://$host:${ONTRAK_LOCAL_FAMILY_GENIE_PORT:-3400}"
+  local sync="http://$host:${ONTRAK_LOCAL_FAMILY_SYNC_PORT:-8420}"
+
+  # The block is owned by this script, so it is replaced rather than appended to:
+  # re-running after the client secret rotated (or after this host's address
+  # changed) has to leave one answer, not two that disagree.
+  local tmp
+  tmp="$(mktemp "$FAMILY_ENV_FILE.XXXXXX")"
+  awk -v begin="$FAMILY_MARK_BEGIN" -v end="$FAMILY_MARK_END" '
+    $0 == begin { skip = 1; next }
+    $0 == end { skip = 0; next }
+    !skip { print }
+  ' "$FAMILY_ENV_FILE" >"$tmp"
+  # A file ending without a newline would glue the block onto its last line.
+  [ -s "$tmp" ] && [ -n "$(tail -c 1 "$tmp")" ] && printf '\n' >>"$tmp"
+  umask 077
+  cat >>"$tmp" <<EOF
+$FAMILY_MARK_BEGIN
+# Written by deploy/authentik/setup.sh — the family signed in through the local
+# Authentik. Delete this block (and re-run the products) to go back to no SSO.
+#
+# One client for the whole family, not one per product: an issuer is an
+# application in Authentik and an application has one front-channel provider,
+# while this compose file carries a single ONTRAK_OIDC_ISSUER for every product.
+# The per-product client-id variables below are therefore all this one client id.
+# Its redirect URIs are every product's published callback.
+
+# ── the provider ──
+ONTRAK_OIDC_ISSUER=$issuer
+ONTRAK_OIDC_PROVIDER_NAME=${ONTRAK_LOCAL_OIDC_PROVIDER_NAME:-OnTrak Authentik}
+# One mapping per line, and a mapping file cannot carry a blank line: an
+# instructor's group becomes the instructor role, and everyone else the default.
+ONTRAK_OIDC_ROLE_MAPPINGS=range-instructors=INSTRUCTOR
+ONTRAK_OIDC_DEFAULT_ROLE=STUDENT
+ONTRAK_OIDC_SCOPES=profile,email,groups
+
+# ── OnTrak Training (:3000) ──
+ONTRAK_TRAINING_BASE_URL=$training
+ONTRAK_OIDC_CLIENT_ID=$client_id
+ONTRAK_OIDC_CLIENT_SECRET=$secret
+
+# ── OnTrak Tix (:3001) ──
+# Its client id and issuer live in a row in its own database, not here — the
+# secret is the one thing it reads from the environment. setup.sh --family
+# writes that row.
+ONTRAK_TIX_BASE_URL=$tix
+ONTRAK_TIX_DEFAULT_TENANT=${ONTRAK_LOCAL_FAMILY_TIX_TENANT:-acme}
+ONTRAK_TIX_OIDC_CLIENT_SECRET=$secret
+
+# ── the family Portal (:3300) ──
+ONTRAK_PORTAL_PUBLIC_URL=$portal
+ONTRAK_PORTAL_OIDC_CLIENT_ID=$client_id
+ONTRAK_PORTAL_OIDC_CLIENT_SECRET=$secret
+
+# ── OnTrak Genie (:3400) ──
+# Genie takes its secret and its session secret from ontrak-genie/.env, which the
+# compose file also mounts — see this script's notes there.
+ONTRAK_OIDC_REDIRECT_URL=$genie/api/auth/callback
+
+# ── OnTrak Sync (:8420) ──
+ONTRAK_SYNC_PUBLIC_URL=$sync
+ONTRAK_SYNC_OIDC_CLIENT_ID=$client_id
+ONTRAK_SYNC_OIDC_CLIENT_SECRET=$secret
+$FAMILY_MARK_END
+EOF
+  # The original keeps its mode; the rewrite is atomic so a reader never sees a
+  # half-written .env.
+  chmod --reference="$FAMILY_ENV_FILE" "$tmp" 2>/dev/null || chmod 600 "$tmp"
+  mv "$tmp" "$FAMILY_ENV_FILE"
+  ok "wrote the family block into $FAMILY_ENV_FILE"
+
+  # The family Portal's session secret, outside the block on purpose.
+  #
+  # Not IdP wiring — it is the key the portal signs its own session cookie with —
+  # but the portal refuses to start a handshake without it ("ONTRAK_PORTAL_SESSION_SECRET
+  # is not set. There is no default: a session cookie signed with a placeholder is
+  # a session cookie anybody can mint"), so a family wired to an IdP and missing
+  # this reads as "single sign-on is broken" when it is one unset variable. Written
+  # once and never rewritten: rotating it signs everyone out, which is not what a
+  # re-run of this script should do to a desk that is in use.
+  if ! grep -q '^ONTRAK_PORTAL_SESSION_SECRET=' "$FAMILY_ENV_FILE" 2>/dev/null; then
+    umask 077
+    {
+      printf '\n# The family Portal session-cookie key — written once by\n'
+      printf '# deploy/authentik/setup.sh --family, because the portal will not start a\n'
+      printf '# sign-in without it. Rotate it to sign everybody out.\n'
+      printf 'ONTRAK_PORTAL_SESSION_SECRET=%s\n' "$(rand 32)"
+    } >>"$FAMILY_ENV_FILE"
+    ok "set ONTRAK_PORTAL_SESSION_SECRET (the portal refuses a handshake without it)"
+  fi
+
+  # Genie's two, into the file the compose file mounts for it. Appended rather
+  # than rewritten: that file is Genie's own and holds the gateway's credentials.
+  local genie_env="$FAMILY_DIR/ontrak-genie/.env"
+  if [ -d "$FAMILY_DIR/ontrak-genie" ]; then
+    umask 077
+    grep -q '^ONTRAK_OIDC_CLIENT_SECRET=' "$genie_env" 2>/dev/null \
+      || printf 'ONTRAK_OIDC_CLIENT_SECRET=%s\n' "$secret" >>"$genie_env"
+    grep -q '^ONTRAK_OIDC_SESSION_SECRET=' "$genie_env" 2>/dev/null \
+      || printf 'ONTRAK_OIDC_SESSION_SECRET=%s\n' "$(rand 32)" >>"$genie_env"
+    ok "wrote Genie's client secret and session secret into $genie_env"
+  fi
+}
+
+
+# Tix's identity connection, which is a row and not a variable.
+#
+# Every other product in the family reads its issuer and client id from the
+# environment; Tix looks them up per tenant in its own database, because a desk
+# can serve several organisations against several providers. So "point Tix at
+# this Authentik" is a write, and there is no API for it that does not first need
+# a signed-in admin. It is done through psql inside the desk's own database
+# container — the same client schema the app reads — and it is idempotent.
+connect_tix_connection() {
+  local host="$ONTRAK_LOCAL_HOST"
+  local issuer="http://$host:$AUTHENTIK_HTTP_PORT/application/o/${FAMILY_APPLICATION_SLUG:-ontrak-family}/"
+  local client_id="${ONTRAK_LOCAL_FAMILY_OIDC_CLIENT_ID:-ontrak-family}"
+  local tenant="${ONTRAK_LOCAL_FAMILY_TIX_TENANT:-acme}"
+  local container="${ONTRAK_TIX_DB_CONTAINER:-ontrak-family-tix-db-1}"
+  local db="${ONTRAK_TIX_DB_NAME:-ontrak_tix}"
+  local user="${ONTRAK_TIX_DB_USER:-ontrak}"
+
+  if ! docker inspect "$container" >/dev/null 2>&1; then
+    warn "no $container to write Tix's identity connection into — is the family stack up?"
+    return 1
+  fi
+
+  # `tenantId` is Tix's own id for the desk, not its slug, so the row is written
+  # from a subselect and only when the tenant exists. 'OIDC' is the enum label;
+  # the role mappings are the same shape the app's parser reads.
+  #
+  # `email` and `profile` are in the scopes deliberately: Tix requests `openid`
+  # plus whatever this column names, and a connection asking only for `groups`
+  # gets an ID token with no address in it, which the desk refuses with "the ID
+  # token carried no usable email address" — a sign-in that reached the desk and
+  # could not be completed.
+  docker exec -i "$container" psql -v ON_ERROR_STOP=1 -U "$user" -d "$db" <<SQL
+INSERT INTO "IdentityConnection" (
+  id, "tenantId", protocol, issuer, "clientId", scopes, "allowedDomains",
+  "defaultRole", "roleMappings", "mfaRequired", "scimEnabled", "createdAt", "updatedAt"
+)
+SELECT
+  'ontrak-local-authentik', t.id, 'OIDC'::"IdentityProtocol", '$issuer', '$client_id',
+  ARRAY['email', 'profile', 'groups'], ARRAY[]::text[], 'REQUESTER'::"Role",
+  '[{"claim":"groups","value":"range-instructors","role":"AGENT"}]'::jsonb,
+  false, false, now(), now()
+FROM "Tenant" t WHERE t.slug = '$tenant'
+ON CONFLICT ("tenantId") DO UPDATE SET
+  protocol = EXCLUDED.protocol,
+  issuer = EXCLUDED.issuer,
+  "clientId" = EXCLUDED."clientId",
+  scopes = EXCLUDED.scopes,
+  "allowedDomains" = EXCLUDED."allowedDomains",
+  "roleMappings" = EXCLUDED."roleMappings",
+  "updatedAt" = now();
+SQL
+  ok "Tix: tenant $tenant signs in through this Authentik"
+}
+
+
 write_local_env() {
   local issuer="http://${ONTRAK_LOCAL_HOST}:${AUTHENTIK_HTTP_PORT}/application/o/ontrak/"
+  # Demo mode is a *default*, never an override. This file is rewritten on every
+  # run, so a hard-coded `true` here silently turned a range that had been put on
+  # real machines back into a simulation — the portal comes up on an in-memory
+  # Incus, sessions get fabricated addresses, and every console link is handed a
+  # machine that does not exist, which reads as "the console is broken" rather
+  # than "this range is not running the lab".
+  #
+  # The value comes from, in order: an explicit ONTRAK_LOCAL_DEMO, whatever this
+  # file already says, the checkout's own .env, and finally true — a laptop range
+  # with no image built yet, which is what the default is for.
+  local demo="${ONTRAK_LOCAL_DEMO:-}"
+  if [ -z "$demo" ] && [ -f "$LOCAL_ENV_FILE" ]; then
+    demo="$(sed -n 's/^ONTRAK_DEMO__ENABLED=//p' "$LOCAL_ENV_FILE" | tail -1)"
+  fi
+  if [ -z "$demo" ] && [ -f "$REPO_ROOT/.env" ]; then
+    demo="$(sed -n 's/^ONTRAK_DEMO__ENABLED=//p' "$REPO_ROOT/.env" | tail -1)"
+  fi
+  [ -n "$demo" ] || demo=true
   umask 077
   cat >"$LOCAL_ENV_FILE" <<EOF
 # Generated by deploy/authentik/setup.sh — how a local range is pointed at the
@@ -229,7 +512,10 @@ ONTRAK_GUAC__BASE_URL=http://${ONTRAK_LOCAL_HOST}:${ONTRAK_PORTAL__PORT:-8080}/g
 # demo mode, which is an in-memory Incus and a driver that reports plausible
 # grades. That is what makes a class work end to end here. Set it to false once
 # the image and the templates exist and the range should hand out real VMs.
-ONTRAK_DEMO__ENABLED=${ONTRAK_LOCAL_DEMO:-true}
+#
+# Carried forward from the last run (or from the checkout's .env), so turning it
+# off sticks: pass ONTRAK_LOCAL_DEMO=false to change it from here.
+ONTRAK_DEMO__ENABLED=$demo
 EOF
   ok "wrote $LOCAL_ENV_FILE"
 }
@@ -255,6 +541,18 @@ connect() {
   ok "portal and gateway recreated against http://${ONTRAK_LOCAL_HOST}:${AUTHENTIK_HTTP_PORT}"
 }
 
+# The family's side. No second env file here, unlike the range: the values went
+# into the family checkout's own .env, so the only thing left is to make the
+# running containers read them again. Named services rather than the whole stack —
+# the databases, Sentinel and the preview host are not sign-in clients and
+# restarting them buys nothing.
+connect_family() {
+  log "recreating the family services against this Authentik"
+  ( cd "$FAMILY_DIR" && docker compose -f docker-compose.all.yml up -d \
+      training-app tix-app portal-app sync-api genie-app )
+  ok "training, tix, portal, sync and genie recreated"
+}
+
 
 # ------------------------------------------------------------------------ run --
 case "${1:-}" in
@@ -276,6 +574,8 @@ else
   ok "using the existing $ENV_FILE (delete it for fresh secrets)"
 fi
 
+# Before load_env, because the values it adds are the ones provisioning reads.
+ensure_family_secrets
 load_env
 
 # The one value here that cannot be defaulted into working. The compose file
@@ -326,4 +626,28 @@ EOF
 
 if [ "${1:-}" = "--connect" ]; then
   connect
+fi
+
+# --family does for the family stack what --connect does for the range, plus the
+# two writes that have no environment variable to carry them: the family .env and
+# Tix's identity connection row.
+if [ "${1:-}" = "--family" ]; then
+  write_family_env
+  connect_tix_connection || true
+  connect_family
+
+  cat <<EOF
+
+  family issuer     http://${ONTRAK_LOCAL_HOST}:${AUTHENTIK_HTTP_PORT}/application/o/${FAMILY_APPLICATION_SLUG:-ontrak-family}/
+  family client id  ${ONTRAK_LOCAL_FAMILY_OIDC_CLIENT_ID:-ontrak-family}
+  family secret     ${ONTRAK_LOCAL_FAMILY_OIDC_CLIENT_SECRET}
+
+  Every family product signs in as the accounts above — the family has no
+  accounts of its own, which is the point of wiring it to one provider.
+  Products:  Training :${ONTRAK_LOCAL_FAMILY_TRAINING_PORT:-3000}
+             Tix      :${ONTRAK_LOCAL_FAMILY_TIX_PORT:-3001}   (tenant ${ONTRAK_LOCAL_FAMILY_TIX_TENANT:-acme})
+             Portal   :${ONTRAK_LOCAL_FAMILY_PORTAL_PORT:-3300}
+             Genie    :${ONTRAK_LOCAL_FAMILY_GENIE_PORT:-3400}
+             Sync     :${ONTRAK_LOCAL_FAMILY_SYNC_PORT:-8420}
+EOF
 fi

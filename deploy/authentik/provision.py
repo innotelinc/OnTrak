@@ -11,6 +11,9 @@ things against the local instance, through its own REST API:
   2. a `groups` scope mapping, so the scope the portal asks for exists
   3. a confidential OAuth2/OIDC provider for the OnTrak application
   4. the application itself, pointing at that provider
+  5. when ONTRAK_LOCAL_FAMILY_OIDC_CLIENT_SECRET is set, the same pair again for
+     the family stack (`docker-compose.all.yml`), whose products each read a
+     client id and secret from their own environment
 
 It is idempotent: everything is looked up by name first, so re-running it after a
 `docker compose down` (or after adding a student) changes what is missing and
@@ -58,11 +61,80 @@ DEFAULT_REDIRECT_URI = "http://localhost:8080/oidc/callback"
 INSTRUCTOR_GROUP = "range-instructors"
 STUDENT_GROUP = "range-students"
 
+# ── the family's own client ────────────────────────────────────────────────────
+# The second relying party here, and a different one from the portal above: the
+# family stack (`docker-compose.all.yml`) — Training, Tix, Sentinel, Sync, Genie
+# and the family Portal — signs in through a *single* issuer and, in the estate,
+# one client per product registered against it.
+#
+# Authentik cannot spell that: an issuer IS an application here
+# (`/application/o/<slug>/`), and an application has exactly one front-channel
+# provider, so two client ids in this instance means two issuers. The family
+# compose carries one `ONTRAK_OIDC_ISSUER` for every product, deliberately, so
+# one client for the whole family is the shape that fits — and it is the shape a
+# laptop range wants anyway. The per-product `*_OIDC_CLIENT_ID` variables in the
+# family .env are all pointed at this one client id rather than left to disagree.
+#
+# `ONTRAK_LOCAL_FAMILY_OIDC_CLIENT_SECRET` is the credential; which products read
+# it is setup.sh's business, not this file's.
+FAMILY_APPLICATION_NAME = "OnTrak Family"
+FAMILY_APPLICATION_SLUG = "ontrak-family"
+FAMILY_PROVIDER_NAME = "OnTrak Family"
+DEFAULT_FAMILY_CLIENT_ID = "ontrak-family"
+
+# Every callback the family's products answer on, as (port, path). This is the
+# list that has to be right: the provider compares the redirect URI byte for
+# byte, and a missing one is a sign-in that dies at the provider's door with a
+# page that names no product. Ports and paths are the published ones — Training
+# 3000, Tix 3001, the family Portal 3300, Genie 3400, Sync's API 8420.
+FAMILY_CALLBACKS = (
+    (3000, "/api/sso/callback"),        # OnTrak Training
+    (3001, "/api/sso/callback"),        # OnTrak Tix
+    (3300, "/api/sso/callback"),        # the family Portal
+    (3400, "/api/auth/callback"),       # OnTrak Genie
+    (8420, "/api/auth/sso/callback"),   # OnTrak Sync
+)
+# The names a callback is registered under. The machine's own address first:
+# that is the one the browser and every container agree on, and the one the
+# family .env hands the products as their public base URL. Loopback and
+# `localhost` are registered beside it so a product opened on the range itself
+# works without the operator having to a second time remember which name the
+# browser used.
+REDIRECT_HOSTS = ("127.0.0.1", "localhost")
+
 # The scope the portal asks for. Authentik's default `profile` mapping already
 # returns a groups claim, but the *scope name* it requests has to exist on the
 # provider or the authorize request is refused before anyone types a password —
 # which is why Cerulean's setup "pins the platform's groups scope mapping on
 # every app" (ontrak/oidc.py). Same mapping, made here.
+# The scope the products read the address out of, and the one mapping in here
+# that replaces an Authentik default rather than adding beside it.
+#
+# Authentik's own mapping for `email` is, in full:
+#
+#     return {'email': request.user.email, 'email_verified': False}
+#
+# — false, unconditionally. A defensible default for an IdP that has no way to
+# know, and fatal for this one: every OnTrak product refuses a sign-in whose
+# address is not verified, so with the default in place the whole family, and the
+# range's portal with it, signs in successfully and is then turned away by every
+# one of them — "the provider has not verified that email address".
+#
+# The accounts here are created by this script, exist nowhere else, and hold
+# addresses nobody off this machine can claim. Asserting them verified is the
+# honest answer; the alternative is a login page nobody can get past.
+EMAIL_SCOPE = "email"
+EMAIL_MAPPING_NAME = "OnTrak email"
+EMAIL_EXPRESSION = (
+    "# OnTrak: the address this deployment created the account with, asserted\n"
+    "# verified. See deploy/authentik/provision.py for why the default cannot be\n"
+    "# used — it reports every address unverified, and every product refuses one.\n"
+    "return {\n"
+    "    'email': request.user.email,\n"
+    "    'email_verified': bool(request.user.email),\n"
+    "}\n"
+)
+
 GROUPS_SCOPE = "groups"
 GROUPS_EXPRESSION = (
     "# The portal reads this to decide who is an instructor (ontrak/oidc.py).\n"
@@ -200,8 +272,36 @@ def log(text: str) -> None:
 
 
 # --------------------------------------------------------------------- lookups --
+def one_where(api: Api, path: str, params: dict, field: str, value: str) -> dict | None:
+    """The first match whose `field` is exactly `value` — or None.
+
+    Deliberately not `api.one`, and this is the one thing in this file that has to
+    be got right. Authentik 2026.8 answers a *filtered* list endpoint with a
+    pagination count of 0 and the unfiltered page in `results`: asking
+    `/core/applications/?slug=ontrak-family` for an application that does not
+    exist returns the application beside it, with `"count": 0`. That breaks a
+    lookup in both directions — `results[0]` concludes the thing is already there
+    and skips creating it, while paging to the end of the *response* concludes it
+    is not there and creates it a second time, which Authentik refuses with
+    "Application with this slug already exists".
+
+    So the filter is not sent at all: the list is fetched whole and the field is
+    compared here. `params` is kept in the signature because it is what says
+    *which* field identifies a row, and because a caller reading it should still
+    be able to see what it is looking for; every table this is asked about is
+    small, and an unfiltered page costs nothing next to a wrong answer.
+    """
+    for row in api.all(path):
+        if str(row.get(field) or "") == value:
+            return row
+    return None
+
+
 def required(api: Api, path: str, params: dict, what: str) -> dict:
-    found = api.one(path, params)
+    # The single parameter *is* the identity being asked for, so the same one is
+    # the one compared.
+    field, value = next(iter(params.items()))
+    found = one_where(api, path, params, field, str(value))
     if not found:
         raise ProvisionError(f"{what} not found in Authentik ({path} {params})")
     return found
@@ -209,13 +309,19 @@ def required(api: Api, path: str, params: dict, what: str) -> dict:
 
 def authorization_flow(api: Api) -> dict:
     for slug in AUTHORIZATION_FLOW_SLUGS:
-        found = api.one("/flows/instances/", {"slug": slug})
+        found = one_where(api, "/flows/instances/", {"slug": slug}, "slug", slug)
         if found:
             return found
     raise ProvisionError("neither default provider authorization flow is present")
 
 
 def signing_key(api: Api) -> dict:
+    # The one lookup here that has to trust the endpoint's filter: `has_key` is
+    # not in the list serializer at all, so there is nothing to compare it
+    # against. It is worth knowing *why* that is safe here and not elsewhere —
+    # this endpoint has a single row on a fresh instance, and a keypair without a
+    # private key makes provider creation fail loudly rather than quietly sign
+    # with nothing.
     keys = api.all("/crypto/certificatekeypairs/", {"has_key": "true"})
     if not keys:
         raise ProvisionError("Authentik has no certificate keypair to sign with")
@@ -227,9 +333,21 @@ def signing_key(api: Api) -> dict:
     return keys[0]
 
 
+def scope_mappings(api: Api, scope: str) -> list:
+    """Every scope mapping that claims `scope`.
+
+    Filtered here rather than at the endpoint, for the reason `one_where` gives:
+    Authentik will hand back the whole table whatever was asked for, and the
+    mappings for `openid`, `email` and `profile` all look alike from the outside
+    — taking the first one that came back is how a provider ends up signing
+    tokens with the wrong claims in them.
+    """
+    return [m for m in api.all("/propertymappings/provider/scope/") if str(m.get("scope_name") or "") == scope]
+
+
 def default_scope_mapping(api: Api, scope: str) -> dict:
     """Authentik's own scope mapping for `openid`, `email` or `profile`."""
-    mappings = api.all("/propertymappings/provider/scope/", {"scope_name": scope})
+    mappings = scope_mappings(api, scope)
     if not mappings:
         raise ProvisionError(f"Authentik has no default '{scope}' scope mapping")
     for mapping in mappings:
@@ -238,8 +356,32 @@ def default_scope_mapping(api: Api, scope: str) -> dict:
     return mappings[0]
 
 
+def ensure_email_mapping(api: Api) -> dict:
+    """This instance's own `email` scope, which asserts the address verified.
+
+    Found by name rather than by scope: Authentik ships a mapping for this scope
+    already, and that mapping is precisely the one that has to be left out of the
+    provider.
+    """
+    found = next(
+        (m for m in scope_mappings(api, EMAIL_SCOPE) if str(m.get("name")) == EMAIL_MAPPING_NAME),
+        None,
+    )
+    if found:
+        return found
+    return api.post(
+        "/propertymappings/provider/scope/",
+        {
+            "name": EMAIL_MAPPING_NAME,
+            "scope_name": EMAIL_SCOPE,
+            "description": "The account's email address, asserted verified",
+            "expression": EMAIL_EXPRESSION,
+        },
+    )
+
+
 def ensure_groups_mapping(api: Api) -> dict:
-    found = api.one("/propertymappings/provider/scope/", {"scope_name": GROUPS_SCOPE})
+    found = next(iter(scope_mappings(api, GROUPS_SCOPE)), None)
     if found:
         return found
     return api.post(
@@ -254,7 +396,7 @@ def ensure_groups_mapping(api: Api) -> dict:
 
 
 def ensure_group(api: Api, name: str) -> dict:
-    found = api.one("/core/groups/", {"name": name})
+    found = one_where(api, "/core/groups/", {"name": name}, "name", name)
     if found:
         return found
     return api.post("/core/groups/", {"name": name, "is_superuser": False})
@@ -262,7 +404,7 @@ def ensure_group(api: Api, name: str) -> dict:
 
 # ----------------------------------------------------------------------- users --
 def ensure_user(api: Api, email: str, name: str, password: str, group_pk: str) -> dict:
-    user = api.one("/core/users/", {"username": email})
+    user = one_where(api, "/core/users/", {"username": email}, "username", email)
     if not user:
         user = api.post(
             "/core/users/",
@@ -302,9 +444,17 @@ def _redirect_uri_shapes(uris):
     )
 
 
-def provider_body(*, flows, mappings, key, client_id, client_secret):
+def family_redirect_uris(host: str) -> list[str]:
+    """Every callback the family's products answer on, under every name above."""
+    names = list(REDIRECT_HOSTS)
+    if host and host not in names:
+        names.append(host)
+    return [f"http://{name}:{port}{path}" for name in names for port, path in FAMILY_CALLBACKS]
+
+
+def provider_body(*, name, flows, mappings, key, client_id, client_secret):
     return {
-        "name": PROVIDER_NAME,
+        "name": name,
         "authorization_flow": flows[0]["pk"],
         "invalidation_flow": flows[1]["pk"],
         # confidential: the portal has a client secret and exchanges the code
@@ -370,15 +520,16 @@ def write_provider(api: Api, method: str, path: str, body: dict, redirect_uris) 
     raise last or ProvisionError("the provider could not be written")
 
 
-def ensure_provider(api: Api, *, flows, mappings, key, client_id, client_secret, redirect_uris):
+def ensure_provider(api: Api, *, name, flows, mappings, key, client_id, client_secret, redirect_uris):
     body = provider_body(
+        name=name,
         flows=flows,
         mappings=mappings,
         key=key,
         client_id=client_id,
         client_secret=client_secret,
     )
-    found = api.one("/providers/oauth2/", {"name": PROVIDER_NAME})
+    found = one_where(api, "/providers/oauth2/", {"name": name}, "name", name)
     if not found:
         return write_provider(api, "POST", "/providers/oauth2/", body, redirect_uris)
     drift = provider_drift(
@@ -391,22 +542,46 @@ def ensure_provider(api: Api, *, flows, mappings, key, client_id, client_secret,
     )
     if not drift:
         return found
-    log(f"provider {PROVIDER_NAME} is not what this range needs ({', '.join(drift)}) — correcting")
+    log(f"provider {name} is not what this range needs ({', '.join(drift)}) — correcting")
     return write_provider(api, "PATCH", f"/providers/oauth2/{found['pk']}/", body, redirect_uris)
 
 
-def ensure_application(api: Api, provider_pk: str) -> dict:
-    found = api.one("/core/applications/", {"slug": APPLICATION_SLUG})
-    if found:
-        return found
-    return api.post(
-        "/core/applications/",
-        {
-            "name": APPLICATION_NAME,
-            "slug": APPLICATION_SLUG,
-            "provider": provider_pk,
-        },
-    )
+def find_application(api: Api, slug: str) -> dict | None:
+    """The application with this slug, or None.
+
+    Asked for at its own route, not through the list, and that is not a
+    preference. On 2026.8 `/core/applications/` answers `"count": 2` and returns
+    one row — an application that plainly exists is simply absent from the page,
+    while `/core/applications/<slug>/` serves it. A lookup that trusts the list
+    concludes it has to create the application, and the create is refused with
+    "Application with this slug already exists", which reads as a broken
+    provisioner rather than a broken list.
+    """
+    try:
+        found = api.get(f"/core/applications/{slug}/")
+    except ProvisionError:
+        return None
+    return found if str(found.get("slug") or "") == slug else None
+
+
+def ensure_application(api: Api, provider_pk: str, *, name=APPLICATION_NAME, slug=APPLICATION_SLUG) -> dict:
+    found = find_application(api, slug)
+    if not found:
+        return api.post(
+            "/core/applications/",
+            {
+                "name": name,
+                "slug": slug,
+                "provider": provider_pk,
+            },
+        )
+    # An application pointed at the wrong provider is an application whose
+    # sign-in runs against the wrong client — and it looks entirely correct from
+    # the outside, so it is compared rather than assumed.
+    if str(found.get("provider") or "") != str(provider_pk):
+        log(f"application {slug} points at provider {found.get('provider')} — correcting")
+        return api.patch(f"/core/applications/{slug}/", {"provider": provider_pk})
+    return found
 
 
 # ------------------------------------------------------------------------ main --
@@ -437,6 +612,7 @@ def main() -> int:
     students = int(os.environ.get("ONTRAK_LOCAL_STUDENTS", "6"))
     instructor = os.environ.get("ONTRAK_LOCAL_INSTRUCTOR", "instructor@ontrak.lab").strip()
     student_domain = os.environ.get("ONTRAK_LOCAL_STUDENT_DOMAIN", "ontrak.lab").strip()
+    host = os.environ.get("ONTRAK_LOCAL_HOST", "").strip()
 
     version = detect_version(base_url, token)
     api = Api(base_url, token, version)
@@ -448,12 +624,13 @@ def main() -> int:
 
     mappings = [
         default_scope_mapping(api, "openid"),
-        default_scope_mapping(api, "email"),
+        # Ours, not Authentik's: see EMAIL_EXPRESSION.
+        ensure_email_mapping(api),
         default_scope_mapping(api, "profile"),
     ]
     groups_mapping = ensure_groups_mapping(api)
     mappings.append(groups_mapping)
-    log(f"scope mappings: openid, email, profile, {GROUPS_SCOPE}")
+    log(f"scope mappings: openid, {EMAIL_MAPPING_NAME} (email), profile, {GROUPS_SCOPE}")
 
     instructors = ensure_group(api, INSTRUCTOR_GROUP)
     students_group = ensure_group(api, STUDENT_GROUP)
@@ -461,6 +638,7 @@ def main() -> int:
 
     provider = ensure_provider(
         api,
+        name=PROVIDER_NAME,
         flows=(auth_flow, inval_flow),
         mappings=mappings,
         key=key,
@@ -471,6 +649,43 @@ def main() -> int:
     ensure_application(api, provider["pk"])
     log(f"application {APPLICATION_SLUG} -> provider {provider['name']} (client {client_id})")
     log(f"redirect URIs: {', '.join(redirect_uris) or '(none — Authentik keeps the first used)'}")
+
+    # ── the family's client ────────────────────────────────────────────────
+    # Optional on purpose: this script is also the portal-only provisioner, and a
+    # checkout that never generated the family secret should still come up with
+    # a working portal rather than die here for a client nothing was going to
+    # use. When the secret *is* set — the state of any .env setup.sh has written
+    # — the family's client is registered and drift-corrected on exactly the same
+    # terms as the portal's.
+    family_secret = os.environ.get("ONTRAK_LOCAL_FAMILY_OIDC_CLIENT_SECRET", "").strip()
+    if family_secret:
+        family_client_id = os.environ.get(
+            "ONTRAK_LOCAL_FAMILY_OIDC_CLIENT_ID", DEFAULT_FAMILY_CLIENT_ID
+        ).strip()
+        family_uris = family_redirect_uris(host)
+        family_provider = ensure_provider(
+            api,
+            name=FAMILY_PROVIDER_NAME,
+            flows=(auth_flow, inval_flow),
+            mappings=mappings,
+            key=key,
+            client_id=family_client_id,
+            client_secret=family_secret,
+            redirect_uris=family_uris,
+        )
+        ensure_application(
+            api,
+            family_provider["pk"],
+            name=FAMILY_APPLICATION_NAME,
+            slug=FAMILY_APPLICATION_SLUG,
+        )
+        log(
+            f"application {FAMILY_APPLICATION_SLUG} -> provider {family_provider['name']} "
+            f"(client {family_client_id})"
+        )
+        log(f"family redirect URIs: {len(family_uris)} registered, across {len(REDIRECT_HOSTS) + (1 if host and host not in REDIRECT_HOSTS else 0)} host name(s)")
+    else:
+        log("no ONTRAK_LOCAL_FAMILY_OIDC_CLIENT_SECRET — skipping the family's client")
 
     # The seed accounts. Same shape as demo mode's (ontrak/demo.py): one
     # instructor who runs the class, N students who take it.
