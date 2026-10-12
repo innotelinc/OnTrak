@@ -75,9 +75,24 @@ async function signIn(page: Page): Promise<void> {
   // By `name` rather than by label: the password field's own label wraps the
   // "show the password" checkbox, so its accessible name is "Password show the
   // password" — a label lookup matches two controls and says so.
-  await page.locator('input[name="username"]').fill(USERNAME);
-  await page.locator('input[name="password"]').fill(PASSWORD);
-  await page.getByRole("button", { name: "Sign in locally" }).click();
+  const username = page.locator('input[name="username"]');
+  const password = page.locator('input[name="password"]');
+  // The fields are React-controlled, and typing into one before React has taken the
+  // page over is a race the first test of the file loses: `next dev` compiles this
+  // route on the request that just arrived, hydration lands between the two fills, and
+  // the render that follows writes its own (empty) state back over the username — so
+  // the button stays disabled and the test waits out its whole timeout at the click.
+  // The panel focuses the username field from an effect, which is the first moment
+  // React owns the form, so that is what this waits for.
+  await expect(username).toBeFocused();
+  await username.fill(USERNAME);
+  await password.fill(PASSWORD);
+  // And the click is only reached once the form agrees the credentials are there: if
+  // that race ever comes back, this fails in twenty seconds naming the button rather
+  // than ninety naming nothing.
+  const submit = page.getByRole("button", { name: "Sign in locally" });
+  await expect(submit).toBeEnabled();
+  await submit.click();
   await expect(
     page.getByRole("heading", { name: "Rollouts", level: 1 }),
     "signing in should land on /rollouts",
