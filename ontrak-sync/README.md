@@ -142,6 +142,7 @@ by itself — for the containers it has been **given**, and only those.
 | | |
 |---|---|
 | What it is given | A `(host, container, image ref)` remit, claimed through `POST /api/rollouts/claim` with the note saying who gave it up. An empty remit is the shipped state and means the feature cannot touch anything. |
+| Who fills the remit | By hand, unless `ONTRAK_ROLLOUT_ADOPT` says otherwise. `watched` claims every docker image a scan finds on a configured host and arms none of it (findings are still raised, a person still decides); `unattended` claims the same rows and lets the timer roll them. Only the *configured* host list is adopted, a finding marked `skipped` on the Findings page never is, and a container taken out with **Release** stays out however often a scan finds it — claiming it again is the way back in, so the release is a decision and not a gesture the next pass undoes. |
 | Where it is driven from | The **Rollouts** page: the banner when the switch is off, the claim form, the remit with its cooldowns and holds, every docker image the scans have seen and whether it is owned, the roll history with an Undo, and the caps in force. Claiming is `sync:configure`, running a pass and undoing one are `sync:apply`, reading it is `sync:view`. |
 | When it runs | At the end of a **scheduled scan**, in both `detect` and `auto` mode, inside the policy's window and around its change freeze — plus on demand through `POST /api/rollouts/run`. |
 | The decision | Ten rails, all pure and unit-tested: ownership, the kill switch, `auto: false` (watched, never moved), protected refs, the window, the freeze, a per-container cooldown, per-run and per-host caps, an unjudged registry (which is not a reason to restart anything), and the compose-plan refusal the clicked path already makes — checked *before* a container is stopped. |
@@ -152,6 +153,13 @@ by itself — for the containers it has been **given**, and only those.
 
 Every outcome is a row: what was running, what it was asked to become, the state, the reason in
 the daemon's own words, and how long it took. See [docs/rollout.md](docs/rollout.md).
+
+Adoption is off by default because it changes what the remit *is*: with it off the list is one a
+person wrote, and with it on the list is one the Network wrote. On a deployment that switches it
+on, the Rollouts page says so — the posture, the variable and the containers kept out by hand —
+and a pass reports what it took on and what it left alone, so "the remit is empty" never has to be
+read as "there is nothing behind". The kill switch is a separate decision: with `ONTRAK_ROLLOUT`
+still off, an adopting deployment fills the remit and restarts nothing.
 
 ### What it will never do
 
@@ -226,12 +234,12 @@ writes to it.
 ## Tests
 
 ```bash
-make test        # 510 tests with nothing installed; 536 with requirements.txt
+make test        # 533 tests with nothing installed; 563 with requirements.txt
 ```
 
 No Network is required either way. The two modules that drive the HTTP layer skip on a
 bare checkout — they need FastAPI, which a developer's `python3` does not have — and run
-their 26 tests inside the image and in CI, which install `requirements.txt`.
+their 30 tests inside the image and in CI, which install `requirements.txt`.
 
 The suite covers the parsers, the cron arithmetic, the finding lifecycle, the scan engine (against
 a fake Network) and the apply decision. It is plain `unittest` and ships inside the backend image,
@@ -279,6 +287,12 @@ and `docker` faked, reusing the same fake the roll's own unit tests are held to.
 dashboard is then started on `:8451` against it with the same-origin `/api/*` proxy the
 family stack ships, and the spec signs in through the break-glass door. Only the Network is
 faked; nothing about the page, the wire or the roll is.
+
+The harness starts in the posture this repository deploys — adoption on, `unattended` — so the
+adopted console is covered too: the posture notice, the released rows with who and why, and a pass
+that reports what it refused to take back. `ONTRAK_SYNC_ADOPT=off npm run test:e2e:sync` runs the
+same suite against the shipped claim-by-hand posture, and the two assertions that differ between
+them are the only ones that know which one it is.
 
 It also asserts the dev server's **hot-reload socket** connects, because that is the one
 failure nothing else here can see. Next answers an HMR handshake `Unauthorized` when the

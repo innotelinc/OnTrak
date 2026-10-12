@@ -37,6 +37,19 @@ const PASSWORD = process.env.ONTRAK_SYNC_ADMIN_PASSWORD ?? "change-me-ontrak";
 const REF = process.env.ONTRAK_SYNC_REF ?? "ghcr.io/innotelinc/monarch/api:1.4";
 const CONTAINER = process.env.ONTRAK_SYNC_CONTAINER ?? "monarch";
 const HOST = process.env.ONTRAK_SYNC_HOST ?? "i1";
+/**
+ * Who fills the remit, as the harness was started (`ONTRAK_ROLLOUT_ADOPT`).
+ *
+ * `off` is the shipped posture and `unattended` is the one this repository deploys, and
+ * two assertions differ between them: what an empty remit *says*, and whether a released
+ * container is kept out. Everything else — the claim, the roll, the undo, the hold — is
+ * the same code either way, which is the point of testing both.
+ */
+const ADOPT = process.env.ONTRAK_SYNC_ADOPT ?? "off";
+const ADOPTING = ADOPT !== "off";
+
+/** The credentials/CSRF the API insists on for a cookie-authenticated write. */
+const CSRF = { "X-Ontrak-CSRF": "1" };
 
 /** Sync is not under Playwright's `baseURL`, so every address is absolute. */
 function url(path: string): string {
@@ -90,11 +103,26 @@ test.describe("the rollouts console", () => {
     // page that always shows the warning is a page whose warnings nobody reads.
     await expect(page.getByText("ONTRAK_ROLLOUT=1")).toHaveCount(0);
 
-    // Nothing is owned yet. That is the shipped posture, and it has to read as a
-    // deliberate statement rather than as a table that failed to load.
+    // Nothing is owned yet, and that has to read as a deliberate statement rather than as
+    // a table that failed to load. *Why* it is empty depends on the posture, and the page
+    // is expected to say which: on a deployment that claims what the scans find, an empty
+    // remit means no pass has run, not that nobody has claimed anything.
     await expect(
-      section(page, "The remit").getByText("Nothing has been given to this deployment"),
+      section(page, "The remit").getByText(
+        ADOPTING ? "this deployment fills it itself" : "Nothing has been given to this deployment",
+      ),
     ).toBeVisible();
+
+    // The posture is stated, with the variable that changes it — the same courtesy the
+    // kill switch gets. A page that silently adopts is a page whose operator cannot tell
+    // a covered Network from a Network somebody has been adding to by hand.
+    const rails = section(page, "The rails in force");
+    await expect(rails.getByText(ADOPTING ? "the scans fill it" : "a person claims every row"))
+      .toBeVisible();
+    if (ADOPTING) {
+      await expect(page.getByText("fills its own remit")).toBeVisible();
+      await expect(page.getByText("ONTRAK_ROLLOUT_ADOPT=off")).toBeVisible();
+    }
 
     // The scan's image is visible, and it is visible as *not* owned — the pair of facts
     // that make an empty remit legible.
@@ -121,7 +149,7 @@ test.describe("the rollouts console", () => {
     // cookie the sign-in just set; a release that matches nothing is a 404 and is
     // exactly the case being cleared away.
     await page.request.post(url("/api/rollouts/release"), {
-      headers: { "X-Ontrak-CSRF": "1" },
+      headers: CSRF,
       data: { host: HOST, container: CONTAINER, ref: REF },
     });
 
@@ -190,17 +218,82 @@ test.describe("the rollouts console", () => {
 
     // ── release ──────────────────────────────────────────────────────────────
     await page.getByRole("button", { name: "Release", exact: true }).click();
+    await expect(page.getByText(new RegExp(`Released ${escapeRe(REF)} — it is scanned`)))
+      .toBeVisible();
     await expect(
-      page.getByText(`Released ${REF} — it is scanned and left alone from now on.`),
+      section(page, "The remit").getByText(
+        ADOPTING ? "this deployment fills it itself" : "Nothing has been given to this deployment",
+      ),
     ).toBeVisible();
-    await expect(
-      section(page, "The remit").getByText("Nothing has been given to this deployment"),
-    ).toBeVisible();
-    // Back to the posture it started in: the image is still seen, and still not owned.
+    // Back to the posture it started in: the image is still seen, and this deployment no
+    // longer owns it. `kept out` rather than `not owned`, on either posture, because a
+    // release is a *decision* and the deny list is what records it — on a deployment that
+    // adopts what the scans find that decision is the difference between a control and a
+    // gesture, and on one that does not it still says why this container is not covered.
     await expect(
       section(page, "What the Network runs").getByRole("row").filter({ hasText: REF })
-        .getByText("not owned"),
+        .getByText("kept out"),
     ).toBeVisible();
+  });
+});
+
+/**
+ * The posture where the scans fill the remit (`ONTRAK_ROLLOUT_ADOPT`).
+ *
+ * The interesting half of adoption is not what it takes on — it is what it must *not*
+ * take back. A release on an adopting deployment has to be permanent until a person says
+ * otherwise, or every pass would undo the operator's last decision and the control would
+ * be decorative. So this drives the whole loop: release, watch a pass refuse to readopt,
+ * and claim it back — the last of which is a person overriding the deny list, which is
+ * what makes it a decision rather than a bug.
+ */
+test.describe("a deployment that fills its own remit", () => {
+  test.skip(!ADOPTING, "run with ONTRAK_SYNC_ADOPT=unattended — `npm run test:e2e:sync` does");
+
+  test("a release keeps a container out, and a claim is the way back", async ({ page }) => {
+    await signIn(page);
+
+    // Own it first, so the release below is a release rather than a 404 — and so a retry
+    // of this test starts from the same place the first attempt did.
+    await page.request.post(url("/api/rollouts/claim"), {
+      headers: CSRF,
+      data: { host: HOST, container: CONTAINER, ref: REF, service: "api", auto: true },
+    });
+    await page.reload();
+
+    await section(page, "The remit").getByRole("row").filter({ hasText: REF })
+      .getByRole("button", { name: "Release", exact: true }).click();
+    await expect(page.getByText(/kept out of the remit/)).toBeVisible();
+
+    // The decision is legible afterwards: who, when and why, rather than a row that
+    // simply vanished from a table.
+    const keptOut = section(page, "Kept out of the remit");
+    const outRow = keptOut.getByRole("row").filter({ hasText: REF });
+    await expect(outRow).toBeVisible();
+    await expect(outRow.getByText(USERNAME)).toBeVisible();
+    await expect(outRow.getByText("released by hand")).toBeVisible();
+
+    // And the image below says the same thing about the same container, so the two
+    // panels cannot disagree about whether it is covered.
+    await expect(section(page, "What the Network runs").getByRole("row")
+      .filter({ hasText: REF }).getByText("kept out")).toBeVisible();
+
+    // A pass over a Network that has been handed back must not take it back. This is the
+    // assertion that makes a release a control rather than a gesture, and the run says so
+    // in its own sentence instead of reporting an empty remit.
+    await page.getByRole("button", { name: "Run a pass now" }).click();
+    await expect(page.getByText(/1 kept out of the remit by hand/)).toBeVisible();
+    await expect(section(page, "The remit").getByText("this deployment fills it itself"))
+      .toBeVisible();
+    await expect(keptOut.getByRole("row").filter({ hasText: REF })).toBeVisible();
+
+    // Claiming it again is the door back in, and it is a person's decision: the row leaves
+    // the deny list and joins the remit.
+    await outRow.getByRole("button", { name: "Claim back…" }).click();
+    await page.getByRole("button", { name: "Claim", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Kept out of the remit" })).toHaveCount(0);
+    await expect(section(page, "The remit").getByRole("row").filter({ hasText: REF }))
+      .toBeVisible();
   });
 });
 

@@ -932,8 +932,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if moment is not None else None)
         return {
             "enabled": config.enabled,
+            # Who fills the remit: `off`, `watched` or `unattended`. Sent rather than
+            # left for the page to guess, because "this deployment adopts what the scans
+            # find" is the difference between an empty remit being a statement about the
+            # Network and one being a statement about the operator's week.
+            "adopt": config.adopt,
             "targets": targets,
             "rolls": db.list_container_rolls(conn, limit=limit),
+            # The containers taken out of the remit by hand. Shown so a release reads as
+            # a decision that is still standing rather than as a row that vanished.
+            "optouts": db.list_rollout_optouts(conn),
             "limits": {"max_per_run": config.max_per_run, "max_per_host": config.max_per_host,
                        "cooldown_hours": config.cooldown_hours,
                        "health_grace_seconds": config.health_grace_seconds,
@@ -956,6 +964,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         problems = remit.validate()
         if problems:
             raise HTTPException(status_code=400, detail="; ".join(problems))
+        # An explicit claim outranks an earlier release, so it lifts the opt-out. On a
+        # deployment that adopts what the scans find this is the only way back in for a
+        # container somebody took out, and a deny list with no door is a trap.
+        if db.lift_rollout_optout(conn, host=remit.host, container=remit.container,
+                                  ref=remit.ref):
+            db.log(conn, f"rollout remit: {remit.host}:{remit.container or remit.host} "
+                         f"is back in the remit — {remit.ref} is claimed again",
+                   actor=actor.name)
         db.claim_rollout_target(conn, remit)
         db.log(conn, f"rollout remit: {remit.host}:{remit.container or remit.host} "
                      f"now owns {remit.ref}"
@@ -974,15 +990,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         An operator who released the wrong row has to be told, because the row they meant is
         still being rolled on a timer.
+
+        The release also writes an opt-out, and on a deployment that adopts what the scans
+        find that record is the whole point of it: without it the next pass would see a
+        container nobody owns, adopt it straight back, and the operator's decision would
+        last until the next scan. A claim lifts it again, so the two controls are a pair.
         """
         released = db.release_rollout_target(conn, host=body.host, container=body.container,
                                             ref=body.ref)
         if not released:
             raise HTTPException(status_code=404, detail="no such remit")
+        db.opt_out_rollout_target(conn, host=body.host, container=body.container, ref=body.ref,
+                                  reason=(body.note or "released by hand"), actor=actor.name)
         db.log(conn, f"rollout remit: {body.host}:{body.container or body.host} no longer "
-                     f"owns {body.ref}", actor=actor.name)
+                     f"owns {body.ref} (kept out of the remit)", actor=actor.name)
         identity.audit(conn, "rollout.release",
-                       f"{actor.name} released {body.ref} on {body.host}", actor=actor.name)
+                       f"{actor.name} released {body.ref} on {body.host} "
+                       f"(and kept it out of the remit)", actor=actor.name)
         conn.commit()
         return {"released": 1}
 

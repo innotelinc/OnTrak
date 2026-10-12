@@ -43,6 +43,44 @@ Claiming is `sync:configure` (the same capability as the timer, because a remit 
 timer acts on), releasing is the same, and every claim, release and refusal is on the audit
 trail with the actor's name.
 
+## Who fills the remit (`ONTRAK_ROLLOUT_ADOPT`, off by default)
+
+By hand is the default, and it is the posture that makes the remit a list a person is
+accountable for. A Network that would rather not depend on somebody remembering is what
+`ONTRAK_ROLLOUT_ADOPT` is for:
+
+```bash
+ONTRAK_ROLLOUT_ADOPT=watched      # the scans fill the remit; nothing moves on its own
+ONTRAK_ROLLOUT_ADOPT=unattended   # the scans fill it, and the timer rolls it
+ONTRAK_ROLLOUT_ADOPT=off          # the default: a person claims every row
+```
+
+The work happens at the top of a **rollout pass**, which is the thing the timer already runs at
+the end of every scheduled scan — so "adopt what the scan found" is one code path, whether the
+pass came from the schedule or from the button. What it takes on, and what it does not:
+
+| | |
+|---|---|
+| Taken on | Every docker image the findings hold for a host in `ONTRAK_HOSTS`, as a `(host, container, ref)` remit with `auto` set from the posture — `watched` claims with `auto: false`, `unattended` with `auto: true`. A finding is a *record of what the scan saw*, so a container whose image was already closed out by an earlier roll is still adopted. |
+| Left alone | A finding on a host that is no longer configured (a remit nobody can roll only ever reads as coverage), a finding marked `skipped` on the Findings page (that is an operator saying "leave this one", which outranks a scan that merely found it), and a container already in the remit — a claim carries terms a person chose, and re-writing them from a discovery would throw away the only part of the remit anybody decided. |
+| Kept out | A container released with **Release**. The release writes a deny list entry (`rollout_optouts`), because without it the next pass would find a container nobody owns and claim it straight back — a control that undoes itself lasts until the next scan. `Claim` removes the entry: a person saying "actually, yes" is a later and better-informed decision than the "no" it replaces, and a deny list that could not be cleared would be a trap. |
+
+Two things follow from that, and they are the reason this is a setting rather than a default:
+
+- **The kill switch is a separate decision.** With `ONTRAK_ROLLOUT` off and adoption on, the
+  remit fills itself and *nothing restarts* — every pass reports `rollout off` for each owned
+  container. That is a useful intermediate state (the page shows what would be covered), and it
+  is also why turning both on at once should be deliberate.
+- **The remit is no longer a list somebody wrote**, so the rails are the whole of the bound: the
+  window, the change freeze, the per-container cooldown, the per-pass and per-host caps, the
+  protected refs, the health gate with its rollback, and the block after a failure. Those do not
+  change with this setting, and none of them can be widened by it.
+
+The page states the posture in force, names the variable that changes it, lists the containers
+kept out with who released them and why, and shows a pass's own sentence — including
+`N kept out of the remit by hand`, so an empty remit on an adopting deployment cannot be misread
+as a Network with nothing behind it.
+
 ## Turn it on
 
 ```bash
@@ -196,6 +234,11 @@ fake the roll's own unit tests are held to), and the dashboard is started agains
 with the same-origin `/api/*` proxy the family stack ships. The API's unittest suite covers the
 rails; this covers the page — and it is also the only check that would notice the console filling
 with refused hot-reload handshakes, which no typecheck and no production build can see.
+
+The harness runs in the posture this repository deploys (adoption `unattended`), so the deny list is
+exercised as a page and not only as a table: a release has to survive a pass, and "Claim back…" has
+to bring it in. `ONTRAK_SYNC_ADOPT=off npm run test:e2e:sync` runs the same file against the shipped
+claim-by-hand posture.
 
 ## What it deliberately does not do
 

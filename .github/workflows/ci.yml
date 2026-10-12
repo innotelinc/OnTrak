@@ -465,6 +465,12 @@ jobs:
   # the pass, the roll's `old → new`, the undo that holds the container, the clear and
   # the release.
   #
+  # The harness runs the posture this repository deploys (`ONTRAK_ROLLOUT_ADOPT=unattended`),
+  # so the half of that feature which is easiest to get wrong is covered too: a released
+  # container has to stay out *across a pass* — otherwise the release is a control that
+  # undoes itself — and a claim has to be the way back in. `ONTRAK_SYNC_ADOPT=off` runs the
+  # same file against the shipped claim-by-hand posture.
+  #
   # The dev server is a dev server on purpose. Next refuses HMR handshakes whose `Origin`
   # is not in `allowedDevOrigins`, and a WebSocket handshake always carries one — so the
   # socket the dashboard needs to develop against is also the one thing here that no

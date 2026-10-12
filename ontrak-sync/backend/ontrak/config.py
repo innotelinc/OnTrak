@@ -245,6 +245,35 @@ def _parse_list(raw: str) -> tuple[str, ...]:
     return tuple(item.strip().lower() for item in (raw or "").split(",") if item.strip())
 
 
+def _parse_adopt_mode(raw: str) -> str:
+    """Parse `ONTRAK_ROLLOUT_ADOPT` into one of the three postures.
+
+    `off` is the shipped default: the remit is exactly the list a person wrote, and an
+    unclaimed container is visible on the page as `not owned` rather than covered.
+    `watched` adopts what the scans find and rolls none of it until somebody flips the
+    row — the remit tracks work, the blast radius stays zero. `unattended` adopts it
+    *and* rolls it, which makes the kill switch, the window, the freeze, the caps, the
+    cooldown and the protected refs the only things between a bad image and the whole
+    Network. That is the posture this setting exists to make an explicit decision.
+
+    `1`/`yes`/`on` mean `unattended`, because that is what somebody setting a variable
+    named ADOPT is asking for, and `0`/`no`/empty mean `off`. A value that is none of
+    these raises rather than falling back to `off`: a deployment that asked to adopt and
+    silently got the manual posture is a deployment whose remit never fills and whose
+    operator has no reason to suspect the variable rather than the feature.
+    """
+    value = (raw or "").strip().lower()
+    if value in ("", "0", "false", "no", "off", "none"):
+        return "off"
+    if value in ("1", "true", "yes", "on", "unattended", "auto"):
+        return "unattended"
+    if value in ("watched", "watch", "manual"):
+        return "watched"
+    raise ValueError(
+        f"ONTRAK_ROLLOUT_ADOPT: `{raw}` is not a posture — use off, watched or unattended"
+    )
+
+
 def _parse_registry_credentials(raw: str) -> tuple[RegistryCredential, ...]:
     """Parse `ONTRAK_REGISTRY_CREDENTIALS`.
 
@@ -363,6 +392,10 @@ class Settings:
     # Refs that are never rolled automatically whatever the remit says. Matched as
     # written, so `postgres:16` protects the `docker.io/library/` spelling too.
     rollout_protected_refs: tuple[str, ...] = ()
+    # Who fills the remit: `off`, `watched` or `unattended`. OFF by default, because
+    # adopting what a scan finds is what turns a list somebody wrote into a list the
+    # Network wrote. See `_parse_adopt_mode`.
+    rollout_adopt: str = "off"
     # The scheduler is in-process (see policy.py for the cron arithmetic and the
     # apply policy). Disabling it leaves the API and the manual scan/apply paths
     # working, which is what you want while debugging a schedule that fires at the
@@ -429,6 +462,7 @@ class Settings:
             cooldown_hours=self.rollout_cooldown_hours,
             health_grace_seconds=self.rollout_health_grace_seconds,
             protected_refs=tuple(self.rollout_protected_refs),
+            adopt=self.rollout_adopt,
         )
 
     def credential_for(self, registry: str) -> RegistryCredential | None:
@@ -493,6 +527,7 @@ class Settings:
             rollout_health_grace_seconds=_env_int("ONTRAK_ROLLOUT_HEALTH_GRACE", 90),
             rollout_health_poll_seconds=_env_int("ONTRAK_ROLLOUT_HEALTH_POLL", 5),
             rollout_protected_refs=_parse_list(_env("ONTRAK_ROLLOUT_PROTECTED")),
+            rollout_adopt=_parse_adopt_mode(_env("ONTRAK_ROLLOUT_ADOPT")),
             scheduler_enabled=_env_bool("ONTRAK_SCHEDULER", True),
             scheduler_tick_seconds=_env_int("ONTRAK_SCHEDULER_TICK", 30),
             default_schedule=_env("ONTRAK_DEFAULT_SCHEDULE", "0 4 * * 0"),

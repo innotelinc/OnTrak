@@ -50,7 +50,10 @@ except ImportError as exc:  # pragma: no cover — see the note in test_api_roll
     )
 
 from ontrak import api, applier, db, registry  # noqa: E402
-from ontrak.config import Host, Settings  # noqa: E402
+# `_parse_adopt_mode` is the parser the service itself uses, imported rather than
+# re-implemented: a harness with its own copy of the vocabulary is how the fake and the
+# deployment start disagreeing about what `ONTRAK_ROLLOUT_ADOPT=1` means.
+from ontrak.config import Host, Settings, _parse_adopt_mode  # noqa: E402
 from test_rollout_apply import REF, FakeDocker  # noqa: E402
 
 
@@ -81,6 +84,11 @@ def settings_from_env() -> tuple[Settings, str, str]:
         # and a spec that can only ever see the disabled state proves nothing about the
         # buttons it is there to exercise.
         rollout_enabled=True,
+        # Who fills the remit. `off` by default here too, so the suite can be run against
+        # either posture; `playwright.sync.config.ts` starts the harness in the one this
+        # repository deploys (`unattended`), which is what makes the adopted posture a
+        # thing the browser tests actually cover rather than a claim in a document.
+        rollout_adopt=_parse_adopt_mode(os.environ.get("ONTRAK_ROLLOUT_ADOPT", "off")),
     )
     return settings, container, ref
 

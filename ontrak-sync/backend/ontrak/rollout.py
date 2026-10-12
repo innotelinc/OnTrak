@@ -165,6 +165,28 @@ class RolloutConfig:
     # Images that are never rolled automatically, whatever the remit says. Matched on
     # the ref as written (`postgres:16`), which is the string an operator recognises.
     protected_refs: tuple[str, ...] = ()
+    # Who fills the remit: `off` (a person claims every row), `watched` (the scans fill
+    # it, nothing rolls until somebody says so) or `unattended` (the scans fill it and
+    # it rolls). The two properties below are the only places that spelling is read, so
+    # a rail can ask `config.adopting` and never compare strings.
+    adopt: str = "off"
+
+    @property
+    def adopting(self) -> bool:
+        """Does this deployment claim what the scans find?
+
+        Spelled as a list of the postures that adopt rather than as `!= "off"`, because
+        the safe answer to a value this code does not recognise is *not to adopt*. A
+        dataclass built by hand — a test, a future caller — with a typo in `adopt` would
+        otherwise claim a Network on the strength of a misspelling. `config.py` refuses
+        an unknown mode at boot; this is the second lock on the same door.
+        """
+        return self.adopt in ("watched", "unattended")
+
+    @property
+    def adopt_auto(self) -> bool:
+        """Does what it adopts roll unattended, or is it only watched?"""
+        return self.adopt == "unattended"
 
 
 @dataclass

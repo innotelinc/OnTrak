@@ -59,6 +59,14 @@ export default defineConfig({
         ONTRAK_API_TOKEN: process.env.ONTRAK_API_TOKEN ?? "ci-only-not-a-production-secret",
         ONTRAK_ADMIN_USER: process.env.ONTRAK_SYNC_ADMIN_USER ?? "admin",
         ONTRAK_ADMIN_PASSWORD: process.env.ONTRAK_SYNC_ADMIN_PASSWORD ?? "change-me-ontrak",
+        // The posture this deployment runs: the scans fill the remit and the timer rolls
+        // it, which is what makes the *adopted* console — the posture notice, the
+        // released rows, the deny list — something a browser test looks at rather than a
+        // paragraph in a document. `ONTRAK_SYNC_ADOPT=off` runs the suite against the
+        // shipped, claim-by-hand posture instead; the spec decides which assertions
+        // apply from the same variable, and the backend is in `off` by default either
+        // way, so the shipped default is still the thing no test has to remember.
+        ONTRAK_ROLLOUT_ADOPT: process.env.ONTRAK_SYNC_ADOPT ?? "unattended",
       },
     },
     {

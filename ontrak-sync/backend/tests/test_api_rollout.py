@@ -324,5 +324,74 @@ class UndoingThroughTheApi(RolloutApiCase):
         self.assertEqual(403, response.status)
 
 
+class Adoption(RolloutApiCase):
+    """The posture where the scans fill the remit, driven over the wire.
+
+    `test_rollout_adopt.py` pins what is adopted and what stays out; these four pin the
+    things only visible from outside the process: which posture the deployment *says* it
+    is in, that a release is still standing after a pass, and that a claim is the way back
+    in. The page draws all of that from this payload, so a field missing here is a screen
+    an operator cannot trust.
+    """
+
+    def adopt_unattended(self):
+        """Rebuild the app as a deployment that adopts and rolls what it finds."""
+        self.settings = Settings(
+            hosts=(Host("i1", "192.168.1.51", "both"),),
+            db_path=self.settings.db_path, api_token=self.TOKEN, scheduler_enabled=False,
+            admin_password="a-long-enough-one", rollout_enabled=True,
+            rollout_adopt="unattended",
+        )
+        self.app = api.create_app(self.settings)
+        self.conn = self.app.state.conn
+
+    def test_the_posture_is_reported_and_the_default_is_manual(self):
+        payload = self.rollouts().json()
+        self.assertEqual("off", payload["adopt"])
+        self.assertEqual([], payload["optouts"])
+
+    def test_a_release_is_recorded_and_a_claim_is_the_way_back(self):
+        self.claim()
+        call(self.app, "POST", "/api/rollouts/release",
+             body={"host": "i1", "ref": REF, "container": "monarch",
+                   "note": "the imaging window"}, token=self.TOKEN)
+        payload = self.rollouts().json()
+        self.assertEqual([], payload["targets"])
+        self.assertEqual(1, len(payload["optouts"]), "a release has to stay a release")
+        self.assertEqual("the imaging window", payload["optouts"][0]["reason"])
+        self.assertIsNotNone(payload["optouts"][0]["actor"])
+
+        self.claim()
+        payload = self.rollouts().json()
+        self.assertEqual([], payload["optouts"], "a claim lifts the release")
+        self.assertEqual(1, len(payload["targets"]))
+
+    def test_a_pass_adopts_what_the_scan_found_and_says_so(self):
+        self.adopt_unattended()
+        self.finding()
+        self.assertEqual("unattended", self.rollouts().json()["adopt"])
+        payload = call(self.app, "POST", "/api/rollouts/run", token=self.TOKEN).json()
+        self.assertEqual(1, payload["adopted"])
+        self.assertEqual(1, payload["rolled"])
+        targets = self.rollouts().json()["targets"]
+        self.assertEqual(1, len(targets))
+        self.assertEqual(1, targets[0]["auto"])
+        # The deployment token is the principal that did it, which is what "adopted by"
+        # has to read as on a deployment where no person was involved.
+        self.assertEqual(api.SERVICE_ACTOR, targets[0]["created_by"])
+
+    def test_a_released_container_is_not_put_back_by_the_next_pass(self):
+        self.adopt_unattended()
+        self.claim()
+        self.finding()
+        call(self.app, "POST", "/api/rollouts/release",
+             body={"host": "i1", "ref": REF, "container": "monarch"}, token=self.TOKEN)
+        payload = call(self.app, "POST", "/api/rollouts/run", token=self.TOKEN).json()
+        self.assertEqual(0, payload["adopted"])
+        self.assertEqual(1, payload["kept_out"])
+        self.assertEqual([], self.rollouts().json()["targets"])
+        self.assertEqual([], self.fake.up_calls())
+
+
 if __name__ == "__main__":
     unittest.main()

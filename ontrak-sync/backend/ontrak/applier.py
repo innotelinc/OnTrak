@@ -822,6 +822,105 @@ def _roll_one(conn, host: Host, target: _RollTarget, settings: Settings, config,
     return state, reason
 
 
+def _kept_out_note(count: int) -> str:
+    """The half of a pass's sentence that is about what it deliberately did not touch.
+
+    A deployment where every container has been released runs a pass that does nothing at
+    all, and "no containers in the remit" would read as a Network with nothing to do —
+    when the truth is that somebody took each one out and the timer is respecting that.
+    The number is in the run log for the same reason every other count is: a pass that
+    does nothing has to be able to say *which* nothing.
+    """
+    if not count:
+        return ""
+    return f"; {count} kept out of the remit by hand"
+
+
+def adopt_discovered(conn, settings: Settings, *, actor: str = "sync") -> dict:
+    """Take ownership of every container the scans have found on a host this reaches.
+
+    Only runs on a deployment that asked for it (`ONTRAK_ROLLOUT_ADOPT`); on any other it
+    is a no-op, because "nothing is owned until a person claims it" is the shipped
+    posture and it has to stay the one you get without asking. Where it is on, this is
+    what makes the remit a property of the Network rather than a list somebody keeps
+    complete by hand: a container that appears on a host this deployment is configured
+    for enters the remit without anybody remembering to add it.
+
+    Four things bound it, and each is the difference between adoption and a footgun:
+
+      * **The configured host list.** A finding on a machine this deployment no longer
+        reaches is not adopted: ownership of a container nobody can roll is a row that
+        only ever reads as coverage.
+      * **A `skipped` finding is a person saying "leave it alone"** on the Findings page,
+        so it is a decision, not a discovery, and it is not adopted. So is a row on the
+        opt-out list (`db.rollout_optouts`), which is what `Release` writes when this is
+        on — otherwise a release would last until the next pass, and a control that
+        undoes itself is worse than no control.
+      * **`watched` adopts without arming.** `ONTRAK_ROLLOUT_ADOPT=watched` fills the
+        remit and rolls none of it; only `unattended` makes the adopted rows live, and
+        even then the kill switch (`ONTRAK_ROLLOUT`) and the rails in `rollout.py` stand
+        between them and a restart.
+      * **What is already owned is left alone.** A claim carries terms a person chose —
+        a window, a cooldown, a note — and re-writing them from a discovery would throw
+        away the only part of the remit somebody actually decided.
+
+    Returns the counts and the keys, because "the pass adopted four containers" is a
+    sentence the run log and the page both need and neither can reconstruct afterwards.
+    """
+    config = settings.rollout_config()
+    if not config.adopting:
+        return {"adopting": False, "adopted": 0, "kept_out": 0, "owned": 0, "keys": []}
+
+    configured = {host.name for host in settings.hosts}
+    owned = {(row["host"], row["container"], row["ref"])
+             for row in db.list_rollout_targets(conn)}
+    kept_out = {(row["host"], row["container"], row["ref"])
+                for row in db.list_rollout_optouts(conn)}
+
+    # Every docker finding, newest first, folded to the triple a remit is keyed on — the
+    # same fold the Rollouts page does for what it draws as `not owned`. Status is not
+    # filtered to "behind": this is a record of what the scans *saw*, and a container
+    # whose finding was closed by a roll is still a container this deployment owns.
+    rows = conn.execute(
+        """
+        SELECT t.host AS host, t.kind AS kind, t.name AS name, f.package AS ref
+          FROM findings f JOIN targets t ON t.id = f.target_id
+         WHERE f.manager = 'docker' AND f.status != 'skipped'
+         ORDER BY f.id ASC, t.host, t.name, f.package
+        """
+    ).fetchall()
+
+    adopted: list[str] = []
+    held: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
+    for row in rows:
+        if row["host"] not in configured:
+            continue
+        container = "" if row["kind"] == "host" else row["name"]
+        key = (row["host"], container, row["ref"])
+        if key in seen:
+            continue
+        seen.add(key)
+        if key in owned:
+            continue
+        if key in kept_out:
+            held.add(key)
+            continue
+        db.claim_rollout_target(conn, rollout.Remit(
+            host=key[0], container=key[1], ref=key[2], auto=config.adopt_auto,
+            note=f"adopted automatically from the scan ({config.adopt})",
+            created_by=actor, created_at=db.utcnow()))
+        adopted.append(f"{key[0]}/{key[1] or 'host-daemon'}:{key[2]}")
+
+    if adopted:
+        db.log(conn, f"rollout remit: adopted {len(adopted)} container(s) from the scans"
+                     + (" — watched only" if not config.adopt_auto else " — unattended")
+                     + f" ({', '.join(adopted[:10])}"
+                     + (", …" if len(adopted) > 10 else "") + ")", actor=actor)
+    return {"adopting": True, "adopted": len(adopted), "kept_out": len(held),
+            "owned": len(owned), "keys": adopted}
+
+
 def _roll_targets(conn, settings: Settings) -> list[tuple[Host, _RollTarget]]:
     """The remit, resolved against the hosts and containers as they are right now.
 
@@ -910,10 +1009,21 @@ def apply_rollouts(conn, settings: Settings, policy: Policy, *, trigger: str = "
     """
     moment = now or datetime.now(timezone.utc)
     config = settings.rollout_config()
+    # Adoption happens at the top of a pass, and only here: a pass is the thing the timer
+    # already runs after every scan, and the thing the page's button runs by hand, so
+    # there is one code path that can change what this deployment owns rather than two
+    # that disagree. `adopt_discovered` is a no-op unless the deployment asked for it.
+    adoption = adopt_discovered(conn, settings, actor=actor or "sync")
+    if adoption["adopted"]:
+        conn.commit()
     targets = _roll_targets(conn, settings)
     if not targets:
+        summary = (f"adopted {adoption['adopted']} container(s); nothing owned to roll"
+                   if adoption["adopted"] else "no containers in the remit")
+        summary += _kept_out_note(adoption["kept_out"])
         return {"run_id": None, "rolled": 0, "rolled_back": 0, "failed": 0,
-                "skipped": 0, "summary": "no containers in the remit", "messages": []}
+                "skipped": 0, "summary": summary, "messages": [], "decisions": [],
+                "adopted": adoption["adopted"], "kept_out": adoption["kept_out"]}
 
     history = db.rollout_history(conn, [t.remit.key() for _host, t in targets])
     for _host, target in targets:
@@ -957,6 +1067,9 @@ def apply_rollouts(conn, settings: Settings, policy: Policy, *, trigger: str = "
         db.log(conn, message, run_id=run_id,
                level="warning" if report.rolled_back or report.failed else "info")
     summary = rollout.summarize(report.decisions)
+    if adoption["adopted"]:
+        summary = (f"adopted {adoption['adopted']} container(s) from the scans; " + summary)
+    summary += _kept_out_note(adoption["kept_out"])
     if report.rolled_back or report.failed:
         summary += f"; {report.rolled_back} rolled back, {report.failed} failed"
     db.finish_run(conn, run_id, status="ok" if not (report.rolled_back or report.failed)
@@ -966,7 +1079,8 @@ def apply_rollouts(conn, settings: Settings, policy: Policy, *, trigger: str = "
     conn.commit()
     return {"run_id": run_id, "rolled": report.rolled, "rolled_back": report.rolled_back,
             "failed": report.failed, "skipped": report.skipped, "summary": summary,
-            "messages": report.messages,
+            "messages": report.messages, "adopted": adoption["adopted"],
+            "kept_out": adoption["kept_out"],
             "decisions": [{"host": d.state.host, "name": d.state.name, "ref": d.state.ref,
                            "code": d.code, "detail": d.detail} for d in report.decisions]}
 

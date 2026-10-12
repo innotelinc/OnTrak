@@ -215,6 +215,50 @@ class RegistryCredentials(unittest.TestCase):
             self.assertEqual(0, Settings.from_env().docker_pin_warm_budget)
 
 
+class AdoptionMode(unittest.TestCase):
+    """`ONTRAK_ROLLOUT_ADOPT` — who fills the remit.
+
+    Worth pinning because every wrong answer here is quiet in a different way. A default
+    that drifted to "on" would claim a Network nobody asked it to claim; a typo that fell
+    back to "off" would look exactly like a feature that does not work; and `1` meaning
+    "watched" would leave an operator who asked for unattended rolls wondering why the
+    timers do nothing.
+    """
+
+    def test_it_defaults_to_off(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            settings = Settings.from_env()
+        self.assertEqual("off", settings.rollout_adopt)
+        self.assertFalse(settings.rollout_config().adopting)
+
+    def test_the_yes_spellings_mean_unattended(self):
+        # What somebody setting a variable named ADOPT is asking for.
+        for value in ("1", "true", "on", "unattended", "TRUE"):
+            with mock.patch.dict(os.environ, {"ONTRAK_ROLLOUT_ADOPT": value}):
+                config = Settings.from_env().rollout_config()
+            self.assertTrue(config.adopting, value)
+            self.assertTrue(config.adopt_auto, value)
+
+    def test_watched_fills_the_remit_and_arms_nothing(self):
+        with mock.patch.dict(os.environ, {"ONTRAK_ROLLOUT_ADOPT": "watched"}):
+            config = Settings.from_env().rollout_config()
+        self.assertTrue(config.adopting)
+        self.assertFalse(config.adopt_auto)
+
+    def test_the_no_spellings_mean_off(self):
+        for value in ("0", "false", "no", "off", ""):
+            with mock.patch.dict(os.environ, {"ONTRAK_ROLLOUT_ADOPT": value}):
+                self.assertFalse(Settings.from_env().rollout_config().adopting, value)
+
+    def test_a_typo_is_refused_rather_than_read_as_off(self):
+        # Silently falling back to the manual posture is a deployment whose remit never
+        # fills and whose operator has no reason to suspect the variable.
+        with mock.patch.dict(os.environ, {"ONTRAK_ROLLOUT_ADOPT": "attic"}):
+            with self.assertRaises(ValueError) as caught:
+                Settings.from_env()
+        self.assertIn("off, watched or unattended", str(caught.exception))
+
+
 class SetupScript(unittest.TestCase):
     """`scripts/setup.sh` must authorise the key on exactly the hosts config scans.
 

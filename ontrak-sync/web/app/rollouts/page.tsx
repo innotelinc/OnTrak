@@ -90,10 +90,25 @@ export default function RolloutsPage() {
   const targets = rollouts.data?.targets ?? [];
   const rolls = rollouts.data?.rolls ?? [];
   const limits = rollouts.data?.limits;
+  // Who fills the remit. `off` is the shipped posture and the page says nothing extra
+  // about it; the other two change what an empty remit *means*, so they are stated.
+  const adopt = rollouts.data?.adopt ?? "off";
+  const optouts = rollouts.data?.optouts ?? [];
 
   const owned = useMemo(
     () => new Set(targets.map((row) => key(row.host, row.container, row.ref))),
     [targets],
+  );
+  /**
+   * The containers taken out by hand, keyed the same way the remit is.
+   *
+   * Kept as a map rather than a set because the row has to be able to say *who* and
+   * *why*: on a deployment that adopts what the scans find, a release that did not
+   * record a reason would be indistinguishable from one nobody meant.
+   */
+  const keptOut = useMemo(
+    () => new Map(optouts.map((row) => [key(row.host, row.container, row.ref), row])),
+    [optouts],
   );
 
   /**
@@ -192,9 +207,11 @@ export default function RolloutsPage() {
           <p>
             Containers this deployment has been <em>given</em>, kept on their tag&apos;s
             current image at the end of each scheduled scan — and put back when the new
-            image does not come up. Nothing here is claimed by default: the remit below is
-            the entire list this service may restart, and a container that is not in it is
-            still scanned and still raises findings.
+            image does not come up. The remit below is the entire list this service may
+            restart, and a container that is not in it is still scanned and still raises
+            findings; {adopt === "off"
+              ? "nothing is claimed by default, so that list is the one a person wrote."
+              : "on this deployment the scans fill that list themselves."}
           </p>
         </div>
         <div className="actions">
@@ -223,6 +240,26 @@ export default function RolloutsPage() {
           Unattended rolls are switched off for this deployment, so every owned container
           below is left alone however far behind it is. Set <code>ONTRAK_ROLLOUT=1</code> on
           the API and restart it to let the timer roll them.
+        </div>
+      ) : null}
+      {rollouts.data && adopt !== "off" ? (
+        <div className={adopt === "unattended" ? "note note--warn" : "note note--ok"}>
+          {adopt === "unattended" ? (
+            <>
+              This deployment <strong>fills its own remit and rolls it</strong>: every
+              container a scan finds on a configured host is claimed unattended, and the
+              next pass may restart it. A container taken out by hand stays out. Set{" "}
+              <code>ONTRAK_ROLLOUT_ADOPT=off</code> to go back to claiming every row by
+              hand.
+            </>
+          ) : (
+            <>
+              This deployment <strong>fills its own remit</strong>, watching everything
+              the scans find and rolling none of it until a row is switched to
+              unattended. Set <code>ONTRAK_ROLLOUT_ADOPT=off</code> to claim by hand
+              again.
+            </>
+          )}
         </div>
       ) : null}
       {notice ? <div className="note note--ok">{notice}</div> : null}
@@ -344,8 +381,11 @@ export default function RolloutsPage() {
         <div className="body body--flush">
           {targets.length === 0 ? (
             <Empty>
-              Nothing has been given to this deployment, so it restarts nothing. Claim a
-              container above, or from the images below.
+              {adopt === "off"
+                ? "Nothing has been given to this deployment, so it restarts nothing. " +
+                  "Claim a container above, or from the images below."
+                : "The remit is empty and this deployment fills it itself, so no pass has " +
+                  "run since the last scan. Run one now, or wait for the timer."}
             </Empty>
           ) : (
             <div className="scroll">
@@ -424,7 +464,7 @@ export default function RolloutsPage() {
                                     await api.releaseRollout({
                                       host: row.host, container: row.container, ref: row.ref,
                                     });
-                                    return `Released ${row.ref} — it is scanned and left alone from now on.`;
+                                    return `Released ${row.ref} — it is scanned, left alone, and kept out of the remit${adopt === "off" ? "" : " however the scans find it"}.`;
                                   })
                                 }
                               >
@@ -473,9 +513,11 @@ export default function RolloutsPage() {
                 </thead>
                 <tbody>
                   {discovered.map((row) => {
-                    const isOwned = owned.has(key(row.host, row.container, row.ref));
+                    const id = key(row.host, row.container, row.ref);
+                    const isOwned = owned.has(id);
+                    const out = keptOut.get(id);
                     return (
-                      <tr key={key(row.host, row.container, row.ref)}>
+                      <tr key={id}>
                         <td className="tight">
                           {row.host}
                           <div className="faint mono">{row.container || "host daemon"}</div>
@@ -486,6 +528,13 @@ export default function RolloutsPage() {
                         <td className="tight">
                           {isOwned ? (
                             <span className="pill pill--ok">in the remit</span>
+                          ) : out ? (
+                            <span className="pill pill--absent"
+                                  title={`kept out by ${out.actor || "an operator"}` +
+                                         `${out.created_at ? ` on ${out.created_at.slice(0, 10)}` : ""}` +
+                                         `${out.reason ? ` — ${out.reason}` : ""}`}>
+                              kept out
+                            </span>
                           ) : (
                             <span className="pill pill--absent">not owned</span>
                           )}
@@ -497,7 +546,9 @@ export default function RolloutsPage() {
                             ) : (
                               <button
                                 disabled={busy !== null}
-                                title="Load it into the claim form above, to be confirmed there."
+                                title={out
+                                  ? "Bring it back in: claiming clears the release."
+                                  : "Load it into the claim form above, to be confirmed there."}
                                 onClick={() => {
                                   setDraft({
                                     host: row.host,
@@ -511,11 +562,13 @@ export default function RolloutsPage() {
                                     note: "",
                                   });
                                   setNotice(
-                                    `Loaded ${row.ref} into the claim form — check the terms and claim it.`,
+                                    out
+                                      ? `Loaded ${row.ref} into the claim form — claiming clears the release.`
+                                      : `Loaded ${row.ref} into the claim form — check the terms and claim it.`,
                                   );
                                 }}
                               >
-                                Claim…
+                                {out ? "Claim back…" : "Claim…"}
                               </button>
                             )}
                           </td>
@@ -608,6 +661,73 @@ export default function RolloutsPage() {
         </div>
       </section>
 
+      {optouts.length ? (
+        <section className="panel">
+          <header>
+            <h2>Kept out of the remit</h2>
+            <span className="faint">{optouts.length} container(s)</span>
+          </header>
+          <div className="body body--flush">
+            <div className="scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Host</th>
+                    <th>Image</th>
+                    <th>Who</th>
+                    <th>When</th>
+                    <th>Why</th>
+                    {mayClaim ? <th /> : null}
+                  </tr>
+                </thead>
+                <tbody>
+                  {optouts.map((row) => (
+                    <tr key={key(row.host, row.container, row.ref)}>
+                      <td className="tight">
+                        {row.host}
+                        <div className="faint mono">{row.container || "host daemon"}</div>
+                      </td>
+                      <td className="mono">{row.ref}</td>
+                      <td className="tight faint">{row.actor || "—"}</td>
+                      <td className="tight faint">{row.created_at?.slice(0, 10) || "—"}</td>
+                      <td className="dim" style={{ maxWidth: 320 }}>{row.reason || "—"}</td>
+                      {mayClaim ? (
+                        <td className="tight">
+                          <button
+                            disabled={busy !== null}
+                            title="Put it back in the remit, as an explicit claim."
+                            onClick={() => {
+                              setDraft({
+                                host: row.host,
+                                container: row.container,
+                                ref: row.ref,
+                                service: "",
+                                auto: true,
+                                note: "",
+                              });
+                              setNotice(
+                                `Loaded ${row.ref} into the claim form — claiming clears the release.`,
+                              );
+                            }}
+                          >
+                            Claim back…
+                          </button>
+                        </td>
+                      ) : null}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="faint" style={{ margin: "10px 14px 0" }}>
+              A released container stays out however often the scans find it. Claiming it
+              again is the way back in — that is a person overriding an earlier decision,
+              not the timer doing it.
+            </p>
+          </div>
+        </section>
+      ) : null}
+
       {limits ? (
         <section className="panel">
           <header>
@@ -616,6 +736,7 @@ export default function RolloutsPage() {
           </header>
           <div className="body">
             <div className="row-inline">
+              <Chip label="who fills the remit" value={ADOPT_LABEL[adopt]} />
               <Chip label="per pass, Network-wide" value={String(limits.max_per_run)} />
               <Chip label="per pass, per host" value={String(limits.max_per_host)} />
               <Chip label="cooldown" value={`${limits.cooldown_hours}h`} />
@@ -709,6 +830,13 @@ function millis(value: number | null): string {
   const seconds = Math.round(value / 1000);
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
+
+/** What `ONTRAK_ROLLOUT_ADOPT` is set to, in the operator's own words. */
+const ADOPT_LABEL: Record<string, string> = {
+  off: "a person claims every row",
+  watched: "the scans fill it, watched",
+  unattended: "the scans fill it, unattended",
+};
 
 /** The one line of the limits that fits under the form. */
 function limitsText(limits: Rollouts["limits"] | undefined): string {

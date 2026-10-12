@@ -308,6 +308,25 @@ CREATE TABLE IF NOT EXISTS container_rolls (
 
 CREATE INDEX IF NOT EXISTS rolls_by_target
     ON container_rolls (host, container, ref, started_at DESC);
+
+-- The containers an operator has taken *out* of the remit, on a deployment that fills
+-- the remit itself (`ONTRAK_ROLLOUT_ADOPT`). Without this table, `Release` would be a
+-- control that undoes itself: the release deletes the remit row, the next pass sees a
+-- container nobody owns, adopts it again, and the operator's decision lasts until the
+-- next scan. A deny list is what makes "hands off this one" mean it — and it is a table
+-- of its own rather than a flag on `rollout_targets` because a released container has no
+-- row there to flag, and because who opted out and why is the same kind of fact as who
+-- claimed. An explicit `Claim` lifts it: a person saying "actually, yes" outranks an
+-- earlier "no", and a deny list that could not be cleared would be a trap.
+CREATE TABLE IF NOT EXISTS rollout_optouts (
+    host       TEXT NOT NULL,
+    container  TEXT NOT NULL DEFAULT '',
+    ref        TEXT NOT NULL,
+    reason     TEXT NOT NULL DEFAULT '',
+    actor      TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (host, container, ref)
+);
 """
 
 
@@ -1138,6 +1157,55 @@ def list_rollout_targets(conn) -> list[dict]:
         "SELECT * FROM rollout_targets ORDER BY host, container, ref"
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def opt_out_rollout_target(conn, *, host: str, container: str, ref: str,
+                           reason: str = "", actor: str | None = None) -> None:
+    """Keep a container out of the remit, including after a scan finds it again.
+
+    Only means anything on a deployment that adopts what the scans find; on one where a
+    person claims every row it is inert metadata about a decision that was already final.
+    Upsert, so releasing the same row twice updates the reason rather than failing.
+    """
+    conn.execute(
+        """
+        INSERT INTO rollout_optouts (host, container, ref, reason, actor, created_at)
+        VALUES (?,?,?,?,?,?)
+        ON CONFLICT(host, container, ref) DO UPDATE SET
+            reason=excluded.reason, actor=excluded.actor, created_at=excluded.created_at
+        """,
+        (host, container or "", ref, (reason or "")[:200], actor, utcnow()),
+    )
+
+
+def lift_rollout_optout(conn, *, host: str, container: str, ref: str) -> bool:
+    """Take a container off the deny list. Returns whether anything was removed.
+
+    Called by an explicit `Claim`, because a person saying "actually, yes" is a later
+    and better-informed decision than the "no" it replaces — and a deny list that could
+    not be cleared would be a trap rather than a control.
+    """
+    cur = conn.execute(
+        "DELETE FROM rollout_optouts WHERE host=? AND container=? AND ref=?",
+        (host, container or "", ref),
+    )
+    return cur.rowcount > 0
+
+
+def list_rollout_optouts(conn) -> list[dict]:
+    """The containers taken out of the remit, so a page can show them as a decision."""
+    rows = conn.execute(
+        "SELECT * FROM rollout_optouts ORDER BY host, container, ref"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def rollout_optout(conn, *, host: str, container: str, ref: str) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM rollout_optouts WHERE host=? AND container=? AND ref=?",
+        (host, container or "", ref),
+    ).fetchone()
+    return dict(row) if row is not None else None
 
 
 def get_rollout_target(conn, *, host: str, container: str, ref: str) -> dict | None:

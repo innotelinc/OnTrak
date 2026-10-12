@@ -281,6 +281,34 @@ export interface Policy {
 export type RollState = "rolling" | "rolled" | "rolled-back" | "failed" | "untouched";
 
 /**
+ * Who fills the remit, as `ONTRAK_ROLLOUT_ADOPT` spells it.
+ *
+ * `off` is the shipped posture: the remit is exactly the list a person wrote, and an
+ * unclaimed container is shown as `not owned`. `watched` adopts what the scans find and
+ * rolls none of it until somebody says so. `unattended` adopts it and rolls it, which is
+ * what makes the caps, the window, the freeze and the cooldown the whole of the bound on
+ * an unattended restart.
+ */
+export type AdoptMode = "off" | "watched" | "unattended";
+
+/**
+ * A container taken out of the remit by hand.
+ *
+ * `Release` writes one of these, and on an adopting deployment it is what keeps the
+ * decision standing: without it the next pass would find a container nobody owns and
+ * claim it straight back. `Claim` removes it — a person saying "actually, yes" is a
+ * later decision than the "no" it replaces.
+ */
+export interface RolloutOptOut {
+  host: string;
+  container: string;
+  ref: string;
+  reason: string;
+  actor: string | null;
+  created_at: string;
+}
+
+/**
  * One container this deployment has been given — a `(host, image ref)` remit.
  *
  * `container` is the incus container Docker runs in, or `""` when Docker runs on the
@@ -336,8 +364,12 @@ export interface ContainerRoll {
 export interface Rollouts {
   /** The kill switch. `false` with a full remit is a prepared deployment, not a current one. */
   enabled: boolean;
+  /** Who fills the remit — see `AdoptMode`. Sent so the page need not guess from an empty list. */
+  adopt: AdoptMode;
   targets: RolloutTarget[];
   rolls: ContainerRoll[];
+  /** The containers taken out of the remit by hand, and staying out. */
+  optouts: RolloutOptOut[];
   limits: {
     max_per_run: number;
     max_per_host: number;
@@ -372,6 +404,10 @@ export interface RollPassResult {
   summary: string;
   messages: string[];
   decisions?: RollDecision[];
+  /** How many containers the pass claimed for itself, on an adopting deployment. */
+  adopted?: number;
+  /** How many it left alone because somebody had taken them out by hand. */
+  kept_out?: number;
 }
 
 /**
