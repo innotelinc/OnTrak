@@ -13,6 +13,17 @@ dist/
 .env.production
 .env.production.local
 
+# Deployment-local compose overlays. Each carries this host's own settings — a
+# timezone, a port, the images a particular checkout builds — and each says so in its
+# own header: local to the deployment, not in the repository. They were untracked until
+# a directory-wide `git add ontrak-tix` swept one of them into a commit, so the pattern
+# is named here rather than left to whether the next person stages a path or a folder.
+# `docker compose` reads them straight off the disk; nothing has to be tracked for them
+# to work.
+docker-compose.override.yml
+**/docker-compose.override.yml
+docker-compose.deployment.yml
+
 # prisma
 prisma/migrations/dev.db*
 
