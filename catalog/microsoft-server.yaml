@@ -1,0 +1,175 @@
+# The Microsoft server-side products: Exchange Server, SQL Server, SharePoint and
+# the Microsoft 365 Apps enterprise channel.
+#
+# Like office.yaml, an entry here is a *Windows guest with the product
+# preinstalled*, not a standalone OS: `requires` names the Windows Server base
+# the product itself insists on (Exchange 2016 refuses to install anywhere but
+# Server 2016, and so on), and the image build combines the two. None of this
+# media is redistributable, so every entry is `source: operator`.
+#
+# This is the catalog half of the roadmap item: the entries describe the
+# platforms, and each one's `install.builder: manual` is the honest marker that
+# the build recipe is still the operator's job.
+group: microsoft-server
+label: Microsoft server products
+era: 2012-present
+description: >
+  Exchange Server, SQL Server and SharePoint, each layered onto the Windows
+  Server base it requires, plus the Microsoft 365 Apps enterprise channel
+  alongside the per-user entries in office.yaml. Mail-flow, database-mount,
+  site-collection, service-account and certificate scenarios all live here.
+family: microsoft-server
+defaults:
+  kind: vm
+  family: microsoft-server
+  scenario_families: [software, os, security]
+  device_profile: modern
+  resources: {cpu: 4, memory: 8GiB, disk: 80GiB}
+
+entries:
+  - id: exchange2013-on-win2012r2
+    name: Microsoft Exchange Server 2013
+    released: "2012-10"
+    support: eol
+    requires: [win2012-r2]
+    media: {source: operator, kind: iso, filename: exchange2013.iso}
+    install: {recipe: manual, builder: manual}
+    device_profile: vista-era
+    automation: winrm-ps51
+    resources: {cpu: 4, memory: 8GiB, disk: 100GiB}
+    tags: [mail, legacy, identity-dependent]
+    notes: >
+      Mail-flow and database-mount tickets. An Exchange install is an AD install,
+      so a range that grades it needs the identity family alongside it.
+
+  - id: exchange2016-on-win2016
+    name: Microsoft Exchange Server 2016
+    released: "2015-10"
+    support: eol
+    requires: [win2016]
+    media: {source: operator, kind: iso, filename: exchange2016.iso}
+    install: {recipe: manual, builder: manual}
+    automation: winrm-ps51
+    resources: {cpu: 4, memory: 12GiB, disk: 120GiB}
+    tags: [mail, identity-dependent]
+    notes: >
+      Refuses any base but Server 2016, which is why the entry is one-to-one with
+      it. Transport-queue and certificate-renewal faults grade well here.
+
+  - id: exchange2019-on-win2019
+    name: Microsoft Exchange Server 2019
+    released: "2018-10"
+    support: extended
+    requires: [win2019]
+    media: {source: operator, kind: iso, filename: exchange2019.iso}
+    install: {recipe: manual, builder: manual}
+    automation: winrm-ps51
+    resources: {cpu: 4, memory: 16GiB, disk: 120GiB}
+    tags: [mail, identity-dependent, common]
+    notes: >
+      The newest on-premises Exchange, and the one hybrid-identity tickets are
+      about. Hybrid scenarios need the tenant sandbox that the roadmap still
+      lists as unbuilt.
+
+  - id: sql2016-on-win2016
+    name: Microsoft SQL Server 2016
+    released: "2016-06"
+    support: eol
+    requires: [win2016]
+    media: {source: operator, kind: iso, filename: sql2016.iso}
+    install: {recipe: manual, builder: manual}
+    automation: winrm-ps51
+    resources: {cpu: 4, memory: 8GiB, disk: 100GiB}
+    tags: [database, legacy]
+    notes: Service-account and collation tickets; the oldest SQL Server a modern support desk still meets.
+
+  - id: sql2019-on-win2019
+    name: Microsoft SQL Server 2019
+    released: "2019-11"
+    support: extended
+    requires: [win2019]
+    media: {source: operator, kind: iso, filename: sql2019.iso}
+    install: {recipe: manual, builder: manual}
+    automation: winrm-ps51
+    resources: {cpu: 4, memory: 12GiB, disk: 100GiB}
+    tags: [database, common]
+    notes: >
+      The default SQL Server for on-premises line-of-business tickets: failed
+      logins, a database stuck in recovery, and backup-chain restores.
+
+  - id: sql2022-on-win2022
+    name: Microsoft SQL Server 2022
+    released: "2022-11"
+    support: extended
+    requires: [win2022]
+    media: {source: operator, kind: iso, filename: sql2022.iso}
+    install: {recipe: manual, builder: manual}
+    automation: winrm-ps51
+    resources: {cpu: 4, memory: 16GiB, disk: 120GiB}
+    tags: [database, current]
+    notes: Current-generation SQL Server; encryption-at-rest and least-privilege scenarios.
+
+  - id: sharepoint2013-on-win2012r2
+    name: Microsoft SharePoint Server 2013
+    released: "2012-10"
+    support: eol
+    requires: [win2012-r2]
+    media: {source: operator, kind: iso, filename: sharepoint2013.iso}
+    install: {recipe: manual, builder: manual}
+    device_profile: vista-era
+    automation: winrm-ps51
+    resources: {cpu: 4, memory: 8GiB, disk: 120GiB}
+    tags: [collaboration, legacy]
+    notes: Site-collection and search-service tickets; needs SQL Server on the same range.
+
+  - id: sharepoint2016-on-win2016
+    name: Microsoft SharePoint Server 2016
+    released: "2016-05"
+    support: eol
+    requires: [win2016]
+    media: {source: operator, kind: iso, filename: sharepoint2016.iso}
+    install: {recipe: manual, builder: manual}
+    automation: winrm-ps51
+    resources: {cpu: 4, memory: 12GiB, disk: 120GiB}
+    tags: [collaboration]
+    notes: Service-application provisioning faults, which is where most farm tickets start.
+
+  - id: sharepoint2019-on-win2019
+    name: Microsoft SharePoint Server 2019
+    released: "2018-10"
+    support: extended
+    requires: [win2019]
+    media: {source: operator, kind: iso, filename: sharepoint2019.iso}
+    install: {recipe: manual, builder: manual}
+    automation: winrm-ps51
+    resources: {cpu: 4, memory: 16GiB, disk: 140GiB}
+    tags: [collaboration, common]
+    notes: The last of the versioned SharePoint releases, and the usual on-premises farm.
+
+  - id: sharepoint-se-on-win2022
+    name: Microsoft SharePoint Server Subscription Edition
+    released: "2021-11"
+    support: extended
+    requires: [win2022]
+    media: {source: operator, kind: iso, filename: sharepoint-se.iso}
+    install: {recipe: manual, builder: manual}
+    automation: winrm-ps51
+    resources: {cpu: 4, memory: 16GiB, disk: 140GiB}
+    tags: [collaboration, current]
+    notes: Subscription Edition, the one Microsoft still patches; certificate and zero-downtime-patch tickets.
+
+  - id: m365-apps-enterprise-on-win11
+    name: Microsoft 365 Apps for enterprise
+    released: "2022-01"
+    support: extended
+    requires: [win11-24h2]
+    media: {source: operator, kind: archive, filename: m365-apps-enterprise.zip}
+    install: {recipe: manual, builder: manual}
+    automation: agent
+    resources: {cpu: 4, memory: 8GiB, disk: 64GiB}
+    tags: [productivity, current, common]
+    notes: >
+      The enterprise channel, which is what the per-user entry in office.yaml is
+      not: update-channel, office-policy and shared-activation tickets are the
+      difference between the two entries. Shipped as an archive because the
+      click-to-run media the Office Deployment Tool downloads is a folder, not an ISO.
