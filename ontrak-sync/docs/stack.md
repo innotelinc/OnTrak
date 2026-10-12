@@ -22,6 +22,11 @@ and explicitly does not own.
   the one fact about a patch no manager reports, since every manager reports an unpacked
   kernel as current.
 - The **apply decision**: what gets installed, in what window, within what scope.
+- The **remit**: which containers this deployment has been given, and therefore the only
+  containers it may keep current unattended. A remit is a `(host, container, image ref)`
+  triple somebody recorded through the API, with the note saying who gave it up; an empty
+  remit means the unattended roll in `rollout.py` cannot touch anything. See
+  [rollout.md](rollout.md).
 - The **finding lifecycle**: what "approved", "skipped", "expired" and "unknown" mean,
   and the rule that none of them may erase a finding that was not re-inspected.
 - The one credential that reaches every Network host (an SSH key, read-only in the
@@ -48,6 +53,10 @@ and explicitly does not own.
   the directory takes effect on the next sign-in with no write here.
 - Package repositories — it reads what `apt`, `snap` and the registries already publish;
   it never mirrors, signs, or re-hosts a package.
+- **Image ownership in the abstract.** It owns the containers it has been handed and no
+  others: a container nobody claimed is scanned and reported, never restarted, and the
+  containers it does roll are recreated through their own compose invocation — this
+  service does not become the place a stack is defined.
 - Configuration management — it upgrades packages and recreates compose projects. It does
   not write host configuration, manage users, or converge a machine to a desired state.
 - Billing (Magnate), storage (ONYX), media, or telephony — it has nothing to bill, store,
@@ -58,7 +67,7 @@ and explicitly does not own.
 | Component | Technology | Job |
 |---|---|---|
 | `ontrak-api` | Python 3.12, FastAPI, SQLite | The scan, the finding lifecycle, the cron policy, and the only code that writes to a host |
-| `ontrak-web` | Next.js 16, React 19, hand-written CSS | The dashboard: hosts, findings, runs, settings, accounts |
+| `ontrak-web` | Next.js 16, React 19, hand-written CSS | The dashboard: hosts, findings, rollouts, runs, settings, accounts |
 | `ontrak/remote.py` | OpenSSH, `incus exec` | Every command that reaches another machine, in one file |
 | `ontrak/applier.py` | apt / snap / docker | The only module that changes a machine |
 | `ontrak/scheduler.py` | in-process cron | The timer — a setting in the database, not a system crontab |

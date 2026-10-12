@@ -34,14 +34,15 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
+from datetime import datetime
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import __version__, db, identity, oidc, reconcile
-from .applier import apply_findings, approve_and_apply
+from . import __version__, db, identity, oidc, reconcile, rollout
+from .applier import apply_findings, apply_rollouts, approve_and_apply, undo_roll
 from .config import Settings
 from .policy import Cron, CronError, Policy, describe, next_runs
 from .scan import host_admin_summary, scan_network
@@ -117,6 +118,30 @@ class PolicyRequest(BaseModel):
     # A separate flag so "clear the window" is expressible. Without it, an omitted
     # field means "leave alone" and there is no way to remove a window once set.
     clear_window: bool = False
+
+
+class RolloutClaimRequest(BaseModel):
+    """One container being given to this deployment, or being given back.
+
+    Every field is optional except the two that identify the container, so "claim this
+    with the defaults" is one call and "narrow the hours on the one I already claimed"
+    is the same call with two more fields set.
+    """
+
+    host: str
+    ref: str
+    container: str = ""
+    project: str = ""
+    service: str = ""
+    auto: bool = True
+    window_start_hour: int | None = None
+    window_end_hour: int | None = None
+    cooldown_hours: int | None = None
+    note: str = ""
+
+
+class RolloutUndoRequest(BaseModel):
+    roll_id: int
 
 
 class LoginRequest(BaseModel):
@@ -864,6 +889,158 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                   trigger=f"manual:{actor.name}")
         finally:
             RUN_LOCK.release()
+
+    # ── the remit: what this deployment has been given, and rolling it ───────
+    #
+    # The only unattended write in this service. Everything else waits for a click, which is
+    # why the endpoints here are shaped differently from the findings ones: claiming is a
+    # *policy* decision (`sync:configure` — the same capability as the timer, because a remit
+    # is what the timer acts on), while running a pass and undoing a roll install/restart
+    # containers (`sync:apply`).
+    @app.get("/api/rollouts", dependencies=[requires("sync:view")])
+    def rollouts(limit: int = Query(default=50, le=500)):
+        """The remit, the recent rolls, and whether the feature is even on.
+
+        `enabled: false` with a full remit is a deployment somebody has prepared and not
+        switched on, which is a state the page has to be able to show rather than looking
+        like a Network that is simply up to date.
+        """
+        config = settings.rollout_config()
+        targets = db.list_rollout_targets(conn)
+        history = db.rollout_history(conn, [(row["host"], row["container"], row["ref"])
+                                            for row in targets])
+        for row in targets:
+            past = history.get((row["host"], row["container"], row["ref"])) or {}
+            row["last_rolled_at"] = past.get("last_rolled_at")
+            row["blocked_reason"] = past.get("blocker") or ""
+            row["auto"] = bool(row["auto"])
+            # When this container becomes eligible again, derived from the same two
+            # numbers the rail uses. A page that shows a cooldown without saying when it
+            # ends is a page an operator has to do arithmetic on.
+            stamped = row["last_rolled_at"]
+            moment = None
+            if stamped:
+                try:
+                    moment = datetime.fromisoformat(str(stamped).replace("Z", "+00:00"))
+                except ValueError:
+                    moment = None
+            row["next_eligible_at"] = (
+                rollout.next_attempt(
+                    moment,
+                    row["cooldown_hours"] if row["cooldown_hours"] is not None
+                    else config.cooldown_hours).strftime("%Y-%m-%dT%H:%M:%SZ")
+                if moment is not None else None)
+        return {
+            "enabled": config.enabled,
+            "targets": targets,
+            "rolls": db.list_container_rolls(conn, limit=limit),
+            "limits": {"max_per_run": config.max_per_run, "max_per_host": config.max_per_host,
+                       "cooldown_hours": config.cooldown_hours,
+                       "health_grace_seconds": config.health_grace_seconds,
+                       "protected_refs": list(config.protected_refs)},
+        }
+
+    @app.post("/api/rollouts/claim")
+    def claim_rollout(body: RolloutClaimRequest, actor: Actor = requires("sync:configure")):
+        """Give a container to this deployment. Recorded with who did it.
+
+        Refused when the remit does not make sense (no host, no ref, a half-written window),
+        because a remit that cannot be honoured is worse than none: it looks like coverage.
+        """
+        remit = rollout.Remit(
+            host=body.host, ref=body.ref, container=body.container, project=body.project,
+            service=body.service, auto=body.auto, window_start_hour=body.window_start_hour,
+            window_end_hour=body.window_end_hour, cooldown_hours=body.cooldown_hours,
+            note=body.note, created_by=actor.name, created_at=db.utcnow(),
+        )
+        problems = remit.validate()
+        if problems:
+            raise HTTPException(status_code=400, detail="; ".join(problems))
+        db.claim_rollout_target(conn, remit)
+        db.log(conn, f"rollout remit: {remit.host}:{remit.container or remit.host} "
+                     f"now owns {remit.ref}"
+                     + ("" if remit.auto else " (watched only)"), actor=actor.name)
+        identity.audit(conn, "rollout.claim",
+                       f"{actor.name} gave {remit.ref} on {remit.host}"
+                       f"{'/' + remit.container if remit.container else ''} to Ontrak Sync"
+                       + ("" if remit.auto else " (watched only)"), actor=actor.name)
+        conn.commit()
+        return {"target": db.get_rollout_target(conn, host=remit.host,
+                                                container=remit.container, ref=remit.ref)}
+
+    @app.post("/api/rollouts/release")
+    def release_rollout(body: RolloutClaimRequest, actor: Actor = requires("sync:configure")):
+        """Give a container back. A release that matched nothing is a 404, not a shrug.
+
+        An operator who released the wrong row has to be told, because the row they meant is
+        still being rolled on a timer.
+        """
+        released = db.release_rollout_target(conn, host=body.host, container=body.container,
+                                            ref=body.ref)
+        if not released:
+            raise HTTPException(status_code=404, detail="no such remit")
+        db.log(conn, f"rollout remit: {body.host}:{body.container or body.host} no longer "
+                     f"owns {body.ref}", actor=actor.name)
+        identity.audit(conn, "rollout.release",
+                       f"{actor.name} released {body.ref} on {body.host}", actor=actor.name)
+        conn.commit()
+        return {"released": 1}
+
+    @app.post("/api/rollouts/clear")
+    def clear_rollout(body: RolloutClaimRequest, actor: Actor = requires("sync:approve")):
+        """Arm a container that a failed roll is holding back.
+
+        `sync:approve` rather than `sync:apply`: this restarts nothing by itself, it removes
+        a hold — and the next run is what makes it real, on the rails it always used.
+        """
+        cleared = db.clear_container_roll_blocker(conn, host=body.host, container=body.container,
+                                                 ref=body.ref, actor=actor.name)
+        identity.audit(conn, "rollout.clear",
+                       f"{actor.name} cleared {cleared} failed roll(s) for "
+                       f"{body.container or body.host}:{body.ref}", actor=actor.name)
+        conn.commit()
+        return {"cleared": cleared}
+
+    @app.post("/api/rollouts/run")
+    def run_rollouts(actor: Actor = requires("sync:apply")):
+        """One pass over the remit, now, under the same rails the timer uses.
+
+        The same lock as a scan and an apply: a manual pass must not walk the Network while
+        a scheduled one is in the middle of a container — two passes could otherwise restart
+        the same container twice, or roll a stack while a scan is describing it.
+        """
+        if not RUN_LOCK.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="a scan, apply or rollout is already running")
+        try:
+            identity.audit(conn, "rollout.run", f"{actor.name} ran a rollout pass",
+                           level="warning", actor=actor.name)
+            conn.commit()
+            return apply_rollouts(conn, settings, load_policy(conn, settings),
+                                  trigger=f"manual:{actor.name}", actor=actor.name)
+        finally:
+            RUN_LOCK.release()
+
+    @app.post("/api/rollouts/undo")
+    def undo_rollout(body: RolloutUndoRequest, actor: Actor = requires("sync:apply")):
+        """Put the image that was running before a roll back, by hand.
+
+        The automatic path does this when the health gate fails; this is for the case the
+        gate cannot see — a container that came up healthy and is serving the wrong thing.
+        The container is left *held* afterwards, so the next pass does not immediately roll
+        it forward again while somebody is still deciding.
+        """
+        identity.audit(conn, "rollout.undo", f"{actor.name} undoing roll #{body.roll_id}",
+                       level="warning", actor=actor.name)
+        conn.commit()
+        if not RUN_LOCK.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="a scan, apply or rollout is already running")
+        try:
+            outcome = undo_roll(conn, settings, roll_id=body.roll_id, actor=actor.name)
+        finally:
+            RUN_LOCK.release()
+        if not outcome.get("ok"):
+            raise HTTPException(status_code=400, detail=outcome.get("error") or "could not undo")
+        return outcome
 
     # ── the timer ────────────────────────────────────────────────────────────
     @app.get("/api/settings", dependencies=[requires("sync:configure")])

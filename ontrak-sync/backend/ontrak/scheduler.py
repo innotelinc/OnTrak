@@ -27,7 +27,7 @@ import threading
 from datetime import datetime, timezone
 
 from . import db
-from .applier import apply_findings
+from .applier import apply_findings, apply_rollouts
 from .policy import Cron, CronError, Policy
 from .scan import scan_network
 
@@ -118,6 +118,30 @@ class Scheduler(threading.Thread):
             self.conn.commit()
             result = scan_network(self.conn, self.settings, policy, trigger="schedule")
             self.last_fired_at = db.utcnow()
+
+            if self.settings.rollout_enabled:
+                # THE ROLL RUNS ON THE SAME TIMER AND THE SAME LOCK, and in both modes.
+                #
+                # Same timer, because the schedule an operator set is when this Network
+                # wants work done and a second cron would only be a second thing to keep
+                # in step — which is the argument this file's own docstring makes about
+                # the host's crontab. The window and the freeze inside that hour are the
+                # rails that say *which* of those minutes is acceptable.
+                #
+                # In both modes, because `detect` is a statement about packages: an
+                # operator who wants apt to wait for an approval has said nothing about
+                # container rolls, and the roll has a kill switch of its own
+                # (`ONTRAK_ROLLOUT`) plus a per-remit `auto` flag. Folding the two
+                # together would make "detect" silently mean "never roll these either",
+                # which is a different decision nobody made.
+                #
+                # Under the lock, because a manual roll from the dashboard and a
+                # scheduled one walking the Network at the same time could restart the
+                # same container twice.
+                result = dict(result)
+                result["rollout"] = apply_rollouts(
+                    self.conn, self.settings, policy, trigger="schedule")
+
             self.last_result = result
 
             if policy.mode != "auto":

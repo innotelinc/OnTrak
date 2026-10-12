@@ -27,7 +27,8 @@
 
 import type {
   ApplyResult, ApproveResult, AppUser, Event, Identity, Finding, Host, Meta, Policy, Run,
-  ScanResult, SignInResult, Summary, Target, UserSession,
+  RollPassResult, Rollouts, RollUndoResult, ScanResult, SignInResult, Summary, Target,
+  UserSession,
 } from "./types";
 
 /**
@@ -239,6 +240,23 @@ export const api = {
   scan: (hosts: string[] = []) => post<ScanResult>("/api/scan", { hosts }),
   apply: (body: { ids?: number[]; all_approved?: boolean } = { all_approved: true }) =>
     post<ApplyResult>("/api/apply", body),
+
+  // ── the remit ─────────────────────────────────────────────────────────────
+  // The only unattended write in this service. Reading it is `sync:view`; claiming and
+  // releasing are `sync:configure` (a remit is what the timer acts on); running a pass
+  // and undoing one are `sync:apply`.
+  rollouts: (limit = 50) => request<Rollouts>(`/api/rollouts?limit=${limit}`),
+  claimRollout: (body: {
+    host: string; ref: string; container?: string; project?: string; service?: string;
+    auto?: boolean; window_start_hour?: number | null; window_end_hour?: number | null;
+    cooldown_hours?: number | null; note?: string;
+  }) => post<{ target: { host: string; container: string; ref: string } }>("/api/rollouts/claim", body),
+  releaseRollout: (body: { host: string; ref: string; container?: string }) =>
+    post<{ released: number }>("/api/rollouts/release", body),
+  clearRollout: (body: { host: string; ref: string; container?: string }) =>
+    post<{ cleared: number }>("/api/rollouts/clear", body),
+  runRollouts: () => post<RollPassResult>("/api/rollouts/run"),
+  undoRollout: (roll_id: number) => post<RollUndoResult>("/api/rollouts/undo", { roll_id }),
 
   policy: () => request<Policy>("/api/settings"),
   savePolicy: (body: Record<string, unknown>) => put<Policy>("/api/settings", body),

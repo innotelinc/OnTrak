@@ -9,7 +9,7 @@
  * dashboard exists.
  */
 
-import type { FindingStatus, Manager } from "@/lib/types";
+import type { FindingStatus, Manager, RollState } from "@/lib/types";
 
 const STATUS_LABEL: Record<FindingStatus, string> = {
   pending: "pending",
@@ -36,6 +36,28 @@ export function ScanPill({ scanned, managers }: { scanned: boolean; managers?: R
   }
   const partial = Object.values(managers ?? {}).some((state) => state === "partial");
   return <span className={`pill pill--${partial ? "partial" : "ok"}`}>{partial ? "partial" : "ok"}</span>;
+}
+
+/**
+ * How a container roll ended.
+ *
+ * Two of these read as success and one of them is not obvious: `untouched` means the
+ * attempt never got as far as the container — the registry refused the pull, or the
+ * plan could not be read — so nothing was replaced and nothing is held back. Drawing it
+ * as a failure would make a throttled registry look like a broken service, which is the
+ * pair of facts the backend keeps apart on purpose.
+ */
+const ROLL_LABEL: Record<RollState, [string, string]> = {
+  rolled: ["rolled", "ok"],
+  untouched: ["untouched", "absent"],
+  rolling: ["rolling", "pending"],
+  "rolled-back": ["rolled back", "partial"],
+  failed: ["failed", "bad"],
+};
+
+export function RollStatePill({ state }: { state: RollState }) {
+  const [label, tone] = ROLL_LABEL[state] ?? [state, "unknown"];
+  return <span className={`pill pill--${tone}`}>{label}</span>;
 }
 
 export function SecurityPill() {

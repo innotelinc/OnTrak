@@ -341,6 +341,28 @@ class Settings:
     # that it stays as it is. The report exists so that decision is asked out loud
     # instead of by a red number nobody can explain. See `reconcile.py`.
     stale_failure_seconds: int = 48 * 3600
+
+    # ── unattended container rolls (rollout.py) ──────────────────────────────
+    # OFF unless somebody turns it on, and the only setting in this service that lets
+    # it restart a container nobody asked about at that moment. Every other write here
+    # waits for a person to click something; this one does not, so the shipped default
+    # is the cautious one and enabling it is a decision that shows up in a diff.
+    rollout_enabled: bool = False
+    # Three per run, two per host, is the blast radius of one bad image: a rollout run
+    # that goes wrong takes at most two containers off one machine, and the rest of the
+    # Network stays on the image that was working.
+    rollout_max_per_run: int = 3
+    rollout_max_per_host: int = 2
+    # A day between rolls of one container: a tag republished twice an hour must not
+    # become a container restarted twice an hour.
+    rollout_cooldown_hours: int = 24
+    # How long a new container is given to report `running` and, when the image defines
+    # one, `healthy` before the previous image is put back.
+    rollout_health_grace_seconds: int = 90
+    rollout_health_poll_seconds: int = 5
+    # Refs that are never rolled automatically whatever the remit says. Matched as
+    # written, so `postgres:16` protects the `docker.io/library/` spelling too.
+    rollout_protected_refs: tuple[str, ...] = ()
     # The scheduler is in-process (see policy.py for the cron arithmetic and the
     # apply policy). Disabling it leaves the API and the manual scan/apply paths
     # working, which is what you want while debugging a schedule that fires at the
@@ -388,6 +410,26 @@ class Settings:
     # The secret that signs the SSO state cookie. Falls back to the API token,
     # which is already required and already random.
     session_secret: str = ""
+
+    def rollout_config(self):
+        """The rails this deployment rolls under, as `rollout.RolloutConfig`.
+
+        Imported inside the function rather than at the top of the file: `rollout.py`
+        imports `policy.py`, and every module in this service imports this one, so a
+        top-level import would put the whole decision layer in the import graph of
+        anything that wanted to know a bind port. The return type is left unannotated
+        for the same reason — the name is only needed when the method is called.
+        """
+        from .rollout import RolloutConfig
+
+        return RolloutConfig(
+            enabled=self.rollout_enabled,
+            max_per_run=self.rollout_max_per_run,
+            max_per_host=self.rollout_max_per_host,
+            cooldown_hours=self.rollout_cooldown_hours,
+            health_grace_seconds=self.rollout_health_grace_seconds,
+            protected_refs=tuple(self.rollout_protected_refs),
+        )
 
     def credential_for(self, registry: str) -> RegistryCredential | None:
         """The credential to log in with for `registry`, or None to stay anonymous.
@@ -444,6 +486,13 @@ class Settings:
             login_ttl_seconds=_env_int("ONTRAK_LOGIN_TTL", 7 * 24 * 3600),
             docker_pin_warm_budget=_env_int("ONTRAK_DOCKER_PIN_WARM_BUDGET", 48),
             stale_failure_seconds=_env_int("ONTRAK_STALE_FAILURE_HOURS", 48) * 3600,
+            rollout_enabled=_env_bool("ONTRAK_ROLLOUT", False),
+            rollout_max_per_run=_env_int("ONTRAK_ROLLOUT_MAX_PER_RUN", 3),
+            rollout_max_per_host=_env_int("ONTRAK_ROLLOUT_MAX_PER_HOST", 2),
+            rollout_cooldown_hours=_env_int("ONTRAK_ROLLOUT_COOLDOWN_HOURS", 24),
+            rollout_health_grace_seconds=_env_int("ONTRAK_ROLLOUT_HEALTH_GRACE", 90),
+            rollout_health_poll_seconds=_env_int("ONTRAK_ROLLOUT_HEALTH_POLL", 5),
+            rollout_protected_refs=_parse_list(_env("ONTRAK_ROLLOUT_PROTECTED")),
             scheduler_enabled=_env_bool("ONTRAK_SCHEDULER", True),
             scheduler_tick_seconds=_env_int("ONTRAK_SCHEDULER_TICK", 30),
             default_schedule=_env("ONTRAK_DEFAULT_SCHEDULE", "0 4 * * 0"),

@@ -133,6 +133,26 @@ managers and the window it will act in. There is no API parameter that applies s
 regardless of the mode — a policy a request can bypass isn't a policy. `security_only` is what
 makes `auto` tolerable: CVE fixes go out, feature updates wait for a person.
 
+### Unattended rolls (`ONTRAK_ROLLOUT`, off by default)
+
+A finding that nobody clicks is an image with a known CVE sitting on the Network for as long as
+the dashboard goes unread, so this service can also keep a container on its tag's current image
+by itself — for the containers it has been **given**, and only those.
+
+| | |
+|---|---|
+| What it is given | A `(host, container, image ref)` remit, claimed through `POST /api/rollouts/claim` with the note saying who gave it up. An empty remit is the shipped state and means the feature cannot touch anything. |
+| Where it is driven from | The **Rollouts** page: the banner when the switch is off, the claim form, the remit with its cooldowns and holds, every docker image the scans have seen and whether it is owned, the roll history with an Undo, and the caps in force. Claiming is `sync:configure`, running a pass and undoing one are `sync:apply`, reading it is `sync:view`. |
+| When it runs | At the end of a **scheduled scan**, in both `detect` and `auto` mode, inside the policy's window and around its change freeze — plus on demand through `POST /api/rollouts/run`. |
+| The decision | Ten rails, all pure and unit-tested: ownership, the kill switch, `auto: false` (watched, never moved), protected refs, the window, the freeze, a per-container cooldown, per-run and per-host caps, an unjudged registry (which is not a reason to restart anything), and the compose-plan refusal the clicked path already makes — checked *before* a container is stopped. |
+| The roll | Pull, then compare the id the tag resolves to against the id the container runs. Equal means nothing was needed and nothing is stopped; different means recreate through the container's own compose invocation. |
+| The verdict | The new container has to report `running` and, when the image defines one, `healthy` inside the grace period. A container still `starting` at the end of it is **down**, not "up because it has not failed yet". |
+| When it fails | The previous image is tagged back and the stack is recreated on it, the roll is recorded `rolled-back`, and the container is **held** until somebody clears it — a roll that fails once would otherwise fail every night. If the previous image is gone from the host the roll is recorded `failed`, never as a success. |
+| Undoing by hand | `POST /api/rollouts/undo` — for the image that starts, reports healthy and serves the wrong thing, which no gate can see. It leaves the container held so the next pass does not roll it forward again. |
+
+Every outcome is a row: what was running, what it was asked to become, the state, the reason in
+the daemon's own words, and how long it took. See [docs/rollout.md](docs/rollout.md).
+
 ### What it will never do
 
 Not configurable, because each one is how an update tool becomes an outage:
@@ -142,7 +162,10 @@ Not configurable, because each one is how an update tool becomes an outage:
 - **No installs and no removals.** apt runs with `--only-upgrade`, so an unsatisfiable dependency
   fails the transaction instead of removing something to satisfy it.
 - **No config-file replacement.** `force-confdef`/`force-confold` keeps the operator's configuration.
-- **No blind container recreate.** Docker's "apply" means *recreate*, so a compose project is
+- **No blind container recreate.** A recreate is always through the invocation the container's own
+  labels describe and the plan check above, whether a person pressed the button or the timer did
+  ([the roll](docs/rollout.md) is the timer's path, and it shares that resolution and that refusal
+  with the clicked one). Concretely: a compose project is
   rebuilt with the invocation the container's own labels describe — its project name, its working
   directory, its exact `-f` set and the `--env-file` it was started with — and, only when the plain plan cannot
   see every running service, with the profiles the compose files declare. The number of services
@@ -171,6 +194,7 @@ the container and authorises the SSH key on the Network hosts. See
 | Doc | What it covers |
 |---|---|
 | [docs/placement.md](docs/placement.md) | Where it runs (its own incus container), why not on a Network host, the addressing and access boundaries it needs |
+| [docs/rollout.md](docs/rollout.md) | Unattended container rolls: the remit, the ten rails, what a roll does step by step, the health gate and the rollback, undoing one by hand, and what it deliberately does not do |
 | [docs/stack.md](docs/stack.md) | Its role in the [Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack): owns / consumes / does not own |
 
 ## Layout
@@ -183,11 +207,17 @@ backend/ontrak/
   scanners.py   the pure parsers (the unit-tested core)
   scan.py       walks the Network, records findings, applies expiry
   policy.py     cron arithmetic and the apply decision
+  rollout.py    the rails and the decision of an unattended container roll (pure)
   applier.py    the only code that changes a machine
   scheduler.py  the in-process timer
   api.py        the HTTP surface
 web/            the dashboard (Next.js app router)
 web/landing/    the GitHub Pages landing
+
+# at the repository root, because the browser suite is the family's, not this
+# product's alone (Playwright and Chromium are the root package's)
+tests/browser/sync.spec.ts      the rollouts console, driven in Chromium
+playwright.sync.config.ts       boots the API harness and the dashboard, then runs it
 ```
 
 `remote.py` and `applier.py` are the only modules that touch the Network, and only `applier.py`
@@ -196,8 +226,12 @@ writes to it.
 ## Tests
 
 ```bash
-make test        # 415 tests, no Network required
+make test        # 510 tests with nothing installed; 536 with requirements.txt
 ```
+
+No Network is required either way. The two modules that drive the HTTP layer skip on a
+bare checkout — they need FastAPI, which a developer's `python3` does not have — and run
+their 26 tests inside the image and in CI, which install `requirements.txt`.
 
 The suite covers the parsers, the cron arithmetic, the finding lifecycle, the scan engine (against
 a fake Network) and the apply decision. It is plain `unittest` and ships inside the backend image,
@@ -223,6 +257,37 @@ production:
   nothing on a real Network and every target read as `partial`. The cross-check against
   `apt list --upgradable` kept the findings visible, which is why the unit tests did not catch it
   and the first scan against the real Network did.
+
+### The dashboard, in a browser
+
+None of the above renders a page, so the questions an operator's page has to answer had no
+check at all until this suite: whether an empty remit *says* it is empty, whether the images
+the scans found are shown as owned or not, whether a claim lands and rolls, whether the row
+reads `old → new`, whether Undo is offered where it means something, and whether the
+container comes back held. From the repository root:
+
+```bash
+npm ci --prefix ontrak-sync/web                        # the dashboard's dependencies
+pip install -r ontrak-sync/backend/requirements.txt    # the fake Network's harness
+npm run test:e2e:sync
+```
+
+That one command boots both halves. `backend/tests/serve_fake.py` serves the **real**
+application — FastAPI's routes, the session cookie, the capabilities, the remit store, the
+rails, `apply_rollouts` and `undo_roll` — over a throwaway database with `ssh`, `incus exec`
+and `docker` faked, reusing the same fake the roll's own unit tests are held to. The
+dashboard is then started on `:8451` against it with the same-origin `/api/*` proxy the
+family stack ships, and the spec signs in through the break-glass door. Only the Network is
+faked; nothing about the page, the wire or the roll is.
+
+It also asserts the dev server's **hot-reload socket** connects, because that is the one
+failure nothing else here can see. Next answers an HMR handshake `Unauthorized` when the
+request's `Origin` is not in `allowedDevOrigins` — and a WebSocket handshake always carries
+one — so a dashboard without that list works perfectly while its console fills with
+`WebSocket connection to '…/_next/hmr' failed` and a reconnect every second. Set
+`ONTRAK_ALLOWED_DEV_ORIGINS` when the app is reached through a name that is neither the
+host's own address nor loopback (a tunnel host, for example); it has no effect in
+production. The suite runs in CI as the `sync-browser` job.
 
 ## The registry budget
 

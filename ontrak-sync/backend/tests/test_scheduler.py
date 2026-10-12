@@ -54,7 +54,15 @@ class SchedulerCase(unittest.TestCase):
             return {"run_id": 2, "applied": len(finding_ids), "failed": 0, "manual": [],
                     "messages": [], "summary": f"{len(finding_ids)} applied"}
 
-        patcher = mock.patch.multiple(scheduler, scan_network=fake_scan, apply_findings=fake_apply)
+        self.rollout_calls: list[dict] = []
+
+        def fake_rollouts(conn, settings, policy, **kwargs):
+            self.rollout_calls.append(kwargs)
+            return {"run_id": 3, "rolled": 0, "rolled_back": 0, "failed": 0, "skipped": 1,
+                    "summary": "0 rolled", "messages": [], "decisions": []}
+
+        patcher = mock.patch.multiple(scheduler, scan_network=fake_scan,
+                                      apply_findings=fake_apply, apply_rollouts=fake_rollouts)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.scheduler = scheduler.Scheduler(self.conn, self.settings)
@@ -64,6 +72,51 @@ class SchedulerCase(unittest.TestCase):
         base.update(kwargs)
         db.set_setting(self.conn, scheduler.POLICY_KEY, base)
         self.conn.commit()
+
+
+# ── the unattended roll on the timer ────────────────────────────────────────
+class Rollouts(SchedulerCase):
+    """The roll rides the scan's timer, which is the whole point of it being here.
+
+    Two things are pinned: that it runs on the same tick as the scan (so an operator has
+    one schedule to keep in step, not two), and that it runs in **both** modes — `detect`
+    is a statement about packages and says nothing about container rolls, which have a
+    kill switch of their own.
+    """
+
+    def test_the_roll_runs_at_the_end_of_a_scheduled_scan(self):
+        self.settings = Settings(hosts=(Host("i1", "192.168.1.51", "both"),),
+                                 rollout_enabled=True)
+        self.scheduler = scheduler.Scheduler(self.conn, self.settings)
+        self.set_policy(schedule="0 3 * * 1", mode="auto")
+        result = self.scheduler.tick(dt(2026, 9, 28, 3, 0))
+        self.assertEqual([{"trigger": "schedule"}], self.rollout_calls)
+        self.assertIn("rollout", result)
+
+    def test_the_roll_runs_in_detect_mode_too(self):
+        # `detect` means "apt waits for an approval". Reading it as "and never roll these
+        # either" would be a second decision nobody made, and the roll's own kill switch
+        # plus the per-remit `auto` flag are where that is said instead.
+        self.settings = Settings(hosts=(Host("i1", "192.168.1.51", "both"),),
+                                 rollout_enabled=True)
+        self.scheduler = scheduler.Scheduler(self.conn, self.settings)
+        self.set_policy(schedule="0 3 * * 1", mode="detect")
+        self.scheduler.tick(dt(2026, 9, 28, 3, 0))
+        self.assertEqual(1, len(self.rollout_calls))
+        self.assertEqual([], self.apply_calls, "detect mode still installs nothing")
+
+    def test_the_roll_does_not_run_with_the_kill_switch_off(self):
+        self.set_policy(schedule="0 3 * * 1", mode="auto")
+        self.scheduler.tick(dt(2026, 9, 28, 3, 0))
+        self.assertEqual([], self.rollout_calls)
+
+    def test_a_tick_that_does_not_fire_rolls_nothing(self):
+        self.settings = Settings(hosts=(Host("i1", "192.168.1.51", "both"),),
+                                 rollout_enabled=True)
+        self.scheduler = scheduler.Scheduler(self.conn, self.settings)
+        self.set_policy(schedule="0 3 * * 1", mode="auto")
+        self.assertIsNone(self.scheduler.tick(dt(2026, 9, 28, 4, 0)))
+        self.assertEqual([], self.rollout_calls)
 
 
 class Firing(SchedulerCase):

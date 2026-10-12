@@ -252,6 +252,62 @@ CREATE TABLE IF NOT EXISTS registry_refusals (
     recorded_at TEXT NOT NULL,
     PRIMARY KEY (run_id, host, cause)
 );
+
+-- THE REMIT: the containers this deployment has been *given*. Everything else in this
+-- database is a record of what was seen; this table is the only list that says what the
+-- unattended roll in `rollout.py` may restart. It is keyed on (host, container, ref)
+-- rather than on the container name because one host runs several incus containers with
+-- their own Docker daemons, and one image can legitimately run twice inside one of them;
+-- a remit that could not tell those apart would roll both. An empty table is the shipped
+-- posture and means "roll nothing", which is why "whole-network protection" here is a
+-- list somebody wrote rather than a default.
+CREATE TABLE IF NOT EXISTS rollout_targets (
+    host              TEXT NOT NULL,
+    container         TEXT NOT NULL DEFAULT '',
+    ref               TEXT NOT NULL,
+    project           TEXT NOT NULL DEFAULT '',
+    service           TEXT NOT NULL DEFAULT '',
+    auto              INTEGER NOT NULL DEFAULT 1,
+    window_start_hour INTEGER,
+    window_end_hour   INTEGER,
+    cooldown_hours    INTEGER,
+    note              TEXT NOT NULL DEFAULT '',
+    created_by        TEXT NOT NULL DEFAULT '',
+    created_at        TEXT NOT NULL,
+    PRIMARY KEY (host, container, ref)
+);
+
+-- One row per attempted roll: what it was before, what it was asked to become, and how
+-- it ended. Three things depend on this table existing rather than on a log line:
+--   * the cooldown, which is "how long since this container was last rolled" and has to
+--     survive a restart of this service;
+--   * the block after a failed roll, which is the difference between a roll that failed
+--     once and a container restarted every night forever;
+--   * the rollback, which needs the image id that was in place *before*, recorded at the
+--     moment it was captured rather than reconstructed from a `docker image ls` later.
+CREATE TABLE IF NOT EXISTS container_rolls (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id        INTEGER,
+    host          TEXT NOT NULL,
+    container     TEXT NOT NULL DEFAULT '',
+    name          TEXT NOT NULL DEFAULT '',
+    ref           TEXT NOT NULL,
+    project       TEXT NOT NULL DEFAULT '',
+    service       TEXT NOT NULL DEFAULT '',
+    from_image_id TEXT NOT NULL DEFAULT '',
+    to_image_id   TEXT NOT NULL DEFAULT '',
+    state         TEXT NOT NULL,
+    reason        TEXT NOT NULL DEFAULT '',
+    trigger       TEXT NOT NULL DEFAULT '',
+    actor         TEXT,
+    started_at    TEXT NOT NULL,
+    finished_at   TEXT,
+    duration_ms   INTEGER,
+    cleared_at    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS rolls_by_target
+    ON container_rolls (host, container, ref, started_at DESC);
 """
 
 
@@ -1029,3 +1085,212 @@ def upsert_schedule(conn, *, name: str, cron: str, mode: str, enabled: bool,
         """,
         (name, cron, mode, int(bool(enabled)), next_run_at, utcnow()),
     )
+
+
+# ── the remit, and the rolls against it ──────────────────────────────────────
+# The store side of `rollout.py`. Nothing here decides anything: the rails are pure
+# and live there, and these four functions only move rows. Kept apart on purpose, so a
+# test of a rail needs no database and a test of the store needs no policy.
+def claim_rollout_target(conn, remit) -> None:
+    """Record that this deployment has been given a container.
+
+    Upsert on the (host, container, ref) key, so claiming a container twice — a form
+    submitted twice, or the same container claimed after a host rebuild — updates the
+    terms rather than refusing or duplicating. `created_by`/`created_at` are kept from
+    the first claim, because who gave it up and when is the thing an incident review
+    asks and a re-claim is not a new decision.
+    """
+    conn.execute(
+        """
+        INSERT INTO rollout_targets (host, container, ref, project, service, auto,
+                                     window_start_hour, window_end_hour, cooldown_hours,
+                                     note, created_by, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(host, container, ref) DO UPDATE SET
+            project=excluded.project, service=excluded.service, auto=excluded.auto,
+            window_start_hour=excluded.window_start_hour,
+            window_end_hour=excluded.window_end_hour,
+            cooldown_hours=excluded.cooldown_hours, note=excluded.note
+        """,
+        (remit.host, remit.container or "", remit.ref, remit.project or "",
+         remit.service or "", int(bool(remit.auto)), remit.window_start_hour,
+         remit.window_end_hour, remit.cooldown_hours, remit.note or "",
+         remit.created_by or "", remit.created_at or utcnow()),
+    )
+
+
+def release_rollout_target(conn, *, host: str, container: str, ref: str) -> bool:
+    """Give a container back. Returns whether anything was actually given back.
+
+    A release that matched nothing is reported rather than silently succeeding: an
+    operator who released the wrong row needs to know the row they meant is still
+    being rolled.
+    """
+    cur = conn.execute(
+        "DELETE FROM rollout_targets WHERE host=? AND container=? AND ref=?",
+        (host, container or "", ref),
+    )
+    return cur.rowcount > 0
+
+
+def list_rollout_targets(conn) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM rollout_targets ORDER BY host, container, ref"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_rollout_target(conn, *, host: str, container: str, ref: str) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM rollout_targets WHERE host=? AND container=? AND ref=?",
+        (host, container or "", ref),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def start_container_roll(conn, *, host: str, container: str, name: str, ref: str,
+                         project: str = "", service: str = "", from_image_id: str = "",
+                         trigger: str = "", actor: str | None = None,
+                         run_id: int | None = None) -> int:
+    """Open a roll row *before* anything is stopped.
+
+    Written first on purpose: if this service dies mid-roll, a row saying `rolling` is
+    the only evidence that a container may have been left half-replaced, and a row
+    written afterwards would be missing exactly in the case that needs it.
+    """
+    cur = conn.execute(
+        """
+        INSERT INTO container_rolls (run_id, host, container, name, ref, project, service,
+                                     from_image_id, state, trigger, actor, started_at)
+        VALUES (?,?,?,?,?,?,?,?,'rolling',?,?,?)
+        """,
+        (run_id, host, container or "", name, ref, project or "", service or "",
+         from_image_id or "", trigger, actor, utcnow()),
+    )
+    return int(cur.lastrowid)
+
+
+def finish_container_roll(conn, roll_id: int, *, state: str, to_image_id: str = "",
+                          reason: str = "", duration_ms: int | None = None) -> None:
+    """Close a roll row with what actually happened.
+
+    `state` is one of the constants in `rollout.py` — `rolled`, `rolled-back` or
+    `failed` — and never "probably fine": a roll that could not be verified lands on
+    one of the two bad states, because the cooldown and the block both read this
+    column and a hopeful value would defeat both.
+    """
+    conn.execute(
+        "UPDATE container_rolls SET state=?, to_image_id=?, reason=?, finished_at=?, "
+        "duration_ms=? WHERE id=?",
+        (state, to_image_id or "", (reason or "")[:400], utcnow(), duration_ms, roll_id),
+    )
+
+
+def last_container_roll(conn, *, host: str, container: str, ref: str) -> dict | None:
+    """The most recent roll for one container, whatever state it ended in."""
+    row = conn.execute(
+        """
+        SELECT * FROM container_rolls WHERE host=? AND container=? AND ref=?
+         ORDER BY started_at DESC, id DESC LIMIT 1
+        """,
+        (host, container or "", ref),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def container_roll_blocker(conn, *, host: str, container: str, ref: str) -> str:
+    """Why this container must not be rolled again, or "" when it may be.
+
+    A roll that ended `rolled-back` or `failed` and has not been cleared blocks the
+    next attempt. This is the rail that turns a nightly crash-loop into one incident:
+    without it, every timer would try the same image again, restart the container, fail
+    the health gate, roll back, and repeat — which is a container that flaps nightly and
+    a Network nobody can keep stable long enough to fix.
+
+    A `rolling` row that never finished counts as a failure too — see
+    `start_container_roll` for why it is written first.
+    """
+    last = last_container_roll(conn, host=host, container=container, ref=ref)
+    if last is None or last["cleared_at"]:
+        return ""
+    if last["state"] in ("rolled-back", "failed", "rolling"):
+        return f"{last['state']}: {last['reason'] or 'no reason recorded'}"
+    return ""
+
+
+def clear_container_roll_blocker(conn, *, host: str, container: str, ref: str,
+                                actor: str | None = None) -> int:
+    """Let a blocked container be rolled again, after somebody looked at it.
+
+    Clears every uncleared bad row rather than only the newest: an operator who fixed
+    the image means "try this again", and leaving an older refusal in place would keep
+    the container blocked for a reason that no longer applies.
+    """
+    cur = conn.execute(
+        """
+        UPDATE container_rolls SET cleared_at=?
+         WHERE host=? AND container=? AND ref=? AND cleared_at IS NULL
+           AND state IN ('rolled-back','failed','rolling')
+        """,
+        (utcnow(), host, container or "", ref),
+    )
+    if cur.rowcount:
+        log(conn, f"roll block cleared for {container or host}:{ref}" +
+                  (f" by {actor}" if actor else ""), actor=actor)
+    return cur.rowcount
+
+
+def list_container_rolls(conn, *, limit: int = 50, host: str | None = None) -> list[dict]:
+    """Recent rolls, newest first — the history page, and the cooldown's evidence."""
+    if host:
+        rows = conn.execute(
+            "SELECT * FROM container_rolls WHERE host=? ORDER BY started_at DESC, id DESC LIMIT ?",
+            (host, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM container_rolls ORDER BY started_at DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def rollout_history(conn, targets: list[tuple[str, str, str]]) -> dict[tuple, dict]:
+    """Per owned container, the two facts a rollout run needs: when it last rolled, and
+    whether a bad roll is still holding it back.
+
+    One pass over the roll history for the whole remit rather than a query per
+    container, because a rollout run asks this for every container it owns before
+    deciding anything and a hundred round trips to SQLite on a timer buys nothing.
+
+    The two facts come from different rows on purpose:
+
+      * **The cooldown runs from the last roll that actually changed the container**
+        (`rolled`). An attempt that did not get that far — a throttled registry — must
+        not start a day-long wait, or a rate limit would become a day of no updates.
+      * **The block comes from the newest row whatever it is**, because a `rolling` row
+        that never finished is the only evidence that a container may have been left
+        half-replaced, and it outranks an older success.
+    """
+    wanted = set(targets)
+    # Every owned container starts with an answer, so a caller never has to tell "never
+    # rolled" apart from "not in the result".
+    out: dict[tuple, dict] = {key: {"last_rolled_at": None, "blocker": ""} for key in wanted}
+    for row in conn.execute(
+        "SELECT * FROM container_rolls ORDER BY started_at ASC, id ASC"
+    ).fetchall():
+        key = (row["host"], row["container"], row["ref"])
+        if key not in wanted:
+            continue
+        state = out[key]
+        if row["state"] == "rolled":
+            state["last_rolled_at"] = row["finished_at"] or row["started_at"]
+        # The NEWEST bad row is the one that counts, and `cleared_at` un-blocks it: an
+        # operator who looked at a failure and fixed the image means "try again", and
+        # leaving an older refusal standing would hold the container back for a reason
+        # that no longer applies. Walked oldest-first, so a later bad row simply overwrites
+        # an earlier cleared one. See `clear_container_roll_blocker`.
+        if row["state"] in ("rolled-back", "failed", "rolling"):
+            state["blocker"] = "" if row["cleared_at"] else \
+                f"{row['state']}: {row['reason'] or 'no reason recorded'}"
+    return out

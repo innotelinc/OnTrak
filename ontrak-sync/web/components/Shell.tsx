@@ -42,6 +42,7 @@ interface NavLink {
 const LINKS: NavLink[] = [
   { href: "/", label: "Dashboard" },
   { href: "/findings", label: "Findings", badge: "pending" },
+  { href: "/rollouts", label: "Rollouts" },
   { href: "/hosts", label: "Hosts" },
   { href: "/runs", label: "Runs & log" },
   { href: "/settings", label: "Timer & policy", needs: "sync:configure" },

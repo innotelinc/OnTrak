@@ -270,6 +270,127 @@ export interface Policy {
   next_runs: string[];
 }
 
+/**
+ * How one attempted roll ended, as `container_rolls.state` spells it.
+ *
+ * `rolled` and `untouched` are the two that do not hold a container back; the other
+ * three do, and the distinction is deliberate — see `container_rolls` in the backend.
+ * There is no "probably fine": a roll that could not be verified lands on one of the
+ * bad two, because the cooldown and the block-after-failure rails both read this.
+ */
+export type RollState = "rolling" | "rolled" | "rolled-back" | "failed" | "untouched";
+
+/**
+ * One container this deployment has been given — a `(host, image ref)` remit.
+ *
+ * `container` is the incus container Docker runs in, or `""` when Docker runs on the
+ * host itself; the pair with `host` is what the scan's finding rows are keyed on, which
+ * is why it is here and not derived from the ref.
+ */
+export interface RolloutTarget {
+  host: string;
+  container: string;
+  ref: string;
+  project: string;
+  service: string;
+  /** False means watched, not rolled: findings are still raised, a person still clicks. */
+  auto: boolean;
+  window_start_hour: number | null;
+  window_end_hour: number | null;
+  cooldown_hours: number | null;
+  note: string;
+  created_by: string;
+  created_at: string;
+  last_rolled_at: string | null;
+  /** Set when a failed roll is holding this container back until somebody clears it. */
+  blocked_reason: string;
+  /** Derived from the cooldown by the API, so the page need not do the arithmetic. */
+  next_eligible_at: string | null;
+}
+
+/** One attempted roll: what was running, what it was asked to become, and how it ended. */
+export interface ContainerRoll {
+  id: number;
+  run_id: number | null;
+  host: string;
+  container: string;
+  /** The container's own name, as the Docker daemon knows it. */
+  name: string;
+  ref: string;
+  project: string;
+  service: string;
+  from_image_id: string;
+  to_image_id: string;
+  state: RollState;
+  /** The daemon's own words, or the reason the rail refused. */
+  reason: string;
+  trigger: string;
+  actor: string | null;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+  cleared_at: string | null;
+}
+
+/** What `GET /api/rollouts` returns: the remit, the history, and the rails in force. */
+export interface Rollouts {
+  /** The kill switch. `false` with a full remit is a prepared deployment, not a current one. */
+  enabled: boolean;
+  targets: RolloutTarget[];
+  rolls: ContainerRoll[];
+  limits: {
+    max_per_run: number;
+    max_per_host: number;
+    cooldown_hours: number;
+    health_grace_seconds: number;
+    protected_refs: string[];
+  };
+}
+
+/**
+ * One decision out of a rollout pass, as the run reported it.
+ *
+ * `code` is the machine-readable refusal (`not-owned`, `outside-window`, `rolling`) and
+ * `detail` the sentence for it, so a pass that did nothing can still say *which* nothing
+ * for every container it looked at rather than only the ones it moved.
+ */
+export interface RollDecision {
+  host: string;
+  name: string;
+  ref: string;
+  code: string;
+  detail: string;
+}
+
+/** What `POST /api/rollouts/run` returns. */
+export interface RollPassResult {
+  run_id: number | null;
+  rolled: number;
+  rolled_back: number;
+  failed: number;
+  skipped: number;
+  summary: string;
+  messages: string[];
+  decisions?: RollDecision[];
+}
+
+/**
+ * What `POST /api/rollouts/undo` returns.
+ *
+ * The undo is written as a row of its own, so `roll_id` here is the *undo's* id and not
+ * the one that was passed in. `held` says whether the container is now blocked from the
+ * next pass, which is the half of the answer an operator has to know about.
+ */
+export interface RollUndoResult {
+  ok: boolean;
+  roll_id?: number;
+  state?: RollState;
+  detail?: string;
+  held?: boolean;
+  /** Set when the undo was refused (`ok: false`) — e.g. a roll that never landed. */
+  error?: string;
+}
+
 export interface ScanResult {
   run_id: number;
   targets: number;
