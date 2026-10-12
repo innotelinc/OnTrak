@@ -349,12 +349,17 @@ function alert(overrides: Partial<SecurityAlertRecord> = {}): SecurityAlertRecor
     identityPrivileged: false,
     sourceIp: "203.0.113.9",
     rawRef: null,
+    rulebookVersion: null,
+    techniques: [],
+    threatIntelCount: 0,
     dedupeKey: "fp:IDS|et scan|web-01|-|2026-09-01T12:00:00.000Z",
     occurredAt: "2026-09-01T12:00:00.000Z",
     firstSeenAt: "2026-09-01T12:00:00.000Z",
     lastSeenAt: "2026-09-01T12:03:00.000Z",
     occurrences: 3,
     ticketId: null,
+    containmentState: "NONE",
+    containmentActionId: null,
     ...overrides,
   };
 }

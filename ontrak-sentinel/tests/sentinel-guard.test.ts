@@ -30,10 +30,20 @@ import {
   ALERT_EVIDENCE_MAX,
 } from "../src/lib/detection-service";
 import {
+  AUTH_SPRAY_RULE,
+  CONNECTION_VOLUME_ANOMALY_RULE,
+  CREDENTIAL_DUMPING_TOOL_RULE,
   CREDENTIAL_STUFFING_RULE,
+  DESTINATION_FANOUT_ANOMALY_RULE,
   DETECTION_RULES,
+  EXPOSED_REMOTE_DESKTOP_RULE,
+  HOST_PERSISTENCE_RULE,
+  LATERAL_ADMIN_RULE,
+  LISTENING_PORT_ANOMALY_RULE,
   SCAN_RULE,
   SUSPICIOUS_SERVICE_RULE,
+  WEB_SERVER_SHELL_RULE,
+  WEB_SHELL_REQUEST_RULE,
   evaluateRules,
   inCidr,
   rulebookVersion,
@@ -170,7 +180,7 @@ test("rules: every shipped rule is documented and versioned", () => {
     assert.ok(rule.id.trim(), "a rule without an id cannot be reported");
     assert.ok(Number.isInteger(rule.version) && rule.version >= 1, `${rule.id} has no version`);
     assert.ok(rule.name.trim() && rule.description.length > 40, `${rule.id} is not documented enough to read at 03:00`);
-    assert.ok(["signature", "behavioural", "sequence"].includes(rule.detection.kind));
+    assert.ok(["signature", "behavioural", "sequence", "anomaly"].includes(rule.detection.kind));
   }
 });
 
@@ -249,6 +259,88 @@ test("rules: the sequence rule needs the order, the count and the window", () =>
     .concat(failures(5).map((entry) => ({ ...entry, sourceAddress: "203.0.113.9" })))
     .concat([auth("success", AT + 7_000, "203.0.113.9")]);
   assert.equal(evaluateRules(twoSources, [CREDENTIAL_STUFFING_RULE]).length, 2);
+});
+
+test("rules: attributeIn matches a set, and a host rule reads only host telemetry", () => {
+  const dumper = event({ kind: "HOST", source: "EDR", attributes: { process: "mimikatz.exe" } });
+  const fired = evaluateRules([dumper], [CREDENTIAL_DUMPING_TOOL_RULE]);
+  assert.equal(fired.length, 1);
+  assert.equal(fired[0].severity, "CRITICAL");
+  // A process name outside the set does not match...
+  assert.equal(
+    evaluateRules([event({ kind: "HOST", source: "EDR", attributes: { process: "explorer.exe" } })], [CREDENTIAL_DUMPING_TOOL_RULE]).length,
+    0,
+  );
+  // ...and a network event carrying the same attribute is not host telemetry.
+  assert.equal(evaluateRules([event({ attributes: { process: "mimikatz.exe" } })], [CREDENTIAL_DUMPING_TOOL_RULE]).length, 0);
+
+  // Two attribute sets ANDed: a shell is only suspicious when a server process is its parent.
+  const shell = event({ kind: "HOST", source: "EDR", attributes: { process: "bash", parentProcess: "nginx" } });
+  assert.equal(evaluateRules([shell], [WEB_SERVER_SHELL_RULE]).length, 1);
+  assert.equal(
+    evaluateRules([event({ kind: "HOST", source: "EDR", attributes: { process: "bash", parentProcess: "sshd" } })], [WEB_SERVER_SHELL_RULE]).length,
+    0,
+  );
+
+  // Persistence on a host, and the web-shell path a proxy reports.
+  assert.equal(evaluateRules([event({ kind: "HOST", source: "EDR", attributes: { event: "scheduled_task_created" } })], [HOST_PERSISTENCE_RULE]).length, 1);
+  assert.equal(evaluateRules([event({ kind: "HTTP", source: "PROXY", attributes: { path: "/shell.php" } })], [WEB_SHELL_REQUEST_RULE]).length, 1);
+  assert.equal(evaluateRules([event({ kind: "HTTP", source: "PROXY", attributes: { path: "/index.html" } })], [WEB_SHELL_REQUEST_RULE]).length, 0);
+});
+
+test("rules: the new network, lateral and auth rules fire on their own traffic only", () => {
+  assert.equal(evaluateRules([event({ destinationPort: 3389, direction: "INBOUND" })], [EXPOSED_REMOTE_DESKTOP_RULE]).length, 1);
+  assert.equal(evaluateRules([event({ destinationPort: 3389, direction: "OUTBOUND" })], [EXPOSED_REMOTE_DESKTOP_RULE]).length, 0);
+
+  const lateral = Array.from({ length: 10 }, (_, index) =>
+    event({ destinationPort: 5985, direction: "LATERAL", at: AT + index * 1_000 }),
+  );
+  assert.equal(evaluateRules(lateral.slice(0, 9), [LATERAL_ADMIN_RULE]).length, 0, "nine lateral connections is not a sweep");
+  assert.equal(evaluateRules(lateral, [LATERAL_ADMIN_RULE]).length, 1, "ten from one host is");
+
+  const failures = Array.from({ length: 10 }, (_, index) =>
+    event({ kind: "AUTH", source: "SYSLOG", at: AT + index * 1_000, attributes: { outcome: "failure" } }),
+  );
+  assert.equal(evaluateRules(failures.slice(0, 9), [AUTH_SPRAY_RULE]).length, 0, "nine failures is not a spray");
+  assert.equal(evaluateRules(failures, [AUTH_SPRAY_RULE]).length, 1);
+});
+
+test("rules: the anomaly rule learns a baseline and fires only where it breaks", () => {
+  const bucket = (index: number, count: number) =>
+    Array.from({ length: count }, (_, offset) =>
+      event({ at: AT + index * 60_000 + offset * 10, direction: "OUTBOUND", destinationPort: 8443 }),
+    );
+
+  // Eight quiet minutes of one connection each, then one minute of sixty: the loud window is
+  // statistically far from this source's own normal, so it fires once.
+  const quiet = Array.from({ length: 8 }, (_, index) => bucket(index, 1)).flat();
+  const fired = evaluateRules([...quiet, ...bucket(8, 60)], [CONNECTION_VOLUME_ANOMALY_RULE]);
+  assert.equal(fired.length, 1);
+  assert.equal(fired[0].occurrences, 60);
+  assert.equal(fired[0].groupKey, "203.0.113.7");
+
+  // A steady stream is not an anomaly however loud: the baseline moves with it.
+  const steady = Array.from({ length: 9 }, (_, index) => bucket(index, 50)).flat();
+  assert.equal(evaluateRules(steady, [CONNECTION_VOLUME_ANOMALY_RULE]).length, 0);
+
+  // Under the absolute floor it stays quiet even at an infinite z-score...
+  const underFloor = [...quiet, ...bucket(8, 30)];
+  assert.equal(evaluateRules(underFloor, [CONNECTION_VOLUME_ANOMALY_RULE]).length, 0, "thirty is under the floor of forty");
+
+  // ...and with too little history it refuses to guess at all.
+  const fewWindows = [...Array.from({ length: 5 }, (_, index) => bucket(index, 1)).flat(), ...bucket(5, 60)];
+  assert.equal(evaluateRules(fewWindows, [CONNECTION_VOLUME_ANOMALY_RULE]).length, 0, "six windows is not a baseline");
+});
+
+test("rules: the fan-out anomaly watches diversity, not volume", () => {
+  const fan = (index: number, destinations: number) =>
+    Array.from({ length: destinations }, (_, offset) =>
+      event({ at: AT + index * 60_000 + offset * 10, destinationAddress: `10.0.1.${offset + 1}` }),
+    );
+  const quiet = Array.from({ length: 8 }, (_, index) => fan(index, 1)).flat();
+  const fired = evaluateRules([...quiet, ...fan(8, 20)], [DESTINATION_FANOUT_ANOMALY_RULE]);
+  assert.equal(fired.length, 1);
+  assert.equal(fired[0].occurrences, 20, "one window's worth of the sweep is the evidence");
 });
 
 /* -------------------------------------------------------------------------- */

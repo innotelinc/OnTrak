@@ -40,7 +40,28 @@ export interface SecurityAlertRecord extends EnrichedSecurityAlert {
   occurrences: number;
   /** The ticket this alert was promoted to, set by the promotion rules (M2). */
   ticketId: string | null;
+  /**
+   * Where this alert stands with Sentinel's prevention, if anywhere.
+   *
+   * On the alert rather than in a table of its own because it is one fact about one alert and
+   * the queue has to show it: an operator looking at a row needs to know whether a block was
+   * asked for, whether it is waiting for an approver in the other product, and whether a rail
+   * refused it — three different sentences that a boolean could not tell apart.
+   */
+  containmentState: ContainmentState;
+  /** Sentinel's action id, so the desk can point at the action it asked for. */
+  containmentActionId: string | null;
 }
+
+/**
+ * The states a containment request can be in, from the desk's side.
+ *
+ * `NONE` is a real state and not an absence: most alerts are never contained, and a queue that
+ * rendered that as blank would make "nothing was asked" and "something was asked and lost"
+ * look the same.
+ */
+export const CONTAINMENT_STATES = ["NONE", "REQUESTED", "PENDING", "APPLIED", "REFUSED", "FAILED"] as const;
+export type ContainmentState = (typeof CONTAINMENT_STATES)[number];
 
 export interface SecurityAlertStore {
   findById(tenantId: string, alertId: string): Promise<SecurityAlertRecord | null>;
@@ -94,6 +115,10 @@ export class SecurityAlertService {
         occurrences: existing.occurrences + 1,
         // A repeat must not forget that this alert already became a ticket.
         ticketId: existing.ticketId,
+        // Nor that containment was asked for: a detector repeating its finding is not a reason
+        // for the desk to lose track of the block standing against it.
+        containmentState: existing.containmentState,
+        containmentActionId: existing.containmentActionId,
       };
       await this.store.update(merged);
       return { alert: merged, duplicate: true };
@@ -107,6 +132,8 @@ export class SecurityAlertService {
       lastSeenAt: enriched.occurredAt,
       occurrences: 1,
       ticketId: null,
+      containmentState: "NONE",
+      containmentActionId: null,
     };
     await this.store.insert(record);
     if (this.audit) await this.audit.append(ingestAudit(record));
@@ -136,6 +163,58 @@ export class SecurityAlertService {
     await this.store.update(linked);
     return linked;
   }
+
+  /**
+   * Record where an alert stands with prevention.
+   *
+   * A later write always wins here, unlike the ticket link, and the asymmetry is the point:
+   * an alert becomes one ticket and stays there, while containment genuinely *moves* — asked
+   * for, then pending, then applied, then lifted — and each move is a fact the queue has to
+   * show. Returns `null` for an unknown alert rather than creating one, so a containment
+   * callback for an alert somebody deleted cannot resurrect a row.
+   */
+  async linkContainment(
+    tenantId: string,
+    alertId: string,
+    input: { state: ContainmentState; actionId: string | null },
+  ): Promise<SecurityAlertRecord | null> {
+    const alert = await this.store.findById(tenantId, alertId);
+    if (!alert) return null;
+    const updated: SecurityAlertRecord = {
+      ...alert,
+      containmentState: input.state,
+      containmentActionId: input.actionId,
+    };
+    await this.store.update(updated);
+    return updated;
+  }
+}
+
+/** The audit event a containment request emits, whether it was applied or refused. */
+export function containmentAudit(
+  record: SecurityAlertRecord,
+  input: { action: string; outcome: string; actionId: string | null; reason: string | null; by: string },
+): AuditEventInput {
+  return {
+    id: randomUUID(),
+    tenantId: record.tenantId,
+    at: new Date().toISOString(),
+    actor: `staff:${input.by}`,
+    action: `security.containment.${input.outcome.toLowerCase()}`,
+    targetType: "security-alert",
+    targetId: record.id,
+    detail: {
+      signature: record.signature,
+      source: record.source,
+      request: input.action,
+      outcome: input.outcome,
+      // Sentinel's own id, so the desk's record and the other product's register point at each
+      // other rather than being two stories about one block.
+      sentinelActionId: input.actionId,
+      reason: input.reason,
+      by: input.by,
+    },
+  };
 }
 
 /** The audit event the first sighting of an alert emits. */

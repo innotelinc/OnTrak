@@ -409,6 +409,9 @@ test("the console's SSO door ends in a session the console itself accepts", asyn
   assert.ok(Array.isArray(cookies), "the two cookies travel as two headers");
   assert.match(cookies[0]!, new RegExp(`^${UPSTREAM_STATE_COOKIE}=;`), "and the spent attempt is cleared");
   assert.match(cookies[1]!, new RegExp(`^${CONSOLE_SESSION_COOKIE}=`), "while the session is set");
+  // `Secure` is decided from the request, and the provider returns the browser to the https
+  // address: the one case a cookie set on a plain-HTTP LAN address must *not* carry it.
+  assert.match(cookies[1]!, /Secure/, "and the session cookie is Secure on the https callback");
 
   // The session the provider brokered is the one the console accepts: the page renders
   // rather than bouncing the person straight back to the door they just came through.

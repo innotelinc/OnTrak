@@ -30,6 +30,8 @@
  */
 
 import { DETECTION_RULES, type DetectionRule } from "./detection-rules";
+import { attackReport, type AttackReport } from "./attack-rules";
+import { complianceReport, type ComplianceReport } from "./compliance-rules";
 import {
   TELEMETRY_KINDS,
   TELEMETRY_SOURCES,
@@ -38,8 +40,8 @@ import {
   type TelemetrySource,
 } from "./telemetry-rules";
 
-/** The three shapes a rule can take, as the map names them. */
-export type CoverageShape = "signature" | "behavioural" | "sequence";
+/** The shapes a rule can take, as the map names them. */
+export type CoverageShape = "signature" | "behavioural" | "sequence" | "anomaly";
 
 export interface CoverageRuleView {
   id: string;
@@ -84,6 +86,24 @@ export interface CoverageReport {
   gaps: CoverageGap[];
   /** Rules that read nothing this build declares — usually a typo in `appliesTo`. */
   unreachable: { id: string; detail: string }[];
+  /**
+   * The same rulebook read against MITRE ATT&CK: which tactics the rules answer, and which
+   * they do not. See `attack-rules.ts`.
+   *
+   * On the same report as the kind/source map because the two answer one question asked two
+   * ways. "Which telemetry is read" is a statement about the platform; "which tactics are
+   * answered" is a statement about the intruder — and a page that showed the first without the
+   * second would be a page about collectors rather than about detection.
+   */
+  attack: AttackReport;
+  /**
+   * The same rulebook read against the compliance frameworks its rules cite. See
+   * `compliance-rules.ts`.
+   *
+   * Derived from `references` rather than restated, so the control a reviewer reads on the
+   * page is the control a rule actually cites.
+   */
+  compliance: ComplianceReport;
 }
 
 /**
@@ -179,5 +199,15 @@ export function coverageReport(rulebook: readonly DetectionRule[] = DETECTION_RU
     return problems.length > 0 ? [{ id: rule.id, detail: `names ${problems.join("; ")}` }] : [];
   });
 
-  return { rules, kinds, sources, gaps, unreachable };
+  return {
+    rules,
+    kinds,
+    sources,
+    gaps,
+    unreachable,
+    // Both are derived from the same input as everything above, for the same reason: a
+    // coverage claim that is maintained by hand is a coverage claim that drifts.
+    attack: attackReport(rulebook),
+    compliance: complianceReport(rulebook),
+  };
 }

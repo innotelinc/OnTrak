@@ -80,7 +80,8 @@ import {
 } from "../src/lib/enforcement-service";
 import { PrismaEnforcementStore, type EnforcementPrismaClient } from "../src/lib/enforcement-store-prisma";
 import { planeFromEnv } from "../src/lib/enforcement-plane";
-import { notifierFromEnv } from "../src/lib/alert-notify";
+import { notifierChain, notifierFromEnv } from "../src/lib/alert-notify";
+import { tixTransportFromEnv } from "../src/lib/tix-alert-transport";
 import {
   MemorySuppressionStore,
   SuppressionService,
@@ -429,11 +430,13 @@ async function main(): Promise<void> {
   }
 
   /**
-   * The console's login.
+   * The console's password service.
    *
-   * Built before the bootstrap because the bootstrap's session is what the console
-   * *starts* with, and the login is what a person uses afterwards. It lands on
-   * `/console` like any other sign-in.
+   * Still constructed and handed to the console service, but no longer reachable from the
+   * browser: the console's sign-in page and its `POST` handler are gone, and it enters
+   * through the provider below. Kept — and kept wired — so a caller that drives the console
+   * service directly keeps a working password path, and so the sign-in rules stay exercised
+   * by their own tests. See the note on `ConsoleService.signIn`.
    */
   const signIn = new SignInService(identities, credentials, mfa, spine, audit, systemSignInIds(), {
     defaultOrganizationSlug: DEMO_SLUG,
@@ -466,7 +469,11 @@ async function main(): Promise<void> {
   // because detection is given it, and the service satisfies the pipeline's own `SuppressionSource`
   // port as-is — the same posture the threat-intel feed takes.
   const suppressions = new SuppressionService(suppressionStore, audit);
-  const alertNotifier = notifierFromEnv(process.env);
+  // Two transports can be configured at once and both are told: the generic webhook the
+  // deployment wrote an adapter for, and OnTrak Tix — the family's own desk, which has a
+  // first-party adapter because it is the other half of this repository and its contract has
+  // to have one definition. Either alone, or neither, behaves exactly as before.
+  const alertNotifier = notifierChain([notifierFromEnv(process.env), tixTransportFromEnv(process.env)]);
   console.log(
     alertNotifier === null
       ? "[sentinel] alert delivery: no transport configured — alerts are raised into the queue only"
@@ -517,8 +524,9 @@ async function main(): Promise<void> {
   // a deployment can serve a login with no directories, or read directories with no
   // console login configured. Passing both is what lets the console show either.
   // Upstream sign-in: a deployment that federates a provider (Cerulean's Authentik) sets
-  // the SENTINEL_UPSTREAM_* variables and the console gains a second door. Absent means the
-  // console is password-only, which is a legitimate deployment and the default here.
+  // the SENTINEL_UPSTREAM_* variables and the console signs in through it. This is the
+  // console's only door — a deployment with none configured still starts and serves its
+  // OIDC endpoints, but its sign-in page says there is no way in.
   const upstreamConfig = upstreamConfigFromEnv(process.env);
   const upstream = upstreamConfig
     ? new UpstreamSignInService(upstreamConfig, identities, spine, {
@@ -555,10 +563,21 @@ async function main(): Promise<void> {
     // deliberately cannot reach the query the pipeline runs — a browser is not a sensor.
     suppressions,
   );
-  const guardService = new GuardService(detection, identities, {
-    token: (process.env.SENTINEL_GUARD_TOKEN ?? "").trim() || null,
-    organizationSlug: (process.env.SENTINEL_GUARD_ORGANIZATION ?? "").trim() || null,
-  });
+  const guardService = new GuardService(
+    detection,
+    identities,
+    {
+      token: (process.env.SENTINEL_GUARD_TOKEN ?? "").trim() || null,
+      organizationSlug: (process.env.SENTINEL_GUARD_ORGANIZATION ?? "").trim() || null,
+      // A credential of its own when a deployment names one, so the ingest token every sensor in
+      // the estate holds cannot take a host off the network.
+      containmentToken: (process.env.SENTINEL_CONTAINMENT_TOKEN ?? "").trim() || null,
+    },
+    // The rails a containment request is judged by. `enforcement` is the same service the
+    // console's register drives, so a desk request and a console proposal meet the same
+    // safe-list, the same blast-radius cap and the same second-approver rule.
+    enforcement,
+  );
   // No token, no surface at all: an ingest endpoint that exists and says "configure me" is
   // a surface somebody eventually finds a way to write to.
   const guard = guardService.enabled() ? guardService : null;
@@ -624,9 +643,14 @@ async function main(): Promise<void> {
    * The console password, from the environment.
    *
    * Written only when there is none, so an operator who set a password here and then
-   * changed it in the console does not have it silently reverted on the next restart.
-   * `SENTINEL_ADMIN_PASSWORD_FORCE=1` is the deliberate override for the case where
-   * the password is genuinely lost and the console is the only way back in.
+   * changed it does not have it silently reverted on the next restart.
+   * `SENTINEL_ADMIN_PASSWORD_FORCE=1` is the deliberate override for the case where the
+   * password is genuinely lost.
+   *
+   * The console's sign-in page no longer checks a password — it is SSO-only — so this only
+   * matters to a caller that drives `ConsoleService.signIn` directly. The bootstrap keeps
+   * writing it anyway, because that is what a deployment that still wants a break-glass
+   * credential has asked for.
    *
    * The value itself is never logged — the line below names the account and says which
    * of the three states this is, and that is all a log may carry.
@@ -637,8 +661,8 @@ async function main(): Promise<void> {
     if (!wanted) {
       if (!existing) {
         console.log(
-          `[sentinel] no console password is set for ${DEMO_ADMIN}, so ${issuer}${CONSOLE_PATHS.signIn} has nothing to check. ` +
-            `Set SENTINEL_ADMIN_PASSWORD to enable it.`,
+          `[sentinel] no console password is set for ${DEMO_ADMIN}. The console signs in through the provider (SSO), ` +
+            `so SENTINEL_ADMIN_PASSWORD only affects a direct ConsoleService.signIn caller.`,
         );
       }
       return;
@@ -652,7 +676,10 @@ async function main(): Promise<void> {
       return;
     }
     await credentials.replace(actor.organizationId, actor.id, await hashPassword(wanted));
-    console.log(`[sentinel] console password ${existing ? "overwritten" : "set"} for ${DEMO_ADMIN}.`);
+    console.log(
+      `[sentinel] console password ${existing ? "overwritten" : "set"} for ${DEMO_ADMIN} ` +
+        `(not used by the console's sign-in page, which is SSO-only).`,
+    );
   }
 
   await applyConfiguredPassword();
@@ -758,7 +785,7 @@ async function main(): Promise<void> {
   console.log(
     upstreamConfig
       ? `[sentinel] console SSO: ${upstreamConfig.label} through ${upstreamConfig.issuer} (client ${upstreamConfig.clientId}), returning to ${upstreamConfig.redirectUri}`
-      : `[sentinel] console SSO: none configured, so the console signs in with its own passwords`,
+      : `[sentinel] console SSO: none configured, so the console has no way to sign in — its sign-in page says so`,
   );
   if (upstreamConfig && !upstreamConfig.defaultOrganizationSlug) {
     console.warn("[sentinel] SENTINEL_UPSTREAM_ORGANIZATION is unset, so SSO sign-in has no organization to sign into and will refuse every attempt.");
@@ -778,6 +805,11 @@ async function main(): Promise<void> {
   if (guard) {
     console.log(`[sentinel] Guard OTLP:   POST ${url}${GUARD_PATHS.otel} (OpenTelemetry logs and traces, JSON)`);
   }
+  console.log(
+    guardService.containmentEnabled()
+      ? `[sentinel] containment: POST ${url}${GUARD_PATHS.containment} (a desk's request; a Sentinel administrator still approves it)`
+      : `[sentinel] containment: off (set SENTINEL_CONTAINMENT_TOKEN, or SENTINEL_GUARD_TOKEN, to accept a desk's request)`,
+  );
   console.log(
     syslog === null
       ? `[sentinel] Guard syslog: off (set SENTINEL_GUARD_SYSLOG_PORT and SENTINEL_GUARD_ORGANIZATION to listen)`

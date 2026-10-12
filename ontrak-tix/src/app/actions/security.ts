@@ -15,7 +15,8 @@ import { revalidatePath } from "next/cache";
 
 import { actorHasPermission, type Actor } from "../../lib/access-rules";
 import { requireActor } from "../../lib/session";
-import { alertPromotionServicesFor, securityAlertServicesFor } from "../../lib/db";
+import { alertPromotionServicesFor, securityAlertServicesFor, sentinelContainmentServicesFor } from "../../lib/db";
+import { sentinelTargetGaps } from "../../lib/sentinel-containment";
 import {
   SUPPRESSION_FIELDS,
   VERDICT_KINDS,
@@ -84,6 +85,49 @@ export async function recordAlertVerdictAction(formData: FormData): Promise<void
   });
 
   ok(`Recorded a ${verdict.replace("_", " ").toLowerCase()} verdict for "${alert.signature}".`);
+}
+
+/**
+ * Ask OnTrak Sentinel to contain what an alert names.
+ *
+ * Triaging permission, not administrator permission, and the asymmetry is deliberate: this
+ * action **asks**. Sentinel's safe-list, blast-radius cap, hourly limit and second-approver
+ * rule all still run there, a desk request always needs a Sentinel administrator to approve it,
+ * and every outcome — applied, pending, refused — is written back onto the alert and onto the
+ * tenant's hash chain. So the worst an over-eager triager can do here is create a proposal
+ * somebody else has to say yes to, which is exactly the blast radius this should have.
+ */
+export async function requestContainmentAction(formData: FormData): Promise<void> {
+  const actor = await requireActor();
+  assertCanTriage(actor);
+
+  const alertId = text(formData, "alertId");
+  if (!alertId) fail("Choose an alert first.");
+
+  const service = sentinelContainmentServicesFor();
+  if (!service) {
+    // Name the variables rather than saying "not configured": a deployment that meant to wire
+    // this up is one environment variable away, and one that did not is told so plainly.
+    const missing = sentinelTargetGaps();
+    fail(`This desk is not configured to contain anything in Sentinel (missing ${missing.join(", ")}).`);
+  }
+
+  const reason = text(formData, "reason");
+  if (!reason) fail("Say why; the reason is what Sentinel's audit row and this one record.");
+
+  // The label is carried in the form rather than looked up: it is what Sentinel's audit row
+  // shows as the person who asked, and an id alone reads as a machine having decided.
+  const label = text(formData, "requestedByLabel") || actor.id;
+
+  const result = await service.request({
+    tenantId: actor.tenantId,
+    alertId,
+    reason,
+    requestedBy: { id: actor.id, label, role: actor.role },
+  });
+  if (!result.ok) fail(result.error);
+
+  ok(result.value.message);
 }
 
 /** Configure a suppression rule for the tenant. */

@@ -55,6 +55,16 @@ export interface SignatureMatch {
   destinationAddressInCidr?: readonly string[];
   /** Attribute name → value the observation must carry. All of them must match. */
   attributeEquals?: Record<string, string>;
+  /**
+   * Attribute name → a set of values, any one of which matches. All names must match.
+   *
+   * The `OR` beside `attributeEquals`'s `AND`, and it exists because some facts are
+   * naturally a *set*: the process names that dump credentials, the web-shell paths, the
+   * startup mechanisms. Spelling those as one `attributeEquals` per member would be a rule
+   * per synonym, and a rulebook that grows a row whenever somebody learns a new tool name
+   * is a rulebook nobody reads.
+   */
+  attributeIn?: Record<string, readonly string[]>;
 }
 
 export interface ThresholdMatch {
@@ -77,10 +87,50 @@ export interface SequenceMatch {
   where?: SignatureMatch;
 }
 
+/**
+ * The measure an anomaly rule watches inside each window.
+ *
+ * Deliberately a small, named vocabulary rather than a free-form expression: each one is a
+ * count a sensor's telemetry already supports, and a rule names *which* count anomalous —
+ * "too many events" and "too many destinations" are different shapes of attack and a
+ * detector that chose for the reader would answer the question nobody asked.
+ */
+export type AnomalyMetric = "eventCount" | "distinctDestinations" | "distinctDestinationPorts";
+
+/**
+ * A statistical anomaly: a window whose measure is far from *this group's own* baseline.
+ *
+ * This is the one shape that is not a hand-written predicate. It learns each group's normal
+ * from the observations in the batch — a **robust** baseline, so a single loud window does
+ * not drag the centre toward itself and hide the thing it is supposed to find — and fires
+ * when a window sits `sigma` robust standard deviations above it. Three guards keep it from
+ * being a noise generator: `minSamples` windows of history must exist before it will speak
+ * at all, `minValue` is an absolute floor so a burst of two is never "anomalous", and
+ * `where` narrows what is even counted (outbound only, a host only).
+ *
+ * The default `sigma` is 3, read as a modified z-score: with a normal-ish distribution that
+ * is roughly the 99.9th percentile, which is the point — an anomaly rule is allowed to be
+ * quiet for a long time.
+ */
+export interface AnomalyMatch {
+  metric: AnomalyMetric;
+  /** The width of one comparison window, and how anomalies are bucketed. */
+  windowMs: number;
+  groupBy: GroupKey;
+  /** Robust standard deviations above the group's median before this fires. */
+  sigma: number;
+  /** How many windows of history the baseline needs before the rule may speak. */
+  minSamples: number;
+  /** An absolute floor: a value under this is never anomalous, however far above zero. */
+  minValue: number;
+  where?: SignatureMatch;
+}
+
 export type DetectionShape =
   | { kind: "signature"; match: SignatureMatch }
   | { kind: "behavioural"; match: ThresholdMatch }
-  | { kind: "sequence"; match: SequenceMatch };
+  | { kind: "sequence"; match: SequenceMatch }
+  | { kind: "anomaly"; match: AnomalyMatch };
 
 export interface DetectionRule {
   id: string;
@@ -169,6 +219,12 @@ function matchesWhere(event: ObservedEvent, match: SignatureMatch): boolean {
       if (event.attributes[key] !== value) return false;
     }
   }
+  if (match.attributeIn) {
+    for (const [key, values] of Object.entries(match.attributeIn)) {
+      const actual = event.attributes[key];
+      if (actual === undefined || !values.includes(actual)) return false;
+    }
+  }
   return true;
 }
 
@@ -181,6 +237,29 @@ function groupValue(event: ObservedEvent, groupBy: GroupKey): string {
     case "sourceAddressAndPort":
       return `${event.sourceAddress ?? "-"}:${event.sourcePort ?? "-"}`;
   }
+}
+
+/** The middle value, the robust half of the anomaly baseline. */
+function median(values: readonly number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/** The mean absolute deviation, the fallback scale when the median one is zero. */
+function meanAbsoluteDeviation(values: readonly number[], center: number): number {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + Math.abs(value - center), 0) / values.length;
+}
+
+/** The measure an anomaly rule watches, taken over one window's observations. */
+function anomalyMetricValue(metric: AnomalyMetric, events: readonly ObservedEvent[]): number {
+  if (metric === "eventCount") return events.length;
+  if (metric === "distinctDestinations") {
+    return new Set(events.map((event) => event.destinationAddress).filter((value): value is string => value !== null)).size;
+  }
+  return new Set(events.map((event) => event.destinationPort).filter((value): value is number => value !== null)).size;
 }
 
 /** Whether the rule is even interested in this observation. */
@@ -260,6 +339,233 @@ export const CREDENTIAL_STUFFING_RULE: DetectionRule = {
 };
 
 /**
+ * A remote-access or remote-desktop port answered from outside the network.
+ *
+ * RDP and VNC in from the perimeter is the single most exploited exposed service there is,
+ * and it is a *configuration* finding as much as an intrusion one: either somebody meant to
+ * publish it or nobody noticed, and both need a person today.
+ */
+export const EXPOSED_REMOTE_DESKTOP_RULE: DetectionRule = {
+  id: "SG-SIG-002",
+  version: 1,
+  name: "Remote desktop exposed to the perimeter",
+  severity: "HIGH",
+  description:
+    "An inbound connection to RDP or VNC from outside the network. A remote-desktop service reachable from the internet is the most-attacked exposed service there is; whether it was meant to be published or was never noticed, it needs a person.",
+  references: ["MITRE:T1133", "CIS:9.3"],
+  appliesTo: { kinds: ["NETWORK"] },
+  detection: {
+    kind: "signature",
+    match: { destinationPorts: [3389, 5900, 5901], direction: "INBOUND" },
+  },
+};
+
+/**
+ * One source sweeping east-west management ports — WinRM, RPC and RDP between hosts.
+ *
+ * A threshold rather than a signature on purpose: a *single* SMB or RPC connection between
+ * two servers is ordinary, and a rule that fired on one would fire on the file server all day.
+ * What is not ordinary is one host reaching those ports ten times in a minute, which is what
+ * a lateral sweep looks like, so that is what this counts.
+ */
+export const LATERAL_ADMIN_RULE: DetectionRule = {
+  id: "SG-BEH-004",
+  version: 1,
+  name: "Lateral sweep to administrative services",
+  severity: "MEDIUM",
+  description:
+    "Ten east-west connections from one source to remote-management ports inside a minute. A single such connection is normal file-share or RPC traffic; ten from one host is a sweep across the estate, and the alert names the source so a reader can see where it started.",
+  references: ["MITRE:T1021.002", "MITRE:T1570"],
+  appliesTo: { kinds: ["NETWORK"] },
+  detection: {
+    kind: "behavioural",
+    match: {
+      count: 10,
+      windowMs: 60_000,
+      groupBy: "sourceAddress",
+      where: { destinationPorts: [135, 5985, 5986, 3389], direction: "LATERAL" },
+    },
+  },
+};
+
+/** A spray that never succeeds is still a spray: many failures from one address. */
+export const AUTH_SPRAY_RULE: DetectionRule = {
+  id: "SG-BEH-003",
+  version: 1,
+  name: "Repeated authentication failures from one address",
+  severity: "MEDIUM",
+  description:
+    "Ten authentication failures from one address inside five minutes. This is the half the sequence rule deliberately does not cover — a spray that never lands — and it is worth a person's attention precisely because it says somebody is still trying.",
+  references: ["MITRE:T1110", "MITRE:T1531"],
+  appliesTo: { kinds: ["AUTH"] },
+  detection: {
+    kind: "behavioural",
+    match: { count: 10, windowMs: 5 * 60_000, groupBy: "sourceAddress", where: { attributeEquals: { outcome: "failure" } } },
+  },
+};
+
+/**
+ * A tool whose only reason to run on a host is to steal credentials.
+ *
+ * A signature, not an anomaly: these names are not ambiguous, and a host running one is a
+ * host whose secrets have to be treated as taken. Case is as the sensor reports it — an
+ * agent that canonicalizes process names to lower case (as the shipped agent does) is what
+ * makes this list short.
+ */
+export const CREDENTIAL_DUMPING_TOOL_RULE: DetectionRule = {
+  id: "SG-HOST-001",
+  version: 1,
+  name: "Credential-dumping tool executed on a host",
+  severity: "CRITICAL",
+  description:
+    "A process on a monitored host whose known purpose is to read credentials out of memory or the registry. There is no benign reading of this: treat the host's secrets as compromised and start containment.",
+  references: ["MITRE:T1003", "MITRE:T1055"],
+  appliesTo: { kinds: ["HOST"] },
+  detection: {
+    kind: "signature",
+    match: {
+      attributeIn: {
+        process: [
+          "mimikatz", "mimikatz.exe", "procdump", "procdump.exe", "secretsdump.py",
+          "lazagne", "lazagne.exe", "gsecdump", "gsecdump.exe", "pwdump", "pwdump7.exe",
+          "wce.exe", "ntdsutil.exe", "dsinternals",
+        ],
+      },
+    },
+  },
+};
+
+/** A web server that spawned an interactive shell: the signature of a dropped web shell. */
+export const WEB_SERVER_SHELL_RULE: DetectionRule = {
+  id: "SG-HOST-002",
+  version: 1,
+  name: "A web-server process spawned a shell",
+  severity: "HIGH",
+  description:
+    "A shell whose parent is a web server or application server. A server process is not supposed to hand a person an interactive command line; when it does, something already reached it and this is the shell it left behind.",
+  references: ["MITRE:T1190", "MITRE:T1059"],
+  appliesTo: { kinds: ["HOST"] },
+  detection: {
+    kind: "signature",
+    match: {
+      attributeIn: {
+        process: ["sh", "bash", "dash", "zsh", "cmd.exe", "powershell.exe", "pwsh.exe", "/bin/sh", "/bin/bash"],
+        parentProcess: ["nginx", "apache2", "httpd", "w3wp.exe", "php-fpm", "tomcat", "node", "java", "caddy"],
+      },
+    },
+  },
+};
+
+/** A new persistence mechanism appearing on a host. */
+export const HOST_PERSISTENCE_RULE: DetectionRule = {
+  id: "SG-HOST-003",
+  version: 1,
+  name: "A persistence mechanism was installed on a host",
+  severity: "MEDIUM",
+  description:
+    "A scheduled task, a startup entry, a new service, an SSH authorized-key change or a cron line. Each is a legitimate administrative act and each is also how an intruder guarantees they come back; the alert names the host and the mechanism so a reader can check whether anybody asked for it.",
+  references: ["MITRE:T1053", "MITRE:T1543", "MITRE:T1098"],
+  appliesTo: { kinds: ["HOST"] },
+  detection: {
+    kind: "signature",
+    match: {
+      attributeIn: {
+        event: [
+          "scheduled_task_created", "startup_entry_added", "service_installed",
+          "authorized_keys_changed", "cron_entry_added", "persistence",
+        ],
+      },
+    },
+  },
+};
+
+/** A request to a path that only a web shell or an exploit kit would ask for. */
+export const WEB_SHELL_REQUEST_RULE: DetectionRule = {
+  id: "SG-HTTP-001",
+  version: 1,
+  name: "Web-shell or exploit path requested",
+  severity: "CRITICAL",
+  description:
+    "An HTTP request to a path that is a known web shell, a backup of one, or a scanner's probe. It may be a probe that found nothing, but the request is the reconnaissance half of an intrusion and the address that sent it is worth blocking.",
+  references: ["MITRE:T1190", "MITRE:T1595"],
+  appliesTo: { kinds: ["HTTP"] },
+  detection: {
+    kind: "signature",
+    match: {
+      attributeIn: {
+        path: [
+          "/shell.php", "/cmd.php", "/c99.php", "/r57.php", "/webshell.php", "/wso.php",
+          "/wp-content/uploads/shell.php", "/.env", "/wp-config.php.bak", "/phpmyadmin/",
+          "/actuator/env", "/console/login/LoginForm.jsp",
+        ],
+      },
+    },
+  },
+};
+
+/**
+ * The statistical rules.
+ *
+ * Three baselines, and each exists because a hand-written threshold would be a guess: the
+ * "too many" number for a health-check box is a Tuesday for a desktop, so the rule learns
+ * the group's own normal instead of declaring one. They are the rules that catch the attack
+ * nobody wrote a signature for — a machine quietly beaconing, a host that started listening
+ * on something.
+ */
+export const CONNECTION_VOLUME_ANOMALY_RULE: DetectionRule = {
+  id: "SG-ANM-001",
+  version: 1,
+  name: "Connection-volume anomaly from one source",
+  severity: "HIGH",
+  description:
+    "A source whose connections in one minute are far above its own baseline. The count that is normal differs per host and per hour, so this rule learns the baseline from the batch rather than naming a number, and stays quiet until a window is statistically far from it.",
+  references: ["MITRE:T1046", "MITRE:T1071"],
+  appliesTo: { kinds: ["NETWORK"] },
+  detection: {
+    kind: "anomaly",
+    match: { metric: "eventCount", windowMs: 60_000, groupBy: "sourceAddress", sigma: 3, minSamples: 8, minValue: 40 },
+  },
+};
+
+export const DESTINATION_FANOUT_ANOMALY_RULE: DetectionRule = {
+  id: "SG-ANM-002",
+  version: 1,
+  name: "Destination fan-out anomaly from one source",
+  severity: "HIGH",
+  description:
+    "A source reaching far more distinct destinations in one minute than it normally does. This is the shape of a sweep or of beaconing rolled over many hosts, and it fires on the *diversity* rather than the volume, so a scanner that is quiet per-address is still seen.",
+  references: ["MITRE:T1046", "MITRE:T1105"],
+  appliesTo: { kinds: ["NETWORK"] },
+  detection: {
+    kind: "anomaly",
+    match: { metric: "distinctDestinations", windowMs: 60_000, groupBy: "sourceAddress", sigma: 3, minSamples: 8, minValue: 15 },
+  },
+};
+
+export const LISTENING_PORT_ANOMALY_RULE: DetectionRule = {
+  id: "SG-ANM-003",
+  version: 1,
+  name: "New listening-port anomaly on one host",
+  severity: "MEDIUM",
+  description:
+    "A host accepting connections on far more distinct ports in one minute than its own baseline. A new listener is how remote access is left behind; the rule learns how many listeners a host usually shows and flags the window where that changes.",
+  references: ["MITRE:T1205", "MITRE:T1571"],
+  appliesTo: { kinds: ["HOST"] },
+  detection: {
+    kind: "anomaly",
+    match: {
+      metric: "distinctDestinationPorts",
+      windowMs: 60_000,
+      groupBy: "sourceAddress",
+      sigma: 3,
+      minSamples: 8,
+      minValue: 8,
+      where: { direction: "INBOUND" },
+    },
+  },
+};
+
+/**
  * The rules this build ships.
  *
  * A list rather than a registry object, because the order is not meaningful and a list is
@@ -270,6 +576,16 @@ export const DETECTION_RULES: readonly DetectionRule[] = [
   SUSPICIOUS_SERVICE_RULE,
   SCAN_RULE,
   CREDENTIAL_STUFFING_RULE,
+  EXPOSED_REMOTE_DESKTOP_RULE,
+  LATERAL_ADMIN_RULE,
+  AUTH_SPRAY_RULE,
+  CREDENTIAL_DUMPING_TOOL_RULE,
+  WEB_SERVER_SHELL_RULE,
+  HOST_PERSISTENCE_RULE,
+  WEB_SHELL_REQUEST_RULE,
+  CONNECTION_VOLUME_ANOMALY_RULE,
+  DESTINATION_FANOUT_ANOMALY_RULE,
+  LISTENING_PORT_ANOMALY_RULE,
 ];
 
 /**
@@ -374,6 +690,47 @@ export function evaluateRules(
           if (window.length < count) continue;
           drafts.push(draft(rule, group, windowKey(rule, group, ordered[start].at, windowMs), window));
           break;
+        }
+      }
+      continue;
+    }
+
+    if (rule.detection.kind === "anomaly") {
+      const { metric, windowMs, groupBy, sigma, minSamples, minValue, where } = rule.detection.match;
+      const groups = new Map<string, ObservedEvent[]>();
+      for (const event of considered) {
+        if (where && !matchesWhere(event, where)) continue;
+        const group = groupValue(event, groupBy);
+        groups.set(group, [...(groups.get(group) ?? []), event]);
+      }
+      for (const [group, inGroup] of groups) {
+        const buckets = new Map<number, ObservedEvent[]>();
+        for (const event of inGroup) {
+          const bucket = Math.floor(event.at / windowMs) * windowMs;
+          buckets.set(bucket, [...(buckets.get(bucket) ?? []), event]);
+        }
+        // Not enough history to know what "normal" is: say nothing, which is the whole
+        // discipline of an anomaly rule. A detector that spoke on four windows would be a
+        // detector that cries wolf and gets switched off.
+        if (buckets.size < minSamples) continue;
+        const entries = [...buckets.entries()].sort((a, b) => a[0] - b[0]);
+        const values = entries.map(([, events]) => anomalyMetricValue(metric, events));
+        for (let index = 0; index < entries.length; index += 1) {
+          const [bucket, events] = entries[index];
+          const value = anomalyMetricValue(metric, events);
+          if (value < minValue) continue;
+          // Leave this window *out* of its own baseline: including the loud one would drag
+          // the centre toward it and hide the very thing the rule exists to find.
+          const others = values.filter((_, other) => other !== index);
+          const center = median(others);
+          const mad = median(others.map((other) => Math.abs(other - center)));
+          // The modified z-score's scale (MAD / 0.6745 ≈ 1σ for a normal distribution). When
+          // the baseline is flat — MAD 0 — the mean deviation is the fallback, so a perfectly
+          // steady stream still has to clear `minValue` rather than fire on a rounding error.
+          const scale = mad > 0 ? mad / 0.6745 : meanAbsoluteDeviation(others, center);
+          const z = scale > 0 ? (value - center) / scale : value > center ? Number.POSITIVE_INFINITY : 0;
+          if (!(z >= sigma)) continue;
+          drafts.push(draft(rule, group, windowKey(rule, group, bucket, windowMs), events));
         }
       }
       continue;

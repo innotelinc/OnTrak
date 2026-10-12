@@ -61,6 +61,13 @@ import {
 } from "./alert-notify";
 import { matchSuppression, type SuppressionRule } from "./alert-suppression-rules";
 import {
+  CORRELATION_RULES,
+  correlateAlerts,
+  toCorrelationCandidate,
+  worseSeverity,
+  type CorrelationRule,
+} from "./correlation-rules";
+import {
   escalateSeverity,
   matchIndicators,
   type Indicator,
@@ -224,11 +231,24 @@ export class DetectionService {
      * until somebody names a suppression source.
      */
     private readonly suppressions: SuppressionSource | null = null,
+    /**
+     * The correlation rules, appended for the same reason every other collaborator is.
+     *
+     * A deployment that names none runs the shipped corpus; a deployment that names an empty
+     * list switches correlation off without touching detection, which is the shape somebody
+     * debugging a noisy correlation actually wants.
+     */
+    private readonly correlationRules: readonly CorrelationRule[] = CORRELATION_RULES,
   ) {}
 
   /** The rules, so a deployment can see what it is running and at which version. */
   rulebook(): readonly DetectionRule[] {
     return this.rules;
+  }
+
+  /** The correlation rules, so the corpus that grouped an incident can be named. */
+  correlationRulebook(): readonly CorrelationRule[] {
+    return this.correlationRules;
   }
 
   /**
@@ -297,6 +317,9 @@ export class DetectionService {
     const moment = new Date(at).toISOString();
     const alerts: IngestReport["alerts"] = [];
     const suppressed: IngestReport["suppressed"] = [];
+    // What this batch raised, so the correlation pass sees it without a second read of a
+    // store that may not have committed it yet in a concurrent deployment.
+    const pool: AlertRecord[] = [];
 
     for (const draft of drafts) {
       const identityId = correlateIdentity(draft.evidence[0], sessions);
@@ -306,35 +329,19 @@ export class DetectionService {
       // A known detection is recorded on the chain and *not* raised. Recorded rather than
       // forgotten: an absence is indistinguishable from a rule that stopped firing, and the
       // whole point of the mute is that a review can still see what it silenced.
-      if (suppressions.length > 0) {
-        const mute = matchSuppression(
-          {
-            ruleId: draft.ruleId,
-            sourceAddress: draft.evidence[0].sourceAddress,
-            asset,
-            device,
-            identityId,
-          },
-          suppressions,
-          moment,
-        );
-        if (mute) {
-          suppressed.push({ suppressionId: mute.rule.id, name: mute.rule.name, ruleId: draft.ruleId });
-          await this.append(organizationId, "guard.detection.suppressed", draft.ruleId, {
-            suppressionId: mute.rule.id,
-            name: mute.rule.name,
-            reason: mute.reason,
-            ruleId: draft.ruleId,
-            ruleVersion: draft.ruleVersion,
-            severity: draft.severity,
-            sourceAddress: draft.evidence[0].sourceAddress ?? null,
-            device,
-            asset,
-            identityId,
-            occurrences: draft.occurrences,
-          });
-          continue;
-        }
+      const mute = await this.muteFor(organizationId, suppressions, moment, {
+        ruleId: draft.ruleId,
+        ruleVersion: draft.ruleVersion,
+        severity: draft.severity,
+        sourceAddress: draft.evidence[0].sourceAddress ?? null,
+        asset,
+        device,
+        identityId: identityId ?? null,
+        occurrences: draft.occurrences,
+      });
+      if (mute) {
+        suppressed.push(mute);
+        continue;
       }
 
       // What the feeds know about this evidence, and what it does to how bad it is.
@@ -373,6 +380,7 @@ export class DetectionService {
       };
 
       const stored = await this.upsert(record);
+      pool.push(stored.alert);
       alerts.push({
         id: stored.alert.id,
         ruleId: stored.alert.ruleId,
@@ -408,7 +416,212 @@ export class DetectionService {
       if (stored.created) await this.notify(stored.alert);
     }
 
+    // Correlation runs *after* the batch's own alerts are on record, and over both this batch
+    // and what the organization already holds: an intrusion is under no obligation to start
+    // and finish inside one ingest request. See `correlateInto`.
+    await this.correlateInto(organizationId, pool, suppressions, moment, alerts, suppressed);
+
     return { alerts, rejected: [], suppressed };
+  }
+
+  /**
+   * Raise the incidents the correlation rules find.
+   *
+   * A correlated incident is a **derived detection**: it becomes an alert through the same
+   * store, the same mute, the same evidence cap, the same delivery and the same queue as an
+   * alert a rule raised. The alternative — a second kind of object with its own triage — is a
+   * second place for suppression and delivery to be forgotten, and the incident nobody is
+   * told about is exactly the one that matters.
+   *
+   * The pool is the batch's own alerts plus the organization's stored ones, de-duplicated by
+   * id and by *identity* (a batch alert is the same object the store would hand back).
+   * Correlating over the batch alone would miss every intrusion whose halves arrive in
+   * different requests, which is most of them.
+   */
+  private async correlateInto(
+    organizationId: string,
+    batch: readonly AlertRecord[],
+    suppressions: readonly SuppressionRule[],
+    moment: string,
+    alerts: IngestReport["alerts"],
+    suppressed: IngestReport["suppressed"],
+  ): Promise<void> {
+    if (this.correlationRules.length === 0) return;
+
+    const byId = new Map<string, AlertRecord>(batch.map((alert) => [alert.id, alert]));
+    for (const stored of await this.store.listAlerts(organizationId)) {
+      if (!byId.has(stored.id)) byId.set(stored.id, stored);
+    }
+    const pool = [...byId.values()];
+
+    const incidents = correlateAlerts(pool.map(toCorrelationCandidate), this.correlationRules, {
+      now: this.ids.nowMs(),
+    });
+
+    for (const incident of incidents) {
+      const members = incident.members
+        .map((member) => byId.get(member.alertId))
+        .filter((alert): alert is AlertRecord => alert !== undefined);
+      // Every alert an incident names has to be readable, or the incident would be a claim
+      // about evidence nobody can open. A pool that lost one is an incident not raised.
+      if (members.length === 0) continue;
+
+      // The subject the incident is *about*: the group it correlated on, and failing that the
+      // first member that names one. Correlation never fires on a null group, so the group is
+      // always available for the rule's own dimension.
+      const sourceAddress =
+        incident.groupBy === "sourceAddress"
+          ? incident.group
+          : members.find((alert) => alert.sourceAddress !== null)?.sourceAddress ?? null;
+      const identityHolder =
+        incident.groupBy === "identityId"
+          ? members.find((alert) => alert.identityId === incident.group) ?? null
+          : members.find((alert) => alert.identityId !== null) ?? null;
+      const asset =
+        incident.groupBy === "asset" ? incident.group : members.find((alert) => alert.asset !== null)?.asset ?? null;
+      const device =
+        incident.groupBy === "device" ? incident.group : members.find((alert) => alert.device !== null)?.device ?? null;
+
+      const mute = await this.muteFor(organizationId, suppressions, moment, {
+        ruleId: incident.ruleId,
+        ruleVersion: incident.ruleVersion,
+        severity: incident.severity,
+        sourceAddress,
+        asset,
+        device,
+        identityId: identityHolder?.identityId ?? null,
+        occurrences: incident.members.length,
+      });
+      if (mute) {
+        suppressed.push(mute);
+        continue;
+      }
+
+      // Did correlation make this worse than the loudest single detection? That is the whole
+      // claim an incident makes, and it is on the chain rather than left to a reader.
+      const worstMember = incident.members.reduce<Severity>(
+        (worst, member) => worseSeverity(worst, member.severity),
+        "LOW",
+      );
+
+      const now = this.ids.now();
+      const record: AlertRecord = {
+        id: this.ids.id(),
+        organizationId,
+        ruleId: incident.ruleId,
+        ruleVersion: incident.ruleVersion,
+        ruleName: incident.ruleName,
+        severity: incident.severity,
+        state: "NEW",
+        dedupeKey: incident.dedupeKey,
+        groupKey: incident.group,
+        sourceAddress,
+        identityId: identityHolder?.identityId ?? null,
+        identityLabel: identityHolder?.identityLabel ?? null,
+        device,
+        asset,
+        firstSeenAt: new Date(incident.firstSeenAt).toISOString(),
+        lastSeenAt: new Date(incident.lastSeenAt).toISOString(),
+        occurrences: incident.members.length,
+        evidence: members.flatMap((alert) => alert.evidence).slice(0, ALERT_EVIDENCE_MAX),
+        // Deliberately empty: the members were already enriched and escalated when they were
+        // raised, and counting a feed twice would inflate the incident it is evidence about.
+        threatIntel: [],
+        note: null,
+        assigneeId: null,
+        assigneeLabel: null,
+        assignedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const stored = await this.upsert(record);
+      alerts.push({
+        id: stored.alert.id,
+        ruleId: stored.alert.ruleId,
+        severity: stored.alert.severity,
+        created: stored.created,
+        identityLabel: stored.alert.identityLabel,
+      });
+      await this.append(
+        organizationId,
+        stored.created ? "guard.alert.raised" : "guard.alert.repeated",
+        stored.alert.id,
+        {
+          ruleId: stored.alert.ruleId,
+          ruleVersion: stored.alert.ruleVersion,
+          severity: stored.alert.severity,
+          ruleSeverity: incident.severity,
+          escalated: incident.severity !== worstMember,
+          // Named so a reader of the chain never has to infer that this alert is a *group of*
+          // others, and so the contributing alerts are recoverable from the record itself.
+          correlated: true,
+          groupBy: incident.groupBy,
+          group: incident.group,
+          contributingRules: incident.distinctRules,
+          contributingAlertIds: incident.members.map((member) => member.alertId),
+          worstMemberSeverity: worstMember,
+          identityId: stored.alert.identityId,
+          device: stored.alert.device,
+          asset: stored.alert.asset,
+          occurrences: stored.alert.occurrences,
+          sourceAddress: stored.alert.sourceAddress,
+        },
+      );
+      if (stored.created) await this.notify(stored.alert);
+    }
+  }
+
+  /**
+   * Whether a mute catches this subject, recording the window that did.
+   *
+   * One place for the decision and its audit row, because detection and correlation both ask
+   * it and a mute that applied to one and not the other would be a mute with a hole in it.
+   */
+  private async muteFor(
+    organizationId: string,
+    suppressions: readonly SuppressionRule[],
+    moment: string,
+    subject: {
+      ruleId: string;
+      ruleVersion: number;
+      severity: Severity;
+      sourceAddress: string | null;
+      asset: string | null;
+      device: string | null;
+      identityId: string | null;
+      occurrences: number;
+    },
+  ): Promise<IngestReport["suppressed"][number] | null> {
+    if (suppressions.length === 0) return null;
+
+    const mute = matchSuppression(
+      {
+        ruleId: subject.ruleId,
+        sourceAddress: subject.sourceAddress,
+        asset: subject.asset,
+        device: subject.device,
+        identityId: subject.identityId,
+      },
+      suppressions,
+      moment,
+    );
+    if (!mute) return null;
+
+    await this.append(organizationId, "guard.detection.suppressed", subject.ruleId, {
+      suppressionId: mute.rule.id,
+      name: mute.rule.name,
+      reason: mute.reason,
+      ruleId: subject.ruleId,
+      ruleVersion: subject.ruleVersion,
+      severity: subject.severity,
+      sourceAddress: subject.sourceAddress,
+      device: subject.device,
+      asset: subject.asset,
+      identityId: subject.identityId,
+      occurrences: subject.occurrences,
+    });
+    return { suppressionId: mute.rule.id, name: mute.rule.name, ruleId: subject.ruleId };
   }
 
   /* ----------------------------------------------------------- delivery */

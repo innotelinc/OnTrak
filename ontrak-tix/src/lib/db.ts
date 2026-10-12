@@ -29,6 +29,7 @@ import { SecurityAlertService } from "./security-alert-service";
 import { PrismaSecurityAlertStore, type SecurityAlertPrismaClient } from "./security-alert-store-prisma";
 import { AlertPromotionService } from "./alert-promotion-service";
 import { PrismaPromotionStore, type AlertPromotionPrismaClient } from "./alert-promotion-store-prisma";
+import { HttpSentinelContainment, SentinelContainmentService, sentinelTargetFromEnv } from "./sentinel-containment";
 import { IdentityService } from "./identity-service";
 import { PrismaIdentityStore, type IdentityPrismaClient } from "./identity-store-prisma";
 import { ScimSyncService } from "./scim-sync-service";
@@ -196,6 +197,7 @@ let savedViews: SavedViewService | null = null;
 let templates: TicketTemplateService | null = null;
 let securityAlerts: SecurityAlertService | null = null;
 let alertPromotions: AlertPromotionService | null = null;
+let sentinelContainment: SentinelContainmentService | null = null;
 let identities: IdentityService | null = null;
 let scimSync: ScimSyncService | null = null;
 let incidents: IncidentService | null = null;
@@ -358,6 +360,29 @@ export function securityAlertServicesFor(): SecurityAlertService {
     ticketServices().audit,
   );
   return securityAlerts;
+}
+
+/**
+ * The configured containment service: the desk asking Sentinel to act (M2/S5).
+ *
+ * `null` when the deployment has named no Sentinel, which is the honest answer rather than a
+ * client pointed at nothing: the console then says the desk is not configured to contain
+ * anything, instead of offering a button whose request could only fail.
+ *
+ * It shares the ticket stack's audit sink, so "we asked for that host to be isolated" lands on
+ * the same per-tenant hash chain as the alert it was about.
+ */
+export function sentinelContainmentServicesFor(
+  env: Record<string, string | undefined> = process.env,
+): SentinelContainmentService | null {
+  const target = sentinelTargetFromEnv(env);
+  if (!target) return null;
+  sentinelContainment ??= new SentinelContainmentService(
+    securityAlertServicesFor(),
+    new HttpSentinelContainment(target),
+    ticketServices().audit,
+  );
+  return sentinelContainment;
 }
 
 /**

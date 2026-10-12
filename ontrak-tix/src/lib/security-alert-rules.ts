@@ -18,10 +18,19 @@
  * alert — it classifies, deduplicates and enriches so a human can.
  */
 
-export type SecuritySource = "IDS" | "IPS" | "SIEM" | "EDR" | "NETWORK";
+export type SecuritySource = "IDS" | "IPS" | "SIEM" | "EDR" | "NETWORK" | "SENTINEL";
 export type SecuritySeverity = "INFO" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
-export const SECURITY_SOURCES: readonly SecuritySource[] = ["IDS", "IPS", "SIEM", "EDR", "NETWORK"];
+/**
+ * The source classes an alert can be filed under.
+ *
+ * `SENTINEL` is separate from `IPS` on purpose even though OnTrak Sentinel is one: a desk
+ * wants to know at a glance whether a detection came from *our* platform or from somebody
+ * else's sensor, and a family product that reported itself as a generic IPS would make
+ * "which of these is Guard's own finding?" an unanswerable question about a queue the desk
+ * has to work.
+ */
+export const SECURITY_SOURCES: readonly SecuritySource[] = ["IDS", "IPS", "SIEM", "EDR", "NETWORK", "SENTINEL"];
 export const SECURITY_SEVERITIES: readonly SecuritySeverity[] = ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"];
 
 /** The vendor-specific shape a connector hands over before normalization. */
@@ -42,6 +51,24 @@ export interface RawSecurityAlert {
   externalId?: string | null;
   /** Where the raw payload is stored. A reference, never the payload itself. */
   rawRef?: string | null;
+  /**
+   * The **rule set's own id** the detection was judged by, when the sender knows it.
+   *
+   * Carried rather than looked up because it is the one field that makes an old alert
+   * explicable: a rule at version 3 in a corpus with four rules and the same rule at version 3
+   * in a corpus with forty are different claims, and a desk that only stored the per-rule
+   * version cannot tell them apart. OnTrak Sentinel reports it as `rulebookVersion`.
+   */
+  rulebookVersion?: string | null;
+  /**
+   * MITRE ATT&CK technique ids the detection maps to.
+   *
+   * Structured, not a free-text string: a desk groups, filters and reports on technique, and
+   * "which techniques did we see this month" is a query rather than a reading exercise.
+   */
+  techniques?: readonly string[];
+  /** How many threat-intelligence indicators the evidence matched, when the sender says. */
+  threatIntelCount?: number;
 }
 
 export interface NormalizedSecurityAlert {
@@ -55,6 +82,12 @@ export interface NormalizedSecurityAlert {
   sourceIp: string | null;
   externalId: string | null;
   rawRef: string | null;
+  /** The rule set's own id, or `null` when the sender does not report one. */
+  rulebookVersion: string | null;
+  /** ATT&CK technique ids, upper-cased. Empty when the detection maps to none. */
+  techniques: string[];
+  /** Threat-intelligence indicators matched. `0` when unknown or unmatched. */
+  threatIntelCount: number;
   /** Stable de-duplication key: the same alert seen twice shares it. */
   dedupeKey: string;
 }
@@ -69,6 +102,10 @@ export interface NormalizedSecurityAlert {
  * tested first, so the more specific class comes before the broader one.
  */
 const SOURCE_PATTERNS: readonly [RegExp, SecuritySource][] = [
+  // The family's own platform, tested before everything else and named exactly: a Sensor
+  // whose product name is "Sentinel" is caught by the SIEM pattern below, and `SentinelOne`
+  // by the EDR one, so an unanchored `/sentinel/` here would file all three together.
+  [/on ?trak[\s-]+sentinel|\bsentinel guard\b/i, "SENTINEL"],
   [/\b(?:edr|xdr)\b|crowdstrike|falcon|sentinelone|carbon ?black|cylance|defender|sophos intercept|trend micro apex/i, "EDR"],
   [/\bips\b|intrusion prevention|firepower|fortigate|palo ?alto threat/i, "IPS"],
   [/\bids\b|intrusion detection|snort|suricata|zeek|\bbro\b/i, "IDS"],
@@ -194,8 +231,33 @@ export function normalizeAlert(raw: RawSecurityAlert): NormalizedSecurityAlert {
     sourceIp: trimmedOrNull(raw.sourceIp),
     externalId: trimmedOrNull(raw.externalId),
     rawRef: trimmedOrNull(raw.rawRef),
+    rulebookVersion: trimmedOrNull(raw.rulebookVersion),
+    // Upper-cased and de-duplicated: technique ids are ATT&CK's vocabulary, and two senders
+    // disagreeing about the case of `T1110` is not a second technique.
+    techniques: normalizeTechniques(raw.techniques),
+    threatIntelCount:
+      typeof raw.threatIntelCount === "number" && Number.isFinite(raw.threatIntelCount) && raw.threatIntelCount > 0
+        ? Math.trunc(raw.threatIntelCount)
+        : 0,
   } satisfies Omit<NormalizedSecurityAlert, "dedupeKey">;
   return { ...base, dedupeKey: computeDedupeKey(base) };
+}
+
+/**
+ * ATT&CK ids, upper-cased and de-duplicated, in the order they were given.
+ *
+ * A sender that reports a technique as `t1110` and another that reports `T1110` are reporting
+ * the same technique; a desk that stored both would report a covered tactic twice and a
+ * filter would miss half of it.
+ */
+export function normalizeTechniques(techniques: readonly string[] | undefined): string[] {
+  if (!techniques) return [];
+  const out: string[] = [];
+  for (const technique of techniques) {
+    const value = String(technique).trim().toUpperCase();
+    if (value !== "" && !out.includes(value)) out.push(value);
+  }
+  return out;
 }
 
 /* -------------------------------------------------------------------------- */

@@ -27,6 +27,7 @@
 import type { HttpRequest, HttpResponse } from "./oidc-http";
 import type { ServiceResult } from "./identity-service";
 import type { RulebookEntry } from "./guard-service";
+import { containmentStatus, type ContainmentReply } from "./containment-rules";
 import { toObservedEventsFromOtlp } from "./telemetry-otel";
 
 export const GUARD_PATHS = {
@@ -42,6 +43,17 @@ export const GUARD_PATHS = {
    */
   otel: "/guard/v1/otel",
   rules: "/guard/v1/rules",
+  /**
+   * The containment door (S5): prevention asked for by another product.
+   *
+   * A path of its own rather than a flag on `events` because the two directions are not the
+   * same verb on the same object. `events` is telemetry *in* — machine-generated, high volume,
+   * nothing you would want anybody to be able to block with. This is a request *out*: it
+   * proposes an action that can take a host off the network, so it is a separate credential, a
+   * separate path and a separate sentence in the audit trail, and a deployment can mount one
+   * without the other.
+   */
+  containment: "/guard/v1/containment",
 } as const;
 
 /**
@@ -58,6 +70,18 @@ export interface GuardEndpoints {
     payload: unknown;
     at: number;
   }): Promise<ServiceResult<{ accepted: number; rejected: { reason: string }[]; alerts: { id: string; ruleId: string; severity: string; created: boolean }[] }>>;
+  /**
+   * Ask for a containment action on behalf of another product (S5).
+   *
+   * The router moves bytes and maps the answer to a status; what "authorised" means, which
+   * role the requester is, and whether the rails allow it are the service's — the same split
+   * the ingest path takes, for the same reason.
+   */
+  containment(input: {
+    authorization: string;
+    organization: string;
+    body: unknown;
+  }): Promise<ServiceResult<ContainmentReply>>;
   /** The rules this deployment runs, so a sensor platform can be reconciled against them. */
   rulebook(): RulebookEntry[];
   /**
@@ -118,6 +142,28 @@ export async function routeGuard(request: HttpRequest, endpoints: GuardEndpoints
     // the same version in two different corpora is the case a per-rule version cannot
     // describe, and the one this field exists for.
     return json(200, { rulebookVersion: endpoints.rulebookVersion(), rules: endpoints.rulebook() });
+  }
+
+  if (path === GUARD_PATHS.containment) {
+    if (method !== "POST") return json(405, { error: "method_not_allowed", allow: "POST" });
+    let body: unknown;
+    try {
+      body = request.body ? JSON.parse(request.body) : null;
+    } catch {
+      return json(400, { error: "invalid_request", error_description: "The body is not JSON." });
+    }
+
+    const result = await endpoints.containment({
+      authorization: header(request, "authorization"),
+      organization: header(request, "x-sentinel-organization"),
+      body,
+    });
+    if (!result.ok) return json(statusFor(result.error), { error: result.error });
+
+    // A refusal is `409` rather than a 4xx-shaped error: the request was understood, the rails
+    // answered no, and a retry cannot change that — which is exactly what a status tells a
+    // caller, and why "pending approval" is a `202` and not a failure.
+    return json(containmentStatus(result.value), result.value);
   }
 
   if (path === GUARD_PATHS.otel) {

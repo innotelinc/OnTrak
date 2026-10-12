@@ -16,6 +16,13 @@ import type { SecurityAlertRecord } from "../lib/security-alert-service";
 export interface SecurityAlertActions {
   promote: (formData: FormData) => Promise<void>;
   verdict: (formData: FormData) => Promise<void>;
+  /**
+   * Ask OnTrak Sentinel to contain what this alert names (M2/S5).
+   *
+   * Optional because a desk that has named no Sentinel has nowhere to ask — and a button whose
+   * request could only fail is worse than no button, so the page simply does not pass one.
+   */
+  contain?: (formData: FormData) => Promise<void>;
 }
 
 export interface SecurityAlertListProps {
@@ -23,6 +30,8 @@ export interface SecurityAlertListProps {
   /** The decision recorded for an alert, if any, so a suppressed alert says why. */
   promotionsFor?: (alertId: string) => PromotionRecord | undefined;
   actions?: SecurityAlertActions;
+  /** What is shown beside the containment control: who the request will name as its requester. */
+  requestedByLabel?: string;
   emptyMessage?: string;
 }
 
@@ -39,6 +48,39 @@ function chip(text: string, tone: "muted" | "brand" | "amber" = "muted") {
 
 function severityTone(severity: string): "muted" | "amber" {
   return severity === "CRITICAL" || severity === "HIGH" ? "amber" : "muted";
+}
+
+/**
+ * Where an alert stands with Sentinel's prevention, always as a sentence.
+ *
+ * "Nothing was asked" is said rather than left blank, for the same reason the promotion status
+ * is: an operator scanning the queue has to be able to tell "nobody asked for a block" from
+ * "a block was asked for and is waiting on somebody in the other product".
+ */
+function Containment({ alert }: { alert: SecurityAlertRecord }) {
+  if (alert.containmentState === "NONE") return null;
+
+  const tone =
+    alert.containmentState === "APPLIED"
+      ? "text-ok"
+      : alert.containmentState === "REFUSED" || alert.containmentState === "FAILED"
+        ? "text-bad"
+        : "text-attention";
+
+  const sentence: Record<string, string> = {
+    REQUESTED: "Containment requested — waiting for Sentinel to answer.",
+    PENDING: "Containment proposed in Sentinel; a Sentinel administrator has to approve it. Nothing is blocked yet.",
+    APPLIED: "Sentinel applied the containment action.",
+    REFUSED: "Sentinel refused the containment action.",
+    FAILED: "Sentinel could not be reached; nothing was blocked.",
+  };
+
+  return (
+    <p className={`mt-1 text-xs ${tone}`}>
+      {sentence[alert.containmentState]}
+      {alert.containmentActionId ? ` Action ${alert.containmentActionId}.` : ""}
+    </p>
+  );
 }
 
 /** One alert's promotion status, as text plus a link when it became a ticket. */
@@ -59,7 +101,13 @@ function Status({ alert, promotion }: { alert: SecurityAlertRecord; promotion: P
   return null;
 }
 
-export function SecurityAlertList({ alerts, promotionsFor, actions, emptyMessage }: SecurityAlertListProps) {
+export function SecurityAlertList({
+  alerts,
+  promotionsFor,
+  actions,
+  requestedByLabel,
+  emptyMessage,
+}: SecurityAlertListProps) {
   if (alerts.length === 0) {
     return (
       <p className="rounded-xl2 border border-line bg-surface p-5 text-sm text-ink-soft">
@@ -81,6 +129,9 @@ export function SecurityAlertList({ alerts, promotionsFor, actions, emptyMessage
               {alert.occurrences > 1 ? chip(`${alert.occurrences}×`, "muted") : null}
               {alert.assetCriticality === "HIGH" || alert.assetCriticality === "CRITICAL" ? chip("critical asset", "amber") : null}
               {alert.identityPrivileged ? chip("privileged identity", "amber") : null}
+              {alert.source === "SENTINEL" && alert.rulebookVersion ? chip(`rulebook ${alert.rulebookVersion}`, "muted") : null}
+              {alert.threatIntelCount > 0 ? chip(`${alert.threatIntelCount} indicator${alert.threatIntelCount === 1 ? "" : "s"}`, "amber") : null}
+              {alert.techniques.map((technique) => chip(technique, "muted"))}
               <time className="ml-auto text-[11px] text-ink-faint" dateTime={alert.lastSeenAt}>
                 {alert.lastSeenAt}
               </time>
@@ -101,6 +152,7 @@ export function SecurityAlertList({ alerts, promotionsFor, actions, emptyMessage
             </p>
 
             <Status alert={alert} promotion={promotion} />
+            <Containment alert={alert} />
 
             {actions && !alert.ticketId ? (
               <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -118,6 +170,31 @@ export function SecurityAlertList({ alerts, promotionsFor, actions, emptyMessage
                   </button>
                 </form>
               </div>
+            ) : null}
+
+            {/*
+              Containment is offered whatever the alert's promotion state: a detection worth
+              escalating is exactly the one worth containing, and gating the ask on "not yet a
+              ticket" would make the desk choose between documenting the incident and stopping
+              it.
+            */}
+            {actions?.contain && alert.containmentState !== "PENDING" && alert.containmentState !== "APPLIED" ? (
+              <form action={actions.contain} className="mt-2 flex flex-wrap items-center gap-2">
+                <input type="hidden" name="alertId" value={alert.id} />
+                {requestedByLabel ? <input type="hidden" name="requestedByLabel" value={requestedByLabel} /> : null}
+                <label className="text-xs font-medium text-ink-soft">
+                  Contain in Sentinel
+                  <input
+                    name="reason"
+                    required
+                    placeholder="Why this should be contained"
+                    className="ml-2 rounded-xl2 border border-line bg-surface px-2 py-1 text-xs text-ink"
+                  />
+                </label>
+                <button type="submit" className="rounded-full bg-attention/15 px-3 py-1.5 text-xs font-semibold text-attention">
+                  Ask Sentinel
+                </button>
+              </form>
             ) : null}
           </li>
         );

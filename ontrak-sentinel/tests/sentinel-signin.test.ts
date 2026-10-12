@@ -390,13 +390,21 @@ test("console: the bare host does not short-circuit a signed-in visitor into a l
   assert.notEqual(response.headers.location, CONSOLE_PATHS.signIn);
 });
 
-test("console: the sign-in page renders a password field and the shared theme", async () => {
+test("console: the sign-in page is a single SSO gate and the shared theme", async () => {
   const h = harness();
   const response = await routeConsole(request("GET", CONSOLE_PATHS.signIn), h.service);
   assert.equal(response.status, 200);
-  assert.match(response.body, /type="password"/);
-  assert.match(response.body, /name="identifier"/);
-  assert.match(response.body, /name="code"/);
+  // Single sign-on is the only door: there is no password form for the console to check,
+  // so no field, no email box and no authenticator code appear on the page at all.
+  assert.doesNotMatch(response.body, /type="password"/);
+  assert.doesNotMatch(response.body, /name="identifier"/);
+  assert.doesNotMatch(response.body, /name="code"/);
+  assert.doesNotMatch(response.body, /<form/);
+  // The gate card — the shape the family's front doors share.
+  assert.match(response.body, /class="gate"/);
+  // With no provider configured the page says so rather than drawing a control that could
+  // never complete.
+  assert.match(response.body, /no identity provider configured/i);
   // The scheme and the two shared assets, which is what makes the console look like the
   // rest of the Network rather than like its own product.
   assert.match(response.body, /data-scheme="soc"/);
@@ -412,101 +420,21 @@ test("console: the sign-in page renders a password field and the shared theme", 
   assert.match(response.body, /<title>Sign in · OnTrak Sentinel<\/title>/);
 });
 
-test("console: a good sign-in answers 303 with the session cookie", async () => {
-  const h = harness();
-  const { secret } = await h.organization();
-  assert.ok(secret);
-  const response = await routeConsole(
-    request("POST", CONSOLE_PATHS.signIn, {
-      body: { identifier: "admin@acme.test", password: PASSWORD, code: h.code(secret) },
-    }),
-    h.service,
-  );
-  assert.equal(response.status, 303);
-  assert.equal(response.headers.location, CONSOLE_PATHS.home);
-  const cookie = String(response.headers["set-cookie"] ?? "");
-  assert.match(cookie, new RegExp(`${CONSOLE_SESSION_COOKIE}=`));
-  assert.match(cookie, /HttpOnly/);
-  assert.match(cookie, /SameSite=Lax/);
-});
-
-test("console: a sign-in records the address it came from, so a network event can be joined to it", async () => {
-  const h = harness();
-  const { actor, secret } = await h.organization();
-  assert.ok(secret);
-  const response = await routeConsole(
-    request("POST", CONSOLE_PATHS.signIn, {
-      body: { identifier: "admin@acme.test", password: PASSWORD, code: h.code(secret) },
-      // A TLS proxy sets this; the first entry is the client that actually connected,
-      // and the rest is the proxy chain rather than the person.
-      headers: { "x-forwarded-for": "203.0.113.7, 10.0.0.1" },
-    }),
-    h.service,
-  );
-  assert.equal(response.status, 303);
-
-  const sessions = await h.spine.listSessions(actor);
-  assert.ok(sessions.ok, sessions.ok ? "" : sessions.error);
-  const live = sessions.value.filter((session) => session.revokedAt === null);
-  assert.equal(live.length, 1);
-  // The join `correlateIdentity` makes is an alert's `sourceAddress` against the address
-  // a session was granted from. A sign-in that stores no address leaves that join with no
-  // data on the identity side, which is the half Sentinel exists to supply.
-  assert.equal(live[0]?.ipAddress, "203.0.113.7");
-  assert.equal(live[0]?.userAgent, null, "and the address is the only thing the proxy supplied");
-});
-
-test("console: behind a TLS proxy the cookie is Secure, because the browser saw https", async () => {
-  const h = harness();
-  const { secret } = await h.organization();
-  assert.ok(secret);
-  const response = await routeConsole(
-    request("POST", CONSOLE_PATHS.signIn, {
-      body: { identifier: "admin@acme.test", password: PASSWORD, code: h.code(secret) },
-      // What a proxy terminates: the browser is on https, the console is on plain
-      // HTTP behind it. Deciding `Secure` from the local scheme would get this wrong.
-      origin: "http://127.0.0.1:8787",
-      headers: { "x-forwarded-proto": "https" },
-    }),
-    h.service,
-  );
-  assert.equal(response.status, 303);
-  assert.match(String(response.headers["set-cookie"] ?? ""), /Secure/);
-});
-
-test("console: on a plain-HTTP LAN address the cookie is not Secure, which is what makes it stick", async () => {
-  const h = harness();
-  const { secret } = await h.organization();
-  assert.ok(secret);
-  const response = await routeConsole(
-    request("POST", CONSOLE_PATHS.signIn, {
-      body: { identifier: "admin@acme.test", password: PASSWORD, code: h.code(secret) },
-      origin: "http://192.168.1.21:8787",
-    }),
-    h.service,
-  );
-  assert.equal(response.status, 303);
-  // A `Secure` cookie the browser refuses to store presents as a sign-in that
-  // succeeds and leaves you signed out, so this is not a cosmetic distinction.
-  assert.equal((String(response.headers["set-cookie"] ?? "")).includes("Secure"), false);
-});
-
-test("console: a failed sign-in re-renders the form, sets no cookie, and keeps the address", async () => {
+test("console: a password POST is refused now that SSO is the only door", async () => {
+  // The console no longer holds a login of its own, so a POST carrying a password is not a
+  // sign-in attempt — it is a method this path does not serve. A `405` and no session is how
+  // the removal is enforced rather than merely hidden.
   const h = harness();
   await h.organization();
   const response = await routeConsole(
     request("POST", CONSOLE_PATHS.signIn, {
-      body: { identifier: "admin@acme.test", password: "nope" },
+      body: { identifier: "admin@acme.test", password: PASSWORD, code: "123456" },
     }),
     h.service,
   );
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 405);
   assert.equal(response.headers["set-cookie"], undefined);
-  assert.match(response.body, /do not match an account/i);
-  // The mistyped address is echoed so it can be corrected rather than retyped...
-  assert.match(response.body, /value="admin@acme\.test"/);
-  // ...and the password is not, ever.
-  assert.equal(response.body.includes("nope"), false);
+  assert.equal(response.headers.allow, "GET");
 });
 
 test("console: the sign-in page answers a POST-only path correctly and a GET to nothing", async () => {
@@ -520,12 +448,12 @@ test("console: the sign-in page answers a POST-only path correctly and a GET to 
 test("console: an unconfigured sign-in says so instead of pretending", async () => {
   const h = harness();
   const bare = new ConsoleService(h.spine, h.mfa, null, null, null, null, null);
-  const response = await routeConsole(
-    request("POST", CONSOLE_PATHS.signIn, { body: { identifier: "admin@acme.test", password: PASSWORD } }),
-    bare,
-  );
+  const response = await routeConsole(request("GET", CONSOLE_PATHS.signIn), bare);
   assert.equal(response.status, 200);
-  assert.match(response.body, /not configured/i);
+  // A provider-less deployment draws no door at all: the page says there is no way in
+  // rather than rendering a control that could never complete.
+  assert.match(response.body, /no identity provider configured/i);
+  assert.doesNotMatch(response.body, /Sign in with/);
   assert.equal(response.headers["set-cookie"], undefined);
 });
 

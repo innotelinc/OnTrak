@@ -1,0 +1,49 @@
+# ── This deployment reads New York time ──────────────────────────────────────
+# Local to the deployment, not in the repository: `docker compose` merges this
+# file automatically when it runs in this directory, so every service here —
+# database, migrator and one-shot job included — reads New York rather than the
+# zone it would otherwise inherit. The product compose files name no `TZ`
+# because a laptop does not need one; `docker-compose.all.yml` names it for the
+# family stack's own services. Delete this file and the deployment is back to
+# whatever the host says.
+services:
+  db:
+    environment:
+      TZ: America/New_York
+    volumes:
+      # The zone name has to have a database to resolve against, and these images
+      # ship none of their own; `/etc/localtime` covers the programs that ignore
+      # `TZ` entirely.
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      - /etc/localtime:/etc/localtime:ro
+
+  migrate:
+    environment:
+      TZ: America/New_York
+    volumes:
+      # The zone name has to have a database to resolve against, and these images
+      # ship none of their own; `/etc/localtime` covers the programs that ignore
+      # `TZ` entirely.
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      - /etc/localtime:/etc/localtime:ro
+
+  app:
+    environment:
+      TZ: America/New_York
+    volumes:
+      # The zone name has to have a database to resolve against, and these images
+      # ship none of their own; `/etc/localtime` covers the programs that ignore
+      # `TZ` entirely.
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      - /etc/localtime:/etc/localtime:ro
+
+  seed:
+    environment:
+      TZ: America/New_York
+    volumes:
+      # The zone name has to have a database to resolve against, and these images
+      # ship none of their own; `/etc/localtime` covers the programs that ignore
+      # `TZ` entirely.
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      - /etc/localtime:/etc/localtime:ro
+

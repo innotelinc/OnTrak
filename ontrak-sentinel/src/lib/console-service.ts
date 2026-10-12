@@ -153,15 +153,14 @@ export class ConsoleService implements ConsoleEndpoints {
     /**
      * The login, when this deployment has one.
      *
-     * Optional, and left that way, so a deployment that has not configured a console
-     * password still starts and still serves the OIDC endpoints — the console then
-     * says plainly that sign-in is not configured rather than 404ing at `/` or, worse,
-     * letting somebody in. Sentinel is an identity provider first and a console
-     * second; the order matters when the two disagree.
+     * Retained for a caller that drives the console service directly. The HTTP layer no
+     * longer routes to it — the console signs in through the provider only — so nothing on
+     * the wire reaches this. Optional, and left that way, so a deployment with no provider
+     * still starts and still serves the OIDC endpoints rather than 404ing at `/`.
      */
     private readonly signInService: Pick<SignInService, "signIn"> | null = null,
     /**
-     * The organization the console signs into, when it serves exactly one.
+     * The organization a direct `signIn` call signs into, when it names none.
      *
      * `null` means "ask", which is the honest answer for a console that could serve
      * several: an email address is unique within an organization, not across them.
@@ -263,16 +262,14 @@ export class ConsoleService implements ConsoleEndpoints {
   /* ------------------------------------------------------------ sign in */
 
   /**
-   * The sign-in page shows one thing that depends on the deployment: whether it names
-   * a workspace. Nothing here reads an account, so the page is safe to render for an
-   * unknown visitor.
+   * The sign-in page shows one thing that depends on the deployment: whether it federates to
+   * a provider, and whose. Nothing here reads an account, so the page is safe to render for
+   * an unknown visitor.
    */
   async signInView(): Promise<ServiceResult<ConsoleSignInView>> {
     return {
       ok: true,
       value: {
-        identifier: null,
-        organization: this.signInOrganization,
         error: null,
         flash: null,
         upstream: this.upstream?.enabled ? { path: UPSTREAM_PATHS.start, label: this.upstream.label } : null,
@@ -283,11 +280,27 @@ export class ConsoleService implements ConsoleEndpoints {
   /**
    * The login itself, delegated to `SignInService`.
    *
-   * The console adds one thing: the deployment's default workspace, when the form did
-   * not carry one. Everything else — the single failure sentence, the order of the
-   * password and the factor, the audit entries — belongs to the sign-in service, and
-   * duplicating any of it here is how a second, subtly different login appears.
+   * Kept on the service for a caller that drives it directly. It is deliberately no longer
+   * reachable from the router: the console is entered through the provider, and a password
+   * form beside that door was the second login the SSO deployment did not want. Everything
+   * that was here — the single failure sentence, the order of the password and the factor,
+   * the audit entries — still belongs to the sign-in service.
    */
+  async signIn(input: SignInInput): Promise<ServiceResult<{ sessionId: string; redirectTo: string }>> {
+    if (!this.signInService) {
+      return {
+        ok: false,
+        error:
+          "Console sign-in is not configured on this deployment (set SENTINEL_ADMIN_PASSWORD and restart). " +
+          "The console is still reached with a session minted by the OIDC flow.",
+      };
+    }
+    const organization = (input.organization ?? "").trim() || this.signInOrganization || undefined;
+    const result = await this.signInService.signIn({ ...input, organization });
+    if (!result.ok) return { ok: false, error: result.error };
+    return { ok: true, value: { sessionId: result.value.sessionId, redirectTo: result.value.redirectTo } };
+  }
+
   /**
    * The one origin an upstream sign-in can finish on, so the router can compare it with the
    * address the browser used. `null` when no provider is configured, which is the answer that
@@ -327,21 +340,6 @@ export class ConsoleService implements ConsoleEndpoints {
         clearCookie: result.value.clearCookie,
       },
     };
-  }
-
-  async signIn(input: SignInInput): Promise<ServiceResult<{ sessionId: string; redirectTo: string }>> {
-    if (!this.signInService) {
-      return {
-        ok: false,
-        error:
-          "Console sign-in is not configured on this deployment (set SENTINEL_ADMIN_PASSWORD and restart). " +
-          "The console is still reached with a session minted by the OIDC flow.",
-      };
-    }
-    const organization = (input.organization ?? "").trim() || this.signInOrganization || undefined;
-    const result = await this.signInService.signIn({ ...input, organization });
-    if (!result.ok) return { ok: false, error: result.error };
-    return { ok: true, value: { sessionId: result.value.sessionId, redirectTo: result.value.redirectTo } };
   }
 
   /* ------------------------------------------------------------ the pages */

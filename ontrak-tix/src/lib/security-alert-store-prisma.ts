@@ -14,7 +14,12 @@ import {
   type SecuritySeverity,
   type SecuritySource,
 } from "./security-alert-rules";
-import type { SecurityAlertRecord, SecurityAlertStore } from "./security-alert-service";
+import {
+  CONTAINMENT_STATES,
+  type ContainmentState,
+  type SecurityAlertRecord,
+  type SecurityAlertStore,
+} from "./security-alert-service";
 
 export interface SecurityAlertRow {
   id: string;
@@ -42,6 +47,20 @@ export interface SecurityAlertRow {
   lastSeenAt: Date;
   occurrences: number;
   ticketId: string | null;
+  /**
+   * Optional on the row, required on the record.
+   *
+   * A row written before these columns existed reads as "the sender did not report one",
+   * which is the truth — and a mapper that refused those rows would make an upgrade a
+   * migration somebody has to run before the desk shows anything.
+   */
+  rulebookVersion?: string | null;
+  techniques?: string[] | null;
+  threatIntelCount?: number | null;
+  /** `NONE` until the desk asks Sentinel to contain something about this alert. */
+  containmentState?: string | null;
+  /** Sentinel's own action id, so the desk can point at the action it asked for. */
+  containmentActionId?: string | null;
 }
 
 export interface SecurityAlertPrismaClient {
@@ -67,6 +86,16 @@ function toSeverity(value: string): SecuritySeverity {
 
 function toCriticality(value: string | null): AssetCriticality | null {
   return value === "LOW" || value === "NORMAL" || value === "HIGH" || value === "CRITICAL" ? value : null;
+}
+
+/**
+ * Narrow the containment column, defaulting to `NONE`.
+ *
+ * A value this build does not know reads as "the desk has not asked for containment", which is
+ * the safe direction: a state that failed to parse must never render as "something is blocked".
+ */
+function toContainmentState(value: string | null): ContainmentState {
+  return (CONTAINMENT_STATES as readonly string[]).includes(value ?? "") ? (value as ContainmentState) : "NONE";
 }
 
 export function toSecurityAlertRecord(row: SecurityAlertRow): SecurityAlertRecord {
@@ -96,6 +125,11 @@ export function toSecurityAlertRecord(row: SecurityAlertRow): SecurityAlertRecor
     lastSeenAt: toIso(row.lastSeenAt),
     occurrences: row.occurrences,
     ticketId: row.ticketId,
+    rulebookVersion: row.rulebookVersion ?? null,
+    techniques: row.techniques ?? [],
+    threatIntelCount: row.threatIntelCount ?? 0,
+    containmentState: toContainmentState(row.containmentState ?? null),
+    containmentActionId: row.containmentActionId ?? null,
   };
 }
 
@@ -121,6 +155,11 @@ export function toSecurityAlertData(record: SecurityAlertRecord) {
     sourceIp: record.sourceIp,
     rawRef: record.rawRef,
     dedupeKey: record.dedupeKey,
+    rulebookVersion: record.rulebookVersion,
+    techniques: [...record.techniques],
+    threatIntelCount: record.threatIntelCount,
+    containmentState: record.containmentState,
+    containmentActionId: record.containmentActionId,
     occurredAt: new Date(record.occurredAt),
     firstSeenAt: new Date(record.firstSeenAt),
     lastSeenAt: new Date(record.lastSeenAt),

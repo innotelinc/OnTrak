@@ -92,8 +92,8 @@ export const CONSOLE_PATHS = {
   /**
    * The console's own sign-in.
    *
-   * Sentinel is an identity provider, so this page is the one place in the Network
-   * that checks a password itself — everywhere else hands the person to a provider.
+   * The console delegates identity to the provider, so this page is the deployment's
+   * single sign-on door rather than a login of its own.
    * It sits under `/console` rather than at `/sign-in` so the console's whole surface
    * is one path prefix an operator can reason about (and one prefix a deployment can
    * put behind a VPN without catching the OIDC endpoints too).
@@ -102,9 +102,9 @@ export const CONSOLE_PATHS = {
   /**
    * The console's *other* sign-in: the provider.
    *
-   * Sentinel owns a password for its own console, but a deployment with a provider does
-   * not want a second one. These two paths are the authorization-code legs — the first
-   * hands the browser to the provider, the second receives the reply — and they live under
+   * These two paths are the authorization-code legs — the first hands the browser to the
+   * provider, the second receives the reply — and they are the console's only way in. They
+   * live under
    * the same `/console` prefix as everything else, so a deployment can put one prefix behind
    * a VPN without catching the OIDC endpoints the family depends on.
    */
@@ -254,8 +254,8 @@ export const CONSOLE_SCHEME = "soc";
  * The Sentinel mark: a shield with a heartbeat across it.
  *
  * Sentinel's console is the one page in the Network a person reaches without a
- * product tile to click, so it has to say *whose* page it is before it asks for a
- * password. The shield is the security-operations reading of the family's mark —
+ * product tile to click, so it has to say *whose* page it is before it asks a person to
+ * sign in. The shield is the security-operations reading of the family's mark —
  * the same idea as the IT Support Training icon — and the trace inside it is what
  * the product does: watch the wire and raise what it finds. It is inline rather
  * than a file because the console ships no static assets of its own and because
@@ -677,9 +677,15 @@ const STYLES = `
   .field { display: block; margin: var(--space-3) 0; }
   .field label { display: block; font-weight: 600; font-size: .88rem; margin-bottom: var(--space-1); }
   .field .hint { font-weight: 400; color: var(--ink-faint); }
-  /* The sign-in page is a single narrow column, centred in the viewport rather than
-     in the 52rem reading column: a login form adrift in a wide empty page looks
-     like a page that failed to load. */
+  /* The sign-in gate: one card, centred in the viewport, holding the product lockup
+     and the one control. The shape the family's front doors share — the same centred
+     card ontrak.innotel.us shows — rather than a form adrift in the 52rem reading
+     column, which reads like a page that failed to load. */
+  .gate { max-width: 24rem; margin: 9vh auto 0; display: flex; flex-direction: column;
+    gap: var(--space-4); text-align: center; background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow-card); padding: var(--space-6) var(--space-5); }
+  .gate p { margin: 0; }
+  .gate .muted { font-size: .9rem; }
   /* The product lockup. Sized so the mark reads at a glance without the name
      becoming a headline: on the sign-in page the form is the subject, not the
      branding. */
@@ -688,23 +694,18 @@ const STYLES = `
   .brand-text { display: flex; flex-direction: column; }
   .brand-name { font-size: 1.3rem; font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; }
   .brand-sub { color: var(--ink-faint); font-size: .78rem; text-transform: uppercase; letter-spacing: .09em; }
-  .signin { max-width: 24rem; margin: 8vh auto 0; }
-  .signin h1 { font-size: 1.5rem; }
-  .signin .sub { color: var(--ink-faint); margin-bottom: var(--space-5); }
-  .signin button[type="submit"] { width: 100%; padding: .6rem; margin-top: var(--space-2); }
+  .gate .brand-head { justify-content: center; margin: 0; }
   /* The provider door is an anchor, not a button (the handshake is a browser
-     navigation), and it is the family's front door, so it is styled as the one
-     primary control — matching the Unity gate. Left as a plain link it would make
-     single sign-on look like the lesser path beside a password form. */
-  .signin a.button { display: block; text-align: center; background: var(--brand); color: var(--brand-ink);
-    border: 1px solid var(--brand); border-radius: var(--radius-sm); padding: .65rem .9rem; font-weight: 650;
+     navigation), and it is the family's front door, so it is the one primary
+     control — matching the Unity gate. */
+  .gate a.button { display: block; text-align: center; background: var(--brand); color: var(--brand-ink);
+    border: 1px solid var(--brand); border-radius: var(--radius-sm); padding: .7rem .9rem; font-weight: 650;
     text-decoration: none; }
-  .signin a.button:hover { filter: brightness(1.06); text-decoration: none; }
-  /* The console's own password, demoted below the provider: the same shape as the
-     gate elsewhere, with the fallback separated by a rule rather than competing. */
-  .signin .or { display: flex; align-items: center; gap: var(--space-3); color: var(--ink-faint);
-    font-size: .72rem; text-transform: uppercase; letter-spacing: .09em; margin: var(--space-5) 0 var(--space-2); }
-  .signin .or::before, .signin .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .gate a.button:hover { filter: brightness(1.06); text-decoration: none; }
+  /* No provider configured: say so, rather than draw a control that cannot complete. */
+  .gate .note { border-radius: var(--radius-sm); padding: .6rem .75rem; text-align: left;
+    background: var(--surface-muted); border: 1px solid var(--line-strong); color: var(--ink-soft); font-size: .9rem; }
+  .gate code { font-family: var(--mono); font-size: .85em; }
 `;
 
 export interface ConsolePageInput {
@@ -780,6 +781,19 @@ export function consolePage(input: ConsolePageInput): string {
     ? brandHead(input.brandSub ?? "security console")
     : `<h1>${escapeHtml(input.title)}</h1>`;
 
+  const notices =
+    (input.error ? `<p class="error" role="alert">${escapeHtml(input.error)}</p>` : "") +
+    (input.flash ? `<p class="flash">${escapeHtml(input.flash)}</p>` : "");
+
+  // The sign-in page is the one page that leads with the product mark, and it leads
+  // with it *inside* the gate card — the lockup, the notices and the one control read
+  // as a single centred column, the shape ontrak.innotel.us uses. Every other page is
+  // a signed-in operator's, who already knows where they are, so it keeps the plain
+  // heading in the reading column.
+  const inner = input.brand
+    ? `<div class="gate">${heading}${notices}${input.body}</div>`
+    : `${heading}${who}${notices}${input.body}`;
+
   return (
     // `data-scheme` is how the shared theme is told which palette to paint; the mode
     // (light/dark/system) is whichever the person chose, restored by the theme script
@@ -796,10 +810,7 @@ export function consolePage(input: ConsolePageInput): string {
     `<link rel="stylesheet" href="${CONSOLE_ASSET_PATHS.themeCss}">` +
     `<script src="${CONSOLE_ASSET_PATHS.themeJs}"></script>` +
     `<style>${STYLES}</style></head>` +
-    `<body><div class="bar">${nav}${actions}</div><main>${heading}${who}` +
-    (input.error ? `<p class="error" role="alert">${escapeHtml(input.error)}</p>` : "") +
-    (input.flash ? `<p class="flash">${escapeHtml(input.flash)}</p>` : "") +
-    input.body +
+    `<body><div class="bar">${nav}${actions}</div><main>${inner}` +
     `</main>${TOGGLE_SCRIPT}</body></html>`
   );
 }
@@ -848,8 +859,8 @@ const TOGGLE_SCRIPT =
  * The paragraph below is the one place the console explains how it is reached, and it
  * exists because of a real confusion: an operator who reached `/console` without a live
  * cookie read "the console is reached with a browser session" as "you came in by the
- * wrong door". It has to say the opposite — that this page is the door, and that the way
- * through it is an email address, a password and an authenticator code.
+ * wrong door". It has to say the opposite — that the sign-in page is the door, and that the
+ * way through it is the identity provider the deployment federates to.
  */
 export function consoleErrorPage(message: string, status: number): { status: number; html: string } {
   /*
@@ -862,8 +873,8 @@ export function consoleErrorPage(message: string, status: number): { status: num
     status === 403
       ? `Your session is valid, but this account is not allowed to do that. An administrator can change the ` +
         `role it holds, and nothing about the account or the sign-in has changed.`
-      : `Sentinel <em>is</em> the Network's identity provider, so its console is the sign-in screen: the email ` +
-        `address, the password and the authenticator code enrolled on the account are the way in.`;
+      : `This console signs in through the identity provider the deployment federates to: open the sign-in ` +
+        `page and follow the single sign-on control, and the directory decides who you are.`;
 
   return {
     status,
@@ -897,12 +908,15 @@ export function consoleSignedOutPage(): string {
 /*  Sign in                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/** What the sign-in form needs to render. */
+/**
+ * What the sign-in page needs to render.
+ *
+ * One thing depends on the deployment: whether it names a provider, and whose. There is
+ * deliberately no field for an account — the page never reads one, which is what lets it
+ * render for a stranger — and no password, because the console no longer holds a login of
+ * its own: it signs a person in through the provider or not at all.
+ */
 export interface ConsoleSignInView {
-  /** Echoed back so a mistyped address does not have to be retyped. */
-  identifier: string | null;
-  /** The organization slug, when the deployment is configured with one. */
-  organization: string | null;
   error: string | null;
   flash: string | null;
   /**
@@ -910,7 +924,8 @@ export interface ConsoleSignInView {
    *
    * `null` — not a disabled button — is the honest way to say "this console has no provider
    * configured": a greyed-out control that can never work is a question the page cannot
-   * answer. The label is the deployment's, so the page can say *whose* SSO it is.
+   * answer, so the page says it in words instead. The label is the deployment's, so the
+   * page can say *whose* SSO it is.
    */
   upstream: { path: string; label: string } | null;
 }
@@ -918,55 +933,27 @@ export interface ConsoleSignInView {
 /**
  * The console's sign-in page.
  *
- * One form, three fields, and no client script: the code field is always present
- * rather than revealed after the password is accepted, because *revealing* it would
- * announce which accounts have a second factor enrolled — a small thing on its own
- * and a useful one to a person choosing who to attack.
- *
- * The workspace field is shown only when the deployment names a default. A
- * single-tenant console should not ask somebody to type a workspace they were never
- * given; a multi-tenant one has to, because an email address is unique within an
- * organization rather than across them.
+ * One control and nothing else: the console delegates identity to the provider, so the page
+ * is the provider's door and one sentence about whose it is. There is no email field, no
+ * password and no authenticator code — the console does not hold a login of its own any
+ * more, which is the whole point of a single sign-on deployment. A deployment with no
+ * provider configured says so plainly rather than drawing a control that could never
+ * complete.
  */
 export function renderSignIn(view: ConsoleSignInView): string {
-  const workspace = view.organization
-    ? `<span class="field"><label for="organization">Workspace</label>` +
-      `<input id="organization" name="organization" value="${escapeHtml(view.organization)}" autocomplete="organization" readonly>` +
-      `<span class="hint muted">This console signs in to <code>${escapeHtml(view.organization)}</code>.</span></span>`
-    : `<span class="field"><label for="organization">Workspace <span class="hint">(optional)</span></label>` +
-      `<input id="organization" name="organization" autocomplete="organization" placeholder="your-organization"></span>`;
-
   return consolePage({
     title: "Sign in",
-    // The tab still says "Sign in · OnTrak Sentinel"; the page itself leads with the
-    // mark and the name, because the product is what a person arriving cold needs to
-    // recognise before they type a password.
+    // The page leads with the mark and the name — inside the gate card — because the
+    // product is what a person arriving cold needs to recognise before they click through.
     brand: true,
     brandSub: "security console",
     actor: null,
-    body:
-      `<div class="signin">` +
-      (view.upstream
-        ? `<p class="muted">Sign in with your organisation’s account. Sentinel is the Network’s identity ` +
-          `provider, so this console also keeps its own password as a fallback for the day the provider is ` +
-          `unreachable.</p>` +
-          `<p><a class="button" href="${escapeHtml(view.upstream.path)}">Sign in with ${escapeHtml(view.upstream.label)}</a></p>` +
-          `<p class="or">console password</p>`
-        : `<p class="muted">OnTrak Sentinel is the identity provider for the Network: this console holds the ` +
-          `identities, so this is the one place that checks a password itself.</p>`) +
-      `<form method="post" action="${CONSOLE_PATHS.signIn}">` +
-      `<span class="field"><label for="identifier">Email address</label>` +
-      `<input id="identifier" name="identifier" type="text" inputmode="email" autocomplete="username" ` +
-      `autocapitalize="none" spellcheck="false" required value="${escapeHtml(view.identifier ?? "")}"></span>` +
-      `<span class="field"><label for="password">Password</label>` +
-      `<input id="password" name="password" type="password" autocomplete="current-password" required></span>` +
-      workspace +
-      `<span class="field"><label for="code">Authenticator code <span class="hint">(when one is enrolled)</span></label>` +
-      `<input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" ` +
-      `pattern="[0-9]{6,8}" placeholder="123456"></span>` +
-      `<button type="submit">Sign in</button>` +
-      `</form>` +
-      `</div>`,
+    body: view.upstream
+      ? `<p class="muted">Sign in with your organisation’s account. The console signs you in through ${escapeHtml(view.upstream.label)}.</p>` +
+        `<p><a class="button" href="${escapeHtml(view.upstream.path)}">Sign in with ${escapeHtml(view.upstream.label)}</a></p>`
+      : `<p class="note" role="status">This deployment has no identity provider configured, so the console cannot sign you in yet. ` +
+        `Set <code>SENTINEL_UPSTREAM_ISSUER</code>, <code>SENTINEL_UPSTREAM_CLIENT_ID</code> and ` +
+        `<code>SENTINEL_UPSTREAM_REDIRECT_URI</code> and restart Sentinel.</p>`,
     flash: view.flash,
     error: view.error,
   });
@@ -2310,6 +2297,89 @@ export function renderCoverage(view: ConsoleCoverageView, flash?: string | null,
         .join("")}</ul></div>`
     : "";
 
+  const attack = report.attack;
+  const tacticRows = attack.tactics
+    .map(
+      (tactic) =>
+        `<tr><td>${escapeHtml(tactic.title)}</td>` +
+        `<td class="${tactic.covered ? "control-ok" : "control-fail"}">${tactic.covered ? "answered" : "nothing answers it"}</td>` +
+        `<td class="muted">${tactic.techniques.length ? tactic.techniques.map((id) => escapeHtml(id)).join(", ") : "—"}</td>` +
+        `<td class="muted">${tactic.rules.length ? tactic.rules.map((id) => escapeHtml(id)).join(", ") : "—"}</td></tr>`,
+    )
+    .join("");
+
+  const attackGaps = attack.gaps.length
+    ? `<ul>${attack.gaps
+        .map((gap) => `<li><strong>${escapeHtml(gap.title)}</strong> — ${escapeHtml(gap.detail)}</li>`)
+        .join("")}</ul>`
+    : `<p class="flash">Every tactic in this build's ATT&CK catalogue is answered by at least one rule.</p>`;
+
+  const attackNotes: string[] = [];
+  if (attack.uncatalogued.length > 0) {
+    attackNotes.push(
+      `<p class="muted">Techniques named by a rule that this build's catalogue does not carry: ` +
+        attack.uncatalogued
+          .map((entry) => `<code>${escapeHtml(entry.id)}</code> (${entry.rules.map((id) => escapeHtml(id)).join(", ")})`)
+          .join(", ") +
+        `. A taxonomy this build has not learned is reported rather than counted as coverage.</p>`,
+    );
+  }
+  if (attack.unmappedRules.length > 0) {
+    attackNotes.push(
+      `<p class="muted">${attack.unmappedRules.length} rule(s) name no ATT&CK technique at all: ` +
+        `${attack.unmappedRules.map((id) => escapeHtml(id)).join(", ")}. They still detect; they simply ` +
+        `cannot be placed on the map.</p>`,
+    );
+  }
+  if (attack.unparsedReferences.length > 0) {
+    attackNotes.push(
+      `<p class="muted">${attack.unparsedReferences.length} reference(s) carry no <code>FRAMEWORK:</code> prefix ` +
+        `and cannot be read: ${attack.unparsedReferences
+          .map((entry) => `${escapeHtml(entry.ruleId)} → “${escapeHtml(entry.reference)}”`)
+          .join(", ")}.</p>`,
+    );
+  }
+
+  const frameworkCards = report.compliance.frameworks
+    .map((framework) => {
+      const uncovered = framework.controls.filter((control) => !control.covered);
+      return (
+        `<div class="card"><h3>${escapeHtml(framework.name)} ` +
+        `<span class="muted">${framework.coveredCount}/${framework.controls.length} control(s) backed by a rule</span></h3>` +
+        `<table><thead><tr><th>Control</th><th></th><th>Rules</th></tr></thead><tbody>${framework.controls
+          .map(
+            (control) =>
+              `<tr><td>${escapeHtml(control.code)} <span class="muted">${escapeHtml(control.title)}</span></td>` +
+              `<td class="${control.covered ? "control-ok" : "control-fail"}">${control.covered ? "evidenced" : "no rule"}</td>` +
+              `<td class="muted">${control.rules.length ? control.rules.map((id) => escapeHtml(id)).join(", ") : "—"}</td></tr>`,
+          )
+          .join("")}</tbody></table>` +
+        (uncovered.length > 0
+          ? `<p class="muted">Uncovered: ${uncovered
+              .map((control) => `${escapeHtml(control.code)} — ${escapeHtml(control.expectation)}`)
+              .join(" ")}</p>`
+          : `<p class="muted">Every control in this build's catalogue of the framework has a rule behind it.</p>`) +
+        `<p class="muted">The catalogue is the subset of the framework this product maps onto, not the framework — ` +
+        `a control nobody has mapped is not a control that passes.</p></div>`
+      );
+    })
+    .join("");
+
+  const complianceNotes: string[] = [];
+  if (report.compliance.uncatalogued.length > 0) {
+    complianceNotes.push(
+      `<p class="muted">Cited controls no catalogue carries: ${report.compliance.uncatalogued
+        .map((entry) => `<code>${escapeHtml(entry.framework)}:${escapeHtml(entry.code)}</code> (${entry.rules.map((id) => escapeHtml(id)).join(", ")})`)
+        .join(", ")}. Reported rather than interpreted.</p>`,
+    );
+  }
+  if (report.compliance.unmappedRules.length > 0) {
+    complianceNotes.push(
+      `<p class="muted">${report.compliance.unmappedRules.length} rule(s) cite no control in any framework: ` +
+        `${report.compliance.unmappedRules.map((id) => escapeHtml(id)).join(", ")}.</p>`,
+    );
+  }
+
   const body =
     `<p class="muted">This is what detection <em>actually reads</em>, derived from the rules this deployment runs ` +
     `rather than from the sources it can accept. A source is “read” when a rule would look at an event from it — not ` +
@@ -2330,6 +2400,21 @@ export function renderCoverage(view: ConsoleCoverageView, flash?: string | null,
     unreachable +
     `<h2>The rulebook</h2>` +
     `<div class="card"><table><thead><tr><th>Rule</th><th>Name</th><th>Severity</th><th>Shape</th><th>Reads</th></tr></thead><tbody>${ruleRows}</tbody></table></div>` +
+    `<h2>MITRE ATT&CK</h2>` +
+    `<p class="muted">The same rulebook read against the kill chain: a rule's technique comes from its own ` +
+    `<code>MITRE:</code> reference, and a tactic is answered when at least one rule names a technique filed under it. ` +
+    `The catalogue this build carries is a subset of the enterprise matrix, so these are statements about this build ` +
+    `rather than about ATT&CK.</p>` +
+    `<div class="card"><table><thead><tr><th>Tactic</th><th></th><th>Techniques</th><th>Rules</th></tr></thead><tbody>${tacticRows}</tbody></table></div>` +
+    `<h3>Untouched tactics</h3>` +
+    attackGaps +
+    attackNotes.join("") +
+    `<h2>Compliance controls</h2>` +
+    `<p class="muted">Which framework controls the rules cite, taken from the rules' own references. An uncovered ` +
+    `control is a control with nothing behind it in detection, which is the honest half of a compliance claim and ` +
+    `the half a control matrix usually leaves out.</p>` +
+    frameworkCards +
+    complianceNotes.join("") +
     `<p class="muted">Generated ${escapeHtml(view.generatedAt)} from the ${escapeHtml(report.rules.length)} rule(s) ` +
     `in this build. Adding a rule adds it here; nothing on this page is maintained by hand.</p>`;
 

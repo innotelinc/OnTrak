@@ -1,13 +1,19 @@
 import { redirect } from "next/navigation";
 
-import { requireActor } from "../../../lib/session";
+import { currentSessionName, requireActor } from "../../../lib/session";
 import { actorHasPermission } from "../../../lib/access-rules";
-import { alertPromotionServicesFor, securityAlertServicesFor } from "../../../lib/db";
+import { alertPromotionServicesFor, securityAlertServicesFor, sentinelContainmentServicesFor } from "../../../lib/db";
 import { summarizeAlerts } from "../../../lib/security-alert-rules";
+import { sentinelTargetGaps } from "../../../lib/sentinel-containment";
 import { SUPPRESSION_FIELDS } from "../../../lib/alert-promotion-rules";
 import type { PromotionRecord } from "../../../lib/alert-promotion-service";
 import { SecurityAlertList } from "../../../components/SecurityAlertList";
-import { addSuppressionAction, promoteAlertAction, recordAlertVerdictAction } from "../../actions/security";
+import {
+  addSuppressionAction,
+  promoteAlertAction,
+  recordAlertVerdictAction,
+  requestContainmentAction,
+} from "../../actions/security";
 
 export const metadata = { title: "Security" };
 
@@ -28,16 +34,23 @@ export default async function SecurityPage({
   if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
 
   const { flash, error } = await searchParams;
-  const [alerts, promotions, suppressions] = await Promise.all([
+  const [alerts, promotions, suppressions, containingActor] = await Promise.all([
     securityAlertServicesFor().list(actor.tenantId),
     alertPromotionServicesFor().listPromotions(actor.tenantId),
     alertPromotionServicesFor().listSuppressions(actor.tenantId),
+    currentSessionName(),
   ]);
 
   const summary = summarizeAlerts(alerts);
   const byAlert = new Map<string, PromotionRecord>(promotions.map((promotion) => [promotion.alertId, promotion]));
   const canTriage = actorHasPermission(actor, "ticket:update");
   const open = alerts.filter((alert) => alert.ticketId === null).length;
+  // Resolved the same way the action resolves it, so the page cannot offer a control the
+  // action would refuse: `null` here is the same `null` the button is gated on.
+  const canContain = canTriage && sentinelContainmentServicesFor() !== null;
+  const containmentGaps = sentinelTargetGaps();
+  const sentinelAlerts = alerts.filter((alert) => alert.source === "SENTINEL").length;
+  const pendingContainment = alerts.filter((alert) => alert.containmentState === "PENDING").length;
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
@@ -53,6 +66,8 @@ export default async function SecurityPage({
         <p className="text-xs text-ink-faint">
           {summary.uniqueDetections} detection{summary.uniqueDetections === 1 ? "" : "s"} from {Object.values(summary.bySource).filter((count) => count > 0).length} source
           {Object.values(summary.bySource).filter((count) => count > 0).length === 1 ? "" : "s"}
+          {sentinelAlerts > 0 ? ` · ${sentinelAlerts} from OnTrak Sentinel` : ""}
+          {pendingContainment > 0 ? ` · ${pendingContainment} awaiting a Sentinel approver` : ""}
         </p>
       </div>
 
@@ -63,10 +78,26 @@ export default async function SecurityPage({
       ) : null}
       {flash ? <p className="rounded-xl2 border border-ok/40 bg-ok/10 px-4 py-3 text-sm text-ok">{flash}</p> : null}
 
+      {canTriage && !canContain && containmentGaps.length > 0 ? (
+        <p className="rounded-xl2 border border-line bg-surface px-4 py-3 text-xs text-ink-soft">
+          This desk cannot contain anything in OnTrak Sentinel yet: {containmentGaps.join(", ")} {containmentGaps.length === 1 ? "is" : "are"} unset.
+          Alerts are still ingested and triaged; the containment ask is simply not offered.
+        </p>
+      ) : null}
+
       <SecurityAlertList
         alerts={alerts}
         promotionsFor={(alertId) => byAlert.get(alertId)}
-        {...(canTriage ? { actions: { promote: promoteAlertAction, verdict: recordAlertVerdictAction } } : {})}
+        {...(canTriage
+          ? {
+              actions: {
+                promote: promoteAlertAction,
+                verdict: recordAlertVerdictAction,
+                ...(canContain ? { contain: requestContainmentAction } : {}),
+              },
+              ...(containingActor ? { requestedByLabel: containingActor } : {}),
+            }
+          : {})}
       />
 
       <section className="space-y-3 rounded-xl2 border border-line bg-surface p-4">

@@ -913,12 +913,17 @@ model InboundMessage {
   @@index([tenantId, messageId])
 }
 
+/// `SENTINEL` is OnTrak Sentinel itself, kept apart from `IPS` on purpose: a desk wants to
+/// know at a glance whether a detection came from the family's own platform or from somebody
+/// else's sensor, and a product that reported itself as a generic IPS would make that
+/// unanswerable about a queue somebody has to work.
 enum SecuritySource {
   IDS
   IPS
   SIEM
   EDR
   NETWORK
+  SENTINEL
 }
 
 enum SecuritySeverity {
@@ -960,6 +965,24 @@ model SecurityAlert {
   sourceIp    String?
   /// Where the raw vendor payload is stored. A reference, never the payload.
   rawRef      String?
+  ///
+  /// The **rule set's own id** the detection was judged by, when the sender reports one.
+  /// OnTrak Sentinel calls it `rulebookVersion`, and it is the field that makes an old alert
+  /// explicable: a rule at version 3 in a corpus of four and the same rule at version 3 in a
+  /// corpus of forty are different claims, and a per-rule version cannot tell them apart.
+  rulebookVersion  String?
+  /// MITRE ATT&CK technique ids the detection maps to, upper-cased.
+  techniques       String[] @default([])
+  /// Indicators of compromise the evidence matched, when the sender reports a count.
+  threatIntelCount Int      @default(0)
+  ///
+  /// Where this alert stands with Sentinel's prevention (S5): `NONE`, `REQUESTED`, `PENDING`,
+  /// `APPLIED`, `REFUSED` or `FAILED`. Three different sentences — asked for, waiting for an
+  /// approver, refused by a rail — that a boolean could not tell apart, and the reason a desk
+  /// that read "pending" as "blocked" would stop watching a host nothing is blocking.
+  containmentState    String  @default("NONE")
+  /// Sentinel's action id, so the desk's record and the other register point at each other.
+  containmentActionId String?
   dedupeKey   String
   occurredAt  DateTime
   firstSeenAt DateTime

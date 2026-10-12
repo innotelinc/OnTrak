@@ -7,9 +7,10 @@
  *
  *  - **It reports coverage that is not there.** A map built from a source list rather than
  *    from the rules would show every declared source as watched, which is the opposite of
- *    what a reader needs. The report is derived from `DETECTION_RULES`, so the build's own
- *    blind spots — HOST and HTTP kinds, and the EBPF, EDR and PROXY sources under them —
- *    have to appear on it.
+ *    what a reader needs. The report is derived from `DETECTION_RULES`, so a deliberately
+ *    narrow rulebook has to show its blind spots, and the shipped rulebook — which now has a
+ *    reader for every declared kind and source — has to show *none*, rather than inventing
+ *    one to look busy.
  *  - **It reads the rulebook differently from the pipeline.** `appliesTo.kinds` and
  *    `appliesTo.sources` mean specific things to `ruleApplies`; a second reading here would
  *    drift, so the two override rules (a missing list means everything, an explicit source
@@ -57,40 +58,61 @@ function rule(overrides: Partial<DetectionRule>): DetectionRule {
   };
 }
 
-test("coverage: the map is the build's own blind spots, named", () => {
+test("coverage: the shipped rulebook reads every declared kind and source", () => {
   const report = coverageReport();
 
   // The rulebook is the input, so every shipped rule is on the map with its version.
   assert.deepEqual(
     report.rules.map((entry) => entry.id).sort(),
-    ["SG-BEH-001", "SG-BEH-002", "SG-SIG-001"],
+    [
+      "SG-ANM-001", "SG-ANM-002", "SG-ANM-003",
+      "SG-BEH-001", "SG-BEH-002", "SG-BEH-003", "SG-BEH-004",
+      "SG-HOST-001", "SG-HOST-002", "SG-HOST-003", "SG-HTTP-001",
+      "SG-SIG-001", "SG-SIG-002",
+    ],
   );
   assert.equal(report.rules.every((entry) => entry.version >= 1), true);
 
-  // NETWORK is read (two rules) and AUTH is read (the sequence); HOST and HTTP are not, and a
-  // map that skipped them would be answering a different question.
+  // Every kind has a reader now — the host and HTTP rules were the build's blind spots and are
+  // no longer — and the map is allowed to say so rather than manufacturing a gap.
   const byKind = Object.fromEntries(report.kinds.map((entry) => [entry.kind, entry]));
-  assert.equal(byKind.NETWORK.covered, true);
-  assert.equal(byKind.AUTH.covered, true);
-  assert.deepEqual(byKind.HOST.rules, [], "no rule reads HOST telemetry");
-  assert.deepEqual(byKind.HTTP.rules, [], "no rule reads HTTP telemetry");
-  assert.equal(byKind.HOST.covered, false);
-  assert.equal(byKind.HTTP.covered, false);
+  for (const kind of ["NETWORK", "HOST", "HTTP", "AUTH"] as const) {
+    assert.equal(byKind[kind].covered, true, `${kind} should be read`);
+    assert.ok(byKind[kind].rules.length > 0);
+  }
 
   // By source, through the normalizer's own kind mapping: EBPF and EDR are HOST and PROXY is
-  // HTTP, and none of the three is read.
+  // HTTP, and the host/HTTP rules reach them the same way a firewall's flow is reached.
   const bySource = Object.fromEntries(report.sources.map((entry) => [entry.source, entry]));
   assert.equal(bySource.NETFLOW.kind, "NETWORK");
   assert.equal(bySource.EBPF.kind, "HOST");
   assert.equal(bySource.EDR.kind, "HOST");
   assert.equal(bySource.PROXY.kind, "HTTP");
-  assert.equal(bySource.NETFLOW.covered, true);
-  assert.equal(bySource.FIREWALL.covered, true);
-  for (const source of ["EBPF", "EDR", "PROXY"] as const) {
-    assert.equal(bySource[source].covered, false, `${source} is a blind spot and has to say so`);
+  for (const source of ["NETFLOW", "FIREWALL", "EBPF", "EDR", "PROXY"] as const) {
+    assert.equal(bySource[source].covered, true, `${source} should be read`);
   }
 
-  // The gap list carries both halves, and the source gaps explain the kind they fall under.
+  // Every kind is read, so there is no gap to report — and a map that listed one anyway would
+  // be the failure this page exists to prevent.
+  assert.deepEqual(report.gaps, []);
+  assert.deepEqual(report.unreachable, []);
+
+  // AUTH is never implied by a source — it is a kind a payload claims — so no source maps to
+  // it even though a rule reads it.
+  assert.equal(report.sources.some((entry) => entry.kind === "AUTH"), false);
+});
+
+test("coverage: a narrow rulebook's blind spots are still named", () => {
+  // The map's honesty does not depend on the shipped rulebook covering everything: hand it a
+  // narrow one and the gaps it names are the same question answered against that input.
+  const networkOnly = rule({ id: "SG-NET", appliesTo: { kinds: ["NETWORK"] } });
+  const report = coverageReport([networkOnly]);
+
+  const byKind = Object.fromEntries(report.kinds.map((entry) => [entry.kind, entry]));
+  assert.equal(byKind.NETWORK.covered, true);
+  assert.equal(byKind.HOST.covered, false);
+  assert.equal(byKind.HTTP.covered, false);
+
   const gapNames = report.gaps.map((gap) => gap.name);
   for (const name of ["HOST", "HTTP", "EBPF", "EDR", "PROXY"]) {
     assert.ok(gapNames.includes(name), `${name} is missing from the gap list`);
@@ -98,10 +120,6 @@ test("coverage: the map is the build's own blind spots, named", () => {
   for (const gap of report.gaps) {
     assert.ok(gap.detail.length > 0, "a gap without an explanation is a bare accusation");
   }
-
-  // AUTH is never implied by a source — it is a kind a payload claims — so no source maps to
-  // it even though a rule reads it.
-  assert.equal(report.sources.some((entry) => entry.kind === "AUTH"), false);
 });
 
 test("coverage: the read rules match the pipeline's, both overrides included", () => {

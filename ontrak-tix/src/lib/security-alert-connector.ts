@@ -22,6 +22,7 @@
  */
 
 import { normalizeOccurredAt, type RawSecurityAlert } from "./security-alert-rules";
+import { parseSentinelAlert } from "./sentinel-ingest";
 import type { IngestResult, SecurityAlertService } from "./security-alert-service";
 
 /** The outcome of feeding one alert to the ingest service. */
@@ -47,6 +48,12 @@ function firstString(...values: unknown[]): string | undefined {
 /**
  * Turn a vendor webhook body into the rules module's `RawSecurityAlert`.
  *
+ * A payload from OnTrak Sentinel is read by its own reader first (`sentinel-ingest.ts`),
+ * because the family's own platform reports three things no alias lookup can recover — the
+ * corpus the alert was judged by, its ATT&CK techniques and its indicator count — and reading
+ * it through the generic path would file it correctly while quietly dropping all three. Every
+ * other vendor gets the alias treatment below, unchanged.
+ *
  * Vendors disagree on field names, so the common aliases are accepted rather
  * than forcing one vendor's shape. A payload with no identifiable vendor or no
  * parseable time is not an alert we can dedupe or place, and returns `null` so
@@ -55,6 +62,10 @@ function firstString(...values: unknown[]): string | undefined {
  */
 export function parseVendorAlert(body: unknown): RawSecurityAlert | null {
   if (!body || typeof body !== "object") return null;
+
+  const sentinel = parseSentinelAlert(body);
+  if (sentinel) return sentinel;
+
   const raw = body as Record<string, unknown>;
 
   const vendor = firstString(raw.vendor, raw.product, raw.detector, raw.sensor, raw.integration, raw.source);

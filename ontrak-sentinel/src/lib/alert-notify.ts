@@ -91,6 +91,67 @@ export interface AlertNotifier {
 }
 
 /**
+ * Several transports, told in order.
+ *
+ * A deployment that wants a pager *and* the desk is not asking for anything unusual, and the
+ * seam's contract already allows it: `notify` answers with an outcome per transport, so a
+ * fan-out is a loop rather than a new concept. Two properties are deliberate.
+ *
+ * **Every transport is told, whatever the last one answered.** A pager that is down must not
+ * be the reason the ticket queue never hears about an alert — that failure mode is exactly the
+ * one this seam exists to prevent, and short-circuiting would move it rather than remove it.
+ *
+ * **The outcome is the worst answer, with each transport named.** The chain records one row
+ * per alert, so a fan-out that reported `ok` because the first transport accepted would hide a
+ * refusal behind a success. Naming them keeps "who was told" answerable when it is more than
+ * one somebody.
+ */
+export class FanoutAlertNotifier implements AlertNotifier {
+  readonly name: string;
+
+  constructor(private readonly transports: readonly AlertNotifier[]) {
+    this.name = transports.map((transport) => transport.name).join("+") || "fanout";
+  }
+
+  async notify(event: AlertNotification): Promise<NotifyOutcome> {
+    const outcomes: [string, NotifyOutcome][] = [];
+    for (const transport of this.transports) {
+      try {
+        outcomes.push([transport.name, await transport.notify(event)]);
+      } catch (error) {
+        // Held to the interface's own answer: a transport whose implementation throws answers
+        // with a refusal, and a broken adapter does not get to stop the others being told.
+        outcomes.push([transport.name, { ok: false, error: error instanceof Error ? error.message : "the transport threw" }]);
+      }
+    }
+
+    const refusals = outcomes.filter(([, outcome]) => !outcome.ok);
+    if (refusals.length === 0) {
+      return { ok: true, detail: outcomes.map(([name, outcome]) => `${name}: ${(outcome as { detail: string }).detail}`).join("; ") };
+    }
+    return {
+      ok: false,
+      error: refusals.map(([name, outcome]) => `${name}: ${(outcome as { error: string }).error}`).join("; "),
+    };
+  }
+}
+
+/**
+ * The transports a deployment's environment describes, in the order they are told.
+ *
+ * The family's own desk first when both are configured, because a ticket is the one an operator
+ * will act on; the generic webhook is the pager somebody wrote an adapter for. A single
+ * transport is returned as itself rather than wrapped, so the chain names it exactly as before.
+ */
+export function notifierChain(candidates: readonly (AlertNotifier | null)[]): AlertNotifier | null {
+  const transports = candidates.filter((entry): entry is AlertNotifier => entry !== null);
+  if (transports.length === 0) return null;
+  // One transport is returned as itself, not wrapped: the chain names it in the evidence row
+  // exactly as it did before a fan-out existed.
+  return transports.length === 1 ? transports[0] : new FanoutAlertNotifier(transports);
+}
+
+/**
  * A transport that keeps what it was told, and does nothing with it.
  *
  * Two real uses, and neither is a placeholder: it is the transport a deployment runs to

@@ -63,7 +63,6 @@ import {
   type ConsoleSyncReportView,
 } from "./console-rules";
 import type { CompliancePacket } from "./assurance-packet";
-import type { SignInInput } from "./sign-in-rules";
 import { UPSTREAM_STATE_COOKIE, readCallback } from "./upstream-rules";
 import type { WebAuthnRegistrationResponse } from "./webauthn-rules";
 import type { WebAuthnRegistrationOptions } from "./webauthn-service";
@@ -79,23 +78,15 @@ export interface ConsoleEndpoints {
   /**
    * The sign-in page's view.
    *
-   * Separate from `signIn` because the page is reachable by anybody and shows
-   * nothing about any account — it only tells the renderer whether this deployment
-   * names a workspace.
+   * The page is reachable by anybody and shows nothing about any account — it only
+   * tells the renderer whether this deployment federates to a provider, and whose.
    */
   signInView(): Promise<ServiceResult<ConsoleSignInView>>;
   /**
-   * Verify a credential and start a session.
-   *
-   * Returns the session id for the router to put in the cookie, rather than setting
-   * the cookie itself: the HTTP layer owns the transport, and a service that wrote
-   * response headers would be the second place a session could be started.
-   */
-  signIn(input: SignInInput): Promise<ServiceResult<{ sessionId: string; redirectTo: string }>>;
-  /**
    * The provider door. `start` is the redirect *to* the provider (with the sealed state as
-   * a cookie); `callback` is the reply, and answers with the session id for the same reason
-   * `signIn` does: the HTTP layer owns the cookie.
+   * a cookie); `callback` is the reply, and answers with the session id for the HTTP layer
+   * to put in the cookie — the transport owns the cookie, and a service that wrote response
+   * headers would be the second place a session could be started.
    */
   upstreamStart(
     returnTo: string | null,
@@ -1078,50 +1069,18 @@ function requestIsSecure(request: HttpRequest): boolean {
 /*  Sign in                                                                   */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The sign-in page.
+ *
+ * A `GET` only. The console has no password leg any more — a `POST` here is not a sign-in
+ * attempt, it is a path the product does not serve, and the router answers it the same way
+ * it answers any other unsupported method.
+ */
 async function handleSignInPage(url: URL, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
   const result = await endpoints.signInView();
   return respond(result, (view) =>
     html(200, renderSignIn({ ...view, error: errorFrom(url), flash: flashFrom(url) })),
   );
-}
-
-/**
- * A sign-in attempt.
- *
- * A failure re-renders the form with `200` rather than redirecting to a `?error=`. A
- * redirect would put the identifier in the URL — where it lands in history, in
- * `Referer` and in the proxy log — and a refresh would re-post the attempt. Rendering
- * in place keeps the typed address in the field and the attempt out of the address bar.
- *
- * The plaintext password is never carried across: it exists in this function's scope
- * and is gone when it returns, whether the attempt succeeded or not.
- */
-async function handleSignInSubmit(
-  request: HttpRequest,
-  endpoints: ConsoleEndpoints,
-): Promise<HttpResponse> {
-  const params = formParams(request);
-  const input: SignInInput = {
-    identifier: params.identifier ?? "",
-    password: params.password ?? "",
-    code: params.code ?? "",
-    organization: params.organization ?? "",
-    userAgent: header(request, "user-agent") || null,
-    // Behind a proxy this is the client; `x-forwarded-for` may be a list, and the
-    // first entry is the one that connected.
-    ipAddress: header(request, "x-forwarded-for").split(",")[0]?.trim() || null,
-  };
-
-  const result = await endpoints.signIn(input);
-  if (!result.ok) {
-    const view = await endpoints.signInView();
-    const shown = view.ok ? view.value : { identifier: null, organization: null, error: null, flash: null, upstream: null };
-    return html(200, renderSignIn({ ...shown, identifier: input.identifier, error: result.error, flash: null }));
-  }
-
-  return redirect(result.value.redirectTo, {
-    "set-cookie": sessionCookie(result.value.sessionId, requestIsSecure(request)),
-  });
 }
 
 /**
@@ -1231,9 +1190,7 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
     case "/":
       return get(() => Promise.resolve(redirect(CONSOLE_PATHS.home)));
     case CONSOLE_PATHS.signIn:
-      return method === "POST"
-        ? handleSignInSubmit(request, endpoints)
-        : get(() => handleSignInPage(url, endpoints));
+      return get(() => handleSignInPage(url, endpoints));
     case CONSOLE_PATHS.upstreamStart:
       return get(() => handleUpstreamStart(url, endpoints, request));
     case CONSOLE_PATHS.upstreamCallback:

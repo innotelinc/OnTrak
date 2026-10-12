@@ -30,6 +30,7 @@ import {
 } from "../src/lib/console-rules";
 import { ConsoleService } from "../src/lib/console-service";
 import { routeConsole, type ConsoleEndpoints } from "../src/lib/console-http";
+import { DETECTION_RULES } from "../src/lib/detection-rules";
 import { DetectionService, MemoryAlertStore } from "../src/lib/detection-service";
 import { EnforcementService, MemoryEnforcementStore } from "../src/lib/enforcement-service";
 import { sha256Hex } from "../src/lib/hash";
@@ -295,9 +296,11 @@ test("control center: an administrator sees detection, prevention and the chain"
   assert.equal(ids.summary.open, 1);
   assert.equal(ids.summary.openHighOrCritical, 1, "the plaintext-management signature is HIGH");
   assert.equal(ids.watchlist.length, 1);
-  assert.equal(ids.ruleCount, 3, "the cockpit reads the corpus this build runs");
+  assert.equal(ids.ruleCount, DETECTION_RULES.length, "the cockpit reads the corpus this build runs");
   assert.match(ids.rulebookVersion, /^[0-9a-f]{12}$/);
-  assert.ok(ids.gaps.length > 0, "blind spots are reported, not hidden");
+  // The shipped corpus now reads every declared kind and source, so there is no blind spot to
+  // report — and the cockpit says so rather than manufacturing one.
+  assert.deepEqual(ids.gaps, []);
 
   // Prevention is present for an administrator even with nothing in force — the register is
   // shown, not omitted, because "nothing is blocked" is a fact worth stating.
