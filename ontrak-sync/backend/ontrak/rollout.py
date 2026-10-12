@@ -93,6 +93,14 @@ BLOCKED = "blocked-after-failure"
 BATCH_LIMIT = "batch-limit"
 HOST_LIMIT = "host-limit"
 PLAN_REFUSED = "compose-plan-refused"
+# The one refusal a decision can pick up AFTER the rails said yes: the roll was attempted
+# and the container was not replaced — the registry refused the pull, the tag already
+# resolved to what was running, or `compose up` left the old container in place. It is in
+# the refusal vocabulary, and apart from the `untouched` STATE (which says the same thing
+# in the roll history), because the run's one-line summary groups by these codes: an
+# attempt that replaced nothing is not a roll, and counting it as one put `2 rolled`
+# beside numbers that said `rolled: 1`.
+NOT_REPLACED = "not-replaced"
 ROLL = "roll"
 
 # Every code that means "this one is going to be rolled", as a set, so a caller can
@@ -106,7 +114,7 @@ ROLLING = frozenset({ROLL})
 REFUSAL_CODES = frozenset({
     NOT_OWNED, HOST_NOT_CONFIGURED, DISABLED, MANUAL_ONLY, NOT_RUNNING,
     PROTECTED, UNJUDGED, CURRENT, OUTSIDE_WINDOW, FREEZE, COOLDOWN, BLOCKED,
-    BATCH_LIMIT, HOST_LIMIT, PLAN_REFUSED,
+    BATCH_LIMIT, HOST_LIMIT, PLAN_REFUSED, NOT_REPLACED,
 })
 DECISION_CODES = REFUSAL_CODES | {ROLL}
 
@@ -494,6 +502,7 @@ def describe(code: str) -> str:
         OUTSIDE_WINDOW: "outside window", FREEZE: "frozen",
         COOLDOWN: "cooling down", BLOCKED: "blocked", BATCH_LIMIT: "run limit",
         HOST_LIMIT: "host limit", PLAN_REFUSED: "plan refused", ROLL: "rolled",
+        NOT_REPLACED: "not replaced",
     }.get(code, code)
 
 

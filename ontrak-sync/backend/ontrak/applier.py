@@ -1061,6 +1061,17 @@ def apply_rollouts(conn, settings: Settings, policy: Policy, *, trigger: str = "
             report.rolled_back += 1
         elif state == rollout.ROLL_FAILED:
             report.failed += 1
+        else:
+            # `untouched`: the attempt never replaced the container, so the decision that
+            # said "this one rolls" is rewritten to say what happened instead. The rails
+            # run before the pull, so a decision can only learn this afterwards — and the
+            # run's own sentence reads these decisions, which is how a pass that pulled an
+            # image already running came to report `2 rolled` beside counts saying
+            # `rolled: 1`. The roll row's state is the same fact for the history table;
+            # this is the same fact for the summary, the decisions payload and the tallies.
+            report.decisions[-1] = replace(decision, roll=False, code=rollout.NOT_REPLACED,
+                                           detail=reason)
+            report.skipped += 1
         conn.commit()
 
     for message in report.messages:

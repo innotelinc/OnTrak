@@ -236,6 +236,9 @@ class ThePullIsTheVerdict(RollCase):
         self.assertEqual(1, len(self.fake.up_calls()))
         self.assertEqual(rollout.ROLLED, self.last_roll()["state"])
         self.assertIn("rolled to", self.last_roll()["reason"])
+        # A roll that landed still reports the rails' `roll` code, so the payload keeps
+        # saying which decision was taken and not only what came of it.
+        self.assertEqual([rollout.ROLL], [d["code"] for d in result["decisions"]])
 
     def test_a_tag_that_did_not_move_is_left_running(self):
         # The finding said behind and the registry disagrees: the image was republished
@@ -248,6 +251,23 @@ class ThePullIsTheVerdict(RollCase):
         self.assertEqual([], self.fake.up_calls())
         self.assertEqual(rollout.ROLL_UNTOUCHED, self.last_roll()["state"])
         self.assertIn("already running the current image", self.last_roll()["reason"])
+        self.assertEqual([rollout.NOT_REPLACED],
+                         [d["code"] for d in result["decisions"]])
+
+    def test_an_attempt_that_replaced_nothing_is_not_counted_as_a_roll(self):
+        # The roll row already refuses to call this a roll (`untouched`); the run's
+        # one-line summary has to agree with the counts beside it, or the console
+        # reports a roll that did not happen — which is what a live pass did, with
+        # `2 rolled` over a tally of `rolled: 1`.
+        self.finding()
+        self.fake.pulled_id = self.fake.image_id
+        result = self.run_rollouts()
+        self.assertEqual(0, result["rolled"])
+        self.assertIn("0 rolled", result["summary"])
+        self.assertIn(f"{rollout.NOT_REPLACED} ×1", result["summary"])
+        self.assertEqual([rollout.NOT_REPLACED],
+                         [d["code"] for d in result["decisions"]])
+        self.assertIn("already running the current image", result["decisions"][0]["detail"])
 
     def test_a_registry_that_refuses_the_pull_restarts_nothing(self):
         self.finding()
@@ -624,6 +644,11 @@ class TheRecord(RollCase):
     def test_every_decision_is_reported_with_its_reason(self):
         # A run that does nothing is the normal case, so what it decided has to be
         # legible per container and not only as a count.
+        #
+        # The payload reports the OUTCOME, not the rails' plan. Here the rail said roll
+        # and the container would not move, so the decision reads `not-replaced` and the
+        # sentence says why — reporting `roll` would be the plan, which is the thing the
+        # one-line summary used to be wrong about.
         self.finding()
         self.fake.pulled_id = self.fake.image_id
         result = self.run_rollouts()
@@ -632,5 +657,5 @@ class TheRecord(RollCase):
         decision = result["decisions"][0]
         self.assertEqual("i1", decision["host"])
         self.assertEqual(REF, decision["ref"])
-        self.assertEqual(rollout.ROLL, decision["code"])
-        self.assertIn("rolling", decision["detail"])
+        self.assertEqual(rollout.NOT_REPLACED, decision["code"])
+        self.assertIn("already running the current image", decision["detail"])
