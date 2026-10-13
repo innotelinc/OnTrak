@@ -30,7 +30,7 @@ export const es: Messages = {
   "role.student": "Estudiante",
 
   "auth.metaSignIn": "Iniciar sesión",
-  "auth.metaRegister": "Crear una cuenta",
+  "auth.metaRegister": "Inscribirse",
   "auth.signIn": "Iniciar sesión",
   "auth.welcomeBack": "Bienvenido de nuevo",
   "auth.signInIntro": "Inicia sesión para continuar donde lo dejaste.",
@@ -47,9 +47,10 @@ export const es: Messages = {
     "Iniciar sesión aquí no es el camino normal. Si el proveedor funciona, vuelve y usa el inicio de sesión único: cada uso de esta pantalla queda auditado.",
   "auth.or": "o",
   "auth.newStudent": "¿Eres nuevo estudiante?",
-  "auth.createAccount": "Crear una cuenta",
+  "auth.createAccount": "Inscribirse",
   "auth.startTraining": "Empieza a entrenar",
-  "auth.registerIntro": "Las cuentas de estudiante son gratuitas. Tu instructor podrá añadirte a una clase después.",
+  "auth.registerIntro":
+    "Inscribirse crea tu cuenta de formación. El acceso viene con la matrícula en AthenIQ, una suscripción a la red OnTrak, un pase o una invitación — tu instructor podrá añadirte a una clase después.",
   "auth.whatYouGet": "Lo que obtienes",
   "auth.whatYouGetBody":
     "Un terminal Linux en el navegador, un host de PowerShell de Windows y una suite de Office: todo calificado automáticamente, cronometrado y funcional en un teléfono.",

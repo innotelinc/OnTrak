@@ -272,7 +272,7 @@ export class ConsoleService implements ConsoleEndpoints {
       value: {
         error: null,
         flash: null,
-        upstream: this.upstream?.enabled ? { path: UPSTREAM_PATHS.start, label: this.upstream.label } : null,
+        upstream: this.upstream?.enabled ? { path: UPSTREAM_PATHS.start } : null,
       },
     };
   }

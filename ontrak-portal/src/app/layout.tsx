@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { ProductMark } from "@/components/ProductMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { portalConfig } from "@/lib/config";
 import { readSession } from "@/lib/session";
@@ -51,26 +52,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <div className="page">
           <header className="masthead">
             <a className="masthead__brand" href="/">
-              <svg className="masthead__mark" viewBox="0 0 48 48" role="img" aria-label="OnTrak Unity" width="30" height="30">
-                <defs>
-                  <linearGradient id="unity-masthead" x1="0" y1="0" x2="1" y2="1">
-                    <stop offset="0%" stopColor="var(--brand)" />
-                    <stop offset="100%" stopColor="var(--tone-unity)" />
-                  </linearGradient>
-                </defs>
-                <path
-                  d="M24 4.5 L41 12 V27 C41 37.4 34 43 24 44.5 C14 43 7 37.4 7 27 V12 Z"
-                  fill="url(#unity-masthead)"
-                />
-                <path
-                  d="M14 24.5 h7 l2.5 -6.5 h5.5"
-                  fill="none"
-                  stroke="var(--brand-ink)"
-                  strokeWidth="2.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              {/* The shield every OnTrak product carries, at the masthead's size, with
+                  this product's own stroke inside it. The name is in text beside it, so
+                  the mark is decoration here rather than a second label. */}
+              <ProductMark product="unity" id="unity-masthead" className="masthead__mark" label={false} />
               <strong>OnTrak Unity</strong>
               <span>{config.baseDomain}</span>
             </a>
@@ -97,7 +82,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <ThemeToggle />
             </div>
           </header>
-          <main>{children}</main>
+          <main className="page__main">{children}</main>
           <footer className="footer">
             <span>OnTrak Unity</span>
           </footer>

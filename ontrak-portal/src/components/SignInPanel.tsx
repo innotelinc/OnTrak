@@ -9,10 +9,9 @@
  * reused, and a second place to audit; the family's whole premise is that a person
  * is who the directory says they are.
  *
- * The product mark sits above the gate — an inline SVG, flat and simple, the same
- * family of marks every OnTrak product carries on its login (the same idea the
- * Sentinel console uses). The mark is the thing a person arriving cold recognises
- * before they click through.
+ * The product mark sits above the gate: `ProductMark`, the same shield every product
+ * draws from the same silhouette, which the masthead and the tiles below also use. The
+ * mark is the thing a person arriving cold recognises before they click through.
  *
  * If the provider is not configured for this deployment the page says so plainly
  * instead of rendering a control that cannot complete — a button that fails after
@@ -24,40 +23,8 @@
 
 import { useEffect, useState } from "react";
 
+import { ProductMark } from "@/components/ProductMark";
 import { safeReturnTo } from "@/lib/oidc-rules";
-
-/** The OnTrak Unity mark: a rounded badge with a single joining stroke — the front
- * door of the family, plain and simple. Flat, 48×48, brand-toned, the same style
- * every OnTrak product carries on its login. */
-const UNITY_MARK =
-  <svg
-    className="gate__mark-svg"
-    viewBox="0 0 48 48"
-    role="img"
-    aria-label="OnTrak Unity"
-    width="44"
-    height="44"
-  >
-    <defs>
-      <linearGradient id="unity-mark" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stopColor="var(--brand)" />
-        <stop offset="100%" stopColor="var(--tone-unity)" />
-      </linearGradient>
-    </defs>
-    <path
-      d="M24 4.5 L41 12 V27 C41 37.4 34 43 24 44.5 C14 43 7 37.4 7 27 V12 Z"
-      fill="url(#unity-mark)"
-    />
-    <path
-      d="M14 24.5 h7 l2.5 -6.5 h5.5"
-      fill="none"
-      stroke="var(--brand-ink)"
-      strokeWidth="2.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </svg>;
-
 
 export function SignInPanel({ ssoEnabled, error }: {
   ssoEnabled: boolean;
@@ -83,7 +50,7 @@ export function SignInPanel({ ssoEnabled, error }: {
   return (
     <div className="gate">
       <div className="gate__mark-wrap">
-        {UNITY_MARK}
+        <ProductMark product="unity" id="unity-gate" className="gate__mark-svg" />
         <h1 className="gate__mark">
           OnTrak <span>Unity</span>
         </h1>

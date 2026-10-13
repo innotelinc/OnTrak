@@ -9,7 +9,7 @@
   "display_override": ["standalone", "minimal-ui"],
   "orientation": "any",
   "background_color": "#f7f5ff",
-  "theme_color": "#6c4cf1",
+  "theme_color": "#5f3fe6",
   "categories": ["education", "productivity", "developer"],
   "icons": [
     {

@@ -52,8 +52,16 @@ export interface Product {
   host: string;
   /** Which roles are shown this product. */
   roles: readonly Role[];
-  /** A colour family, so the tiles are distinguishable at a glance. */
-  tone: "training" | "desk" | "security" | "operations" | "agent";
+  /**
+   * A colour family, so the tiles are distinguishable at a glance.
+   *
+   * Each product has one of its own, the lab included: the lab began life on the
+   * training range's tone (they are the same course done two ways), but a tile for each
+   * now sits side by side on the same dashboard, and the pair read as one product until
+   * the lab got `--tone-lab`. Nothing else changes with it — a tone is a label, and the
+   * bold name on the tile is the signal (see the theme's README).
+   */
+  tone: "training" | "desk" | "security" | "operations" | "agent" | "lab";
   /**
    * A product this repository does not serve, which a deployment may not run at all.
    *
@@ -144,10 +152,12 @@ export const PRODUCTS: readonly Product[] = [
     // The lab is the hands-on half of the same training: a student who belongs in
     // the simulated range belongs here too, and an instructor runs both.
     roles: ["STUDENT", "INSTRUCTOR", "ADMIN"],
-    // The one tone reused, on purpose: the lab is the training range's real-VM
-    // sibling, and the shared colour says so. The tile still carries its own name,
-    // so the tone remains a label rather than the only signal (see the theme).
-    tone: "training",
+    // Its own tone: the lab is the training range's real-VM sibling, and the two tiles
+    // are drawn next to each other for the same student — so the shared colour that
+    // once said "same course" said "same product" instead. The tile still carries its
+    // own name and its own mark, so the tone remains a label rather than the only
+    // signal (see the theme).
+    tone: "lab",
     // The catalogue's one optional product: the lab runs on its own host, from its own
     // repository, so a deployment has to say it wants the lab *and* where it is before
     // a tile is drawn for it (see `runsHere`). Both the link and the light come from

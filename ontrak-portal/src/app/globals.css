@@ -29,40 +29,11 @@ a { color: var(--brand); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code, .mono { font-family: var(--mono); font-size: 12.5px; }
 
-.page {
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 0 var(--space-5);
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
-
-/* ── masthead ─────────────────────────────────────────────────────────────── */
-.masthead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: 16px 0 14px;
-  border-bottom: 1px solid var(--line);
-  flex-wrap: wrap;
-}
-.masthead__brand { display: flex; align-items: center; gap: 9px; color: var(--ink); }
-.masthead__mark {
-  flex: none;
-  color: var(--brand);
-}
-.masthead__mark path:first-child { filter: drop-shadow(0 1px 1px rgb(0 0 0 / 12%)); }
-.masthead__brand:hover { text-decoration: none; }
-.masthead__brand strong { font-family: var(--font-display); font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
-.masthead__brand span {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--ink-faint);
-}
-.masthead__tools { display: flex; align-items: center; gap: 10px; }
+/* ── the page and its masthead ──────────────────────────────────────────────
+   `.page`, `.page__main`, the masthead, the footer, the gate and the SSO button
+   all come from the shared theme: they are the family's front door, not this
+   product's page, and every OnTrak sign-in is the same shape because of it. What
+   is defined here is the part only the portal has — who it thinks you are. */
 
 /* Who the portal thinks you are, and the one action that can change the answer
    without a sign-out. Deliberately quiet: it is a diagnostic, not a hero. */
@@ -74,18 +45,6 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
   /* The address is the first thing to go when the bar is tight; the role pill is the
      part that answers the question somebody came here with. */
   .masthead__who { display: none; }
-}
-
-main { flex: 1; padding: var(--space-5) 0 var(--space-6); }
-.footer {
-  padding: 16px 0 26px;
-  border-top: 1px solid var(--line);
-  font-size: 12px;
-  color: var(--ink-faint);
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-3);
-  flex-wrap: wrap;
 }
 
 /* The theme switch is `.ot-theme`, and it lives in the shared theme file above so
@@ -163,8 +122,13 @@ main { flex: 1; padding: var(--space-5) 0 var(--space-6); }
 .tile--security::before { background: var(--tone-sentinel); }
 .tile--operations::before { background: var(--tone-sync); }
 .tile--agent::before { background: var(--tone-genie); }
+.tile--lab::before { background: var(--tone-lab); }
 
 .tile__top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+/* The mark and the name read as one heading, so they sit on one line and the
+   badge on the right stays clear of both. */
+.tile__head { display: flex; align-items: flex-start; gap: 10px; }
+.tile__mark { width: 26px; height: 26px; flex: none; }
 .tile h2 { margin: 0; font-size: 15.5px; font-weight: 650; }
 .tile p { margin: 5px 0 0; color: var(--ink-soft); font-size: 13px; }
 .tile__foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
@@ -250,32 +214,8 @@ tbody tr:last-child td { border-bottom: none; }
 .faint { color: var(--ink-faint); }
 .empty { padding: 30px 16px; text-align: center; color: var(--ink-faint); }
 
-/* ── the sign-in gate ────────────────────────────────────────────────────── */
-/* A column with its own rhythm rather than margins on each child: the gate now
-   holds only the name, the one control and — when there is no provider — a note,
-   and the gap is what keeps it from looking collapsed in any of those cases. */
-.gate {
-  max-width: 420px;
-  margin: 9vh auto 0;
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-  padding: 32px 28px 28px;
-  text-align: center;
-}
-.gate__mark {
-  font-family: var(--font-display);
-  font-size: 30px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: 0;
-  color: var(--ink);
-}
-.gate__mark span { color: var(--brand); }
+/* The sign-in gate (`.gate`, `.gate__mark-wrap`, `.gate__mark`) is the shared
+   theme's, so this product's front door and the other five cannot drift. */
 
 label.field { display: block; margin-bottom: 13px; text-align: left; }
 label.field > span { display: block; font-size: 12px; color: var(--ink-soft); margin-bottom: 4px; }
@@ -308,21 +248,6 @@ button.ghost { background: transparent; }
 
 .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .actions--end { justify-content: flex-end; }
-
-/* An anchor, not a button: the handshake is a browser navigation, and fetching it
-   is what breaks it. */
-.sso-button {
-  display: block;
-  text-align: center;
-  background: var(--brand);
-  border: 1px solid var(--brand);
-  border-radius: var(--radius-sm);
-  padding: 11px 13px;
-  color: var(--brand-ink);
-  font-weight: 650;
-  font-size: 13.5px;
-}
-.sso-button:hover { text-decoration: none; filter: brightness(1.06); }
 
 /* ── the people page ─────────────────────────────────────────────────────── */
 .people td.role select { width: auto; min-width: 148px; padding: 5px 8px; font-size: 12.5px; }

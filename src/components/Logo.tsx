@@ -1,42 +1,61 @@
 import Link from "next/link";
 import { cn } from "@/lib/cn";
 
-/** The OnTrak IT Support Training gate mark: a laptop screen with a check — hands-on IT
- * support training, plain and simple. Flat, 48×48, brand-toned, the same style every
- * OnTrak product carries on its login. */
-export function ItsGateMark({ className }: { className?: string } = {}) {
+/**
+ * The family's mark, and the range's stroke inside it.
+ *
+ * Every OnTrak product carries the same silhouette on its front door — the shield —
+ * and one stroke of its own inside it, so the family is recognisable at a glance and
+ * the product is still legible. The range's stroke is the tick, because a scenario is
+ * answered by getting the job done; the gradient runs from `--brand` to `--tone-its`,
+ * which is what makes this product's mark this product's.
+ *
+ * The geometry is deliberately the same numbers in all six products (see `.gate` in
+ * the shared theme). A mark that is redesigned per product is a mark that drifts, and
+ * the front door is the one screen nobody looks at closely enough to notice.
+ */
+const SHIELD = "M24 4.5 L41 12 V27 C41 37.4 34 43 24 44.5 C14 43 7 37.4 7 27 V12 Z";
+const TICK = "M16 25 l4.5 4.5 L32.5 20.5";
+
+/**
+ * The shield and the tick.
+ *
+ * `gradientId` is a parameter rather than a constant because the mark is drawn twice
+ * on the sign-in page — once in the masthead and once on the gate — and two elements
+ * with the same `id` is a document that only works because the browser picked the
+ * first one. `label` is the other half of that: the gate's mark is the only thing
+ * naming the product there, so it is labelled; the masthead's sits beside the name in
+ * text, so it is decoration.
+ */
+function Shield({
+  gradientId,
+  className,
+  label,
+}: {
+  gradientId: string;
+  className?: string;
+  label?: string;
+}) {
   return (
     <svg
       className={cn("gate__mark-svg", className)}
       viewBox="0 0 48 48"
-      role="img"
-      aria-label="OnTrak IT Support Training"
-      width="44"
-      height="44"
+      role={label ? "img" : undefined}
+      aria-label={label}
+      aria-hidden={label ? undefined : true}
     >
       <defs>
-        <linearGradient id="its-mark" x1="0" y1="0" x2="1" y2="1">
+        <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
           <stop offset="0%" stopColor="var(--brand)" />
           <stop offset="100%" stopColor="var(--tone-its)" />
         </linearGradient>
       </defs>
+      <path d={SHIELD} fill={`url(#${gradientId})`} />
       <path
-        d="M10 11 h28 a3 3 0 0 1 3 3 v19 a3 3 0 0 1 -3 3 h-28 a3 3 0 0 1 -3 -3 v-19 a3 3 0 0 1 3 -3 z"
-        fill="url(#its-mark)"
-      />
-      <path
-        d="M17 22.5 l4 4 l6.5 -7.5"
+        d={TICK}
         fill="none"
         stroke="var(--brand-ink)"
-        strokeWidth="2.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M9 36 h30 v2.5 h-30 z"
-        fill="none"
-        stroke="var(--brand-ink)"
-        strokeWidth="2.4"
+        strokeWidth="2.6"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -44,20 +63,29 @@ export function ItsGateMark({ className }: { className?: string } = {}) {
   );
 }
 
+/** The gate mark: the shield and the tick above the product's name. */
+export function ItsGateMark({ className }: { className?: string } = {}) {
+  return (
+    <Shield gradientId="its-gate-mark" className={className} label="OnTrak IT Support Training" />
+  );
+}
+
+/** The same mark for the masthead, where the name is already in text beside it. */
+export function ItsMastheadMark() {
+  return <Shield gradientId="its-masthead-mark" className="masthead__mark" />;
+}
+
+/**
+ * The mark for the app's own header, where it sits beside the product's name.
+ *
+ * It was a rounded badge with `</>` in it, which said "software" about a product that
+ * teaches people to fix computers, and it was the only mark in the family that did not
+ * belong to the family. It is the shield now, at the header's size.
+ */
 export function LogoMark({ className }: { className?: string }) {
   return (
-    <span
-      className={cn(
-        "relative inline-flex size-9 items-center justify-center rounded-2xl gradient-brand text-white shadow-card",
-        className,
-      )}
-      aria-hidden
-    >
-      <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M8.5 8 4.8 12l3.7 4" />
-        <path d="m15.5 8 3.7 4-3.7 4" />
-        <path d="M13.4 5.5 10.6 18.5" />
-      </svg>
+    <span className={cn("relative inline-flex size-9 items-center justify-center", className)} aria-hidden>
+      <Shield gradientId="its-shell-mark" className="size-9" />
     </span>
   );
 }

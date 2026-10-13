@@ -411,9 +411,17 @@ test("console: the sign-in page is a single SSO gate and the shared theme", asyn
   assert.match(response.body, /href="\/unity-theme\.css"/);
   assert.match(response.body, /src="\/unity-theme\.js"/);
   // The page introduces the product rather than opening on two words of instruction:
-  // the mark, and the name it belongs to.
-  assert.match(response.body, /class="brand-mark"/);
-  assert.match(response.body, /class="brand-name">OnTrak Sentinel</);
+  // the mark, and the name it belongs to — in the family's lockup, so the console's door
+  // is the same door every other product in the Network shows.
+  assert.match(response.body, /class="gate__mark-svg"/);
+  assert.match(response.body, /class="gate__mark">OnTrak <span>Sentinel<\/span>/);
+  // …and the name stands alone: the family's door is the mark, the name and the way in, so
+  // there is no line describing the product under its own name.
+  assert.doesNotMatch(response.body, /security console/);
+  // …and it wears the family's frame: a masthead that names the product and the address
+  // it is reached at, with the one control the page has always had in it.
+  assert.match(response.body, /class="masthead"/);
+  assert.match(response.body, /<strong>OnTrak Sentinel<\/strong>/);
   assert.doesNotMatch(response.body, /<h1>Sign in<\/h1>/);
   // The tab still names the page, so a person with the sign-in open in a background tab
   // can tell what it is.

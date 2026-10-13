@@ -163,7 +163,7 @@ npm install &amp;&amp; npm run docker:db &amp;&amp; npm run setup &amp;&amp; npm
       </div>
 
       <div class="stats">
-        <div class="stat"><div class="n"><em>6</em> products</div><div class="l">Training · Tix · Sentinel · Sync · Portal · Genie</div></div>
+        <div class="stat"><div class="n"><em>6</em> products</div><div class="l">Training · Tix · Sentinel · Sync · Portal · Genie — plus the hands-on Lab</div></div>
         <div class="stat"><div class="n">Graded <em>live</em> state</div><div class="l">Linux, Windows and Office simulations</div></div>
         <div class="stat"><div class="n">Hash-chained <em>audit</em></div><div class="l">Every privileged action, append-only</div></div>
         <div class="stat"><div class="n"><em>One</em> identity layer</div><div class="l">OIDC/SAML + SCIM, local fallback</div></div>
@@ -254,6 +254,16 @@ npm install &amp;&amp; npm run docker:db &amp;&amp; npm run setup &amp;&amp; npm
             <li>One workspace jail — absolute paths and <code>../</code> escapes are refused</li>
             <li>An approval gate between a plan and a changed machine</li>
             <li><code>export</code> turns a workspace into a build request the factory manufactures</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="tag">lab</span>
+          <h3>OnTrak Lab</h3>
+          <p>The hands-on half of the same training: the scenarios above, run on real machines rather than in a browser. A session is a Linux container or a Windows guest stood up on demand, graded from its live state, and torn down when the work is handed in.</p>
+          <ul>
+            <li>Real machines behind the same grading contract — a correct fix is a correct fix</li>
+            <li>An HTML5 console (SSH and RDP) in the browser, nothing to install</li>
+            <li>One family name, <code>lab.ontrak.innotel.us</code>, in front of its own gateway</li>
           </ul>
         </div>
       </div>

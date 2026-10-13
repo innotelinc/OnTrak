@@ -61,6 +61,13 @@ APPS = (
     ("ontrak-genie/public", ("unity-theme.css", "unity-theme.js")),
     ("public", ("unity-theme.js",)),          # the training range at the root
     ("src/theme", ("unity-theme.css",)),
+    # The landing pages of three products, which each grew their own copy of the
+    # theme before this list existed and were left out of it — so they were the one
+    # place a palette change did not reach, and nobody would have noticed until a
+    # marketing page and the app it describes disagreed about what "brand" is.
+    ("web/landing", ("unity-theme.css", "unity-theme.js")),
+    ("ontrak-sync/web/landing", ("unity-theme.css", "unity-theme.js")),
+    ("ontrak-genie/web/landing", ("unity-theme.css", "unity-theme.js")),
 )
 
 

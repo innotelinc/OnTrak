@@ -251,40 +251,85 @@ export const CONSOLE_ASSET_PATHS = {
 export const CONSOLE_SCHEME = "soc";
 
 /**
- * The Sentinel mark: a shield with a heartbeat across it.
+ * The family's own address, printed under the product's name in the masthead.
  *
- * Sentinel's console is the one page in the Network a person reaches without a
- * product tile to click, so it has to say *whose* page it is before it asks a person to
- * sign in. The shield is the security-operations reading of the family's mark —
- * the same idea as the IT Support Training icon — and the trace inside it is what
- * the product does: watch the wire and raise what it finds. It is inline rather
- * than a file because the console ships no static assets of its own and because
- * the colours are theme tokens, so it repaints with the palette.
+ * `ONTRAK_PORTAL_BASE_DOMAIN` is the portal's variable for the family's name — the same
+ * one its product tiles link against — read here with the same default, so every front
+ * door in the family prints the same thing. What it is deliberately not is this
+ * container's own address: behind a proxy that is `0.0.0.0:8787`, which is a worse
+ * thing to print than the family's name.
  */
-const SENTINEL_MARK =
-  `<svg class="brand-mark" viewBox="0 0 48 48" role="img" aria-label="OnTrak Sentinel">` +
-  `<defs><linearGradient id="sentinel-mark" x1="0" y1="0" x2="1" y2="1">` +
-  `<stop offset="0%" stop-color="var(--brand)"/>` +
-  `<stop offset="100%" stop-color="var(--tone-sentinel)"/>` +
-  `</linearGradient></defs>` +
-  `<path d="M24 3.5 42.5 11v13.2C42.5 35 35.3 43.3 24 45.5 12.7 43.3 5.5 35 5.5 24.2V11Z" fill="url(#sentinel-mark)"/>` +
-  `<path d="M12.5 25.5h6.2l2.9-7.4 4.4 14.8 3-8.2h6.5" fill="none" stroke="var(--brand-ink)" ` +
-  `stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>` +
-  `</svg>`;
+const FAMILY_DOMAIN = (process.env.ONTRAK_PORTAL_BASE_DOMAIN ?? "ontrak.innotel.us")
+  .trim()
+  .replace(/^["']|["']$/g, "")
+  .replace(/\.+$/, "");
 
 /**
- * The product lockup: the mark, the name, and one line saying what this is.
+ * The Sentinel mark: the family's shield with a radar sweep in it.
+ *
+ * Sentinel's console is the one page in the Network a person reaches without a product
+ * tile to click, so it has to say *whose* page it is before it asks a person to sign in.
+ * The shield is the silhouette every product in the family carries, and the sweep inside
+ * it is what this one does: watch the wire and raise what it finds. The gradient lands
+ * on `--tone-sentinel`.
+ *
+ * It is inline rather than a file because the console ships no static assets of its own,
+ * and because the colours are theme tokens, so it repaints with the palette. The
+ * parameters exist because the sign-in page draws the mark twice — once in the masthead
+ * and once on the gate — and two elements with the same `id` is a document that only
+ * works because the browser picked the first one. A null `label` is the masthead's: the
+ * name is already in text beside it there, so the mark is decoration.
+ */
+const SHIELD = "M24 4.5 L41 12 V27 C41 37.4 34 43 24 44.5 C14 43 7 37.4 7 27 V12 Z";
+const SWEEP = [
+  "M24 15.5 a8.5 8.5 0 1 0 8.5 8.5",
+  "M24 24 l5.5 -5.5",
+];
+
+function productMark(id: string, className: string, label: string | null): string {
+  const named =
+    label === null
+      ? ` role="presentation" aria-hidden="true"`
+      : ` role="img" aria-label="${escapeHtml(label)}"`;
+  return (
+    `<svg class="${className}" viewBox="0 0 48 48"${named}>` +
+    `<defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1">` +
+    `<stop offset="0%" stop-color="var(--brand)"/>` +
+    `<stop offset="100%" stop-color="var(--tone-sentinel)"/>` +
+    `</linearGradient></defs>` +
+    `<path d="${SHIELD}" fill="url(#${id})"/>` +
+    SWEEP.map(
+      (d) =>
+        `<path d="${d}" fill="none" stroke="var(--brand-ink)" stroke-width="2.6" ` +
+        `stroke-linecap="round" stroke-linejoin="round"/>`,
+    ).join("") +
+    `<circle cx="24" cy="24" r="1.7" fill="var(--brand-ink)"/>` +
+    `</svg>`
+  );
+}
+
+/**
+ * The gate lockup: the mark above the name, which is the shape every front door in the
+ * family uses (see `.gate__mark-wrap` in the shared theme).
  *
  * Rendered instead of the page's `<h1>` on the sign-in page and nowhere else. Every
  * other page is reached by somebody already inside, who knows where they are and
  * wants the page's own title; the sign-in page is the one place a person arrives
  * cold, so there the product signs its name.
+ *
+ * `sub` is the optional line under the name, and the sign-in gate no longer passes
+ * one: the family's front door is the mark, the name and the one control, and
+ * "security console" was this product describing itself on the page that already
+ * says "OnTrak Sentinel". The parameter stays because the lockup is the shape, and
+ * the next page that needs a line under the name should not have to re-cut it.
  */
-function brandHead(sub: string): string {
+function brandHead(sub?: string): string {
   return (
-    `<div class="brand-head">${SENTINEL_MARK}` +
-    `<div class="brand-text"><span class="brand-name">OnTrak Sentinel</span>` +
-    `<span class="brand-sub">${escapeHtml(sub)}</span></div></div>`
+    `<div class="gate__mark-wrap">` +
+    productMark("sentinel-gate-mark", "gate__mark-svg", "OnTrak Sentinel") +
+    `<h1 class="gate__mark">OnTrak <span>Sentinel</span></h1>` +
+    (sub ? `<p class="muted">${escapeHtml(sub)}</p>` : "") +
+    `</div>`
   );
 }
 
@@ -628,7 +673,10 @@ export interface ConsoleOverviewView {
  */
 const STYLES = `
   body { margin: 0; font: 15px/1.55 var(--font-sans); background: var(--canvas); color: var(--ink); }
-  main { max-width: 46rem; margin: 0 auto; padding: var(--space-6) var(--space-4) 4rem; }
+  /* Scoped to the console's own reading column, so it cannot also stretch or pad the
+     masthead-and-footer frame the sign-in page sits in. The width is the one the
+     later rule used to repeat, so removing the duplicate changed nothing. */
+  body > main { max-width: 52rem; margin: 0 auto; padding: var(--space-6) var(--space-4) 4rem; }
   h1 { font-size: 1.4rem; margin: 0 0 var(--space-1); letter-spacing: -.01em; }
   h2 { font-size: .82rem; margin: var(--space-6) 0 var(--space-2); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); }
   h3 { font-size: .95rem; margin: var(--space-4) 0 var(--space-1); }
@@ -672,36 +720,17 @@ const STYLES = `
   .bar-actions form { margin: 0; }
   button.quiet { background: transparent; border-color: var(--line-strong); color: var(--ink-soft); font-weight: 500; }
   button.quiet:hover { background: var(--surface-muted); color: var(--ink); filter: none; }
-  main { max-width: 52rem; }
   ul { padding-left: 1.1rem; }
   .field { display: block; margin: var(--space-3) 0; }
   .field label { display: block; font-weight: 600; font-size: .88rem; margin-bottom: var(--space-1); }
   .field .hint { font-weight: 400; color: var(--ink-faint); }
-  /* The sign-in gate: one card, centred in the viewport, holding the product lockup
-     and the one control. The shape the family's front doors share — the same centred
-     card ontrak.innotel.us shows — rather than a form adrift in the 52rem reading
-     column, which reads like a page that failed to load. */
-  .gate { max-width: 24rem; margin: 9vh auto 0; display: flex; flex-direction: column;
-    gap: var(--space-4); text-align: center; background: var(--surface); border: 1px solid var(--line);
-    border-radius: var(--radius); box-shadow: var(--shadow-card); padding: var(--space-6) var(--space-5); }
+  /* No backticks in this block: the whole stylesheet is one template literal, and a
+     backtick in a comment would end it. The gate and the page frame around it (.page,
+     .masthead, .gate, .gate__mark-wrap, .gate__mark, .footer) come from the shared
+     theme, so this console's front door and the other products' are the same door.
+     What is left here is what only the console's gate has. */
   .gate p { margin: 0; }
   .gate .muted { font-size: .9rem; }
-  /* The product lockup. Sized so the mark reads at a glance without the name
-     becoming a headline: on the sign-in page the form is the subject, not the
-     branding. */
-  .brand-head { display: flex; align-items: center; gap: var(--space-3); margin: 0 0 var(--space-4); }
-  .brand-mark { width: 44px; height: 44px; flex: none; }
-  .brand-text { display: flex; flex-direction: column; }
-  .brand-name { font-size: 1.3rem; font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; }
-  .brand-sub { color: var(--ink-faint); font-size: .78rem; text-transform: uppercase; letter-spacing: .09em; }
-  .gate .brand-head { justify-content: center; margin: 0; }
-  /* The provider door is an anchor, not a button (the handshake is a browser
-     navigation), and it is the family's front door, so it is the one primary
-     control — matching the Unity gate. */
-  .gate a.button { display: block; text-align: center; background: var(--brand); color: var(--brand-ink);
-    border: 1px solid var(--brand); border-radius: var(--radius-sm); padding: .7rem .9rem; font-weight: 650;
-    text-decoration: none; }
-  .gate a.button:hover { filter: brightness(1.06); text-decoration: none; }
   /* No provider configured: say so, rather than draw a control that cannot complete. */
   .gate .note { border-radius: var(--radius-sm); padding: .6rem .75rem; text-align: left;
     background: var(--surface-muted); border: 1px solid var(--line-strong); color: var(--ink-soft); font-size: .9rem; }
@@ -722,7 +751,7 @@ export interface ConsolePageInput {
    * having chosen the product, so the product has to introduce itself there.
    */
   brand?: boolean;
-  /** The line under the product name when `brand` is set. */
+  /** The line under the product name when `brand` is set, if the page has one. */
   brandSub?: string;
 }
 
@@ -778,7 +807,7 @@ export function consolePage(input: ConsolePageInput): string {
   // The sign-in page introduces the product; every other page leads with its own
   // title, because the person is already inside and knows where they are.
   const heading = input.brand
-    ? brandHead(input.brandSub ?? "security console")
+    ? brandHead(input.brandSub)
     : `<h1>${escapeHtml(input.title)}</h1>`;
 
   const notices =
@@ -793,6 +822,31 @@ export function consolePage(input: ConsolePageInput): string {
   const inner = input.brand
     ? `<div class="gate">${heading}${notices}${input.body}</div>`
     : `${heading}${who}${notices}${input.body}`;
+
+  // Two frames, one per kind of page.
+  //
+  // The sign-in page is a front door: a person arrives there from a link, having chosen
+  // nothing, so it wears the family's frame — the masthead naming the product and where
+  // it is reached, the gate, and a footer — which is the page shape every other OnTrak
+  // product shows (see `.page` in the shared theme). The console's own bar is
+  // deliberately not drawn there: every section link in it leads to a page that would
+  // refuse a signed-out visitor.
+  //
+  // Every other page is a signed-in operator's, and keeps the bar, where the section
+  // links are the point.
+  const shell = input.brand
+    ? `<div class="page">` +
+      `<header class="masthead">` +
+      `<a class="masthead__brand" href="${CONSOLE_PATHS.signIn}">` +
+      productMark("sentinel-masthead-mark", "masthead__mark", null) +
+      `<strong>OnTrak Sentinel</strong><span>${FAMILY_DOMAIN}</span>` +
+      `</a>` +
+      `<div class="masthead__tools">${themeSwitch()}</div>` +
+      `</header>` +
+      `<main class="page__main">${inner}</main>` +
+      `<footer class="footer"><span>OnTrak Sentinel</span></footer>` +
+      `</div>`
+    : `<div class="bar">${nav}${actions}</div><main>${inner}</main>`;
 
   return (
     // `data-scheme` is how the shared theme is told which palette to paint; the mode
@@ -810,8 +864,7 @@ export function consolePage(input: ConsolePageInput): string {
     `<link rel="stylesheet" href="${CONSOLE_ASSET_PATHS.themeCss}">` +
     `<script src="${CONSOLE_ASSET_PATHS.themeJs}"></script>` +
     `<style>${STYLES}</style></head>` +
-    `<body><div class="bar">${nav}${actions}</div><main>${inner}` +
-    `</main>${TOGGLE_SCRIPT}</body></html>`
+    `<body>${shell}</body></html>`
   );
 }
 
@@ -924,21 +977,25 @@ export interface ConsoleSignInView {
    *
    * `null` — not a disabled button — is the honest way to say "this console has no provider
    * configured": a greyed-out control that can never work is a question the page cannot
-   * answer, so the page says it in words instead. The label is the deployment's, so the
-   * page can say *whose* SSO it is.
+   * answer, so the page says it in words instead. It is the path and nothing else: the gate
+   * says "Sign in" like every other product's, so the deployment's name for the provider is
+   * not part of what the page renders.
    */
-  upstream: { path: string; label: string } | null;
+  upstream: { path: string } | null;
 }
 
 /**
  * The console's sign-in page.
  *
- * One control and nothing else: the console delegates identity to the provider, so the page
- * is the provider's door and one sentence about whose it is. There is no email field, no
- * password and no authenticator code — the console does not hold a login of its own any
- * more, which is the whole point of a single sign-on deployment. A deployment with no
- * provider configured says so plainly rather than drawing a control that could never
- * complete.
+ * The family's front door, and nothing else on it: the mark, the name and the one
+ * control — the same gate `ontrak.innotel.us/login` draws. The console delegates
+ * identity to the provider, so the control is the provider's door; there is no email
+ * field, no password and no authenticator code, because the console does not hold a
+ * login of its own any more. There is no sentence about the handshake either: the
+ * button says "Sign in" the way every other product's does, and who the provider is
+ * is a fact about the deployment rather than something a person signing in needs to
+ * read first. A deployment with no provider configured says so plainly instead of
+ * drawing a control that could never complete.
  */
 export function renderSignIn(view: ConsoleSignInView): string {
   return consolePage({
@@ -946,11 +1003,9 @@ export function renderSignIn(view: ConsoleSignInView): string {
     // The page leads with the mark and the name — inside the gate card — because the
     // product is what a person arriving cold needs to recognise before they click through.
     brand: true,
-    brandSub: "security console",
     actor: null,
     body: view.upstream
-      ? `<p class="muted">Sign in with your organisation’s account. The console signs you in through ${escapeHtml(view.upstream.label)}.</p>` +
-        `<p><a class="button" href="${escapeHtml(view.upstream.path)}">Sign in with ${escapeHtml(view.upstream.label)}</a></p>`
+      ? `<a class="sso-button" href="${escapeHtml(view.upstream.path)}">Sign in</a>`
       : `<p class="note" role="status">This deployment has no identity provider configured, so the console cannot sign you in yet. ` +
         `Set <code>SENTINEL_UPSTREAM_ISSUER</code>, <code>SENTINEL_UPSTREAM_CLIENT_ID</code> and ` +
         `<code>SENTINEL_UPSTREAM_REDIRECT_URI</code> and restart Sentinel.</p>`,

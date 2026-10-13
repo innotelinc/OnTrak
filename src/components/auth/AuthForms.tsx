@@ -50,7 +50,7 @@ export function RegisterForm({ showJoinCode }: { showJoinCode: boolean }) {
 
   return (
     <form action={action} className="space-y-4">
-      {state.error ? <Alert tone="danger" title="Could not create the account">{state.error}</Alert> : null}
+      {state.error ? <Alert tone="danger" title="Could not enroll you">{state.error}</Alert> : null}
 
       <Field label="Full name" htmlFor="name" error={state.fieldErrors?.name}>
         <Input id="name" name="name" autoComplete="name" required placeholder="Alex Rivera" />
@@ -70,7 +70,7 @@ export function RegisterForm({ showJoinCode }: { showJoinCode: boolean }) {
         </Field>
       ) : null}
 
-      <SubmitButton>Create my student account</SubmitButton>
+      <SubmitButton>Enroll</SubmitButton>
 
       <p className="text-center text-xs text-ink-faint">
         Staff accounts (instructor, administrator) are created by an administrator from the{" "}

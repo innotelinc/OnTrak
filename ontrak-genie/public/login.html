@@ -6,9 +6,9 @@
     <meta name="color-scheme" content="light dark" />
     <title>Sign in — OnTrak Genie</title>
     <!--
-      The gate: the product's name and the one way in. There is deliberately no
-      password field — Genie delegates identity to the provider, and a second way
-      in would be a second place to audit.
+      The gate: the product's mark, its name, and the one way in. There is
+      deliberately no password field — Genie delegates identity to the provider, and a
+      second way in would be a second place to audit.
 
       This is a page rather than a bare redirect to `/api/auth/login` because the
       gate has to render in the case where there is no provider at all, and that
@@ -17,9 +17,11 @@
       provider or says plainly that none is configured, rather than showing a
       button that fails after the click.
 
-      The theme is the family's: `unity-theme.css` and `unity-theme.js` are
-      byte-identical copies of the canonical files, and the script is blocking so
-      the remembered scheme is applied before the first paint.
+      The page is the family's front door, so its shape — the masthead, the gate card
+      and the footer — comes from `unity-theme.css` rather than from a rule written
+      here, and the theme files are byte-identical copies of the canonical ones. The
+      script is blocking so the remembered mode and palette are applied before the
+      first paint.
     -->
     <link rel="stylesheet" href="/unity-theme.css" />
     <script>window.UNITY_DEFAULT_SCHEME = "operations";</script>
@@ -28,65 +30,128 @@
     <style>
       /* Every name here is one style.css already defines — the aliases onto the
          theme tokens — so the gate is themed where the theme is present and
-         legible where it is not. Nothing below is a second palette. */
-      body { display: grid; place-items: center; min-height: 100vh; }
-      /* The front door, drawn the same way here as in OnTrak Unity: the name, then
-         the single control. Simple sign-on, no fluff — there is no password field,
-         only the hand-off to the provider. */
-      .gate {
-        width: min(92vw, 420px);
-        display: flex; flex-direction: column; gap: 22px;
-        background: var(--bg-panel);
-        border: 1px solid var(--border);
-        border-radius: var(--radius, 18px);
-        box-shadow: var(--shadow-card);
-        padding: 32px 28px 28px;
-        text-align: center;
-      }
-      .gate__mark { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.02em; }
-      .gate__mark span { color: var(--accent); }
-      .gate__mark-wrap {
-        display: flex; flex-direction: column; align-items: center; gap: 14px;
-      }
-      .gate__mark-svg { color: var(--accent); }
-      .gate__mark-svg path:first-child { filter: drop-shadow(0 1px 1px rgb(0 0 0 / 12%)); }
+         legible where it is not. Nothing below is a second palette, and nothing
+         below is a second copy of the frame: `.page`, `.masthead`, `.gate`,
+         `.gate__mark` and `.sso-button` are the shared theme's. */
       .gate__note { margin: 0; color: var(--text-dim); font-size: 13px; line-height: 1.55; }
       .gate__note code { font-family: var(--mono); color: var(--text); }
-      .gate__btn {
-        display: block; text-align: center; text-decoration: none;
-        background: var(--accent); color: var(--brand-ink);
-        border-radius: 12px; padding: 11px 18px; font-weight: 650;
-      }
-      .gate__btn:hover { filter: brightness(1.08); }
     </style>
   </head>
   <body>
-    <!-- The OnTrak Genie mark: a small lamp with a rising wisp — the CodeOps console's
-         genie, plain and simple. Flat, 48×48, brand-toned, the same style every OnTrak
-         product carries on its login. -->
-    <svg class="gate__mark-svg" viewBox="0 0 48 48" role="img" aria-label="OnTrak Genie" width="44" height="44" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <linearGradient id="genie-mark" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stop-color="var(--accent)" />
-          <stop offset="100%" stop-color="var(--tone-genie, var(--accent))" />
-        </linearGradient>
-      </defs>
-      <path d="M14 31 h20 l-2 11 h-16 z" fill="url(#genie-mark)" />
-      <path d="M12 31 h24 l-1 4 h-22 z" fill="none" stroke="var(--brand-ink)" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" />
-      <path d="M24 27 V18 a4 4 0 0 1 4 -4" fill="none" stroke="var(--brand-ink)" stroke-width="2.4" stroke-linecap="round" />
-      <circle cx="28" cy="17" r="1.6" fill="var(--brand-ink)" />
-      <path d="M21 17 q3 -3 6 0" fill="none" stroke="var(--brand-ink)" stroke-width="1.8" stroke-linecap="round" opacity="0.7" />
-    </svg>
+    <div class="page">
+      <header class="masthead">
+        <a class="masthead__brand" href="/">
+          <!-- This product's mark: the shield the gate below also draws, at the
+               masthead's size, with the sparkle that makes it Genie's. Decoration here,
+               because the name is in text right beside it, so it is hidden from screen
+               readers rather than labelled twice. -->
+          <svg class="masthead__mark" viewBox="0 0 48 48" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="genie-masthead-mark" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="var(--brand)" />
+                <stop offset="100%" stop-color="var(--tone-genie)" />
+              </linearGradient>
+            </defs>
+            <path d="M24 4.5 L41 12 V27 C41 37.4 34 43 24 44.5 C14 43 7 37.4 7 27 V12 Z" fill="url(#genie-masthead-mark)" />
+            <path d="M24 15 l2.6 6.4 6.4 2.6 -6.4 2.6 -2.6 6.4 -2.6 -6.4 -6.4 -2.6 6.4 -2.6 z"
+                  fill="none" stroke="var(--brand-ink)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <strong>OnTrak Genie</strong>
+          <!-- The one address this page can state truthfully: a static file cannot
+               read the deployment's variables, and the host it was reached at is the
+               host the person is on. Filled by the script at the foot of the page. -->
+          <span id="gate-host"></span>
+        </a>
+        <div class="masthead__tools">
+          <div class="ot-theme" role="group" aria-label="Colour theme">
+            <button type="button" data-theme-mode="system">System</button>
+            <button type="button" data-theme-mode="light">Light</button>
+            <button type="button" data-theme-mode="dark">Dark</button>
+            <button type="button" id="gate-scheme">Operations</button>
+          </div>
+        </div>
+      </header>
 
-    <main class="gate">
-      <div class="gate__mark-wrap">
-        <h1 class="gate__mark">OnTrak <span>Genie</span></h1>
-      </div>
-      <p class="gate__note" id="gate-status">Signing in through your organisation's account.</p>
-      <a class="gate__btn hidden" id="gate-signin" href="/api/auth/login">Sign in</a>
-    </main>
+      <main class="page__main">
+        <div class="gate">
+          <div class="gate__mark-wrap">
+            <svg class="gate__mark-svg" viewBox="0 0 48 48" role="img" aria-label="OnTrak Genie" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="genie-mark" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stop-color="var(--brand)" />
+                  <stop offset="100%" stop-color="var(--tone-genie)" />
+                </linearGradient>
+              </defs>
+              <path d="M24 4.5 L41 12 V27 C41 37.4 34 43 24 44.5 C14 43 7 37.4 7 27 V12 Z" fill="url(#genie-mark)" />
+              <path d="M24 15 l2.6 6.4 6.4 2.6 -6.4 2.6 -2.6 6.4 -2.6 -6.4 -6.4 -2.6 6.4 -2.6 z"
+                    fill="none" stroke="var(--brand-ink)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <h1 class="gate__mark">OnTrak <span>Genie</span></h1>
+          </div>
+          <!-- Empty and hidden until the script below has something to say. A gate that
+               volunteers a sentence is a gate with more on it than the family's front
+               door, which is the mark, the name and the one control. The paragraph is
+               the honest-failure case, not the normal one. -->
+          <p class="gate__note" id="gate-status" hidden></p>
+          <a class="sso-button hidden" id="gate-signin" href="/api/auth/login">Sign in</a>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <span>OnTrak Genie</span>
+      </footer>
+    </div>
 
     <script>
+      /*
+       * The theme switch, wired to the shared script in the head.
+       *
+       * The buttons report the document's state rather than the click that asked for
+       * the change, so this control cannot end up showing a preference other than the
+       * one in force — the same wiring `index.html` uses, so the gate's switch and the
+       * app's cannot disagree.
+       */
+      (function () {
+        var host = document.getElementById("gate-host");
+        if (host) host.textContent = location.host;
+
+        var api = window.UnityTheme || window.OntrakTheme;
+        if (!api) return;
+
+        // The last button cycles the palette, which is the control the other
+        // products' gates have: it names the palette in force rather than offering
+        // three buttons for a preference almost nobody changes.
+        var SCHEMES = ["desk", "operations", "soc"];
+        var LABELS = { desk: "Desk", operations: "Operations", soc: "Security ops" };
+        var modeButtons = document.querySelectorAll("[data-theme-mode]");
+
+        function paint() {
+          var mode = api.mode();
+          for (var i = 0; i < modeButtons.length; i++) {
+            modeButtons[i].setAttribute(
+              "aria-pressed",
+              String(modeButtons[i].getAttribute("data-theme-mode") === mode),
+            );
+          }
+          var scheme = api.scheme();
+          var button = document.getElementById("gate-scheme");
+          button.textContent = LABELS[scheme] || "Palette";
+          button.title = "Switch palette — currently " + (LABELS[scheme] || scheme);
+        }
+
+        for (var i = 0; i < modeButtons.length; i++) {
+          modeButtons[i].addEventListener("click", function () {
+            api.setMode(this.getAttribute("data-theme-mode"));
+          });
+        }
+        document.getElementById("gate-scheme").addEventListener("click", function () {
+          var current = SCHEMES.indexOf(api.scheme());
+          api.setScheme(SCHEMES[(current + 1) % SCHEMES.length]);
+        });
+        window.addEventListener("unity:theme", paint);
+        paint();
+      })();
+
       /*
        * Ask the server which case this deployment is in, once. `/api/auth/status`
        * is the only route that answers without a session, so it is the only thing
@@ -114,15 +179,16 @@
             return;
           }
           if (status.oidc) {
-            note.hidden = true;
             button.classList.remove("hidden");
             return;
           }
+          note.hidden = false;
           note.innerHTML =
             "This deployment has no identity provider configured. Set " +
             "<code>ONTRAK_OIDC_ISSUER</code> and <code>ONTRAK_OIDC_CLIENT_ID</code> " +
             "and restart.";
         } catch {
+          note.hidden = false;
           note.textContent = "Could not reach the console to check how it signs people in.";
         }
       })();

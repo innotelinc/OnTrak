@@ -369,11 +369,16 @@ test("the console's SSO door ends in a session the console itself accepts", asyn
   });
   const doors = new ConsoleService(spine, mfa, null, null, null, null, "demo", null, null, null, provider);
 
-  // The form names the provider the deployment configured rather than drawing a control
-  // that could never work.
+  // The gate is the family's front door: the mark, the name, and the one control — the same
+  // page `ontrak.innotel.us/login` draws. The button says "Sign in", and nothing on the page
+  // names the provider: whose SSO it is is a fact about the deployment, not something a
+  // person signing in has to read first.
   const page = await routeConsole(consoleRequest("GET", CONSOLE_PATHS.signIn), doors);
   assert.equal(page.status, 200);
-  assert.match(page.body, /Sign in with Cerulean SSO/);
+  assert.match(page.body, /<a class="sso-button" href="[^"]+">Sign in<\/a>/);
+  assert.doesNotMatch(page.body, /Sign in with Cerulean SSO/);
+  assert.doesNotMatch(page.body, /signs you in through/);
+  assert.doesNotMatch(page.body, /security console/);
 
   // Starting seals the attempt into a cookie and hands the browser to the provider.
   const started = await routeConsole(consoleRequest("GET", CONSOLE_PATHS.upstreamStart), doors);

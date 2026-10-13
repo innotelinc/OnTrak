@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import { ProductMark } from "@/components/ProductMark";
 import { SignOutButton } from "@/components/SignOutButton";
 import { portalConfig, ssoConfigured } from "@/lib/config";
 import {
@@ -141,9 +142,16 @@ export default async function DashboardPage() {
                 href={tile.url}
               >
                 <div className="tile__top">
-                  <div>
-                    <h2>{tile.name}</h2>
-                    <p>{tile.tagline}</p>
+                  <div className="tile__head">
+                    {/* The product's own mark — the shield with its stroke inside — so a
+                        tile is recognisable by shape before the name is read. The tone
+                        names the mark here: the tile's colour family and the mark's
+                        stroke come from the same one key. */}
+                    <ProductMark product={tile.tone} id={`tile-${tile.key}`} className="tile__mark" />
+                    <div>
+                      <h2>{tile.name}</h2>
+                      <p>{tile.tagline}</p>
+                    </div>
                   </div>
                   {tile.primary ? <span className="badge">start here</span> : null}
                 </div>

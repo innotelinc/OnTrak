@@ -37,7 +37,7 @@ export const en = {
 
   // Auth pages
   "auth.metaSignIn": "Sign in",
-  "auth.metaRegister": "Create an account",
+  "auth.metaRegister": "Enroll",
   "auth.signIn": "Sign in",
   "auth.welcomeBack": "Welcome back",
   "auth.signInIntro": "Sign in to pick up where your last scenario left off.",
@@ -54,9 +54,10 @@ export const en = {
     "Signing in here is not the normal path. If the provider is up, go back and use single sign-on — every use of this screen is audited.",
   "auth.or": "or",
   "auth.newStudent": "New student?",
-  "auth.createAccount": "Create an account",
+  "auth.createAccount": "Enroll",
   "auth.startTraining": "Start training",
-  "auth.registerIntro": "Student accounts are free. Your instructor can add you to a class afterwards.",
+  "auth.registerIntro":
+    "Enrolling creates your training account. Access comes with AthenIQ enrolment, an OnTrak Network subscription, a pass or an invitation — an instructor can add you to a class afterwards.",
   "auth.whatYouGet": "What you get",
   "auth.whatYouGetBody":
     "A browser-based Linux terminal, a Windows PowerShell host and an Office suite — all graded automatically, all timed, all working on a phone.",

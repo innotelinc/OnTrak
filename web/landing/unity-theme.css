@@ -86,6 +86,8 @@
   --tone-sentinel: #b0246a;
   --tone-sync: #05685e;
   --tone-genie: #7c3aed;
+  --tone-lab: #b45309;
+  --tone-unity: #0891b2;
 
   --shadow-card: 0 1px 2px rgb(25 20 48 / 5%), 0 10px 30px -14px rgb(25 20 48 / 18%);
   --shadow-pop: 0 8px 28px -8px rgb(25 20 48 / 26%);
@@ -144,6 +146,8 @@
     --tone-sentinel: #ff7cb4;
     --tone-sync: #3fd3c1;
     --tone-genie: #c4b5fd;
+    --tone-lab: #fbbf24;
+    --tone-unity: #67e8f9;
 
     --shadow-card: 0 1px 2px rgb(0 0 0 / 30%), 0 12px 32px -14px rgb(0 0 0 / 60%);
     --shadow-pop: 0 10px 34px -8px rgb(0 0 0 / 66%);
@@ -187,6 +191,8 @@
   --tone-sentinel: #ff7cb4;
   --tone-sync: #3fd3c1;
   --tone-genie: #c4b5fd;
+  --tone-lab: #fbbf24;
+  --tone-unity: #67e8f9;
 
   --shadow-card: 0 1px 2px rgb(0 0 0 / 30%), 0 12px 32px -14px rgb(0 0 0 / 60%);
   --shadow-pop: 0 10px 34px -8px rgb(0 0 0 / 66%);
@@ -217,6 +223,8 @@
   --tone-sentinel: #9d174d;
   --tone-sync: #0f766e;
   --tone-genie: #7c3aed;
+  --tone-lab: #a16207;
+  --tone-unity: #0891b2;
 
   --shadow-card: 0 1px 2px rgb(16 23 29 / 5%), 0 10px 30px -14px rgb(16 23 29 / 18%);
 }
@@ -257,6 +265,8 @@
   --tone-sentinel: #ff7b72;
   --tone-sync: #56d4dd;
   --tone-genie: #d0bcff;
+  --tone-lab: #fbbf24;
+  --tone-unity: #67e8f9;
 
   --shadow-card: 0 1px 2px rgb(0 0 0 / 34%), 0 12px 32px -14px rgb(0 0 0 / 62%);
 }
@@ -296,6 +306,9 @@
     --tone-tix: #79c0ff;
     --tone-sentinel: #ff7b72;
     --tone-sync: #56d4dd;
+    --tone-genie: #d0bcff;
+    --tone-lab: #fbbf24;
+    --tone-unity: #67e8f9;
 
     --shadow-card: 0 1px 2px rgb(0 0 0 / 34%), 0 12px 32px -14px rgb(0 0 0 / 62%);
   }
@@ -342,6 +355,9 @@
   --tone-tix: #0f6fd1;
   --tone-sentinel: #0e7f9c;
   --tone-sync: #0f766e;
+  --tone-genie: #7c3aed;
+  --tone-lab: #b45309;
+  --tone-unity: #0891b2;
 
   --shadow-card: 0 1px 2px rgb(7 26 43 / 5%), 0 10px 30px -14px rgb(7 26 43 / 18%);
 }
@@ -381,6 +397,8 @@
   --tone-tix: #6cb6ff;
   --tone-sentinel: #4fd0e8;
   --tone-sync: #56d4dd;
+  --tone-genie: #d0bcff;
+  --tone-unity: #67e8f9;
 
   --shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 14px 34px -14px rgb(0 0 0 / 70%);
   --shadow-pop: 0 10px 34px -8px rgb(0 0 0 / 70%);
@@ -421,6 +439,8 @@
     --tone-tix: #6cb6ff;
     --tone-sentinel: #4fd0e8;
     --tone-sync: #56d4dd;
+    --tone-genie: #d0bcff;
+    --tone-unity: #67e8f9;
 
     --shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 14px 34px -14px rgb(0 0 0 / 70%);
     --shadow-pop: 0 10px 34px -8px rgb(0 0 0 / 70%);
@@ -613,3 +633,130 @@
   font-weight: 600;
 }
 .ot-theme svg { width: 13px; height: 13px; }
+
+/* ── the front door ────────────────────────────────────────────────────────
+ * The sign-in gate, the masthead above it and the footer below it — the page a
+ * person is handed when they follow a link to a product they are not yet signed
+ * in to. It lives here rather than in each product's stylesheet for the reason
+ * `.ot-theme` does: nobody chooses which product they arrive at first, and six
+ * front doors drawn six ways is drift that nothing fails on.
+ *
+ * A product brings two things of its own and nothing else. Its name, in the
+ * wordmark, and its tone — `--tone-<product>` is where the mark's gradient lands,
+ * which is why that token must exist in every scheme and every mode. The mark
+ * itself is one silhouette everywhere, the shield, with the product's own stroke
+ * inside it: the family is recognisable at a glance and the product is still
+ * legible. `.masthead__mark` is the same shape at the masthead's size.
+ */
+.page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 var(--space-5);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.page__main { flex: 1; padding: var(--space-5) 0 var(--space-6); }
+
+.masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 16px 0 14px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+/* `text-decoration: none` is on the base rule rather than only on `:hover` because
+   this is a link the browser would otherwise underline by default — and the two
+   products that never reset anchors globally (Genie and Sentinel) were the ones
+   showing it. The name is a wordmark here, not a link somebody is meant to click. */
+.masthead__brand { display: flex; align-items: center; gap: 9px; color: var(--ink); text-decoration: none; }
+.masthead__brand:hover { text-decoration: none; }
+.masthead__brand strong {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.masthead__brand span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+}
+.masthead__mark { width: 30px; height: 30px; flex: none; }
+.masthead__tools { display: flex; align-items: center; gap: 10px; }
+
+.footer {
+  padding: 16px 0 26px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-faint);
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* The gate: one centred card holding the mark, the name and the single control.
+   A column with its own rhythm rather than a margin on each child, because the
+   card also has to hold an error, or the sentence that says no provider is
+   configured here, and the gap is what keeps it from looking collapsed in any of
+   those cases. `width: 100%` because the product that wraps it in a centred flex
+   row would otherwise shrink the card to its content. */
+.gate {
+  width: 100%;
+  max-width: 420px;
+  margin: 9vh auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 32px 28px 28px;
+  text-align: center;
+}
+/* The mark and the name are one lockup, so they are one column: the shield above
+   the words at every product, rather than beside them at one of them. */
+.gate__mark-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.gate__mark {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0;
+  color: var(--ink);
+}
+.gate__mark span { color: var(--brand); }
+.gate__mark-svg {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 12%));
+}
+
+/* An anchor, not a button: the handshake is a browser navigation, and fetching it
+   is what breaks it. */
+.sso-button {
+  display: block;
+  text-align: center;
+  /* The same reset as the masthead's: an anchor is underlined by default, and this
+     one is a button. Left to the products, two of the six drew it underlined. */
+  text-decoration: none;
+  background: var(--brand);
+  border: 1px solid var(--brand);
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  color: var(--brand-ink);
+  font-weight: 650;
+  font-size: 13.5px;
+}
+.sso-button:hover { text-decoration: none; filter: brightness(1.06); }

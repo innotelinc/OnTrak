@@ -113,7 +113,7 @@ Every token, and what it means:
 | text | `--ink` `--ink-soft` `--ink-faint` | three levels, no more. A fourth means the hierarchy is wrong |
 | brand | `--brand` `--brand-soft` `--brand-ink` `--brand-ring` | `--brand-ink` is the *text on* brand, which in dark mode is dark |
 | status | `--ok` `--info` `--bad` `--attention` `--unknown` | each with a `-soft` for backgrounds |
-| product tones | `--tone-its` `--tone-tix` `--tone-sentinel` `--tone-sync` | a label, never the only signal — always with the name in text |
+| product tones | `--tone-its` `--tone-tix` `--tone-sentinel` `--tone-sync` `--tone-genie` `--tone-unity` `--tone-lab` | a label, never the only signal — always with the name in text |
 | shape | `--radius-sm` `--radius` `--radius-lg` `--radius-pill` | |
 | depth | `--shadow-card` `--shadow-pop` | |
 | type | `--font-sans` `--font-display` `--mono` | |
