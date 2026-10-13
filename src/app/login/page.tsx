@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { activeSsoConfig } from "@/lib/oidc-rules";
 import { getTranslator } from "@/lib/i18n-server";
+import { ItsGateMark } from "@/components/Logo";
 
 export const metadata: Metadata = { title: "Sign in" };
 
@@ -25,6 +26,8 @@ export const metadata: Metadata = { title: "Sign in" };
  * environment on every request, so enabling single sign-on needs a restart rather
  * than a rebuild.
  */
+const ITS_MARK = ItsGateMark();
+
 export default async function LoginPage({
   searchParams,
 }: {
@@ -41,9 +44,12 @@ export default async function LoginPage({
           <ThemeToggle />
         </div>
 
-        <h1 className="gate__mark">
-          OnTrak <span>IT Support Training</span>
-        </h1>
+        <div className="gate__mark-wrap">
+          {ITS_MARK}
+          <h1 className="gate__mark">
+            OnTrak <span>IT Support Training</span>
+          </h1>
+        </div>
 
         {error ? (
           <div className="ot-note ot-note--bad text-left" role="alert">
@@ -52,17 +58,12 @@ export default async function LoginPage({
         ) : null}
 
         {sso ? (
-          <>
-            {/* An anchor, not a button: the handshake is a browser navigation, and
-                fetching it is what breaks it. */}
-            <a
-              className="sso-button"
-              href={`/api/sso/start${next ? `?next=${encodeURIComponent(next)}` : ""}`}
-            >
-              {t("auth.ssoSignIn")}
-            </a>
-            <p className="ot-muted m-0 text-[12.5px]">{t("auth.ssoIntro")}</p>
-          </>
+          <a
+            className="sso-button"
+            href={`/api/sso/start${next ? `?next=${encodeURIComponent(next)}` : ""}`}
+          >
+            {t("auth.ssoSignIn")}
+          </a>
         ) : (
           <div className="ot-note ot-note--warn text-left" role="status">
             <strong>{t("auth.ssoMissing")}</strong>

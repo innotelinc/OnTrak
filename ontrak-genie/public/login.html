@@ -45,6 +45,11 @@
       }
       .gate__mark { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.02em; }
       .gate__mark span { color: var(--accent); }
+      .gate__mark-wrap {
+        display: flex; flex-direction: column; align-items: center; gap: 14px;
+      }
+      .gate__mark-svg { color: var(--accent); }
+      .gate__mark-svg path:first-child { filter: drop-shadow(0 1px 1px rgb(0 0 0 / 12%)); }
       .gate__note { margin: 0; color: var(--text-dim); font-size: 13px; line-height: 1.55; }
       .gate__note code { font-family: var(--mono); color: var(--text); }
       .gate__btn {
@@ -56,9 +61,28 @@
     </style>
   </head>
   <body>
+    <!-- The OnTrak Genie mark: a small lamp with a rising wisp — the CodeOps console's
+         genie, plain and simple. Flat, 48×48, brand-toned, the same style every OnTrak
+         product carries on its login. -->
+    <svg class="gate__mark-svg" viewBox="0 0 48 48" role="img" aria-label="OnTrak Genie" width="44" height="44" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="genie-mark" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="var(--accent)" />
+          <stop offset="100%" stop-color="var(--tone-genie, var(--accent))" />
+        </linearGradient>
+      </defs>
+      <path d="M14 31 h20 l-2 11 h-16 z" fill="url(#genie-mark)" />
+      <path d="M12 31 h24 l-1 4 h-22 z" fill="none" stroke="var(--brand-ink)" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" />
+      <path d="M24 27 V18 a4 4 0 0 1 4 -4" fill="none" stroke="var(--brand-ink)" stroke-width="2.4" stroke-linecap="round" />
+      <circle cx="28" cy="17" r="1.6" fill="var(--brand-ink)" />
+      <path d="M21 17 q3 -3 6 0" fill="none" stroke="var(--brand-ink)" stroke-width="1.8" stroke-linecap="round" opacity="0.7" />
+    </svg>
+
     <main class="gate">
-      <h1 class="gate__mark">OnTrak <span>Genie</span></h1>
-      <p class="gate__note" id="gate-status">Checking how this deployment signs people in…</p>
+      <div class="gate__mark-wrap">
+        <h1 class="gate__mark">OnTrak <span>Genie</span></h1>
+      </div>
+      <p class="gate__note" id="gate-status">Signing in through your organisation's account.</p>
       <a class="gate__btn hidden" id="gate-signin" href="/api/auth/login">Sign in</a>
     </main>
 

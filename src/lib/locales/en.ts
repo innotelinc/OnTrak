@@ -41,7 +41,7 @@ export const en = {
   "auth.signIn": "Sign in",
   "auth.welcomeBack": "Welcome back",
   "auth.signInIntro": "Sign in to pick up where your last scenario left off.",
-  "auth.ssoSignIn": "Sign in with single sign-on",
+  "auth.ssoSignIn": "Sign in",
   "auth.ssoIntro": "Your organisation manages this account.",
   "auth.signInFailed": "Sign-in failed",
   "auth.ssoMissing": "Single sign-on is not configured",

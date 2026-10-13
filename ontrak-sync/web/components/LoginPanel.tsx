@@ -33,6 +33,70 @@ import type { AppUser, Meta } from "@/lib/types";
 
 import { ThemeToggle } from "./ThemeToggle";
 
+/** The OnTrak Sync mark: two stacked plates with a refresh ring between — package and
+ * container update monitoring, plain and simple. Flat, 48×48, brand-toned, the same
+ * style every OnTrak product carries on its login. */
+const SYNC_MARK =
+  <svg
+    className="gate__mark-svg"
+    viewBox="0 0 48 48"
+    role="img"
+    aria-label="OnTrak Sync"
+    width="44"
+    height="44"
+  >
+    <defs>
+      <linearGradient id="sync-mark" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stopColor="var(--brand)" />
+        <stop offset="100%" stopColor="var(--tone-sync)" />
+      </linearGradient>
+      <linearGradient id="sync-mark-dark" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stopColor="var(--tone-sync)" />
+        <stop offset="100%" stopColor="var(--brand)" />
+      </linearGradient>
+    </defs>
+    <path
+      d="M8 13 h13 a3 3 0 0 1 3 3 v4 a3 3 0 0 1 -3 3 h-5 a3 3 0 0 1 -3 -3 v-3 z"
+      fill="url(#sync-mark)"
+    />
+    <path
+      d="M27 13 h13 a3 3 0 0 1 3 3 v4 a3 3 0 0 1 -3 3 h-5 a3 3 0 0 1 -3 -3 v-3 z"
+      fill="url(#sync-mark-dark)"
+    />
+    <path
+      d="M18 30 v5 a3 3 0 0 0 3 3 h4 a3 3 0 0 0 3 -3 v-5"
+      fill="none"
+      stroke="var(--brand-ink)"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M22 33 l2 -2 l1.4 1.4"
+      fill="none"
+      stroke="var(--brand-ink)"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M33 30 v5 a3 3 0 0 0 3 3 h4 a3 3 0 0 0 3 -3 v-5"
+      fill="none"
+      stroke="var(--brand-ink)"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M37 33 l2 -2 l1.4 1.4"
+      fill="none"
+      stroke="var(--brand-ink)"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>;
+
 export function LoginPanel({
   notice,
   onSignedIn,
@@ -143,17 +207,23 @@ export function LoginPanel({
 
   return (
     <div className="gate">
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <ThemeToggle />
+      <div className="gate__mark-wrap">
+        {local ? null : SYNC_MARK}
+        {local ? (
+          <h1 className="gate__mark">Break-glass sign-in</h1>
+        ) : (
+          <>
+            {SYNC_MARK}
+            <h1 className="gate__mark">
+              OnTrak <span>Sync</span>
+            </h1>
+          </>
+        )}
       </div>
 
-      {local ? (
-        <h1 className="gate__mark">Break-glass sign-in</h1>
-      ) : (
-        <h1 className="gate__mark">
-          OnTrak <span>Sync</span>
-        </h1>
-      )}
+      <div className="gate__tools">
+        <ThemeToggle />
+      </div>
       {local ? (
         <p>
           OnTrak Sync is single sign-on only. This screen is the local fallback for the day the identity
