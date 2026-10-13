@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "copy:check": "node scripts/copy-check.mjs",
     "serve": "tsx scripts/serve.ts",
-    "test": "tsx --tsconfig tests/tsconfig.json --test tests/*.test.ts",
+    "test": "tsx --tsconfig tests/tsconfig.json --test --test-timeout=60000 tests/*.test.ts",
     "check": "npm run typecheck && npm run copy:check && npm test",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

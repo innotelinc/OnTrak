@@ -317,6 +317,12 @@ jobs:
     # A test that leaks a handle does not fail, it hangs, and a hung job holds the
     # runner until GitHub's six-hour ceiling. The suite itself closes its sockets now;
     # this is the guard that turns a future regression into a five-minute failure.
+    #
+    # `timeout-minutes` bounds the *job*, which is why a run that stalled here on
+    # 2026-10-13 was cancelled after fifteen minutes with no failing test named and
+    # nothing in the log to go on. So the suite also bounds each *test*
+    # (`--test-timeout` in package.json): a stall now fails by name inside a minute,
+    # and the next reader gets the test rather than a cancellation.
     timeout-minutes: 15
     services:
       postgres:
