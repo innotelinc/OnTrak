@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """cerulean-ontrak.py — put the OnTrak family on the Network's trust plane.
 
-Creates what the six public names need and nothing else:
+Creates what the seven public names need and nothing else:
 
     ontrak.innotel.us              → the portal          (:3300)
     its.ontrak.innotel.us          → training range      (:3000)
@@ -9,6 +9,16 @@ Creates what the six public names need and nothing else:
     sentinel.ontrak.innotel.us     → the identity/IDS   (:8787)
     sync.ontrak.innotel.us         → Network updates     (:8421)
     genie.ontrak.innotel.us        → the agent console   (:3400)
+    lab.ontrak.innotel.us          → OnTrak Lab          (:8080)
+
+OnTrak Lab is the one name here that is not a service in `docker-compose.all.yml`:
+it is the hands-on range's own control plane (OnTrak-dev) on its own host, and it
+publishes exactly one port — its own nginx, which routes `/` to its portal and
+`/guacamole/` to its HTML5 console. So this name forwards to that one port and
+passes every path through unchanged, which is what §9/Q4 of docs/consolidation-audit.md
+settles. The lab's own three names (`ontrak.`, `student.`, `admin.`) retire with it:
+this script is the one provisioner that may claim `ontrak.`, and here that name is
+the portal, so the lab's provisioner must not be pointed at this zone.
 
 For each name it ensures:
 
@@ -83,6 +93,21 @@ HOSTS = [
         "websocket": True,
     },
     {
+        "name": "genie",
+        "port": 3400,
+        # The platform's own name for the same console. `genie.innotel.us` is the
+        # *Network's* name — it is what the platform hands out, and the hosting feature
+        # (`*.genie.innotel.us`) is published under it — while `genie.ontrak.innotel.us`
+        # below is the family's. Both front this one console, and Genie chooses its
+        # callback by the browser's host, so **both** names have to be registered with
+        # the provider or a sign-in at one of them dies at the provider with
+        # `redirect_uri mismatch` and nothing on this side to see. Listing the name here
+        # is what keeps the redirect list honest, and it is idempotent: this row already
+        # exists at the edge, pointing at the same host and port.
+        "purpose": "OnTrak Genie, at the platform's own name",
+        "websocket": False,
+    },
+    {
         "name": "sync.ontrak",
         "port": 8421,
         "purpose": "OnTrak Sync — Network package and container updates",
@@ -97,18 +122,35 @@ HOSTS = [
         # asks the edge not to buffer that response itself (`X-Accel-Buffering`).
         "websocket": False,
     },
+    {
+        "name": "lab.ontrak",
+        "port": 8080,
+        "purpose": "OnTrak Lab — real machines for the hands-on half of a task",
+        # The upgrade is for the lab's own console: a student's browser tunnels
+        # Guacamole over a websocket, and the edge has to carry it through to the
+        # lab's gateway or the console renders and then never connects.
+        "websocket": True,
+    },
 ]
 
 # The redirect URIs the `ontrak` OIDC client has to be registered with. Kept
 # beside the host map so a new product cannot be added to one and forgotten in
 # the other, and printed by `--print-redirect-uris` for the Cerulean `.env`.
 REDIRECT_URIS = [
+    # The lab's is **first** on purpose. OnTrak Lab picks its callback by the origin
+    # the browser started on, and falls back to the first entry for anything it does
+    # not find — so with the family name ahead of it a student signing in at
+    # lab.ontrak.innotel.us would be sent to the portal's callback and the handshake
+    # would die after the password. It is the same `ontrak` client as every product;
+    # only the path differs (`/oidc/callback`, the lab's own route).
+    "https://lab.ontrak.innotel.us/oidc/callback",         # OnTrak Lab (OnTrak-dev)
     "https://ontrak.innotel.us/api/sso/callback",          # the portal
     "https://ontrak.innotel.us/api/auth/sso/callback",     # OnTrak Sync, same origin
     "https://its.ontrak.innotel.us/api/sso/callback",      # the training range
     "https://tix.ontrak.innotel.us/api/sso/callback",      # the desk
     "https://sync.ontrak.innotel.us/api/auth/sso/callback",  # OnTrak Sync behind the edge
     "https://genie.ontrak.innotel.us/api/auth/callback",   # Genie, which signs in itself
+    "https://genie.innotel.us/api/auth/callback",          # Genie at the platform's name
 ]
 
 
@@ -172,7 +214,21 @@ class Dns:
     def _get(self, path: str):
         _, payload = http_json(f"{self.base_url}/api/{path}",
                                headers={"Authorization": f"Bearer {self.token}"})
-        return payload or {}
+        payload = payload or {}
+        # A refused call answers **HTTP 200** with `"status": "invalid-token"` (or
+        # `"error"`) and no `response` block — so a reader that only looks at
+        # `response.records` sees "this name has no records" and the writer then
+        # "creates" it, reporting success for a write that never happened. That is
+        # exactly how a lab name can be announced as created and still not resolve.
+        status = str(payload.get("status") or "")
+        if status and status != "ok":
+            raise RuntimeError(
+                f"Technitium refused {path.split('?')[0]} ({status}): "
+                f"{payload.get('errorMessage') or 'no message'}. "
+                "TECHNITIUM_TOKEN is stale or wrong — mint a fresh one with "
+                "/api/user/login and store it in Vault (cerulean/data/technitium#token)."
+            )
+        return payload
 
     def records(self, domain: str, zone: str) -> list[dict]:
         payload = self._get("zones/records/get?" + urllib.parse.urlencode(

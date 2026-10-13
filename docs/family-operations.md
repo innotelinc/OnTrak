@@ -1,7 +1,9 @@
 # Running the OnTrak family
 
-**Six products, one identity layer, six names.** This is the operations guide:
+**Six products, one identity layer, seven names.** This is the operations guide:
 what runs where, how a person gets in, and what to do when something does not.
+The seventh name is **OnTrak Lab** — the hands-on range, which the edge serves from
+its own deployment rather than from a service this stack starts (§7).
 
 It is written for the deployment that exists, and it is deliberately specific —
 addresses, ports and the commands that were actually run. A guide that describes
@@ -24,6 +26,16 @@ All six run on the **`ontrak` incus container**, `192.168.1.21`, on host **i1**
 (`192.168.1.51`). Each is independently deployable and each has its own stack;
 `docker-compose.all.yml` in the repository root runs them together.
 
+**`lab.ontrak.innotel.us` is the seventh name, and the only one with no row in the
+table above** — it is not a service in this stack. OnTrak Lab (OnTrak-dev) is its own
+deployment on its own host, and it publishes exactly one port: its own nginx, which
+serves its portal at `/` and its HTML5 console at `/guacamole/`. The family edge
+forwards that one name to that one port and passes every path through unchanged, so
+this deployment's lab name is `lab.ontrak.innotel.us` → `http://192.168.1.21:8080/`,
+with the websocket upgrade the console tunnel needs. §7 has the whole of it. (The port
+is deliberately absent from the table, because the table's ports are the ones
+`docker-compose.all.yml` publishes and this stack publishes none of them for the lab.)
+
 Genie is the one product whose own stack and the family's stack would otherwise be
 the same service on the same port, so the product-only compose in `ontrak-genie/`
 defaults to **:3410** and :3400 has exactly one owner — this table's `genie-app`.
@@ -34,7 +46,7 @@ Both stacks read `ONTRAK_GENIE_PORT`, so one setting moves whichever you are sta
    browser ────────▶│  Cerulean edge (192.168.1.71)            │
                     │   NPM :80/:443   +  *.ontrak wildcard     │
                     └────────────────┬─────────────────────────┘
-                                     │  six proxy hosts
+                                     │  seven proxy hosts
                     ┌────────────────▼─────────────────────────┐
                     │  ontrak container · 192.168.1.21          │
                     │   :3300 portal   :8421 sync dashboard     │
@@ -74,9 +86,10 @@ to family roles by `ONTRAK_OIDC_ROLE_MAPPINGS` in each product's `.env`:
 | `ontrak-admins` | `ADMIN` | everything, plus accounts |
 
 The last column is the portal's catalogue answering for each role
-(`ontrak-portal/src/lib/portal-rules.ts`), minus **OnTrak Lab** — the catalogue's one
-optional product, which a deployment runs only if it says so (§7), so it is not in a
-table describing what *this* deployment serves. Add a person to a group in Authentik and
+(`ontrak-portal/src/lib/portal-rules.ts`), minus **OnTrak Lab**. The lab is the
+catalogue's one *optional* product, and this table lists the six the family stack
+starts — the lab is a name the edge serves, not a service here (§7), so it stays out
+of the rows while still being one of the names this deployment publishes. Add a person to a group in Authentik and
 their access follows within one sign-in — nothing is copied into a product, which is why
 a change here needs no migration anywhere else.
 
@@ -103,12 +116,14 @@ When a new product is added, copy that shape rather than the literal comparison.
 ### The redirect URIs registered on the `ontrak` client
 
 ```
+https://lab.ontrak.innotel.us/oidc/callback          the lab (first, on purpose — see below)
 https://ontrak.innotel.us/api/sso/callback            the portal
 https://ontrak.innotel.us/api/auth/sso/callback       Sync (same origin as the portal's host)
 https://its.ontrak.innotel.us/api/sso/callback        training
 https://tix.ontrak.innotel.us/api/sso/callback        Tix
 https://sync.ontrak.innotel.us/api/auth/sso/callback  Sync behind the edge
 https://genie.ontrak.innotel.us/api/auth/callback     Genie, which signs in itself
+https://genie.innotel.us/api/auth/callback            the same Genie at the platform's name
 ```
 
 `./scripts/cerulean-ontrak.py --print-redirect-uris` prints the same list — this list,
@@ -116,6 +131,22 @@ and not a second copy of it: `tests/family-ops.test.ts` compares the two, becaus
 had drifted. The page stopped at five while the client registers six, and the one
 missing was Genie's, which is a sign-in that fails at the provider with the
 `redirect_uri mismatch` in §6 as the only clue.
+
+Genie is the one product here with **two** public names, so it has two callbacks on the
+list above: the family's `genie.ontrak.innotel.us` and the platform's own
+`genie.innotel.us`, which the Network's edge publishes for the same console. Genie picks
+its callback from the host the browser started on, which is exactly why a name missing
+from this list fails *only* at the provider — the console builds the URL the browser
+asked for, the provider refuses it, and the console never sees the refusal. Adding a
+name to either side without the other is how `genie.innotel.us` came to answer with a
+provider error page while `genie.ontrak.innotel.us` signed in cleanly.
+
+The lab's is **first** on purpose. OnTrak Lab picks its callback by the origin the
+browser started on and falls back to the first entry for anything it does not find, so
+with the portal's callback ahead of it a student signing in at `lab.ontrak.innotel.us`
+would be sent to the portal's `/api/sso/callback` and the handshake would die after the
+password. It is the same `ontrak` client as every product; only the path differs
+(`/oidc/callback`, the lab's own route).
 
 ## 3. Adding a hostname, or repairing one
 
@@ -128,10 +159,11 @@ python3 /path/to/ontrak/scripts/cerulean-ontrak.py --dry-run    # what would cha
 python3 /path/to/ontrak/scripts/cerulean-ontrak.py              # do it
 ```
 
-It ensures, for each name: a Technitium A record at the address the zone apex
-already uses, an NPM proxy host forwarding to the product's port, and the
-certificate that covers the name — including the Network's `*.ontrak.innotel.us`
-wildcard, which is the one that matters for the five subdomains.
+It ensures, for each name (the lab's included — it is the same script that publishes
+all seven): a Technitium A record at the address the zone apex already uses, an NPM
+proxy host forwarding to the product's port, and the certificate that covers the name
+— including the Network's `*.ontrak.innotel.us` wildcard, which is the one that
+matters for the six subdomains.
 
 ### `already in use`, and why it is not obvious
 
@@ -321,14 +353,15 @@ empty, so a stale value can never restore a password somebody rotated.
 From anywhere on the Network:
 
 ```bash
-for h in ontrak its.ontrak tix.ontrak sentinel.ontrak sync.ontrak genie.ontrak; do
+for h in ontrak its.ontrak tix.ontrak sentinel.ontrak sync.ontrak genie.ontrak lab.ontrak; do
   printf '%-26s ' "$h.innotel.us"
   curl -s -o /dev/null -w '%{http_code} %{ssl_verify_result}\n' "https://$h.innotel.us/"
 done
 ```
 
-`curl` **201** on the training range, **200** on the portal, and `200 {"status":"ok"}`
-on `https://sync.ontrak.innotel.us/api/health` are healthy answers. A **403/401** is
+`curl` **201** on the training range, **200** on the portal, `200 {"status":"ok"}` on
+`https://sync.ontrak.innotel.us/api/health`, and `200 {"status":"ok","scenarios":14}` on
+`https://lab.ontrak.innotel.us/healthz` are healthy answers. A **403/401** is
 also a healthy answer for a product behind its own sign-in. A **502** means NPM is
 up and the product is not — check `docker compose ps` on the container.
 
@@ -365,6 +398,7 @@ account table is not affected by Cerulean being down.
 | Sentinel `sentinel.ontrak.innotel.us` | Its console is at `/console` and holds its own accounts and MFA — the root path is deliberately a 404, because the provider has no landing page to show. |
 | Sync `sync.ontrak.innotel.us` | `ONTRAK_ADMIN_USER` and the password printed once on an empty database (`docker logs ontrak-sync-api | grep 'generated password'`), or Cerulean. |
 | Genie `genie.ontrak.innotel.us` | **Sign in with Cerulean**, through the same `ontrak` client as the portal; with no issuer configured the console falls back to its own `WEB_TOKEN`. |
+| Lab `lab.ontrak.innotel.us` | **Sign in with Cerulean**, the same `ontrak` client with the lab's own callback (`https://lab.ontrak.innotel.us/oidc/callback`), registered first so the lab cannot fall back to the portal's. The range keeps no password; its HTML5 console is Guacamole inside the lab's own gateway, at `/guacamole/`. |
 
 A person's *role* decides which tiles the portal draws: `ontrak-students` and
 `ontrak-instructors` reach training, `ontrak-desk` reaches Tix, `ontrak-analysts`
@@ -386,55 +420,53 @@ somebody's afternoon:
   what the product is.
 - **SAML and IdP-initiated sign-on** are not implemented; the flow is
   SP-initiated OIDC only.
-- **OnTrak Lab is not one of the six.** It is a peer deployment — OnTrak-dev, Python,
-  on its own host — rather than a service `docker-compose.all.yml` starts, and
-  `scripts/cerulean-ontrak.py` provisions no name for it, so §1's six names are the whole
-  list this deployment serves. A deployment that *does* run a lab says so in two facts:
-  `ONTRAK_LAB_ENABLED` and `ONTRAK_LAB_URL`. Put them in the file the deployment
-  actually reads — the root `.env` for `docker-compose.all.yml`, which hands them to the
-  training app and to the portal, or `.env.production` for the training app's production
-  overlay, whose `.env.production.example` does not list them (the overlay passes
-  whatever that file holds, so adding the two lines there is enough). Until both are set
-  the portal draws
-  no lab tile, the training app's control room marks the lab "not deployed here", and
-  `npm run health:check` in the portal skips it — deliberately, because a link to a lab
-  nobody deployed is a dead link with a status light beside it, and the light can only
-  ever read "not answering". Setting the switch without an address is reported as a
-  misconfiguration rather than drawn as one. `ONTRAK_LAB_INTERNAL_URL` is the probe's
-  address when the lab's public name is not reachable from inside the portal container,
-  exactly as the other products have one. That deployment also puts the lab behind this
-  deployment's edge ([audit §9/Q4](consolidation-audit.md)): one name,
-  `lab.<base domain>`, forwarding to the lab host's single published port with
-  websockets enabled, because the lab's own gateway keeps `/` and `/guacamole/` on that
-  one port and the Network's `*.ontrak` wildcard already covers the name. The lab's own
-  provisioner must not be pointed at this zone: it publishes `ontrak.innotel.us` too,
-  and here that name is the portal, so NPM would refuse the second claim rather than
-  quietly move the front door. That deployment runs **one** lab host: the lab is
-  single-tenant — its VMs share one bridge, one warm pool and one results store, and
-  nothing in it names a tenant — so its host sizing is its own arithmetic (2 vCPU and
-  4 GiB per student VM, prewarmed before a class) and multi-tenant hosting stays out of
-  scope until somebody measures it ([audit §9/Q5](consolidation-audit.md)). Nine people
-  cannot be given a lab by adding a second one to this stack: that is a second host and a
-  second name. A deployment that runs one also puts the lab's scenarios in the training
-  catalogue — `npm run lab:import` writes the 14 of them as `lab`-tagged, published
-  scenarios (idempotent by slug, so it is safe on every release), which is what makes a
-  student see a door to the real machine at all; without it the catalogue has no lab
-  scenario and the two facts above turn nothing on. Those rows are published but have
-  **no simulated start**: the lab grades them, this app has no checks for them, and a
-  simulated attempt would be a score nobody earned filed as lab-graded, so the student page
-  draws the lab door in place of the start button and the server refuses the POST.
+- **OnTrak Lab is the seventh name, and the only one this stack does not start.** It
+  is a peer deployment — OnTrak-dev, Python, on its own host — and it publishes exactly
+  one port: its own nginx, which serves its portal at `/` and its HTML5 console at
+  `/guacamole/`. This deployment runs one, at `https://lab.ontrak.innotel.us`, and the
+  two facts that wire it are `ONTRAK_LAB_ENABLED` and `ONTRAK_LAB_URL` in the root
+  `.env`, with `ONTRAK_LAB_INTERNAL_URL` naming the same gateway by its published address
+  for the portal's status light (server-side, inside the compose network). The name is
+  published by `scripts/cerulean-ontrak.py` — A record, NPM proxy host, the `*.ontrak`
+  wildcard, and the websocket upgrade the console tunnel needs
+  ([audit §9/Q4](consolidation-audit.md)) — and the lab's callback,
+  `https://lab.ontrak.innotel.us/oidc/callback`, is registered **first** on the `ontrak`
+  client, because the lab falls back to the first entry for an origin it does not
+  recognise. The lab's own three names (`ontrak.`, `student.`, `admin.`) retire: this
+  zone spends `ontrak.` on the portal, so the lab's provisioner must not be pointed here
+  — NPM would refuse the second claim rather than quietly move the front door.
+
+  **The portal's tile is the peer; the training range's fallback is here.** With
+  `ONTRAK_LAB_IN_APP` set, the training app also serves the ported control plane at
+  `/lab`, in demo mode (`ONTRAK_DEMO__ENABLED`, because this host has no `/dev/kvm`) —
+  the range a course can still reach when the peer is down. That half needs the lab's own
+  data inside the container, which `docker-compose.deployment.yml` mounts read-only
+  (`./scenarios` and `./src/lib/lab/data`); without the mount `/healthz` answers 503
+  naming the missing tree. `npm run lab:import` writes the lab's 14 scenarios into the
+  training catalogue as `lab`-tagged, published scenarios (idempotent by slug) — the
+  catalogue is what makes a student see a door to a real machine at all, on either half
+  of the seam. Those rows are published but have **no simulated start**: the lab grades
+  them and this app has no checks for them, so the server refuses the POST and the
+  student page draws the lab door in place of the start button.
 
   The lab host itself is the other repository's to prepare, and the order is: its own
-  `infra/bootstrap-host.sh` (Incus, the lab bridge, the project and the limits profile — it
-  refuses a host with no usable `/dev/kvm`), `make setup && make doctor`, `make templates`
-  for the scenarios this deployment offers, and finally `npm run lab:import` here so the
-  catalogue holds the tasks those templates grade. **Windows and Office scenarios need one
+  `infra/bootstrap-host.sh` (Incus, the lab bridge, the project and the limits profile —
+  it refuses a host with no usable `/dev/kvm`), `make setup && make doctor`,
+  `make templates`, and `npm run lab:import` here. **Windows and Office scenarios need one
   thing a host cannot fetch for you**: the golden image is built from the operator's own
   Microsoft evaluation media (`make golden`, 30–60 minutes), and without it only the Linux
-  scenarios — which run as system containers, no hypervisor image at all — are buildable.
-  Reporting a finished session back is the client in
-  `integrations/lab-completion-client/`, installed on the lab host and pointed at this
-  deployment's address and `ONTRAK_API_TOKEN`; the lab's own store is what says what
-  happened, so the call is written on that host.
+  scenarios — system containers, no hypervisor image — are buildable. Reporting a finished
+  session back is the client in `integrations/lab-completion-client/`, installed on the
+  lab host and pointed at this deployment's address and `ONTRAK_API_TOKEN`.
+
+  **Autostart is Docker's job, on both halves.** The lab's four control-plane containers
+  (`ontrak-portal`, `ontrak-gateway`, `ontrak-guacamole`, `ontrak-guacd`) and every
+  service in `docker-compose.all.yml` carry `restart: unless-stopped`, so the daemon
+  brings both stacks back after a reboot. The only `restart: "no"` services are the
+  one-shot `lab-setup` and the migrate/seed jobs, which are meant to run once. There is
+  deliberately no systemd unit that starts either stack — it would race the daemon's own
+  restart — so the one unit this host needs is `ontrak-lab-route.service`, the route to
+  the lab network (`10.20.0.0/24` via `192.168.1.52`) the guests live on.
+
 - **The portal does not sign you out of the products.** It clears its own session
   and says so; each product holds its own credential.
