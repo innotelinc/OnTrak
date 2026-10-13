@@ -3,7 +3,7 @@
  * validation catch a bad manifest, and does the planner pick the fastest path the host
  * can actually deliver?
  *
- * Ported from OnTrak-dev's `tests/test_catalog.py`, and — like that suite — it runs
+ * Ported from ontrak-lab/tests/test_catalog.py, and — like that suite — it runs
  * against the **shipped data**, not against a fixture that could drift from it. The
  * manifests live in `src/lib/lab/data/catalog.json`, converted from the lab's own
  * `catalog/*.yaml` field for field, so `validate()` returning clean here is a statement

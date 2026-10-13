@@ -1,5 +1,5 @@
 /**
- * A finished lab session, reported across the boundary from OnTrak-dev.
+ * A finished lab session, reported across the boundary from the lab's own stack.
  *
  * The lab grades a task against a live machine and, when the session ends, tells
  * the family. This module is the door's rulebook: it reads the request the lab

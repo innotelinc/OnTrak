@@ -3,7 +3,7 @@
  * and the explanation. An assignment nobody can explain is worse than a manual one,
  * which is why every case here asserts *why* as well as *what*.
  *
- * Ported from `OnTrak-dev/tests/test_selection.py`, with one change of instrument: the
+ * Ported from `ontrak-lab/tests/test_selection.py`, with one change of instrument: the
  * Python reached for the real scenario repository and catalogue, and this port's loaders
  * do not exist yet, so the fixtures below are the same facts in the same shape — a
  * handful of scenarios across five families, with difficulties a distance from the 2.5

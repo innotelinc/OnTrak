@@ -1,7 +1,7 @@
 /**
  * Automatic scenario assignment.
  *
- * The TypeScript half of OnTrak-dev's `ontrak/selection.py`. A student should not
+ * The TypeScript half of ontrak-lab/ontrak/selection.py. A student should not
  * have to choose which fault to hunt, and an instructor should not have to hand out
  * scenarios one by one: this picks a scenario that (a) the chosen workload can
  * actually run and (b) the class has not seen to death.

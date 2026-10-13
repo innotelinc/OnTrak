@@ -1,7 +1,7 @@
 /**
  * Lessons: the command walkthroughs a scenario can point a student at.
  *
- * The TypeScript half of OnTrak-dev's `ontrak/lessons.py`. A lesson is a *teaching*
+ * The TypeScript half of ontrak-lab/ontrak/lessons.py. A lesson is a *teaching*
  * artefact, deliberately separate from a scenario, and keeping them apart is what
  * lets one lesson be referenced by several scenarios (permissions are needed by the
  * chmod fault, the ownership fault and the sudo fault) without the teaching text

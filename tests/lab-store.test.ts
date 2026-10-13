@@ -1,7 +1,7 @@
 /**
  * The lab store's contract, and the in-memory implementation that stands in for it.
  *
- * `src/lib/lab/store.ts` replaces OnTrak-dev's SQLite class with an interface plus one
+ * `src/lib/lab/store.ts` replaces the lab's SQLite class with an interface plus one
  * reference implementation (plan §3/C3 — a lab host uses the database the family already
  * runs). That shape only works if the stand-in is a *real* implementation: the session
  * manager and the demo flow are tested against it, so a fake that is easier than the
@@ -17,7 +17,7 @@
  *     whatever time the machine happens to say.
  *
  * ── ORDERING IS THE LAB'S, AND PINNED ──────────────────────────────────────────
- * OnTrak-dev reads its audit trail with `ORDER BY id DESC LIMIT ?`, and its own suite
+ * The Python reads its audit trail with `ORDER BY id DESC LIMIT ?`, and its own suite
  * asserts it (`test_store.py`: `[e["kind"] for e in events] == ["checked", "ready"]`,
  * and `recent_events()[0]` is the last event logged). This suite originally exposed the
  * port returning insertion order instead — the divergence was real, and the store was
@@ -217,7 +217,7 @@ test("store: an event is stamped by the injected clock, and the log only grows",
 });
 
 test("store: the readers return the newest first, as the lab's SQL does", async () => {
-  // See the header. OnTrak-dev's `test_store.py` asserts exactly this:
+  // See the header. ontrak-lab/test_store.py asserts exactly this:
   //   events_for(session) -> ["checked", "ready"]      (newest first)
   //   recent_events()[0]  -> the last event logged
   const store = new InMemoryLabStore();

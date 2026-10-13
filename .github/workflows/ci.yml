@@ -1,9 +1,11 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # ci.yml — the checks that must be green on main.
 #
-# Twelve concerns, in the order they fail cheapest:
+# Thirteen concerns, in the order they fail cheapest:
 #   structure    — the conformant file set, the compose files and every landing page
 #   secrets      — the scanner passes its own self-test, then the tracked tree
+#   lab          — OnTrak Lab's Python suites: the portal's own, and the installer
+#                  and publishing scripts'
 #   training     — the IT support training app: typecheck, unit tests, build
 #   tix          — OnTrak Tix: typecheck, unit tests, build
 #   sentinel     — OnTrak Sentinel: migrations applied, then typecheck and unit tests
@@ -100,10 +102,10 @@ jobs:
       - name: Unity theme copies are byte-identical
         run: python3 theme/tests/test_theme_copies.py
 
-      # The lab's reporting client ships here because OnTrak-dev must stay unchanged,
-      # so its suite runs here too rather than waiting for a lab host to report a
-      # payload the server refuses. Offline by design: no network, no database, and
-      # the same command its README gives an operator.
+      # The lab's reporting client is the family's half of the completion contract, so
+      # its suite runs where the contract lives rather than waiting for a lab host to
+      # report a payload the server refuses. Offline by design: no network, no database,
+      # and the same command its README gives an operator.
       - name: Lab client unit tests
         run: |
           set -euo pipefail
@@ -123,6 +125,49 @@ jobs:
 
       - name: Scan the tracked tree
         run: python3 scripts/secret-scan.py
+
+  # OnTrak Lab's own Python suites, which arrived with its tree when the two
+  # repositories became one. Nothing ran them here: the move brought
+  # `ontrak-lab/tests` (the portal, the session manager, the catalog, the scheduler,
+  # the guest drivers — against a fake hypervisor and an in-memory store) and
+  # `ontrak-lab/scripts/tests` (the installer, the image publishing, the secret scan)
+  # into this repository, and a directory of Python tests no job runs is exactly what
+  # `tests/ci-coverage.test.ts` refuses — it named both of these, which is why the job
+  # exists rather than being a nice idea.
+  #
+  # Offline by design, like the boundary tests in the `training` job: no machine, no
+  # network and no host tooling, because these suites assert what the lab *decides*
+  # rather than what a range runs — the script tests put it in their own module
+  # headers ("can be tested without a hypervisor").
+  lab:
+    name: OnTrak Lab
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ontrak-lab
+    steps:
+      - uses: actions/checkout@v7
+
+      # 3.12 because that is what the lab runs on: its portal image is Ubuntu 24.04,
+      # whose python3 this is, and its own development venv is 3.12 as well. The
+      # project's floor is 3.10, and a suite green only on the floor would be a suite
+      # that never ran where it ships.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install the lab's dependencies
+        run: pip install -r requirements.txt
+
+      # The lab's `make test`, run the way CI runs every suite: the same command an
+      # operator runs by hand, so a failure here is a failure somebody can reproduce.
+      - name: The lab's own suite
+        run: python3 -m pytest -q tests
+
+      # Its own directory because the project's `testpaths` is `tests` alone, which is
+      # how these seventeen files came to be run by nobody at all.
+      - name: The installer and publishing scripts
+        run: python3 -m pytest -q scripts/tests
 
   training:
     name: Training app

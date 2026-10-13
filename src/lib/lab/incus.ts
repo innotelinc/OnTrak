@@ -1,5 +1,5 @@
 /**
- * The lab's Incus client — the TypeScript half of OnTrak-dev's `ontrak/incus.py`.
+ * The lab's Incus client — the TypeScript half of ontrak-lab/ontrak/incus.py.
  *
  * We drive the `incus` CLI rather than a client library, for the reason the Python
  * module gives and which survives the port: operators already have the CLI, version

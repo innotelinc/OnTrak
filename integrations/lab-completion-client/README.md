@@ -11,15 +11,16 @@ its certificate land in the family's single ledger with `gradingMode = 'lab'`.
 
 ## Why this lives here
 
-The lab is a Python platform with its own repository, and that repository **must
-stay unchanged** by the consolidation. So the call the lab would make after a
-session is kept here instead: out of tree, in the repo that owns the contract, with
-its own tests, ready to be copied onto a lab host by whoever runs one.
+It is the family's half of the contract, so it lives where the contract lives: with
+its own tests, in the repository whose CI runs them, ready to be copied onto a lab
+host by whoever runs one.
 
-**Nothing in the lab's own repository was modified.** Its portal still signs in
-only through its own provider, and its code still knows nothing about this route.
-Adding the call is a lab operator's change, made on the lab host from this
-directory.
+It is deliberately **not** part of the lab's own package. The client is standard
+library only and knows one route, so a lab host takes it without taking the family's
+application, and a lab tree can be replaced without touching the call that reports
+into it. The lab's portal still signs in only through its own provider, and its code
+still knows nothing about this route — wiring the call in is a lab operator's change,
+made on the lab host from this directory.
 
 ## Installing it on a lab host
 

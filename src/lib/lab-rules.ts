@@ -1,5 +1,5 @@
 /**
- * The lab (OnTrak-dev) as a capability *this* app can offer — read once, from the
+ * The lab (ontrak-lab/) as a capability *this* app can offer — read once, from the
  * environment, and never guessed at.
  *
  * OnTrak grades simulated machines in the browser; the lab grades real ones it
@@ -24,7 +24,7 @@
  * place all three facts are combined into the single answer a page needs — off, a link
  * to the peer, this app's own routes, or a refusal that names the variable to fix. The
  * two older facts keep their meaning exactly: a stated address is still the door, so a
- * deployment migrating off OnTrak-dev links to it until it says otherwise.
+ * deployment migrating off a peer lab links to it until it says otherwise.
  *
  * **The link carries no identity, on purpose.** The lab authenticates a student
  * through the family's own sign-in (see §6/C5 of the audit) — the deep link only
@@ -55,7 +55,7 @@ export const LAB_DASHBOARD_PATH = "/dashboard";
  * A separate variable from `ONTRAK_LAB_ENABLED`, on purpose, because it answers a
  * different question. That one says the deployment wants a lab and where it is; this
  * one says the lab is *here* — the ported control plane, serving its own routes. They
- * are not two spellings of one fact: a deployment still running OnTrak-dev on its own
+ * are not two spellings of one fact: a deployment still running the lab as a peer on its own
  * host keeps `ONTRAK_LAB_URL` and never sets this, and a deployment that has ported the
  * lab sets this and has no peer address to give.
  */
@@ -141,7 +141,7 @@ export function isLabScenario(tags: readonly string[] | null | undefined): boole
 /**
  * Which door a student is offered, and what is behind it.
  *
- * The lab can be somewhere else (a peer OnTrak-dev deployment, linked to) or be *this*
+ * The lab can be somewhere else (a peer lab deployment, linked to) or be *this*
  * app (the ported control plane, served at `/lab`), and the two are one question to the
  * page that draws the door. Four answers, and the fourth is the one worth having: a
  * stated address that was refused is reported with its reason rather than quietly

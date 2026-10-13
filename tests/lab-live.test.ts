@@ -9,7 +9,7 @@
  * `tests/result-filters.test.ts` proves the filters, but not that the query they
  * build selects the rows it claims to. This file is both of those parts: it boots
  * the app with an API token it sets itself, seeds a learner and a `lab`-tagged
- * scenario, and then reports a completion over HTTP exactly as OnTrak-dev would,
+ * scenario, and then reports a completion over HTTP exactly as the lab would,
  * checking what the route *wrote* and what the feed then answers.
  *
  * It is opt-in twice over, like `tests/lti-live.test.ts`: `ONTRAK_LAB_LIVE=1` says

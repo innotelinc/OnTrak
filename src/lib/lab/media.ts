@@ -1,7 +1,7 @@
 /**
  * The media store: where installation media actually lives.
  *
- * The TypeScript half of OnTrak-dev's `ontrak/media.py`. The catalog *describes*
+ * The TypeScript half of ontrak-lab/ontrak/media.py. The catalog *describes*
  * media (`source`, `kind`, `filename`, `url`, `sha256`); this module resolves it to a
  * file on disk, and it is the one place in the product that touches licensed
  * software. Two rules are the reason it exists, and both are refusals:

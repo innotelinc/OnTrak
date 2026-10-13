@@ -1,7 +1,7 @@
 /**
  * The in-house ticket: the write-up a student hands in with their submission.
  *
- * Ported from `OnTrak-dev/tests/test_tickets.py`. The rubric is deliberately mechanical
+ * Ported from `ontrak-lab/tests/test_tickets.py`. The rubric is deliberately mechanical
  * (length, required terms, a dropdown), so these tests are about whether it *resists* the
  * lazy answer while accepting every reasonable one — and about the two properties that
  * matter beyond individual rules:

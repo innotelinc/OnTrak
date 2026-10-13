@@ -2,7 +2,7 @@
  * What the lab keeps between requests, and the one implementation that needs no
  * database.
  *
- * The TypeScript half of OnTrak-dev's `ontrak/store.py`, with one deliberate
+ * The TypeScript half of ontrak-lab/ontrak/store.py, with one deliberate
  * difference of shape. The Python class **is** a SQLite database: 709 lines that open
  * a file, create six tables, run their own migrations and hand back `sqlite3.Row`s.
  * This port keeps the *contract* and replaces the engine, because the plan's C3 says a

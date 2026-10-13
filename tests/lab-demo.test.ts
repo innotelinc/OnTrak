@@ -3,7 +3,7 @@
  * to end: assign, provision, check, submit, tear down — and it has to honour the
  * results-only policy, because that is the promise the UI makes.
  *
- * Ported from `OnTrak-dev/tests/test_demo.py`. The two cases that are *not* here are the
+ * Ported from `ontrak-lab/tests/test_demo.py`. The two cases that are *not* here are the
  * portal's: signing in through the demo door and driving a Linux scenario from the browser
  * are stage 3's, and they live with the routes (docs/lab-port.md §5). What can be proven
  * without a browser is here, and it is the part that matters: no hypervisor, no database and

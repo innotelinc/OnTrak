@@ -1,14 +1,14 @@
 """Report a finished lab session to the OnTrak family.
 
-OnTrak Lab (OnTrak-dev) grades a task against a live machine. When a session ends,
+OnTrak Lab (ontrak-lab/) grades a task against a live machine. When a session ends,
 the family expects one POST describing it, so that the attempt, its checks and its
 certificate land in the family's single ledger with ``gradingMode = 'lab'``
 (docs/consolidation-audit.md, Q3).
 
-This module is the lab-side half of that boundary, and it lives in the OnTrak
-repository on purpose: OnTrak-dev must stay unchanged, so the call the lab would
-make is kept here instead, to be copied onto a lab host. See README.md in this
-directory.
+This module is the lab-side half of that boundary. It ships with the family rather
+than inside the lab's own package on purpose: it is a standalone client an operator
+copies onto a lab host, and the payload it builds is proven by this repository's CI
+against the rules the server enforces. See README.md in this directory.
 
 Nothing outside the Python standard library is imported. The lab host is a service
 with its own pinned dependencies, and a reporting client does not deserve to add

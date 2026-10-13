@@ -59,6 +59,12 @@ APPS = (
     # Genie has no bundler: both files are served as static assets out of `public/`
     # (see STATIC_FILES in ontrak-genie/src/server.ts), so both live there.
     ("ontrak-genie/public", ("unity-theme.css", "unity-theme.js")),
+    # The lab's portal is the one copy with no build step at all: it is a Jinja
+    # template serving the two files out of its own static directory, so both are
+    # copied by hand. That is precisely why it belongs in this list — the lab lived
+    # in another repository when this list was written, and a hand-copied pair in a
+    # tree no check reads is how a sixth product ends up off-palette.
+    ("ontrak-lab/ontrak/portal/static", ("unity-theme.css", "unity-theme.js")),
     ("public", ("unity-theme.js",)),          # the training range at the root
     ("src/theme", ("unity-theme.css",)),
     # The landing pages of three products, which each grew their own copy of the

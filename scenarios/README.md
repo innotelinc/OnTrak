@@ -11,20 +11,20 @@ _lib/ontrak-common.sh       its shell twin
 <id>/resources/**           anything those scripts need
 ```
 
-The scripts are `OnTrak-dev/scenarios/**` copied verbatim — a scenario's check decides
+The scripts are `ontrak-lab/scenarios/**` copied verbatim — a scenario's check decides
 whether a student's fix works, so it is not something a port paraphrases. The
 `scenario.json` files are the lab's `scenario.yaml` converted once, field for field, with
 the lab's own PyYAML (`docs/lab-port.md` §3/C6: YAML was settled as JSON, and this
 repository has no YAML parser on purpose).
 
-To regenerate after a change in `OnTrak-dev` (which stays untouched):
+To regenerate after a change in the lab's `scenarios/` (copied from `ontrak-lab/scenarios`):
 
 ```sh
 python3 - <<'PY'
 import json, shutil
 from pathlib import Path
 import yaml
-lab, out = Path("OnTrak-dev/scenarios"), Path("scenarios")
+lab, out = Path("ontrak-lab/scenarios"), Path("scenarios")
 for name in ("OnTrak.Common.ps1", "ontrak-common.sh", "idp.py"):
     shutil.copy2(lab / "_lib" / name, out / "_lib" / name)
 for d in sorted(p for p in lab.iterdir() if p.is_dir() and p.name != "_lib"):

@@ -3,7 +3,7 @@
  *
  * Three kinds of case are here, and the third is why this file exists.
  *
- * The first two are the Python's own (`OnTrak-dev/tests/test_config.py`): the defaults,
+ * The first two are the Python's own (`ontrak-lab/tests/test_config.py`): the defaults,
  * the precedence between file, environment and explicit overrides, the `__`-scoped
  * environment variable, the value shapes a `.env` really carries, and the refusals —
  * an unknown section key, and an `ONTRAK_...` variable left behind in a deployment's
@@ -127,7 +127,7 @@ test("config: the shipped environment vocabulary is readable and unambiguous", (
   // The Python proved this by loading the shipped `.env.example`; the ported equivalent
   // is the schema itself, because the template is a deployment artifact of a later
   // stage and reading the sibling repository from a unit test would make `npm test`
-  // depend on OnTrak-dev. What matters is the same thing: every key a deployment can
+  // depend on the lab's Python. What matters is the same thing: every key a deployment can
   // write reaches a field, and no two keys share one.
   for (const [name, schema] of Object.entries(SECTION_SCHEMAS)) {
     const keys = Object.keys(schema.fields);

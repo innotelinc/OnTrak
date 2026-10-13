@@ -1,7 +1,7 @@
 /**
  * Grading: turn guest output into a score report.
  *
- * The TypeScript half of OnTrak-dev's `ontrak/scoring.py`. The guest contract it
+ * The TypeScript half of ontrak-lab/ontrak/scoring.py. The guest contract it
  * reads is deliberately tiny, and it is the contract the scenario scripts already
  * speak, so the port reads the same bytes the Python did:
  *

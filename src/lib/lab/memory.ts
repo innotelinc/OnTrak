@@ -1,5 +1,5 @@
 /**
- * The lab's hypervisor, in memory — the TypeScript half of OnTrak-dev's
+ * The lab's hypervisor, in memory — the TypeScript half of the lab's
  * `ontrak/memory.py`.
  *
  * Two callers, one reason. Demo mode runs the whole student flow — request,

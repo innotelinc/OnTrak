@@ -1,7 +1,7 @@
 /**
  * Talking to the guest.
  *
- * This is the TypeScript half of OnTrak-dev's `ontrak/guest.py`: the layer that runs
+ * This is the TypeScript half of ontrak-lab/ontrak/guest.py: the layer that runs
  * a scenario's `setup`/`check` script inside a machine and reads its output back.
  * The guest contract is unchanged, and it is deliberately tiny — a scenario injects
  * a fault and prints one JSON object between the lab's markers, on Windows as

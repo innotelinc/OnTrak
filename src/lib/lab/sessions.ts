@@ -1,5 +1,5 @@
 /**
- * Session lifecycle — the TypeScript half of OnTrak-dev's `ontrak/sessions.py`, the
+ * Session lifecycle — the TypeScript half of ontrak-lab/ontrak/sessions.py, the
  * largest module in the lab (1,638 lines of Python) and the one every other moving
  * part goes through.
  *

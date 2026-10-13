@@ -1,6 +1,16 @@
 # Porting OnTrak Lab into OnTrak's own stack
 
-The decision this document executes: **the lab becomes TypeScript inside OnTrak**, so
+> **Superseded, 2026-10-13 — the lab is in this repository.** It did not have to be
+> ported to become one repository: OnTrak-dev's tree and history were merged in
+> whole instead, and the lab now lives at `ontrak-lab/` **inside this repository** —
+> the tree every `ontrak-lab/…` path below points at, and the one the deployed lab
+> runs from. The ported TypeScript (`src/lib/lab/**`, `scripts/lab/cli.ts`, the
+> suites beside them) stays and is still exercised, but the port is no longer *the
+> plan*, and the premise it was written under — a second repository that must not be
+> touched — no longer holds. Read the stages below as the record of how the
+> TypeScript half was built, not as outstanding work.
+>
+> The decision this document executes: **the lab becomes TypeScript inside OnTrak**, so
 there is one language, one repository and one application rather than two products a
 deployment has to run side by side. The alternative the consolidation audit had
 recommended — keep the lab as a separately deployed Python peer behind
@@ -12,13 +22,13 @@ It is a rewrite of a working platform. It is written down as stages, each with a
 entry condition and an exit check, because the failure mode of a port this size is a
 half-migrated tree where neither stack works.
 
-**OnTrak-dev is not modified.** It stays the behavioural reference: every ported module
-is read against `OnTrak-dev/ontrak/<module>.py` and proven against that module's own
-Python tests, which are ported with it.
+**The lab is where the reference lives.** Every ported module is read against
+`ontrak-lab/ontrak/<module>.py` and proven against that module's own Python tests,
+which are ported with it.
 
 ## 1. What is actually being ported
 
-`OnTrak-dev/ontrak/` is **12,910 lines** of Python, with **8,889 lines** of Python tests
+`ontrak-lab/ontrak/` is **12,910 lines** of Python, with **8,889 lines** of Python tests
 beside it. Module by module, with its disposition:
 
 | Python module | Lines | Ported to | Stage | Status |
@@ -123,9 +133,9 @@ JSON into `src/lib/lab/data/`:
 | `lessons.json` (7 lessons) | `lessons/*.yaml` | keyed by file name, one lesson each |
 | `config.json` | `config/ontrak.yaml` | the config record `config.ts` takes as its file half |
 
-The conversion is lossless (`yaml.safe_load` → `json.dumps`) and was run against
-`OnTrak-dev` read-only — nothing in that repository is written, which is why the YAML
-stays its source of truth and a change there has to be re-converted.
+The conversion is lossless (`yaml.safe_load` → `json.dumps`) and was run without
+writing back to the lab's tree, which is why the YAML stays its source of truth and a
+change there has to be re-converted.
 
 **Verified:** `tsc --noEmit` clean; the two suites **52/52**; the whole app suite
 **770 tests / 765 pass / 0 fail / 5 skipped**; `npm run build` exit 0. The catalogue and
@@ -270,7 +280,7 @@ data and scripts had never been shipped.** The 14 records existed only as flat J
 fixtures, with no `setup.ps1`/`check.ps1`/`setup.sh`/`check.sh` anywhere — so a deployment
 had nothing to inject a fault with and nothing to grade against, which is a fact only an
 end-to-end run can reveal. The fix is `scenarios/`: the lab's own tree, one directory per
-scenario, the scripts copied from `OnTrak-dev` unchanged beside the `scenario.json` converted
+scenario, the scripts copied from `ontrak-lab/scenarios` unchanged beside the `scenario.json` converted
 from its YAML, plus the shared `_lib` libraries. `src/lib/lab/dataset.ts` is the one module
 in the port that reads a disk (which is the other half of the pure modules' injected-file
 contract), and `tests/lab-dataset.test.ts` asserts the tree is *complete* — all 14 records,
@@ -366,8 +376,8 @@ every student — which is also what makes the blended grade visible in a run of
 skipped / 3 fail**, the three being the pre-existing `family-*` failures caused by an
 uncommitted local edit to `docker-compose.all.yml` (binding the published ports to
 `192.168.104.129`), which are green with that edit stashed; `npm run build` exit 0. The
-differential checks above (14 forms, 125 graded submissions) were run against `OnTrak-dev`
-read-only.
+differential checks above (14 forms, 125 graded submissions) were run against the lab's own
+tree, without writing to it.
 
 The migration was verified the way the lab's runtime one was, and with the same three
 checks: `prisma migrate diff` between the migrated database and `schema.prisma` reports an
@@ -393,7 +403,8 @@ that is a different question, so it is a different variable (`ONTRAK_LAB_IN_APP`
 app's `/lab`, or a refusal that names the variable to fix — and the in-app answer wins over
 a stated address, because a stated address would be handed a `/dashboard`, which is the
 *peer* lab's landing page and not a page this app has. A deployment migrating off
-OnTrak-dev therefore adds one variable and does not have to remember to delete another. A
+the lab's Python control plane therefore adds one variable and does not have to remember to
+delete another. A
 deployment that wants the family's portal tile to point at the in-app lab sets
 `ONTRAK_LAB_URL` to this app's origin; that keeps the portal's own light working, which is
 what `/healthz` is for.
@@ -645,7 +656,8 @@ was written (all 14 scenarios, field for field), so the
 scenario loader ports onto data that is already here; `config.ts` takes an
 already-parsed record and does not choose a parser; and `catalog`/`lessons` get the same
 one-off conversion, with a checked script rather than by hand. **Cost:** the lab's YAML
-files stay the source of truth in `OnTrak-dev`, so a change there has to be re-converted —
+files stay the source of truth in the lab's own tree (`ontrak-lab/catalog`,
+`ontrak-lab/lessons`, `ontrak-lab/config`), so a change there has to be re-converted —
 which is true of every ported data file and is stated rather than hidden. The alternative
 (a `yaml` dependency) was not taken because this repository's conventions discourage a new
 dependency that its own precedent makes unnecessary.
@@ -696,7 +708,7 @@ real machine, end to end (§5, with the numbers). What is left is narrower and s
 | **3** (landed) | the student surface (`/lab`, the session page, the console route, the pollable status), the instructor fleet and both CSVs, the in-app door and the lab's `/healthz` | a student starts, checks and hands in; an instructor reads the class; `results.csv` keeps its path, name and header row; three new a11y audits pass |
 | **3 (rest)** (landed) | the admin panel — overview, accounts, platforms, tickets (+ one write-up), schedule and audit under `/lab/admin/**` — and the lessons browse (`/lab/lessons`, `/lab/lessons/[id]`) | every page renders for staff and refuses a student (307 to their own home); a real graded ticket renders from the database, an unknown id is a 404, and the two readings that shell out to `incus` report a failure line instead of a 500. `tests/lab-admin.test.ts` holds the read models. Two parts of `admin.py` are deliberately **not** here: the accounts page is **read-only** (§3/C2 — the writable surface stays the app's own `/admin/users`), and the maintenance form and the schedule **tick** are the CLI's, because a panel is a report rather than a remote control and §3/C4 keeps hypervisor work where the machines live |
 | **4** (landed) | the CLI as `scripts/lab/cli.ts` (`npm run lab`), the settings documentation, and the deployment wiring in `.env.example` / `docker-compose.all.yml` | `doctor` names what a host is missing; `scenario`, `catalog`, `lesson` and `generate` read the shipped data with no host at all; `demo run` drives a whole class with none; the Python commands that a *server* or an account table used to provide refuse, in words, with the code that replaced them |
-| **4 (rest)** | the `infra/**` host shell (not in this repository; OnTrak-dev's) and the three host commands — `image build`, `media fetch` and `catalog refresh` | they run where the hypervisor and the media live, and each says so rather than half-running |
+| **4 (rest)** | the `infra/**` host shell (`ontrak-lab/infra`, which is in this repository and stays shell) and the three host commands — `image build`, `media fetch` and `catalog refresh` | they run where the hypervisor and the media live, and each says so rather than half-running |
 
 **The port is complete.** Stages 1, 2a, 2b, 2c, 2d, 3a, 3, 3 (rest), 4 and 4 (rest) are all
 landed: the control plane, its data, its store, its demo, its write-up, its student and
@@ -714,7 +726,7 @@ recommended the opposite and a reader who opened only one of the two should not 
 which is current.
 
 What remains is two things, and both are named rather than hidden: the `infra/**` host shell,
-which stays shell and stays OnTrak-dev's (it builds a Windows image with `incus`, `qemu-img`
+which stays shell (`ontrak-lab/infra`; it builds a Windows image with `incus`, `qemu-img`
 and `oras`, and a Node rewrite would be a worse version of the same script — §1), and the
 host-side commands that need a hypervisor or gigabytes of media, which refuse by name and point
 at the CLI. Neither is a prerequisite for a class: `/lab` serves one today, from a host or from

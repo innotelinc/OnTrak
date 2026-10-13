@@ -1,7 +1,7 @@
 /**
  * The workload catalog: every operating system and application the lab can stand up.
  *
- * The TypeScript half of OnTrak-dev's `ontrak/catalog.py`. A catalog entry is a
+ * The TypeScript half of ontrak-lab/ontrak/catalog.py. A catalog entry is a
  * *manifest*, never a binary: for freely redistributable media the manifest names a URL
  * `media.ts` can fetch, and for everything else — retail Windows, Office, anything
  * end-of-life — it declares `source: operator`, so the operator supplies it from their

@@ -1,7 +1,7 @@
 /**
  * The lab's scenario catalogue: what loads, what is refused, and what a student may see.
  *
- * Ported from `OnTrak-dev/tests/test_scenarios.py`, with the two things this
+ * Ported from `ontrak-lab/tests/test_scenarios.py`, with the two things this
  * repository changes kept visible rather than glossed:
  *
  * **The data is the lab's own.** These tests read the 14 real scenarios from the

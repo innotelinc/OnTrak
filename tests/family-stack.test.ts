@@ -20,9 +20,9 @@
  *    so pointing the light at the API drew a healthy Sync as down.
  *
  * What it does not check is which products *should* be in the family stack. OnTrak
- * Lab's light has no wiring here on purpose: the lab is OnTrak-dev's control plane, a
- * peer deployment rather than a directory of this repository, and nothing in this
- * compose file starts one. §9/Q4 answers the question that stood here — the family
+ * Lab's light has no wiring here on purpose: the lab's control plane lives in
+ * `ontrak-lab/`, and it is a peer deployment rather than a service this compose
+ * file starts. §9/Q4 answers the question that stood here — the family
  * edge *can* front a lab, as one name over the lab's single published port — and an
  * edge that can front one does not put a service in `docker-compose.all.yml`.
  *
@@ -42,8 +42,8 @@ const PORTAL_RULES = path.join("ontrak-portal", "src", "lib", "portal-rules.ts")
 /**
  * Lights the family stack does not serve, and why.
  *
- * OnTrak Lab is OnTrak-dev's Python control plane: it runs on its own host, it is not a
- * service in this compose file, and §9/Q4 — which asked whether the family edge could
+ * OnTrak Lab is the Python control plane in `ontrak-lab/`: it runs on its own host, it
+ * is not a service in this compose file, and §9/Q4 — which asked whether the family edge
  * serve one — was answered in the direction of an edge, not of a service here. It is
  * also the portal catalogue's one *optional* product:
  * the family stack enables neither `ONTRAK_LAB_ENABLED` nor `ONTRAK_LAB_URL`, and the

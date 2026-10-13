@@ -260,7 +260,7 @@ async function sendCertificateDownChain(attemptId: string, facts: CertificateAtt
  * The app scenario a ported lab scenario belongs to, or `null`.
  *
  * The two catalogues are separate rows on purpose (§6/C3): the lab's tree is authored in
- * OnTrak-dev and imported (`scripts/import-lab-scenarios.ts`), which keeps the lab's id as
+ * the lab's Python and imported (`scripts/import-lab-scenarios.ts`), which keeps the lab's id as
  * the family's slug. So the lookup is by slug, and a deployment that has not imported the
  * catalogue has no task to file against — which is answered as `null` rather than as an
  * error, because the session itself was graded and stored either way.

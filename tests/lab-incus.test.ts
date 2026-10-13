@@ -1,7 +1,7 @@
 /**
  * The real Incus client, driven against a stand-in for the CLI.
  *
- * This is the port of `OnTrak-dev/tests/test_incus_client.py`, and it keeps that
+ * This is the port of `ontrak-lab/tests/test_incus_client.py`, and it keeps that
  * file's reason for existing. The lab's own `FakeIncus` implements the same *method
  * names* as the real client, so it can never catch a command line the CLI does not
  * accept — and that is how three separate mistakes shipped, each of which stopped the

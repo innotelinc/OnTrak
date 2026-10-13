@@ -3,7 +3,7 @@
  * assertion here is: whatever the generator writes passes the same validation the hand-written
  * scenarios pass.
  *
- * Ported from `OnTrak-dev/tests/test_generator.py`. The one test shape that could not come
+ * Ported from `ontrak-lab/tests/test_generator.py`. The one test shape that could not come
  * across as written is the duplicate-objective case: the Python monkeypatched the module's
  * `PRIMITIVES` dict to inject a clashing primitive, and this port's registry is read-only by
  * design (`primitives.ts` — registration is the only way in, and a duplicate id is refused).

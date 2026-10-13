@@ -75,7 +75,7 @@ test("capabilities: an explicit URL wins, is marked named, and loses its trailin
 });
 
 test("capabilities: the lab is off, not linked, until the deployment asks for one", () => {
-  // The lab is OnTrak-dev on its own host, so the family's naming convention is not an
+  // The lab is the Python control plane on its own host, so the family's naming convention is not an
   // address for it: without both facts — the deployment wants a lab, and here is where —
   // there is nothing to link to. A link to `lab.<base domain>` in a deployment with no lab
   // is precisely the "invents a link that does not resolve" failure this list is meant to

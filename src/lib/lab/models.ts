@@ -1,7 +1,7 @@
 /**
  * Domain models shared by the lab's session manager, graders and portal.
  *
- * This is the TypeScript half of OnTrak-dev's `ontrak/models.py`, and it keeps that
+ * This is the TypeScript half of ontrak-lab/ontrak/models.py, and it keeps that
  * module's vocabulary deliberately: the state names, the category keys and the JSON
  * keys a record is stored under are the ones the Python control plane already uses,
  * because a lab host migrating to this stack has a database full of them and a

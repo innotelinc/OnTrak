@@ -12,7 +12,7 @@ Creates what the seven public names need and nothing else:
     lab.ontrak.innotel.us          → OnTrak Lab          (:8080)
 
 OnTrak Lab is the one name here that is not a service in `docker-compose.all.yml`:
-it is the hands-on range's own control plane (OnTrak-dev) on its own host, and it
+it is the hands-on range's own control plane (ontrak-lab/) on its own host, and it
 publishes exactly one port — its own nginx, which routes `/` to its portal and
 `/guacamole/` to its HTML5 console. So this name forwards to that one port and
 passes every path through unchanged, which is what §9/Q4 of docs/consolidation-audit.md
@@ -143,7 +143,7 @@ REDIRECT_URIS = [
     # lab.ontrak.innotel.us would be sent to the portal's callback and the handshake
     # would die after the password. It is the same `ontrak` client as every product;
     # only the path differs (`/oidc/callback`, the lab's own route).
-    "https://lab.ontrak.innotel.us/oidc/callback",         # OnTrak Lab (OnTrak-dev)
+    "https://lab.ontrak.innotel.us/oidc/callback",         # OnTrak Lab (ontrak-lab/)
     "https://ontrak.innotel.us/api/sso/callback",          # the portal
     "https://ontrak.innotel.us/api/auth/sso/callback",     # OnTrak Sync, same origin
     "https://its.ontrak.innotel.us/api/sso/callback",      # the training range

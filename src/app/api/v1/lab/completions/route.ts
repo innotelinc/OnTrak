@@ -1,7 +1,7 @@
 /**
  * `POST /api/v1/lab/completions` — a finished lab session, recorded as a graded attempt.
  *
- * The lab (OnTrak-dev) grades a task against a live machine. This is the door that
+ * The lab (ontrak-lab/) grades a task against a live machine. This is the door that
  * accepts the result and writes it into the family's one ledger
  * (docs/consolidation-audit.md §9/Q3): the attempt, its check results, its
  * certificate and its evidence all land here, with `gradingMode = 'lab'`, so the

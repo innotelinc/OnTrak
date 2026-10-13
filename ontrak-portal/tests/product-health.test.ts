@@ -28,7 +28,7 @@ import { PRODUCTS } from "../src/lib/portal-rules";
  *
  * The convention is `/health`, answered by every product the family builds, and
  * that is what all but one entry lists. The exception is the lab: it is the Python
- * control plane (OnTrak-dev) — a peer service, not a Next.js app, and not ours to
+ * control plane (ontrak-lab/) — a peer service, not a Next.js app, and not ours to
  * change — and it answers `/healthz`. Probing it at `/health` would draw exactly the
  * false "not answering" the dashboard once drew for Sentinel, so the rule is not
  * "every product says `/health`" but "every product declares the path it serves, and

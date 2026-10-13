@@ -1,7 +1,7 @@
 /**
  * The lab's scenario catalogue: loading, the views the portal reads, and validation.
  *
- * The TypeScript half of OnTrak-dev's `ontrak/scenarios.py`. A lab scenario is a
+ * The TypeScript half of ontrak-lab/ontrak/scenarios.py. A lab scenario is a
  * ticket, a list of weighted objectives, hints and metadata, plus two scripts that
  * inject the fault and grade it against a live machine. The objectives are a
  * **contract**: the check script must report on exactly those ids, and

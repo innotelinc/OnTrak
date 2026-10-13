@@ -4,7 +4,7 @@
  * the manager relies on — otherwise a demo would pass while the real path fails, which
  * is the one failure this double exists to prevent.
  *
- * Ported from `OnTrak-dev/tests/test_memory.py`, plus one rule the Python suite got for
+ * Ported from `ontrak-lab/tests/test_memory.py`, plus one rule the Python suite got for
  * free and this port cannot: the last test walks the *real* client's method list and
  * fails if this fake stops covering it. The ported client was rewritten (it is async,
  * and its low-level `run` is public where Python's `_run` was private), so the two

@@ -228,12 +228,14 @@ question this product answers rather than one an operator asks three services.
   tunnel through its own gateway is still unmeasured. The reporting script that made the
   call lives on the lab host rather than in either repository, because it needs the lab's
   own session store; this document is the contract it follows.
-- **OnTrak-dev is unchanged.** OnTrak Lab's half of this boundary is the call it makes
-  after its own `check.ps1` run, idempotently, with this deployment's token. That code is
-  drafted **out of tree**, in this repository, precisely so OnTrak-dev stays untouched:
+- **The lab's own tree is unchanged.** OnTrak Lab's half of this boundary is the call it
+  makes after its own `check.ps1` run, idempotently, with this deployment's token. That
+  call is *not* in the lab's tree: it is
   [`integrations/lab-completion-client/`](../integrations/lab-completion-client/README.md)
-  is a dependency-free Python client for exactly this route, with its own tests. It has not
-  been installed on a lab host, so no completion has travelled from a real session.- **The scenario has to be tagged `lab`.** The boundary refuses a completion filed
+  in this repository — a dependency-free Python client for exactly this route, with its
+  own tests, that a lab host copies in rather than the lab depending on. It has not been
+  installed on a lab host, so no completion has travelled from a real session.
+- **The scenario has to be tagged `lab`.** The boundary refuses a completion filed
   against a simulated task, so the task's declared mode and its evidence never
   disagree. `npm run lab:import` (see [consolidation-audit.md](consolidation-audit.md)
   §7 Step 5) is what writes those rows: the lab's 14 scenarios, published and tagged.

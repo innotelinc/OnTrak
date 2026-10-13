@@ -1,7 +1,7 @@
 /**
  * The lab's settings, read the way the lab read them.
  *
- * This is the TypeScript half of OnTrak-dev's `ontrak/config.py`. The precedence is
+ * This is the TypeScript half of ontrak-lab/ontrak/config.py. The precedence is
  * the Python's, lowest to highest: the deployment's config file, a local override
  * file, `ONTRAK_<SECTION>__<KEY>` environment variables, then explicit overrides.
  * Nested keys are addressed with a double underscore, so `ONTRAK_GUEST__PASSWORD`

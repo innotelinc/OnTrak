@@ -1,7 +1,7 @@
 /**
  * The in-house ticket system: the form a student fills in and hands over.
  *
- * The TypeScript half of OnTrak-dev's `ontrak/tickets.py`. A scenario grades the
+ * The TypeScript half of ontrak-lab/ontrak/tickets.py. A scenario grades the
  * *machine*; a ticket grades the *technician*, and the split is deliberate: fixing a
  * fault and explaining it are different skills, and a support desk hires for the second
  * one. A fix nobody wrote down gets re-done next week, and the ticket that says

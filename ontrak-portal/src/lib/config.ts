@@ -55,9 +55,10 @@ const TRUTHY = ["1", "true", "yes", "on"];
  *
  * Two facts, both required, exactly as the training app's `src/lib/lab-rules.ts` states
  * them: `ONTRAK_LAB_ENABLED` says the deployment wants the lab, and `ONTRAK_LAB_URL` says
- * where it is. OnTrak Lab is OnTrak-dev's Python control plane on its own host — a peer
- * deployment, not a directory of this repository and not a service in the family stack —
- * so a deployment that has not said both has no lab to link to and none to watch. The
+ * where it is. OnTrak Lab is the lab's Python control plane on its own host: a peer
+ * deployment, not a service the family stack runs, whose tree is in this repository at
+ * `ontrak-lab/`. A deployment that has not said both has no lab to link to and none to
+ * watch. The
  * portal then draws **no lab tile at all**, rather than a link that leads nowhere and a
  * status light that could only ever read "not answering" for a product nobody is running.
  *

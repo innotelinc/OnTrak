@@ -4,7 +4,7 @@
  *
  * The family grades a `ScenarioDefinition` by reading its own simulated engine
  * state, in-process: fast, deterministic, and available on a phone. The lab
- * (OnTrak-dev) grades the *same kind of task* by running `check.ps1` against a
+ * (ontrak-lab/) grades the *same kind of task* by running `check.ps1` against a
  * live guest. They are the same training done two ways, and the one thing that
  * cannot be shared is the meaning of a number: "8/10" from a simulator and "8/10"
  * from a live machine were produced by different graders, so a report that adds

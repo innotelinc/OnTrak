@@ -16,13 +16,20 @@
 
 # The sibling products are separate images with their own Dockerfiles and their
 # own build contexts. They are excluded here so the training app's context does not
-# drag four other applications' node_modules and ripgrep-able secrets through the
-# daemon on every build — and so a file that should only live in a sibling cannot
-# be COPY'd into this image by a stray instruction.
+# drag other applications' node_modules, virtualenvs and ripgrep-able secrets
+# through the daemon on every build — and so a file that should only live in a
+# sibling cannot be COPY'd into this image by a stray instruction.
+#
+# `ontrak-lab` is the newest of them and the biggest single exclusion: it is a
+# Python control plane with its own Dockerfile, its own compose stack and a
+# `.venv` of pinned dependencies that no `next build` in this tree reads. The
+# training app's scenarios come from this repository's own `scenarios/`
+# (`scenarioRoot()`), so nothing here needs the lab directory at build time.
 ontrak-tix
 ontrak-sentinel
 ontrak-sync
 ontrak-portal
+ontrak-lab
 web
 
 # Repository tooling, not application code

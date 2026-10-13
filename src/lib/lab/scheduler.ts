@@ -13,7 +13,7 @@
  *   sessions,
  * * **guard** — keep the pool at target while the window is open (and only then).
  *
- * This is the TypeScript half of OnTrak-dev's `ontrak/scheduler.py`. The arithmetic
+ * This is the TypeScript half of ontrak-lab/ontrak/scheduler.py. The arithmetic
  * is separated from the executor on purpose — `LabSchedule.actions` decides,
  * `LabScheduler` performs — so every decision is provable without a hypervisor, and
  * that separation is the reason this file can be ported and tested before the session

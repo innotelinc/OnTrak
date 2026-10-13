@@ -1,7 +1,7 @@
 /**
  * The lab's scenarios, read one way into the family's — a mapping, not a merge.
  *
- * OnTrak-dev authors a scenario as a directory: `scenario.yaml` for the ticket, the
+ * The lab authors a scenario as a directory: `scenario.yaml` for the ticket, the
  * objectives and the metadata the student reads, plus a `setup.ps1`/`check.sh` that
  * injects the fault and grades it against the live machine. This app authors a
  * `ScenarioDefinition`: a machine the simulator boots and a list of checks it
@@ -290,7 +290,7 @@ export function importLabScenario(raw: unknown): LabScenarioImportResult {
     checks: [],
     hints,
     authorNotes:
-      `Imported from OnTrak-dev scenario "${id}"` +
+      `Imported from the lab scenario "${id}"` +
       `${text(raw.category) ? ` (category ${text(raw.category)})` : ""}` +
       `${workloads.length > 0 ? `; built on ${workloads.join(", ")}` : ""}.` +
       " Objectives are graded by the lab's own setup/check scripts against a live machine, not here.",

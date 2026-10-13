@@ -1,7 +1,7 @@
 /**
  * Browser console access through Apache Guacamole.
  *
- * This is the TypeScript half of OnTrak-dev's `ontrak/guac.py`. Students never
+ * This is the TypeScript half of ontrak-lab/ontrak/guac.py. Students never
  * receive an RDP password: the portal hands them a Guacamole URL whose `data`
  * parameter is a signed + encrypted JSON payload (the `guacamole-auth-json`
  * extension), scoped to exactly one connection with a short expiry. Guacamole

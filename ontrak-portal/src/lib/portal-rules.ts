@@ -65,8 +65,8 @@ export interface Product {
   /**
    * A product this repository does not serve, which a deployment may not run at all.
    *
-   * OnTrak Lab is a peer deployment on its own host (OnTrak-dev), not a directory of
-   * this repository and not a service in the family stack, so an operator has to say
+   * OnTrak Lab is a peer deployment on its own host — its tree is in this repository at
+   * `ontrak-lab/`, but it is not a service the family stack runs — so an operator has to say
    * *both* that the deployment wants it and where it is. A product marked here is drawn
    * only when `tilesFor` is told its address: without one there is nothing to link to
    * and nothing to ask, and a light for it could only ever read "not answering" — the
@@ -159,12 +159,12 @@ export const PRODUCTS: readonly Product[] = [
     // signal (see the theme).
     tone: "lab",
     // The catalogue's one optional product: the lab runs on its own host, from its own
-    // repository, so a deployment has to say it wants the lab *and* where it is before
+    // stack, so a deployment has to say it wants the lab *and* where it is before
     // a tile is drawn for it (see `runsHere`). Both the link and the light come from
     // that answer.
     optional: true,
-    // The lab is the Python control plane (OnTrak-dev), a peer service rather than a
-    // Next.js app, and it answers `/healthz`. Probing it at `/health` would draw the
+    // The lab is the Python control plane (`ontrak-lab/` in this repository), a peer
+    // service rather than a Next.js app, and it answers `/healthz`. Probing it at `/health` would draw the
     // false "not answering" the dashboard once drew for Sentinel.
     health: "/healthz",
   },
@@ -227,7 +227,7 @@ export type ProductAddresses = Partial<Record<ProductKey, string>>;
  * Whether this deployment runs a product.
  *
  * Every product the family builds is always part of the family; the lab is the one
- * exception, because it is a peer deployment rather than a directory of this repository.
+ * exception, because it is a peer deployment rather than a service in the family stack.
  * So it is part of *this* deployment only once an operator has said where it is — the two
  * facts the training app's `src/lib/lab-rules.ts` already requires, stated once here for
  * the front door.

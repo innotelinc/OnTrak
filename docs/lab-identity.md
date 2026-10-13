@@ -2,14 +2,15 @@
 
 > **Status: operator-run, not executed here.** This is the Step 3 artefact of the
 > OnTrak ⇄ OnTrak-dev consolidation (`docs/consolidation-audit.md`, §7). It is a set of
-> configuration steps an operator performs on a lab host. **OnTrak-dev is not changed
-> by anything in this document**, and no lab is deployed in the environment this was
-> written in — so nothing below has been run end to end.
+> configuration steps an operator performs on a lab host. **No lab code is changed by
+> anything in this document** — it is operator configuration and documentation — and no
+> lab was deployed in the environment this was written in, so nothing below has been
+> run end to end. (The lab's tree is this repository's `ontrak-lab/`.)
 
 OnTrak Lab is the hands-on half of the same training the range runs in a browser. Its
 portal already signs a person in through a single OIDC provider, keeps no password of
 its own, and re-reads the provider's groups on every sign-in
-(`OnTrak-dev/ontrak/oidc.py`). What it does not yet share is the family's *identity*:
+(`ontrak-lab/ontrak/oidc.py`). What it does not yet share is the family's *identity*:
 today it points at Authentik directly and knows only two roles, `instructor` and
 `student`. This document says how to point it at the family's provider and how its two
 roles line up with the family's six.
@@ -20,13 +21,13 @@ Two facts make this a configuration change rather than a code change.
 
 - **It is a relying party, not an identity provider.** There is no local login to fall
   back to and no credential stored: the `password_hash` column every account row
-  carries holds the literal sentinel `sso:authentik` (`OnTrak-dev/ontrak/auth.py`,
+  carries holds the literal sentinel `sso:authentik` (`ontrak-lab/ontrak/auth.py`,
   `ACCOUNT_SENTINEL`), which nothing verifies.
 - **It speaks plain OIDC discovery.** The flow reads the issuer's
   `/.well-known/openid-configuration`, uses the `authorization_endpoint`,
   `token_endpoint` and `userinfo_endpoint` it names, and reads identity from
   **userinfo** — reached with the access token it was just issued — rather than
-  verifying an `id_token` against JWKS (`OnTrak-dev/ontrak/oidc.py`). Any provider that
+  verifying an `id_token` against JWKS (`ontrak-lab/ontrak/oidc.py`). Any provider that
   serves those documents and returns `email` and `groups` will work.
 
 One caveat worth naming: the flow is generic OIDC, but the *copy* is Authentik's — the
@@ -133,8 +134,8 @@ never grant it.
 
 ## What this does not do
 
-- **It does not change OnTrak-dev.** No file in that repository is modified by this
-  step. It is operator configuration and documentation only.
+- **It changes no lab code.** No file in `ontrak-lab/` is modified by this step. It is
+  operator configuration and documentation only.
 - **It has not been executed.** No lab host or hypervisor exists in the environment this
   was written in, so every step above is unverified against a running lab. The variable
   names, route paths and role rules are read from the sources named inline; whether a

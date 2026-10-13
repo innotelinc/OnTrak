@@ -2,7 +2,7 @@
  * Which QEMU accelerator a Windows guest gets, and what to do when KVM cannot give
  * it one.
  *
- * The TypeScript half of OnTrak-dev's `ontrak/qemu.py`. Every Windows guest in this
+ * The TypeScript half of ontrak-lab/ontrak/qemu.py. Every Windows guest in this
  * range — the golden image the builder produces, the scenario templates cloned from
  * it, the machines students sit in front of — is a QEMU virtual machine. Nothing
  * here writes a QEMU command line: `incusd` builds it from the instance's config, and

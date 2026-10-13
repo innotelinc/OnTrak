@@ -27,7 +27,7 @@ All six run on the **`ontrak` incus container**, `192.168.1.21`, on host **i1**
 `docker-compose.all.yml` in the repository root runs them together.
 
 **`lab.ontrak.innotel.us` is the seventh name, and the only one with no row in the
-table above** — it is not a service in this stack. OnTrak Lab (OnTrak-dev) is its own
+table above** — it is not a service in this stack. OnTrak Lab (ontrak-lab/) is its own
 deployment on its own host, and it publishes exactly one port: its own nginx, which
 serves its portal at `/` and its HTML5 console at `/guacamole/`. The family edge
 forwards that one name to that one port and passes every path through unchanged, so
@@ -421,7 +421,8 @@ somebody's afternoon:
 - **SAML and IdP-initiated sign-on** are not implemented; the flow is
   SP-initiated OIDC only.
 - **OnTrak Lab is the seventh name, and the only one this stack does not start.** It
-  is a peer deployment — OnTrak-dev, Python, on its own host — and it publishes exactly
+  is a peer deployment — its own Python tree here at `ontrak-lab/`, on its own host — and it
+  publishes exactly
   one port: its own nginx, which serves its portal at `/` and its HTML5 console at
   `/guacamole/`. This deployment runs one, at `https://lab.ontrak.innotel.us`, and the
   two facts that wire it are `ONTRAK_LAB_ENABLED` and `ONTRAK_LAB_URL` in the root
