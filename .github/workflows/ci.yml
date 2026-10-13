@@ -47,6 +47,10 @@ jobs:
   structure:
     name: Repository structure
     runs-on: ubuntu-latest
+    # Bounded: without a ceiling a hang holds this runner for GitHub's six-hour
+    # default — minutes of real work, hours of waiting. The whole workflow's
+    # slowest job measures about three minutes; this is five times that.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -115,6 +119,10 @@ jobs:
   secrets:
     name: Secret scan
     runs-on: ubuntu-latest
+    # Bounded: without a ceiling a hang holds this runner for GitHub's six-hour
+    # default — minutes of real work, hours of waiting. The whole workflow's
+    # slowest job measures about three minutes; this is five times that.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -142,6 +150,10 @@ jobs:
   lab:
     name: OnTrak Lab
     runs-on: ubuntu-latest
+    # Bounded: without a ceiling a hang holds this runner for GitHub's six-hour
+    # default — minutes of real work, hours of waiting. The whole workflow's
+    # slowest job measures about three minutes; this is five times that.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: ontrak-lab
@@ -172,6 +184,10 @@ jobs:
   training:
     name: Training app
     runs-on: ubuntu-latest
+    # Bounded: without a ceiling a hang holds this runner for GitHub's six-hour
+    # default — minutes of real work, hours of waiting. The whole workflow's
+    # slowest job measures about three minutes; this is five times that.
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
@@ -254,6 +270,10 @@ jobs:
   tix:
     name: OnTrak Tix
     runs-on: ubuntu-latest
+    # Bounded: without a ceiling a hang holds this runner for GitHub's six-hour
+    # default — minutes of real work, hours of waiting. The whole workflow's
+    # slowest job measures about three minutes; this is five times that.
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
@@ -403,6 +423,10 @@ jobs:
   sentinel-roundtrip:
     name: Sentinel round trip
     runs-on: ubuntu-latest
+    # Bounded: without a ceiling a hang holds this runner for GitHub's six-hour
+    # default — minutes of real work, hours of waiting. The whole workflow's
+    # slowest job measures about three minutes; this is five times that.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -487,6 +511,10 @@ jobs:
   sync:
     name: OnTrak Sync
     runs-on: ubuntu-latest
+    # Bounded: without a ceiling a hang holds this runner for GitHub's six-hour
+    # default — minutes of real work, hours of waiting. The whole workflow's
+    # slowest job measures about three minutes; this is five times that.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -606,6 +634,10 @@ jobs:
   genie:
     name: OnTrak Genie
     runs-on: ubuntu-latest
+    # Bounded: without a ceiling a hang holds this runner for GitHub's six-hour
+    # default — minutes of real work, hours of waiting. The whole workflow's
+    # slowest job measures about three minutes; this is five times that.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: ontrak-genie
@@ -658,6 +690,10 @@ jobs:
   portal:
     name: OnTrak Portal
     runs-on: ubuntu-latest
+    # Bounded: without a ceiling a hang holds this runner for GitHub's six-hour
+    # default — minutes of real work, hours of waiting. The whole workflow's
+    # slowest job measures about three minutes; this is five times that.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: ontrak-portal
@@ -696,6 +732,10 @@ jobs:
   family:
     name: Family stack
     runs-on: ubuntu-latest
+    # Bounded: without a ceiling a hang holds this runner for GitHub's six-hour
+    # default — minutes of real work, hours of waiting. The whole workflow's
+    # slowest job measures about three minutes; this is five times that.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -870,6 +910,10 @@ jobs:
   images:
     name: Image (${{ matrix.app }})
     runs-on: ubuntu-latest
+    # Bounded: without a ceiling a hang holds this runner for GitHub's six-hour
+    # default — minutes of real work, hours of waiting. The whole workflow's
+    # slowest job measures about three minutes; this is five times that.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
