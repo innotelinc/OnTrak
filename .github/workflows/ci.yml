@@ -225,6 +225,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Each test is bounded (`--test-timeout=60000`), so a hang fails by name instead
+      # of holding this job to its ceiling — see the Sentinel job's note for the stall
+      # that taught us.
       - name: Unit tests
         run: npm test
 
@@ -236,14 +239,14 @@ jobs:
       # where the lab is hosted is an operator's deployment (docs/consolidation-audit.md
       # §9/Q8), and the clauses that keep that true are held by tests/ci-coverage.test.ts.
       - name: Lab-completion live test
-        run: ONTRAK_LAB_LIVE=1 npx tsx --tsconfig tests/tsconfig.json --test tests/lab-live.test.ts
+        run: ONTRAK_LAB_LIVE=1 npx tsx --tsconfig tests/tsconfig.json --test --test-timeout=60000 tests/lab-live.test.ts
 
       # The step above drives the route with a body this repository wrote, and the
       # client's unit tests stub the transport out. This is the only check that runs
       # the client's *real* request against the route, which is the pair a lab host
       # depends on. `python3` is already used by the structure job.
       - name: Lab-client live test
-        run: ONTRAK_LAB_CLIENT_LIVE=1 npx tsx --tsconfig tests/tsconfig.json --test tests/lab-client-live.test.ts
+        run: ONTRAK_LAB_CLIENT_LIVE=1 npx tsx --tsconfig tests/tsconfig.json --test --test-timeout=60000 tests/lab-client-live.test.ts
 
       - name: Build
         run: npm run build
@@ -296,6 +299,7 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Each test is bounded (`--test-timeout=60000`); see the Sentinel job's note.
       - name: Unit tests
         run: npm test
 
@@ -316,13 +320,25 @@ jobs:
     runs-on: ubuntu-latest
     # A test that leaks a handle does not fail, it hangs, and a hung job holds the
     # runner until GitHub's six-hour ceiling. The suite itself closes its sockets now;
-    # this is the guard that turns a future regression into a five-minute failure.
+    # this is the guard that turns a future regression into a fifteen-minute failure.
     #
-    # `timeout-minutes` bounds the *job*, which is why a run that stalled here on
-    # 2026-10-13 was cancelled after fifteen minutes with no failing test named and
-    # nothing in the log to go on. So the suite also bounds each *test*
-    # (`--test-timeout` in package.json): a stall now fails by name inside a minute,
-    # and the next reader gets the test rather than a cancellation.
+    # `timeout-minutes` bounds the *job*, which is why the run that stalled here on
+    # 2026-10-13 was cancelled with nothing to go on. Reading that log against a green
+    # one says what happened, and it is not a slow test. The stalled run reported the
+    # same 558 results in the same order as the green run and then stopped at exactly
+    # one place: just after the last test of the sign-in file. The *next* file,
+    # `sentinel-webauthn.test.ts`, emitted nothing at all for the fourteen minutes that
+    # remained. That is a file whose process never exits — this runner takes files one at
+    # a time, so a handle one file leaves open starves every file after it, and the suite
+    # goes quiet instead of failing. (A two-file probe reproduces it: a leaked
+    # `setInterval` in the first file keeps the second from ever running.)
+    #
+    # So the suite bounds each *test* (`--test-timeout` in package.json), which on
+    # Node 20 — what this job runs — bounds the file as well: a file whose process will
+    # not exit is reported as `test timed out after 60000ms`, by name, and the rest of
+    # the suite still runs. A stall names itself instead of being cancelled. That
+    # coverage is version-specific: on Node 26 the same lingering file is *not* bounded
+    # this way, so if this job's Node is ever raised, re-check it before trusting it.
     timeout-minutes: 15
     services:
       postgres:
@@ -613,6 +629,7 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Each test is bounded (`--test-timeout=60000`); see the Sentinel job's note.
       - name: Unit and HTTP tests
         run: npm test
 
@@ -664,6 +681,7 @@ jobs:
       - name: The gate and the chrome carry no family copy
         run: npm run copy:check
 
+      # Each test is bounded (`--test-timeout=60000`); see the Sentinel job's note.
       - name: Unit tests
         run: npm test
 

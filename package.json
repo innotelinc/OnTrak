@@ -12,7 +12,7 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --tsconfig tests/tsconfig.json --test tests/*.test.ts",
+    "test": "tsx --tsconfig tests/tsconfig.json --test --test-timeout=60000 tests/*.test.ts",
     "test:a11y": "playwright test",
     "test:e2e:tix": "ONTRAK_TIX_BASE_URL=${ONTRAK_TIX_BASE_URL:-http://127.0.0.1:3001} playwright test tests/browser/tix.spec.ts",
     "test:e2e:sync": "ONTRAK_SYNC_BASE_URL=${ONTRAK_SYNC_BASE_URL:-http://127.0.0.1:8451} ONTRAK_SYNC_DEV=${ONTRAK_SYNC_DEV:-1} ONTRAK_SYNC_ADOPT=${ONTRAK_SYNC_ADOPT:-unattended} playwright test --config playwright.sync.config.ts",
