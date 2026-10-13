@@ -179,12 +179,22 @@ question this product answers rather than one an operator asks three services.
   The key itself is accepted — Signara's `/api/v1/auth/me` answers with the key's own
   identity (`apikey:…`, display name `ontrak-training-cert-chain`) — but the account it
   belongs to is in no organization, and every document and signature endpoint is
-  tenant-scoped, so it answers `403` to all of them. **An operator fixes this in Signara,
-  not here**: create the organization (its `POST /api/v1/organizations` takes a name) or
-  join one, then mint a key whose account is in it. Nothing about the chain's own steps has
-  been reached yet: the document, signing-request and signature calls are pinned by
-  `tests/certificate-chain.test.ts` against a stub transport, and no live run has got past
-  the first.
+  tenant-scoped, so it answers `403` to all of them.
+
+  **It cannot be fixed from this side, and the key cannot fix it for itself.**
+  `POST /api/v1/organizations` is the one endpoint that would create the tenant, and it
+  refuses the key's own principal deterministically — `500 An unexpected error occurred`
+  for every name tried (`{"name":"OnTrak"}`, with a slug, with a space) — while the
+  tenant-scoped endpoints stay `403` afterwards. Its validation is otherwise happy with
+  just a name, so this is Signara's own failure to create an organization for the
+  principal an API key presents. **Setting up the tenant is therefore an operator's job in
+  Signara's portal**, with a user account, followed by a key whose account is in that
+  organization; the range cannot get past the upload until then, and the refusal it will
+  record is the sentence above.
+
+  Nothing about the chain's own steps has been reached yet, either: the document,
+  signing-request and signature calls are pinned by `tests/certificate-chain.test.ts`
+  against a stub transport, and no live run has got past the first.
 
   The refusal is recorded exactly as designed, which is the half worth noting: the outcome
   is `refused` in the append-only audit chain against the attempt, with the provider's own
