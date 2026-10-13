@@ -108,7 +108,7 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
       ];
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-[1440px]">
+    <div className="mx-auto flex min-h-screen w-full">
       <aside className="hidden w-60 shrink-0 flex-col border-r border-line px-3 py-5 lg:flex">
         <Link href={home} className="px-3 pb-6 font-display text-lg font-semibold text-ink">
           OnTrak <span className="text-brand">Tix</span>

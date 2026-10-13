@@ -18,18 +18,20 @@ import { AuditLog, type HashFn } from "../src/lib/audit-chain";
 import {
   HANDOFF_MIN_NOTE,
   MAX_SHIFT_MINUTES,
+  AUTO_COVER_HOURS,
   coverageAt,
   coverageGaps,
   coverageSummary,
   handoffDecision,
   outstandingFrom,
+  planAutoCover,
   rotaLoad,
   shiftConflict,
   shiftsOverlap,
   validateShift,
   type RotaShiftRecord,
 } from "../src/lib/rota-rules";
-import { MemoryRotaStore, RotaService } from "../src/lib/rota-service";
+import { MemoryRotaStore, RotaService, type RotaTicketPort } from "../src/lib/rota-service";
 import { toHandoffRecord, toRotaShiftRecord, type HandoffRow, type RotaShiftRow } from "../src/lib/rota-store-prisma";
 
 const sha256: HashFn = (input) => createHash("sha256").update(input).digest("hex");
@@ -62,10 +64,10 @@ function shift(overrides: Partial<RotaShiftRecord> = {}): RotaShiftRecord {
 
 let sequential = 0;
 
-async function harness() {
+async function harness(tickets: RotaTicketPort | null = null) {
   const audit = new AuditLog(sha256);
   const store = new MemoryRotaStore();
-  const service = new RotaService(store, audit, { id: () => `rota-${++sequential}`, now: () => NOW });
+  const service = new RotaService(store, audit, { id: () => `rota-${++sequential}`, now: () => NOW }, tickets);
   return { audit, store, service };
 }
 
@@ -211,8 +213,8 @@ test("a handoff needs somebody on duty and something written down, then survives
   assert.equal(recorded.ok, true);
   if (!recorded.ok) return;
 
-  assert.deepEqual(recorded.value.openTicketRefs, ["TIX-000123", "TIX-000131"], "references are deduped");
-  assert.equal(recorded.value.fromUserId, AGENT.id);
+  assert.deepEqual(recorded.value.handoff.openTicketRefs, ["TIX-000123", "TIX-000131"], "references are deduped");
+  assert.equal(recorded.value.handoff.fromUserId, AGENT.id);
 
   // A manager covering for somebody who went home is not a violation.
   assert.equal(
@@ -240,6 +242,132 @@ test("a handoff needs somebody on duty and something written down, then survives
   const events = h.audit.snapshot().events.filter((event) => event.action === "rota.handoff.record");
   assert.equal(events.length, 2);
   assert.equal(events[0].detail?.openTickets, 2, "the count is on the record, the references are on the row");
+});
+
+test("the automatic cover window starts at the handover and ends when the next person is on", () => {
+  // Nothing after now: the window runs for the default span rather than for ever.
+  const bare = planAutoCover({ shifts: [], at: NOW, userId: "agent-1" });
+  assert.equal(bare.covered, false);
+  assert.equal(bare.window?.startsAt, NOW);
+  assert.equal(bare.window?.endsAt, new Date(Date.parse(NOW) + AUTO_COVER_HOURS * 3_600_000).toISOString());
+
+  // A next on-call window inside that span is the end of the gap, so cover stops there.
+  const until = planAutoCover({
+    shifts: [shift({ id: "next", userId: "agent-2", startsAt: at(20, 15), endsAt: at(20, 23) })],
+    at: NOW,
+    userId: "agent-1",
+  });
+  assert.equal(until.window?.endsAt, at(20, 15));
+
+  // Somebody already holding the pager means there is nothing to publish.
+  const covered = planAutoCover({
+    shifts: [shift({ id: "on", userId: "agent-2", startsAt: at(20, 8), endsAt: at(20, 20) })],
+    at: NOW,
+    userId: "agent-1",
+  });
+  assert.equal(covered.covered, true);
+  assert.equal(covered.window, null);
+  assert.match(covered.reason, /already holds the pager/);
+
+  // Double-booking the person taking over is refused, not forced: the gap stays visible.
+  const clash = planAutoCover({
+    shifts: [shift({ id: "their-shift", userId: "agent-1", kind: "SHIFT", startsAt: at(20, 9), endsAt: at(20, 17) })],
+    at: NOW,
+    userId: "agent-1",
+  });
+  assert.equal(clash.window, null);
+  assert.match(clash.reason, /already on shift/);
+
+  // And a handoff that names nobody cannot cover anything.
+  const anonymous = planAutoCover({ shifts: [], at: NOW, userId: null });
+  assert.equal(anonymous.window, null);
+  assert.match(anonymous.reason, /names nobody/);
+});
+
+test("a handoff on an uncovered desk puts somebody on call and hands the open work over", async () => {
+  /*
+   * The two things a handover is for when nobody is holding the pager: the person taking over
+   * gets the pager, and the open work the handoff names — work nobody owned, and the hander's
+   * own — moves to them. Somebody else's ticket and a resolved one do not move.
+   */
+  const assigned: [string, string][] = [];
+  const tickets = [
+    { id: "t1", ref: "TIX-000001", status: "NEW" as const, assigneeId: null },
+    { id: "t2", ref: "TIX-000002", status: "OPEN" as const, assigneeId: AGENT.id },
+    { id: "t3", ref: "TIX-000003", status: "OPEN" as const, assigneeId: OTHER.id },
+    { id: "t4", ref: "TIX-000004", status: "RESOLVED" as const, assigneeId: null },
+  ];
+  const port: RotaTicketPort = {
+    list: async () => tickets,
+    assign: async (actor, ticketId, assigneeId) => {
+      assigned.push([ticketId, assigneeId]);
+      assert.equal(actor.tenantId, "tenant-a");
+      return { ok: true };
+    },
+  };
+
+  const h = await harness(port);
+  // Somebody is at the desk, but nobody is on call — the state this rule exists for.
+  assert.equal((await h.service.addShift(ADMIN, { userId: AGENT.id, kind: "SHIFT", startsAt: at(20, 6), endsAt: at(20, 18) })).ok, true);
+
+  const recorded = await h.service.recordHandoff(AGENT, {
+    toUserId: OTHER.id,
+    note: "Handing the pager over; the printer job is still open.",
+    openTicketRefs: ["TIX-000001", "TIX-000002", "TIX-000003", "TIX-000004"],
+  });
+  assert.equal(recorded.ok, true);
+  if (!recorded.ok) return;
+
+  const { cover, assigned: moved } = recorded.value;
+  assert.equal(cover?.userId, OTHER.id);
+  assert.equal(cover?.kind, "ON_CALL");
+  assert.equal(cover?.startsAt, NOW);
+  assert.deepEqual(moved, ["TIX-000001", "TIX-000002"]);
+  assert.deepEqual(assigned, [
+    ["t1", OTHER.id],
+    ["t2", OTHER.id],
+  ]);
+  assert.match(recorded.value.summary, /is on call from/);
+  assert.match(recorded.value.summary, /2 open tickets moved to agent-2/);
+
+  // The cover is on the rota, and the desk reads as covered a moment later.
+  const view = await h.service.view(ADMIN, { from: at(20, 0), to: at(21, 0) });
+  assert.equal(view.ok, true);
+  if (!view.ok) return;
+  assert.equal(view.value.now.covered, true);
+
+  const actions = h.audit.snapshot().events.map((event) => event.action);
+  assert.deepEqual(actions.filter((action) => action.startsWith("rota.")), [
+    "rota.shift.add",
+    "rota.handoff.record",
+    "rota.shift.add",
+    "rota.handoff.assign",
+  ]);
+  const coverEvent = h.audit.snapshot().events.find((event) => event.detail?.fromHandoff !== undefined);
+  assert.equal(coverEvent?.detail?.kind, "ON_CALL", "an automatic window is audited as the shift it is");
+});
+
+test("a handoff on a desk that already has cover is just the note", async () => {
+  const port: RotaTicketPort = {
+    list: async () => [{ id: "t1", ref: "TIX-000001", status: "NEW" as const, assigneeId: null }],
+    assign: async () => {
+      throw new Error("a covered desk must not be reassigned by a handoff");
+    },
+  };
+
+  const h = await harness(port);
+  assert.equal((await h.service.addShift(ADMIN, { userId: AGENT.id, kind: "ON_CALL", startsAt: at(20, 8), endsAt: at(20, 20) })).ok, true);
+
+  const recorded = await h.service.recordHandoff(AGENT, {
+    toUserId: OTHER.id,
+    note: "Nothing much to report; the queue is quiet.",
+    openTicketRefs: ["TIX-000001"],
+  });
+  assert.equal(recorded.ok, true);
+  if (!recorded.ok) return;
+  assert.equal(recorded.value.cover, null);
+  assert.deepEqual(recorded.value.assigned, []);
+  assert.equal(h.audit.snapshot().events.filter((event) => event.action === "rota.shift.add").length, 1);
 });
 
 test("a handoff with no note is refused before anything is written", async () => {

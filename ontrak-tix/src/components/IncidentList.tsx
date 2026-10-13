@@ -10,6 +10,12 @@
  * decision, not an omission) and the **timeline** (the record written as things
  * happened). Both are the point of the milestone, so neither is hidden behind a
  * disclosure.
+ *
+ * The console is drawn twice, from this one file. `IncidentList` renders an incident
+ * in full and is what one incident's own page shows; `IncidentRow` renders the line
+ * the worklist shows before you open one. They are here together because the two have
+ * to agree about the chips — a severity that means one thing in the list and another
+ * inside it is a console nobody trusts.
  */
 
 import { custodyIntegrity, holdActive, type CustodyEntry, type EvidenceItem, type LegalHold } from "../lib/evidence-rules";
@@ -708,6 +714,85 @@ export function IncidentList({
         },
       )}
     </ul>
+  );
+}
+
+export interface IncidentRowProps {
+  incident: IncidentRecord;
+  /** The playbook's progress, which is the first thing a desk asks about a row. */
+  steps: PlaybookStepRecord[];
+  /** How much is on the record: evidence items, and bytes held under a lock. */
+  evidence: number;
+  artifacts: number;
+  /** Every hold ever placed, so a row can say whether routine retention applies. */
+  holds: LegalHold[];
+  /** Duties and review actions past their own deadline, when the page counted them. */
+  overdue?: { notices: number; actions: number };
+}
+
+/**
+ * One incident as a line in the worklist.
+ *
+ * The worklist has one job — tell the desk what is on fire, and open the incident they
+ * are working on — and everything else belongs to that incident's own page. Drawing the
+ * playbook, the custody trail, the duties and the review for **every** incident is what
+ * made the console grow with the tenant's whole history: twelve incidents were a
+ * megabyte of markup and nearly seven thousand nodes, which is a page a modest machine
+ * crashes on, and it read as twelve screens of forms rather than as a worklist.
+ */
+export function IncidentRow({ incident, steps, evidence, artifacts, holds, overdue }: IncidentRowProps) {
+  const manager = playbookProgress(steps);
+  const hold = holds.find((entry) => holdActive(entry)) ?? null;
+  const notices = overdue?.notices ?? 0;
+  const actionsDue = overdue?.actions ?? 0;
+  return (
+    <li className="rounded-xl2 border border-line bg-surface p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono text-sm font-semibold text-ink">{incident.ref}</span>
+        {chip(incident.severity, severityTone(incident.severity))}
+        {chip(incident.phase, "brand")}
+        {isIncidentClosed(incident.phase) ? chip("closed", "muted") : null}
+        {hold ? chip("legal hold", "amber") : null}
+        {incident.ticketId ? (
+          <a href={`/inbox/${incident.ticketId}`} className="text-xs font-semibold text-brand hover:underline">
+            Ticket
+          </a>
+        ) : null}
+        <time className="ml-auto text-[11px] text-ink-faint" dateTime={incident.declaredAt}>
+          declared {incident.declaredAt}
+        </time>
+      </div>
+
+      <h3 className="mt-1 font-semibold text-ink">{incident.title}</h3>
+      <p className="text-sm text-ink-soft">{incident.summary}</p>
+      <p className="mt-1 text-xs text-ink-faint">
+        Impact {incident.impact} · urgency {incident.urgency} · detected {incident.detectedAt}
+        {steps.length > 0
+          ? ` · playbook ${manager.done}/${manager.total} done${manager.skipped > 0 ? `, ${manager.skipped} skipped` : ""}`
+          : " · playbook not started"}
+        {evidence > 0 ? ` · ${evidence} evidence` : ""}
+        {artifacts > 0 ? ` · ${artifacts} under lock` : ""}
+      </p>
+      {notices > 0 || actionsDue > 0 ? (
+        <p className="mt-1 text-xs text-bad">
+          {notices > 0 ? `${notices} notification${notices === 1 ? "" : "s"} past its deadline` : ""}
+          {notices > 0 && actionsDue > 0 ? " · " : ""}
+          {actionsDue > 0 ? `${actionsDue} review action${actionsDue === 1 ? "" : "s"} overdue` : ""}
+        </p>
+      ) : null}
+
+      <div className="mt-2 flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <PhaseStrip phase={incident.phase} />
+        </div>
+        <a
+          href={`/incidents/${incident.ref}`}
+          className="shrink-0 text-xs font-semibold text-brand hover:underline"
+        >
+          Open
+        </a>
+      </div>
+    </li>
   );
 }
 

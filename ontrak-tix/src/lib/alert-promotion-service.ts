@@ -10,10 +10,13 @@
  *    *why* an alert was or was not worked,
  *  - a hash-chained audit event, so the decision is tamper-evident.
  *
- * Promotion is idempotent by construction: an alert that already carries a
- * `ticketId` is never re-promoted, and `SecurityAlertService.linkTicket` is
- * first-write-wins, so a retried or concurrent promotion returns the ticket that
- * already exists instead of opening a second one.
+ * Promotion is idempotent by construction, on two levels: an alert that already
+ * carries a `ticketId` is never re-promoted, and a decision already on file — a
+ * `PROMOTE` or a `SUPPRESS` for this alert — is answered from the record instead
+ * of being written and audited a second time. `SecurityAlertService.linkTicket`
+ * is first-write-wins and the store keys a decision by `(alert, outcome)`, so a
+ * retried or concurrent promotion returns the ticket that already exists instead
+ * of opening a second one.
  *
  * The ticket stack is injected whole (`TicketService` + its store), so promotion
  * writes through the same lifecycle, access rules and audit sink as every other
@@ -146,6 +149,32 @@ export class AlertPromotionService {
       return { ok: true, value: { decision, alert, ticket: null, promotion: null, alreadyPromoted: false } };
     }
 
+    /*
+     * The same decision twice is one decision.
+     *
+     * The store keys a decision by `(alert, outcome)`, so re-deciding an alert that already
+     * carries this verdict — a second click on a suppressed alert, a retried request — has
+     * nothing new to record and nothing new to audit. Answering from the record on file also
+     * repairs a half-finished promotion: a run that opened the incident and then died before
+     * linking it left a real ticket that the queue showed as unworked, and re-deciding is
+     * exactly the moment to connect the two.
+     */
+    const recorded = (await this.store.listPromotions(actor.tenantId)).find(
+      (promotion) => promotion.alertId === alert.id && promotion.decision === decision.outcome,
+    );
+    if (recorded) {
+      const recordedTicketId = recorded.ticketId;
+      const ticket = recordedTicketId ? await this.deps.tickets.findTicket(actor.tenantId, recordedTicketId) : null;
+      const linked =
+        recordedTicketId && !alert.ticketId
+          ? await this.deps.alerts.linkTicket(actor.tenantId, alert.id, recordedTicketId)
+          : null;
+      return {
+        ok: true,
+        value: { decision, alert: linked ?? alert, ticket, promotion: recorded, alreadyPromoted: true },
+      };
+    }
+
     const at = this.ids.now();
     const record: PromotionRecord = {
       id: this.ids.id(),
@@ -179,6 +208,19 @@ export class AlertPromotionService {
 
     const ticket = created.value;
     const linked = await this.deps.alerts.linkTicket(actor.tenantId, alert.id, ticket.id);
+
+    /*
+     * The link is first-write-wins, so it can come back pointing somewhere else: two
+     * promotions of one alert racing means this run opened a ticket the alert does not name.
+     * The one that linked wins, and this run adopts it rather than overwriting the winner's
+     * record with its own ticket — an alert is one incident, whichever request finished first.
+     */
+    const alreadyLinked = linked?.ticketId ?? null;
+    if (linked && alreadyLinked && alreadyLinked !== ticket.id) {
+      const winner = await this.deps.tickets.findTicket(actor.tenantId, alreadyLinked);
+      return { ok: true, value: { decision, alert: linked, ticket: winner, promotion: null, alreadyPromoted: true } };
+    }
+
     const promotion: PromotionRecord = { ...record, ticketId: ticket.id, ticketRef: ticket.ref };
     await this.store.recordPromotion(promotion);
     if (this.audit) await this.audit.append(promotionAudit(promotion));

@@ -299,6 +299,78 @@ test("promotion is idempotent — one alert, one ticket", async () => {
   assert.equal(auditActions(h).filter((action) => action === "security.alert.promote").length, 1);
 });
 
+test("re-deciding a suppressed alert returns the record instead of writing a second one", async () => {
+  /*
+   * The crash that took the security console down: the stream is read-only for a suppressed
+   * alert until somebody clicks, and clicking decoded the same SUPPRESS decision a second
+   * time — which the database refused on the unique key. Deciding twice now answers from the
+   * record on file, writes nothing and audits nothing.
+   */
+  const h = harness();
+  const alert = await seedAlert(h.alerts, { severity: "critical", signature: "Noisy detection" });
+  await h.service.recordVerdict(ACTOR, { signature: "Noisy detection", verdict: "FALSE_POSITIVE" });
+  await h.service.recordVerdict(ACTOR, { signature: "Noisy detection", verdict: "BENIGN" });
+
+  const first = await h.service.promote(ACTOR, alert.id, { requesterId: "user-7" });
+  assert.equal(first.ok, true);
+  if (!first.ok) return;
+  assert.equal(first.value.decision.outcome, "SUPPRESS");
+  assert.equal(first.value.alreadyPromoted, false);
+
+  const again = await h.service.promote(ACTOR, alert.id, { requesterId: "user-7" });
+  assert.equal(again.ok, true);
+  if (!again.ok) return;
+  assert.equal(again.value.decision.outcome, "SUPPRESS");
+  assert.equal(again.value.alreadyPromoted, true);
+  assert.equal(again.value.promotion?.decision, "SUPPRESS");
+  assert.equal(again.value.ticket, null);
+
+  assert.equal((await h.service.listPromotions("tenant-a")).length, 1);
+  assert.equal(auditActions(h).filter((action) => action === "security.alert.suppress").length, 1);
+});
+
+test("a ticket an interrupted promotion opened is adopted, not duplicated", async () => {
+  /*
+   * A run that opened the incident and then died before linking it leaves a real ticket the
+   * queue shows as unworked. Re-deciding the alert has to find that ticket rather than open a
+   * second one — and it has to put the link the alert is missing back.
+   */
+  const audit = new AuditLog(sha256);
+  const alertStore = new MemorySecurityAlertStore();
+  const alerts = new SecurityAlertService(alertStore, audit);
+  const ticketStore = new MemoryTicketStore();
+  const tickets = new TicketService(ticketStore, audit);
+  const service = new AlertPromotionService(
+    {
+      alerts,
+      tickets: {
+        createTicket: (actor, input) => tickets.createTicket(actor, input),
+        findTicket: (tenantId, ticketId) => ticketStore.findTicket(tenantId, ticketId),
+      },
+    },
+    new MemoryPromotionStore(),
+    audit,
+  );
+
+  const alert = await seedAlert(alerts);
+  const first = await service.promote(ACTOR, alert.id, { requesterId: "user-7" });
+  assert.equal(first.ok, true);
+  if (!first.ok || !first.value.ticket) return;
+  const ticketId = first.value.ticket.id;
+
+  // The half-finished run: the decision and its ticket are on file, the link never landed.
+  await alertStore.update({ ...(await alertStore.findById("tenant-a", alert.id))!, ticketId: null });
+
+  const again = await service.promote(ACTOR, alert.id, { requesterId: "user-7" });
+  assert.equal(again.ok, true);
+  if (!again.ok) return;
+  assert.equal(again.value.alreadyPromoted, true);
+  assert.equal(again.value.ticket?.id, ticketId);
+  assert.equal((await alertStore.findById("tenant-a", alert.id))?.ticketId, ticketId);
+  assert.equal((await ticketStore.listTickets("tenant-a")).length, 1);
+  assert.equal((await service.listPromotions("tenant-a")).length, 1);
+});
+
 test("a false-positive history suppresses promotion and is recorded", async () => {
   const h = harness();
   const alert = await seedAlert(h.alerts, { severity: "critical", signature: "Noisy detection" });
@@ -435,7 +507,7 @@ test("the Prisma promotion store writes and lists through its client", async () 
     },
     alertPromotion: {
       findMany: async () => [promotionRow],
-      create: async () => {
+      upsert: async () => {
         created.push("promotion");
         return {};
       },
@@ -451,6 +523,35 @@ test("the Prisma promotion store writes and lists through its client", async () 
   await store.recordSuppression(toSuppressionRecord(suppressionRow));
   await store.recordPromotion(toPromotionRecord(promotionRow));
   assert.deepEqual(created, ["verdict", "suppression", "promotion"]);
+});
+
+test("the Prisma promotion store records a decision on the key the table enforces", async () => {
+  /*
+   * A decision is keyed by `(tenantId, alertId, decision)`, so writing one twice has to be
+   * an upsert onto that key. It was a `create`, and re-deciding a suppressed alert — the
+   * second click on "Open incident" — failed on the unique key and took the whole console
+   * down with a server-side exception instead of answering "that alert is suppressed".
+   */
+  const seen: { where: Record<string, unknown>; create: Record<string, unknown> }[] = [];
+  const client = {
+    alertVerdict: { findMany: async () => [verdictRow], create: async () => ({}) },
+    alertSuppression: { findMany: async () => [suppressionRow], create: async () => ({}) },
+    alertPromotion: {
+      findMany: async () => [promotionRow],
+      upsert: async (args: { where: unknown; create: unknown }) => {
+        seen.push(args as { where: Record<string, unknown>; create: Record<string, unknown> });
+        return {};
+      },
+    },
+  };
+  const store: PromotionStore = new PrismaPromotionStore(client);
+
+  await store.recordPromotion(toPromotionRecord(promotionRow));
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0].where, {
+    tenantId_alertId_decision: { tenantId: "tenant-a", alertId: "alert-1", decision: "PROMOTE" },
+  });
+  assert.equal((seen[0].create as Record<string, unknown>).ticketRef, "TIX-000001");
 });
 
 test("the system promotion actor is a normal admin in the tenant", () => {

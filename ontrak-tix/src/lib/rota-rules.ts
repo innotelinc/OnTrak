@@ -36,6 +36,15 @@ export const HANDOFF_MIN_NOTE = 8;
 export const MAX_SHIFT_MINUTES = 24 * 60;
 /** How far ahead a rota may be published, so a typo cannot fill the calendar. */
 export const MAX_SHIFT_HORIZON_DAYS = 400;
+/**
+ * How long an automatic covering window runs when the rota shows nothing else coming.
+ *
+ * A handover that lands on an uncovered desk fills the gap, and the gap has to end
+ * *somewhere*: this is the answer when there is no next shift to hand over to. Half a day
+ * is long enough to be real cover and short enough that it is looked at again, and it is
+ * a fraction of the 24-hour ceiling a hand-typed shift has to respect.
+ */
+export const AUTO_COVER_HOURS = 12;
 
 export type ShiftKind = "SHIFT" | "ON_CALL";
 
@@ -335,6 +344,108 @@ export function outstandingFrom(handoffs: readonly HandoffRecord[], refs: readon
   const newest = [...handoffs].sort((a, b) => b.at.localeCompare(a.at))[0];
   if (!newest) return [];
   return refs.filter((ref) => newest.openTicketRefs.includes(ref));
+}
+
+/**
+ * The covering window a handover should publish, if any.
+ *
+ * A handoff is where work changes hands; it is also the last moment anybody looks at the
+ * pager. So when the desk being handed over has nobody on call, the handoff names the person
+ * taking over and this decides what window makes that true — starting at the handover, ending
+ * when the next on-call window begins (or `AUTO_COVER_HOURS` later, whichever comes first,
+ * and never past the 24-hour ceiling), for somebody who is free at that time.
+ *
+ * Three ways this answers "no window", and each is a different sentence for a console: there
+ * is nobody to name, somebody already holds the pager, or the person taking over is already
+ * on shift or on call then — in which case publishing would double-book them, and the honest
+ * outcome is to say so and leave the gap on the page rather than invent cover.
+ */
+export interface AutoCoverPlan {
+  /** True when the pager is already held at `at`. */
+  covered: boolean;
+  /** The window to publish, when one is warranted. */
+  window: { startsAt: string; endsAt: string } | null;
+  /** Why, in a sentence, either way. */
+  reason: string;
+}
+
+export function planAutoCover(input: {
+  shifts: readonly RotaShiftRecord[];
+  at: string;
+  userId: string | null;
+  queueId?: string | null;
+}): AutoCoverPlan {
+  const at = input.at;
+  const coverage = coverageAt(input.shifts, at, input.queueId);
+  if (coverage.covered) {
+    return {
+      covered: true,
+      window: null,
+      reason: `Somebody already holds the pager at ${at} (${coverage.onCall.map((shift) => shift.userId).join(", ")}).`,
+    };
+  }
+  if (!input.userId) {
+    return { covered: false, window: null, reason: "Nobody is on call, and the handoff names nobody to cover it." };
+  }
+
+  // The next on-call window at or after now, and the ceiling for the one we would publish.
+  const next = input.shifts
+    .filter(
+      (shift) =>
+        shift.kind === "ON_CALL" &&
+        (input.queueId === undefined || shift.queueId === input.queueId) &&
+        shift.startsAt > at,
+    )
+    .sort((a, b) => a.startsAt.localeCompare(b.startsAt))[0];
+  const horizon = new Date(new Date(at).getTime() + AUTO_COVER_HOURS * 60 * 60 * 1000).toISOString();
+  const ceiling = new Date(new Date(at).getTime() + MAX_SHIFT_MINUTES * 60_000).toISOString();
+  const endsAt = [next?.startsAt ?? horizon, horizon, ceiling].sort()[0];
+  if (endsAt <= at) {
+    return { covered: false, window: null, reason: "There is no window left to cover." };
+  }
+
+  const clash = shiftConflict({ userId: input.userId, startsAt: at, endsAt }, input.shifts);
+  if (clash) {
+    return {
+      covered: false,
+      window: null,
+      reason: `${input.userId} is already on ${clash.kind === "ON_CALL" ? "call" : "shift"} from ${clash.startsAt} to ${clash.endsAt}, so the gap stays uncovered.`,
+    };
+  }
+
+  return {
+    covered: false,
+    window: { startsAt: at, endsAt },
+    reason: `${input.userId} put on call from ${at} to ${endsAt}, because the handoff landed on an uncovered desk.`,
+  };
+}
+
+/**
+ * What a handoff did, in one sentence, for the console that ran it.
+ *
+ * The record itself says who wrote it and what it named; this says the part that *happened* —
+ * cover published, work moved, or a gap that is still a gap because there was nobody to name.
+ * A handoff that silently did less than the person expected is the failure mode this sentence
+ * exists to prevent.
+ */
+export function handoffOutcomeSentence(input: {
+  handoff: HandoffRecord;
+  uncovered: boolean;
+  cover: RotaShiftRecord | null;
+  assigned: readonly string[];
+}): string {
+  const { handoff } = input;
+  const to = handoff.toUserId;
+  const parts = [`Handed over${to ? ` to ${to}` : ""} with ${handoff.openTicketRefs.length} ticket${handoff.openTicketRefs.length === 1 ? "" : "s"} named.`];
+
+  if (input.cover) parts.push(`${input.cover.userId} is on call from ${input.cover.startsAt} to ${input.cover.endsAt}.`);
+  if (input.assigned.length > 0 && to) {
+    parts.push(`${input.assigned.length} open ${input.assigned.length === 1 ? "ticket" : "tickets"} moved to ${to}.`);
+  }
+  if (input.uncovered && !input.cover && !to) {
+    parts.push("Nobody was on call and the handoff named nobody, so the uncovered window is still on the rota.");
+  }
+  return parts.join(" ");
 }
 
 /** One line for the console: what the rota says about right now. */

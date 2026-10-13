@@ -85,8 +85,8 @@ export async function recordHandoffAction(formData: FormData): Promise<void> {
   if (!result.ok) back("/handoff", result.error, "error");
 
   revalidatePath("/handoff");
-  back(
-    "/handoff",
-    `Handed over${result.value.toUserId ? ` to ${result.value.toUserId}` : ""} with ${result.value.openTicketRefs.length} ticket${result.value.openTicketRefs.length === 1 ? "" : "s"} named.`,
-  );
+  revalidatePath("/inbox");
+  // The service's own sentence: it is the one that knows whether cover was published and which
+  // of the handed-over tickets changed owner, so the page never has to guess at either.
+  back("/handoff", result.value.summary);
 }

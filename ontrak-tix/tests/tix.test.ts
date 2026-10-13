@@ -495,6 +495,73 @@ test("service: only a deleter removes a ticket, and the removal is audited", asy
 });
 
 /* -------------------------------------------------------------------------- */
+/*  Claim on view                                                             */
+/* -------------------------------------------------------------------------- */
+
+test("claim: opening a ticket nobody owns takes it and moves it into pending", async () => {
+  /*
+   * The desk's rule for work that arrives unowned: whoever opens it owns it. One write, one
+   * audit event — half of it applied (taken but still `NEW`, or pending with no owner) would
+   * be worse than none.
+   */
+  const { store, audit, service } = makeService();
+  const created = await service.createTicket(requester, NEW_TICKET);
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+
+  const claimed = await service.claim(agent, created.value.id);
+  assert.equal(claimed.ok, true);
+  if (!claimed.ok) return;
+  assert.equal(claimed.value.assigneeId, agent.id);
+  assert.equal(claimed.value.status, "PENDING");
+  assert.equal((await store.findTicket("t_acme", created.value.id))?.assigneeId, agent.id);
+  assert.deepEqual(
+    audit.snapshot().events.map((event) => event.action),
+    ["ticket.create", "ticket.claim"],
+  );
+});
+
+test("claim: an agent may take unowned work but never a colleague's, and never history", async () => {
+  const { store, audit, service } = makeService();
+  const created = await service.createTicket(dispatcher, NEW_TICKET);
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  const id = created.value.id;
+
+  // Somebody else's ticket stays somebody else's however often it is opened.
+  assert.equal((await service.assign(dispatcher, id, "u_other")).ok, true);
+  const refused = await service.claim(agent, id);
+  assert.equal(refused.ok, true);
+  assert.equal(refused.ok && refused.value.assigneeId, "u_other");
+  assert.equal(refused.ok && refused.value.status, "NEW");
+  assert.equal(audit.length, 2, "a refusal writes nothing");
+
+  // The ticket you already own is advanced, not taken twice.
+  assert.equal((await service.assign(dispatcher, id, agent.id)).ok, true);
+  const mine = await service.claim(agent, id);
+  assert.equal(mine.ok && mine.value.status, "PENDING");
+  const again = await service.claim(agent, id);
+  assert.equal(again.ok && again.value.status, "PENDING");
+  assert.equal(
+    audit.snapshot().events.filter((event) => event.action === "ticket.claim").length,
+    1,
+    "a second look claims nothing and writes nothing, which is what keeps the view from looping",
+  );
+
+  // Finished work is a record, not a queue.
+  assert.equal((await service.setStatus(agent, id, "RESOLVED")).ok, true);
+  const done = await service.claim(dispatcher, id);
+  assert.equal(done.ok && done.value.status, "RESOLVED");
+  assert.equal(audit.snapshot().events.filter((event) => event.action === "ticket.claim").length, 1);
+
+  // A requester viewing their own request takes nothing: it is not their queue to work.
+  const request = await service.createTicket(requester, NEW_TICKET);
+  if (!request.ok) return;
+  assert.equal((await service.claim(requester, request.value.id)).ok, false);
+  assert.equal((await store.findTicket("t_acme", request.value.id))?.assigneeId, null);
+});
+
+/* -------------------------------------------------------------------------- */
 /*  The agent inbox                                                           */
 /* -------------------------------------------------------------------------- */
 

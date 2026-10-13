@@ -24,6 +24,8 @@ import {
   coverageAt,
   coverageGaps,
   handoffDecision,
+  handoffOutcomeSentence,
+  planAutoCover,
   rotaLoad,
   shiftConflict,
   validateHandoff,
@@ -35,7 +37,38 @@ import {
   type RotaShiftRecord,
   type ShiftKind,
 } from "./rota-rules";
+import { isOpen, type TicketStatus } from "./ticket-rules";
 import type { ServiceResult } from "./ticket-service";
+
+/**
+ * The system principal a handoff's automatic assignments are written as.
+ *
+ * A handoff carries its own warrant — the person handing over was on duty, and "this open
+ * work is now yours" is what a handoff *is* — so the assignment is not a person redistributing
+ * the queue, which is what `ticket:assign` guards. It is still written through the ticket
+ * service with a named principal rather than by reaching into the store, and the actor who
+ * wrote the handoff is named on the audit detail. Same shape as the promotion and connector
+ * principals elsewhere on the desk.
+ */
+export const SYSTEM_HANDOFF_ACTOR = "system:handoff";
+
+/** The tickets a handoff can act on, as the rota needs to see them. */
+export interface HandedTicket {
+  id: string;
+  ref: string;
+  status: TicketStatus;
+  assigneeId: string | null;
+}
+
+/**
+ * The ticket stack, as the rota uses it: enough to turn the references written in a handoff
+ * into work that changes hands. A port rather than the service, so `rota-service` keeps
+ * knowing nothing about how tickets are stored.
+ */
+export interface RotaTicketPort {
+  list(tenantId: string): Promise<HandedTicket[]>;
+  assign(actor: Actor, ticketId: string, assigneeId: string): Promise<{ ok: boolean; error?: string }>;
+}
 
 export interface RotaStore {
   listShifts(tenantId: string, filters?: { from?: string; to?: string; userId?: string; queueId?: string | null }): Promise<RotaShiftRecord[]>;
@@ -72,6 +105,17 @@ export interface HandoffInput {
   openTicketRefs?: readonly string[];
 }
 
+/** What recording a handoff did, beyond recording itself. */
+export interface HandoffOutcome {
+  handoff: HandoffRecord;
+  /** The on-call window published because the handoff landed on an uncovered desk. */
+  cover: RotaShiftRecord | null;
+  /** The references of the handed-over work that changed owner. */
+  assigned: string[];
+  /** All of the above as one sentence, for the console that ran it. */
+  summary: string;
+}
+
 /** What the rota page shows. */
 export interface RotaView {
   from: string;
@@ -89,6 +133,12 @@ export class RotaService {
     private readonly store: RotaStore,
     private readonly audit: AuditSink | null = null,
     private readonly ids: RotaIds = systemRotaIds(),
+    /**
+     * The desk's tickets, for handing work over. Absent on a deployment (or a test) that only
+     * publishes cover: the rota page needs no tickets, and a handoff without this port still
+     * records the references it was given.
+     */
+    private readonly tickets: RotaTicketPort | null = null,
   ) {}
 
   /* -------------------------------------------------------------- reading */
@@ -132,6 +182,22 @@ export class RotaService {
     if (!actorHasPermission(actor, "queue:manage")) {
       return { ok: false, error: "You do not publish the rota." };
     }
+    return this.publishShift(actor, input, {});
+  }
+
+  /**
+   * The write behind `addShift`, without the "who may publish" question — because one caller
+   * is not a person publishing a rota. A handoff that lands on an uncovered desk fills the gap
+   * (`planAutoCover`), and the warrant there is the handoff itself: the person handing over was
+   * on duty and is naming the person taking the pager. Everything else — the validation, the
+   * conflict check, the insert, the audit event — is identical to a shift typed into the form,
+   * so an automatic window can never be a kind of shift the desk could not have written itself.
+   */
+  private async publishShift(
+    actor: Actor,
+    input: ShiftInput,
+    detail: Record<string, unknown>,
+  ): Promise<ServiceResult<RotaShiftRecord>> {
     if (!input.userId) return { ok: false, error: "Choose who is covering." };
 
     const issues = validateShift({ startsAt: input.startsAt, endsAt: input.endsAt, note: input.note ?? null });
@@ -172,6 +238,7 @@ export class RotaService {
       kind: record.kind,
       startsAt: record.startsAt,
       endsAt: record.endsAt,
+      ...detail,
     });
     return { ok: true, value: record };
   }
@@ -196,14 +263,27 @@ export class RotaService {
   /**
    * Record a handover. The shift on now is resolved here rather than trusted
    * from a form, so "who was on when this was written" is a fact on the record.
+   *
+   * A handover is also the last moment anybody looks at who is holding the pager, so recording
+   * one does three things rather than one: it writes the record, it fills an uncovered desk
+   * with the person the handoff names (so "somebody is covered" is a published window and not
+   * a good intention), and it moves the open work the handoff named — work nobody owned, or
+   * work the person handing over owned — to that same person, because a ticket with no owner
+   * after a handover is the one that breaches overnight. The two side effects are skipped
+   * entirely when somebody is already on call: a handoff between two people who are both
+   * covered is a note, and rewriting the rota because of it would be a surprise.
    */
-  async recordHandoff(actor: Actor, input: HandoffInput): Promise<ServiceResult<HandoffRecord>> {
+  async recordHandoff(actor: Actor, input: HandoffInput): Promise<ServiceResult<HandoffOutcome>> {
     const issues = validateHandoff({ note: input.note, openTicketRefs: input.openTicketRefs ?? [] });
     if (issues.length > 0) return { ok: false, error: issues[0].message };
 
     const queueId = input.queueId ?? null;
     const now = this.ids.now();
-    const onDuty = await this.store.listShifts(actor.tenantId, { from: now, to: now, queueId });
+    // Everything from now on, not only what covers this instant: the handover needs to know
+    // when the next person is on as much as who is on at this moment, because that is what
+    // bounds the covering window it may publish.
+    const ahead = await this.store.listShifts(actor.tenantId, { from: now, queueId });
+    const onDuty = ahead.filter((shift) => shift.startsAt <= now && now < shift.endsAt);
     const coverage = coverageAt(onDuty, now, queueId);
 
     const decision = handoffDecision({
@@ -233,7 +313,77 @@ export class RotaService {
       openTickets: record.openTicketRefs.length,
       noteChars: record.note.length,
     });
-    return { ok: true, value: record };
+
+    const uncovered = !coverage.covered;
+    const cover = uncovered ? await this.coverUncovered(actor, record, ahead) : null;
+    const assigned = uncovered ? await this.handOverTickets(actor, record) : [];
+
+    return {
+      ok: true,
+      value: { handoff: record, cover, assigned, summary: handoffOutcomeSentence({ handoff: record, uncovered, cover, assigned }) },
+    };
+  }
+
+  /**
+   * Publish the window that puts somebody on call after an uncovered handover.
+   *
+   * Refused by the rules rather than guessed at: if the person named is already on shift
+   * then, the window is not published (double-booking is never the way to close a gap) and the
+   * gap stays visible on the rota page, which is where somebody will act on it.
+   */
+  private async coverUncovered(
+    actor: Actor,
+    record: HandoffRecord,
+    shifts: readonly RotaShiftRecord[],
+  ): Promise<RotaShiftRecord | null> {
+    const plan = planAutoCover({ shifts, at: record.at, userId: record.toUserId, queueId: record.queueId });
+    if (!plan.window || !record.toUserId) return null;
+
+    const published = await this.publishShift(
+      actor,
+      {
+        userId: record.toUserId,
+        queueId: record.queueId,
+        kind: "ON_CALL",
+        startsAt: plan.window.startsAt,
+        endsAt: plan.window.endsAt,
+        note: `Automatic cover: handoff ${record.id} landed on an uncovered desk.`,
+      },
+      { fromHandoff: record.id },
+    );
+    return published.ok ? published.value : null;
+  }
+
+  /**
+   * Hand the work over: the references a handoff names, moved to the person taking over.
+   *
+   * Bounded on purpose, all three limits are the point. Only the references the handoff wrote
+   * down (never the rest of the queue), only work that is still open (a resolved ticket is a
+   * record of what happened, not something to re-own), and only work nobody owned or the person
+   * handing over owned — a handoff is not a licence to take a colleague's tickets away.
+   */
+  private async handOverTickets(actor: Actor, record: HandoffRecord): Promise<string[]> {
+    const port = this.tickets;
+    if (!port || !record.toUserId || record.openTicketRefs.length === 0) return [];
+
+    const byRef = new Map((await port.list(actor.tenantId)).map((ticket) => [ticket.ref, ticket]));
+    const principal = { id: SYSTEM_HANDOFF_ACTOR, tenantId: actor.tenantId, role: "ADMIN" as const };
+    const moved: string[] = [];
+
+    for (const ref of record.openTicketRefs) {
+      const ticket = byRef.get(ref);
+      if (!ticket || !isOpen(ticket.status)) continue;
+      if (ticket.assigneeId !== null && ticket.assigneeId !== actor.id) continue;
+      if (ticket.assigneeId === record.toUserId) continue;
+
+      const assigned = await port.assign(principal, ticket.id, record.toUserId);
+      if (assigned.ok) moved.push(ref);
+    }
+
+    if (moved.length > 0) {
+      await this.append(actor, "rota.handoff.assign", "handoff", record.id, { toUserId: record.toUserId, refs: moved });
+    }
+    return moved;
   }
 
   private async append(actor: Actor, action: string, targetType: string, targetId: string, detail: Record<string, unknown>): Promise<void> {

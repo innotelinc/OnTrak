@@ -74,8 +74,9 @@ import {
   PrismaClientBrandingStore,
   type ClientBrandingPrismaClient,
 } from "./client-branding-store-prisma";
-import { RotaService } from "./rota-service";
+import { RotaService, type RotaTicketPort } from "./rota-service";
 import { PrismaRotaStore, type RotaPrismaClient } from "./rota-store-prisma";
+import type { Actor } from "./access-rules";
 import {
   PrismaClientSurveyStore,
   type ClientSurveyPrismaClient,
@@ -691,7 +692,14 @@ export function clientBrandingServicesFor(): ClientBrandingService {
  * the same per-tenant hash chain as the work they cover.
  */
 export function rotaServicesFor(): RotaService {
-  rota ??= new RotaService(new PrismaRotaStore(prisma as unknown as RotaPrismaClient), ticketServices().audit);
+  // The ticket stack as the rota sees it: a handoff moves the open work it named to the person
+  // taking over, through the same `assign` every other caller uses.
+  const rotaTickets: RotaTicketPort = {
+    list: (tenantId: string) => ticketServices().store.listTickets(tenantId),
+    assign: (actor: Actor, ticketId: string, assigneeId: string) =>
+      ticketServices().service.assign(actor, ticketId, assigneeId),
+  };
+  rota ??= new RotaService(new PrismaRotaStore(prisma as unknown as RotaPrismaClient), ticketServices().audit, undefined, rotaTickets);
   return rota;
 }
 

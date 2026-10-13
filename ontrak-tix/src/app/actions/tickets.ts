@@ -416,6 +416,41 @@ export async function assignAction(formData: FormData): Promise<void> {
 }
 
 /**
+ * Take the ticket somebody just opened.
+ *
+ * The one ticket action that does **not** redirect, and the omission is the point: it is
+ * called by the page the reader is already looking at, so moving them anywhere because a
+ * page rendered would be worse than the ticket going unclaimed. It answers with what
+ * happened so the caller can tell a claim from a refusal, and it runs the same client-scope
+ * check as every other write — a ticket the reader may not see is a ticket they may not take.
+ *
+ * The service decides everything else (`claim-rules.ts` explains the three refusals):
+ * somebody else's work, finished work, and a requester's own request are all unclaimable.
+ */
+export async function claimTicketAction(ticketId: string): Promise<{ claimed: boolean; reason: string }> {
+  const actor = await requireActor();
+  const id = String(ticketId ?? "").trim();
+  if (!id) return { claimed: false, reason: "No ticket was named." };
+
+  const blocked = await blockedByClientScope(actor, [id]);
+  if (blocked.has(id)) return { claimed: false, reason: blocked.get(id) as string };
+
+  const before = await ticketServices().store.findTicket(actor.tenantId, id);
+  const result = await ticketServices().service.claim(actor, id);
+  if (!result.ok) return { claimed: false, reason: result.error };
+
+  // Both views that can claim a ticket render it, so both are refreshed — the inbox list is
+  // where the assignee column changes, and the ticket page is where the status does.
+  revalidatePath("/inbox");
+  revalidatePath(`/inbox/${id}`);
+  revalidatePath("/portal");
+  revalidatePath(`/portal/${id}`);
+
+  const claimed = before?.assigneeId !== result.value.assigneeId || before?.status !== result.value.status;
+  return { claimed, reason: claimed ? "Taken and moved into pending." : "Nothing to take." };
+}
+
+/**
  * Delete a ticket outright.
  *
  * The one ticket action that removes the record, so it is guarded like every other

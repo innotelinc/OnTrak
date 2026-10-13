@@ -80,6 +80,21 @@ async function signIn(page: Page, email: string = EMAIL): Promise<void> {
   await page.waitForURL((next) => !next.pathname.startsWith("/sign-in"), { timeout: 20_000 });
 }
 
+/**
+ * The address of the incident a test just declared.
+ *
+ * Declaring answers on the incident's own page — the worklist is only the list, and
+ * every incident's playbook, evidence and duties live on its own console — so this is
+ * where a test returns to when it has been somewhere else in between, the way somebody
+ * reopening the tab does. Asserted rather than assumed: a redirect that landed
+ * somewhere else would otherwise surface as a locator timeout three steps later.
+ */
+function incidentPathFrom(page: Page): string {
+  const path = new URL(page.url()).pathname;
+  expect(path, "declaring an incident must land on its own console").toMatch(/^\/incidents\/INC-\d+$/);
+  return path;
+}
+
 /** Hand the browser to somebody else, the way two people share a desk. */
 async function switchUser(page: Page, email: string): Promise<void> {
   await page.goto(url("/notifications"), { waitUntil: "load" });
@@ -186,6 +201,19 @@ test.describe("OnTrak Tix desk", () => {
       await auditPath(page, path);
     });
   }
+
+  test("a11y (browser): an incident's own console passes WCAG A/AA", async ({ page }) => {
+    // The worklist's own row is audited above; this is the page a row *opens*, which
+    // is where the playbook, the evidence, the custody trail and the duties are drawn.
+    // A page that is not on anyone's list is a page nobody audits.
+    await page.goto(url("/incidents"), { waitUntil: "load" });
+    const opens = page.getByRole("link", { name: "Open", exact: true });
+    test.skip((await opens.count()) === 0, "this deployment has no incident to open");
+    await opens.first().click();
+    await page.waitForURL(/\/incidents\/INC-\d+/, { timeout: 20_000 });
+    const results = await audit(page);
+    expect(results.violations, `violations on an incident's console:\n${report(results.violations)}`).toEqual([]);
+  });
 
   test("templates: using one prefills the new-ticket form", async ({ page }) => {
     await page.goto(url("/templates"), { waitUntil: "load" });
@@ -338,18 +366,99 @@ test.describe("OnTrak Tix desk", () => {
     await expect(row).toContainText(/Promoted to/);
   });
 
+  test("security: a suppressed alert answers on a second decision instead of erroring the console", async ({ page }) => {
+    /*
+     * The crash this covers (digest 842960131): the stream offers "Open incident" on every
+     * alert with no ticket, including one a decision has already gone against. Deciding it a
+     * second time used to collide with the promotion table's unique key, and the whole console
+     * went to "a server-side exception has occurred" instead of answering. It answers now.
+     */
+    await page.goto(url("/security"), { waitUntil: "load" });
+
+    const suppressed = page.locator("li", { hasText: "Suppressed —" }).first();
+    if ((await page.locator("li", { hasText: "Suppressed —" }).count()) === 0) {
+      test.skip(true, "no alert carries a suppression decision in this tenant");
+    }
+
+    await suppressed.getByRole("button", { name: "Open incident" }).click();
+    // The desk is told why, and the page it lands on is the console rather than an error.
+    await expect(page.locator("body")).toContainText(/That alert is suppressed/, { timeout: 20_000 });
+    await expect(page.locator("body")).not.toContainText("Application error");
+    await expect(page.locator("body")).not.toContainText("server-side exception");
+    await expect(suppressed).toContainText("Suppressed —");
+  });
+
+  test("inbox: the pair fills the window, and the divider a person moves is a real control", async ({ page }) => {
+    /*
+     * The inbox is the desk's all-day screen, so its two panes size to the screen rather than to
+     * a fixed column — and the split is adjustable, from the keyboard as well as the pointer,
+     * because a dispatcher watching a rush and an agent reading a thread want different shapes.
+     */
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.goto(url("/inbox"), { waitUntil: "load" });
+
+    const divider = page.getByRole("separator", { name: "Resize the worklist" });
+    await expect(divider).toBeVisible();
+    const before = Number(await divider.getAttribute("aria-valuenow"));
+
+    await divider.focus();
+    await page.keyboard.press("ArrowRight");
+    const after = Number(await divider.getAttribute("aria-valuenow"));
+    expect(after).toBeGreaterThan(before);
+
+    // The two panes are side by side, and together they use the window: the desk's shell no
+    // longer caps the page at a fixed column, so a wide monitor shows more rows and a wider
+    // conversation rather than more margin.
+    await page.getByRole("link", { name: /TIX-\d+/ }).first().click();
+    const panel = page.locator("section[aria-label^='Ticket TIX-']").first();
+    await expect(panel).toBeVisible({ timeout: 20_000 });
+
+    // Compared by pane, not by table: the worklist scrolls horizontally inside its column, so
+    // the table's own box is wider than the column it lives in.
+    const worklist = await page.locator("section[aria-label='Ticket worklist']").boundingBox();
+    const detail = await panel.boundingBox();
+    expect(worklist?.width ?? 0).toBeGreaterThan(700);
+    expect(detail?.x ?? 0).toBeGreaterThan((worklist?.x ?? 0) + (worklist?.width ?? 0));
+    expect((detail?.x ?? 0) + (detail?.width ?? 0)).toBeGreaterThan(1500);
+    expect((worklist?.x ?? 0) + (worklist?.width ?? 0)).toBeLessThan(1250);
+  });
+
+  test("inbox: opening a ticket nobody owns takes it and moves it into pending", async ({ page }) => {
+    /*
+     * Requester files it, agent opens it: no assignment form, no status form — just looking at
+     * the work. One ticket, taken once, and the panel the reader is looking at says whose it is.
+     */
+    const stamp = Date.now();
+    const subject = `Unclaimed sweep ${stamp}`;
+
+    await switchUser(page, REQUESTER);
+    await page.goto(url("/portal/new"), { waitUntil: "load" });
+    await page.getByLabel("What is it about?").fill(subject);
+    await page.getByLabel("Describe the problem").fill("Filed by the sweep so there is unowned work to open.");
+    await page.getByRole("button", { name: "Submit request" }).click();
+    await page.waitForURL(/\/portal\/[^/?]+/, { timeout: 20_000 });
+
+    await switchUser(page, EMAIL);
+    await page.goto(url("/inbox"), { waitUntil: "load" });
+    await page.getByRole("link", { name: subject }).click();
+
+    // The ticket's own panel, not the worklist beside it (which is "Ticket worklist").
+    const panel = page.locator("section[aria-label^='Ticket TIX-']").first();
+    await expect(panel).toContainText("Assigned to", { timeout: 20_000 });
+    await expect(panel).toContainText("Pending");
+    await expect(panel).not.toContainText("Unassigned");
+  });
+
   test("incidents: declaring one starts its playbook, and the manifest downloads as JSON", async ({ page }) => {
     await page.goto(url("/incidents"), { waitUntil: "load" });
     expect(await page.getByRole("heading", { name: "Incidents", exact: true }).count()).toBe(1);
 
-    // Fresh database: declare one straight from the console so the rest is deterministic.
-    const link = page.getByRole("link", { name: /Download manifest/ }).first();
-    if ((await link.count()) === 0) {
-      await page.getByLabel("Title").fill(`Sweep incident ${Date.now()}`);
-      await page.getByLabel("Summary").fill("Declared by the browser sweep to exercise the console and the manifest.");
-      await page.getByRole("button", { name: "Declare incident" }).click();
-      await expect(page.locator("body")).toContainText(/INC-\d+/, { timeout: 20_000 });
-    }
+    // Declare one, so the rest is deterministic, and land on its own console: the
+    // worklist is rows, and the playbook and the manifest are on the incident's page.
+    await page.getByLabel("Title").fill(`Sweep incident ${Date.now()}`);
+    await page.getByLabel("Summary").fill("Declared by the browser sweep to exercise the console and the manifest.");
+    await page.getByRole("button", { name: "Declare incident" }).click();
+    await page.waitForURL(/\/incidents\/INC-\d+/, { timeout: 20_000 });
 
     // Declaring auto-starts the playbook, so the console always shows its steps.
     expect(await page.getByRole("heading", { name: "Playbook" }).count()).toBeGreaterThan(0);
@@ -397,7 +506,7 @@ test.describe("OnTrak Tix desk", () => {
     await page.getByLabel("Title").fill(`Custody sweep ${stamp}`);
     await page.getByLabel("Summary").fill("Exercises the chain of custody and the legal hold from the console.");
     await page.getByRole("button", { name: "Declare incident" }).click();
-    await expect(page.locator("body")).toContainText(/INC-\d+/, { timeout: 20_000 });
+    await page.waitForURL(/\/incidents\/INC-\d+/, { timeout: 20_000 });
 
     // Scope to the incident's own card: the timeline entries below it quote the
     // title too, so a plain text match would catch the nested list items.
@@ -469,7 +578,9 @@ test.describe("OnTrak Tix desk", () => {
     await page.getByLabel("Title").fill(`Artifact sweep ${stamp}`);
     await page.getByLabel("Summary").fill("Exercises object-lock storage for evidence bytes from the console.");
     await page.getByRole("button", { name: "Declare incident" }).click();
-    await expect(page.locator("body")).toContainText(/INC-\d+/, { timeout: 20_000 });
+    await page.waitForURL(/\/incidents\/INC-\d+/, { timeout: 20_000 });
+    // This test signs out and back in as an administrator, and comes back here.
+    const incidentPath = incidentPathFrom(page);
 
     const card = page
       .locator("li")
@@ -514,7 +625,7 @@ test.describe("OnTrak Tix desk", () => {
     // And an administrator still cannot shorten COMPLIANCE retention: the
     // refusal names the rule that holds it rather than failing vaguely.
     await signIn(page, "admin@acme.test");
-    await page.goto(url("/incidents"), { waitUntil: "load" });
+    await page.goto(url(incidentPath), { waitUntil: "load" });
     const adminCard = page
       .locator("li")
       .filter({ has: page.getByRole("heading", { name: `Artifact sweep ${stamp}`, exact: true }) })
@@ -538,7 +649,7 @@ test.describe("OnTrak Tix desk", () => {
     await page.locator('select[name="impact"]').selectOption("EXTENSIVE");
     await page.locator('select[name="urgency"]').selectOption("CRITICAL");
     await page.getByRole("button", { name: "Declare incident" }).click();
-    await expect(page.locator("body")).toContainText(/INC-\d+/, { timeout: 20_000 });
+    await page.waitForURL(/\/incidents\/INC-\d+/, { timeout: 20_000 });
 
     const card = page
       .locator("li")
@@ -610,7 +721,8 @@ test.describe("OnTrak Tix desk", () => {
     await page.locator('select[name="impact"]').selectOption("EXTENSIVE");
     await page.locator('select[name="urgency"]').selectOption("CRITICAL");
     await page.getByRole("button", { name: "Declare incident" }).click();
-    await expect(page.locator("body")).toContainText(/INC-\d+/, { timeout: 20_000 });
+    await page.waitForURL(/\/incidents\/INC-\d+/, { timeout: 20_000 });
+    const incidentPath = incidentPathFrom(page);
 
     const card = page
       .locator("li")
@@ -642,8 +754,9 @@ test.describe("OnTrak Tix desk", () => {
     await expect(page.locator("body")).toContainText("Retired");
     await expect(page.locator("li").filter({ hasText: label }).first()).toContainText("Offer again");
 
-    // …and the duty it named goes back to the shipped wording, then records it.
-    await page.goto(url("/incidents"), { waitUntil: "load" });
+    // …and the duty it named goes back to the shipped wording, then records it. The
+    // templates page is a different page, so this returns to the incident's own console.
+    await page.goto(url(incidentPath), { waitUntil: "load" });
     const after = page
       .locator("li")
       .filter({ has: page.getByRole("heading", { name: `Draft sweep ${stamp}`, exact: true }) })
@@ -659,6 +772,14 @@ test.describe("OnTrak Tix desk", () => {
     await afterDuty.getByRole("button", { name: "Record this notice as sent" }).first().click();
     await expect(page.locator("body")).toContainText(/Still to fill in: \{\{servicesAffected\}\}/, { timeout: 20_000 });
 
+    // That refusal answers **twice**: the flash arrives in ~150ms, and then Next commits
+    // the revalidated route, which replaces the page under it (the console collapses to
+    // the shell's loading state for a moment). The second replacement closes this
+    // `<details>` — React does not own its open flag — and detaches anything mid-click,
+    // which is what a 60s "element was detached from the DOM, retrying" was. So wait for
+    // the route to settle before reading the panel at all.
+    await page.waitForLoadState("networkidle");
+
     const reopened = page
       .locator("li")
       .filter({ has: page.getByRole("heading", { name: `Draft sweep ${stamp}`, exact: true }) })
@@ -666,8 +787,8 @@ test.describe("OnTrak Tix desk", () => {
       .locator("li")
       .filter({ hasText: "Client contract breach notice" })
       .first();
-    // React does not own the `<details>` open flag, so a soft navigation can
-    // leave the panel open — only click the summary when it is closed.
+    // A soft navigation leaves the panel in whatever state the new tree renders it in,
+    // so only click the summary when it is closed.
     const notice = reopened.locator('textarea[name="message"]').first();
     if (!(await notice.isVisible())) await reopened.getByText(/^Draft this notice/).click();
     await expect(notice).toBeVisible();
@@ -684,7 +805,7 @@ test.describe("OnTrak Tix desk", () => {
     await page.getByLabel("Title").fill(`Review sweep ${stamp}`);
     await page.getByLabel("Summary").fill("Walks the ladder, publishes the review and exercises the war-room timeline.");
     await page.getByRole("button", { name: "Declare incident" }).click();
-    await expect(page.locator("body")).toContainText(/INC-\d+/, { timeout: 20_000 });
+    await page.waitForURL(/\/incidents\/INC-\d+/, { timeout: 20_000 });
 
     const card = page
       .locator("li")
@@ -747,7 +868,7 @@ test.describe("OnTrak Tix desk", () => {
       await page.getByLabel("Title").fill(`Verifier sweep ${Date.now()}`);
       await page.getByLabel("Summary").fill("Gives the verifier a packet to check.");
       await page.getByRole("button", { name: "Declare incident" }).click();
-      await expect(page.locator("body")).toContainText(/INC-\d+/, { timeout: 20_000 });
+      await page.waitForURL(/\/incidents\/INC-\d+/, { timeout: 20_000 });
     }
 
     const href = await page.getByRole("link", { name: /Download assurance packet/ }).first().getAttribute("href");
@@ -1077,8 +1198,12 @@ test.describe("OnTrak Tix identity administration", () => {
     await auditPath(page, "/admin/identity");
 
     expect(await page.getByRole("heading", { name: "Identity", exact: true }).count()).toBe(1);
-    // With no IdP yet, the form offers to configure one and says so plainly.
-    await expect(page.locator("body")).toContainText("No identity provider is configured");
+    // Two honest states, because a desk that has adopted single sign-on is the point of this
+    // screen: with nothing configured the form offers to configure one and says so plainly, and
+    // with a connection on file it reads that connection back. The family deployment this sweep
+    // runs against has one (docs/family-operations.md), so pinning the empty state would fail on
+    // the very install the feature exists for.
+    await expect(page.locator("body")).toContainText(/No identity provider is configured|Current connection/);
     // The redirect URI the IdP must register is spelled out, so setup is copy-paste.
     await expect(page.locator("body")).toContainText("/api/sso/callback");
     expect(await page.getByLabel("Role mappings").count()).toBe(1);

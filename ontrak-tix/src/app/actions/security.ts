@@ -59,10 +59,18 @@ export async function promoteAlertAction(formData: FormData): Promise<void> {
   const result = await alertPromotionServicesFor().promote(actor, alertId, { requesterId: actor.id });
   if (!result.ok) fail(result.error);
 
+  /*
+   * The answer follows the *decision*, not the fact that a decision was already on file.
+   * Reading "already had an incident" back to somebody who has just clicked on a suppressed
+   * alert is how this used to read — the suppression is the thing they need told, and it is
+   * the reason this action exists at all for a re-clicked alert.
+   */
   const { decision, ticket, alreadyPromoted } = result.value;
-  if (alreadyPromoted) ok("That alert already had an incident.");
-  if (decision.outcome === "PROMOTE" && ticket) ok(`Incident ${ticket.ref} opened.`);
   if (decision.outcome === "SUPPRESS") ok("That alert is suppressed; the reason is on the alert.");
+  if (ticket) {
+    ok(alreadyPromoted ? `Incident ${ticket.ref} was already open for that alert.` : `Incident ${ticket.ref} opened.`);
+  }
+  if (alreadyPromoted) ok("That alert was already decided — there is nothing new to do.");
   ok("That alert is below the promotion bar — it stays in the stream.");
 }
 

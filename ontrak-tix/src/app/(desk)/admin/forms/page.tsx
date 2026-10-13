@@ -53,7 +53,7 @@ export default async function FormsPage({ searchParams }: { searchParams: Search
   const activeFields = fields.value.filter((entry) => !entry.field.archived);
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-4xl space-y-6">
       <div>
         <h1 className="text-xl font-semibold text-ink">Fields &amp; forms</h1>
         <p className="text-sm text-ink-soft">

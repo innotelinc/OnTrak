@@ -194,7 +194,7 @@ export default async function DashboardPage() {
   const busiest = Math.max(1, ...statuses.map((status) => counts.byStatus[status]));
 
   return (
-    <div className="space-y-5">
+    <div className="mx-auto max-w-6xl space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-display text-xl font-semibold text-ink">Service overview</h1>

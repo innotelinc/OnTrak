@@ -72,7 +72,7 @@ export default async function RolesPage({ searchParams }: { searchParams: Search
     `/admin/roles?base=${role}${editing ? `&edit=${editing.id}` : ""}`;
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-4xl space-y-6">
       <div>
         <h1 className="text-xl font-semibold text-ink">Roles</h1>
         <p className="text-sm text-ink-soft">

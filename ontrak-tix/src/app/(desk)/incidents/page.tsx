@@ -7,8 +7,6 @@ import {
   complianceServicesFor,
   incidentDocsServicesFor,
   incidentServicesFor,
-  prisma,
-  warRoomServicesFor,
 } from "../../../lib/db";
 import {
   INCIDENT_IMPACTS,
@@ -19,44 +17,35 @@ import {
 } from "../../../lib/incident-rules";
 import { notificationState } from "../../../lib/regulatory-rules";
 import { actionState } from "../../../lib/review-rules";
-import { suggestionsFrom } from "../../../lib/compliance-service";
-import { IncidentList, unassignedRoles, type IncidentView } from "../../../components/IncidentList";
-import {
-  acknowledgeNotificationAction,
-  addIncidentNoteAction,
-  addReviewActionAction,
-  advanceIncidentAction,
-  assignIncidentRoleAction,
-  declareIncidentAction,
-  placeLegalHoldAction,
-  playbookStepAction,
-  publishReviewAction,
-  purgeArtifactAction,
-  recordEvidenceAction,
-  releaseLegalHoldAction,
-  reviewActionStateAction,
-  sendNotificationAction,
-  startPlaybookAction,
-  trackNotificationAction,
-  transferEvidenceAction,
-  uploadArtifactAction,
-  waiveNotificationAction,
-} from "../../actions/incidents";
+import { IncidentRow, unassignedRoles, type IncidentRowProps } from "../../../components/IncidentList";
+import { declareIncidentAction } from "../../actions/incidents";
 
 export const metadata = { title: "Incidents" };
 
 const inputClass = "mt-1 rounded-xl2 border border-line bg-surface px-3 py-2 text-sm text-ink";
 
-/** How many incidents the console renders in full. The rest are counted only. */
-const RECENT_LIMIT = 12;
+/** How many incidents the worklist lists. The rest are counted only. */
+const LIST_LIMIT = 25;
 
 /**
- * The incident console (M3): declare an incident, move it through the lifecycle,
- * name the people who own it, run its playbook and collect its evidence.
+ * The incident worklist (M3): what is open, and the way into each incident's console.
  *
- * Staff-only. The severity matrix, the phase ladder and the playbook are all
- * decided by the services behind this page — the page only offers the moves that
- * are legal and shows what the record already says.
+ * THE RULE THIS PAGE KEEPS
+ * ------------------------
+ * A worklist is not a console. This page answers one question — *what is on fire* — and
+ * each row's job is to get the reader into the incident they are working on, whose own
+ * page (`/incidents/<ref>`) carries the playbook, the evidence, the chain of custody,
+ * the duties and the review.
+ *
+ * That split is not decoration. Rendering every incident in full is what made this page
+ * grow with the tenant's whole history rather than with what the desk is working on: a
+ * dozen incidents came to a megabyte of markup and nearly seven thousand nodes, most of
+ * them the *forms* of incidents nobody had open, and that is a page a modest machine
+ * crashes on. A row is about thirty nodes.
+ *
+ * Declaring lands on the new incident's own page for the same reason: whoever just
+ * declared one is about to run its playbook, and starting it is the last thing this page
+ * does for them.
  */
 export default async function IncidentsPage({
   searchParams,
@@ -67,88 +56,52 @@ export default async function IncidentsPage({
   if (!actorHasPermission(actor, "ticket:read:any")) redirect("/portal");
 
   const { flash, error } = await searchParams;
-  const service = incidentServicesFor();
-  const docs = incidentDocsServicesFor();
-  const compliance = complianceServicesFor();
-  const warRoom = warRoomServicesFor();
   const now = new Date().toISOString();
 
-  const incidents = await service.list(actor.tenantId);
-  // A console renders each incident in full — playbook, evidence, custody,
-  // timeline, duties and review — so an unbounded list means a page that grows
-  // with the tenant's whole incident history. The most recent are the ones a
-  // desk is working on; the rest stay in the record and reachable by their own
-  // links. (The archive view is a later milestone.)
-  const recent = incidents.slice(0, RECENT_LIMIT);
+  const incidents = await incidentServicesFor().list(actor.tenantId);
+  // The most recent are the ones a desk is working on; the rest stay in the record, and
+  // every one of them is reachable by its own address (`/incidents/<ref>`), which is
+  // what a row links to. (A paged archive view is a later milestone.)
+  const recent = incidents.slice(0, LIST_LIMIT);
   const older = incidents.length - recent.length;
   const incidentIds = recent.map((incident) => incident.id);
 
-  // Everything below is read once for the whole page rather than once per
-  // incident. The console lists every incident with its playbook, evidence,
-  // timeline, duties and review — reading those incident by incident multiplies
-  // a ten-query page by the length of the list.
-  const [pages, timelinePages, timelines, overviews] = await Promise.all([
-    docs.pages(actor.tenantId, incidentIds),
-    service.timelinesFor(actor.tenantId, recent),
-    warRoom.timelines(actor, recent),
-    compliance.pages(actor.tenantId, incidentIds),
+  // The two reads a row needs, both once for the whole list rather than once per
+  // incident: the playbook and the counts on the record, and the deadlines that have
+  // passed. The timeline, the war-room assembly and the drafts are deliberately *not*
+  // read here — they belong to the page that shows them.
+  const [pages, overviews] = await Promise.all([
+    incidentDocsServicesFor().pages(actor.tenantId, incidentIds),
+    complianceServicesFor().pages(actor.tenantId, incidentIds),
   ]);
 
-  const views: IncidentView[] = recent.map((incident) => {
+  const rows: IncidentRowProps[] = recent.map((incident) => {
     const page = pages.get(incident.id) ?? { steps: [], evidence: [], custody: [], holds: [], artifacts: [] };
-    const overview = overviews.get(incident.id) ?? {
-      notifications: [],
-      summary: { total: 0, pending: 0, dueSoon: 0, overdue: 0, sent: 0, acknowledged: 0, waived: 0, nextDueAt: null },
-      review: null,
-      actions: [],
-      reviewSummary: { total: 0, open: 0, inProgress: 0, overdue: 0, done: 0, dropped: 0, closedShare: 0, settled: false },
-    };
-    const warRoomTimeline = timelines.ok ? timelines.value.get(incident.id) : undefined;
-
+    const overview = overviews.get(incident.id);
     return {
       incident,
       steps: page.steps,
-      evidence: page.evidence,
-      custody: page.custody,
-      artifacts: page.artifacts,
+      evidence: page.evidence.length,
+      artifacts: page.artifacts.length,
       holds: page.holds,
-      timeline: timelinePages.get(incident.id) ?? [],
-      notifications: overview.notifications,
-      suggestions: suggestionsFrom(incident, overview.notifications),
-      review: overview.review,
-      reviewActions: overview.actions,
-      warRoom: warRoomTimeline?.entries ?? [],
-      ...(warRoomTimeline ? { warRoomSummary: warRoomTimeline.summary } : {}),
+      overdue: {
+        notices: (overview?.notifications ?? []).filter((obligation) => notificationState(obligation, now) === "OVERDUE").length,
+        actions: (overview?.actions ?? []).filter((action) => actionState(action, now) === "OVERDUE").length,
+      },
     };
   });
 
-  const staff = await prisma.user.findMany({
-    where: { tenantId: actor.tenantId, active: true },
-    select: { id: true, displayName: true, role: true },
-    orderBy: { displayName: "asc" },
-  });
-
-  // A notification draft speaks for the desk (its name) and is signed by whoever
-  // records it, so those two names are read once for the page — along with the
-  // drafts the desk wrote itself, which are offered ahead of the shipped ones.
-  const [tenant, templates] = await Promise.all([
-    prisma.tenant.findUnique({ where: { id: actor.tenantId }, select: { name: true } }),
-    commsTemplateServicesFor().templatesFor(actor.tenantId),
-  ]);
-  const comms = {
-    tenant: tenant?.name ?? actor.tenantId,
-    author: staff.find((person) => person.id === actor.id)?.displayName ?? actor.id,
-    templates,
-  };
+  const templates = await commsTemplateServicesFor().templatesFor(actor.tenantId);
 
   const canAct = actorHasPermission(actor, "ticket:update");
-  const open = views.filter((view) => !isIncidentClosed(view.incident.phase));
-  const critical = open.filter((view) => severityRank(view.incident.severity) <= severityRank("SEV2"));
-  const unstaffed = open.filter((view) => unassignedRoles(view.incident).includes("COMMANDER"));
-  // The two numbers a compliance reader wants on the header: a notice that has
-  // run past its window, and a review action that has run past its date.
-  const overdueNotices = views.flatMap((view) => view.notifications ?? []).filter((obligation) => notificationState(obligation, now) === "OVERDUE").length;
-  const overdueActions = views.flatMap((view) => view.reviewActions ?? []).filter((action) => actionState(action, now) === "OVERDUE").length;
+  const open = rows.filter((row) => !isIncidentClosed(row.incident.phase));
+  const critical = open.filter((row) => severityRank(row.incident.severity) <= severityRank("SEV2"));
+  const unstaffed = open.filter((row) => unassignedRoles(row.incident).includes("COMMANDER"));
+  // The two numbers a compliance reader wants on the header, counted from the same
+  // rows that carry them: a notice that has run past its window, and a review action
+  // that has run past its date.
+  const overdueNotices = rows.reduce((total, row) => total + (row.overdue?.notices ?? 0), 0);
+  const overdueActions = rows.reduce((total, row) => total + (row.overdue?.actions ?? 0), 0);
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
@@ -159,13 +112,19 @@ export default async function IncidentsPage({
             ? "No open incidents."
             : `${open.length} open · ${critical.length} at SEV2 or above · ${unstaffed.length} without a commander`}
         </p>
-        {older > 0 ? <p className="text-sm text-ink-soft">…and {older} older incident{older === 1 ? "" : "s"} not shown.</p> : null}
+        {older > 0 ? (
+          <p className="text-sm text-ink-soft">
+            …and {older} older incident{older === 1 ? "" : "s"} not listed. Each one is reachable by its own
+            address — <span className="font-mono text-xs">/incidents/INC-…</span> — and its reference is on the
+            record wherever it is cited.
+          </p>
+        ) : null}
         <p className="text-sm text-ink-soft">
           <a href="/incidents/templates" className="font-semibold text-brand hover:underline">
             Notice templates
           </a>{" "}
-          {comms.templates.length > 0
-            ? `— ${comms.templates.length} draft${comms.templates.length === 1 ? "" : "s"} of your own, offered ahead of the defaults.`
+          {templates.length > 0
+            ? `— ${templates.length} draft${templates.length === 1 ? "" : "s"} of your own, offered ahead of the defaults.`
             : "— write your own draft for a duty instead of using the shipped wording."}
         </p>
         {overdueNotices > 0 || overdueActions > 0 ? (
@@ -260,36 +219,17 @@ export default async function IncidentsPage({
         </p>
       )}
 
-      <IncidentList
-        incidents={views}
-        staff={staff}
-        comms={comms}
-        now={now}
-        {...(canAct
-          ? {
-              actions: {
-                advance: advanceIncidentAction,
-                assignRole: assignIncidentRoleAction,
-                addNote: addIncidentNoteAction,
-                startPlaybook: startPlaybookAction,
-                step: playbookStepAction,
-                recordEvidence: recordEvidenceAction,
-                uploadArtifact: uploadArtifactAction,
-                purgeArtifact: purgeArtifactAction,
-                transfer: transferEvidenceAction,
-                placeHold: placeLegalHoldAction,
-                releaseHold: releaseLegalHoldAction,
-                notifications: {
-                  track: trackNotificationAction,
-                  send: sendNotificationAction,
-                  acknowledge: acknowledgeNotificationAction,
-                  waive: waiveNotificationAction,
-                },
-                review: { publish: publishReviewAction, add: addReviewActionAction, state: reviewActionStateAction },
-              },
-            }
-          : {})}
-      />
+      {rows.length === 0 ? (
+        <p className="rounded-xl2 border border-line bg-surface p-5 text-sm text-ink-soft">
+          No incidents. Nothing is on fire — declare one when something is.
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {rows.map((row) => (
+            <IncidentRow key={row.incident.id} {...row} />
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

@@ -12,6 +12,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
+import { type Actor } from "../../lib/access-rules";
 import { requireActor } from "../../lib/session";
 import { commsTemplateServicesFor, complianceServicesFor, incidentDocsServicesFor, incidentServicesFor } from "../../lib/db";
 import {
@@ -28,13 +29,37 @@ import {
 } from "../../lib/incident-rules";
 import { EVIDENCE_KINDS, type EvidenceKind } from "../../lib/evidence-rules";
 
-function ok(message: string): never {
-  revalidatePath("/incidents");
-  redirect(`/incidents?flash=${encodeURIComponent(message)}`);
+/**
+ * Where a console action answers.
+ *
+ * One incident's console is its own page (`/incidents/<ref>`), so an action taken on it
+ * has to come back *there*: answering on the worklist would drop the desk out of the
+ * incident it was working on, and a flash somebody has to go looking for is a flash they
+ * never read. The form already carries the incident's id; the reference it answers with
+ * is read from the record, so the address is the one the worklist links to.
+ *
+ * A form with no incident on it — a refusal before one was chosen — answers on the
+ * worklist, which is where such a form could only have been submitted from.
+ */
+async function reply(actor: Actor, formData: FormData): Promise<string> {
+  const incidentId = text(formData, "incidentId");
+  if (!incidentId) return "/incidents";
+  const incident = await incidentServicesFor().get(actor.tenantId, incidentId);
+  return incident ? `/incidents/${incident.ref}` : "/incidents";
 }
 
-function fail(message: string): never {
-  redirect(`/incidents?error=${encodeURIComponent(message)}`);
+async function ok(actor: Actor, formData: FormData, message: string): Promise<never> {
+  const to = await reply(actor, formData);
+  // The worklist carries the counts — open, at SEV2 or above, past a deadline — so it
+  // is revalidated as well: an action that refreshed only the incident's own page
+  // would leave the two views disagreeing about the same tenant.
+  revalidatePath("/incidents");
+  revalidatePath(to);
+  redirect(`${to}?flash=${encodeURIComponent(message)}`);
+}
+
+async function fail(actor: Actor, formData: FormData, message: string): Promise<never> {
+  redirect(`${await reply(actor, formData)}?error=${encodeURIComponent(message)}`);
 }
 
 function text(formData: FormData, field: string): string {
@@ -61,59 +86,67 @@ export async function declareIncidentAction(formData: FormData): Promise<void> {
     ticketId: text(formData, "ticketId") || null,
     ...(text(formData, "alertId") ? { alertId: text(formData, "alertId") } : {}),
   });
-  if (!result.ok) fail(result.error);
+  if (!result.ok) return fail(actor, formData, result.error);
 
   // Put the incident on its playbook straight away: a declared incident with no
   // plan is how the first ten minutes get lost.
   await incidentDocsServicesFor().startPlaybook(actor, result.value.id);
-  ok(`Incident ${result.value.ref} declared (${result.value.severity}).`);
+
+  // Declaring lands on the incident itself: whoever just declared it is about to run
+  // its playbook, and the worklist's only job for them was to start this.
+  revalidatePath("/incidents");
+  redirect(
+    `/incidents/${result.value.ref}?flash=${encodeURIComponent(
+      `Incident ${result.value.ref} declared (${result.value.severity}).`,
+    )}`,
+  );
 }
 
 /** Move an incident to another phase. */
 export async function advanceIncidentAction(formData: FormData): Promise<void> {
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
-  if (!incidentId) fail("Choose an incident first.");
+  if (!incidentId) return fail(actor, formData, "Choose an incident first.");
 
   const to = pick<IncidentPhase>(formData.get("to"), INCIDENT_PHASES, "TRIAGED");
   const result = await incidentServicesFor().advance(actor, incidentId, to);
-  if (!result.ok) fail(result.error);
-  ok(`Incident moved to ${to.toLowerCase()}.`);
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, `Incident moved to ${to.toLowerCase()}.`);
 }
 
 /** Assign or clear an incident role. */
 export async function assignIncidentRoleAction(formData: FormData): Promise<void> {
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
-  if (!incidentId) fail("Choose an incident first.");
+  if (!incidentId) return fail(actor, formData, "Choose an incident first.");
 
   const role = pick<IncidentRole>(formData.get("role"), INCIDENT_ROLES, "COMMANDER");
   const userId = text(formData, "userId") || null;
   const result = await incidentServicesFor().assignRole(actor, incidentId, role, userId);
-  if (!result.ok) fail(result.error);
-  ok(userId ? "Role assigned." : "Role cleared.");
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, userId ? "Role assigned." : "Role cleared.");
 }
 
 /** Append a free-text timeline note. */
 export async function addIncidentNoteAction(formData: FormData): Promise<void> {
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
-  if (!incidentId) fail("Choose an incident first.");
+  if (!incidentId) return fail(actor, formData, "Choose an incident first.");
 
   const result = await incidentServicesFor().addNote(actor, incidentId, String(formData.get("summary") ?? ""));
-  if (!result.ok) fail(result.error);
-  ok("Note added to the timeline.");
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, "Note added to the timeline.");
 }
 
 /** Start the playbook for an incident that has none. */
 export async function startPlaybookAction(formData: FormData): Promise<void> {
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
-  if (!incidentId) fail("Choose an incident first.");
+  if (!incidentId) return fail(actor, formData, "Choose an incident first.");
 
   const result = await incidentDocsServicesFor().startPlaybook(actor, incidentId);
-  if (!result.ok) fail(result.error);
-  ok(`Playbook started (${result.value.length} steps).`);
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, `Playbook started (${result.value.length} steps).`);
 }
 
 /** Complete, skip or reopen one playbook step. */
@@ -121,7 +154,7 @@ export async function playbookStepAction(formData: FormData): Promise<void> {
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
   const key = text(formData, "key");
-  if (!incidentId || !key) fail("Choose an incident and a step first.");
+  if (!incidentId || !key) return fail(actor, formData, "Choose an incident and a step first.");
 
   const op = text(formData, "op");
   const docs = incidentDocsServicesFor();
@@ -132,15 +165,15 @@ export async function playbookStepAction(formData: FormData): Promise<void> {
         ? await docs.reopenStep(actor, incidentId, key)
         : await docs.completeStep(actor, incidentId, key, text(formData, "note") || undefined);
 
-  if (!result.ok) fail(result.error);
-  ok(op === "skip" ? "Step skipped." : op === "reopen" ? "Step reopened." : "Step completed.");
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, op === "skip" ? "Step skipped." : op === "reopen" ? "Step reopened." : "Step completed.");
 }
 
 /** Record a piece of evidence for an incident. */
 export async function recordEvidenceAction(formData: FormData): Promise<void> {
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
-  if (!incidentId) fail("Choose an incident first.");
+  if (!incidentId) return fail(actor, formData, "Choose an incident first.");
 
   const result = await incidentDocsServicesFor().recordEvidence(actor, incidentId, {
     kind: pick<EvidenceKind>(formData.get("kind"), EVIDENCE_KINDS, "NOTE"),
@@ -149,8 +182,8 @@ export async function recordEvidenceAction(formData: FormData): Promise<void> {
     sha256: text(formData, "sha256") || null,
     note: text(formData, "note") || null,
   });
-  if (!result.ok) fail(result.error);
-  ok("Evidence recorded.");
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, "Evidence recorded.");
 }
 
 /**
@@ -164,10 +197,10 @@ export async function recordEvidenceAction(formData: FormData): Promise<void> {
 export async function uploadArtifactAction(formData: FormData): Promise<void> {
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
-  if (!incidentId) fail("Choose an incident first.");
+  if (!incidentId) return fail(actor, formData, "Choose an incident first.");
 
   const upload = formData.get("file");
-  if (!(upload instanceof File) || upload.size === 0) fail("Choose a file to store.");
+  if (!(upload instanceof File) || upload.size === 0) return fail(actor, formData, "Choose a file to store.");
 
   const bytes = new Uint8Array(await upload.arrayBuffer());
   const result = await incidentDocsServicesFor().recordArtifact(actor, incidentId, {
@@ -177,10 +210,12 @@ export async function uploadArtifactAction(formData: FormData): Promise<void> {
     bytes,
     note: text(formData, "note") || null,
   });
-  if (!result.ok) fail(result.error);
+  if (!result.ok) return fail(actor, formData, result.error);
 
   const { artifact, stored } = result.value;
-  ok(
+  return ok(
+    actor,
+    formData,
     stored === "unchanged"
       ? `Those bytes were already stored; recorded another collection under ${artifact.mode} retention.`
       : `Artifact stored under ${artifact.mode} retention until ${artifact.retainUntil.slice(0, 10)}.`,
@@ -197,14 +232,14 @@ export async function purgeArtifactAction(formData: FormData): Promise<void> {
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
   const artifactId = text(formData, "artifactId");
-  if (!incidentId || !artifactId) fail("Choose an incident and an artifact first.");
+  if (!incidentId || !artifactId) return fail(actor, formData, "Choose an incident and an artifact first.");
 
   const result = await incidentDocsServicesFor().purgeArtifact(actor, incidentId, artifactId, {
     reason: text(formData, "reason"),
     bypassGovernance: formData.get("bypass") === "on",
   });
-  if (!result.ok) fail(result.error);
-  ok("Artifact purged, and the removal is on the record.");
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, "Artifact purged, and the removal is on the record.");
 }
 
 /** Hand an evidence item to a new custodian. */
@@ -212,36 +247,36 @@ export async function transferEvidenceAction(formData: FormData): Promise<void> 
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
   const evidenceId = text(formData, "evidenceId");
-  if (!incidentId || !evidenceId) fail("Choose an incident and a piece of evidence first.");
+  if (!incidentId || !evidenceId) return fail(actor, formData, "Choose an incident and a piece of evidence first.");
 
   const result = await incidentDocsServicesFor().transferEvidence(actor, incidentId, evidenceId, {
     toActor: text(formData, "toActor"),
     reason: text(formData, "reason"),
   });
-  if (!result.ok) fail(result.error);
-  ok(`Custody moved to ${result.value.toActor}.`);
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, `Custody moved to ${result.value.toActor}.`);
 }
 
 /** Place a legal hold, which stops routine retention. */
 export async function placeLegalHoldAction(formData: FormData): Promise<void> {
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
-  if (!incidentId) fail("Choose an incident first.");
+  if (!incidentId) return fail(actor, formData, "Choose an incident first.");
 
   const result = await incidentDocsServicesFor().placeLegalHold(actor, incidentId, text(formData, "reason"));
-  if (!result.ok) fail(result.error);
-  ok("Legal hold placed.");
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, "Legal hold placed.");
 }
 
 /** Release a legal hold, recording why. */
 export async function releaseLegalHoldAction(formData: FormData): Promise<void> {
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
-  if (!incidentId) fail("Choose an incident first.");
+  if (!incidentId) return fail(actor, formData, "Choose an incident first.");
 
   const result = await incidentDocsServicesFor().releaseLegalHold(actor, incidentId, text(formData, "reason"));
-  if (!result.ok) fail(result.error);
-  ok("Legal hold released.");
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, "Legal hold released.");
 }
 
 /* ------------------------------------------------- regulatory notifications */
@@ -250,11 +285,11 @@ export async function releaseLegalHoldAction(formData: FormData): Promise<void> 
 export async function trackNotificationAction(formData: FormData): Promise<void> {
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
-  if (!incidentId) fail("Choose an incident first.");
+  if (!incidentId) return fail(actor, formData, "Choose an incident first.");
 
   const result = await complianceServicesFor().track(actor, incidentId, text(formData, "regime"), text(formData, "note"));
-  if (!result.ok) fail(result.error);
-  ok(`${result.value.label} is now tracked (due ${result.value.dueAt}).`);
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, `${result.value.label} is now tracked (due ${result.value.dueAt}).`);
 }
 
 /** Mark a tracked notification sent. */
@@ -262,7 +297,7 @@ export async function sendNotificationAction(formData: FormData): Promise<void> 
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
   const notificationId = text(formData, "notificationId");
-  if (!incidentId || !notificationId) fail("Choose an incident and a notification first.");
+  if (!incidentId || !notificationId) return fail(actor, formData, "Choose an incident and a notification first.");
 
   const result = await complianceServicesFor().markSent(actor, incidentId, notificationId, {
     reference: text(formData, "reference"),
@@ -271,8 +306,10 @@ export async function sendNotificationAction(formData: FormData): Promise<void> 
     message: text(formData, "message"),
     templateKey: text(formData, "templateKey"),
   });
-  if (!result.ok) fail(result.error);
-  ok(
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(
+    actor,
+    formData,
     result.value.message
       ? `${result.value.label} marked sent, with the notice text on the record.`
       : `${result.value.label} marked sent.`,
@@ -284,11 +321,11 @@ export async function acknowledgeNotificationAction(formData: FormData): Promise
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
   const notificationId = text(formData, "notificationId");
-  if (!incidentId || !notificationId) fail("Choose an incident and a notification first.");
+  if (!incidentId || !notificationId) return fail(actor, formData, "Choose an incident and a notification first.");
 
   const result = await complianceServicesFor().acknowledge(actor, incidentId, notificationId);
-  if (!result.ok) fail(result.error);
-  ok("Notification acknowledged.");
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, "Notification acknowledged.");
 }
 
 /** Record a decision that a notification did not apply. */
@@ -296,11 +333,11 @@ export async function waiveNotificationAction(formData: FormData): Promise<void>
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
   const notificationId = text(formData, "notificationId");
-  if (!incidentId || !notificationId) fail("Choose an incident and a notification first.");
+  if (!incidentId || !notificationId) return fail(actor, formData, "Choose an incident and a notification first.");
 
   const result = await complianceServicesFor().waive(actor, incidentId, notificationId, text(formData, "reason"));
-  if (!result.ok) fail(result.error);
-  ok("Notification waived.");
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, "Notification waived.");
 }
 
 /* ------------------------------------------------- notification templates */
@@ -347,7 +384,7 @@ export async function retireCommsTemplateAction(formData: FormData): Promise<voi
 export async function publishReviewAction(formData: FormData): Promise<void> {
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
-  if (!incidentId) fail("Choose an incident first.");
+  if (!incidentId) return fail(actor, formData, "Choose an incident first.");
 
   // The form offers two action rows: one required, one optional. A row with no
   // title is simply not an action, so the second can be left blank.
@@ -365,15 +402,15 @@ export async function publishReviewAction(formData: FormData): Promise<void> {
     lessons: String(formData.get("lessons") ?? ""),
     actions,
   });
-  if (!result.ok) fail(result.error);
-  ok(`Review published with ${result.value.actions.length} action(s).`);
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, `Review published with ${result.value.actions.length} action(s).`);
 }
 
 /** Add an action to a published review. */
 export async function addReviewActionAction(formData: FormData): Promise<void> {
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
-  if (!incidentId) fail("Choose an incident first.");
+  if (!incidentId) return fail(actor, formData, "Choose an incident first.");
 
   const result = await complianceServicesFor().addAction(actor, incidentId, {
     title: String(formData.get("title") ?? ""),
@@ -381,8 +418,8 @@ export async function addReviewActionAction(formData: FormData): Promise<void> {
     dueAt: text(formData, "dueAt"),
     note: text(formData, "note") || null,
   });
-  if (!result.ok) fail(result.error);
-  ok("Action added to the review.");
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, "Action added to the review.");
 }
 
 /** Mark a review action done, started, or dropped. */
@@ -390,7 +427,7 @@ export async function reviewActionStateAction(formData: FormData): Promise<void>
   const actor = await requireActor();
   const incidentId = text(formData, "incidentId");
   const actionId = text(formData, "actionId");
-  if (!incidentId || !actionId) fail("Choose an incident and an action first.");
+  if (!incidentId || !actionId) return fail(actor, formData, "Choose an incident and an action first.");
 
   const op = text(formData, "op");
   const compliance = complianceServicesFor();
@@ -401,6 +438,6 @@ export async function reviewActionStateAction(formData: FormData): Promise<void>
         ? await compliance.dropAction(actor, incidentId, actionId, text(formData, "reason"))
         : await compliance.completeAction(actor, incidentId, actionId, text(formData, "note") || undefined);
 
-  if (!result.ok) fail(result.error);
-  ok(op === "start" ? "Action started." : op === "drop" ? "Action dropped." : "Action completed.");
+  if (!result.ok) return fail(actor, formData, result.error);
+  return ok(actor, formData, op === "start" ? "Action started." : op === "drop" ? "Action dropped." : "Action completed.");
 }

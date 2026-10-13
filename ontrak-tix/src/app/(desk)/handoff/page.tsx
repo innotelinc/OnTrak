@@ -232,6 +232,11 @@ export default async function HandoffPage({
           Write it down and it survives the shift. The work still open is named by reference, so the next person opens each one
           instead of guessing what &quot;the usual&quot; meant.
         </p>
+        <p className="text-xs text-ink-faint">
+          When the desk you are handing over has nobody on call, the person taking over is put on call for the uncovered window and
+          the open work this handoff names — the tickets nobody owned, and your own — moves to them. Somebody is always covered; a
+          handoff on a desk that already has cover is just the note.
+        </p>
         <form action={recordHandoffAction} className="flex flex-wrap items-end gap-2">
           <label className="text-xs text-ink-soft">
             Queue

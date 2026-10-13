@@ -18,9 +18,13 @@ import {
   savedViewServicesFor,
 } from "../../../lib/db";
 import { scopeByClient } from "../../../lib/client-rules";
+import { claimOnView } from "../../../lib/claim-rules";
+import { AutoClaim } from "../../../components/AutoClaim";
+import { InboxPanes } from "../../../components/InboxPanes";
 import {
   assignAction,
   bulkAction,
+  claimTicketAction,
   deleteTicketAction,
   deleteViewAction,
   replyAction,
@@ -91,6 +95,9 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     if (canAssignTicket(actor, selected)) actions.assign = assignAction;
     if (canDeleteTicket(actor, selected)) actions.delete = deleteTicketAction;
   }
+  // Selecting a ticket in the pair view is opening it, so it takes it: the same rule the
+  // ticket page asks, so the two views cannot disagree about what "looking at" means.
+  const claim = selected ? claimOnView(actor, selected) : null;
 
   return (
     <div className="space-y-4">
@@ -132,34 +139,39 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
         deleteAction={deleteViewAction}
       />
 
-      {/* The worklist is the page; the ticket opens beside it. Wide screens get the
-          pair side by side, and anything narrower stacks them so neither is squeezed
-          into an unreadable column. */}
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-        <AgentInbox
-          all={all}
-          filter={filter}
-          basePath="/inbox"
-          selectedId={selected?.id ?? null}
-          sla={sla}
-          assignees={assignees}
-          bulk={actorHasPermission(actor, "ticket:update") ? { action: bulkAction } : undefined}
-        />
-        {selected ? (
-          <TicketDetail
-            ticket={selected}
-            actions={actions}
-            sla={slaStatusFor(selected, policies, now)}
-            links={links}
+      {/* The worklist is the page; the ticket opens beside it. Wide screens get the pair
+          side by side with a divider either can move, and anything narrower stacks them so
+          neither is squeezed into an unreadable column. */}
+      {claim ? <AutoClaim ticketId={selected?.id ?? ""} claim={claim.claim} action={claimTicketAction} /> : null}
+      <InboxPanes
+        list={
+          <AgentInbox
+            all={all}
+            filter={filter}
+            basePath="/inbox"
+            selectedId={selected?.id ?? null}
+            sla={sla}
             assignees={assignees}
+            bulk={actorHasPermission(actor, "ticket:update") ? { action: bulkAction } : undefined}
           />
-        ) : (
-          <p className="ot-note self-start">
-            Select a ticket to see its conversation. The list on the left is every ticket in your scope, most urgent
-            first.
-          </p>
-        )}
-      </div>
+        }
+        detail={
+          selected ? (
+            <TicketDetail
+              ticket={selected}
+              actions={actions}
+              sla={slaStatusFor(selected, policies, now)}
+              links={links}
+              assignees={assignees}
+            />
+          ) : (
+            <p className="ot-note">
+              Select a ticket to see its conversation. The list on the left is every ticket in your scope, most urgent
+              first.
+            </p>
+          )
+        }
+      />
     </div>
   );
 }

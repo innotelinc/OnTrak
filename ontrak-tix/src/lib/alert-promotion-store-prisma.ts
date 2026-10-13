@@ -60,7 +60,12 @@ export interface AlertPromotionPrismaClient {
   };
   alertPromotion: {
     findMany(args: unknown): Promise<AlertPromotionRow[]>;
-    create(args: { data: unknown }): Promise<unknown>;
+    /**
+     * An upsert rather than a create, because a decision is keyed by
+     * `(tenantId, alertId, decision)`: re-recording one that is already on file is the same
+     * decision, and a `create` would refuse it on the unique key instead of agreeing.
+     */
+    upsert(args: { where: unknown; create: unknown; update: unknown }): Promise<unknown>;
   };
 }
 
@@ -173,8 +178,19 @@ export class PrismaPromotionStore implements PromotionStore {
     await this.db.alertSuppression.create({ data: toSuppressionData(rule) });
   }
 
+  /**
+   * One row per `(tenant, alert, decision)` — the key the table enforces. A re-recorded
+   * decision overwrites its own row (so a promotion that learned its ticket ref later is
+   * corrected) and never collides with it, which is what makes a retried promotion
+   * idempotent the way the in-memory store already is.
+   */
   async recordPromotion(record: PromotionRecord): Promise<void> {
-    await this.db.alertPromotion.create({ data: toPromotionData(record) });
+    const data = toPromotionData(record);
+    await this.db.alertPromotion.upsert({
+      where: { tenantId_alertId_decision: { tenantId: record.tenantId, alertId: record.alertId, decision: record.decision } },
+      create: data,
+      update: data,
+    });
   }
 
   async listPromotions(tenantId: string): Promise<PromotionRecord[]> {

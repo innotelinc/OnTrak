@@ -22,6 +22,7 @@ import {
   actorHasPermission,
   type Actor,
 } from "./access-rules";
+import { CLAIM_STATUS, claimOnView } from "./claim-rules";
 import {
   TICKET_PRIORITIES,
   TICKET_TYPES,
@@ -334,6 +335,53 @@ export function planAssignment(
 }
 
 /**
+ * The claim a *view* makes: opening a ticket takes it, once.
+ *
+ * A distinct plan from `planAssignment` because it is a distinct act. An assignment is a
+ * decision about somebody else's work and needs `ticket:assign`; a claim is picking up the
+ * ticket in front of you, which is why `claimOnView` (the rule) asks for `ticket:update`
+ * and refuses to touch anything a colleague owns. Both writes — the assignee and the move
+ * into `PENDING` — are one plan and one audit event, because they are one act: half of this
+ * applied (the ticket taken but still `NEW`, or moved to pending with nobody owning it) is
+ * worse than none of it.
+ */
+export type ClaimPlan =
+  | { claimed: false; ticket: TicketRecord; reason: string }
+  | { claimed: true; ticket: TicketRecord; audit: AuditEventInput };
+
+export function planClaim(actor: Actor, ticket: TicketRecord, ids: IdSource): ServiceResult<ClaimPlan> {
+  if (!actorHasPermission(actor, "ticket:update")) {
+    return { ok: false, error: "You cannot work this ticket." };
+  }
+  const decision = claimOnView(actor, ticket);
+  if (!decision.claim) return { ok: true, value: { claimed: false, ticket, reason: decision.reason } };
+
+  const at = ids.now();
+  const status = decision.move ? CLAIM_STATUS : ticket.status;
+  const next: TicketRecord = {
+    ...ticket,
+    status,
+    assigneeId: decision.assigneeId,
+    updatedAt: at,
+    // The SLA clock follows the status the same way any other move into `PENDING` does,
+    // so a claimed ticket pauses the same clock a hand-moved one would.
+    pauses: decision.move ? applyPauseForStatus(ticket.pauses, ticket.status, status, at) : [...ticket.pauses],
+  };
+  return {
+    ok: true,
+    value: {
+      claimed: true,
+      ticket: next,
+      audit: audit(actor, "ticket.claim", ticket, at, {
+        fromAssignee: ticket.assigneeId,
+        fromStatus: ticket.status,
+        toStatus: status,
+      }),
+    },
+  };
+}
+
+/**
  * Delete a ticket outright.
  *
  * The one ticket action that removes the record rather than adding to it, so it is
@@ -616,6 +664,30 @@ export class TicketService {
     if (!ticket) return { ok: false, error: "Ticket not found." };
     const plan = planAssignment(actor, ticket, assigneeId, this.ids);
     if (!plan.ok) return plan;
+
+    const applied = await this.runRules(plan.value.ticket, "ticket.updated");
+    const next = applied?.ticket ?? plan.value.ticket;
+    await this.store.updateTicket(next);
+    await this.audit.append(plan.value.audit);
+    await this.settle(applied);
+    return { ok: true, value: next };
+  }
+
+  /**
+   * Take a ticket just by opening it.
+   *
+   * The write behind `claimOnView`: the ticket becomes the opener's and moves into
+   * `PENDING`, through the same lifecycle, rules and audit as every other edit. Idempotent
+   * in the way the view needs it to be — a second open of a ticket you already own, already
+   * in pending, claims nothing and writes nothing, so rendering a page that calls this can
+   * never loop.
+   */
+  async claim(actor: Actor, ticketId: string): Promise<ServiceResult<TicketRecord>> {
+    const ticket = await this.load(actor.tenantId, ticketId);
+    if (!ticket) return { ok: false, error: "Ticket not found." };
+    const plan = planClaim(actor, ticket, this.ids);
+    if (!plan.ok) return plan;
+    if (!plan.value.claimed) return { ok: true, value: plan.value.ticket };
 
     const applied = await this.runRules(plan.value.ticket, "ticket.updated");
     const next = applied?.ticket ?? plan.value.ticket;

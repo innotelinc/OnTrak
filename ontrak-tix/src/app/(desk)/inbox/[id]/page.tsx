@@ -23,6 +23,7 @@ import {
 import type { AssistResult } from "../../../../lib/assist-rules";
 import type { AssistDecisionRecord } from "../../../../lib/assist-service";
 import { scopeByClient, scopeRefusal } from "../../../../lib/client-rules";
+import { claimOnView } from "../../../../lib/claim-rules";
 import { slaStatusFor } from "../../../../lib/report-rules";
 import {
   TicketDetail,
@@ -31,8 +32,10 @@ import {
   type TicketOption,
 } from "../../../../components/TicketDetail";
 import { TicketTime } from "../../../../components/TicketTime";
+import { AutoClaim } from "../../../../components/AutoClaim";
 import {
   assignAction,
+  claimTicketAction,
   deleteTicketAction,
   linkAction,
   mergeAction,
@@ -133,6 +136,10 @@ export default async function TicketPage({
   if (canUpdateTicket(actor, ticket)) actions.setStatus = setStatusAction;
   if (canAssignTicket(actor, ticket)) actions.assign = assignAction;
   if (canDeleteTicket(actor, ticket)) actions.delete = deleteTicketAction;
+  // Opening the ticket takes it (M2.5, `claim-rules.ts`). Asked here rather than left to the
+  // action so the page only renders the trigger when a claim is actually due — and asked of
+  // the same rule the service will run, so the two can never disagree about what is claimable.
+  const claim = claimOnView(actor, ticket);
   if (canUpdateTicket(actor, ticket)) {
     actions.link = linkAction;
     actions.merge = mergeAction;
@@ -180,6 +187,7 @@ export default async function TicketPage({
           {assistError}
         </p>
       ) : null}
+      <AutoClaim ticketId={ticket.id} claim={claim.claim} action={claimTicketAction} />
       <TicketDetail
         ticket={ticket}
         actions={actions}
