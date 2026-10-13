@@ -423,9 +423,31 @@ test("console: the sign-in page is a single SSO gate and the shared theme", asyn
   assert.match(response.body, /class="masthead"/);
   assert.match(response.body, /<strong>OnTrak Sentinel<\/strong>/);
   assert.doesNotMatch(response.body, /<h1>Sign in<\/h1>/);
-  // The tab still names the page, so a person with the sign-in open in a background tab
-  // can tell what it is.
-  assert.match(response.body, /<title>Sign in · OnTrak Sentinel<\/title>/);
+  // The tab names the product, the way every other front door in the family does. It used
+  // to name the page — "Sign in · OnTrak Sentinel" — which is a tab a person with three
+  // products open cannot tell apart, on a page that already says "Sign in" in the one
+  // control it has.
+  assert.match(response.body, /<title>OnTrak Sentinel<\/title>/);
+  assert.doesNotMatch(response.body, /<title>Sign in/);
+  // The switch is the family's switch and not the console's own: the three modes with the
+  // icons the React copies draw, the palette button beside them, and — the part that was
+  // missing — the script that makes any of it do something. A `TOGGLE_SCRIPT` that no page
+  // included left three buttons that painted no pressed state and changed nothing, which
+  // is a control that looks like the family's and is not one.
+  assert.match(response.body, /class="ot-theme"/);
+  assert.equal((response.body.match(/data-theme-mode="(system|light|dark)"/g) ?? []).length, 3);
+  assert.equal(
+    (response.body.match(/viewBox="0 0 24 24"/g) ?? []).length,
+    3,
+    "one icon per mode, the same three the canonical switch draws",
+  );
+  assert.match(
+    response.body,
+    /data-theme-palette title="Switch palette — currently Security ops">Security ops<\/button>/,
+    "the palette button, labelled with the scheme this deployment opens in",
+  );
+  assert.match(response.body, /window\.UnityTheme\|\|window\.OntrakTheme/);
+  assert.match(response.body, /addEventListener\('unity:theme',paint\)/);
 });
 
 test("console: a password POST is refused now that SSO is the only door", async () => {

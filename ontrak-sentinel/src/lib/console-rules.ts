@@ -264,6 +264,9 @@ const FAMILY_DOMAIN = (process.env.ONTRAK_PORTAL_BASE_DOMAIN ?? "ontrak.innotel.
   .replace(/^["']|["']$/g, "")
   .replace(/\.+$/, "");
 
+/** The product's name, as the tab, the masthead and the footer print it. */
+const PRODUCT_NAME = "OnTrak Sentinel";
+
 /**
  * The Sentinel mark: the family's shield with a radar sweep in it.
  *
@@ -724,6 +727,21 @@ const STYLES = `
   .field { display: block; margin: var(--space-3) 0; }
   .field label { display: block; font-weight: 600; font-size: .88rem; margin-bottom: var(--space-1); }
   .field .hint { font-weight: 400; color: var(--ink-faint); }
+  /* The front door's frame and its gate are the theme's own primitives, and this console
+     is the one product whose stylesheet carries no reset of its own — the others get one
+     from their framework. So the two things the console's own base says differently are
+     said here, for the frame and for nothing else.
+
+     Boxes first: with the padding outside the stated width, the frame came out 44px
+     wider than Tix's and the gate card 58px wider, which is the same door drawn at a
+     slightly different size. Then type: every length in the theme's frame is in px, so
+     the console's 15px/1.55 base moved nothing but the line box — and that is a gate, a
+     button and a footer each a pixel taller than the same frame elsewhere. 16px on a 1.5
+     rhythm is what the other front doors render with, left in place by their frameworks
+     and the browser's own default. The console's own reading column keeps its box model
+     and its 15px/1.55: this is the front door, and only the front door. */
+  .page, .gate { box-sizing: border-box; }
+  .page { font-size: 16px; line-height: 1.5; }
   /* No backticks in this block: the whole stylesheet is one template literal, and a
      backtick in a comment would end it. The gate and the page frame around it (.page,
      .masthead, .gate, .gate__mark-wrap, .gate__mark, .footer) come from the shared
@@ -839,12 +857,12 @@ export function consolePage(input: ConsolePageInput): string {
       `<header class="masthead">` +
       `<a class="masthead__brand" href="${CONSOLE_PATHS.signIn}">` +
       productMark("sentinel-masthead-mark", "masthead__mark", null) +
-      `<strong>OnTrak Sentinel</strong><span>${FAMILY_DOMAIN}</span>` +
+      `<strong>${PRODUCT_NAME}</strong><span>${FAMILY_DOMAIN}</span>` +
       `</a>` +
       `<div class="masthead__tools">${themeSwitch()}</div>` +
       `</header>` +
       `<main class="page__main">${inner}</main>` +
-      `<footer class="footer"><span>OnTrak Sentinel</span></footer>` +
+      `<footer class="footer"><span>${PRODUCT_NAME}</span></footer>` +
       `</div>`
     : `<div class="bar">${nav}${actions}</div><main>${inner}</main>`;
 
@@ -856,7 +874,12 @@ export function consolePage(input: ConsolePageInput): string {
     `<!doctype html><html lang="en" data-scheme="${CONSOLE_SCHEME}"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<meta name="robots" content="noindex">` +
-    `<title>${escapeHtml(input.title)} · OnTrak Sentinel</title>` +
+    // The tab names the product on the front door and the page inside it everywhere
+    // else. The sign-in page is the one screen a person reaches without having chosen
+    // the product, so "Sign in · OnTrak Sentinel" answers a question nobody asked —
+    // that the page is a sign-in page is on it, in words, in the one control it has,
+    // and every other product's front door prints its name in the tab and nothing more.
+    `<title>${input.brand ? PRODUCT_NAME : `${escapeHtml(input.title)} · ${PRODUCT_NAME}`}</title>` +
     // The stylesheet first, then the switch, then the console's own rules. The switch
     // is a *blocking* script on purpose: it has to run before the first paint so
     // `<html>` already carries the remembered mode. Deferred, it would paint the
@@ -864,46 +887,120 @@ export function consolePage(input: ConsolePageInput): string {
     `<link rel="stylesheet" href="${CONSOLE_ASSET_PATHS.themeCss}">` +
     `<script src="${CONSOLE_ASSET_PATHS.themeJs}"></script>` +
     `<style>${STYLES}</style></head>` +
-    `<body>${shell}</body></html>`
+    // The switch's wiring travels with the page it is on: the console is server-rendered
+    // HTML, so there is no bundle to mount a component from, and a switch whose buttons
+    // do nothing is worse than no switch at all.
+    `<body>${shell}${TOGGLE_SCRIPT}</body></html>`
   );
 }
+
+/**
+ * The modes, their labels and their tooltips — the canonical switch's set, in order.
+ *
+ * In `theme/unity-theme.tsx` this is the `LABELS` object and the `title` attribute built
+ * beside each button. Restated here because the console has no bundler to import a
+ * component from, and because a switch that offers a different set of modes — or the
+ * same three under different names — is the drift the shared theme exists to stop.
+ */
+const THEME_MODES = [
+  ["system", "System", "Follow this computer's setting"],
+  ["light", "Light", "Light theme"],
+  ["dark", "Dark", "Dark theme"],
+] as const;
+
+/**
+ * The palettes, in the order the switch walks them, and what each one is called.
+ *
+ * The console's copy of the canonical list for the same reason: `SCHEMES` and
+ * `SCHEME_LABELS` in `theme/unity-theme.tsx`. Cycling from here and cycling from a
+ * React product meet the same three names in the same order.
+ */
+const THEME_SCHEMES = ["desk", "operations", "soc"] as const;
+const THEME_SCHEME_LABELS: Record<string, string> = {
+  desk: "Desk",
+  operations: "Operations",
+  soc: "Security ops",
+};
+
+/**
+ * The switch's icons, as markup.
+ *
+ * The three `<svg>`s `Icon()` draws in `theme/unity-theme.tsx`, at the size the shared
+ * stylesheet gives them (`.ot-theme svg`). They stroke `currentColor`, so the pressed
+ * pill and the two idle buttons colour them without a second rule.
+ */
+const THEME_ICONS: Record<string, string> = {
+  system:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">` +
+    `<rect x="2.6" y="4" width="18.8" height="13" rx="2"/>` +
+    `<path d="M8.5 20.4h7"/></svg>`,
+  light:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">` +
+    `<circle cx="12" cy="12" r="4.2"/>` +
+    `<path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6"/></svg>`,
+  dark:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+    `<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5Z"/></svg>`,
+};
 
 /**
  * The colour switch, as the console renders it.
  *
  * The same control the React apps use, in plain markup: the console is server-rendered
- * HTML with no bundler, so it cannot import `ThemeToggle.tsx`. It renders the same
- * classes (`.ot-theme`) that the shared stylesheet styles, so it cannot drift visually
- * either — only the wiring differs, and that is six lines of script at the foot of the
- * page rather than a framework.
+ * HTML with no bundler, so it cannot import `ThemeToggle.tsx`. That makes it the one
+ * place the control can be got wrong by hand, and it was: three bare labels with no
+ * icons, no palette button and no pressed state, which is a switch that reads as a
+ * different control from every other product's. So this renders the canonical
+ * component's markup — its three modes with their icons and tooltips, and the palette
+ * button beside them — and the stylesheet does the rest, exactly as it does for the
+ * React copies.
+ *
+ * The palette button is server-rendered with the deployment's own scheme on it, and
+ * `TOGGLE_SCRIPT` corrects it to whatever this browser actually chose. Two of those
+ * can disagree, because the scheme is remembered per browser while the page is built
+ * once.
  */
 function themeSwitch(): string {
-  const buttons = (["system", "light", "dark"] as const)
-    .map(
-      (mode) =>
-        `<button type="button" data-theme-mode="${mode}" aria-pressed="false">${mode === "system" ? "System" : mode === "light" ? "Light" : "Dark"}</button>`,
-    )
-    .join("");
-  return `<div class="ot-theme" role="group" aria-label="Colour theme">${buttons}</div>`;
+  const buttons = THEME_MODES.map(
+    ([mode, label, title]) =>
+      `<button type="button" data-theme-mode="${mode}" aria-pressed="false" title="${escapeHtml(title)}">${THEME_ICONS[mode]}${label}</button>`,
+  ).join("");
+  const palette = THEME_SCHEME_LABELS[CONSOLE_SCHEME] ?? "Palette";
+  return (
+    `<div class="ot-theme" role="group" aria-label="Colour theme">${buttons}` +
+    `<button type="button" data-theme-palette title="Switch palette — currently ${palette}">${palette}</button>` +
+    `</div>`
+  );
 }
 
 /**
- * Wire the switch to `window.OntrakTheme`.
+ * Wire the switch to `window.UnityTheme`.
  *
  * A `data-theme-mode` click asks the shared script to change the preference, and the
- * `ontrak:theme` event it fires in response is what repaints the pressed state — so
- * the buttons reflect the document rather than the click that asked for the change.
- * That is what keeps two switches on one page (a product's and this one) agreeing, and
- * it is why `apply()` is never called directly here.
+ * `unity:theme` event it fires in response is what repaints the pressed state — so the
+ * buttons reflect the document rather than the click that asked for the change. That is
+ * what keeps two switches on one page (a product's and this one) agreeing, and it is why
+ * `apply()` is never called directly here. The palette button cycles the three schemes
+ * the same way, and carries the current one in its label and its tooltip.
+ *
+ * `unity:theme` and `window.UnityTheme` are the canonical names; the script still fires
+ * `ontrak:theme` and still publishes `window.OntrakTheme`, and this listens to the one
+ * every other product listens to.
  */
 const TOGGLE_SCRIPT =
   `<script>(function(){` +
-  `var api=window.OntrakTheme;if(!api)return;` +
-  `function paint(){var now=api.mode();var all=document.querySelectorAll('[data-theme-mode]');` +
-  `for(var i=0;i<all.length;i++){all[i].setAttribute('aria-pressed',String(all[i].getAttribute('data-theme-mode')===now));}}` +
-  `var buttons=document.querySelectorAll('[data-theme-mode]');` +
-  `for(var i=0;i<buttons.length;i++){buttons[i].addEventListener('click',function(){api.setMode(this.getAttribute('data-theme-mode'));});}` +
-  `window.addEventListener('ontrak:theme',paint);paint();` +
+  `var api=window.UnityTheme||window.OntrakTheme;if(!api)return;` +
+  `var schemes=${JSON.stringify([...THEME_SCHEMES])};var labels=${JSON.stringify(THEME_SCHEME_LABELS)};` +
+  `var modes=document.querySelectorAll('[data-theme-mode]');` +
+  `var palette=document.querySelector('[data-theme-palette]');` +
+  `function paint(){var mode=api.mode();` +
+  `for(var i=0;i<modes.length;i++){modes[i].setAttribute('aria-pressed',String(modes[i].getAttribute('data-theme-mode')===mode));}` +
+  `if(palette){var label=labels[api.scheme()]||'Palette';palette.textContent=label;` +
+  `palette.setAttribute('title','Switch palette — currently '+label);}}` +
+  `for(var i=0;i<modes.length;i++){modes[i].addEventListener('click',function(){api.setMode(this.getAttribute('data-theme-mode'));});}` +
+  `if(palette){palette.addEventListener('click',function(){` +
+  `api.setScheme(schemes[(schemes.indexOf(api.scheme())+1)%schemes.length]);});}` +
+  `window.addEventListener('unity:theme',paint);paint();` +
   `})();</script>`;
 
 /**
