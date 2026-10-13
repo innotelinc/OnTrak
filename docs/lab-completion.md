@@ -187,10 +187,12 @@ question this product answers rather than one an operator asks three services.
   for every name tried (`{"name":"OnTrak"}`, with a slug, with a space) — while the
   tenant-scoped endpoints stay `403` afterwards. Its validation is otherwise happy with
   just a name, so this is Signara's own failure to create an organization for the
-  principal an API key presents. **Setting up the tenant is therefore an operator's job in
-  Signara's portal**, with a user account, followed by a key whose account is in that
-  organization; the range cannot get past the upload until then, and the refusal it will
-  record is the sentence above.
+  principal an API key presents.  **Setting up the tenant is therefore an operator's job in
+  Signara's portal** — this estate serves it at `http://192.168.1.44:3000/`, with a user
+  account rather than this key — followed by a key whose account is in that organization.
+  The range cannot get past the upload until then, and the refusal it will record is the
+  sentence above, so nothing else about the chain needs changing when it is done: one more
+  completion is the whole retry.
 
   Nothing about the chain's own steps has been reached yet, either: the document,
   signing-request and signature calls are pinned by `tests/certificate-chain.test.ts`
