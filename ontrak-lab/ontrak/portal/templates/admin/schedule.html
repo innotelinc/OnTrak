@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Schedule</h1>
+<p class="muted">
+  Prewarm windows keep a class from waiting for a boot; teardown windows give the host's
+  memory back after it. Right now the schedule says: <strong>{{ phase }}</strong>
+  ({{ "enabled" if schedule.enabled else "disabled" }}).
+</p>
+{% include "admin/_nav.html" %}
+
+<div class="card">
+  <h2>Windows</h2>
+  {% if schedule.windows %}
+    <table class="grid">
+      <tr><th>label</th><th>days</th><th>open</th><th>prewarm</th><th>target</th><th>scenarios</th></tr>
+      {% for window in schedule.windows %}
+        <tr>
+          <td>{{ window.label }}</td>
+          <td>{{ window.days|join(", ") }}</td>
+          <td>{{ window.start }}–{{ window.end }}</td>
+          <td>{{ window.prewarm_minutes }} min before</td>
+          <td>{{ window.target }}</td>
+          <td>{{ window.scenarios|join(", ") or "all" }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="muted">
+      No windows configured. Add them under <code>schedule.windows</code> in
+      <code>config/ontrak.yaml</code> — each one names days, an open/close time, how long
+      before opening to start warming, how many machines, and which scenarios.
+    </p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>What a tick would do now</h2>
+  {% if planned %}
+    <table class="grid">
+      <tr><th>action</th><th>scenario</th><th>count</th><th>reason</th></tr>
+      {% for action in planned %}
+        <tr>
+          <td>{{ action.kind }}</td>
+          <td>{{ action.scenario_id or "—" }}</td>
+          <td>{{ action.count }}</td>
+          <td class="muted small">{{ action.reason }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="muted">Nothing to do at this moment.</p>
+  {% endif %}
+  <form method="post" action="/admin/schedule/tick" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit">Run a tick now</button>
+  </form>
+  <p class="muted small">
+    In production this runs from <code>ontrak reap --loop</code> (or a systemd timer);
+    the button exists so an operator can react to a class that started early.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Current pools</h2>
+  <table class="grid">
+    <tr><th>pool</th><th>target</th><th>ready</th><th>deficit</th><th>shortfall</th><th>machine total</th></tr>
+    {% for status in pool %}
+      <tr>
+        <td>{{ status.label }}</td>
+        <td>{{ status.target }}</td>
+        <td>{{ status.ready }}</td>
+        <td>{% if status.deficit %}<span class="badge warn">{{ status.deficit }}</span>{% else %}<span class="badge ok">0</span>{% endif %}</td>
+        <td>{% if status.shortfall %}<span class="badge warn">{{ status.shortfall }}</span>{% else %}0{% endif %}</td>
+        <td>{{ status.total }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+  <p class="muted small">
+    <strong>Deficit</strong> counts machines still to create; <strong>shortfall</strong> counts
+    unclaimed ones missing right now (handoff latency). A class where every student holds a
+    machine shows a deficit of 0 even though nothing is free.
+  </p>
+</div>
+{% endblock %}

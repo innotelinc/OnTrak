@@ -1,0 +1,827 @@
+from __future__ import annotations
+
+import json
+from datetime import timedelta
+
+import pytest
+
+from ontrak.demo import synthesise_ticket
+from ontrak.guest import NullDriver
+from ontrak.incus import IncusError
+from ontrak.models import SessionState, iso, parse_iso, utcnow
+from ontrak.qemu import KVM, TCG
+from ontrak.scenarios import JSON_BEGIN, JSON_END, SETUP_OK_MARKER
+from ontrak.sessions import POOL_SNAPSHOT, SETUP_ATTEMPTS, SessionError, SessionManager
+
+SCENARIO = "net-dns-failure"
+OBJECTIVES = ["restore-resolver", "resolve-intranet", "reach-service"]
+
+
+def payload(**passed: object) -> str:
+    checks = [{"objective": key, "passed": value, "detail": f"{key}={value}"} for key, value in passed.items()]
+    return f"{JSON_BEGIN}{json.dumps({'checks': checks})}{JSON_END}"
+
+
+def full_pass() -> str:
+    return payload(**{objective: True for objective in OBJECTIVES})
+
+
+def partial() -> str:
+    return payload(**{"restore-resolver": True, "resolve-intranet": False, "reach-service": False})
+
+
+def manager_with(settings, store, repo, incus, responses: dict[str, str]) -> SessionManager:
+    return SessionManager(
+        settings, store, repo=repo, incus=incus, driver=NullDriver(settings, responses=responses)
+    )
+
+
+# --------------------------------------------------------------------------- #
+# templates
+# --------------------------------------------------------------------------- #
+def settings_template(manager) -> str:
+    return manager.settings.incus.template_name(SCENARIO)
+
+
+def test_template_build_injects_the_fault_and_snapshots(manager, incus, settings):
+    name = manager.ensure_template(SCENARIO)
+    assert name == settings.incus.template_name(SCENARIO)
+    assert incus.exists(name)
+    assert incus.has_snapshot(name, POOL_SNAPSHOT)
+    assert incus.instance_status(name) == "STOPPED"  # snapshots come from a clean power-off
+
+
+# --------------------------------------------------------------------------- #
+# the host's accelerator
+# --------------------------------------------------------------------------- #
+def test_a_template_on_a_host_that_cannot_run_kvm_is_emulated(manager, incus, monkeypatch):
+    """The point of the fallback: the guest starts on a host that cannot do SMM.
+
+    incusd writes `-cpu host,hv_passthrough` and `[machine] accel = "kvm"` for every
+    VM, and on a host whose KVM cannot virtualise SMM that guest goes to ERROR
+    seconds after it starts. A template that cannot boot is a range that hands out broken
+    machines, so the accelerator is set when the template is made — and the clones
+    inherit it, which is what makes the pool and the students' VMs work too.
+    """
+    monkeypatch.setenv("ONTRAK_QEMU_ACCEL", TCG)
+    manager.ensure_template(SCENARIO)
+    name = settings_template(manager)
+    written = {key: value for instance, key, value in incus.configs if instance == name}
+    assert 'accel = "tcg"' in written["raw.qemu.conf"]
+    assert "-cpu max" in written["raw.qemu"]
+    # And at no cost to the guest: this is about the CPU, not about dropping what
+    # Windows 11 needs to boot.
+    assert not [key for key in written if "secureboot" in key.lower() or "tpm" in key.lower()]
+
+
+def test_a_template_on_a_kvm_host_is_never_touched(manager, incus, monkeypatch):
+    monkeypatch.setenv("ONTRAK_QEMU_ACCEL", KVM)
+    manager.ensure_template(SCENARIO)
+    assert not [c for c in incus.configs if c[1] in {"raw.qemu", "raw.qemu.conf"}]
+
+
+def test_the_boot_deadline_is_longer_where_the_cpu_is_emulated(manager, monkeypatch):
+    """A Windows guest on an emulated CPU reaches WinRM in minutes, not seconds."""
+    scenario = manager.repo.get(SCENARIO)
+    monkeypatch.setenv("ONTRAK_QEMU_ACCEL", KVM)
+    on_kvm = manager._ready_timeout(scenario)
+    monkeypatch.setenv("ONTRAK_QEMU_ACCEL", TCG)
+    emulated = manager._ready_timeout(scenario)
+    assert emulated > on_kvm
+
+
+def test_an_unknown_scenario_id_is_reported_rather_than_skipped(manager):
+    """A typo used to print nothing at all and exit 0.
+
+    An operator who asks for a template that does not exist was told nothing, which
+    reads exactly like a build that happened. The rest of the request still runs.
+    """
+    results = manager.build_templates([SCENARIO, "net-dns-fialure"])
+    assert results["net-dns-fialure"].startswith("failed: unknown scenario")
+    assert "net-dns-failure" in results["net-dns-fialure"], results["net-dns-fialure"]
+    assert [key for key, status in results.items() if status == "ready"], results
+
+
+def test_template_build_is_idempotent(manager, incus):
+    first = manager.ensure_template(SCENARIO)
+    copies_before = len([c for c in incus.calls if c[0] == "create_instance"])
+    again = manager.ensure_template(SCENARIO)
+    assert first == again
+    assert len([c for c in incus.calls if c[0] == "create_instance"]) == copies_before
+
+
+def test_template_build_can_be_forced(manager, incus, settings):
+    manager.ensure_template(SCENARIO)
+    manager.ensure_template(SCENARIO, force=True)
+    assert len([c for c in incus.calls if c[0] == "delete_instance"]) >= 1
+    assert incus.has_snapshot(settings.incus.template_name(SCENARIO), POOL_SNAPSHOT)
+
+
+def test_a_template_is_built_on_the_pool_this_range_is_configured_to_use(manager, incus, settings):
+    """The pool is a fact about the range, not the daemon's default.
+
+    A template exists to be snapshotted, and on a `dir` pool Incus takes a VM's
+    snapshot by copying the guest's disk with `dd --direct` — so a build that let the
+    daemon choose could produce a Windows template that can never be snapshotted.
+    """
+    manager.ensure_template(SCENARIO)
+    created = [call for call in incus.calls if call[0] == "create_instance"]
+    assert created, incus.calls
+    assert created[-1][-1] == settings.incus.storage_pool, created[-1]
+
+
+def test_template_build_fails_loudly_when_setup_does_not_confirm(settings, store, repo, incus):
+    manager = manager_with(settings, store, repo, incus, responses={})  # no ONTRAK-SETUP-OK
+    with pytest.raises(SessionError, match="ONTRAK-SETUP-OK"):
+        manager.ensure_template(SCENARIO)
+    assert not incus.has_snapshot(settings.incus.template_name(SCENARIO), POOL_SNAPSHOT)
+    assert incus.instance_status(settings.incus.template_name(SCENARIO)) == "STOPPED"
+
+
+# --------------------------------------------------------------------------- #
+# a fault that cuts the connection its own result travels over
+# --------------------------------------------------------------------------- #
+# net-static-ip-conflict turns its adapter off DHCP, and Windows tears the interface
+# down with the lease: the socket the build is reading the setup script's result over
+# dies, so ONTRAK-SETUP-OK never arrives even though the fault applied perfectly. The
+# scenario failed every build until the build learned to reconnect and ask again.
+
+
+class ScriptedGuest(NullDriver):
+    """A guest that answers setup.ps1 with a scripted sequence of results.
+
+    Each entry is ``(ok, stdout)``. An empty ``stdout`` is exactly what a cut channel
+    looks like -- no marker, and no reason either -- and is the only case the build is
+    allowed to ask again after: a run that came back with text answered the question,
+    even when the answer was no.
+    """
+
+    def __init__(self, settings, results, on_served=None):
+        super().__init__(settings, responses={})
+        self.results = list(results)
+        self.on_served = on_served
+        self.setup_runs = 0
+        self.setup_hosts: list[str] = []
+
+    def run_powershell(self, script, host="", instance="", timeout=120):
+        from ontrak.guest import CommandResult
+
+        if "setup.ps1" not in script:
+            return super().run_powershell(script, host=host, instance=instance, timeout=timeout)
+        self.setup_runs += 1
+        self.setup_hosts.append(host)
+        if self.on_served is not None:
+            self.on_served(instance)
+        ok, stdout = self.results[min(self.setup_runs, len(self.results)) - 1]
+        return CommandResult(ok, 0 if ok else 1, stdout, "")
+
+
+def scripted_manager(settings, store, repo, incus, results, on_served=None):
+    driver = ScriptedGuest(settings, results, on_served=on_served)
+    return SessionManager(settings, store, repo=repo, incus=incus, driver=driver), driver
+
+
+def test_a_fault_that_cuts_its_own_channel_is_asked_again(settings, store, repo, incus):
+    manager, driver = scripted_manager(
+        settings, store, repo, incus, [(False, ""), (True, f"{SETUP_OK_MARKER}\n")]
+    )
+    name = manager.ensure_template("net-static-ip-conflict")
+    assert driver.setup_runs == 2, "the fault should be asked again exactly once"
+    assert incus.has_snapshot(name, POOL_SNAPSHOT), "the build must still finish"
+
+
+def test_the_second_ask_is_dialled_at_the_address_incus_now_reports(settings, store, repo, incus):
+    """The point of a fault like this one is that the guest's network changed.
+
+    Whatever moved it -- its address, its adapter -- the build has to ask the guest
+    where it is rather than dial the address it started with.
+    """
+
+    def move(instance):
+        incus.instances[instance]["ip"] = "10.20.0.77"
+
+    manager, driver = scripted_manager(
+        settings,
+        store,
+        repo,
+        incus,
+        [(False, ""), (True, f"{SETUP_OK_MARKER}\n")],
+        on_served=move,
+    )
+    manager.ensure_template("net-static-ip-conflict")
+    assert driver.setup_hosts[-1] == "10.20.0.77", driver.setup_hosts
+    assert driver.setup_hosts[0] != driver.setup_hosts[-1]
+
+
+def test_a_setup_script_that_reports_its_own_failure_is_not_asked_again(
+    settings, store, repo, incus
+):
+    """A script that ran and failed says why; repeating it would not help."""
+    manager, driver = scripted_manager(
+        settings,
+        store,
+        repo,
+        incus,
+        [(True, "the addressing fault did not apply; refusing to report success\n")],
+    )
+    with pytest.raises(SessionError, match=SETUP_OK_MARKER):
+        manager.ensure_template("net-static-ip-conflict")
+    assert driver.setup_runs == 1, "a reported failure was treated as a cut channel"
+
+
+def test_repeated_cuts_stop_after_a_bounded_number_of_attempts(settings, store, repo, incus):
+    """A guest that never answers must not be re-asked forever."""
+    manager, driver = scripted_manager(settings, store, repo, incus, [(False, "")])
+    with pytest.raises(SessionError, match=SETUP_OK_MARKER):
+        manager.ensure_template("net-static-ip-conflict")
+    assert driver.setup_runs == SETUP_ATTEMPTS
+
+
+def test_template_build_requires_the_golden_image(settings, store, repo):
+    from .helpers import FakeIncus
+
+    incus = FakeIncus(image_alias=settings.incus.image_alias, image_present=False)
+    manager = manager_with(settings, store, repo, incus, responses={"setup.ps1": "ONTRAK-SETUP-OK"})
+    with pytest.raises(SessionError, match="golden image"):
+        manager.ensure_template(SCENARIO)
+
+
+def test_scenario_declared_devices_are_attached_to_the_template(manager, incus):
+    name = manager.ensure_template("hw-driver-device")
+    devices = [d for d in incus.devices if d[0] == name]
+    assert devices, "the hardware scenario needs its second NIC attached before first boot"
+    _, kind, device_name, options = devices[0]
+    assert (kind, device_name) == ("nic", "eth1")
+    # An unmanaged adapter, passed through untouched. Incus refuses a second NIC on the
+    # lab bridge (duplicate DNS name) and refuses "nictype" together with "network",
+    # so the lab network must not be filled in for a device that names its own
+    # attachment -- filling it in is exactly what made this template unbuildable.
+    assert options == {"nictype": "p2p"}
+
+
+def test_build_templates_reports_per_scenario_results(manager):
+    results = manager.build_templates(["net-dns-failure", "sw-app-crash"])
+    assert results == {"net-dns-failure": "ready", "sw-app-crash": "ready"}
+
+
+# --------------------------------------------------------------------------- #
+# availability — refusing a scenario the range cannot start
+# --------------------------------------------------------------------------- #
+# A student who started a scenario the range could not run used to end up with a
+# session row whose entire content was `template tpl-sw-app-crash is missing
+# snapshot clean` — an operator's message, delivered after a slot was spent. The
+# availability check is what turns that into a refusal they can act on, so it is
+# tested for both the refusal and the two ways it must stay silent.
+#
+def test_a_built_template_is_available(manager, built_template):
+    assert manager.scenario_availability(SCENARIO) == ""
+
+
+def test_a_scenario_with_no_template_is_refused_by_name(manager, incus):
+    reason = manager.scenario_availability("sw-app-crash")
+    assert reason.startswith("sw-app-crash is not available on this range yet")
+    # The repair is named, because "unavailable" without a next step is just a wall.
+    assert "tpl-sw-app-crash" in reason
+    assert "ontrak template build sw-app-crash" in reason
+
+
+def test_a_missing_golden_image_is_named_as_the_cause(manager, incus):
+    """The Windows scenarios layer differently from the Linux ones: none of them
+    has a template, and building one template would not fix any of them."""
+    incus.image_present = False
+    reason = manager.scenario_availability("sw-app-crash")
+    assert "ontrak-win-base" in reason
+    assert "build-golden-image.sh" in reason
+
+
+def test_a_waiting_pooled_machine_makes_a_scenario_available(manager, incus, settings):
+    """No template, but a booted machine already in the pool: the session can run,
+    so refusing it would be wrong."""
+    incus.add_instance(settings.incus.pool_name("sw-app-crash", 1), running=True)
+    assert manager.scenario_availability("sw-app-crash") == ""
+
+
+def test_an_unreachable_hypervisor_is_not_a_missing_template(manager, incus):
+    """An Incus outage cannot prove a scenario is unrunnable, only that we cannot
+    tell — refusing every scenario would be a worse failure than the outage."""
+    incus.exists = _boom  # type: ignore[method-assign]
+    assert manager.scenario_availability("sw-app-crash") == ""
+    assert manager.unavailable_scenarios() == {}
+
+
+def test_unavailable_scenarios_lists_what_cannot_start(manager, incus, built_template):
+    reasons = manager.unavailable_scenarios()
+    assert SCENARIO not in reasons  # its template is built
+    assert "sw-app-crash" in reasons
+
+
+def _boom(*args, **kwargs):
+    raise IncusError(["list", "--format=json"], 1, "The incus daemon doesn't appear to be started")
+
+
+# --------------------------------------------------------------------------- #
+# allocation
+# --------------------------------------------------------------------------- #
+def test_allocate_clones_the_template_and_reaches_ready(manager, incus, built_template, settings):
+    session = manager.allocate("Alice", SCENARIO)
+    assert session.state is SessionState.READY
+    assert session.student == "alice"
+    assert session.instance == settings.incus.session_name(SCENARIO, session.id)
+    assert session.host_ip
+    assert session.expires_at and parse_iso(session.expires_at) > utcnow()
+
+
+def test_allocate_claims_a_prewarmed_pool_vm(manager, incus, settings):
+    pooled = settings.incus.pool_name(SCENARIO, 1)
+    incus.add_instance(pooled, running=True, ip="10.20.0.77")
+    session = manager.allocate("bob", SCENARIO)
+    assert session.state is SessionState.READY
+    assert session.instance == pooled
+    assert session.host_ip == "10.20.0.77"
+    # no clone was needed
+    assert not [c for c in incus.calls if c[0] == "copy_instance"]
+
+
+def test_allocate_is_idempotent_per_student_and_scenario(manager, built_template):
+    first = manager.allocate("alice", SCENARIO)
+    second = manager.allocate("alice", SCENARIO)
+    assert first.id == second.id
+
+
+def test_allocate_enforces_one_session_per_student(manager, incus, built_template):
+    manager.allocate("alice", SCENARIO)
+    with pytest.raises(SessionError, match="already has a live session"):
+        manager.allocate("alice", "sw-app-crash")
+
+
+def test_allocate_without_a_template_reports_an_error_session(manager, incus):
+    session = manager.allocate("alice", "sw-app-crash")
+    assert session.state is SessionState.ERROR
+    assert "missing snapshot" in session.error or "template" in session.error
+    # nothing was left running
+    assert not incus.live_names()
+
+
+def test_allocate_marks_a_failed_guest_handshake(settings, store, repo, incus, built_template):
+    class NeverReady(NullDriver):
+        def wait_ready(self, session, timeout=None):  # noqa: D102 - test double
+            return False
+
+    manager = SessionManager(
+        settings, store, repo=repo, incus=incus,
+        driver=NeverReady(settings, responses={"setup.ps1": "ONTRAK-SETUP-OK"}),
+    )
+    session = manager.allocate("alice", SCENARIO)
+    assert session.state is SessionState.ERROR
+    assert "never became reachable" in session.error
+
+
+def test_a_failed_provisioning_takes_its_machine_away_again(
+    settings, store, repo, incus, built_template
+):
+    """A guest that never answered is a whole Windows VM, still burning the host.
+
+    Leaving it is how one failed session becomes several: the next clone boots on a
+    host that now has to serve the corpse too, so the readiness budget that was
+    already tight runs out on that one as well.
+    """
+
+    class NeverReady(NullDriver):
+        def wait_ready(self, session, timeout=None):  # noqa: D102 - test double
+            return False
+
+    manager = SessionManager(
+        settings, store, repo=repo, incus=incus, driver=NeverReady(settings, responses={})
+    )
+    session = manager.allocate("alice", SCENARIO)
+    assert session.state is SessionState.ERROR
+    assert session.instance == "" and session.host_ip == ""
+    assert incus.live_names() == {settings_template(manager)}, "the VM was left running"
+
+
+def test_a_failed_reset_takes_its_machine_away_again(settings, store, repo, incus, built_template):
+    """The same contract one method over: reset throws the VM away first, so a reset
+    that then fails owes the host the replacement it cloned."""
+
+    class ReadyOnce(NullDriver):
+        def __init__(self, *args, **kwargs):  # noqa: D107 - test double
+            super().__init__(*args, **kwargs)
+            self.calls = 0
+
+        def wait_ready(self, session, timeout=None):  # noqa: D102 - test double
+            self.calls += 1
+            return self.calls == 1
+
+    manager = SessionManager(
+        settings, store, repo=repo, incus=incus, driver=ReadyOnce(settings, responses={})
+    )
+    session = manager.allocate("alice", SCENARIO)
+    assert session.state is SessionState.READY
+
+    session = manager.reset(session)
+    assert session.state is SessionState.ERROR
+    assert "reset failed" in session.error
+    assert incus.live_names() == {settings_template(manager)}, "the VM was left running"
+
+
+def test_randomised_credentials_are_applied_when_enabled(settings, store, repo, incus, built_template):
+    settings.session.randomize_credentials = True
+    manager = manager_with(settings, store, repo, incus, {"setup.ps1": "ONTRAK-SETUP-OK"})
+    session = manager.allocate("alice", SCENARIO)
+    assert session.state is SessionState.READY
+    assert session.rdp_password != settings.guest.password
+    assert len(session.rdp_password) >= 16
+
+
+# --------------------------------------------------------------------------- #
+# warm pool
+# --------------------------------------------------------------------------- #
+def test_prewarm_creates_booted_unclaimed_vms(manager, incus, built_template):
+    created = manager.prewarm(SCENARIO, 3)
+    assert created == 3
+    status = manager.pool_status(SCENARIO)[0]
+    assert status.ready == 3
+    assert status.total == 3
+    assert status.claimed == 0
+    assert all(incus.instance_status(name) == "RUNNING" for name in incus.instances if "pool" in name)
+
+
+def test_prewarm_respects_max_total(manager, incus, built_template, settings):
+    assert settings.pool.max_total == 4
+    assert manager.prewarm(SCENARIO, 10) == 4
+    assert manager.prewarm(SCENARIO, 5) == 0
+
+
+def test_refill_tops_up_to_the_configured_target(settings, store, repo, incus, built_template):
+    settings.pool.targets = {SCENARIO: 2}
+    manager = manager_with(settings, store, repo, incus, {"setup.ps1": "ONTRAK-SETUP-OK"})
+    created = manager.refill_pool()
+    assert created == {SCENARIO: 2}
+    assert manager.refill_pool() == {}  # already at target
+    assert manager.pool_status(SCENARIO)[0].deficit == 0
+
+
+def test_refill_does_not_over_create_while_students_hold_the_pool(settings, store, repo, incus, built_template):
+    """A full class must not trigger a second wave of VMs.
+
+    The claimed instances keep their pool names and count against the target, so
+    the host never has to hold `students + target` Windows VMs at once.
+    """
+    settings.pool.targets = {SCENARIO: 2}
+    manager = manager_with(settings, store, repo, incus, {"setup.ps1": "ONTRAK-SETUP-OK"})
+    assert manager.prewarm(SCENARIO, 2) == 2
+
+    alice = manager.allocate("alice", SCENARIO)
+    bob = manager.allocate("bob", SCENARIO)
+    assert {alice.instance, bob.instance} == {settings.incus.pool_name(SCENARIO, 1), settings.incus.pool_name(SCENARIO, 2)}
+
+    status = manager.pool_status(SCENARIO)[0]
+    assert (status.target, status.total, status.ready, status.claimed) == (2, 2, 0, 2)
+    assert status.deficit == 0
+    assert status.shortfall == 2  # nothing on the shelf, but that is not capacity
+    assert manager.refill_pool() == {}
+    assert len([name for name in incus.instances if "pool" in name]) == 2
+
+    # once a session ends, the slot is refilled for the next student
+    manager.end(alice)
+    assert manager.refill_pool() == {SCENARIO: 1}
+
+
+def test_pool_status_reports_missing_templates(manager, incus):
+    rows = {row.scenario_id: row for row in manager.pool_status()}
+    assert rows[SCENARIO].template_ready is False
+    manager.ensure_template(SCENARIO)
+    rows = {row.scenario_id: row for row in manager.pool_status()}
+    assert rows[SCENARIO].template_ready is True
+
+
+# --------------------------------------------------------------------------- #
+# grading
+# --------------------------------------------------------------------------- #
+def test_checks_grade_a_passing_attempt(settings, store, repo, incus, built_template):
+    manager = manager_with(settings, store, repo, incus, {"setup.ps1": "ONTRAK-SETUP-OK", "check.ps1": full_pass()})
+    session = manager.allocate("alice", SCENARIO)
+    assert session.instance  # claimed the pooled entry from the fixture
+
+    report = manager.run_checks(session)
+    assert report.score == 100.0
+    assert report.resolved is True
+    assert session.state is SessionState.PASSED
+    assert session.resolved is True
+    assert session.best_score == 100.0
+    assert session.checks_run == 1
+    # Results-only policy: a preview check gives the student feedback but is not
+    # recorded. Only Complete & End stores a result.
+    assert store.attempt_counts(session.id) == 0
+    assert store.latest_report(session.id) is None
+
+    final = manager.complete(session, values=synthesise_ticket(manager.ticket_form_for(session)))
+    assert final.score == 100.0
+    assert final.resolved is True
+    assert session.state is SessionState.PASSED
+    assert store.attempt_counts(session.id) == 1
+    # The machine is destroyed on submission: nothing is left to tamper with.
+    assert incus.exists(session.instance) is False
+
+
+def test_checks_grade_a_failing_attempt_and_keep_the_session_usable(settings, store, repo, incus, built_template):
+    manager = manager_with(settings, store, repo, incus, {"setup.ps1": "ONTRAK-SETUP-OK", "check.ps1": partial()})
+    session = manager.allocate("alice", SCENARIO)
+    report = manager.run_checks(session)
+
+    assert report.score == 40.0
+    assert report.resolved is False
+    assert session.state is SessionState.IN_USE  # not a dead end: they can keep working
+    assert session.resolved is False
+    assert [o.objective_id for o in report.failed] == ["resolve-intranet", "reach-service"]
+    assert all(o.reported for o in report.outcomes)  # the script reported all three
+
+
+def test_best_score_is_kept_across_attempts(settings, store, repo, incus, built_template):
+    response = {"setup.ps1": "ONTRAK-SETUP-OK"}
+    manager = manager_with(settings, store, repo, incus, {**response, "check.ps1": partial()})
+    session = manager.allocate("alice", SCENARIO)
+    manager.run_checks(session)
+    assert session.best_score == 40.0
+
+    manager.driver.responses["check.ps1"] = full_pass()
+    manager.run_checks(session)
+    assert session.best_score == 100.0
+    assert session.resolved is True
+    assert session.checks_run == 2
+
+
+def test_a_broken_check_script_reports_an_error_not_a_score(settings, store, repo, incus, built_template):
+    manager = manager_with(settings, store, repo, incus, {"setup.ps1": "ONTRAK-SETUP-OK", "check.ps1": "crashed\n"})
+    session = manager.allocate("alice", SCENARIO)
+    report = manager.run_checks(session)
+    assert report.error
+    assert report.score == 0.0
+    assert session.state is SessionState.IN_USE
+    assert session.best_score == 0.0
+
+
+def test_grading_does_not_re_upload_the_setup_script(settings, store, repo, incus, built_template):
+    manager = manager_with(settings, store, repo, incus, {"setup.ps1": "ONTRAK-SETUP-OK", "check.ps1": full_pass()})
+    session = manager.allocate("alice", SCENARIO)
+    uploads_before = [c for c in manager.driver.calls if "setup.ps1" in c[1]]
+    manager.run_checks(session)
+    uploads_after = [c for c in manager.driver.calls if "setup.ps1" in c[1]]
+    assert len(uploads_after) == len(uploads_before)
+
+
+# --------------------------------------------------------------------------- #
+# reset, recycle, reaping
+# --------------------------------------------------------------------------- #
+def test_reset_destroys_the_machine_and_hands_over_a_clean_one(manager, incus, built_template, settings):
+    session = manager.allocate("alice", SCENARIO)
+    broken_instance = session.instance
+    incus.calls.clear()
+
+    session = manager.reset(session)
+    assert session.state is SessionState.READY
+    assert session.instance == broken_instance  # same deterministic name, new VM
+    assert ("delete_instance", broken_instance) in incus.calls
+    assert any(c[0] == "copy_instance" for c in incus.calls)
+    assert incus.instance_status(session.instance) == "RUNNING"
+    assert session.best_score == 0.0  # scores belong to the previous attempt
+
+
+def test_reset_prefers_a_ready_pool_vm(manager, incus, built_template, settings):
+    session = manager.allocate("alice", SCENARIO)
+    spare = settings.incus.pool_name(SCENARIO, 9)
+    incus.add_instance(spare, running=True, ip="10.20.0.99")
+    session = manager.reset(session)
+    assert session.instance == spare
+    assert session.host_ip == "10.20.0.99"
+
+
+def test_reset_refuses_terminal_sessions(manager, built_template):
+    session = manager.allocate("alice", SCENARIO)
+    manager.end(session)
+    assert session.state is SessionState.DESTROYED
+    with pytest.raises(SessionError, match="cannot be reset"):
+        manager.reset(session)
+
+
+def test_end_destroys_the_instance(manager, incus, built_template):
+    session = manager.allocate("alice", SCENARIO)
+    instance = session.instance
+    manager.end(session)
+    assert session.state is SessionState.DESTROYED
+    assert not incus.exists(instance)
+
+
+def test_reap_expires_sessions_past_their_ttl(manager, store, incus, built_template):
+    session = manager.allocate("alice", SCENARIO)
+    instance = session.instance
+    store.update_session(session.id, expires_at=iso(utcnow() - timedelta(minutes=1)))
+
+    result = manager.reap()
+    assert session.id in result["recycled"]
+    assert store.get_session(session.id).state is SessionState.DESTROYED
+    assert not incus.exists(instance)  # the student's VM is gone
+    assert incus.exists(settings_template(manager))  # the template survives for the next student
+
+
+def test_reap_reclaims_idle_sessions(manager, store, incus, built_template):
+    session = manager.allocate("alice", SCENARIO)
+    store.update_session(session.id, last_activity_at=iso(utcnow() - timedelta(hours=2)))
+    result = manager.reap()
+    assert session.id in result["recycled"]
+    assert "idle" in store.get_session(session.id).notes
+
+
+def test_reap_leaves_active_sessions_alone(manager, store, built_template):
+    session = manager.allocate("alice", SCENARIO)
+    manager.touch(session)
+    result = manager.reap()
+    assert result["recycled"] == []
+    assert store.get_session(session.id).state is SessionState.READY
+
+
+def test_reap_clears_stuck_provisioning_rows(manager, store, incus, built_template):
+    session = manager.create_session("alice", SCENARIO)
+    store.update_session(
+        session.id, state=SessionState.ALLOCATING, created_at=iso(utcnow() - timedelta(hours=1))
+    )
+    manager.reap()
+    reloaded = store.get_session(session.id)
+    assert reloaded.state is SessionState.ERROR
+    assert "timed out" in reloaded.error
+
+
+def test_reap_also_reclaims_what_a_failed_session_left_behind(
+    manager, store, incus, built_template
+):
+    """A row that failed *after* its machine was cloned holds the VM this sweep is for.
+
+    Rows the current code creates no longer leave one behind, which is exactly why
+    this is tested through the store: a range whose database already has one of these
+    needs the sweep to be what frees the host, not the next deploy.
+    """
+    session = manager.allocate("alice", SCENARIO)
+    instance = session.instance
+    store.update_session(
+        session.id,
+        state=SessionState.ERROR,
+        error="provisioning timed out",
+        created_at=iso(utcnow() - timedelta(hours=1)),
+    )
+
+    manager.reap()
+    reloaded = store.get_session(session.id)
+    assert reloaded.state is SessionState.ERROR, "the instructor can no longer see the failure"
+    assert reloaded.instance == "" and reloaded.host_ip == "", "the row still names a dead machine"
+    assert not incus.exists(instance), "the failed session's VM is still on the host"
+
+
+# --------------------------------------------------------------------------- #
+# session helpers
+# --------------------------------------------------------------------------- #
+def test_hints_reveal_one_at_a_time(manager, built_template, repo):
+    session = manager.allocate("alice", SCENARIO)
+    scenario = repo.get(SCENARIO)
+    assert session.hint_level == 0
+    manager.reveal_hint(session, scenario)
+    assert session.hint_level == 1
+    for _ in range(len(scenario.hints) + 3):
+        manager.reveal_hint(session, scenario)
+    assert session.hint_level == len(scenario.hints)
+
+
+def test_extend_pushes_the_expiry_out(manager, built_template):
+    session = manager.allocate("alice", SCENARIO)
+    before = parse_iso(session.expires_at)
+    manager.extend(session, 30)
+    assert parse_iso(session.expires_at) > before
+
+
+def test_ownership_is_enforced(manager, built_template):
+    session = manager.allocate("alice", SCENARIO)
+    assert manager.get_owned_session("alice", session.id).id == session.id
+    with pytest.raises(SessionError, match="another student"):
+        manager.get_owned_session("bob", session.id)
+    assert manager.get_owned_session("bob", session.id, allow_instructor=True).id == session.id
+
+
+def test_stats_snapshot(manager, built_template):
+    manager.allocate("alice", SCENARIO)
+    stats = manager.stats()
+    assert stats["sessions"][SessionState.READY.value] == 1
+    assert stats["pool"][0]["scenario_id"]
+    assert isinstance(stats["templates"], list)
+
+
+# --------------------------------------------------------------------------- #
+# the SSH console transport a Linux template is built with
+#
+# The console iframe used to point an RDP connection at a Linux container, which
+# answers no RDP at all — so every container scenario showed "the remote desktop
+# server is currently unreachable", a page that blamed the student's machine for a
+# transport that was never going to exist. These pin the replacement.
+# --------------------------------------------------------------------------- #
+LINUX_SCENARIO = "linux-dir-tree-build"
+
+
+class RecordingShell(NullDriver):
+    """A NullDriver that also speaks shell and keeps what it was asked to run."""
+
+    def __init__(self, settings, marker: str = "ontrak-console-ready", ok: bool = True):
+        super().__init__(settings, responses={"setup": f"{SETUP_OK_MARKER}\n"})
+        self.marker = marker
+        self.ok = ok
+        self.shell_calls: list[str] = []
+
+    def run_shell(self, script, host="", instance="", timeout=120):
+        from ontrak.guest import CommandResult
+
+        self.shell_calls.append(script)
+        if "openssh-server" in script:
+            stdout = f"provisioned\n{self.marker}\n" if self.ok else "apt failed\n"
+            return CommandResult(self.ok, 0 if self.ok else 1, stdout)
+        return CommandResult(True, 0, "ok")
+
+
+def console_manager(settings, store, repo, incus, driver):
+    """The driver is both halves: these tests are about which scenarios get one."""
+    return SessionManager(
+        settings, store, repo=repo, incus=incus, driver=driver, shell_driver=driver
+    )
+
+
+def test_the_console_script_sets_the_lab_credential_and_enables_the_door(settings):
+    from ontrak.sessions import console_transport_script
+
+    script = console_transport_script(settings)
+    assert f"root:{settings.guest.password}" in script
+    assert "chpasswd" in script
+    assert "PermitRootLogin yes" in script
+    assert "PasswordAuthentication yes" in script
+    # `00-` and not `99-`: sshd keeps the *first* value per keyword and reads
+    # `sshd_config.d` from the top, so only a name sorting ahead of ours outranks it.
+    assert "00-ontrak-console.conf" in script
+    assert "openssh-server" in script
+    assert f":{settings.guest.ssh_port} " in script
+    assert "ontrak-console-ready" in script
+
+
+def test_a_password_with_a_quote_cannot_escape_the_script(settings):
+    from ontrak.sessions import console_transport_script
+
+    settings.guest.password = "pa'ss word"
+    script = console_transport_script(settings)
+    # Single-quoted and the embedded quote doubled — the shell sees one argument,
+    # not a command.
+    assert "'root:pa'\\''ss word'" in script
+
+
+def test_a_linux_template_is_built_with_the_console_transport(settings, store, repo, incus):
+    settings.guac.linux_ssh = True
+    driver = RecordingShell(settings)
+    manager = console_manager(settings, store, repo, incus, driver)
+    manager.ensure_template(LINUX_SCENARIO)
+    assert any("openssh-server" in call for call in driver.shell_calls), driver.shell_calls
+
+
+def test_a_windows_template_gets_no_sshd(settings, store, repo, incus):
+    settings.guac.linux_ssh = True
+    driver = RecordingShell(settings)
+    manager = console_manager(settings, store, repo, incus, driver)
+    manager.ensure_template(SCENARIO)
+    assert not any("openssh-server" in call for call in driver.shell_calls)
+
+
+def test_the_console_transport_is_opt_in(settings, store, repo, incus):
+    settings.guac.linux_ssh = False
+    driver = RecordingShell(settings)
+    manager = console_manager(settings, store, repo, incus, driver)
+    manager.ensure_template(LINUX_SCENARIO)
+    assert not any("openssh-server" in call for call in driver.shell_calls)
+
+
+def test_an_empty_lab_password_refuses_to_build_a_console(settings, store, repo, incus):
+    """An empty password would be `chpasswd`-ed in — a console anyone can open as root."""
+    settings.guac.linux_ssh = True
+    settings.guest.password = ""
+    driver = RecordingShell(settings)
+    manager = console_manager(settings, store, repo, incus, driver)
+    with pytest.raises(SessionError, match="guest.password is empty"):
+        manager._provision_console_transport(
+            type("S", (), {"scenario_id": LINUX_SCENARIO, "instance": "tpl-x"})(),
+            repo.get(LINUX_SCENARIO),
+            driver,
+        )
+
+
+def test_a_transport_that_did_not_install_fails_the_build(settings, store, repo, incus):
+    """A template whose sshd did not come up must fail loudly, not snapshot quietly.
+
+    The failure it replaces: a build that succeeded and a console that reported the
+    remote desktop server as unreachable, with nothing anywhere saying why.
+    """
+    settings.guac.linux_ssh = True
+    driver = RecordingShell(settings, marker="")
+    manager = console_manager(settings, store, repo, incus, driver)
+    with pytest.raises(SessionError, match="SSH console transport was not installed"):
+        manager.ensure_template(LINUX_SCENARIO)

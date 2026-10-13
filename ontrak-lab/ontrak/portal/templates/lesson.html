@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="session-head">
+  <div>
+    <h1>{{ lesson.title }}</h1>
+    <p class="muted">
+      {{ lesson.platform|capitalize }} &middot; {{ lesson.minutes }} min &middot;
+      difficulty {{ lesson.difficulty }}/4
+      {% if lesson.category %}&middot; {{ lesson.category }}{% endif %}
+    </p>
+  </div>
+  <div class="session-meta">
+    {% if prerequisites %}
+      <span class="muted small">Do first:
+        {% for prerequisite in prerequisites %}<a href="/lessons/{{ prerequisite.id }}">{{ prerequisite.title }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+      </span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="layout">
+  <div class="col-console">
+    <div class="card">
+      <h2>Why this matters</h2>
+      <p>{{ lesson.summary }}</p>
+      {% if lesson.objectives %}
+        <ul>{% for objective in lesson.objectives %}<li>{{ objective }}</li>{% endfor %}</ul>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2>Walkthrough</h2>
+      {% for step in lesson.steps %}
+        <div class="step">
+          <h3>{{ loop.index }}. {{ step.title }}</h3>
+          {% if step.body %}<p>{{ step.body }}</p>{% endif %}
+          {% if step.command %}<pre class="cmd">{{ step.command }}</pre>{% endif %}
+        </div>
+      {% endfor %}
+    </div>
+
+    <div class="card">
+      <h2>Exercises</h2>
+      <p class="muted small">
+        Try each one in your lab machine before opening the answer. The <code>verify</code>
+        line is how you check yourself — in a real ticket, that is the verification you
+        would write down.
+      </p>
+      {% for exercise in lesson.exercises %}
+        <div class="exercise">
+          <h3>{{ exercise.prompt }}</h3>
+          <details>
+            <summary>Show the answer</summary>
+            <pre class="cmd">{{ exercise.solution }}</pre>
+            {% if exercise.verify %}<p class="muted small">Check it with:</p><pre class="cmd">{{ exercise.verify }}</pre>{% endif %}
+          </details>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="col-side">
+    <div class="card">
+      <h2>Commands used</h2>
+      <table class="kv">
+        {% for command in lesson.commands %}
+          <tr>
+            <th><code>{{ command.command }}</code></th>
+            <td>
+              {{ command.what }}
+              {% if command.example %}<div class="muted small">e.g. <code>{{ command.example }}</code></div>{% endif %}
+              {% if command.danger %}<div class="danger small">Careful: {{ command.danger }}</div>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+    </div>
+
+    {% if shell_block %}
+    <div class="card">
+      <h2>All of it, in order</h2>
+      <p class="muted small">Paste this into the session console if you want the whole lesson run once.</p>
+      <pre class="cmd">{{ shell_block }}</pre>
+    </div>
+    {% endif %}
+
+    {% if related %}
+    <div class="card">
+      <h2>Scenarios that use this</h2>
+      <ul>
+        {% for scenario in related %}
+          <li><a href="/dashboard">{{ scenario.title }}</a> <span class="muted small">({{ scenario.id }})</span></li>
+        {% endfor %}
+      </ul>
+      <p class="muted small">Start a session from the dashboard to practise it on a real machine.</p>
+    </div>
+    {% endif %}
+
+    {% if lesson.docs %}
+    <div class="card">
+      <h2>Further reading</h2>
+      <ul>{% for doc in lesson.docs %}<li><code>{{ doc }}</code></li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

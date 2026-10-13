@@ -1,0 +1,100 @@
+id: linux-user-lifecycle
+title: A joiner, a mover and a leaver on the same ticket
+category: security
+platform: linux
+workloads: [ubuntu-24.04, debian-12]
+difficulty: 2
+minutes: 25
+pass_score: 80
+tags: [linux, users, groups, useradd, userdel, offboarding, cli]
+requires_internet: false
+lessons: [linux-users-and-groups, linux-permissions]
+
+ticket:
+  from: "Priya Raman (People team)"
+  system: "sso-01 (Ubuntu)"
+  priority: "High"
+  channel: "Email"
+  reported: "Monthly access review"
+  form:
+    title: Access review — three changes, one ticket
+    intro: >
+      The People team sends one of these every month. The write-up is the audit
+      record: if it does not say what you did and why, the change did not happen.
+    weight: 35
+    fields:
+      - id: summary
+        label: The three changes requested
+        kind: textarea
+        weight: 15
+        min_words: 8
+      - id: joiner_action
+        label: What you ran to create the joiner's account
+        kind: textarea
+        weight: 25
+        min_words: 6
+        all_of: [useradd]
+        hint: "Include -m and the shell. An account with no home directory is not an account."
+      - id: group_decision
+        label: Why the joiner needs the support group
+        kind: textarea
+        weight: 20
+        min_words: 6
+        any_of: [support, access, service desk, role]
+        hint: "Group membership is how the role is granted. Say which group and why."
+      - id: leaver_action
+        label: What you ran to offboard the leaver
+        kind: textarea
+        weight: 25
+        min_words: 6
+        all_of: [userdel]
+        hint: "Offboarding is a removal, not a lock. Include what happened to the home directory."
+      - id: evidence
+        label: Evidence the leaver is really gone
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [id, find, nouser, home, no longer exists]
+
+briefing: |
+  The monthly access review on sso-01 has three items:
+
+    1. Aisha Khan joins the service desk on Monday. She needs a local account with
+       a home directory and a bash shell, and membership of the support group
+       (create the group if it does not exist).
+    2. Tom Reeves, who left at the end of last month, still has an account. Remove
+       it completely, including his home directory.
+    3. The same review notes that files around the estate are still owned by
+       Tom's uid. Prove the machine is clear of them.
+
+  This is a security review: "I locked the account" is not offboarding. A locked
+  account still owns files and still appears in an audit.
+
+objectives:
+  - id: joiner-created
+    text: "The joiner's account exists, with a home directory and a login shell"
+    weight: 30
+    critical: true
+    hint: "`useradd -m -s /bin/bash` — the -m is what creates the home directory from /etc/skel."
+  - id: group-membership
+    text: "The joiner is a member of the support group"
+    weight: 25
+    hint: "`id -nG <user>` lists the groups. usermod -aG adds without removing the others."
+  - id: leaver-removed
+    text: "The leaver's account no longer exists"
+    weight: 25
+    critical: true
+    hint: "`id <user>` should fail. userdel -r also takes the home directory."
+  - id: no-orphan-files
+    text: "No files under /srv are owned by an account that no longer exists"
+    weight: 20
+    hint: "`find /srv -xdev -nouser` is the audit query; -xdev keeps it on one filesystem."
+
+hints:
+  - "`getent passwd`, `id`, `ls -l` and `find -nouser` are the four commands that answer this whole ticket."
+  - "Create the group before adding the user to it, or useradd will refuse the membership."
+  - "userdel without -r leaves the home directory behind — and the audit still finds it."
+
+reset_notes: |
+  Reset re-clones the clean snapshot, so the joiner is missing, the leaver is back
+  with his home directory, and the orphan files return.

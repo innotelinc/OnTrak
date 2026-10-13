@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Scenarios</h1>
+<p class="muted">
+  {{ scenarios|length }} scenario(s). Each entry shows its grading contract — objectives,
+  whether a ticket is attached, the platforms it is offered on, and whether its template
+  has been built. Validation runs on the same rules CI uses.
+</p>
+{% include "admin/_nav.html" %}
+
+{% if problems %}
+  <div class="card error">
+    <h2>{{ problems|length }} problem(s)</h2>
+    {% for problem in problems %}<p><code>{{ problem }}</code></p>{% endfor %}
+  </div>
+{% endif %}
+
+<div class="card">
+  <table class="grid">
+    <tr>
+      <th>id</th><th>title</th><th>family</th><th>platforms</th><th>objectives</th>
+      <th>ticket</th><th>lessons</th><th>template</th><th></th>
+    </tr>
+    {% for scenario in scenarios %}
+      {% set key = scenario.id %}
+      {% set status = templates.get(key) %}
+      <tr>
+        <td><code>{{ scenario.id }}</code></td>
+        <td>
+          {{ scenario.title }}
+          {% if scenario.generated_from %}<div class="muted small">generated from {{ scenario.generated_from|join(", ") }}</div>{% endif %}
+        </td>
+        <td>{{ scenario.category_label }}</td>
+        <td>
+          {{ scenario.platform }}
+          {% if scenario.platform_workloads %}
+            <div class="muted small">{{ scenario.platform_workloads|join(", ") }}</div>
+          {% else %}
+            <div class="muted small">site golden image</div>
+          {% endif %}
+        </td>
+        <td>
+          {{ scenario.objectives|length }} ({{ scenario.objectives|selectattr("critical")|list|length }} critical)
+          <div class="muted small">{{ scenario.total_weight|int }} pts, pass {{ scenario.pass_score|int }}%</div>
+        </td>
+        <td>
+          {% if scenario.ticket_form %}
+            <span class="badge ok">{{ scenario.ticket_form.weight|int }}%</span>
+            <div class="muted small">{{ scenario.ticket_form.fields|length }} fields</div>
+          {% else %}
+            <span class="badge warn">none</span>
+          {% endif %}
+        </td>
+        <td>
+          {% for lesson in scenario.lessons %}
+            <a href="/lessons/{{ lesson }}"><code>{{ lesson }}</code></a>{% if not loop.last %}<br>{% endif %}
+          {% endfor %}
+        </td>
+        <td>
+          {% if status and status.ready %}<span class="badge ok">ready</span>
+          {% elif status and status.exists %}<span class="badge warn">no snapshot</span>
+          {% else %}<span class="badge">not built</span>{% endif %}
+        </td>
+        <td>
+          <form method="post" action="/instructor/template" class="inline"
+                onsubmit="return confirm('Build the template for {{ scenario.id }}? This boots a machine.')">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="scenario_id" value="{{ scenario.id }}">
+            <button type="submit" class="link">build</button>
+          </form>
+          <form method="post" action="/instructor/template" class="inline"
+                onsubmit="return confirm('Rebuild {{ scenario.id }} from scratch?')">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="scenario_id" value="{{ scenario.id }}">
+            <input type="hidden" name="force" value="true">
+            <button type="submit" class="link">rebuild</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card">
+  <h2>Per-platform templates</h2>
+  <p class="muted small">One template per scenario and platform, because the same fault on Windows 11 and Ubuntu are different machines.</p>
+  <table class="grid">
+    <tr><th>scenario</th><th>platform</th><th>template</th><th>snapshot</th><th>state</th></tr>
+    {% for entry in templates.values() %}
+      <tr>
+        <td>{{ entry.scenario_id }}</td>
+        <td>{{ entry.workload or "golden image" }}</td>
+        <td><code>{{ entry.name }}</code></td>
+        <td>{% if entry.snapshot %}<span class="badge ok">clean</span>{% else %}<span class="badge warn">missing</span>{% endif %}</td>
+        <td>{% if entry.running %}running{% else %}stopped{% endif %}</td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card">
+  <h2>Lessons in the library</h2>
+  <table class="grid">
+    <tr><th>lesson</th><th>title</th><th>platform</th><th>exercises</th></tr>
+    {% for lesson_id, lesson in lessons.items() %}
+      <tr>
+        <td><a href="/lessons/{{ lesson_id }}"><code>{{ lesson_id }}</code></a></td>
+        <td>{{ lesson.title }}</td>
+        <td>{{ lesson.platform }}</td>
+        <td>{{ lesson.exercises|length }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

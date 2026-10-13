@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Tickets</h1>
+<p class="muted">
+  The write-ups students handed in with their submissions, and how the rubric marked
+  them. {{ scenarios_with_ticket }} of {{ scenario_count }} scenario(s) ask for one; the
+  rest are graded on machine state alone.
+</p>
+{% include "admin/_nav.html" %}
+
+<div class="cards">
+  <div class="tile">
+    <h3>Marked</h3>
+    <p class="big">{{ stats.count }}</p>
+    <p class="muted small">submissions recorded</p>
+  </div>
+  <div class="tile">
+    <h3>Submitted</h3>
+    <p class="big">{{ stats.submitted }}</p>
+    <p class="muted small">with writing in them</p>
+  </div>
+  <div class="tile">
+    <h3>Average</h3>
+    <p class="big">{{ stats.average }}%</p>
+    <p class="muted small">across every marked ticket</p>
+  </div>
+  <div class="tile">
+    <h3>Scenarios asking for one</h3>
+    <p class="big">{{ scenarios_with_ticket }}</p>
+    <p class="muted small">of {{ scenario_count }} in the catalogue</p>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Submissions</h2>
+  <table class="grid">
+    <tr><th>session</th><th>student</th><th>scenario</th><th>ticket</th><th>score</th><th>submitted</th><th>at</th></tr>
+    {% for ticket in tickets %}
+      <tr>
+        <td><a href="/admin/tickets/{{ ticket.session_id }}">#{{ ticket.session_id }}</a></td>
+        <td>{{ ticket.student }}</td>
+        <td>
+          {{ scenarios.get(ticket.scenario_id).title if scenarios.get(ticket.scenario_id) else ticket.scenario_id }}
+          <div class="muted small"><code>{{ ticket.scenario_id }}</code></div>
+        </td>
+        <td>
+          {% if ticket.submitted %}
+            {% set form = forms.get(ticket.scenario_id) %}
+            <span class="muted small">{{ form.weight|int if form else 0 }}% of the grade</span>
+          {% else %}
+            <span class="badge warn">blank</span>
+          {% endif %}
+        </td>
+        <td>
+          <strong>{{ "%.0f%%"|format(ticket.score) }}</strong>
+        </td>
+        <td>{% if ticket.submitted %}<span class="badge ok">yes</span>{% else %}<span class="badge warn">no</span>{% endif %}</td>
+        <td class="muted small">{{ ticket.created_at }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+  {% if not tickets %}
+    <p class="muted">
+      No tickets have been submitted yet. Run <code>ontrak demo --students 4</code> to
+      generate a class's worth of them in a few seconds.
+    </p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Which scenarios ask for a write-up</h2>
+  <p class="muted small">
+    A ticket is graded with the machine state at Complete &amp; End: an unsubmitted ticket
+    scores zero and the attempt cannot be marked resolved. Change the rubric in the
+    scenario's <code>ticket.form</code>.
+  </p>
+  <table class="grid">
+    <tr><th>scenario</th><th>ticket title</th><th>weight</th><th>fields</th><th>pass mark</th></tr>
+    {% for scenario_id, form in forms.items() %}
+      <tr>
+        <td><code>{{ scenario_id }}</code></td>
+        <td>{{ form.title }}</td>
+        <td>{{ form.weight|int }}%</td>
+        <td>{{ form.fields|length }}</td>
+        <td>{{ form.pass_score|int }}%</td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

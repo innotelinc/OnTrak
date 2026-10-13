@@ -1,0 +1,865 @@
+# Operations
+
+## Capacity: the arithmetic
+
+Three resources bind, in this order: **RAM**, then **storage**, then **CPU**.
+
+Baseline per student VM (from `infra/incus/profile.yaml`): 2 vCPU, 4 GiB RAM,
+48 GiB thin disk. A booted Windows VM idles at a few percent CPU and ~1.5-2 GiB
+resident, but plan for the limit, not the idle.
+
+### RAM is the binding constraint
+
+```text
+RAM ≈ host_overhead (8-16 GiB)
+    + max(live_students, pool_target) × 4 GiB
+    + refill_headroom
+```
+
+The `max(...)` is the important part, and it is why the pool targets count
+*claimed* VMs too: when a student claims a pooled VM the pool shrinks by one, so
+a full class holds `students` VMs, not `students + target`. The reaper only builds
+replacements as sessions end.
+
+| Host | Students (simultaneous) | Notes |
+| --- | --- | --- |
+| 4 vCPU / 15 GiB, `dir` storage | 1 | This site. See "One student at a time" below. |
+| 8 vCPU / 16 GiB, `dir` storage | 2-3 | Development only. Every clone is a full 20-30 GB copy. |
+| 16 vCPU / 64 GiB, ZFS or btrfs | 8-12 | Small class. Pool of 4-6 prewarmed for instant handoff. |
+| 32 vCPU / 128 GiB, ZFS or btrfs | 20-26 | Comfortable class of 20 with a pool of 10. |
+| 64 vCPU / 256 GiB, ZFS or btrfs | 45-55 | Two classes back to back, or one large lab. |
+| Incus cluster (2× 32 vCPU / 128 GiB) | 40-50 | Recommended above ~30 students; one control node runs the portal. |
+
+### One student at a time
+
+The lab host (`ontrak`) is 4 vCPU / 15 GiB on `dir` storage, and it runs a single
+student. That is a policy, not the arithmetic: two fit on paper, and two at once is
+exactly the case that swaps — one of them is `os-perf-startup`, which burns a core
+by design. So the pool is sized for one machine, which is also what makes the first
+connection instant:
+
+```text
+ONTRAK_POOL__DEFAULT_TARGET=1   # one machine warm and waiting for the student
+ONTRAK_POOL__MAX_TOTAL=1        # and never a second one pre-built beside it
+```
+
+`pool.max_total` bounds *pool* VMs, not sessions: a session that outlives the warm
+machine still provisions from the template's `clean` snapshot, so the ceiling costs
+latency rather than access. Raise both only when the host itself grows — with `dir`
+storage every clone is a full 20-30 GB copy, so the second student is the expensive
+one.
+
+### A prewarm that fails leaves its machine in the pool
+
+Warming a machine runs the same readiness wait a template build does, so it fails
+the same way when `guest.password` is not in the environment (see the troubleshooting
+row below): the clone is created and started, the wait times out, and
+`prewarm()` logs `prewarm_failed` and returns. What it does **not** do is remove the
+machine it was warming. Measured on this host: two hand-run prewarms (`ontrak pool
+prewarm`, no password exported) left two VMs running, the lab's own event log said
+`prewarm_failed` for both, and `ontrak pool status` reported `ready 2` — because
+readiness is derived from the instance alone (`running` + an address + unclaimed),
+not from the guest answering. So a pool figure is not proof that a machine will let
+a student in, and a failed prewarm quietly spends the pool's budget. Worse, the wait
+retries every 5 s for its whole budget, and those rejected logons trip the guest's own
+lockout policy (see the troubleshooting row below): the machine it leaves behind can
+refuse the *correct* password for ten minutes after the last attempt — and an attempt
+with the right password counts too, so testing it keeps it locked.
+
+Warm the pool through the Makefile, which carries the password from `.env`:
+
+```bash
+make prewarm ARGS="--scenario sw-app-crash --count 3"
+```
+
+and clear machines an earlier failure abandoned with `ontrak pool drain
+--scenario <id>` (or `--all`), which destroys unclaimed pool VMs only. `ontrak reap`
+refills pools and therefore needs the password too; `make reap` supplies it.
+
+### CPU: mind the performance scenario
+
+`os-perf-startup` deliberately burns one core per student. In that scenario CPU
+is not overcommittable: 30 students need roughly 30 cores' worth of headroom, or
+the CPU objective becomes noisy and grading turns flaky. Either split the cohort,
+shrink the pool for that session, or raise the VM's `limits.cpu` and adjust the
+scenario's threshold. Every other scenario is happy at 2-3× CPU overcommit.
+
+### Storage
+
+| Storage driver | Clone cost | When to use |
+| --- | --- | --- |
+| `zfs` / `btrfs` | Copy-on-write, seconds, megabytes | **Use this.** Snapshots and resets are the whole design. |
+| `lvm` (thin) | Similar, with thin snapshots | Fine if you already run LVM thin. |
+| `dir` | Full copy: 20-30 GB and minutes per VM | Works, but a 30-student class means ~900 GB and a slow start. |
+
+```text
+disk ≈ templates (20-30 GiB × scenarios, powered off)
+     + pool VMs × (a few GiB on CoW; full size on dir)
+     + recordings, if guac.recording is on
+```
+
+`ontrak doctor` warns when the pool driver is `dir`, and reports the pool's **free
+space** — read from Incus (`/1.0/storage-pools/<pool>/resources`), so a portal in a
+container sees the host's numbers. It warns at 90% used and fails at 97%, because
+the pool is not the only thing on that filesystem.
+
+#### Put the pool on its own disk
+
+This is the one mistake here that takes a working range down without an error
+message anywhere useful. A pool on the host's **root** filesystem — a subdirectory
+of `/var/lib/incus`, or a loop-file pool, which is the same thing with a mount in
+front of it — shares that filesystem with the Incus database, the container runtime
+and the portal's own state. When it fills, PostgreSQL panics with `No space left on
+device` and enters recovery, and every symptom arrives through the portal instead:
+the sign-in page says the provider is unreachable and the range reports
+"sign-in is not set up". Measured on a host laid out this way: 45 GiB of 45 GiB
+pool in a loop file, 0 bytes free on `/`, and a portal that was healthy six minutes
+earlier.
+
+So give the pool a device of its own, sized for the templates and the class:
+
+* a dedicated disk or LVM logical volume, **not** a loop file and not a directory
+  on `/`, formatted `zfs` or `btrfs` (`incus storage create lab btrfs
+  source=/dev/<vg>/<lv>`);
+* big enough for the apparent size of what you hold, which CoW makes hard to guess:
+a pool holding the golden image plus one template per Windows scenario can report
+`incus storage info` at 35 GiB used while `du` on its disks shows **215 GiB** — the
+clones share the image's extents. Copying those instances to another pool
+materialises them, which is why an in-place "move the pool" needs more space than
+the pool says it uses;
+* and pointed at by both `ONTRAK_INCUS__STORAGE_POOL` and the profile the machines
+are cloned into (`incus profile device get <profile> root pool`). When those two
+disagree, `doctor` names both rather than reporting the space of a pool nothing is
+using — which is how a pool with 10 GiB left went unnoticed while the configured
+one sat empty.
+
+## Scheduled prewarm and teardown
+
+A class starts at 09:00. If every student's first action is "provision me a machine", the
+first minutes are spent watching a clone bar and the host takes a burst of load. Both
+problems disappear if the pool is warm before the class and drained after it.
+
+```yaml
+schedule:
+  enabled: true
+  windows:
+    - label: morning-class
+      days: [mon, wed]
+      start: "09:00"
+      end: "12:00"
+      prewarm_minutes: 30      # start filling at 08:30
+      target: 15               # unclaimed, booted machines per scenario
+      scenarios: [net-dns-failure, os-perf-startup]
+```
+
+```bash
+ontrak schedule show     # the windows, and which phase we are in right now
+ontrak schedule tick     # decide and perform: prewarm, recycle idle, drain
+```
+
+`tick` is idempotent and safe to run from cron every minute. It prewarms only a genuine
+deficit — a class mid-session does not trigger a second wave — recycles sessions idle beyond
+`session.idle_recycle_minutes` while a window is open, and drains unclaimed pool machines
+when a window closes (never one a student is using).
+
+Without a schedule you can do the same by hand:
+
+```bash
+ontrak pool prewarm --scenario net-dns-failure --count 15
+ontrak pool drain --scenario net-dns-failure      # after the class
+```
+
+## Media, before the first class
+
+The catalog describes media; the media store holds it. Check what you actually have:
+
+```bash
+ontrak media status      # present / fetchable / operator-required, with sizes
+ontrak media missing     # the exact filenames to supply from your own licences
+ontrak media fetch       # free media only: evaluation ISOs and image-server entries
+```
+
+Expect a first-run download in the tens of gigabytes if you fetch everything. Free media
+can be served from a local mirror instead — a manifest `url:` accepts `file://`.
+
+## Time limits
+
+Each session is created with a time limit the student picks (`session.time_limit_choices`,
+default 45/90/180 minutes), stored on the session row rather than derived from config on
+read, so what a student was granted is auditable. Operators change it mid-session:
+
+```bash
+ontrak session limit --session-id 42 --minutes 120   # set the clock
+ontrak session extend --session-id 42 --minutes 15   # grant extra time as a delta
+```
+
+Expiry destroys the machine and closes the session. Nothing is graded on the way out — an
+unsubmitted session has no result, which is the intended meaning of "results only".
+
+## Running a workshop with no host
+
+Demo mode exercises the whole student flow with an in-memory hypervisor: no Incus, no
+Windows, no secrets. Use it for walkthroughs, screenshots, conference talks and CI:
+
+```bash
+ontrak demo run --students 6 --success-rate 1.0   # a clean class
+ontrak demo run --students 6 --success-rate 0.6   # realistic partial credit
+ontrak demo serve                                 # the portal, in demo mode
+```
+
+It proves the lifecycle, the scoring and the UI. It does **not** prove the Windows path —
+the same caveat applies as everywhere else: `ontrak doctor` and one real template build.
+
+Running the platform itself in Docker (`docker compose up -d`) changes none of this: the
+containers are the control plane and the console gateway, while the training machines stay
+Incus VMs on the host. The first run prepares that host for you — it installs Incus and
+creates the pool, bridge, project and profiles — so the only thing left before a class is
+the part that genuinely needs a human: check the storage driver, build the templates you
+intend to use, and size the pool. See [docker.md](docker.md) for what is containerised, the
+three ways to reach a hypervisor, and the volume that holds the results.
+
+## Before, during and after a class
+
+### Before (10 minutes)
+
+```bash
+make doctor                                                    # host healthy? (incus, secrets, console gateway key)
+
+.venv/bin/ontrak scenario validate                           # catalogue healthy?
+make templates                                               # after any scenario edit
+.venv/bin/ontrak pool prewarm --scenario net-dns-failure --count 30
+make serve          # terminal 1: portal
+make reap           # terminal 2: expiry + pool top-ups
+```
+
+Prewarm only the scenario(s) you are teaching now. Keeping a pool warm for all
+six scenarios multiplies idle RAM by six for no benefit.
+
+There is no roster to import: sign-in is Authentik's, and the portal creates an
+account on the first sign-in, keyed on the account's Authentik **email** address.
+Provision the class in Authentik (and, if you gate the range to a cohort, set
+`ONTRAK_PORTAL__OIDC_REQUIRED_GROUP`) before the session — a student who signs in
+before that still lands on the row that holds their results, because the row is
+their email either way.
+
+### During
+
+* Students self-serve from `/dashboard`; each gets their own VM and timer.
+* `/instructor` shows live sessions, the pool, results, and a **Watch** link per
+  session (Guacamole) when `guac.recording` or shadowing is enabled.
+* Stuck student: give them `+15 minutes` or reset their session from the
+  instructor page rather than debugging the VM yourself.
+* A session left open on a screenless desktop is recycled automatically
+  (`session.idle_recycle_minutes`), so you rarely need to end sessions by hand.
+
+### The student's console: RDP for Windows, SSH for Linux
+
+Guacamole speaks RDP and SSH, and the guest decides which one a scenario needs.
+A Windows VM brokers RDP (`guest.rdp_port`). A Linux *container* answers no RDP at
+all, so an RDP connection aimed at one used to render as a page saying "the remote
+desktop server is currently unreachable" — a message that blamed the student's
+machine for a transport that was never going to exist, and said nothing about the
+scenario being fine.
+
+With `guac.linux_ssh` on, `ontrak template build` provisions the template for a
+shell console instead: `openssh-server` installed, root's password set to
+`guest.password`, `PermitRootLogin` and `PasswordAuthentication` enabled, and a
+`00-ontrak-console.conf` drop-in written into `sshd_config.d` so an image's own
+drop-in cannot override it. That runs **after** the fault is injected and after
+`setup.sh` has verified it, and is the last thing written before the snapshot — a
+fault that touches accounts or permissions (`id-locked-account`,
+`linux-sudo-delegation`) must not be able to take the console's credential with
+it. A build where sshd does not come up **fails**, naming the reason, rather than
+snapshotting a template whose console will lie.
+
+Two consequences worth knowing: it is the one step in a template build that
+reaches the network (apt), and it opens port 22 in every Linux guest on the
+isolated `ontrak0` bridge. Turning it off restores the previous behaviour exactly
+(no console for Linux scenarios, and the page explains why). It also refuses to
+run with an empty `guest.password`, because `chpasswd` would set an empty one and
+the console would then be openable as root by anyone on the lab network.
+
+### After
+
+```bash
+curl -s -b "ontrak_session=$COOKIE" http://portal:8080/instructor/results.csv > results.csv
+.venv/bin/ontrak session list                     # confirm nothing is left running
+.venv/bin/ontrak pool refill                      # or set targets to 0 to give the RAM back
+```
+
+Student VMs are always destroyed — there is nothing to clean up by hand. Only pool
+VMs and powered-off templates persist, and templates cost no RAM.
+
+## Multi-host
+
+Put the hosts in an Incus cluster and point the control plane at the cluster
+endpoint; placement is then the cluster's job.
+
+```bash
+incus remote add lab https://node1.lab.example.com:8443 --auth-type=tls
+export ONTRAK_INCUS__REMOTE=lab
+```
+
+Keep the portal, Guacamole and SQLite on one control node, and prewarm enough VMs
+for the whole class: a cluster does not make a cold Windows boot faster.
+
+The control node takes on two obligations the moment the machines are somewhere
+else, and both fail quietly rather than loudly:
+
+* **It has to reach them.** Provisioning is WinRM to the guest's address and the
+  console is `guacd` opening RDP to the same address, so the control node needs a
+  route into the lab network. A guest that is up, with an address, that no session
+  ever becomes ready against is this, not a bad template: `ip route replace
+  10.20.0.0/24 via <machines-host>` and make it survive a reboot.
+* **It has to answer for their accelerator.** KVM-versus-TCG is decided from
+  `/dev/kvm` on the machine the CLI runs on, which for a remote range is the control
+  node — so either give the portal container a usable device or settle it by hand
+  with `ONTRAK_QEMU_ACCEL`. See [Running the stack in
+  Docker](docker.md) for both, and for the CLI's trust configuration, which the
+  portal needs mounted read-only to know the remote at all.
+
+## Maintenance
+
+| Task | Command / approach |
+| --- | --- |
+| Refresh the Windows image (patches, expired eval) | `make golden` — rebuilds and republishes `ontrak-win-base`, then rebuild templates |
+| Publish a golden image built on another host | `make golden-import ARGS=/path/to/export` — checks the disk is a finished install, then imports it as `ontrak-win-base`. See [Building the golden image on a nested host](#building-the-golden-image-on-a-nested-host) |
+| Move the golden image between hosts, more than once | `infra/publish-golden-image.sh` puts the verified image in a registry and each host pulls it, instead of copying a 12 GB export by hand. See [Publishing the golden image to a registry](#publishing-the-golden-image-to-a-registry) |
+| A build failed and left its VM behind | `incus list ontrak-winpack-build` — a failed build keeps its VM on purpose, because the disk may hold a finished install. See [Recovering a build VM that was kept](#recovering-a-build-vm-that-was-kept) |
+| Scenario edited | `make validate && .venv/bin/ontrak template build <id> --force` |
+| Templates regenerated | Pool VMs built from the old template keep running; end their sessions or let the reaper recycle them |
+| Leaked instances | `incus --project ontrak list` and delete anything that is not `tpl-*` or an active session; `ontrak stats` shows the state counts |
+| Control plane database | `state/ontrak.sqlite3` (WAL) on the host, or the `ontrak-state` volume when the portal runs in Docker (`docker run --rm -v ontrak-state:/s alpine tar czf - -C /s . > ontrak-state.tgz`). Back it up if results matter; deleting it resets users/results, not VMs |
+| Logs | `journalctl -u incus`, `make logs` (or `docker compose logs -f`) for the stack, and the portal's events table (`/admin/audit`) |
+| Who is an instructor | membership of the Authentik group in `ONTRAK_PORTAL__OIDC_INSTRUCTOR_GROUP` (read on every sign-in). There is no local account to promote — change the group in Authentik |
+| Reclaim RAM fast | set `pool.targets` to 0, then `ontrak pool status` and delete pool VMs, or just stop them with `incus stop` |
+
+### Building the golden image on a nested host
+
+`make golden` boots a Windows 11 virtual machine and lets Windows Setup install
+into it. Windows 11 Setup requires Secure Boot, and on a UEFI guest Secure Boot
+means **SMM**. A host whose own virtualisation is *nested* may not be able to
+virtualise SMM at all. The host this was measured on is a **nested AMD** one — a
+range host that is itself a guest, e.g. **WSL2/Hyper-V on a Ryzen**. Nesting alone
+does not decide it, and this range used to assume it did; see "When the host can
+virtualise SMM after all" below. Four configurations were measured on *that* host:
+
+| Configuration | Result |
+| --- | --- |
+| Secure Boot + TPM (the default for `11e`) | VM goes to `ERROR` seconds after launch; its qemu log ends `KVM: entry failed, hardware error 0xffffffff` with `SMM=1` |
+| `ONTRAK_GOLDEN_NO_SECUREBOOT=1` (no TPM, no Secure Boot) | the same crash — OVMF uses SMM for its runtime services even with Secure Boot off |
+| `-machine smm=off` (bare, and as `q35,smm=off`) | no crash, but the guest spins at 100% CPU and never writes a sector |
+| legacy BIOS (`security.csm=true`, SeaBIOS — no SMM at all) | reaches "Booting from Hard Disk..." and then spins the same way |
+
+None of those is a setting to get right: the host cannot do the one thing the guest
+needs, and every attempt to ask for less of it produces a guest that is not the one
+this range teaches on. What works is not asking the host to virtualise at all.
+
+#### When the host can virtualise SMM after all
+
+The table above is what a host does when nested virtualisation is not *exposed* to
+it. That is a setting on the hypervisor underneath — Hyper-V on the host, or
+`nested=1` on a KVM one — not a property of the hardware, of QEMU or of this range.
+Turn it on and the same machine runs the guest on KVM.
+
+This is also where the range's own nested-AMD rule went. It moved **every** nested
+AMD host to the emulator on sight, generalised from the WSL2/Hyper-V measurement
+above, and that generalisation is wrong: the accelerator decision now reads one
+thing, whether this host's `/dev/kvm` answers (`ontrak/qemu.py`), and `virt` and
+`vendor` are reported to the operator rather than decided on.
+
+Measured on a VMware guest on a Ryzen (8 cores, 22 GiB RAM) after its outer
+hypervisor was told to expose virtualisation:
+
+* `infra/qemu-accel.sh --accel` now decides **`kvm`** — the same host the old rule
+  read as `tcg`, because `systemd-detect-virt` returns `vmware` and the CPU is
+  still `AuthenticAMD`. Detection is not evidence about the limit; the probe is.
+* A UEFI guest with Secure Boot and SMM on, under `accel = "kvm"`, boots and runs:
+
+  ```bash
+  sudo incus init images:ubuntu/24.04/cloud smm-probe --vm -c security.secureboot=true
+  printf '[machine]\nsmm = "on"\n' | sudo incus config set smm-probe raw.qemu.conf -
+  sudo incus start smm-probe && sudo incus exec smm-probe -- uptime
+  ```
+
+  A host that still cannot do it fails *immediately* instead — the instance is in
+  `ERROR` seconds after the start and its qemu log ends `KVM: entry failed,
+  hardware error 0xffffffff` with `SMM=1`. So the probe costs a minute, not an hour.
+* `make golden` then ran to completion in **about 35 minutes** — Windows Setup, the
+  specialize pass, `post-install.ps1` over WinRM, and the publish — where the
+  emulated path costs hours.
+* A Windows guest from the golden image ran on `accel = "kvm"` and answered WinRM
+  four minutes after it was started, which is what a student's session looks like.
+
+**There is nothing to set on a host like this.** The build and the range both ask
+`infra/qemu-accel.sh`, which asks `ontrak/qemu.py`, which asks `/dev/kvm` — one
+decision, in one place, so a template and the sessions cloned from it cannot
+disagree about the accelerator. A host whose KVM genuinely cannot virtualise SMM
+is the exception, and it is named rather than guessed: set `ONTRAK_QEMU_ACCEL=tcg`
+for the build and for the range, and the guests fall back to the emulator. The
+signature above — `KVM: entry failed` with `SMM=1`, seconds after the start — is
+how that host is recognised.
+
+#### The emulated fallback
+
+QEMU can emulate the CPU instead, and both the golden build and the range use it
+automatically where KVM cannot run the guest. Nothing about the guest is reduced
+for it — Q35, UEFI on OVMF, SMM, the writable per-VM VARS store, Secure Boot and
+TPM 2.0 on swtpm all stay exactly as Incus configured them. What changes is the
+CPU, and the speed.
+
+Where the QEMU command line comes from is worth knowing, because it decides how
+this can be done at all: **incusd writes it**, from the instance's config, and no
+part of this repository writes one. For a VM it ends up as
+
+```
+qemu-system-x86_64 … -cpu host,hv_passthrough … -readconfig /run/incus/<instance>/qemu.conf
+```
+
+with `[machine] accel = "kvm"` inside that config file. So the accelerator is
+chosen by `raw.qemu.conf` (merged into the generated file, and it does override
+`[machine]`) and the CPU model by `raw.qemu` (appended last, and QEMU takes the
+last `-cpu`):
+
+```
+raw.qemu.conf:  [machine]
+                accel = "tcg"
+raw.qemu:       -cpu max
+```
+
+`ontrak/qemu.py` decides whether that is needed — usable `/dev/kvm`, what
+`systemd-detect-virt` says, and the CPU vendor — and `infra/qemu-accel.sh` is how
+the build asks it. Both halves of the range share the one decision, so the
+templates and the student sessions are set up by the same rule as the build.
+
+* **It is a host fact, not a scenario or workload fact.** `ontrak template build`
+  applies it when the template is created, which is where every Windows instance
+  is born: the pool and every student's machine are clones of it and inherit it.
+* **See what this host decided**: `infra/qemu-accel.sh --check` prints the chosen
+  accelerator, the firmware it found, and anything the software path is missing.
+  `infra/qemu-accel.sh --reason` is the one-line version.
+* **Overrule it**: `ONTRAK_QEMU_ACCEL=kvm` or `=tcg` settles it for this host.
+  `ONTRAK_GOLDEN_REQUIRE_KVM=1` refuses the build instead of emulating it, which
+  is what `ONTRAK_GOLDEN_ALLOW_NESTED=1` used to mean (`ONTRAK_GOLDEN_ALLOW_NESTED`
+  no longer exists — there is nothing left to allow).
+* **Give the build more room**: `ONTRAK_GOLDEN_ADDRESS_ATTEMPTS` (default 60, or
+  240 on an emulated host) is how many times, 5 seconds apart, the build waits for
+the build VM's address.
+
+It costs time. An already-*installed* Windows 11 image reaches the network in
+about four minutes on a WSL2/AMD host, where KVM gets there in seconds; an install
+into a blank disk is several times longer again than its normal 30-60 minutes. The
+preflight for it is the packages it needs — `qemu-system-x86`, `qemu-utils`, `ovmf`,
+`swtpm`, `swtpm-tools` — which `infra/bootstrap-host.sh` installs.
+
+Building somewhere else and copying the result in is still the faster path if you
+have such a host. Build where the kernel's virtualisation is **not** nested and
+move the result:
+
+1. On a suitable host — bare-metal Linux, a Linux desktop, or a cloud VM with
+   nested virtualisation — run `make golden`, then `make templates` there and let
+   the range point at that host; or
+2. run `make golden` there, copy the export the build wrote
+   (`build/incus-windows/output/win11e` — `incus.tar.xz` and `disk.qcow2`) to the
+   range host, and publish it there:
+
+   ```bash
+   make golden-import ARGS=/path/to/win11e
+   ```
+
+   `infra/import-golden-image.sh` checks the disk is a *finished* install before it
+   publishes anything — `scripts/verify-golden-image.py` reads the partition table
+   and the EFI System Partition straight out of the file and looks for
+   `\EFI\Microsoft\Boot\bootmgfw.efi`, so it needs no root and no loop device — then
+   imports it as `ontrak-win-base` in the `ontrak` project. Run `make templates`
+   after it.
+
+   A 12 GB export is a poor thing to move by hand more than once, which is what
+   [Publishing the golden image to a registry](#publishing-the-golden-image-to-a-registry)
+   is for.
+
+### Publishing the golden image to a registry
+
+Copying the export between hosts works once. For a classroom of hosts, or for one
+that cannot build the image at all, publish it to a registry and pull it where it is
+needed:
+
+```bash
+infra/publish-golden-image.sh build/incus-windows/output/win11e
+```
+
+The script verifies the disk first, for the reason the import does: a half-applied
+image stores and transfers perfectly well, and then hangs every template built from
+it — publishing one hands that to every host at once. It then pushes the two files
+the build wrote (`incus.tar.xz` and `disk.qcow2`) as a single OCI artifact, using
+`oras`, which it needs on `PATH` or pointed at with `ONTRAK_ORAS`.
+
+**One thing travels with a published image: its password.** The training account was
+created by `post-install.ps1` at build time with the *building* range's
+`ONTRAK_GUEST__PASSWORD`, and nothing in the artifact says so. A host that pulls the
+image and builds templates from it inherits that password, so its own
+`guest.password` — the value every logon it makes uses — is a different secret, and
+the range cannot provision a single Windows guest until the two agree: the guest
+boots, takes an address, answers on 3389 and 5985, and refuses every logon with
+`the specified credentials were rejected by the server`, which a session reports as
+`never became reachable over the winrm transport`. The account name is baked in the
+same way. Either set `ONTRAK_GUEST__PASSWORD` (and `ONTRAK_GUEST__USER`) to what the
+image was built with before building templates, or build the image on this host
+(`make golden`) so its password is this range's own. `admin`/`changeme` is the
+*image's* account, not the training one, and post-install does not remove it — see
+`infra/windows/apply-postinstall.py` for which of the two a step should connect as.
+
+A pulling host needs one step more than an importing one, and `make golden-pull` is
+that step: it asks the registry what it holds, takes the newest `win11e-*` tag unless
+one is named, and refuses a destination that is not empty — an older `disk.qcow2`
+sitting there is a complete Windows install too, so the import would adopt the wrong
+one without complaint. `ONTRAK_GOLDEN_FORCE=1` overwrites what is there.
+
+```bash
+make golden-pull                                # newest image → ./golden-export
+make golden-import ARGS=./golden-export         # verifies the disk again, then imports
+make templates                                  # templates are built where they run
+```
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `ONTRAK_GOLDEN_REPOSITORY` | `ghcr.io/innotelinc/ontrak-golden` | any OCI registry `oras` can reach |
+| `ONTRAK_GOLDEN_TAG` | the newest `win11e-*` tag | name one to pin it: `make golden-pull ARGS=win11e-2026-10-09` |
+| `ONTRAK_GOLDEN_PULL_DIR` | `golden-export` | where the layers land |
+| `ONTRAK_GOLDEN_FORCE` | unset | pull into a destination that already holds files |
+| `ONTRAK_GOLDEN_TOKEN` / `ONTRAK_GOLDEN_USER` | `gh auth token` / `gh api user` | leave both unset to use an existing `oras login` |
+| `ONTRAK_ORAS` | `oras` on `PATH` | oras is not vendored with this repo |
+| `ONTRAK_SKIP_VERIFY` | unset | publishes an unverified disk; only for a deliberate call |
+
+The publish side and the pull side are one script each (`infra/publish-golden-image.sh`,
+`infra/pull-golden-image.sh`) for the reason the templates' pair exists: a command an
+operator types by hand from a document is a command that will be typed slightly wrong,
+and the way it goes wrong here is a directory holding last week's disk beside this
+week's metadata.
+
+Two things about what lands in the registry. A GHCR package starts **private**, which
+is the right default for an image built from a Windows evaluation ISO — making it
+public is a deliberate act in the package's settings. And a published image is not a
+substitute for `make templates`: a template is a booted, faulted snapshot, so it has
+to be built on the host that will run it.
+
+### Running with no Windows image at all
+
+The golden image is only needed by scenarios that name no catalog workload: those
+clone `incus.image_alias`. Every scenario that *does* name a workload
+(`ubuntu-24.04`, `debian-12`, …) is built from that workload's own image instead,
+by `ontrak image build <entry>`. A range whose scenarios are all of the second
+kind is complete without any Windows image.
+
+On such a range `ontrak doctor` reports the golden image as
+`info … no scenario is built on it` rather than as a failure, because nothing on
+the range clones it — there is nothing missing. Where the image *is* needed it
+still reports `golden image 'ontrak-win-base' missing` and fails, and Windows
+sessions cannot start. Both are accurate, and neither is a bug.
+
+### Recovering a build VM that was kept
+
+`infra/build-golden-image.sh` pins incus-windows' own build VM to a fixed name
+(`ONTRAK_PACK_VM`, default `ontrak-winpack-build`) and removes the `incus delete`
+from the EXIT trap in `tools/pack.sh`. So a build that fails does **not** delete its
+VM: it stays in Incus' `default` project and its disk holds whatever Windows had
+installed. That matters because a build is hours long and most of what kills it has
+nothing to do with Windows — an unrelated package upgrade restarting `incus` is
+enough.
+
+Look at what survived before deciding to start again:
+
+```bash
+incus list ontrak-winpack-build          # still there? still running?
+incus info ontrak-winpack-build
+```
+
+If Windows did finish, publish that disk instead of rebuilding. `incus publish`
+must use `--compression none`: that is what makes the image export a plain `.tar`
+holding `metadata.yaml` and `rootfs.img`, which is the layout everything below
+expects.
+
+```bash
+incus start ontrak-winpack-build          # only if it stopped mid-Setup
+incus stop ontrak-winpack-build --timeout 120
+incus publish ontrak-winpack-build --alias win11e-local \
+  --compression none requirements.cdrom_agent=true
+
+# the export is a single tarball, named after the image fingerprint
+mkdir -p ./golden-export && incus image export win11e-local ./golden-export
+cp ./golden-export/*.tar ./golden-export/one.tar
+```
+
+Two details make that recipe worth spelling out. The export tarball is named after
+the image fingerprint, so it has to be renamed before it can be globbed. And
+`make golden-import` wants a *split* image — `incus.tar.xz` (the metadata tarball,
+i.e. `metadata.yaml` on its own) plus `disk.qcow2` — while `incus image export`
+writes a single *unified* tarball, so the two halves have to be split back out:
+
+```bash
+mkdir -p ./golden-export/split
+tar -C ./golden-export/split -xf ./golden-export/one.tar metadata.yaml rootfs.img
+( cd ./golden-export/split && tar -cJf ../incus.tar.xz metadata.yaml )
+mv ./golden-export/split/rootfs.img ./golden-export/disk.qcow2
+rm -rf ./golden-export/split ./golden-export/one.tar
+
+make golden-import ARGS=./golden-export        # verifies the disk, imports it
+incus delete ontrak-winpack-build --force      # done with the build VM
+```
+
+A build VM left over from a version before the name was pinned is called `build`
+plus twelve hex digits; `incus list` shows it. Either way, a new run refuses to
+start while a build VM is still there — because deleting it might be deleting a
+finished install — unless `ONTRAK_DISCARD_BUILD_VM=1` says to throw it away.
+
+Two variations are worth knowing, because they are the cheap ones.
+
+**The install can finish and only the export fail.** After exporting, `pack.sh`
+extracts `rootfs.img` out of the tarball it just wrote, which needs as much free
+space as the disk is big — on the build host's *root* filesystem, not on the Incus
+pool. Running out of space there leaves a truncated `rootfs.img` *and* an intact
+export tarball, and the publish and the export have already happened, so the image
+is fine. Nothing about that is a failed install; check the fingerprint `incus
+publish` printed in the log before assuming the install has to be repeated.
+
+**Split the tarball where there is room.** `incus image export` writes one unified
+`.tar`, and splitting it back into `incus.tar.xz` + `disk.qcow2` does not have to
+happen on the build host — which is usually the one short of space. Copy it to the
+range host and split it there:
+
+```bash
+rsync -a --info=progress2 root@builder:/root/ontrak/build/incus-windows/output/win11e/<fingerprint>.tar /tmp/one.tar
+mkdir -p /tmp/golden-export && cd /tmp/golden-export
+cp /tmp/one.tar one.tar
+mkdir split && tar -C split -xf one.tar metadata.yaml rootfs.img
+( cd split && tar -cJf ../incus.tar.xz metadata.yaml )
+mv split/rootfs.img disk.qcow2
+rm -rf split one.tar /tmp/one.tar
+
+make golden-import ARGS=/tmp/golden-export
+```
+
+Whichever way the image arrives, `make golden-import` verifies the disk before it
+publishes anything, so a truncated transfer or a half-applied install is refused
+rather than published.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Session sits in `provisioning`, then `error` | guest transport never answered | Check `session.error` on the page, then `ONTRAK_INCUS__REMOTE=... incus --project ontrak info <instance>`; confirm the guest has an IP on `ontrak0`. If RDP is up but WinRM is not, the image's `post-install.ps1` step did not run — rebuild the golden image. If *nothing* answers, see the row below. |
+| A Windows guest has an address and answers ARP, but every port times out with **no RST** — 5985, 3389, 445 and 135 alike — and its qemu log stays empty | Windows Firewall is dropping everything inbound, which is what it does on a network profile it treats as **Public**: the image's WinRM rules are only active on Domain and Private. It is not the SMM fault — that one leaves `KVM: entry failed, hardware error 0xffffffff` and `SMM=1` in the qemu log and puts the instance in `ERROR` — and it is not the network, because ARP resolving proves the path. The guest is running; nothing can reach it | Fixed in the *install*, so that no network is needed for it: `infra/incus-windows-pack.sh` adds a declarative firewall group that activates the Windows Remote Management rules on every profile in the autounattend, and `infra/windows/golden-local/main.ps1` — which the build puts on the unattended ISO as `local/main.ps1`, where upstream's `OEM/main.ps1` dot-sources it — runs `Enable-PSRemoting -SkipNetworkProfileCheck` and explicit 5985/3389 rules for `-Profile Any` at first logon, which also guarantees the *listener* exists. `scripts/tests/test_unattend_winrm.py` and `scripts/tests/test_golden_local.py` keep both applying. **An image built before that fix carries this fault**, and nothing on the range can repair it: OnTrak's own repair is `post-install.ps1`, which runs `Enable-PSRemoting -SkipNetworkProfileCheck` but is applied *over WinRM* — the lock is on the door with the key behind it. Rebuild the image (`make golden`, or on a host that needs the emulated CPU see [Building the golden image on a nested host](#building-the-golden-image-on-a-nested-host)), then re-import or re-publish it. **Do not** put the listener half back into the autounattend as a `RunSynchronousCommand`: an over-long `Path` does not fail the command, it invalidates the whole answer file, and Windows Setup then blocks the install in the `specialize` pass with nothing in the qemu log and a guest that never stops — `infra/incus-windows-pack.sh` has the measured error and `scripts/tests/test_unattend_winrm.py` bounds the length |
+| `make golden` reports success but every Windows template then hangs at the firmware boot prompt, and `ontrak doctor` still says the golden image is present | the ISO install was OOM-killed and the half-applied disk was published as the image. Incus gives a VM disk the host write cache by default, so applying the ~7 GiB Windows image is charged to the container's memory cgroup; on a 16 GiB range host the kernel kills qemu part-way through the apply. The pinned builder (`tools/click.py`) then only waits for `incus ls` to report STOPPED — it cannot tell that kill from the clean sysprep shutdown it expects — and `pack.sh` publishes the truncated disk anyway | `infra/build-golden-image.sh` now sets the build disk to `io.cache=none` and bounds the guest RAM (`ONTRAK_GOLDEN_CPUS`/`ONTRAK_GOLDEN_MEMORY`), which removes the pressure that caused the kill. Re-run `make golden`. To check a suspect image, inspect its ESP: a formatted-but-empty ESP (no `EFI/Microsoft/Boot/bootmgfw.efi`) means the apply never finished |
+| `make golden` gets all the way through the install and then fails part-way through publishing, and from that point every `incus` command fails with `Failed to begin transaction: no available cowsql leader server found` or `context deadline exceeded` | `incus publish` tars the build disk's *apparent* size into the image — holes are not skipped — and the image store shares a dataset with Incus's own cowsql database, so a long enough copy starves the database's leader election and takes the daemon's DB with it. The bigger the build disk, the worse it gets: a 60 GiB disk copied with `--compression none` ran for fourteen minutes before wedging the DB, and a 29 GiB one ran fifteen | Size the build disk small — that is the lever this script has, and it is already set (`ONTRAK_GOLDEN_DISK`, default 32 GiB). Note that the pinned builder publishes with `--compression none` on purpose: its export step extracts the disk from a plain `.tar`, and `incus image export` writes `<fingerprint>.tar.gz` when the image is gzipped, which that step cannot read. If the DB is already wedged, `systemctl restart incus` clears it — the installed disk survives, so recover rather than rebuild: publish that instance instead of re-running the 30-60 minute install |
+| `make golden` stops immediately with `ONTRAK_GOLDEN_REQUIRE_KVM=1, and this host cannot give the guest KVM` | that variable was set, and this host's KVM cannot virtualise SMM — Windows 11 Setup needs it. Measured on WSL2/Hyper-V on a Ryzen; nesting on its own does not decide it, and a VMware guest on the same CPU can do it | Leave it unset and let QEMU emulate the CPU (see [Building the golden image on a nested host](#building-the-golden-image-on-a-nested-host)); it is several times slower but it finishes. Or build on a host whose KVM can virtualise SMM and copy the image in |
+| `make golden` fails seconds in on a host whose KVM cannot virtualise SMM, and the build VM's qemu log ends `KVM: entry failed, hardware error 0xffffffff` with `SMM=1` | the build VM was started on KVM anyway, which means the accelerator hook never reached it. The fallback is applied by a hook this range writes into the checkout's `tools/pack.sh`, and the build warns when it cannot — `could not add the accelerator hook to tools/pack.sh` | Look for that warning in the build's own output and re-read `infra/incus-windows-pack.sh` against the pinned checkout. On a build VM that was kept, set it by hand: `infra/qemu-accel.sh --apply <vm> default`. Disabling Secure Boot and the TPM is not the fix — OVMF uses SMM for its runtime services regardless, and `-machine smm=off` hangs the guest instead |
+| A Windows instance goes to `ERROR` a few seconds after it starts — `ontrak template build` on the golden image, or a student session — and its qemu log ends `KVM: entry failed, hardware error 0xffffffff` with `SMM=1` | the same host limit as the row above, except that it stops *running* the image and not only building it. Templates are set up for the emulated fallback when they are built and the clones inherit it, so an instance that still fails was either made before that existed or did not go through `ontrak` | Confirm what this host decided with `infra/qemu-accel.sh --check`, then set it on the instance: `infra/qemu-accel.sh --apply <instance>` — stopped, because Incus refuses `raw.qemu.conf` on a running VM — and rebuild the template so future clones carry it. This row is about the CPU only: `security.secureboot=false` does not help, and the guest still has to be Windows |
+| `ontrak template build` (or `session start`) fails with `Error: This virtual machine image requires an agent:config disk be added` | the golden image carries `requirements.cdrom_agent=true`. incus-windows' `tools/pack.sh` stamps it on every image it publishes, `incus publish` copies image properties, and the property also travels in the export's `metadata.yaml` — so it arrives with the image and cannot be dropped by importing without the flag. It means "every instance from this image must have an `agent:config` disk", and Incus enforces it at *start*, where nothing in `ontrak/` attaches one: OnTrak drives Windows over WinRM, which needs no agent config | Fixed — `infra/import-golden-image.sh` and `infra/build-golden-image.sh` clear the property as they adopt the image. To repair one that is already imported: `incus --project ontrak image set-property ontrak-win-base requirements.cdrom_agent=""` (`incus image unset-property` panics with a nil pointer in Incus 7.5.1). Operators using the opt-in `incus-exec` driver want the requirement back, with the disk: `incus config device add <vm> incusagent disk source=agent:config` |
+| `ontrak template build` fails with `incus list --format=json failed (124): timed out after 120s`, even though `ONTRAK_INCUS__OPERATION_TIMEOUT_SECONDS` is raised | the plumbing used to fall back to its own 120 s default for reads, ignoring the operator's setting. `incus list` is not a cheap read on a busy host: it reports each instance's state, agent status and address, so it blocks for minutes on a VM that is still booting | Fixed — the configured timeout is the ceiling for every call. If you are on an older build, raise the default in `incus.py` or pacify the host first |
+| `make golden` fails after a long install with `Error: Failed to begin transaction: sql: database is closed`, then `incus ls` fails with `Error: Image not found`, and the build VM is gone | something on the host restarted `incus` while the build was running, and `tools/pack.sh` deleted its build VM from an EXIT trap on the way out. An unattended `apt` upgrade is enough: `unattended-upgrades` and `apt-daily*.timer` are enabled by default, `ovmf`/`qemu-efi-*` upgrades are routine, and the restart kills a running build | Current builds keep the VM (`ontrak-winpack-build`) so the installed disk survives, and a new run stops rather than overwrite it — recover with [Recovering a build VM that was kept](#recovering-a-build-vm-that-was-kept) instead of rebuilding. The script does not *disable* the host's update timers, but it does name the ones it finds at the start of a build and tell you to stop them; they return at the next boot, which is deliberate — a build should not leave a range's security updates off |
+| `make golden` gets all the way through the install and the export, then fails with `tar: rootfs.img: Wrote only 512 of 10240 bytes`, and the published image has vanished from `incus image list` | `tools/pack.sh` extracts the disk back out of the export tarball when it is finished, and the build host's **root** filesystem ran out of space doing it — not the Incus pool, which is usually a separate disk. `pack.sh`'s `EXIT` trap then removes the image it had just published, so what is left is a complete export tarball and a truncated `rootfs.img` | Recover, do not rebuild — the tarball *is* the image, and the install is finished. See [Recovering a build VM that was kept](#recovering-a-build-vm-that-was-kept) |
+| A clone of the golden image — `ontrak template build`, or a session — goes to `ERROR`, and `incus` logs `Unpack failed … tar: rootfs.img: Wrote only 512 of 10240 bytes` at the moment it was created | the host's **root** filesystem filled while Incus unpacked the image's disk, which on the `dir` driver is a full-size copy: a Windows 11 golden image is 6 GiB compressed but each instance made from it holds about 13 GiB (the disk itself is 32 GiB apparent). It does not have to be the pool that fills — the build's own `output/` (13 GiB), the ISOs (6 GiB) and a couple of clones are enough to take a 100 GiB root to zero, and the next clone then fails to unpack | Free space before building or cloning, and check `df` rather than the pool: `incus list`, `/var/lib/incus/images`, `/var/lib/incus/storage-pools` and the checkout's `build/` are what to weigh. The build's export (``build/incus-windows/output/<image>``) and the intermediate image it imports (`win11e`) are both recoverable — the published alias is the one to keep |
+| `ontrak template build` — or a pool prewarm — fails with "`<vm>` at `<ip>` never became reachable over the winrm transport", the guest has an address, **both 3389 and 5985 are open**, and the same image logs in fine by hand | the range's `guest.password` is empty: it reads `os.environ`, while `.env` is a *compose* env file only `docker compose` parses. Every logon it makes is then with an empty password, and WinRM answers `the specified credentials were rejected by the server` — which the readiness wait reports as the transport never coming up. Running the CLI by hand does this; `make golden` reads the password out of `.env` with `sed`, and `make templates`, `make prewarm` and `make reap` now do the same. A prewarm that fails this way leaves its machine behind — see [A prewarm that fails leaves its machine in the pool](#a-prewarm-that-fails-leaves-its-machine-in-the-pool) | `make templates` / `make prewarm` / `make reap` instead of the bare CLI, or export it yourself: `ONTRAK_GUEST__PASSWORD="$(sed -n 's/^ONTRAK_GUEST__PASSWORD=//p' .env | head -1)" .venv/bin/ontrak template build <id> --force`. Sourcing `.env` is not an equivalent fix — it is a compose file, so a value with a space splits (see the `golden` recipe) |
+| `ontrak pool status` says a warm machine is ready, but the training credentials are rejected when a session claims it, while its sibling — cloned from the same snapshot at the same moment — logs in fine | the machine was left by a prewarm whose readiness wait failed on the empty-password trap above, and the wait does not stop there: it retries every 5 s for its whole budget (84 logons in the 7-minute run measured here), which trips the guest's own lockout policy and locks `student` out. `net accounts` on the built image reports Windows' defaults — **threshold 10, duration 10 minutes, observation window 10** — nothing in this repository sets them, and network logons count. Reproduced on a warm machine, in this order: the correct password was accepted; twelve rejected logons later it was refused; eight minutes after the flood it was *still* refused; and after eleven minutes with no attempt at all it was accepted again. The middle two are the trap for whoever is diagnosing this — **a refused logon counts even when the password is right**, so testing the machine re-arms its own lockout and it looks permanently broken. That is why the sibling answered and this one did not: its wait had ended earlier, so its lockout had already cleared | A machine in this state needs no repair, only ten quiet minutes — do not sit there testing it, or you will keep it locked. Clear it out rather than diagnosing it in place: `ontrak pool drain --scenario <id>`, then `make prewarm ARGS="--scenario <id> --count <n>"`. The reason to fix the *cause* is that the failed prewarm leaves these machines behind and `ontrak pool status` counts them as ready |
+| `ontrak template build` gets all the way through the scenario setup, the guest shuts down, and the build then fails with `incus snapshot create tpl-<id> clean failed (1): … dd if=…/root.img of=…/virtual-machines-snapshots/… bs=16M conv=nocreat,sparse iflag=direct oflag=direct: exit status 1 (dd: IO error: Invalid input)` | the host's filesystem cannot do **O_DIRECT reads**, which is how Incus's `dir` driver copies a VM disk to snapshot it. It is not the image and not free space: measured on such a host, `dd if=<a file written seconds ago> of=/dev/null bs=16M iflag=direct` returns `Invalid input` while buffered reads and O_DIRECT *writes* both succeed. Only virtual machines are affected — a container snapshot (every Linux scenario) uses rsync and works | Give the range a pool whose driver snapshots without copying the disk: `ONTRAK_STORAGE_DRIVER=btrfs` (or `zfs`), per `infra/bootstrap-host.sh`, with the template and pool built there. `incus image copy <alias> <pool>: --alias <alias>` moves the golden image onto it |
+| `infra/publish-golden-image.sh` (or `scripts/verify-golden-image.py` on its own) fails with `qemu-img: error while writing at byte …: No space left on device` on a host with tens of GiB free | the verifier reads a qcow2 by converting it to a raw copy inside `TMPDIR`, and the copy is the size of the disk's *data* (~17 GiB for the 32 GiB Windows image). Where `/tmp` is a tmpfs — 12 GiB here, a fraction of RAM, and not counted in the `df` of `/` you were just looking at — it cannot fit, and the failure names the wrong filesystem | point `TMPDIR` at one with room: `TMPDIR=/var/tmp infra/publish-golden-image.sh ./golden-export`. Same for `make golden-import`, which verifies the disk it is about to adopt |
+| `infra/publish-golden-image.sh` runs for hours, then ends `PUBLISH EXIT=1`, and the tag it was publishing is not in `oras repo tags` | the upload died on the wire, not in the script: `oras` reports `http2: Transport: cannot retry err [stream error: stream ID 17; REFUSED_STREAM; received from peer] after Request.Body was written`. Observed here ~11 GiB into the 12.9 GiB `disk.qcow2` — the whole disk is one blob, `oras` cannot resume a blob upload, and this host's link moves ~1.7 MB/s, so the push takes about two hours and anything that drops it loses everything sent so far | Do not assume a publish landed: `oras repo tags ghcr.io/innotelinc/ontrak-golden` is the check, and the registry keeps the previous tag when a run dies this way. The fix that fits a link like this one is to send fewer bytes rather than to retry: `qemu-img convert -c -O qcow2` over the export's disk is still a qcow2, so the layer's name, its media type and `incus image import` are all unchanged, and it is smaller by more than half — **12.05 GiB to 6.29 GiB measured on this host**, which put the push inside the window the two 12.9 GB attempts never reached. Verify the compressed disk first (`scripts/verify-golden-image.py`, which decompresses to raw and so needs ~12 GiB in `TMPDIR` and a `TMPDIR` on a real filesystem), then publish with `ONTRAK_SKIP_VERIFY=1` because that same file has just been read. Publishing from a host that can finish 12.9 GB in one go needs none of this |
+| `pywinrm` errors with 401 | wrong training password, or the account is not a local admin | Compare with `guest.password`; the image sets `LocalAccountTokenFilterPolicy=1` so elevation should work |
+| Template build fails with "never obtained an address" | wrong bridge or DHCP range exhausted | `incus network get ontrak0 ipv4.dhcp.ranges`; widen the range for large classes |
+| Template build fails with "did not report ONTRAK-SETUP-OK" | the setup script threw | The error includes the output tail; run the VM manually and execute `setup.ps1` to see the full error |
+| "template is missing snapshot clean" | scenario edited, template not rebuilt | `ontrak template build <scenario> --force` |
+| Guacamole shows "connection failed" | target 3389 unreachable from guacd, or wrong credentials | `ontrak session console <id>` to inspect; confirm the VM answers on 3389 from the control node; check `guest.rdp_port` |
+| Console loads but every session is refused ("Permission denied"), or the iframe never opens | the gateway signs off on a different `JSON_SECRET_KEY` than the portal's `guac.secret_key`, or its `guacamole-auth-json` extension is not enabled | `ontrak doctor` probes this directly and now **fails** on it (it posts a payload signed with `guac.secret_key` to `<guac.base_url>/api/tokens`). Make `JSON_SECRET_KEY` equal `ONTRAK_GUAC__SECRET_KEY` and recreate the gateway: `make console-recreate` (or `docker compose up -d --force-recreate guacamole`). A stack started before the key was set keeps the empty one until it is recreated. The student's page says so too instead of showing an empty console |
+| Console iframe blank | `guac.base_url` is not the URL the student's browser uses, or the page is HTTP while Guacamole is HTTPS | Set `guac.base_url` to the browser-visible HTTPS URL and put a TLS proxy in front |
+| Console says "the remote desktop server is currently unreachable" | the console is an **RDP** connection pointed at a Linux *container*, which answers no RDP at all | Turn on `guac.linux_ssh` and rebuild that scenario's template: the build installs and configures `sshd` (see below), and the console becomes a shell |
+| Console is refused the same way **after** turning on `guac.linux_ssh` | the template predates the setting | Templates are snapshots: re-run `ontrak template build <scenario> --force` for each Linux scenario, or `infra/build-templates.sh`. A template built before the setting existed has no sshd in it |
+| Students say "no machine available" | pool empty and clones are slow | Prewarm more, or move the pool to ZFS/btrfs |
+| Pool keeps growing and the host swaps | refill targets too high for a full class | Lower `pool.targets`, or `pool.max_total`; remember targets count claimed VMs, so `target = class size` is the right shape |
+| Grading returns 0% with "grading could not run" | `check.ps1` failed or never printed the markers | Run it manually in a session; `make validate` first, then check the guest-side error in the network detail line |
+| Scores look wrong after an image change | the check reads live state that moved (an adapter name, a service name) | Prefer outcome-based checks (`docs/scenarios.md`); open a session and inspect the `-Detail` strings |
+| `curl http://<this host>:8080/` from the host itself hangs or resets, while another machine reaches the same URL | Docker publishes the port with a DNAT rule in `nat OUTPUT`, so a connection from the host to the host's own address is rewritten to the container's address, from a source its reply can never match | `sudo infra/host-local-hairpin.sh --install` — the script's header explains the mechanism, `--check` says whether it is in place, `--remove` takes it out. On a WSL host the rule does not survive a restart by itself, which is what the installed unit is for |
+| A guest on `ontrak0` resolves names but opens no connection at all — `apt-get` fails with `Cannot initiate the connection to deb.debian.org:80 ... Network is unreachable`, or a scenario's setup fails while the guest reports itself healthy | Docker sets the host's **FORWARD policy to DROP** and accepts only the traffic it knows about, so a packet from a lab guest is dropped as unrelated forwarded traffic on its way out of the uplink. DNS still works (it is UDP, answered by the host's own resolver), which is what makes the guest look networked — and the first place it shows is the one scenario that has to install a package inside the guest | `sudo infra/host-lab-forward.sh --install` accepts the lab bridge in Docker's `DOCKER-USER` chain; `--check` says whether it is in place and `--remove` takes it out. `infra/bootstrap-host.sh` installs it, and the script's header explains the mechanism |
+| `ontrak template build` fails for every *container* scenario with `incusd forklxc ...: exit status 1`, and the instance's log says `Failed to set "io.weight" to "500"` | the host's cgroup v2 has no `io` controller — WSL2 is the usual such host — and `limits.disk.priority` in the `ontrak-student` profile is written as `io.weight`, which does not exist there. Nothing about the container, the scenario or the image is wrong; the profile simply cannot be applied on that host | Drop the one setting: `incus --project ontrak profile unset ontrak-student limits.disk.priority`. Every other setting in the profile still applies. Windows VMs are unaffected by it, so a host with the `io` controller should keep it — see the note in `infra/incus/profile.yaml` |
+
+## Sign-in
+
+The portal has no password of its own. An instructor and a student are
+**Authentik** accounts in Cerulean, and the portal only decides what a signed-in
+account may do — one list of who exists, one place to disable someone, and
+nothing on the range to keep in step.
+
+Cerulean registers the application, and prints the client secret for it:
+
+```bash
+# in Cerulean's checkout
+python3 scripts/authentik-setup.py ontrak
+```
+
+Then set the four `ONTRAK_PORTAL__OIDC_*` values in `.env` (see `.env.example`)
+and restart the portal. All four are needed: with any one missing the flow is off
+and the login page says which values are expected instead of rendering a button
+that leads nowhere.
+
+**The callback is per origin.** The sign-in returns to the origin it started on,
+and Authentik only accepts a callback it was registered with — so every origin
+the portal answers on is listed in `ONTRAK_PORTAL__OIDC_REDIRECT_URI`. The range
+answers on three names (`scripts/cerulean-provision.py` creates them):
+
+```
+https://ontrak.innotel.us/oidc/callback
+https://student.ontrak.innotel.us/oidc/callback
+https://admin.ontrak.innotel.us/oidc/callback
+```
+
+A name whose callback is missing cannot sign in at all — the IdP refuses the
+redirect before anyone types a password. A `Host` header naming an origin that is
+*not* on the list falls back to the first entry, so a forged one cannot create a
+new callback.
+
+**Roles come from Authentik groups**, read on every sign-in: a member of
+`ONTRAK_PORTAL__OIDC_INSTRUCTOR_GROUP` is an instructor (the class view, reset and
+the admin panel), everyone else who signs in is a student. Adding someone to the
+group grants that view and removing them takes it away, with no local edit and no
+second place to keep in step. An Authentik superuser is always an instructor, so
+the range's owner is never locked out of it. Set
+`ONTRAK_PORTAL__OIDC_REQUIRED_GROUP` to gate the whole range to one class cohort.
+
+The portal's account is keyed on the Authentik **email address**. An account
+Authentik authenticates but has no email for is refused rather than given an
+invented name; the fix belongs in Authentik.
+
+### There is no password path
+
+There is no local account and no password form, anywhere: `POST /login` does not
+exist, and the portal holds no credential of its own. An account appears on the
+range the first time its owner signs in through Authentik, keyed on their email
+address — and because Authentik is re-read on every sign-in, adding someone to
+the instructor group grants the class view and removing them takes it away, with
+nothing to keep in step locally.
+
+Two consequences worth knowing. A *disabled* account stays disabled: an
+instructor taking a student off the board is not undone by that student signing
+in again. And **deleting** an account in the admin panel only removes the local
+row — identity is Authentik's, so the person can sign straight back in. Revoke
+the person in Authentik; use disable for the range's own control.
+
+`ontrak demo serve` is the one exception, and only for itself: a demo has no IdP
+to sign in against, so the portal opens a demo-only door — pick a demo account,
+no password — mounted only while `demo.enabled` is on. Demo mode and Authentik are
+independent settings, though, so a local range can have both at once; see below.
+
+### A local Authentik, for a laptop, a demo or CI
+
+Everything above is the estate's Authentik: Cerulean registers the application and
+prints its client secret, and a range cannot be signed into without it. For the
+ranges that must be signed into anyway — a laptop, a demo on a table, CI — this
+checkout carries a second one: `deploy/authentik/`, its own compose project with
+its own database and its own secret key, holding nothing the estate knows about.
+
+```bash
+deploy/authentik/setup.sh          # generate secrets, start, provision OnTrak
+make local-auth                    # ...and point this range at it
+deploy/authentik/setup.sh --down   # stop it (the database is kept)
+```
+
+It creates the application, an OIDC provider, the `groups` scope mapping,
+`range-instructors`/`range-students` and a set of seed accounts, then writes
+`deploy/authentik/ontrak-local.env`: the four `ONTRAK_PORTAL__OIDC_*` values, the
+instructor group, and the address students are sent to. `make local-auth` hands
+that file to compose as a second `--env-file`, so it wins where the two disagree
+and the operator's `.env` is never written to. Going back to the estate's
+Authentik is running compose without it — which also means a plain
+`docker compose up -d` puts the range back, so re-run `make local-auth` after one.
+
+Three details that are not obvious:
+
+* **The issuer is the host's own address, not `localhost`.** It has to resolve, and
+  give the same answer, for the student's browser *and* for the portal container —
+  and `localhost` is the container itself to the container. The callbacks
+  registered on the provider follow from that: every origin the range answers on
+  has to be listed, the same rule the three estate names above follow.
+* **It is not for production.** Plain HTTP, its admin password in the file next to
+  it, and seed accounts that share one password. `deploy/authentik/README.md` says
+  so at more length.
+* **A local range runs on demo mode.** There are no hypervisor-backed machines
+  until the golden image exists (`make golden`), so `ontrak-local.env` also sets
+  `ONTRAK_DEMO__ENABLED=true` and scenarios come from demo mode's in-memory range.
+  That combination — a real IdP, the real portal, an in-memory range — is what makes
+  a whole class demonstrable on a laptop: students sign in through Authentik, start
+  scenarios and are graded. Turn it off once the image and templates exist.
+
+## Security and audit notes
+
+* **Isolation boundary:** the `ontrak0` bridge. Never put the portal, Guacamole or
+  the SQLite file on it, and do not bridge it to the office LAN. Student VMs are
+  hostile-by-design (they run simulated malware).
+* **Recording:** set `guac.recording: true` to keep an RDP recording per session
+  for review. Recordings live on the guacd volume and can be large; treat them as
+  student data and prune them.
+* **Events:** every allocate/ready/check/reset/recycle is written to the `events`
+  table with the session id, which is enough to reconstruct who did what, when.
+* **Instructor actions are not yet separately audited** (an instructor reset looks
+  like a student reset in the event log) — add the actor to `log_event` before this
+  runs in an environment with multiple instructors.
+* **Guacamole holds no credentials.** If you enable `guac.recording`, remember the
+  recordings contain whatever was on the student's screen.
+
+## Cost and licensing
+
+* **Windows:** the golden-image path uses Microsoft *evaluation* media
+  (90 days for Windows 11 Enterprise eval, 180 for Server). Rebuild before a course,
+  or use volume licensing with KMS/AD for permanent infrastructure. Licence
+  compliance for training VMs is the operator's responsibility.
+* **Hosts:** nothing in this stack needs a commercial hypervisor; Linux + KVM +
+  Incus covers it. The Zabbly repository is the upstream Incus channel. One caveat,
+  for the golden image only: the host's KVM must be able to virtualise SMM, which
+  is a property of the virtualisation underneath rather than of the hardware. A
+  nested AMD host was measured *without* it (WSL2/Hyper-V on a Ryzen) and one was
+  measured *with* it (VMware on a Ryzen) — see [Building the golden image on a
+  nested host](#building-the-golden-image-on-a-nested-host).
+* **Third-party build tool:** `antifob/incus-windows` automates the unattended
+  Windows install. Pin a commit (`ONTRAK_INCUS_WINDOWS_REF`) — it is a build-time
+  dependency, not a runtime one, and its interface changes between versions. Four of
+  its behaviours have bitten this stack and are rewritten in
+  `infra/incus-windows-pack.sh`: it sizes its build VM at the whole host (rewritten
+  to `ONTRAK_GOLDEN_CPUS`/`ONTRAK_GOLDEN_MEMORY`), it grows the build disk to 60 GiB
+  (rewritten to `ONTRAK_GOLDEN_DISK`, because that disk becomes the published image),
+  it leaves that disk on the host write cache, and it names its build VM with six
+  random bytes and deletes it from an unconditional `EXIT` trap. Its `tools/click.py`
+  also treats any stop as a finished install, so a killed build publishes silently —
+  see the golden-image rows above. Those rewrites live in their own file so they can
+  be tested without a hypervisor (`scripts/tests/test_pack_sh_rewrites.py`): a rewrite
+  whose anchor has moved warns, rather than running a two-hour build with upstream's
+  defaults.
+
+## Legacy platform notes
+
+The catalog carries platforms that predate VirtIO, ACPI assumptions and remote management.
+Three things to know before offering them:
+
+- **They need their own device profile.** `legacy-9x` guests (95/98/ME) get an IDE disk, an
+  rtl8139 NIC, a Pentium-class chipset and a 512 MiB ceiling; giving them VirtIO produces a
+  guest that never boots. The profile is applied from the catalog entry, not by hand.
+- **They cannot be graded automatically.** There is no WMI, no PowerShell and no agent, so
+  those entries are `automation: none`. Scenarios on them are instructor-observed. OnTrak
+  will provision them; it will not pretend to grade them.
+- **Some media never automates.** Entries with `recipe: manual` have no unattended install,
+  so `ontrak image build` refuses and tells the operator to build the guest by hand and
+  publish it (`--publish-only`). Budget an evening per platform, once.
+
+## Known limitations
+
+1. **The Windows guest, Incus, ZFS and Guacamole paths are unverified here.** The
+   Python control plane is unit-tested (109 tests, no Windows needed); `infra/`
+   and the `.ps1` scenarios are reviewed but must be proven on your hardware. Run
+   `ontrak doctor`, build one template, and walk one scenario end to end before
+   committing a class to it.
+2. **The portal is single-node and SQLite-backed.** Fine to roughly 100
+   simultaneous students on one control node; beyond that, move to Postgres and a
+   second portal replica.
+3. **No scheduled class windows.** Prewarming is manual (a cron entry calling
+   `ontrak pool prewarm` is the obvious next step).
+4. **Instructor audit trail** does not record *which* instructor acted (see above).
+5. **Scenario realism is bounded by the image.** New Windows builds move things
+   (VBScript deprecation, Defender tamper protection); the fallbacks are in place
+   but re-verify after each image refresh.

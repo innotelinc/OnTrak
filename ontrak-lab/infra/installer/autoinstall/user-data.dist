@@ -1,0 +1,126 @@
+#cloud-config
+#
+# OnTrak installer — automation for Ubuntu Server 24.04 LTS.
+#
+# infra/installer/render-autoinstall.py renders this template into the ISO tree
+# -- once per profile -- substituting @USERNAME@, @HOSTNAME@, @PASSWORD_HASH@,
+# @RELEASE@ and @INTERACTIVE_SECTIONS@, and writing each result to the datasource
+# directory its boot entry points at (`ds=nocloud;s=/cdrom/<dir>/`).
+#
+#   machine      /nocloud/              installs onto this machine's disk
+#   choose-disk  /nocloud-choose-disk/  the operator picks the target disk, which
+#                                       is how a USB stick is installed
+#
+# Design: everything is automated except the screens that are left interactive.
+# `identity` is always one of them, so the operator at the console chooses the
+# admin username, the hostname and the password, and can paste an SSH key: no
+# credential is baked into an image that gets copied around. Identity still
+# carries defaults, so a boot nobody answers still ends in a usable host.
+autoinstall:
+  version: 1
+
+  # identity in both profiles; storage in `choose-disk` only, where the target
+  # disk is the operator's decision and the installer's. See
+  # render-autoinstall.py for which profile carries which, and why they are
+  # profiles of one template rather than two files that drift.
+  interactive-sections: @INTERACTIVE_SECTIONS@
+
+  # Defaults for the interactive identity screen. Whatever the operator types
+  # wins; these are what an unattended boot falls back to.
+  identity:
+    hostname: @HOSTNAME@
+    realname: OnTrak operator
+    username: @USERNAME@
+    password: "@PASSWORD_HASH@"
+
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+
+  # The installer needs the internet (the range host's dependencies are fetched
+  # later, on first boot). Ask for the country mirror, keep archive.ubuntu.com as
+  # a fallback, and if neither answers still install from the ISO itself rather
+  # than aborting.
+  apt:
+    mirror-selection:
+      primary:
+        - country-mirror
+        - uri: "http://archive.ubuntu.com/ubuntu"
+    fallback: offline-install
+    geoip: true
+
+  # DHCP on every physical NIC, renamed or not. The range's own bridge (ontrak0)
+  # is created on first boot by infra/bootstrap-host.sh.
+  network:
+    version: 2
+    ethernets:
+      all-en:
+        match:
+          name: "en*"
+        dhcp4: true
+        dhcp4-overrides:
+          use-hostname: false
+      all-eth:
+        match:
+          name: "eth*"
+        dhcp4: true
+        dhcp4-overrides:
+          use-hostname: false
+
+  # LVM on the largest disk: enough room for Incus's storage pool and the golden
+  # image without the operator partitioning anything.
+  #
+  # In the `choose-disk` profile this is only the default the storage screen opens
+  # with: that section is interactive there, and the operator picks the disk ("Use
+  # an entire disk" on a USB stick, rather than the internal one). The installer
+  # cannot know which disk is the stick; the person at the console can.
+  storage:
+    layout:
+      name: lvm
+
+  updates: security
+
+  ssh:
+    install-server: true
+    allow-pw: true
+
+  # Just enough for the first-boot provisioning to start. It installs the rest
+  # (Docker, the OnTrak checkout, Incus) itself, so a change there does not
+  # require rebuilding this ISO.
+  packages:
+    - git
+    - curl
+    - ca-certificates
+    - openssl
+    - rsync
+    - tmux
+    - htop
+
+  late-commands:
+    # Runs in the installer environment once the system is installed: the target
+    # root is /target, the ISO is mounted at /cdrom.
+    - install -d -m 0755 /target/etc/ontrak
+    - cp /cdrom/ontrak/firstboot.sh /target/usr/local/sbin/ontrak-firstboot.sh
+    - chmod 0755 /target/usr/local/sbin/ontrak-firstboot.sh
+    - cp /cdrom/ontrak/ontrak-firstboot.service /target/etc/systemd/system/ontrak-firstboot.service
+    - cp /cdrom/ontrak/firstboot.env.example /target/etc/ontrak/firstboot.env.example
+    - chmod 0644 /target/etc/ontrak/firstboot.env.example
+    # The sizing tier's own two files, on an image built as one: the settings that
+    # tier bakes (firstboot.env) and the machine it is for (tier.env, which the
+    # first boot reads back and checks this host against). One tolerant command
+    # rather than two `cp`s, because the untiered image has neither file and a
+    # failed late-command fails the whole install.
+    - bash -c 'for f in firstboot.env tier.env; do if [ -f "/cdrom/ontrak/$f" ]; then install -m 0644 "/cdrom/ontrak/$f" "/target/etc/ontrak/$f"; fi; done'
+    - cp /cdrom/ontrak/tier-check.py /target/usr/local/sbin/ontrak-tier-check.py
+    - chmod 0755 /target/usr/local/sbin/ontrak-tier-check.py
+    - cp /cdrom/ontrak/README.txt /target/opt/ONTRAK-INSTALL.txt
+    - curtin in-target -- systemctl enable ontrak-firstboot.service
+
+  # Keep the installer's own logs when an install fails, so the machine can be
+  # diagnosed without re-running the whole thing.
+  error-commands:
+    - tar -czf /target/var/log/installer-failure.tar.gz /var/log/installer /var/log/syslog || true
+
+  # Reboot into the installed system: that is what makes the first-boot unit run.
+  # Left implicit, an unattended install can end at a powered-off machine.
+  shutdown: reboot

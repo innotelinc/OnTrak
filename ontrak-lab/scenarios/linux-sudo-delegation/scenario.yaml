@@ -1,0 +1,102 @@
+id: linux-sudo-delegation
+title: "sudo is broken on the ops box, and the delegation is missing"
+category: security
+platform: linux
+workloads: [ubuntu-24.04, debian-12]
+difficulty: 3
+minutes: 30
+pass_score: 80
+tags: [linux, sudo, sudoers, least-privilege, cli]
+requires_internet: false
+lessons: [linux-sudo, linux-users-and-groups]
+
+ticket:
+  from: "Dana Okafor (Platform team)"
+  system: "ops-01 (Ubuntu)"
+  priority: "Critical"
+  channel: "Phone"
+  reported: "Started this morning"
+  form:
+    title: Change record — sudo policy on ops-01
+    intro: >
+      A privilege change without a record is how estates drift. State what was
+      broken, what the policy now says, and how you proved it — including the
+      negative test.
+    weight: 35
+    fields:
+      - id: symptom
+        label: What was reported
+        kind: textarea
+        weight: 15
+        min_words: 8
+      - id: root_cause
+        label: Root cause of the sudo failure
+        kind: textarea
+        weight: 25
+        min_words: 6
+        any_of: [syntax, invalid, sudoers, malformed, typo]
+        hint: "sudo refuses to run at all when the policy will not parse."
+      - id: delegation
+        label: The delegation you put in place
+        kind: textarea
+        weight: 30
+        min_words: 8
+        all_of: [ops]
+        any_of: [systemctl, restart nginx, NOPASSWD, "%ops"]
+        hint: "Group (with its % prefix), the exact command, and whether a password is required. Quote the line you added."
+      - id: why_narrow
+        label: Why the rule names one command instead of ALL
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [least privilege, blast radius, audit, root, blanket]
+        none_of: ["easier", "simpler"]
+      - id: verification
+        label: How you verified it, including the negative test
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [sudo -l, visudo, -U, negative]
+
+briefing: |
+  Nobody on ops-01 can escalate any more: sudo exits with a syntax error before it
+  reads the command. Someone edited the sudo policy by hand last night and did not
+  check it.
+
+  Once sudo works again, the platform team needs their delegation back: members of
+  the ops group must be able to restart nginx's unit without a password — and they
+  must not be able to do anything else with it.
+
+  The delegation belongs in /etc/sudoers.d, as one file per change, with the mode
+  sudo requires. Do not hand out a blanket rule to make the ticket go away, and do
+  not weaken anything that is already there.
+
+objectives:
+  - id: sudoers-valid
+    text: "The sudo policy parses: visudo -c reports no errors"
+    weight: 30
+    critical: true
+    hint: "visudo -c names the first broken file. Read the error, it points at the line."
+  - id: delegation-present
+    text: "The ops group may run systemctl restart nginx as root without a password"
+    weight: 30
+    critical: true
+    hint: "`sudo -l -U <user>` shows the effective policy for another account, which is how you check a delegation you cannot log in as."
+  - id: no-blanket-rule
+    text: "No blanket ALL/NOPASSWD:ALL rule was introduced anywhere in the sudo policy"
+    weight: 20
+    hint: "The easy fix is the finding. Name the command, not the world."
+  - id: dropin-hygiene
+    text: "Every file in /etc/sudoers.d is mode 0440 and contains no syntax errors"
+    weight: 20
+    hint: "A drop-in with the wrong mode is silently ignored by sudo, so it looks like your rule did not work."
+
+hints:
+  - "Read the broken file before deleting anything: `visudo -c` and `grep -rn '' /etc/sudoers.d/`."
+  - "sudo will not accept a file that is group- or world-writable, or whose name contains a dot."
+  - "The narrow form is `%ops ALL=(root) NOPASSWD: /usr/bin/systemctl restart nginx` — one command, one group, no password."
+  - "A group rule needs the % prefix. Without it, sudoers reads `ops` as a *user* named ops, which silently grants nobody anything."
+
+reset_notes: |
+  Reset re-clones the clean snapshot, so the broken drop-in file returns and the ops
+  delegation is gone again.

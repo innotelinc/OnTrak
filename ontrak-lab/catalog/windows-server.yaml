@@ -1,0 +1,140 @@
+# Windows Server, NT 4.0 through Server 2025.
+group: windows-server
+label: Windows Server
+era: 1996-present
+description: >
+  Server releases for AD/DNS/DHCP/gpo, file-service and IIS exercises. Server
+  guests are the natural home for the network and security scenario families,
+  because DNS and DHCP can be broken *at the server* rather than on the client.
+family: windows
+defaults:
+  kind: vm
+  family: windows
+  scenario_families: [hardware, software, network, os, security]
+  resources: {cpu: 2, memory: 4GiB, disk: 60GiB}
+
+entries:
+  - id: win-nt4-server
+    name: Windows NT 4.0 Server
+    edition: SP6a
+    released: "1996-07"
+    support: eol
+    media: {source: operator, kind: iso, filename: winnt4srv-sp6a.iso}
+    install: {recipe: manual, builder: manual}
+    device_profile: legacy-xp
+    automation: none
+    resources: {cpu: 1, memory: 512MiB, disk: 12GiB}
+    tags: [nt-era, legacy-domain]
+    notes: Historical NT domain exercises. Manual grading only.
+  - id: win2000-server
+    name: Windows 2000 Server
+    edition: SP4
+    released: "2000-02"
+    support: eol
+    media: {source: operator, kind: iso, filename: win2000srv-sp4.iso}
+    install: {recipe: manual, builder: answer-file}
+    device_profile: legacy-xp
+    automation: winrm-ps2
+    resources: {cpu: 2, memory: 1GiB, disk: 20GiB}
+    tags: [nt-era, active-directory]
+    notes: Active Directory and DFS at their earliest usable form.
+  - id: win2003-r2
+    name: Windows Server 2003 R2
+    edition: Standard
+    released: "2005-12"
+    support: eol
+    media: {source: operator, kind: iso, filename: win2003r2.iso}
+    install: {recipe: iso-unattended, builder: answer-file, unattended: winnt.sif}
+    device_profile: legacy-xp
+    automation: winrm-ps2
+    resources: {cpu: 2, memory: 2GiB, disk: 24GiB}
+    tags: [active-directory, iis6]
+    notes: IIS 6 and group-policy exercises. Install PowerShell 2.0 for grading.
+  - id: win2008-r2
+    name: Windows Server 2008 R2
+    edition: Standard
+    released: "2009-10"
+    support: eol
+    media: {source: operator, kind: iso, filename: win2008r2.iso}
+    install: {recipe: iso-unattended, builder: answer-file, unattended: autounattend.xml}
+    device_profile: vista-era
+    automation: winrm-ps51
+    resources: {cpu: 2, memory: 4GiB, disk: 60GiB}
+    tags: [active-directory, dns, common]
+    notes: The classic DNS/DHCP/GPO lab platform, still widely deployed.
+  - id: win2012-r2
+    name: Windows Server 2012 R2
+    edition: Standard
+    released: "2013-10"
+    support: eol
+    media: {source: operator, kind: iso, filename: win2012r2.iso}
+    install: {recipe: iso-unattended, builder: answer-file, unattended: autounattend.xml}
+    device_profile: vista-era
+    automation: winrm-ps51
+    resources: {cpu: 2, memory: 4GiB, disk: 60GiB}
+    tags: [active-directory, dns, dhcp]
+    notes: Server Core and full-desktop variants are both useful; this entry is the full install.
+  - id: win2016
+    name: Windows Server 2016
+    edition: Standard
+    released: "2016-10"
+    support: extended
+    media:
+      source: free
+      kind: iso
+      filename: Windows_Server_2016_Eval.iso
+      url: https://software-download.microsoft.com/download/Windows_Server_2016_Evaluation.iso
+      notes: Microsoft evaluation media (180 days).
+    install: {recipe: iso-unattended, builder: incus-windows, target: win2016}
+    device_profile: modern
+    automation: agent
+    tags: [dns, dhcp, gpo, common]
+    notes: Recommended general-purpose server platform.
+  - id: win2019
+    name: Windows Server 2019
+    edition: Standard
+    released: "2018-10"
+    support: extended
+    media:
+      source: free
+      kind: iso
+      filename: Windows_Server_2019_Eval.iso
+      url: https://software-download.microsoft.com/download/Windows_Server_2019_Evaluation.iso
+      notes: Microsoft evaluation media (180 days).
+    install: {recipe: iso-unattended, builder: incus-windows, target: win2019}
+    device_profile: modern
+    automation: agent
+    tags: [dns, dhcp, gpo, common, iis]
+    notes: Widely deployed; good default for AD/DNS scenarios.
+  - id: win2022
+    name: Windows Server 2022
+    edition: Standard
+    released: "2021-08"
+    support: supported
+    media:
+      source: free
+      kind: iso
+      filename: Windows_Server_2022_Eval.iso
+      url: https://software-download.microsoft.com/download/Windows_Server_2022_Evaluation.iso
+      notes: Microsoft evaluation media (180 days).
+    install: {recipe: iso-unattended, builder: incus-windows, target: win2022}
+    device_profile: modern
+    automation: agent
+    tags: [dns, dhcp, gpo, iis, common]
+    notes: Current-generation server platform.
+  - id: win2025
+    name: Windows Server 2025
+    edition: Standard
+    released: "2024-11"
+    support: supported
+    media:
+      source: free
+      kind: iso
+      filename: Windows_Server_2025_Eval.iso
+      url: https://software-download.microsoft.com/download/Windows_Server_2025_Evaluation.iso
+      notes: Microsoft evaluation media (180 days).
+    install: {recipe: iso-unattended, builder: incus-windows, target: win2025}
+    device_profile: modern
+    automation: agent
+    tags: [dns, dhcp, gpo, iis, newest]
+    notes: Newest server platform; useful for "what changed" exercises.

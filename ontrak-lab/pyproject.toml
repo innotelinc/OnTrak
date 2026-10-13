@@ -1,0 +1,47 @@
+[project]
+name = "ontrak"
+version = "0.1.0"
+description = "IT Support Training Platform powered by Innotel OnTrak: broken Windows, Server, Office and Linux machines, ticketed and graded, on Ubuntu + Incus"
+requires-python = ">=3.10"
+dependencies = [
+    "PyYAML>=6.0.3",
+    "cryptography>=50.0",
+    "pywinrm>=0.5.0",
+    "fastapi>=0.142",
+    "uvicorn[standard]>=0.54",
+    "jinja2>=3.1.6",
+    "python-multipart>=0.0.32",
+]
+
+[project.scripts]
+ontrak = "ontrak.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["ontrak", "ontrak.portal"]
+
+[tool.setuptools.package-data]
+# Templates and stylesheets are data, and the admin pages live one directory
+# deeper than the rest: `templates/*.html` alone ships a portal whose /admin
+# 500s when the app is installed rather than run from the source tree.
+"ontrak.portal" = ["templates/*.html", "templates/admin/*.html", "static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    # FastAPI takes its dependencies as call-in-default-argument; that is the
+    # framework's idiom, not a bug.
+    "B008",
+]

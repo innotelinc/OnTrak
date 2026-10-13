@@ -1,0 +1,386 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# ci.yml — static checks on push and pull requests.
+#
+# The repo is maintained at zero findings: structure and landing stay conformant,
+# the Python control plane is linted and tested, every scenario and catalog manifest
+# is validated, the guest PowerShell parses, the compose stacks render, and the
+# container image builds and serves the portal.
+# The attribution guard lives in its own workflow.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  structure:
+    name: Repository structure
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Conformant structure
+        run: |
+          set -euo pipefail
+          for f in README.md LICENSE .env.example .gitignore \
+                   web/landing/index.html docs/stack.md docs/catalog.md docs/roadmap.md \
+                   .github/workflows/attribution-guard.yml .githooks/guard-lib \
+                   docs/installer.md infra/build-installer-iso.sh \
+                   infra/installer/README.txt \
+                   infra/installer/autoinstall/user-data.dist \
+                   infra/installer/firstboot/ontrak-firstboot.sh \
+                   infra/installer/firstboot/ontrak-firstboot.service; do
+            if [ ! -f "$f" ]; then
+              echo "::error::missing required file: $f"
+              exit 1
+            fi
+          done
+          echo "structure: ok"
+
+      - name: .gitignore covers .env
+        run: |
+          set -euo pipefail
+          grep -q '^\.env' .gitignore || { echo "::error:: .gitignore does not list .env"; exit 1; }
+
+      - name: No licensed media committed
+        run: |
+          set -euo pipefail
+          # Media is never redistributed with the repo: the catalog describes it and
+          # the operator supplies it. A committed ISO means somebody broke that rule.
+          if git ls-files | grep -Eiq '\.(iso|img|vhd|vhdx|esd|wim)$'; then
+            echo "::error::an installation image is committed; media must stay out of the repo"
+            git ls-files | grep -Eic '\.(iso|img|vhd|vhdx|esd|wim)$'
+            exit 1
+          fi
+          echo "media: not committed (correct)"
+
+  landing:
+    name: Landing page sanity
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Landing sanity
+        run: |
+          set -euo pipefail
+          f=web/landing/index.html
+          grep -qi '<title>' "$f" || { echo "::error::landing has no <title>"; exit 1; }
+          grep -qi 'og:title' "$f" || { echo "::error::landing has no og:title"; exit 1; }
+          grep -qi 'og:description' "$f" || { echo "::error::landing has no og:description"; exit 1; }
+          grep -qi 'data:image/svg+xml' "$f" || { echo "::error::landing favicon is not inline SVG"; exit 1; }
+          if grep -Eiq 'https?://(fonts\.googleapis|cdn\.|unpkg|jsdelivr)' "$f"; then
+            echo "::error::landing makes third-party network requests"
+            exit 1
+          fi
+          echo "landing: ok"
+
+  python:
+    name: Python control plane
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Lint
+        run: ruff check ontrak tests scripts
+
+      - name: Tests
+        run: pytest -q
+
+      # The identity path, on its own line. Sign-in is Authentik's and only
+      # Authentik's, so a regression here is a range nobody can get into. The
+      # fake IdP in tests/test_oidc.py drives discovery, the code exchange and
+      # userinfo; this fails loudly if that stops holding.
+      - name: Authentik sign-in flow
+        run: pytest -q tests/test_oidc.py
+
+      # The repository's own tooling has tests too — the secret scanner and the
+      # Cerulean provisioner. They are what runs unattended against the estate, so
+      # they are held to the same bar as the platform.
+      - name: Scripts
+        run: python -m unittest discover -s scripts/tests -q
+
+      - name: Catalogue and manifest validation
+        run: |
+          python -m ontrak scenario validate
+          python -m ontrak catalog validate
+          python -m ontrak generate list >/dev/null
+
+      - name: Generated scenarios must validate
+        run: |
+          set -euo pipefail
+          # Generation is a supported path, so a primitive that cannot produce a
+          # gradeable scenario is a CI failure, not a surprise in a classroom.
+          python -m ontrak generate matrix --prefix gen 2>&1 | tee /tmp/generate.log
+          if grep -q 'FAIL' /tmp/generate.log; then
+            echo "::error::a generated scenario failed validation"
+            exit 1
+          fi
+          python -m ontrak scenario validate
+
+      - name: CLI smoke test
+        run: |
+          python -m ontrak doctor --help >/dev/null
+          python -m ontrak catalog plan ubuntu-24.04
+          python -m ontrak media status >/dev/null
+          python -m ontrak schedule show >/dev/null
+
+  guest-scripts:
+    name: Guest PowerShell parses
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Parse every scenario script
+        shell: pwsh
+        run: |
+          $failed = @()
+          $files = Get-ChildItem -Path scenarios -Recurse -Filter *.ps1
+          Write-Host "checking $($files.Count) PowerShell file(s)"
+          foreach ($file in $files) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $failed += $file.FullName
+              foreach ($e in $errors) { Write-Host "::error file=$($file.FullName)::$($e.Message)" }
+            }
+          }
+          if ($failed.Count -gt 0) { throw "$($failed.Count) guest script(s) do not parse" }
+          Write-Host "guest scripts: ok"
+
+      - name: Parse the infrastructure scripts
+        shell: pwsh
+        run: |
+          $failed = @()
+          foreach ($file in Get-ChildItem -Path infra -Recurse -Filter *.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $failed += $file.FullName
+              foreach ($e in $errors) { Write-Host "::error file=$($file.FullName)::$($e.Message)" }
+            }
+          }
+          if ($failed.Count -gt 0) { throw "$($failed.Count) infra script(s) do not parse" }
+          Write-Host "infra scripts: ok"
+
+  shell-and-compose:
+    name: Shell and compose
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Shell syntax
+        run: |
+          set -euo pipefail
+          for f in $(git ls-files '*.sh'); do
+            bash -n "$f" || { echo "::error::$f does not parse"; exit 1; }
+          done
+          echo "shell: ok"
+
+      # Warning severity, the same bar the platform stack holds itself to:
+      # the info-level findings in the guest scenario scripts (sourced-library
+      # paths, intentional word splitting) are not worth silencing by hand.
+      # The host bootstrap and the first-run setup are the reason this is here:
+      # they run as root on someone's machine before anything else does.
+      - name: ShellCheck
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files '*.sh')
+          echo "checking ${#files[@]} shell file(s)"
+          shellcheck -S warning "${files[@]}"
+          echo "shellcheck: ok"
+
+      - name: The root stack renders
+        run: |
+          set -euo pipefail
+          # The stack has to render with generated keys (the way an operator starts
+          # it) and with none at all — a first run has no .env yet, and
+          # `docker compose up` has to be a complete installation on its own.
+          # lab-setup is what makes that true: it writes .env and the shared
+          # secrets before the portal and the gateway start.
+          bash scripts/secrets.sh .env.ci >/dev/null
+          docker compose --env-file .env.ci config --quiet
+          docker compose --env-file .env.ci -f docker-compose.yml -f docker-compose.remote.yml config --quiet
+          rm -f .env.ci
+          docker compose -f docker-compose.yml config --quiet
+          echo "root stack: ok (with generated keys, and with none)"
+
+      # The first-run promise, checked as a contract rather than a comment:
+      # lab-setup must exist, must be able to write the project directory and
+      # reach the host, and the services that read what it writes must wait for
+      # it to finish. The same check runs locally in `make check-compose`.
+      - name: The first-run contract
+        run: python3 scripts/check-first-run-contract.py
+
+      - name: Compose config renders
+        run: |
+          set -euo pipefail
+          cd deploy/guacamole
+          cp .env.example .env
+          # The template ships JSON_SECRET_KEY empty on purpose: the compose file marks it
+          # required (${JSON_SECRET_KEY:?...}) so a copied .env fails loudly instead of
+          # booting a gateway whose key does not match the portal's. Render with a real
+          # generated key here, which is the path an operator actually takes.
+          JSON_SECRET_KEY="$(openssl rand -hex 16)" docker compose config --quiet
+          rm -f .env
+          echo "compose: ok"
+
+  docker:
+    name: Container image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the portal image
+        run: docker build -t ontrak:ci .
+
+      - name: A whole class runs inside the image
+        run: |
+          set -euo pipefail
+          # The image has to be useful with no hypervisor, no Windows and no secrets:
+          # demo mode is the one path every host can always run.
+          docker run --rm ontrak:ci demo run --students 3
+
+      - name: The portal boots and offers Authentik only
+        run: |
+          set -euo pipefail
+          # A representative range: pointed at Authentik. The issuer is
+          # deliberately unreachable — this checks the *posture* the portal
+          # presents, not the IdP, and a login page that offered a password form
+          # would be the regression. The flow itself is driven against the fake
+          # IdP in tests/test_oidc.py.
+          docker run -d --name ontrak-ci -p 18080:8080 \
+            -e ONTRAK_PORTAL__SECRET=ci-only-secret \
+            -e ONTRAK_GUAC__SECRET_KEY="$(openssl rand -hex 16)" \
+            -e ONTRAK_PORTAL__OIDC_ISSUER=https://auth.example.invalid/application/o/ontrak/ \
+            -e ONTRAK_PORTAL__OIDC_CLIENT_ID=ontrak \
+            -e ONTRAK_PORTAL__OIDC_CLIENT_SECRET=ci-only-oidc-secret \
+            -e ONTRAK_PORTAL__OIDC_REDIRECT_URI=http://127.0.0.1:18080/oidc/callback \
+            ontrak:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:18080/healthz
+
+          login="$(curl -fsS http://127.0.0.1:18080/login)"
+          grep -q 'Sign in with Authentik' <<<"$login" \
+            || { echo '::error::the login page does not offer Authentik'; exit 1; }
+          if grep -q 'name="password"' <<<"$login"; then
+            echo '::error::the login page renders a password form; the local login is gone'
+            exit 1
+          fi
+          echo 'login page: Authentik offered, no password form'
+
+          # The route is gone, not merely refused.
+          code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            --data 'username=alice&password=alice-pw' \
+            http://127.0.0.1:18080/login)"
+          [ "$code" = "405" ] \
+            || { echo "::error::POST /login answered $code, expected 405 (no password route)"; exit 1; }
+          echo 'POST /login: 405 (no password route)'
+
+          # The demo door exists for `ontrak demo serve` only; a real range 404s it.
+          code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/demo/login/student1)"
+          [ "$code" = "404" ] \
+            || { echo "::error::the demo sign-in answered $code on a non-demo range, expected 404"; exit 1; }
+          echo 'demo door: 404 (closed on a real range)'
+
+          # Starting the flow with an unreachable IdP is reported, not a 500.
+          code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/oidc/login)"
+          [ "$code" = "303" ] \
+            || { echo "::error::/oidc/login answered $code, expected a 303 back to /login"; exit 1; }
+          echo 'oidc start: 303 back to /login when the IdP is unreachable'
+
+          echo '--- container log ---'
+          docker logs ontrak-ci 2>&1 | tail -20
+
+      - name: Container log on failure
+        if: failure()
+        run: docker logs ontrak-ci 2>&1 | tail -50 || true
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f ontrak-ci || true
+
+  # The failure this job exists for is silent: a gateway whose JSON_SECRET_KEY does
+  # not match the portal's guac.secret_key (a stack recreated from an older .env, or a
+  # gateway deployed on its own) answers every student with "Permission denied", and
+  # the console iframe simply never opens. Both services look healthy and neither log
+  # says anything. `doctor` now asks the gateway directly, so a range that would fail
+  # a class fails here instead — with the real gateway image, doing the real signing.
+  console-gateway:
+    name: Console gateway key
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the portal image
+        run: docker build -t ontrak:ci .
+
+      - name: A matched key is accepted and a mismatched one is refused
+        run: |
+          set -euo pipefail
+          docker network create ontrak-console-ci
+          key="$(openssl rand -hex 16)"
+
+          # A gateway that really verifies the payload, signing with its own key.
+          # The same image the stack runs; guacd is not needed to answer a token.
+          docker run -d --name ontrak-console-ci-gateway --network ontrak-console-ci \
+            -e JSON_ENABLED=true -e JSON_SECRET_KEY="$key" guacamole/guacamole:1.6.0
+
+          # Wait for Tomcat to answer, through the image under test (python is there).
+          for _ in $(seq 1 45); do
+            if docker run --rm --network ontrak-console-ci ontrak:ci python3 -c \
+                 "import urllib.request; urllib.request.urlopen('http://ontrak-console-ci-gateway:8080/guacamole/', timeout=3)" \
+                 >/dev/null 2>&1; then break; fi
+            sleep 4
+          done
+
+          # Only the section is read: doctor exits non-zero on this runner for lack of
+          # a hypervisor, which is not what this job is about — so the pipeline is
+          # deliberately not allowed to fail the step on that exit code.
+          section() {
+            docker run --rm --network ontrak-console-ci \
+              -e ONTRAK_GUAC__SECRET_KEY="$1" \
+              -e ONTRAK_GUAC__BASE_URL=http://ontrak-console-ci-gateway:8080/guacamole/ \
+              ontrak:ci doctor 2>&1 | sed -n '/Console gateway/,/^$/p' || true
+          }
+
+          matched="$(section "$key")"
+          grep -q '\[  ok  \]' <<<"$matched" \
+            || { echo '::error::the console gateway key check did not accept a matching key'; echo "$matched"; exit 1; }
+          echo "$matched"
+
+          refused="$(section "$(openssl rand -hex 16)")"
+          grep -q '\[ FAIL \]' <<<"$refused" \
+            || { echo '::error::a console key the gateway refuses passed doctor'; echo "$refused"; exit 1; }
+          grep -q 'JSON_SECRET_KEY' <<<"$refused" \
+            || { echo '::error::the refusal does not name the value to fix'; echo "$refused"; exit 1; }
+          echo "$refused"
+
+      - name: Clean up
+        if: always()
+        run: |
+          docker rm -f ontrak-console-ci-gateway || true
+          docker network rm ontrak-console-ci || true

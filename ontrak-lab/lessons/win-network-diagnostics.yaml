@@ -1,0 +1,92 @@
+id: win-network-diagnostics
+title: "Windows network diagnostics: from the desktop to the command line"
+platform: windows
+category: network
+difficulty: 2
+minutes: 20
+summary: >
+  Work a "I have no network" ticket in the order that costs the least time: the
+  desktop indicators first, then address, then name resolution, then the far end —
+  in both the GUI and PowerShell, so the same evidence comes out either way.
+tags: [cli, gui, network, dns, powershell, level-1]
+objectives:
+  - Read the desktop network status and adapter list without a browser
+  - Separate address, gateway, name-resolution and service failures
+  - Collect the four commands of evidence a ticket needs
+prerequisites: []
+commands:
+  - command: Get-NetAdapter | Format-Table Name,Status,LinkSpeed
+    what: Every NIC and whether it is Up. Physical up + no address is a different fault from "adapters missing".
+  - command: ipconfig /all
+    what: The full picture — address, DHCP, DNS servers, gateway — in one command every technician recognises.
+  - command: Get-NetIPConfiguration
+    what: The same information as objects, so you can pipe it to Where-Object.
+    example: Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway }
+  - command: Test-NetConnection 10.20.0.1
+    what: Ping plus route plus interface selection in one object. Substitute for a bare ping.
+  - command: Resolve-DnsName fileserver.ontrak.lab -DnsOnly
+    what: Test the DNS resolver itself, bypassing the hosts file and NetBIOS.
+    example: Resolve-DnsName fileserver.ontrak.lab -Server 10.20.0.53
+  - command: Test-NetConnection fileserver.ontrak.lab -Port 80
+    what: Prove the service is reachable by name, not just that the name resolves.
+  - command: Get-DnsClientServerAddress -AddressFamily IPv4
+    what: Which resolvers each adapter is actually using.
+  - command: Clear-DnsClientCache
+    what: Drop the client cache after any resolver change, so the next test tells the truth.
+  - command: Get-Content $env:SystemRoot\System32\drivers\etc\hosts
+    what: Check for a manual override that makes a name resolve even when DNS is broken.
+steps:
+  - title: Start at the desktop
+    body: >
+      The taskbar indicator and Settings > Network answer "is there a link and an
+      address" in two clicks. It is not a substitute for the command line, but it
+      tells you which branch to take, and a user can be talked through it on the
+      phone.
+    command: Get-NetAdapter | Format-Table Name,Status,MediaConnectionState
+  - title: Address before names
+    body: >
+      If the adapter has an address in 169.254.x.x it never reached DHCP, and name
+      resolution cannot be the fix yet. Fix the link, the DHCP scope or the switch
+      port first. Only once there is a real address do DNS tests mean anything.
+    command: Get-NetIPAddress -AddressFamily IPv4 | Format-Table InterfaceAlias,IPAddress,PrefixOrigin
+  - title: Gateway, then the far side
+    body: >
+      Ping the default gateway by address. Success means routing works and the fault
+      is further out; failure means the fault is here. Test the remote service by IP
+      *and* by name: works by IP but not by name is, by definition, a name-resolution
+      fault.
+    command: Test-NetConnection 10.20.0.1; Test-NetConnection fileserver.ontrak.lab -Port 80
+  - title: Name resolution, tested honestly
+    body: >
+      -DnsOnly forces a real DNS query. Without it, a hosts entry or a cached answer
+      can make a broken resolver look healthy — which is exactly how "it works for
+      me" tickets happen.
+    command: Resolve-DnsName fileserver.ontrak.lab -DnsOnly; Get-DnsClientServerAddress -AddressFamily IPv4
+  - title: Write the four lines down
+    body: >
+      A ticket needs the client (hostname), the address it has, the resolver it is
+      using, and the test result. Four lines. Whoever picks the ticket up next
+      should not have to repeat your work.
+    command: "hostname; ipconfig | Select-String IPv4; Get-DnsClientServerAddress -AddressFamily IPv4"
+exercises:
+  - id: no-address
+    prompt: >
+      A laptop shows "no internet". It has address 169.254.43.7 and no gateway. Say
+      what the fault is and what you check next.
+    solution: |
+      # 169.254.x.x is APIPA: the machine never got a DHCP lease, so this is not a
+      # DNS problem. Check the link/switch port, then the DHCP scope:
+      Get-NetAdapter | Format-Table Name,Status
+      ipconfig /release; ipconfig /renew
+    verify: Get-NetIPAddress -AddressFamily IPv4 | Format-Table InterfaceAlias,IPAddress,PrefixOrigin
+  - id: name-only
+    prompt: >
+      A workstation can reach 10.20.0.10 on port 80 but cannot reach
+      fileserver.ontrak.lab on port 80. Which layer is broken, and what is the
+      fastest confirmation?
+    solution: |
+      Resolve-DnsName fileserver.ontrak.lab -DnsOnly
+      Get-DnsClientServerAddress -AddressFamily IPv4
+    verify: Resolve-DnsName fileserver.ontrak.lab -DnsOnly
+docs:
+  - Get-Help Test-NetConnection -Full

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Audit</h1>
+<p class="muted">
+  Everything the control plane did, newest first: requests, provisioning, grading,
+  tickets, pool operations, instructor and admin actions. This is the answer to "what
+  changed, and who changed it".
+</p>
+{% include "admin/_nav.html" %}
+
+<div class="card">
+  <form method="get" action="/admin/audit" class="filters">
+    <label>Kind
+      <select name="kind">
+        <option value="">all</option>
+        {% for kind, count in kinds %}
+          <option value="{{ kind }}" {% if selected == kind %}selected{% endif %}>{{ kind }} ({{ count }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Limit <input type="number" name="limit" value="{{ limit }}" min="1" max="2000"></label>
+    <button type="submit">Filter</button>
+  </form>
+  <p class="muted small">
+    {{ kinds|length }} distinct event kind(s). Provisioning failures, template builds,
+    credential rotations and reset reasons are all recorded here.
+  </p>
+</div>
+
+<div class="card">
+  <table class="grid">
+    <tr><th>when</th><th>kind</th><th>session</th><th>detail</th></tr>
+    {% for event in events %}
+      <tr>
+        <td class="muted small">{{ event["created_at"] }}</td>
+        <td><code>{{ event["kind"] }}</code></td>
+        <td>
+          {% if event["session_id"] %}
+            <a href="/admin/tickets/{{ event['session_id'] }}">#{{ event["session_id"] }}</a>
+          {% else %}<span class="muted small">—</span>{% endif %}
+        </td>
+        <td>{{ event["detail"] }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+  <p class="muted small">{{ events|length }} event(s) shown.</p>
+</div>
+{% endblock %}

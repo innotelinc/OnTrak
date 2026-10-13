@@ -1,0 +1,109 @@
+id: linux-users-and-groups
+title: Local users and groups — joiners, movers, leavers
+platform: linux
+category: security
+difficulty: 2
+minutes: 25
+summary: >
+  Create and remove accounts and groups, set and lock passwords, and run the
+  joiner/mover/leaver tasks a support desk gets weekly — including removing the
+  home directory and checking nothing was left behind.
+tags: [cli, users, groups, useradd, offboarding, security]
+objectives:
+  - Create a user with a home directory, shell and supplementary group
+  - Reset and lock a password, and understand where the hash lives
+  - Remove a leaver completely, including their home directory
+prerequisites: [linux-files-and-dirs]
+commands:
+  - command: id aisha.khan
+    what: Show a user's uid, primary group and every group they are in.
+  - command: useradd -m -s /bin/bash -G support aisha.khan
+    what: Create the account with a home directory, a login shell, and group membership.
+    example: useradd -m -s /bin/bash -c 'Aisha Khan' -G support,developers aisha.khan
+  - command: passwd aisha.khan
+    what: Set or reset a password interactively. Use `chpasswd` for non-interactive scripts.
+  - command: passwd -l aisha.khan
+    what: Lock the account (the hash is prefixed with !) without deleting it.
+  - command: usermod -aG developers aisha.khan
+    what: Add to a supplementary group. Without -a, -G *replaces* the whole list.
+    danger: usermod -G without -a silently removes every other group membership.
+  - command: groupadd supporters
+    what: Create a group before adding anyone to it.
+  - command: userdel -r tom.reeves
+    what: Delete the account and its home directory and mail spool.
+    danger: -r deletes files. Confirm the account is the leaver's before running it.
+  - command: "getent passwd | cut -d: -f1,3"
+    what: List every account and uid from the system database.
+  - command: "lastlog | grep -v Never"
+    what: Show who has actually logged in — the fastest way to spot stale accounts.
+  - command: chage -l aisha.khan
+    what: Show password and account expiry dates.
+steps:
+  - title: Two files, two halves of the story
+    body: >
+      /etc/passwd holds the public record — name, uid, gid, home, shell — and is
+      readable by everyone. /etc/shadow holds the password hash and is readable only
+      by root. When a ticket says "the user says their password is wrong", the
+      answer is in the second file: `passwd -S` prints the state without exposing
+      the hash.
+    command: passwd -S aisha.khan
+  - title: Joiner
+    body: >
+      A new starter needs an account, a group, and access. Create the group first if
+      it does not exist, then the user with -m so the home directory and skel files
+      appear, then set a password. Everything above is one line in an onboarding
+      script, and running it twice should be harmless.
+    command: groupadd -f support && useradd -m -s /bin/bash -G support aisha.khan
+  - title: Mover
+    body: >
+      Moving teams changes group membership, not the account. -a is mandatory:
+      `usermod -G` replaces the list, which is how people quietly lose access they
+      still need.
+    command: usermod -aG developers aisha.khan
+  - title: Leaver
+    body: >
+      Offboarding is a removal, not a lock, once the person has left: a locked
+      account still owns files and still appears in audits. Delete the account with
+      -r, then check for leftovers with `find / -nouser` — files owned by a uid that
+      no longer exists.
+    command: find /srv -xdev -nouser -o -xdev -nogroup
+  - title: Prove it
+    body: >
+      "I removed the user" is a claim. The evidence is: id fails, the home
+      directory is gone, and no files reference the old uid.
+    command: id tom.reeves || echo 'account gone'
+exercises:
+  - id: onboard
+    prompt: >
+      Aisha Khan joins the support team. Create her account with a home directory
+      and a bash shell, in the supplementary group support (creating the group if
+      needed), and give it a password.
+    solution: |
+      groupadd -f support
+      useradd -m -s /bin/bash -c 'Aisha Khan' -G support aisha.khan
+      echo 'aisha.khan:ChangeMe!23' | chpasswd
+    verify: id aisha.khan && getent passwd aisha.khan
+  - id: promote
+    prompt: Aisha also needs the developers group. Add it without losing the support group.
+    solution: usermod -aG developers aisha.khan
+    verify: id -nG aisha.khan
+  - id: offboard
+    prompt: >
+      Tom Reeves has left. Remove his account completely, including his home
+      directory, and show that nothing is left behind.
+    solution: |
+      userdel -r tom.reeves
+      find /home -maxdepth 1 -name 'tom.reeves' -print
+      find / -xdev -nouser 2>/dev/null | head
+    verify: id tom.reeves || echo 'gone'
+  - id: audit-stale
+    prompt: Find every account that has never logged in, excluding system accounts below uid 1000.
+    solution: |
+      awk -F: '$3 >= 1000 {print $1}' /etc/passwd | while read -r u; do
+        lastlog -u "$u" | tail -n1 | grep -q 'Never' && echo "$u"
+      done
+    verify: lastlog | grep -i never
+docs:
+  - man 8 useradd
+  - man 8 userdel
+  - man 5 shadow

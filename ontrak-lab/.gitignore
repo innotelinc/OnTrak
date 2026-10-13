@@ -1,0 +1,58 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# build/packaging artifacts
+*.egg-info/
+build/
+# the golden image export: what `make golden` writes and `make golden-pull` fetches,
+# and what `make golden-import` reads. A 6.4 GB disk does not belong in the tree.
+golden-export/
+
+# local state / secrets
+state/
+*.sqlite3
+config/local.yaml
+.env
+# A timestamped copy of `.env` (`cp .env .env.bak.20261013120000`) is what an
+# operator writes before changing the deployment's settings, and it holds the same
+# credentials in plaintext. Local artifact, never source — the same rule the root
+# repository (which this tree now lives in) states for its own backups.
+.env.bak.*
+# the local Authentik (deploy/authentik): its generated secrets, and the values
+# that point a local range at it. Both hold credentials.
+deploy/authentik/.env
+deploy/authentik/ontrak-local.env
+
+# editor and agent scratch space
+.freebuff/
+images/
+output/
+
+# installation media never belongs in the repository: the catalog describes it,
+# `ontrak media fetch` downloads the free copies, and the operator supplies the
+# licensed ones. CI fails the build if an image is ever committed.
+media/
+*.iso
+*.vhd
+*.vhdx
+*.qcow2
+*.esd
+*.wim
+
+# build artefacts of the guest image pipeline
+build-*/
+*.tar.gz
+
+# the installer ISO's build output, including the fallback credentials it writes
+# next to the image (never commit a password)
+dist/
+
+# guacamole session recordings (large, and they show a student's screen)
+deploy/guacamole/recordings/
+
+# compose env check (generated, never committed)
+.env.compose-check

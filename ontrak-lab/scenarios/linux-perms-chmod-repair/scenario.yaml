@@ -1,0 +1,107 @@
+id: linux-perms-chmod-repair
+title: The nightly deployment stopped running
+category: software
+platform: linux
+workloads: [ubuntu-24.04, debian-12]
+difficulty: 2
+minutes: 25
+pass_score: 80
+tags: [linux, permissions, chmod, cli, level-1]
+requires_internet: false
+lessons: [linux-permissions, linux-files-and-dirs]
+
+ticket:
+  from: "Dana Okafor (Platform team)"
+  system: "app-01 (Ubuntu)"
+  priority: "High"
+  channel: "Service desk"
+  reported: "After last night's restore"
+  form:
+    title: Incident write-up — deployment script permissions
+    intro: >
+      The service desk asks every ticket to end with the same three lines: what was
+      wrong, what you changed, and how you proved it. They are marked, and they are
+      what the next technician will read.
+    weight: 30
+    fields:
+      - id: symptom
+        label: Reported symptom, in your own words
+        kind: textarea
+        weight: 15
+        min_words: 8
+        placeholder: "What the user reported, and what you saw when you looked."
+      - id: root_cause
+        label: Root cause
+        kind: textarea
+        weight: 30
+        min_words: 6
+        any_of: [permission, chmod, mode, executable, 644, 755]
+        none_of: ["reinstall", "reboot the machine", "chmod 777"]
+        hint: "Name the mechanism — the file lost a permission bit, not \"the script was broken\"."
+      - id: category
+        label: Classification
+        kind: select
+        weight: 15
+        options:
+          - File permissions
+          - Ownership
+          - Disk space
+          - Network
+          - Account
+        expected: File permissions
+      - id: action
+        label: What you changed
+        kind: textarea
+        weight: 25
+        min_words: 8
+        all_of: [chmod]
+        hint: "The command, the path and the mode you chose."
+      - id: verification
+        label: How you verified it
+        kind: textarea
+        weight: 15
+        min_words: 6
+        any_of: [ran, executed, stat, ls -l, ran the script, deploy.sh]
+        hint: "Grading is not verification. What did you run, and what did it print?"
+
+briefing: |
+  app-01 runs a nightly deployment from /srv/app/deploy.sh. Last night it stopped,
+  and the operator who was on shift says the job "just didn't do anything" — no
+  error in the cron mail, no output at all.
+
+  While you are on the box, the security review flagged the same directory: an
+  export of payroll data is sitting in /srv/app and, according to the reviewer,
+  "the whole office can read it". A cache directory in the same tree was created by
+  an installer and is writable by every account on the machine.
+
+  Fix all three without widening anything that is already correct. /srv/app itself,
+  and everything that was not flagged, must keep the permissions they have now.
+
+objectives:
+  - id: deploy-executable
+    text: "/srv/app/deploy.sh is runnable by its owner and group, and by nobody else (750)"
+    weight: 30
+    critical: true
+    hint: "Read the first column of `ls -l`. A script with no x bit is a text file."
+  - id: export-private
+    text: "The payroll export is no longer readable by group or other (600)"
+    weight: 30
+    critical: true
+    hint: "`stat -c '%a %U %G %n' /srv/app/payroll-export.csv` prints the mode you need to compare."
+  - id: cache-not-world-writable
+    text: "/srv/app/cache is no longer world-writable, and is still traversable (755)"
+    weight: 20
+    hint: "Removing write is the point; removing read/execute as well would break the app that uses it."
+  - id: deploy-runs
+    text: "Running /srv/app/deploy.sh now completes and reports success"
+    weight: 20
+    hint: "A permission fix you have not exercised is a guess."
+
+hints:
+  - "Start with `ls -l /srv/app` and `stat -c '%a %n' /srv/app/*` to see all three problems at once."
+  - "Octal is three triples: owner, group, other — 7=rwx, 6=rw, 5=r-x, 4=r, 0=none."
+  - "750 means the owner and the group can run it and nobody else can. 777 is not the answer to anything."
+
+reset_notes: |
+  Reset re-clones the clean snapshot, so the 644 script, the world-readable export
+  and the 777 cache all come back.

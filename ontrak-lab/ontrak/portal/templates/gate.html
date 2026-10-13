@@ -1,0 +1,247 @@
+{#
+  The range's front door — the same gate every other OnTrak product shows.
+
+  This page is deliberately *not* an extension of `base.html`. `base.html` is the
+  range's own shell: a topbar of range navigation, the operator's brand note, and a
+  footer about simulated faults. That is the right frame for a signed-in page and the
+  wrong one for a front door, because a person arriving cold has chosen nothing yet.
+
+  So the gate wears the family's frame instead — `.page`, `.masthead`, `.gate`,
+  `.footer` — which comes from `static/unity-theme.css`, a byte-identical copy of the
+  family's canonical `theme/unity-theme.css` (copied rather than re-authored: this
+  repository cannot import across build contexts). It loads the theme and *not* the
+  range's `app.css`, because `app.css` carries the range's own palette and its own
+  `a:hover { text-decoration: underline }` — and the whole point of the gate is that
+  the mark, the name and the control are the family's, so nothing here may re-colour
+  them or underline them.
+
+  What the page says is decided by one thing only: whether this range has an identity
+  provider. With one, the page is the mark, the name and the single "Sign in" control —
+  exactly what `ontrak.innotel.us/login` draws. Without one it says so plainly rather
+  than drawing a control that could never complete, which is the same rule the other
+  products' gates follow. A demo range is the one case with something to offer instead
+  (demo mode has no provider by design), so there the accounts are listed on the gate.
+#}
+{% macro lab_mark(gradient_id, class_name, label) -%}
+{#
+  The mark, from the family's one geometry: the shield, then this product's own single
+  stroke inside it — a terminal window with a prompt waiting. The numbers are the ones
+  every OnTrak product draws (`theme/unity-theme.tsx`'s sibling, the portal's
+  `ProductMark.tsx`), so six marks in six products are one silhouette rather than six
+  escalations of it. Each instance takes its own gradient id: two elements with the same
+  id is a document that only renders because the browser picked the first one.
+#}
+<svg class="{{ class_name }}" viewBox="0 0 48 48"{% if label %} role="img" aria-label="{{ label }}"{% else %} aria-hidden="true"{% endif %} xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="{{ gradient_id }}" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="var(--brand)" />
+      <stop offset="100%" stop-color="var(--tone-lab)" />
+    </linearGradient>
+  </defs>
+  <path d="M24 4.5 L41 12 V27 C41 37.4 34 43 24 44.5 C14 43 7 37.4 7 27 V12 Z" fill="url(#{{ gradient_id }})" />
+  <path d="M15.5 18.5 h17 a2.5 2.5 0 0 1 2.5 2.5 v8 a2.5 2.5 0 0 1 -2.5 2.5 h-17 a2.5 2.5 0 0 1 -2.5 -2.5 v-8 a2.5 2.5 0 0 1 2.5 -2.5 z"
+        fill="none" stroke="var(--brand-ink)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M18 23 l2.6 2.4 -2.6 2.4" fill="none" stroke="var(--brand-ink)" stroke-width="2.6"
+        stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M24 27.8 h7" fill="none" stroke="var(--brand-ink)" stroke-width="2.6"
+        stroke-linecap="round" stroke-linejoin="round" />
+</svg>
+{%- endmacro %}
+{% macro theme_switch() -%}
+{#
+  The colour switch, in the family's markup (`.ot-theme` in the shared theme) and with
+  the family's own icons and labels — the same control the portal's `ThemeToggle`
+  renders, in Jinja rather than React, which is the only way a page with no bundler can
+  have it. It is drawn server-side with every mode unpressed and the palette named
+  after the scheme this page declares, and the script at the foot of the page corrects
+  both from the document on load: the buttons report the state in force rather than the
+  click that asked for it.
+#}
+<div class="ot-theme" role="group" aria-label="Colour theme">
+  <button type="button" data-theme-mode="system" aria-pressed="false"
+          title="Follow this computer's setting">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+         stroke-linecap="round" aria-hidden="true">
+      <rect x="2.6" y="4" width="18.8" height="13" rx="2" />
+      <path d="M8.5 20.4h7" />
+    </svg>
+    System
+  </button>
+  <button type="button" data-theme-mode="light" aria-pressed="false" title="Light theme">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+         stroke-linecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="4.2" />
+      <path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6" />
+    </svg>
+    Light
+  </button>
+  <button type="button" data-theme-mode="dark" aria-pressed="false" title="Dark theme">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5Z" />
+    </svg>
+    Dark
+  </button>
+  <button type="button" id="gate-scheme" title="Switch palette">Operations</button>
+</div>
+{%- endmacro %}
+<!doctype html>
+<html lang="en" data-scheme="operations">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>OnTrak Lab</title>
+  <!--
+    The stylesheet, then the switch, then this page's own two rules. The switch is a
+    blocking script on purpose: it has to run before the first paint so `<html>`
+    already carries the remembered mode, or the page paints the default palette and
+    then corrects itself, which reads as a flicker.
+  -->
+  <link rel="stylesheet" href="/static/unity-theme.css">
+  <script>window.UNITY_DEFAULT_SCHEME = "operations";</script>
+  <script src="/static/unity-theme.js"></script>
+  <style>
+    /* The theme draws the frame, the card, the lockup and the control, and it assumes
+       exactly two things about the page around it, both of which every product's own
+       stylesheet supplies and the theme therefore never repeats: the document's font
+       and colour (`html, body` below), and `box-sizing: border-box`. This page
+       deliberately loads no other stylesheet, and without them the gate is subtly not
+       the family's: an 8px body margin, the browser's own 15px font, a 478px card
+       instead of 420, and text that is a size taller in its line box. */
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font: 14px/1.55 var(--font-sans);
+      -webkit-font-smoothing: antialiased;
+    }
+    * { box-sizing: border-box; }
+    a { color: var(--brand); text-decoration: none; }
+    /* What is left is the two things only this gate has: the sentence that replaces the
+       control when there is no provider, and the demo roster. Neither is a second
+       palette or a second card — they are the same tokens with more text in them. */
+    .gate__note { margin: 0; color: var(--ink-soft); font-size: 13.5px; line-height: 1.55; }
+    .gate__note code { font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
+    .gate__choices { display: grid; gap: 10px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="masthead">
+      <a class="masthead__brand" href="/">
+        {#
+          The product's mark: the shield every OnTrak product carries, at the masthead's
+          size, with this product's own stroke inside it — a terminal with a prompt
+          waiting. Decoration here, because the name is in text right beside it, so it is
+          hidden from screen readers rather than labelled twice.
+        #}
+        {{ lab_mark("lab-masthead-mark", "masthead__mark", label=None) }}
+        <strong>OnTrak Lab</strong>
+        <span>{{ base_domain }}</span>
+      </a>
+      <div class="masthead__tools">
+        {{ theme_switch() }}
+      </div>
+    </header>
+
+    <main class="page__main">
+      <div class="gate">
+        <div class="gate__mark-wrap">
+          {{ lab_mark("lab-gate-mark", "gate__mark-svg", label="OnTrak Lab") }}
+          <h1 class="gate__mark">OnTrak <span>Lab</span></h1>
+        </div>
+
+        {% if flash %}
+          <p class="gate__note" role="status">{{ flash }}</p>
+        {% endif %}
+
+        {% if sso.enabled %}
+          {# The family's one control. An anchor, not a button: the handshake is a
+             browser navigation, and fetching it is what breaks it. #}
+          <a class="sso-button" href="/oidc/login">Sign in</a>
+        {% elif demo_accounts %}
+          {#
+            Demo mode. There is no provider to sign in against — that is what demo mode
+            *is* — so the honest page is not the family's single control but the roster
+            this range opened for itself. The door is passwordless on purpose and is
+            never mounted on a real range (`ontrak demo serve` only).
+          #}
+          <p class="gate__note">
+            Demo mode: this range has no identity provider to sign in against, so pick an
+            account. There is no password — demo mode is not a way into a real range.
+          </p>
+          <div class="gate__choices">
+            {% for name in demo_accounts %}
+              <a class="sso-button" href="/demo/login/{{ name }}">{{ name }}</a>
+            {% endfor %}
+          </div>
+        {% else %}
+          {#
+            No provider and no demo roster: the range has no way in at all, and only an
+            operator can fix it. Say which variables, rather than render nothing.
+          #}
+          <p class="gate__note">
+            Sign-in is not set up on this range, so there is no way in yet. Set
+            <code>ONTRAK_PORTAL__OIDC_ISSUER</code>,
+            <code>ONTRAK_PORTAL__OIDC_CLIENT_ID</code>,
+            <code>ONTRAK_PORTAL__OIDC_CLIENT_SECRET</code> and
+            <code>ONTRAK_PORTAL__OIDC_REDIRECT_URI</code> and restart the range. OnTrak
+            keeps no password of its own, so there is nothing else to switch on.
+          </p>
+        {% endif %}
+      </div>
+    </main>
+
+    <footer class="footer">
+      <span>OnTrak Lab</span>
+    </footer>
+  </div>
+
+  <script>
+    /*
+     * The theme switch, wired to the shared script in the head.
+     *
+     * The buttons report the document's state rather than the click that asked for the
+     * change, so the control cannot end up showing a preference other than the one in
+     * force. `paint()` runs once on load and again on every `unity:theme` event, which
+     * is what keeps two switches on two tabs agreeing.
+     */
+    (function () {
+      var api = window.UnityTheme || window.OntrakTheme;
+      if (!api) return;
+
+      var SCHEMES = ["desk", "operations", "soc"];
+      var LABELS = { desk: "Desk", operations: "Operations", soc: "Security ops" };
+      var modeButtons = document.querySelectorAll("[data-theme-mode]");
+      var schemeButton = document.getElementById("gate-scheme");
+
+      function paint() {
+        var mode = api.mode();
+        for (var i = 0; i < modeButtons.length; i++) {
+          modeButtons[i].setAttribute(
+            "aria-pressed",
+            String(modeButtons[i].getAttribute("data-theme-mode") === mode),
+          );
+        }
+        var scheme = api.scheme();
+        schemeButton.textContent = LABELS[scheme] || "Palette";
+        schemeButton.title = "Switch palette — currently " + (LABELS[scheme] || scheme);
+      }
+
+      for (var i = 0; i < modeButtons.length; i++) {
+        modeButtons[i].addEventListener("click", function () {
+          api.setMode(this.getAttribute("data-theme-mode"));
+        });
+      }
+      schemeButton.addEventListener("click", function () {
+        var current = SCHEMES.indexOf(api.scheme());
+        api.setScheme(SCHEMES[(current + 1) % SCHEMES.length]);
+      });
+      window.addEventListener("unity:theme", paint);
+      paint();
+    })();
+  </script>
+</body>
+</html>

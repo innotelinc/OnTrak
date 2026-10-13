@@ -1,0 +1,102 @@
+id: linux-sudo
+title: Delegating privilege with sudo
+platform: linux
+category: security
+difficulty: 3
+minutes: 25
+summary: >
+  Grant a user or group exactly the privilege they need — and no more — through
+  /etc/sudoers.d, verify it with sudo -l, and repair sudoers without locking
+  everybody out of the machine.
+tags: [cli, sudo, sudoers, least-privilege, security]
+objectives:
+  - Explain the difference between su and sudo, and why sudo is auditable
+  - Delegate one command to one group with a drop-in file
+  - Validate sudoers syntax before it takes effect
+prerequisites: [linux-users-and-groups]
+commands:
+  - command: sudo -l
+    what: List the current user's allowed commands. The fastest way to answer "can they sudo?".
+  - command: sudo -l -U ops
+    what: Check another user's policy. Works without being that user.
+  - command: sudo -n true
+    what: Non-interactive check — succeeds only if the command would not prompt for a password.
+  - command: visudo -f /etc/sudoers.d/ops
+    what: Edit a drop-in file with a syntax check. Always edit through visudo.
+    danger: Editing sudoers with a normal editor and a typo locks everyone out of sudo.
+  - command: visudo -c
+    what: Validate every sudoers file on the box and report the first error.
+  - command: "echo 'ops ALL=(root) NOPASSWD: /bin/systemctl restart nginx' > /etc/sudoers.d/ops"
+    what: One command, one group, no password. This is the shape of a real delegation.
+  - command: chmod 440 /etc/sudoers.d/ops
+    what: Drop-in files must be 0440 and owned by root, or sudo ignores them.
+  - command: "grep -rn '' /etc/sudoers.d/"
+    what: Read every delegation currently in force.
+steps:
+  - title: sudo is privilege per command, su is privilege for a session
+    body: >-
+      `su -` gives you a root shell and an audit trail that says "someone became
+      root". `sudo <command>` gives one command the privilege it needs and logs
+      which command, as whom, on which host. For a support team, the second is what
+      you want: it is least privilege *and* the evidence you need afterwards.
+    command: sudo -l
+  - title: Never hand out a blanket rule
+    body: >
+      `ops ALL=(ALL) NOPASSWD: ALL` is indistinguishable from giving out the root
+      password, except that nobody remembers they did it. Delegate the specific
+      commands an operational role actually runs, and keep /etc/sudoers for the
+      distribution's own defaults.
+    danger: A blanket NOPASSWD:ALL rule is the finding auditors look for first.
+  - title: Drop-in files, one per delegation
+    body: >
+      /etc/sudoers.d/<name> keeps delegations reviewable and removable: delete the
+      file and the privilege is gone. The filename must not contain a dot or end in
+      ~, and the file must be mode 0440 owned by root, or sudo silently skips it.
+    command: "printf '%s\n' 'ops ALL=(root) NOPASSWD: /bin/systemctl restart nginx' > /etc/sudoers.d/ops && chmod 440 /etc/sudoers.d/ops"
+  - title: Validate before you walk away
+    body: >
+      `visudo -c` parses the whole policy and names the first broken file. This is
+      the single most valuable habit in this lesson: a syntax error in sudoers can
+      take away your own root access, and if you are already root over SSH you
+      cannot fix it from the console.
+    command: visudo -c
+  - title: Prove it works, and that it does not over-grant
+    body: >
+      A delegation is only finished when you have confirmed both halves: the
+      intended user can run the intended command without a password, and the same
+      user cannot run anything else.
+    command: sudo -l -U ops
+exercises:
+  - id: delegate-restart
+    prompt: >
+      The ops group must be able to restart nginx without a password, and nothing
+      else. Implement it as a drop-in file and show the resulting policy.
+    solution: |
+      printf '%s\n' 'ops ALL=(root) NOPASSWD: /bin/systemctl restart nginx' > /etc/sudoers.d/ops
+      chmod 440 /etc/sudoers.d/ops
+      visudo -c
+      sudo -l -U ops
+    verify: sudo -l -U ops
+  - id: spot-overgrant
+    prompt: >
+      A colleague proposed `/etc/sudoers.d/helpdesk` containing `helpdesk ALL=(ALL)
+      NOPASSWD: ALL`. Explain in one line why a training lab rejects it, and write
+      the narrow alternative for resetting one user's password.
+    solution: |
+      # It grants full root with no password to everyone in the group, so a single
+      # compromised helpdesk account owns the estate.
+      printf '%s\n' 'helpdesk ALL=(root) NOPASSWD: /usr/bin/passwd [a-z]*' > /etc/sudoers.d/helpdesk
+    verify: visudo -c && sudo -l -U helpdesk
+  - id: recover-sudoers
+    prompt: >
+      sudo now prints "syntax error" and nobody can escalate. You still have a root
+      shell on another tty. Recover the machine.
+    solution: |
+      # visudo refuses to save a broken file, so recover by naming the bad file:
+      visudo -c
+      rm /etc/sudoers.d/<the-broken-file>
+      visudo -c
+    verify: sudo -n true && echo 'sudo works'
+docs:
+  - man 5 sudoers
+  - man 8 visudo

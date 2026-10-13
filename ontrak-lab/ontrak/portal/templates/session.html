@@ -1,0 +1,387 @@
+{% extends "base.html" %}
+{% set state = session.state.value %}
+{% set shown = report or preview %}
+{% set outcome_map = {} %}
+{% if shown %}{% for o in shown.outcomes %}{% set _ = outcome_map.update({o.objective_id: o}) %}{% endfor %}{% endif %}
+{% set live_states = ["ready", "in_use"] %}
+{# What is booting, said in the platform's terms: the site's golden image is a Windows
+   build, so "waiting for Windows" was the copy for a Linux container too, and read as
+   the wrong machine being started. #}
+{% set platform_name = workload.label if workload else ("a Linux machine" if scenario.is_linux else "Windows") %}
+
+{% block content %}
+<div class="session-head">
+  <div>
+    <h1>{{ scenario.title }}</h1>
+    <p class="muted">
+      Session #{{ session.id }} &middot; {{ scenario.category_label }} &middot;
+      machine <code>{{ session.instance or "pending" }}</code>
+      {% if session.host_ip %}&middot; {{ session.host_ip }}{% endif %}
+      {% if workload %}&middot; {{ workload.label }}{% endif %}
+      {% if session.time_limit_minutes %}&middot; {{ session.time_limit_minutes }} min limit{% endif %}
+    </p>
+  </div>
+  <div class="session-meta">
+    <span class="badge state-{{ state }}">{{ state }}</span>
+    {% if state in live_states %}<span class="timer">Time left <strong id="timer">--:--</strong></span>{% endif %}
+  </div>
+</div>
+
+{% if state in ["requested", "allocating", "provisioning"] %}
+  <div class="card notice">
+    <h2>Preparing your machine</h2>
+    <p>
+      Copying the scenario image and waiting for {{ platform_name }} to come up. This takes
+      {% if state == "allocating" %}about a minute on a warm pool, up to two on a cold clone{% else %}a few seconds{% endif %}.
+      This page will refresh itself.
+    </p>
+    <div class="spinner"></div>
+  </div>
+{% elif state == "error" %}
+  <div class="card error">
+    <h2>Something went wrong starting this session</h2>
+    <p><code>{{ session.error }}</code></p>
+    <p class="muted">Press Reset to try again with a fresh machine, or ask your instructor.</p>
+  </div>
+{% elif state in ["passed", "failed"] %}
+  <div class="card {{ "notice" if state == "passed" else "error" }}">
+    <h2>{{ "Passed" if state == "passed" else "Not passed" }}</h2>
+    <p>
+      {% if report %}{{ report.summary_line() }}.{% else %}This session has been submitted.{% endif %}
+      The machine has been destroyed, so there is nothing left to change — this score is final.
+    </p>
+    <p class="muted small">See <a href="/results?session={{ session.id }}">the submitted result</a> for the objective-by-objective breakdown.</p>
+  </div>
+{% endif %}
+
+<div class="layout">
+  <div class="col-console">
+    <div class="card">
+      <h2>Machine</h2>
+      {# The address is on the page for every scenario, the Linux ones included. Saying
+         "ask your instructor" made a student ask once per session for a string the
+         portal already holds, and left them with nothing when nobody was watching. #}
+      {% if address.host %}
+        <table class="kv">
+          <tr>
+            <th>{{ address.transport or "Address" }}</th>
+            <td><code>{{ address.target }}</code></td>
+          </tr>
+          {% if address.user %}<tr><th>Account</th><td><code>{{ address.user }}</code></td></tr>{% endif %}
+        </table>
+        {# The guests are on the lab's own bridge with no route in from outside it, so
+           the address identifies the machine and the console is what reaches it. That
+           distinction is the difference between a student on their own network knowing
+           where to type and knowing their laptop cannot get there at all. #}
+        <p class="muted small">
+          That address is on {{ address.reach }} and does not route from outside it.
+          {% if console_url %}The console is how you reach this machine from anywhere else.{% endif %}
+        </p>
+      {% else %}
+        <p class="muted small">This machine's address appears here as soon as it has one.</p>
+      {% endif %}
+      {% if console_refused %}
+        {# The gateway has been asked and it refused the link we signed — the console
+           would sit here blank, blaming the machine. Say what is actually wrong:
+           nothing the student can do, and one value for an operator to fix. #}
+        <div class="card error">
+          <h2>The console cannot open right now</h2>
+          <p>
+            Your machine is running — this is the lab's console gateway refusing the
+            connection, not a fault in your virtual machine.
+          </p>
+          <p class="muted small">{{ console_refused }}</p>
+          <p class="muted small">Tell your instructor; this is fixed by an operator, not by you.</p>
+        </div>
+      {% endif %}
+      {% if console_url and state in live_states %}
+        <iframe id="console" src="{{ console_url }}" title="Remote session" allow="clipboard-read; clipboard-write"></iframe>
+        <p class="muted small">
+          Click inside the screen, then press the "Send Ctrl+Alt+Del" button in the Guacamole menu if you
+          need a login prompt. Sign in with the training account shown to you by your instructor.
+        </p>
+      {% elif console_url %}
+        <p class="muted">The console appears once the machine is ready.</p>
+      {% elif scenario.is_linux %}
+        {# No remote desktop to embed: the guest is a Linux container, which speaks SSH
+           and runs no RDP server — an iframe here used to report "the remote desktop
+           server is currently unreachable", which reads like a fault in the lab rather
+           than a console that does not apply. A Linux machine's console *is* its shell
+           (guac.linux_ssh), so with the console configured this branch is not reached. #}
+        <p class="muted">
+          This scenario runs on a Linux machine, so there is no remote desktop to open
+          here — the console is its shell, and no console is configured for this
+          deployment. The address above is reachable from inside {{ address.reach }}
+          only, so there is nothing to connect to from off that network until the
+          instructor sets one up.
+        </p>
+      {% else %}
+        <p class="muted">
+          No browser console is configured (the instructor needs to set guac.base_url and
+          guac.secret_key), and the address above is reachable from inside
+          {{ address.reach }} only — there is nothing to connect to from off that network
+          until that is set up.
+        </p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-side">
+    <div class="card">
+      <h2>Ticket</h2>
+      {# The header only. The block also holds `form` — the rubric the write-up is
+         marked against — and rendering it here would hand the student the
+         answers (see Scenario.ticket_header). #}
+      {% if scenario.ticket_header %}
+        <table class="kv">
+          {% for k, v in scenario.ticket_header.items() %}<tr><th>{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}
+        </table>
+      {% endif %}
+      <div class="briefing">{{ scenario.briefing }}</div>
+      {% if lessons %}
+        <p class="muted small">
+          Lessons for this ticket:
+          {% for lesson in lessons %}<a href="/lessons/{{ lesson.id }}">{{ lesson.title }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+        </p>
+      {% endif %}
+    </div>
+
+    {% if ticket_form and state in live_states %}
+    <div class="card ticket-card">
+      <h2>{{ ticket_form.title }}</h2>
+      <p class="muted small">
+        {{ ticket_form.intro }}
+        This write-up is <strong>{{ ticket_form.weight|int }}%</strong> of your grade and is
+        marked with the machine when you hand the session in. Nothing here is recorded until then.
+      </p>
+      <form method="post" action="/sessions/{{ session.id }}/complete">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        {% for field in ticket_form.fields %}
+          {% set value = ticket_answers.get(field.id, "") %}
+          <label class="ticket-field">
+            <span class="label">{{ field.label }}{% if field.required %} <span class="muted small">required</span>{% endif %}</span>
+            <span class="weight">{{ field.weight|int }} pts{% if field.min_words %} &middot; at least {{ field.min_words }} words{% endif %}</span>
+            {% if field.kind == "textarea" %}
+              <textarea name="{{ field.id }}" rows="{{ field.rows }}" placeholder="{{ field.placeholder }}">{{ value }}</textarea>
+            {% elif field.kind == "select" %}
+              <select name="{{ field.id }}">
+                <option value="">— choose —</option>
+                {% for option in field.options %}
+                  <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+              </select>
+            {% elif field.kind == "checkbox" %}
+              <input type="checkbox" name="{{ field.id }}" value="yes" {% if value %}checked{% endif %}>
+            {% elif field.kind == "number" %}
+              <input type="number" name="{{ field.id }}" value="{{ value }}">
+            {% else %}
+              <input type="text" name="{{ field.id }}" value="{{ value }}" placeholder="{{ field.placeholder }}">
+            {% endif %}
+            {% if field.hint %}<span class="muted small">{{ field.hint }}</span>{% endif %}
+          </label>
+        {% endfor %}
+        <div class="actions">
+          {# ontrak_writeup, not `action`: a ticket may have a field of its own called
+             action, and both would be submitted under the same name (see
+             tickets.WRITEUP_ACTION). #}
+          <button type="submit" name="ontrak_writeup" value="save" class="secondary">Save draft</button>
+          <button type="submit" name="ontrak_writeup" value="preview" class="secondary">Preview mark</button>
+          <button type="submit" name="ontrak_writeup" value="complete" class="primary"
+                  onclick="return confirm('Hand this session in? The machine is graded and destroyed afterwards.')">
+            Complete &amp; End
+          </button>
+        </div>
+      </form>
+      {% if ticket_rows %}
+        <h3>Last mark{% if ticket_preview and not report %} (preview, not recorded){% endif %}</h3>
+        <ul class="objectives">
+          {% for row in ticket_rows %}
+            <li class="{% if row.passed %}done{% else %}failed{% endif %}">
+              <div class="objective-head">
+                <span class="mark">{% if row.passed %}✓{% else %}✗{% endif %}</span>
+                <span>{{ row.label }}</span>
+                <span class="weight">{{ row.weight|int }} pts</span>
+              </div>
+              <div class="detail">{{ row.detail }}</div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+      {% if report and report.has_ticket %}
+        <p class="muted small">Submitted grade: {{ report.breakdown() }}</p>
+      {% endif %}
+    </div>
+    {% elif ticket_form %}
+    <div class="card">
+      <h2>Write-up</h2>
+      {% if report and report.has_ticket %}
+        <p class="muted small">Marked with the machine: {{ report.breakdown() }}</p>
+        <ul class="objectives">
+          {% for row in ticket_rows %}
+            <li class="{% if row.passed %}done{% else %}failed{% endif %}">
+              <div class="objective-head"><span class="mark">{% if row.passed %}✓{% else %}✗{% endif %}</span><span>{{ row.label }}</span></div>
+              <div class="detail">{{ row.detail }}</div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted small">The write-up is filled in on the machine page while the session is live.</p>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="card">
+      <h2>Objectives</h2>
+      <ul class="objectives">
+        {% for objective in scenario.objectives %}
+          {% set outcome = outcome_map.get(objective.id) %}
+          <li class="{% if outcome and outcome.passed %}done{% elif outcome %}failed{% else %}unknown{% endif %}">
+            <div class="objective-head">
+              <span class="mark">{% if outcome and outcome.passed %}✓{% elif outcome %}✗{% else %}•{% endif %}</span>
+              <span>{{ objective.text }}</span>
+              <span class="weight">{{ objective.weight|int }} pts{% if objective.critical %} &middot; critical{% endif %}</span>
+            </div>
+            {% if outcome and outcome.detail %}<div class="detail">{{ outcome.detail }}</div>{% endif %}
+            {% if outcome and not outcome.passed and objective.hint %}<div class="hint">Hint: {{ objective.hint }}</div>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+      {% if report %}
+        <p class="score">
+          Submitted: <strong>{{ "%.0f%%"|format(report.score) }}</strong>
+          {% if report.resolved %}<span class="badge ok">passed</span>{% else %}<span class="badge warn">not passed</span>{% endif %}
+        </p>
+      {% elif preview %}
+        <p class="score">
+          Last check: <strong>{{ "%.0f%%"|format(preview.score) }}</strong>
+          {% if preview.resolved %}<span class="badge ok">would pass</span>{% else %}<span class="badge warn">not there yet</span>{% endif %}
+          <span class="muted small">not recorded — only Complete &amp; End is graded</span>
+        </p>
+      {% else %}
+        <p class="muted">No check run yet.</p>
+      {% endif %}
+      {% if shown and shown.error %}<p class="error">{{ shown.error }}</p>{% endif %}
+      {% if shown %}{% for note in shown.notes %}<p class="muted small">{{ note }}</p>{% endfor %}{% endif %}
+      <div class="actions">
+        {% if state in live_states + ["passed", "failed"] %}
+        <form method="post" action="/sessions/{{ session.id }}/check" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit">Check my work</button>
+        </form>
+        {% endif %}
+        {% if state in live_states %}
+        <form method="post" action="/sessions/{{ session.id }}/reset" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" class="secondary" title="Destroy this machine and get a clean one">Reset machine</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if state in live_states and not ticket_form %}
+    <div class="card submit-card">
+      <h2>Finished?</h2>
+      <p class="muted small">
+        Complete &amp; End grades the machine once, records that result, then destroys the
+        machine. Nothing from your practice checks is carried over.
+      </p>
+      <form method="post" action="/sessions/{{ session.id }}/complete" class="inline"
+            onsubmit="return confirm('Submit this session for grading? The machine is destroyed afterwards.')">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit" class="primary">Complete &amp; End</button>
+      </form>
+    </div>
+    {% elif state in live_states and ticket_form %}
+    <div class="card submit-card">
+      <h2>Handing in</h2>
+      <p class="muted small">
+        Complete &amp; End grades the machine and marks your write-up together, records one
+        result, then destroys the machine. A blank write-up scores zero for its share, and
+        the attempt cannot pass without it.
+      </p>
+    </div>
+    {% endif %}
+
+    <div class="card">
+      <h2>Hints ({{ scenario_public.hints_revealed|length }}/{{ scenario.hints|length }})</h2>
+      {% for hint in scenario_public.hints_revealed %}<p class="hint">{{ hint }}</p>{% endfor %}
+      {% if scenario_public.hints_revealed|length < scenario.hints|length %}
+        <form method="post" action="/sessions/{{ session.id }}/hint" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" class="secondary">Reveal next hint</button>
+        </form>
+        <p class="muted small">Hints are progressive: the next one gives less away than the last.</p>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2>Session</h2>
+      <form method="post" action="/sessions/{{ session.id }}/limit" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label>
+          Time limit
+          <select name="minutes">
+            {% for minutes in time_limits %}
+              <option value="{{ minutes }}" {% if session.time_limit_minutes == minutes %}selected{% endif %}>{{ minutes }} min</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit" class="secondary">Set</button>
+      </form>
+      <div class="actions">
+        {% if state in live_states %}
+        <form method="post" action="/sessions/{{ session.id }}/extend" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="minutes" value="15">
+          <button type="submit" class="secondary">+15 minutes</button>
+        </form>
+        <form method="post" action="/sessions/{{ session.id }}/end" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" class="danger">End without grading</button>
+        </form>
+        {% else %}
+          <a class="button secondary" href="/results?session={{ session.id }}">See submitted result</a>
+        {% endif %}
+      </div>
+      <details>
+        <summary>Activity</summary>
+        <ul class="timeline">
+          {% for event in events %}
+            <li><span class="muted small">{{ event["created_at"] }}</span> {{ event["kind"] }} — {{ event["detail"] }}</li>
+          {% endfor %}
+        </ul>
+      </details>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  var remaining = {{ session.seconds_remaining() or 0 }};
+  var timer = document.getElementById('timer');
+  function paint() {
+    var m = Math.floor(remaining / 60), s = remaining % 60;
+    timer.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+    if (remaining <= 300) { timer.classList.add('low'); }
+  }
+  // The countdown element is only rendered while the session is live. Guarding the whole
+  // block on it matters beyond the clock: an unguarded paint() throws on a machine that is
+  // still booting, which aborts the rest of this script — including the status polling
+  // below, so the page would never reload itself once the machine was ready.
+  if (timer) {
+    paint();
+    setInterval(function () { remaining = Math.max(0, remaining - 1); paint(); }, 1000);
+  }
+
+  {% if state in ["requested", "allocating", "provisioning"] %}
+  setInterval(async function () {
+    try {
+      var response = await fetch('/sessions/{{ session.id }}/status');
+      var data = await response.json();
+      if (data.ready || data.state === 'error') { window.location.reload(); }
+    } catch (err) { /* keep polling */ }
+  }, 5000);
+  {% endif %}
+</script>
+{% endblock %}

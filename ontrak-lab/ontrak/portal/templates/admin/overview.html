@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Administration</h1>
+<p class="muted">
+  Running the training programme: accounts, the catalogue, the marking record and the
+  audit trail. Sessions and machines for a class in progress are on
+  <a href="/instructor">the class page</a>.
+</p>
+{% include "admin/_nav.html" %}
+
+{% if problems or lesson_problems or catalog_problems %}
+  <div class="card error">
+    <h2>Health problems</h2>
+    {% for problem in problems %}<p><code>{{ problem }}</code></p>{% endfor %}
+    {% for problem in lesson_problems %}<p><code>{{ problem }}</code></p>{% endfor %}
+    {% for problem in catalog_problems %}<p><code>{{ problem }}</code></p>{% endfor %}
+  </div>
+{% else %}
+  <div class="card notice">
+    <h2>Everything validates</h2>
+    <p class="muted small">
+      {{ scenarios }} scenarios, {{ lessons }} lessons and the platform catalogue all pass
+      their own checks — targets and weights add up, every referenced lesson and workload
+      exists, and every grading script reports on the objectives its manifest declares.
+    </p>
+  </div>
+{% endif %}
+
+<div class="cards">
+  <div class="tile">
+    <h3>Accounts</h3>
+    <p class="big">{{ users.student + users.instructor }}</p>
+    <p class="muted small">{{ users.student }} student(s), {{ users.instructor }} instructor(s), {{ users.inactive }} disabled</p>
+    <a class="button secondary" href="/admin/users">Manage accounts</a>
+  </div>
+  <div class="tile">
+    <h3>Sessions</h3>
+    <p class="big">{{ live }} live</p>
+    <p class="muted small">
+      {% for state, count in by_state.items() %}{% if count %}{{ count }} {{ state }} &middot; {% endif %}{% endfor %}
+    </p>
+    <a class="button secondary" href="/admin/sessions">All sessions</a>
+  </div>
+  <div class="tile">
+    <h3>Tickets</h3>
+    <p class="big">{{ tickets.average }}%</p>
+    <p class="muted small">{{ tickets.submitted }} submitted of {{ tickets.count }} marked</p>
+    <a class="button secondary" href="/admin/tickets">Read the tickets</a>
+  </div>
+  <div class="tile">
+    <h3>Results</h3>
+    <p class="big">{{ results }}</p>
+    <p class="muted small">stored submissions (results-only policy)</p>
+    <a class="button secondary" href="/admin/results">Marking record</a>
+  </div>
+  <div class="tile">
+    <h3>Machines</h3>
+    <p class="big">{{ pool_ready }}</p>
+    <p class="muted small">{{ templates_ready }} template(s) with a clean snapshot, {{ pool_ready }} warm machine(s)</p>
+    <a class="button secondary" href="/admin/platforms">Platforms</a>
+  </div>
+  <div class="tile">
+    <h3>Schedule</h3>
+    <p class="big">{{ schedule_phase }}</p>
+    <p class="muted small">{{ schedule.windows|length }} window(s) configured, {{ "enabled" if schedule.enabled else "disabled" }}</p>
+    <a class="button secondary" href="/admin/schedule">Windows</a>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="col-console">
+    <div class="card">
+      <h2>Operations</h2>
+      <p class="muted small">
+        These act on real machines. Everything here is written to the audit log.
+        Reaping expires sessions and tops pools up; draining destroys only unclaimed
+        machines, never one a student is using.
+      </p>
+      <div class="actions">
+        <form method="post" action="/admin/maintenance" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="reap">
+          <button type="submit">Reap + refill</button>
+        </form>
+        <form method="post" action="/admin/maintenance" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="refill">
+          <button type="submit" class="secondary">Refill pools</button>
+        </form>
+        <form method="post" action="/admin/maintenance" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="action" value="validate">
+          <button type="submit" class="secondary">Validate catalogue</button>
+        </form>
+      </div>
+
+      <h3>Build every missing template</h3>
+      <p class="muted small">Slow — one boot per (scenario, platform) pair. Run it after adding a scenario.</p>
+      <form method="post" action="/admin/maintenance" class="inline"
+            onsubmit="return confirm('Build every missing template? This can take a long time.')">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="templates">
+        <button type="submit" class="secondary">Build missing templates</button>
+      </form>
+
+      <h3>Drain a pool</h3>
+      <p class="muted small">End of a class: destroys unclaimed machines only.</p>
+      <form method="post" action="/admin/maintenance" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="drain">
+        <select name="scenario_id">
+          {% for status in pool %}<option value="{{ status.scenario_id }}">{{ status.label }}</option>{% endfor %}
+        </select>
+        <button type="submit" class="danger">Drain</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Recent activity</h2>
+      <ul class="timeline">
+        {% for event in events_recent %}
+          <li><span class="muted small">{{ event["created_at"] }}</span> <strong>{{ event["kind"] }}</strong> — {{ event["detail"] }}</li>
+        {% endfor %}
+      </ul>
+      <p class="muted small">{{ events }} event(s) recorded. <a href="/admin/audit">Full audit trail</a>.</p>
+    </div>
+  </div>
+
+  <div class="col-side">
+    <div class="card">
+      <h2>Recent sessions</h2>
+      <table class="grid">
+        <tr><th>#</th><th>student</th><th>scenario</th><th>state</th></tr>
+        {% for session in recent_sessions %}
+          <tr>
+            <td><a href="/admin/sessions?student={{ session.student }}">{{ session.id }}</a></td>
+            <td>{{ session.student }}</td>
+            <td>{{ session.scenario_id }}</td>
+            <td><span class="badge state-{{ session.state.value }}">{{ session.state.value }}</span></td>
+          </tr>
+        {% endfor %}
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Settings in force</h2>
+      <table class="kv">
+        <tr><th>Session limit</th><td>{{ settings_summary.ttl_minutes }} min (default)</td></tr>
+        <tr><th>Warm pool</th><td>{{ "enabled" if settings_summary.pool_enabled else "disabled" }}, target {{ settings_summary.default_target }}, ceiling {{ settings_summary.max_total }}</td></tr>
+        <tr><th>Results</th><td>{{ "every attempt recorded" if settings_summary.persist_progress else "results only (final submission)" }}</td></tr>
+        <tr><th>On complete</th><td>{{ "destroy the machine" if settings_summary.destroy_on_complete else "leave the machine running" }}</td></tr>
+      </table>
+      <p class="muted small">Change these in <code>config/ontrak.yaml</code> or with <code>ONTRAK_*</code> environment variables.</p>
+    </div>
+
+    {% if pool_error %}
+      <div class="card error">
+        <h2>Machine state unavailable</h2>
+        <p><code>{{ pool_error }}</code></p>
+        <p class="muted small">Accounts, tickets and results still work; only the hypervisor views are missing.</p>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
