@@ -28,7 +28,10 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/db";
 import { recordAudit } from "@/lib/audit";
-import { certificatePatchFor } from "@/lib/certificates";
+import { submitCertificateToChain } from "@/lib/certificate-chain";
+import { chainConfigFromEnv, describeChainOutcome, type ChainOutcome } from "@/lib/certificate-chain-rules";
+import { certificateForAttempt, certificatePatchFor, type CertificateAttempt } from "@/lib/certificates";
+import { certificateCode } from "@/lib/credentials";
 import { announceGraded, storedCertificateOf } from "@/lib/graded-events";
 import { gradingModeForTags } from "@/lib/grading-mode";
 import { LAB_SCENARIO_TAG } from "@/lib/lab-rules";
@@ -85,23 +88,20 @@ export async function recordLabCompletion(completion: LabCompletion): Promise<La
   const timeSpentSec = labTimeSpentSec(completion.startedAt, completion.completedAt);
   // The certificate rides on the same facts as the attempt, mode included, so the
   // pasted record can say it was a live machine that graded it.
-  const certificate = certificatePatchFor(
-    {
-      learnerId: learner.id,
-      learnerName: learner.name,
-      scenarioId: scenario.id,
-      scenarioTitle: scenario.title,
-      platform: scenario.platform,
-      score: completion.score,
-      maxScore,
-      passScore,
-      completedAt: completion.completedAt,
-      skills: scenario.tags,
-      mode: "lab",
-    },
-    null,
-    completion.completedAt,
-  );
+  const certificateFacts: CertificateAttempt = {
+    learnerId: learner.id,
+    learnerName: learner.name,
+    scenarioId: scenario.id,
+    scenarioTitle: scenario.title,
+    platform: scenario.platform,
+    score: completion.score,
+    maxScore,
+    passScore,
+    completedAt: completion.completedAt,
+    skills: scenario.tags,
+    mode: "lab",
+  };
+  const certificate = certificatePatchFor(certificateFacts, null, completion.completedAt);
 
   let attemptId: string;
   try {
@@ -184,7 +184,76 @@ export async function recordLabCompletion(completion: LabCompletion): Promise<La
     certificate: await storedCertificateOf(attemptId),
   });
 
+  // Only a pass is a certificate, and only a certificate goes down the chain: `certificatePatchFor`
+  // returns a record exactly when the attempt cleared its pass mark.
+  if (certificate.certificate !== undefined) {
+    await sendCertificateDownChain(attemptId, certificateFacts);
+  }
+
   return { ok: true, attemptId, created: true };
+}
+
+/**
+ * The certificate's trip down the family's trust chain.
+ *
+ * A lab certificate is **issued by AthenIQ** — the learning platform whose enrolment
+ * entitled the learner — **signed by Signara**, and **stored on ONYX**. The range drives
+ * that itself (`src/lib/certificate-chain.ts`) because a lab session is this product's
+ * grade of a live machine rather than a course completion AthenIQ ever saw.
+ *
+ * It runs *after* the row is written, and every outcome is a value rather than an
+ * exception. That ordering is the point: a signing key that has expired is an operator's
+ * morning, and a learner's attempt that was rolled back because Signara was unreachable
+ * would be a result destroyed by somebody else's outage. The local record and its code
+ * stand either way — the chain adds a signature to them, it does not hold them up.
+ */
+async function sendCertificateDownChain(attemptId: string, facts: CertificateAttempt): Promise<void> {
+  const config = chainConfigFromEnv();
+  const record = certificateForAttempt(facts);
+
+  let outcome: ChainOutcome;
+  try {
+    outcome = await submitCertificateToChain(
+      {
+        learnerName: facts.learnerName,
+        scenarioTitle: facts.scenarioTitle,
+        platform: facts.platform,
+        score: facts.score,
+        maxScore: facts.maxScore,
+        completedAt: facts.completedAt.toISOString(),
+        code: certificateCode(record),
+        issuer: config.issuer,
+        verifyUrl: config.verifyUrl,
+        skills: record.skills ?? [],
+      },
+      { config },
+    );
+  } catch (cause) {
+    // The chain reports its own refusals; a throw is the transport falling over under it,
+    // and it is recorded the same way so nothing about a certificate is silent.
+    outcome = { kind: "refused", step: "upload", reason: cause instanceof Error ? cause.message : String(cause) } as const;
+  }
+
+  // A deployment that has not adopted the chain says nothing, on every completion.
+  if (outcome.kind === "off") return;
+
+  await recordAudit({
+    actorId: null,
+    action: "attempt.certificate_chain",
+    targetType: "attempt",
+    targetId: attemptId,
+    detail: {
+      outcome: outcome.kind,
+      detail: describeChainOutcome(outcome),
+      ...(outcome.kind === "signed"
+        ? { requestId: outcome.requestId, documentId: outcome.documentId, objectKey: outcome.objectKey }
+        : {}),
+    },
+  });
+
+  if (outcome.kind !== "signed") {
+    console.error(`certificate chain (attempt ${attemptId}): ${describeChainOutcome(outcome)}`);
+  }
 }
 
 /**

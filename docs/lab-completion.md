@@ -101,8 +101,81 @@ Then it records an `attempt.lab_completion` entry in the append-only audit chain
 does: the webhook consumer sees `data.mode = "lab"`, and any learning-platform
 passthrough is a no-op because a lab attempt has no launch.
 
+## The chain: what happens to the certificate next
+
+A code a learner can paste into `/verify` is worth exactly what the database that
+issued it is worth. The family's trust chain is the other half: **AthenIQ issues** the
+credential (the learning platform whose enrolment entitled the learner to the range),
+**Signara signs** it (the stack's only document-signing surface), and **ONYX stores**
+the signed artifact (the stack's only object storage).
+
+The range drives that chain itself, from
+[`src/lib/certificate-chain.ts`](../src/lib/certificate-chain.ts) — AthenIQ's own
+certificate bridge signs *course* completions, and a lab session is not one: it is this
+product's grade of a live machine, reported over the route above. Writing into another
+product's tables to describe work it never saw is the thing being avoided, so instead
+the sheet goes straight to Signara and the result is stored here. `ONTRAK_CERT_ISSUER`
+keeps AthenIQ's name on the credential it is entitled through, and the sheet prints it.
+
+**It runs after the row is written, and it never decides whether anybody passed.** The
+completion and its code stand whether the chain signs or not; every outcome is a value
+that is recorded rather than an exception that could roll a learner's result back. A
+signing key that expired is an operator's morning, and a result destroyed by somebody
+else's outage is not the same failure.
+
+### The settings
+
+The chain is **off** until every one of these is set — a half-configured chain is
+refused rather than started, because a certificate that is neither local nor signed is
+one nobody can use:
+
+| Setting | What it is |
+| --- | --- |
+| `ONTRAK_SIGNARA_API_URL` | Signara's API base |
+| `ONTRAK_SIGNARA_API_KEY` | A machine key minted in Signara's portal |
+| `ONTRAK_CERT_SIGNER_NAME` / `ONTRAK_CERT_SIGNER_EMAIL` | Who signs — a person, not the product |
+| `ONTRAK_ONYX_S3_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` | ONYX's S3 surface and its own pair |
+| `ONTRAK_ONYX_S3_BUCKET` / `_REGION` | Where artifacts live (`ontrak-certificates` by default) |
+| `ONTRAK_CERT_ISSUER` | Who issued it — `AthenIQ` by default |
+| `ONTRAK_TRAINING_VERIFY_URL` | Printed on the sheet, so the sheet carries the way to check itself |
+
+The bucket is the one thing the chain assumes and cannot make for itself, so it is
+bootstrapped once per ONYX with this repository's own SigV4 code:
+
+```
+npm run certs:bucket      # PUT /<bucket>, then reads the store back
+```
+
+It signs with the same `sigv4Headers` the uploads use, so a bucket that appears is
+proof ONYX accepts this implementation before a certificate depends on it. Re-running
+it is safe: an existing bucket is reported as such. The artifact is
+`certificates/<year>/<code>.pdf` — the learner's code, not the attempt id, because the
+code is what somebody holding a printed sheet actually has — with the provenance record
+beside it as `.json`.
+
+### The four outcomes
+
+| Outcome | Meaning |
+| --- | --- |
+| `off` | Nothing is configured. Silent, on every completion: the deployment keeps the local record exactly as it did before this existed. |
+| `misconfigured` | Some of it is set. The recorded reason **names the variables**, because "the certificate was not signed" without that is a support ticket rather than a fix. The chain does not start. |
+| `signed` | Signara signed it (a request id) and the artifact is on ONYX (an object key). |
+| `signed-unstored` | Signed and not stored — an ONYX credential to fix, named so somebody can finish the job. |
+| `refused` | One leg said no: `upload` (the PDF), `request` (the signing request) or `sign`. The reason is the provider's own words. Every outcome except `signed` is also written to stderr, so it is in the container log and not only in the audit chain. |
+
+All of them are recorded against the attempt as `attempt.certificate_chain` in the
+append-only audit chain — so "was this certificate signed, and where is it kept?" is a
+question this product answers rather than one an operator asks three services.
+
 ## Caveats
 
+- **The chain has not been driven end to end yet.** Its rules and its Signara flow are
+  covered by unit tests (`tests/certificate-chain.test.ts`), against a stub transport that
+  records every request, and the ONYX leg has been exercised against the live store
+  (`npm run certs:bucket`: the bucket exists, the signature is accepted, the store lists
+  it). What no run here has yet done is take a **real completion** all the way down the
+  chain and report `signed` — Signara's document, signing request and signature steps have
+  only ever been answered by the stub.
 - **Reported from a live lab host, once.** The route has been driven end to end twice.
   First with a hand-typed body: `sess-2026-10-08-0001` against `net-dns-failure`, answered
   `201`, retry `200` with the same `attemptId`, `GRADED` with `gradingMode = 'lab'` and a
