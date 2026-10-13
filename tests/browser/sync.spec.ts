@@ -26,11 +26,19 @@
  * with no `ONTRAK_SYNC_BASE_URL` the whole file skips rather than failing a checkout that
  * never launched the stack. `npm run test:e2e:sync` supplies the address and boots both
  * halves — see `playwright.sync.config.ts`.
+ *
+ * And it will not drive a deployment that is not this machine without being told to:
+ * the spec writes as it goes, so an address that came from somewhere other than the
+ * runner's own harness is refused by name. See `tests/support/live-target.ts`.
  */
 
 import { test, expect, type Page } from "@playwright/test";
 
+import { liveRefusal } from "../support/live-target";
+
 const BASE_URL = process.env.ONTRAK_SYNC_BASE_URL;
+/** Why this sweep must not drive the dashboard, or null when it may — see `tests/support/live-target.ts`. */
+const BASE_REFUSAL = liveRefusal("ONTRAK_SYNC_BASE_URL", BASE_URL);
 const USERNAME = process.env.ONTRAK_SYNC_ADMIN_USER ?? "admin";
 const PASSWORD = process.env.ONTRAK_SYNC_ADMIN_PASSWORD ?? "change-me-ontrak";
 /** The container the fake Network runs, and the ref the scan flagged as behind. */
@@ -59,6 +67,10 @@ function url(path: string): string {
 }
 
 test.skip(!BASE_URL, "set ONTRAK_SYNC_BASE_URL (or run `npm run test:e2e:sync`) to drive the dashboard");
+// And it refuses an address that is not this machine unless the run says so: this spec
+// claims a remit, rolls it and gives it back, which is a write to whatever it is pointed at.
+// `playwright.sync.config.ts` starts its own harness on loopback; a deployment is opt-in.
+test.skip(Boolean(BASE_REFUSAL), BASE_REFUSAL ?? "");
 
 /** The section whose heading is this text — the page's own unit of interest. */
 function section(page: Page, name: string) {

@@ -38,9 +38,24 @@ import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import type { AxeResults } from "axe-core";
 
+import { liveRefusal } from "../support/live-target";
+
 const BASE_URL = process.env.ONTRAK_TIX_BASE_URL;
 const EMAIL = process.env.ONTRAK_TIX_EMAIL ?? "agent@acme.test";
 const PASSWORD = process.env.ONTRAK_TIX_PASSWORD ?? "ChangeMe123";
+
+/** Why this sweep must not drive the desk, or null when it may — see `tests/support/live-target.ts`. */
+const BASE_REFUSAL = liveRefusal("ONTRAK_TIX_BASE_URL", BASE_URL);
+
+/*
+ * `ONTRAK_TIX_BASE_URL` is also what a deployment records as its own public name, and this
+ * repository's `.env` holds the production desk's. So a shell that sourced it would sweep
+ * production — signing in, filing tickets, declaring incidents, storing evidence — and
+ * report success. The unit-level live files had exactly that bug; this is the same rule for
+ * the surface that reaches further. Set `ONTRAK_E2E_ALLOW_REMOTE=1` when the address is a
+ * rehearsal desk you mean to write to.
+ */
+test.skip(Boolean(BASE_REFUSAL), BASE_REFUSAL ?? "");
 
 /** The Tix app is not under Playwright's `baseURL`, so build absolute URLs. */
 function url(path: string): string {
