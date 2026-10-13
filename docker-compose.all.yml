@@ -289,15 +289,31 @@ services:
       ONTRAK_TIX_OIDC_CLIENT_SECRET: ${ONTRAK_TIX_OIDC_CLIENT_SECRET:-}
       # Outbound provisioning (the desk's people, pushed to the provider). The
       # endpoint is the network name, because this is server-to-server and needs no
-      # browser; the token is a credential, so it lives in the environment rather
-      # than in a row.
+      # browser.
+      #
+      # The *token* is deliberately not named here. `environment:` beats
+      # `env_file:`, and this block is interpolated against the family project's
+      # `.env` — the repo root's — which is also the training app's `env_file`. A
+      # credential named here would therefore come from the root file, where it
+      # cannot be a `vault://` reference (the training app's entrypoint refuses to
+      # boot with one it cannot resolve), and being empty here it would *shadow* the
+      # reference the desk's own `.env` carries — a desk that boots with an empty
+      # connector token and reports provisioning as unconfigured. The desk reads
+      # `ONTRAK_TIX_SCIM_TOKEN` from `ontrak-tix/.env` (the `env_file` above) as
+      # `vault://cerulean/ontrak/tix#ONTRAK_TIX_SCIM_TOKEN`, and resolves it at boot.
       ONTRAK_TIX_SCIM_BASE_URL: ${ONTRAK_TIX_SCIM_BASE_URL:-http://sentinel-app:8787}
-      ONTRAK_TIX_SCIM_TOKEN: ${ONTRAK_TIX_SCIM_TOKEN:-}
     volumes:
       - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
       - /etc/localtime:/etc/localtime:ro
       - ontrak-family-tix-blobs:/app/.ontrak-tix-blobs
       - ontrak-family-tix-evidence:/app/.ontrak-tix-evidence
+      # This stack's Cerulean Vault token, narrowed to cerulean/data/ontrak — the same
+      # read-only mount Sentinel and Genie take. The desk needs it for the one value it
+      # keeps in Vault (`ONTRAK_TIX_SCIM_TOKEN`, the outbound provisioning token in its
+      # own `.env`): without the mount the entrypoint cannot resolve the reference and
+      # refuses to boot, which is the designed behaviour — a container that started
+      # anyway would be holding the literal `vault://…` as a credential.
+      - ./data/vault/token/ontrak.token:/vault/token/ontrak.token:ro
     healthcheck:
       test:
         - CMD
@@ -515,6 +531,13 @@ services:
       - ontrak-family-sync-data:/var/lib/ontrak
       - ${ONTRAK_SSH_KEY:-/root/.ssh/id_ed25519}:/root/.ssh/id_ed25519:ro
       - ${ONTRAK_SSH_KNOWN_HOSTS:-/root/.ssh/known_hosts}:/root/.ssh/known_hosts
+      # This stack's Cerulean Vault token, narrowed to cerulean/data/ontrak — the same
+      # read-only mount Sentinel, Genie and Tix take. The API keeps its session secret
+      # and its registry credential as `vault://` values in `ontrak-sync/.env`, so
+      # without this mount the entrypoint cannot resolve them and refuses to boot: a
+      # service that started anyway would be holding the literal reference as a
+      # credential, which looks configured and is not.
+      - ./data/vault/token/ontrak.token:/vault/token/ontrak.token:ro
     ports:
       - "${ONTRAK_SYNC_BIND_HOST:-0.0.0.0}:${ONTRAK_SYNC_API_PORT:-8420}:8420"
     healthcheck:
@@ -543,6 +566,10 @@ services:
     environment:
       TZ: ${TZ:-America/New_York}
       ONTRAK_API_INTERNAL: http://sync-api:8420
+      # The family's own name, printed under this product's name in the masthead —
+      # the same variable the portal reads, so the two front doors cannot print
+      # different domains.
+      ONTRAK_PORTAL_BASE_DOMAIN: ${ONTRAK_PORTAL_BASE_DOMAIN:-ontrak.innotel.us}
     ports:
       - "${ONTRAK_SYNC_BIND_HOST:-0.0.0.0}:${ONTRAK_SYNC_WEB_PORT:-8421}:8421"
     healthcheck:
@@ -754,6 +781,12 @@ services:
     volumes:
       - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
       - /etc/localtime:/etc/localtime:ro
+      # The same read-only Vault token as the rest of the family: the portal's own
+      # `vault://` values (in `ontrak-portal/.env`) are resolved by its entrypoint
+      # before it serves, and an unresolved reference stops it from booting rather
+      # than letting it come up holding the reference as a secret.
+      - ./data/vault/token/ontrak.token:/vault/token/ontrak.token:ro
+
 volumes:
   ontrak-family-training-db:
   ontrak-family-training-storage:
