@@ -2,7 +2,15 @@ import type { Metadata } from "next";
 
 import { ThemeToggle } from "../../components/ThemeToggle";
 
-export const metadata: Metadata = { title: "Sign in" };
+/**
+ * The tab says which product this is, not which page.
+ *
+ * Every other OnTrak front door names its product in the title bar, and this one used
+ * to name the form instead: "Sign in". A person with the desk, the console and the
+ * training range open in three tabs could not tell which was which without reading
+ * each one — the page already says "Sign in" in the one control it has.
+ */
+export const metadata: Metadata = { title: "OnTrak Tix" };
 
 /**
  * Sign-in: single sign-on for the one desk, and nothing else.
