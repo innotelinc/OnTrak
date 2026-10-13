@@ -47,6 +47,8 @@ const HOST = process.env.ONTRAK_SYNC_HOST ?? "i1";
  */
 const ADOPT = process.env.ONTRAK_SYNC_ADOPT ?? "off";
 const ADOPTING = ADOPT !== "off";
+/** The family's own name, which the masthead prints under the product's. */
+const DOMAIN = process.env.ONTRAK_PORTAL_BASE_DOMAIN ?? "ontrak.innotel.us";
 
 /** The credentials/CSRF the API insists on for a cookie-authenticated write. */
 const CSRF = { "X-Ontrak-CSRF": "1" };
@@ -100,6 +102,25 @@ async function signIn(page: Page): Promise<void> {
 }
 
 test.describe("the rollouts console", () => {
+  test("the console wears the family's masthead", async ({ page }) => {
+    await signIn(page);
+
+    // The same bar the portal draws on every page: the product's mark, its name and the
+    // family's own address on the left, and who the console thinks you are on the right.
+    // It used to be a small block at the top of the rail, which made Sync read as a tool
+    // with its own chrome rather than as one of the products — and left the address
+    // nobody can look up while they are handing out a link.
+    const masthead = page.locator("header.masthead");
+    await expect(masthead).toBeVisible();
+    await expect(masthead).toContainText("OnTrak Sync");
+    await expect(masthead).toContainText(DOMAIN);
+    await expect(masthead.getByRole("group", { name: "Colour theme" })).toBeVisible();
+
+    // The rail is navigation, not a second header: the product's name lives in the
+    // masthead now, and the rail starts with the work.
+    await expect(page.locator("nav.nav .brand")).toHaveCount(0);
+  });
+
   test("an empty remit says so, and the Network's images say who owns them", async ({ page }) => {
     const faults: string[] = [];
     page.on("console", (message) => {

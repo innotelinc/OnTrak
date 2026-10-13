@@ -31,71 +31,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "@/lib/api";
 import type { AppUser, Meta } from "@/lib/types";
 
-import { ThemeToggle } from "./ThemeToggle";
-
-/** The OnTrak Sync mark: two stacked plates with a refresh ring between — package and
- * container update monitoring, plain and simple. Flat, 48×48, brand-toned, the same
- * style every OnTrak product carries on its login. */
-const SYNC_MARK =
-  <svg
-    className="gate__mark-svg"
-    viewBox="0 0 48 48"
-    role="img"
-    aria-label="OnTrak Sync"
-    width="44"
-    height="44"
-  >
-    <defs>
-      <linearGradient id="sync-mark" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stopColor="var(--brand)" />
-        <stop offset="100%" stopColor="var(--tone-sync)" />
-      </linearGradient>
-      <linearGradient id="sync-mark-dark" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stopColor="var(--tone-sync)" />
-        <stop offset="100%" stopColor="var(--brand)" />
-      </linearGradient>
-    </defs>
-    <path
-      d="M8 13 h13 a3 3 0 0 1 3 3 v4 a3 3 0 0 1 -3 3 h-5 a3 3 0 0 1 -3 -3 v-3 z"
-      fill="url(#sync-mark)"
-    />
-    <path
-      d="M27 13 h13 a3 3 0 0 1 3 3 v4 a3 3 0 0 1 -3 3 h-5 a3 3 0 0 1 -3 -3 v-3 z"
-      fill="url(#sync-mark-dark)"
-    />
-    <path
-      d="M18 30 v5 a3 3 0 0 0 3 3 h4 a3 3 0 0 0 3 -3 v-5"
-      fill="none"
-      stroke="var(--brand-ink)"
-      strokeWidth="2.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    <path
-      d="M22 33 l2 -2 l1.4 1.4"
-      fill="none"
-      stroke="var(--brand-ink)"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    <path
-      d="M33 30 v5 a3 3 0 0 0 3 3 h4 a3 3 0 0 0 3 -3 v-5"
-      fill="none"
-      stroke="var(--brand-ink)"
-      strokeWidth="2.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    <path
-      d="M37 33 l2 -2 l1.4 1.4"
-      fill="none"
-      stroke="var(--brand-ink)"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </svg>;
+import { SyncGateMark } from "./ProductMark";
 
 export function LoginPanel({
   notice,
@@ -208,12 +144,11 @@ export function LoginPanel({
   return (
     <div className="gate">
       <div className="gate__mark-wrap">
-        {local ? null : SYNC_MARK}
         {local ? (
           <h1 className="gate__mark">Break-glass sign-in</h1>
         ) : (
           <>
-            {SYNC_MARK}
+            <SyncGateMark />
             <h1 className="gate__mark">
               OnTrak <span>Sync</span>
             </h1>
@@ -221,9 +156,6 @@ export function LoginPanel({
         )}
       </div>
 
-      <div className="gate__tools">
-        <ThemeToggle />
-      </div>
       {local ? (
         <p>
           OnTrak Sync is single sign-on only. This screen is the local fallback for the day the identity
@@ -259,11 +191,12 @@ export function LoginPanel({
       {/* ── the normal path ─────────────────────────────────────────────────── */}
       {!local ? (
         ssoEnabled ? (
-          <div className="gate__sso">
-            <a className="sso-button" href={api.ssoStartUrl(next)}>
-              Sign in
-            </a>
-          </div>
+          // The anchor is a direct child of `.gate`, as it is on every other
+          // product's gate: the card's own column gap is what spaces it, so a
+          // wrapper element here was one more thing to keep in step.
+          <a className="sso-button" href={api.ssoStartUrl(next)}>
+            Sign in
+          </a>
         ) : meta !== null ? (
           <p className="faint" style={{ marginTop: 14, marginBottom: 0 }}>
             Single sign-on is not configured for this deployment, so there is no way to sign in yet.

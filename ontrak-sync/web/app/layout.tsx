@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { Shell } from "@/components/Shell";
+import { familyDomain } from "@/lib/family";
 import { SessionProvider } from "@/lib/session";
 
 import "./globals.css";
@@ -20,6 +21,10 @@ export const metadata: Metadata = {
  * purpose, because that is what makes it run before the first paint — and it is a
  * byte-identical copy of the canonical `theme/unity-theme.js` (checked by
  * `make theme`).
+ *
+ * The family's own address is read here, once, and handed to the shell: the shell
+ * draws the masthead that prints it, and that masthead is a client component which
+ * cannot read a server-side variable without disagreeing with the server's markup.
  */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -37,7 +42,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             shell needs the identity to decide whether to draw itself at all, and
             the login page has to be able to sign somebody in without it. */}
         <SessionProvider>
-          <Shell>{children}</Shell>
+          <Shell domain={familyDomain()}>{children}</Shell>
         </SessionProvider>
       </body>
     </html>

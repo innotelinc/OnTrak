@@ -98,6 +98,11 @@ services:
       # built with an empty NEXT_PUBLIC_ONTRAK_API; the service name resolves on
       # the compose network, which is why it is not the published LAN address.
       ONTRAK_API_INTERNAL: ${ONTRAK_API_INTERNAL:-http://ontrak-api:8420}
+      # The family's own name, printed under this product's name in the masthead — the
+      # same variable the portal reads, so the two front doors cannot print different
+      # domains. The code has the same default; setting it here is what makes a
+      # deployment that renames the family rename it on this product too.
+      ONTRAK_PORTAL_BASE_DOMAIN: ${ONTRAK_PORTAL_BASE_DOMAIN:-ontrak.innotel.us}
     ports:
       - "${ONTRAK_WEB_BIND:-192.168.1.21}:8421:8421"
     healthcheck:

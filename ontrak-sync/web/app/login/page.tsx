@@ -1,30 +1,26 @@
-"use client";
+import { GateFrame } from "@/components/GateFrame";
+import { familyDomain } from "@/lib/family";
+
+import { LoginRoute } from "./LoginRoute";
 
 /**
- * `/login` — the same panel the shell draws, on its own page.
+ * `/login` — the same panel the shell draws, on its own page, inside the family's
+ * front door.
  *
- * It exists so that a link, a bookmark, or the Cerulean SSO callback can name a
- * destination. The shell gates every other route with the identical component, so
- * there is one form and one set of decisions, not two that drift.
+ * The route exists so that a link, a bookmark, or the Cerulean SSO callback can name a
+ * destination. The frame it draws is the same one the shell draws for a signed-out
+ * visitor on every other route, so `/` and `/login` are the same front door under two
+ * addresses — and neither is two headers over one screen, because the shell hands the
+ * sign-in routes their own children untouched.
+ *
+ * The address under the product's name comes from `familyDomain()` (`lib/family.ts`),
+ * which the signed-in console's masthead reads as well — the same value in both, so a
+ * product cannot print one name at its front door and another inside it.
  */
-
-import { useRouter } from "next/navigation";
-
-import { LoginPanel } from "@/components/LoginPanel";
-import { useSession } from "@/lib/session";
-
 export default function LoginPage() {
-  const { adopt } = useSession();
-  const router = useRouter();
-
   return (
-    <LoginPanel
-      notice={null}
-      onSignedIn={(user) => {
-        adopt({ ...user, via: "cookie" });
-        const next = new URLSearchParams(window.location.search).get("next") || "/";
-        router.replace(next.startsWith("/") && !next.startsWith("//") ? next : "/");
-      }}
-    />
+    <GateFrame domain={familyDomain()}>
+      <LoginRoute />
+    </GateFrame>
   );
 }
