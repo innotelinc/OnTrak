@@ -19,13 +19,14 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 
-import { identityServicesFor } from "../../../../lib/db";
+import { identityServicesFor, prisma } from "../../../../lib/db";
 
 /*
- * This route no longer reads `prisma` directly: the desk's single identity
- * provider is reached through `identityServicesFor().connectionFor`, and the
- * desk slug comes from `ONTRAK_TIX_DEFAULT_TENANT`, not from a workspace typed
- * by a person. The workspace/prisma path is gone with the multi-tenant feature.
+ * The desk slug comes from `ONTRAK_TIX_DEFAULT_TENANT`, not from a workspace
+ * typed by a person, but it is still a slug: the identity connection is keyed by
+ * the tenant's id, so the slug is resolved to the tenant row first. Passing the
+ * slug straight to `connectionFor` finds nothing and reads as "single sign-on is
+ * not configured" on a deployment that has it configured.
  */
 import { HttpOidcClient, createPkcePair, randomUrlSafe } from "../../../../lib/oidc-client";
 import { buildAuthorizationUrl, deploymentOrigin, safeReturnTo, ssoRedirectUri } from "../../../../lib/oidc-rules";
@@ -51,13 +52,16 @@ function fail(request: NextRequest, message: string): NextResponse {
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   // This deployment is single-desk: the one identity provider is the one stored
-  // for this desk, read off the desk's own tenant rather than a slug typed by a
-  // person. The sign-in page already hands the browser here from the SSO button,
-  // so nobody reaches this route with a `tenant` they typed.
-  const defaultTenant = (process.env.ONTRAK_TIX_DEFAULT_TENANT ?? "").trim().toLowerCase();
-  if (!defaultTenant) return fail(request, "Single sign-on is not configured for this deployment.");
+  // for the desk named by `ONTRAK_TIX_DEFAULT_TENANT`. Nothing is typed — the
+  // sign-in page's button hands the browser straight here — but the name is a
+  // slug, and the connection is keyed by the tenant's id, so it is resolved.
+  const slug = (process.env.ONTRAK_TIX_DEFAULT_TENANT ?? "").trim().toLowerCase();
+  if (!slug) return fail(request, "Single sign-on is not configured for this deployment.");
 
-  const connection = await identityServicesFor().connectionFor(defaultTenant);
+  const tenant = await prisma.tenant.findUnique({ where: { slug } });
+  if (!tenant) return fail(request, "Single sign-on is not configured for this deployment.");
+
+  const connection = await identityServicesFor().connectionFor(tenant.id);
   if (!connection) return fail(request, "Single sign-on is not configured for this deployment.");
   if (connection.protocol !== "OIDC") {
     return fail(request, "This deployment is configured for SAML; only OIDC is supported today.");
@@ -80,7 +84,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     state,
     nonce,
     codeVerifier: pkce.verifier,
-    tenantId: defaultTenant,
+    tenantId: tenant.id,
     returnTo: safeReturnTo(request.nextUrl.searchParams.get("returnTo")) ?? "",
     at: new Date().toISOString(),
   });

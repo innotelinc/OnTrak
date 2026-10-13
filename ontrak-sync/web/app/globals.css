@@ -59,16 +59,19 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 /* ── shell ─────────────────────────────────────────────────────────────── */
 .shell { display: flex; min-height: 100vh; }
 
+/* The sidebar is a column of the page, not a pane of its own. Sizing it with
+   `max-content` lets the labels and the family notes set the width instead of a
+   fixed 208px clipping them; dropping the fixed `100vh` height and its own
+   `overflow-y` is what stops it reading as a separate window with a scrollbar of
+   its own — the page scrolls as one and the sidebar scrolls with it. */
 .nav {
-  width: 208px;
-  flex: 0 0 208px;
+  width: max-content;
+  min-width: 208px;
+  max-width: 320px;
+  flex: 0 0 auto;
   border-right: 1px solid var(--line);
   background: var(--bg-raised);
   padding: 14px 0;
-  position: sticky;
-  top: 0;
-  height: 100vh;
-  overflow-y: auto;
 }
 
 .brand {
