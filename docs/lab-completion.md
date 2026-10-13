@@ -169,13 +169,31 @@ question this product answers rather than one an operator asks three services.
 
 ## Caveats
 
-- **The chain has not been driven end to end yet.** Its rules and its Signara flow are
-  covered by unit tests (`tests/certificate-chain.test.ts`), against a stub transport that
-  records every request, and the ONYX leg has been exercised against the live store
-  (`npm run certs:bucket`: the bucket exists, the signature is accepted, the store lists
-  it). What no run here has yet done is take a **real completion** all the way down the
-  chain and report `signed` — Signara's document, signing request and signature steps have
-  only ever been answered by the stub.
+- **Driven end to end against the live stack, and refused at Signara's door — for a
+  provisioning reason, not a code one.** A real completion was filed
+  (`sess-2026-10-13-chain-verify-1`, `linux-perms-chmod-repair`, 9/10, answered `201`) and
+  the chain ran. It stopped at the **upload** step with Signara's own sentence:
+
+  > No active tenant. Join or create an organization to use this endpoint.
+
+  The key itself is accepted — Signara's `/api/v1/auth/me` answers with the key's own
+  identity (`apikey:…`, display name `ontrak-training-cert-chain`) — but the account it
+  belongs to is in no organization, and every document and signature endpoint is
+  tenant-scoped, so it answers `403` to all of them. **An operator fixes this in Signara,
+  not here**: create the organization (its `POST /api/v1/organizations` takes a name) or
+  join one, then mint a key whose account is in it. Nothing about the chain's own steps has
+  been reached yet: the document, signing-request and signature calls are pinned by
+  `tests/certificate-chain.test.ts` against a stub transport, and no live run has got past
+  the first.
+
+  The refusal is recorded exactly as designed, which is the half worth noting: the outcome
+  is `refused` in the append-only audit chain against the attempt, with the provider's own
+  words, and the same line goes to stderr. (The first version of that reader reported only
+  `FORBIDDEN (403)` — NestJS puts the sentence in `message`, as an array — so the reason
+  above is what the fix now records.)
+- **The ONYX leg is proven against the live store.** `npm run certs:bucket` puts the
+  bucket with the same SigV4 code the uploads use: it exists, the signature is accepted,
+  and a `GET` lists it.
 - **Reported from a live lab host, once.** The route has been driven end to end twice.
   First with a hand-typed body: `sess-2026-10-08-0001` against `net-dns-failure`, answered
   `201`, retry `200` with the same `attemptId`, `GRADED` with `gradingMode = 'lab'` and a

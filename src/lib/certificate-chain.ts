@@ -122,10 +122,24 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 
 const textOf = (value: unknown): string => (typeof value === "string" ? value : "");
 
-/** The reason a Signara response carries, or its status when it carries none. */
+/**
+ * The reason a Signara response carries, or its status when it carries none.
+ *
+ * A refused certificate is only useful if the operator is told *why*, so the provider's
+ * own sentence is preferred over its status, and its status over nothing: Signara is a
+ * NestJS service, and its refusals arrive as
+ * `{ statusCode, error: "FORBIDDEN", message: ["No active tenant. Join or create an
+ * organization to use this endpoint."] }` — where the sentence that says what to do is
+ * in `message`, as an **array**, and `error` is only the HTTP word for it. Reading the
+ * array first is the difference between a recorded reason somebody can act on and
+ * "FORBIDDEN (403)", which is a reason to go and reproduce the call by hand.
+ */
 function reasonFrom(status: number, body: unknown): string {
   const record = asRecord(body);
-  const named = textOf(record.message) || textOf(record.error) || textOf(record.detail);
+  const listed = Array.isArray(record.message)
+    ? record.message.filter((entry): entry is string => typeof entry === "string").join("; ")
+    : "";
+  const named = listed || textOf(record.message) || textOf(record.detail) || textOf(record.error);
   return named === "" ? `Signara answered ${status}` : `${named} (${status})`;
 }
 

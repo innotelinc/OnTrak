@@ -190,7 +190,12 @@ interface Call {
 }
 
 /** A transport that answers the three Signara calls and the two ONYX PUTs. */
-function stub(options: { failAt?: "upload" | "request" | "sign"; onyxStatus?: number } = {}) {
+function stub(options: {
+  failAt?: "upload" | "request" | "sign";
+  onyxStatus?: number;
+  /** The body a refused upload answers with, so a provider's shape can be pinned. */
+  uploadRefusal?: unknown;
+} = {}) {
   const calls: Call[] = [];
   const fetchImpl: ChainFetch = async (url, init) => {
     calls.push({ url, method: init.method, headers: init.headers, body: init.body });
@@ -201,7 +206,7 @@ function stub(options: { failAt?: "upload" | "request" | "sign"; onyxStatus?: nu
     });
 
     if (url.endsWith("/api/v1/documents/upload")) {
-      if (options.failAt === "upload") return json(403, { message: "Invalid API key" });
+      if (options.failAt === "upload") return json(403, options.uploadRefusal ?? { message: "Invalid API key" });
       return json(201, { id: "doc-123" });
     }
     if (url.endsWith("/api/v1/signatures/requests")) {
@@ -312,6 +317,33 @@ test("chain: a refusal names the step that refused, and never reaches ONYX", asy
     // The reason is the provider's own words, not a bare status.
     assert.ok(outcome.kind === "refused" && outcome.reason.length > 0);
   }
+});
+
+/**
+ * The refusal is what an operator acts on, so it is the provider's sentence rather than
+ * the HTTP word for it. Signara is a NestJS service and says both, in that order:
+ *
+ *   {"statusCode":403,"error":"FORBIDDEN","message":["No active tenant. Join or
+ *    create an organization to use this endpoint."]}
+ *
+ * This is the shape a live run was refused with, and the sentence in `message` — an
+ * *array*, which the first version of this reader could not read — is the thing that
+ * says what to do about it.
+ */
+test("chain: a refusal is recorded in the provider's own sentence, not as its status", async () => {
+  const { fetchImpl } = stub({
+    failAt: "upload",
+    uploadRefusal: {
+      statusCode: 403,
+      error: "FORBIDDEN",
+      message: ["No active tenant. Join or create an organization to use this endpoint."],
+    },
+  });
+  const outcome = await submitCertificateToChain(SHEET, { fetchImpl, config: config() });
+  assert.equal(outcome.kind, "refused");
+  const reason = outcome.kind === "refused" ? outcome.reason : "";
+  assert.match(reason, /No active tenant/, "the provider's own sentence is not the reason");
+  assert.match(reason, /403/, "the status is not recorded with it");
 });
 
 test("chain: a signed certificate ONYX refuses is reported as unstored, not as signed", async () => {
