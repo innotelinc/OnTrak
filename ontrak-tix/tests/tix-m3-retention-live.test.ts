@@ -12,7 +12,10 @@
  * it POSTs to the running server exactly as a cron would.
  *
  * Opt-in twice over (`ONTRAK_TIX_BASE_URL` and `ONTRAK_TIX_CRON_SECRET`), and it
- * provisions its own throwaway tenant, so it never touches the demo seed.
+ * provisions its own throwaway tenant, so it never touches the demo seed. The address
+ * must be this machine's, or the run must say otherwise: `ONTRAK_TIX_BASE_URL` is also
+ * how a deployment records its own public name, so a filled-in `.env` would otherwise
+ * point a sweep that *deletes files* at the real desk. See `support/live-target.ts`.
  *
  * Both the test and the app resolve evidence paths from the same working
  * directory (`ontrak-tix/`), which is what lets this assert on the actual file
@@ -27,8 +30,12 @@ import { test } from "node:test";
 
 import { PrismaClient } from "@prisma/client";
 
+import { liveRefusal } from "./support/live-target";
+
 const BASE_URL = process.env.ONTRAK_TIX_BASE_URL;
 const SECRET = process.env.ONTRAK_TIX_CRON_SECRET;
+/** Why this run must not drive the desk, or null when it may — see support/live-target.ts. */
+const BASE_REFUSAL = liveRefusal("ONTRAK_TIX_BASE_URL", BASE_URL);
 
 /** Connect, or return null so the test can skip cleanly. */
 async function connect(): Promise<PrismaClient | null> {
@@ -71,6 +78,10 @@ async function exists(path: string): Promise<boolean> {
 test("a cron run of the sweep endpoint purges a real expired artifact through the app", async (t) => {
   if (!BASE_URL) {
     t.skip("set ONTRAK_TIX_BASE_URL to run the live retention sweep test");
+    return;
+  }
+  if (BASE_REFUSAL) {
+    t.skip(BASE_REFUSAL);
     return;
   }
   if (!SECRET) {

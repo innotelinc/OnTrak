@@ -12,7 +12,10 @@
  * That is what this does — it POSTs to the running server exactly as a cron would.
  *
  * Opt-in twice over (`ONTRAK_TIX_BASE_URL` and `ONTRAK_TIX_CRON_SECRET`), and it
- * provisions two throwaway tenants, so it never touches the demo seed. It never
+ * provisions two throwaway tenants, so it never touches the demo seed. The address
+ * must be this machine's, or the run must say otherwise: `ONTRAK_TIX_BASE_URL` is
+ * also how a deployment records its own public name, so a filled-in `.env` would
+ * otherwise point a sweep at the real desk. See `support/live-target.ts`. It never
  * calls the endpoint without `?tenant=`: an unscoped run would sweep every tenant
  * in the database, including the demo one.
  */
@@ -22,8 +25,12 @@ import { test } from "node:test";
 
 import { PrismaClient } from "@prisma/client";
 
+import { liveRefusal } from "./support/live-target";
+
 const BASE_URL = process.env.ONTRAK_TIX_BASE_URL;
 const SECRET = process.env.ONTRAK_TIX_CRON_SECRET;
+/** Why this run must not drive the desk, or null when it may — see support/live-target.ts. */
+const BASE_REFUSAL = liveRefusal("ONTRAK_TIX_BASE_URL", BASE_URL);
 
 /** A 24×7 calendar, so the arithmetic below is whole minutes and no business hours. */
 const ALWAYS_OPEN = {
@@ -104,6 +111,10 @@ async function seedBreachedDesk(db: PrismaClient, slug: string): Promise<{ tenan
 test("a cron run of the SLA sweep endpoint raises a real rung through the app", async (t) => {
   if (!BASE_URL) {
     t.skip("set ONTRAK_TIX_BASE_URL to run the live SLA sweep test");
+    return;
+  }
+  if (BASE_REFUSAL) {
+    t.skip(BASE_REFUSAL);
     return;
   }
   if (!SECRET) {

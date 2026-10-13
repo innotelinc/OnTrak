@@ -15,7 +15,10 @@
  *
  * Opt-in, and it provisions a throwaway tenant, so it never touches the demo seed.
  * It never calls the endpoint without `?tenant=`: an unscoped run would push every
- * desk in the database to the provider.
+ * desk in the database to the provider. Both addresses must be this machine's, or the
+ * run must say otherwise — a filled-in `.env` records a deployment's own public name,
+ * which would otherwise point this at a real desk and a real provider. See
+ * `support/live-target.ts`.
  */
 
 import assert from "node:assert/strict";
@@ -24,10 +27,15 @@ import { test } from "node:test";
 import { PrismaClient } from "@prisma/client";
 import { HttpScimClient } from "../src/lib/scim-client";
 import { scimTargetFromEnv } from "../src/lib/scim-rules";
+import { liveRefusal } from "./support/live-target";
 
 const BASE_URL = process.env.ONTRAK_TIX_BASE_URL;
 const SECRET = process.env.ONTRAK_TIX_CRON_SECRET;
 const target = scimTargetFromEnv().target;
+/** Why this run must not drive the desk, or null when it may — see support/live-target.ts. */
+const BASE_REFUSAL = liveRefusal("ONTRAK_TIX_BASE_URL", BASE_URL);
+/** The same question for the provider this test writes to. */
+const TARGET_REFUSAL = liveRefusal("ONTRAK_TIX_SCIM_BASE_URL", target?.baseUrl);
 
 async function connect(): Promise<PrismaClient | null> {
   const db = new PrismaClient();
@@ -62,10 +70,18 @@ test("the scheduler provisions a desk through the endpoint", async (t) => {
     t.skip("set ONTRAK_TIX_BASE_URL and ONTRAK_TIX_CRON_SECRET to run the live sweep test");
     return;
   }
+  if (BASE_REFUSAL) {
+    t.skip(BASE_REFUSAL);
+    return;
+  }
   if (!target) {
     // Only a proxy for whether the *server* is configured — the endpoint reads its
     // own environment. Without the target here the run below has nothing to assert.
     t.skip("set ONTRAK_TIX_SCIM_BASE_URL and ONTRAK_TIX_SCIM_TOKEN to run the live sweep test");
+    return;
+  }
+  if (TARGET_REFUSAL) {
+    t.skip(TARGET_REFUSAL);
     return;
   }
   const db = await connect();

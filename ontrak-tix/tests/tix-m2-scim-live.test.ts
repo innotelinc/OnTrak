@@ -13,7 +13,10 @@
  *
  * It provisions its own throwaway tenant and its own addresses, so it never
  * touches the demo seed, and it asserts the *stateful* property that matters as
- * much as the happy path: a second run over unchanged people writes nothing.
+ * much as the happy path: a second run over unchanged people writes nothing. The
+ * provider's address must be this machine's, or the run must say otherwise — a
+ * filled-in `.env` records a deployment's own provider, which would otherwise make
+ * this provision people on it. See `support/live-target.ts`.
  */
 
 import assert from "node:assert/strict";
@@ -27,8 +30,11 @@ import { scimTargetFromEnv, type ScimTarget } from "../src/lib/scim-rules";
 import { ScimSyncService } from "../src/lib/scim-sync-service";
 import { createPrismaScimPeople, type ScimPeoplePrismaClient } from "../src/lib/scim-sync-store-prisma";
 import { PrismaAuditSink, sha256Hex, type TicketPrismaClient } from "../src/lib/ticket-store-prisma";
+import { liveRefusal } from "./support/live-target";
 
 const target: ScimTarget | null = scimTargetFromEnv().target;
+/** Why this run must not drive the provider, or null when it may — see support/live-target.ts. */
+const TARGET_REFUSAL = liveRefusal("ONTRAK_TIX_SCIM_BASE_URL", target?.baseUrl);
 
 async function connect(): Promise<PrismaClient | null> {
   const db = new PrismaClient();
@@ -44,6 +50,10 @@ async function connect(): Promise<PrismaClient | null> {
 test("the desk's people reach a real identity provider", async (t) => {
   if (!target) {
     t.skip("set ONTRAK_TIX_SCIM_BASE_URL and ONTRAK_TIX_SCIM_TOKEN to run the live provisioning test");
+    return;
+  }
+  if (TARGET_REFUSAL) {
+    t.skip(TARGET_REFUSAL);
     return;
   }
   const db = await connect();
@@ -158,6 +168,10 @@ test("the desk's people reach a real identity provider", async (t) => {
 test("the live provider refuses a token that is not a connector token", async (t) => {
   if (!target) {
     t.skip("set ONTRAK_TIX_SCIM_TOKEN to run the live provisioning test");
+    return;
+  }
+  if (TARGET_REFUSAL) {
+    t.skip(TARGET_REFUSAL);
     return;
   }
 

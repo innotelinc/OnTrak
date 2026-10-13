@@ -15,6 +15,11 @@
  * database), and it provisions its own throwaway tenant, so it never touches the
  * demo seed. That also makes it the honest answer to "does single sign-on
  * actually work?", rather than "do the pieces add up?".
+ *
+ * The address must be this machine's, or the run must say otherwise —
+ * `ONTRAK_TIX_BASE_URL` is also how a deployment records its own public name, so a
+ * filled-in `.env` would otherwise point this test at the real desk. See
+ * `support/live-target.ts`.
  */
 
 import assert from "node:assert/strict";
@@ -25,8 +30,11 @@ import { PrismaClient } from "@prisma/client";
 import { SSO_STATE_COOKIE } from "../src/lib/oidc-rules";
 import { TIX_SESSION_COOKIE } from "../src/lib/session-rules";
 import { startLocalIdp, LOCAL_IDP_CLIENT_ID } from "./support/local-idp";
+import { liveRefusal } from "./support/live-target";
 
 const BASE_URL = process.env.ONTRAK_TIX_BASE_URL;
+/** Why this run must not drive the desk, or null when it may — see support/live-target.ts. */
+const BASE_REFUSAL = liveRefusal("ONTRAK_TIX_BASE_URL", BASE_URL);
 
 /** Every `Set-Cookie` on a response, keyed by cookie name. */
 function cookiesFrom(response: Response): Map<string, string> {
@@ -60,6 +68,10 @@ async function connect(): Promise<PrismaClient | null> {
 test("single sign-on signs a user in through the real routes", async (t) => {
   if (!BASE_URL) {
     t.skip("set ONTRAK_TIX_BASE_URL to run the live SSO test");
+    return;
+  }
+  if (BASE_REFUSAL) {
+    t.skip(BASE_REFUSAL);
     return;
   }
   const db = await connect();
@@ -170,6 +182,10 @@ test("single sign-on signs a user in through the real routes", async (t) => {
 test("the live routes refuse a workspace that does not exist, and one without SSO", async (t) => {
   if (!BASE_URL) {
     t.skip("set ONTRAK_TIX_BASE_URL to run the live SSO test");
+    return;
+  }
+  if (BASE_REFUSAL) {
+    t.skip(BASE_REFUSAL);
     return;
   }
   const db = await connect();
