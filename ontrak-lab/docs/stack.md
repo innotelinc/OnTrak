@@ -100,5 +100,5 @@ Canonical definition of the ecosystem:
 - **ONYX (StorageOps)** — the tier that holds golden images and snapshot backups long-term;
   OnTrak consumes it and never re-implements replication or backup policy.
 - **Cerulean (TrustOps / IdentityOps)** — OnTrak does not run its own CA, DNS server or IdP.
-- **Distro / Atlas (CodeOps / GitOps)** — unrelated: nothing from this repository is deployed
-  by them, and no artifact here is a runtime service for another platform.
+- **Distro / Atlas (CodeOps / GitOps)** — unrelated: nothing from the lab's tree is
+  deployed by them, and no artifact here is a runtime service for another platform.

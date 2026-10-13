@@ -11,7 +11,8 @@
 #   deploy/authentik/setup.sh              # start Authentik and provision OnTrak
 #   deploy/authentik/setup.sh --connect    # ... and point the local portal at it
 #   deploy/authentik/setup.sh --family     # ... and point the whole family stack
-#                                          #     at it too (../OnTrak, or
+#                                          #     at it too (the checkout this
+#                                          #     repository *is*, or
 #                                          #     ONTRAK_FAMILY_DIR)
 #   deploy/authentik/setup.sh --down       # stop it (the database is kept)
 #
@@ -56,7 +57,10 @@ LOCAL_ENV_FILE="$HERE/ontrak-local.env"
 # up`. So these values go into that checkout's own .env, inside a marked block
 # that this script owns and rewrites — everything around it is the operator's and
 # is left alone.
-FAMILY_DIR="${ONTRAK_FAMILY_DIR:-$(cd "$REPO_ROOT/.." && pwd)/OnTrak}"
+# The checkout this repository is: the lab is a directory of the family repository
+# since 2026-10-13, so its parent *is* the family checkout. This used to name a
+# sibling (`../OnTrak`) because the lab was cloned beside it.
+FAMILY_DIR="${ONTRAK_FAMILY_DIR:-$(cd "$REPO_ROOT/.." && pwd)}"
 FAMILY_ENV_FILE="$FAMILY_DIR/.env"
 FAMILY_MARK_BEGIN="# >>> ontrak-local-family (deploy/authentik/setup.sh)"
 FAMILY_MARK_END="# <<< ontrak-local-family"

@@ -154,7 +154,7 @@ for name in "${NAMES[@]}"; do
     cd "$WORKDIR"
     "$ORAS" push "$REPOSITORY:$tag" \
       --artifact-type "$ARTIFACT_TYPE" \
-      -a "org.opencontainers.image.source=https://github.com/innotelinc/OnTrak-dev" \
+      -a "org.opencontainers.image.source=https://github.com/innotelinc/OnTrak" \
       -a "org.opencontainers.image.title=OnTrak scenario template $name" \
       -a "org.opencontainers.image.description=$name — a booted scenario template (fault injected, 'clean' snapshot). Pull, then: infra/import-templates.sh $name" \
       "$name.tar.gz:$LAYER_TYPE"

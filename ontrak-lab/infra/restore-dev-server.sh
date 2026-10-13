@@ -12,8 +12,10 @@
 # downloading as possible. Everything it needs is already on GitHub, in one of
 # three forms, and it pulls what can be pulled before it compiles anything:
 #
-#   the two repositories   innotelinc/OnTrak and innotelinc/OnTrak-dev, cloned at the
-#                          refs named below (this script lives in the second one)
+#   the repository         innotelinc/OnTrak, cloned at the ref named below. The lab
+#                          is a directory of it (`ontrak-lab/`), which is where this
+#                          script lives: it used to clone a second repository for the
+#                          lab, and the two are one repository since 2026-10-13
 #   the product images     ghcr.io/innotelinc/ontrak-* — published by
 #                          `make publish-images` on the OnTrak side, one tag per
 #                          product plus `sha-<commit>`; pulled here and tagged into
@@ -29,10 +31,10 @@
 #                          Genie, Portal, three databases, one network — see
 #                          OnTrak/docker-compose.all.yml, and `make all-up-lan`
 #                          there for the same stack by hand
-#   the local Authentik    OnTrak-dev @ main: deploy/authentik, the IdP the *lab*
-#                          portal signs in through (the family has its own)
-#   the lab control plane  OnTrak-dev @ main: portal, gateway, Guacamole and Incus
-#                          on the host (--with-lab; needs /dev/kvm)
+#   the local Authentik    ontrak-lab/deploy/authentik: the IdP the *lab* portal
+#                          signs in through (the family has its own)
+#   the lab control plane  ontrak-lab/: portal, gateway, Guacamole and Incus on
+#                          the host (--with-lab; needs /dev/kvm)
 #
 # What it does **not** bring back, deliberately:
 #
@@ -42,12 +44,13 @@
 #     with keys that no longer exist. `--no-demo` skips even the seed data. Copy
 #     volumes across by hand (`docker volume` + `tar`) if a class's results matter.
 #   * the installer ISO. It is built where it is needed (`make installer-iso` /
-#     `make installer-iso-tiers`), and the published release
-#     (`installer-24.04.5` on OnTrak-dev) exists for a range host that has no
-#     internet yet. Neither is this host's job to restore.
+#     `make installer-iso-tiers`, in the lab's tree), and the published release
+#     (`installer-24.04.5`) exists for a range host that has no internet yet. That
+#     release is still published on innotelinc/OnTrak-dev — see docs/dev-server.md
+#     for what the merge did and did not move. Neither is this host's job to restore.
 #
 # Environment (all optional; the flags win):
-#   ONTRAK_ROOT        where the two checkouts go        (default /srv/ontrak)
+#   ONTRAK_ROOT        where the checkout goes           (default /srv/ontrak)
 #   ONTRAK_REGISTRY    image registry                    (default ghcr.io/innotelinc)
 #   ONTRAK_IMAGE_TAG   tag to pull                       (default sha-<commit>, else latest)
 #   ONTRAK_LAB_IMAGE   the lab portal image name         (default ontrak)
@@ -63,9 +66,7 @@ set -euo pipefail
 # ── what this host is being restored to ────────────────────────────────────
 ROOT="${ONTRAK_ROOT:-/srv/ontrak}"
 FAMILY_REPO="${ONTRAK_REPO:-https://github.com/innotelinc/OnTrak.git}"
-LAB_REPO="${ONTRAK_DEV_REPO:-https://github.com/innotelinc/OnTrak-dev.git}"
 FAMILY_REF="${ONTRAK_REF:-main}"
-LAB_REF="${ONTRAK_DEV_REF:-main}"
 REGISTRY="${ONTRAK_REGISTRY:-ghcr.io/innotelinc}"
 TAG="${ONTRAK_IMAGE_TAG:-}"
 LAB_IMAGE_NAME="${ONTRAK_LAB_IMAGE:-ontrak}"
@@ -78,7 +79,11 @@ DRY=0
 CHECK=0
 
 FAMILY_DIR="$ROOT/OnTrak"
-LAB_DIR="$ROOT/OnTrak-dev"
+# Cloned with the family, not beside it: the lab has been a directory of this
+# checkout since 2026-10-13, so one `git clone` brings both and one commit names
+# both. Everything below therefore runs the lab out of the family checkout, which is
+# what its compose file already does on a host built this way.
+LAB_DIR="$FAMILY_DIR/ontrak-lab"
 
 log()  { printf '\033[36m==>\033[0m %s\n' "$*"; }
 step() { printf '\n\033[1m── %s\033[0m\n' "$*"; }
@@ -89,9 +94,8 @@ usage() { sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --root)          ROOT="${2:?--root needs a directory}"; FAMILY_DIR="$ROOT/OnTrak"; LAB_DIR="$ROOT/OnTrak-dev"; shift ;;
+    --root)          ROOT="${2:?--root needs a directory}"; FAMILY_DIR="$ROOT/OnTrak"; LAB_DIR="$FAMILY_DIR/ontrak-lab"; shift ;;
     --family-ref)    FAMILY_REF="${2:?--family-ref needs a ref}"; shift ;;
-    --lab-ref)       LAB_REF="${2:?--lab-ref needs a ref}"; shift ;;
     --tag)           TAG="${2:?--tag needs a tag}"; shift ;;
     --registry)      REGISTRY="${2:?--registry needs a registry}"; shift ;;
     --with-lab)      WITH_LAB=1 ;;
@@ -239,8 +243,8 @@ fi
 
 log "checkouts will live in $ROOT"
 
-# ═══ 2. the two repositories ═══════════════════════════════════════════════
-step "2/8 the two repositories"
+# ═══ 2. the repository ═════════════════════════════════════════════════════
+step "2/8 the repository"
 
 checkout() { # checkout <dir> <repo> <ref>
   local dir="$1" repo="$2" ref="$3"
@@ -261,14 +265,13 @@ else
   mkdir -p "$ROOT"
 fi
 checkout "$FAMILY_DIR" "$FAMILY_REPO" "$FAMILY_REF"
-checkout "$LAB_DIR" "$LAB_REPO" "$LAB_REF"
 
 # Nothing below can be read from a directory that is not there, and `--dry-run` on
 # a bare host has no checkout to read — so the rest of the plan stops here rather
 # than inviting the reader to believe steps it cannot name the inputs of.
 if [[ ! -d "$FAMILY_DIR" ]] || [[ ! -d "$LAB_DIR" ]]; then
-  step "the rest of the plan needs the checkouts"
-  log "$FAMILY_DIR and $LAB_DIR are not both present yet"
+  step "the rest of the plan needs the checkout"
+  log "the lab is not at $LAB_DIR yet (it ships inside $FAMILY_DIR)"
   if [[ $DRY = 1 ]]; then
     log "run this again after the clone, or let a real run do it: the script is the plan."
     exit 0
@@ -277,11 +280,9 @@ if [[ ! -d "$FAMILY_DIR" ]] || [[ ! -d "$LAB_DIR" ]]; then
 fi
 
 FAMILY_COMMIT="$(git -C "$FAMILY_DIR" rev-parse HEAD)"
-LAB_COMMIT="$(git -C "$LAB_DIR" rev-parse HEAD)"
-log "OnTrak      $FAMILY_REF @ ${FAMILY_COMMIT:0:12}"
-log "OnTrak-dev  $LAB_REF @ ${LAB_COMMIT:0:12}"
+log "OnTrak  $FAMILY_REF @ ${FAMILY_COMMIT:0:12}  (the lab is ontrak-lab/ in it)"
 
-# The default tag is the commit the two repositories are on: the publish script
+# The default tag is the commit the tree is on: the publish script
 # tags every image it builds with `sha-<full commit>`, so one hash names the whole
 # set a tree produced. `latest` is the fallback for a host restoring a tree whose
 # images were never published by commit — and the difference matters enough to say
@@ -649,5 +650,5 @@ if [[ $WITH_LAB = 1 ]]; then
   printf '  lab       http://%s:%s/        (portal and console on one port)\n' "${LAN_IP:-127.0.0.1}" "${ONTRAK_LAB_PORT:-8080}"
 fi
 echo
-log "the checkouts are $FAMILY_DIR and $LAB_DIR; the .env files hold freshly generated secrets"
+log "the checkout is $FAMILY_DIR, the lab at $LAB_DIR; the .env files hold freshly generated secrets"
 log "not restored on purpose: the Docker volumes (see this script's header), and the installer ISO"

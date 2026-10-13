@@ -147,7 +147,7 @@ log "publishing (this is the whole disk: expect minutes, not seconds)"
   cd "$DIR"
   "$ORAS" push "$REPOSITORY:$TAG" \
     --artifact-type "$ARTIFACT_TYPE" \
-    -a "org.opencontainers.image.source=https://github.com/innotelinc/OnTrak-dev" \
+    -a "org.opencontainers.image.source=https://github.com/innotelinc/OnTrak" \
     -a "org.opencontainers.image.title=OnTrak golden Windows 11 Enterprise image" \
     -a "org.opencontainers.image.description=Windows 11 Enterprise (11e) golden image for OnTrak scenario templates. Pull, then: make golden-import ARGS=<dir>" \
     "$(basename "$META"):$META_TYPE" \
