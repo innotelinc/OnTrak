@@ -41,16 +41,17 @@
 ## What it is
 
 - **The agent loop** — request → tool call → result, streamed over Server-Sent Events, with the partial tool call rendered as it is still arriving — in the browser and in the terminal alike.
-- **A terminal client** — `genie`: the same turns, tool cards, diffs and approval gate, plus slash commands, Tab completion, skills, session management and follow-ups. A client of the server, never a second agent ([docs/cli.md](docs/cli.md)).
+- **A terminal client** — `genie`: the same turns, tool cards, diffs and approval gate, plus slash commands, Tab completion, skills, saved projects, session management and follow-ups. A client of the server, never a second agent ([docs/cli.md](docs/cli.md)).
 - **A chat surface built for reading** — the conversation is the page: your turn is a bubble, the agent's is a document, tool calls are cards you can open, and diffs land before the write does. `/` opens a command palette over the console's own actions and the model catalog, and each turn ends with up to three next steps offered as chips that fill the composer rather than firing on click.
 - **A workspace jail you can aim** — the agent works in a directory you choose from the workspace panel (and can create folders from there). The choice is always inside the sandbox: absolute paths and `../` escapes are refused, so pointing the agent at a project never points it at the host. `.git`, `node_modules` and build output are skipped.
 - **The tool set** — `read`, `edit`, `write`, `list`, `search`, `run`, each confined to that workspace.
+- **Projects you can keep, and carry** — a named workspace directory you come back to, and a portable form of it: a project leaves as one JSON bundle holding its files and its note, and loads back as a new project — in the console, or as `genie projects export -o - | genie projects import -` between two deployments.
 - **The approval gate** — a browser decision for commands and large writes, with a deny path that ends the turn instead of stalling it.
 - **Live visibility** — the file being written, syntax-highlighted, with a live diff against the on-disk baseline; a changed-marker file tree; a diff view for any file with history.
 - **The app, running** — `preview` opens on the project itself rather than on the code that builds it: it works out this project's own start command (its `dev` script, `manage.py`, a directory with an `index.html`), runs it, reloads it as files change, and serves it same-origin through the console so the app's own cookies and relative URLs behave as they will in production. `show code` is one click away.
 - **A workspace that can actually build** — the image carries bash, git, ripgrep, curl, wget, jq, make, gcc/g++, python3 + pip and unzip, and the agent is told to install what else it needs (`apk add`, `pip install`, `npm install`) rather than work around a missing tool.
 - **Model resilience** — a fallback chain, a chain-health badge, a catalog sweep, and an optional second gateway (a local model, no key) tried only after the chain is exhausted.
-- **Sign-in (optional)** — Authentik OIDC: authorization code with PKCE, RS256 `id_token` verification against the provider's JWKS, and a signed session cookie. The shared bearer is kept for API clients that drive the endpoint directly.
+- **Sign-in (optional)** — Authentik OIDC: authorization code with PKCE, RS256 `id_token` verification against the provider's JWKS, and a signed session cookie. The console names the session it is holding and offers **sign out** beside it, which clears the cookie and any `?token=` credential the tab is carrying, then returns to the gate. The shared bearer is kept for API clients that drive the endpoint directly.
 - **Tenancy (optional)** — Distro's control plane: a turn is resolved to an account, gated on that account's quota, spent on that account's own gateway key, and recorded afterwards. The key stays server-side, and a refusal is a `401` or a `429` rather than a quiet charge to the operator. The account keys the disk too: its own workspace, chats and file history, so two people on one deployment cannot read each other's files.
 - **Persistence** — sessions, transcripts and file snapshots under one data directory.
 
@@ -107,7 +108,7 @@ gitignored.
 
 | Document | What it covers |
 | --- | --- |
-| [docs/cli.md](docs/cli.md) | The terminal client: sign-in, the REPL and its commands, skills, follow-ups, scripting and the flags. |
+| [docs/cli.md](docs/cli.md) | The terminal client: sign-in, the REPL and its commands, projects, skills, follow-ups, scripting and the flags. |
 | [docs/operations.md](docs/operations.md) | The full developer reference: HTTP API, SSE events, every environment variable, the check commands, the Docker and sandbox setup. |
 | [docs/stack.md](docs/stack.md) | Genie's role in the Innotel Platform Stack — what it owns, provides and consumes, and the service map. |
 | [docs/roadmap.md](docs/roadmap.md) | What is shipped, what is open, and what comes next — the milestones from the console to stack citizenship. |

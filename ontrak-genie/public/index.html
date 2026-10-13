@@ -83,6 +83,26 @@
             <span class="status-dot" id="usage-dot" aria-hidden="true"></span>
             <span id="usage-label" class="muted">checking account usage...</span>
           </div>
+          <!--
+            Who the console is signed in as, and the way out. Both come from
+            `/api/auth/status`, the one route that answers without a session.
+
+            The row stays hidden until the server reports an identity, because a
+            deployment with no provider — or one reached with a shared
+            `WEB_TOKEN` — has no session to end. A sign-out button that cannot
+            sign anybody out is worse than none: it teaches the wrong thing about
+            whether the credential is still live.
+          -->
+          <div class="row hidden" id="account-row">
+            <span id="account-label" class="muted"></span>
+            <button
+              id="sign-out"
+              class="btn-ghost mini"
+              title="End this session and go back to the sign-in gate"
+            >
+              sign out
+            </button>
+          </div>
           <div id="workspace-label" class="muted mono"></div>
           <div class="theme-row">
             <div class="ot-theme" role="group" aria-label="Colour theme">

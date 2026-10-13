@@ -772,6 +772,18 @@ A single-page app with no build step (`public/`), served by the agent itself.
   `[data-theme-mode]` / `[data-theme-scheme]` button in the page is wired by the same
   loop. Nothing offered can be a no-op — a test fails if a scheme button names a
   palette `unity-theme.css` does not define.
+- **Sign-out.** The sidebar names the session the console is holding — `signed in
+  as <address>` — and offers `sign out` beside it. Both come from one call to
+  `/api/auth/status` at startup, the only route that answers without a session,
+  and the row stays **hidden** until that answer carries an identity: a deployment
+  with no provider, or one reached with a shared `WEB_TOKEN`, has no session to
+  end, and a sign-out that cannot end anything is not merely useless advice — it is
+  wrong advice about whether the credential is still live. Clicking it posts
+  `/api/auth/logout` (the server clears the cookie), forgets any `?token=`
+  credential the tab is carrying, and **replaces** the page with `/login`, so Back
+  cannot walk into a console whose session has just ended. The wiring is pinned by
+  `src/test/static-assets.test.ts`; the endpoint has its own test in
+  `src/test/oidc.test.ts`.
 - **Screens.** One layout, three sizes, and no second build for any of them.
   `style.css` carries the rules. At **1080px** the preview rail leaves the grid for
   an overlay and the toolbar is allowed to wrap — a control pushed past the right

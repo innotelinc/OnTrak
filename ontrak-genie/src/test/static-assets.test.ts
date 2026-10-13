@@ -132,6 +132,53 @@ test("the appearance controls only offer what the theme can paint", async () => 
   }
 });
 
+test("the console offers a sign-out only where there is a session to end", async () => {
+  /*
+   * The endpoint has a test of its own (`oidc.test.ts`); what this pins is that
+   * the console actually reaches it. A missing sign-out is the silent kind of
+   * failure: every page still loads, and the only symptom is a session nobody
+   * can close from the browser they opened it in.
+   *
+   * The hidden default matters as much as the button. The row is drawn from
+   * `/api/auth/status`, and a deployment with no provider — or one reached with
+   * a shared `WEB_TOKEN` — has no session to end. A sign-out that cannot sign
+   * anything out is not merely useless advice, it is wrong advice about whether
+   * the credential is still live.
+   */
+  const html = await fs.readFile(path.join(PUBLIC_DIR, "index.html"), "utf8");
+  const app = await fs.readFile(path.join(PUBLIC_DIR, "app.js"), "utf8");
+
+  const row = /<div class="[^"]*" id="account-row">/.exec(html)?.[0] ?? "";
+  assert.notEqual(row, "", "the sidebar needs an account row");
+  assert.match(row, /\bhidden\b/, "and it has to start hidden: there may be no session");
+  assert.match(html, /id="sign-out"/, "holding the control itself");
+
+  // Both halves come from the one route that answers without a session, asked
+  // once at startup — so the row cannot disagree with the gate's own question.
+  assert.match(app, /function renderAccount\(/, "the row is drawn from the status answer");
+  assert.match(app, /renderAccount\(status\);/, "which the startup check already fetched");
+  assert.match(
+    app,
+    /identity === null[\s\S]{0,64}classList\.add\("hidden"\)/,
+    "no identity means no row to offer",
+  );
+  assert.match(app, /\$\s*\(\s*"#sign-out"\)\.addEventListener\("click"/, "and the control is wired");
+
+  // Sign-out is the cookie *and* the token a `?token=` link left in this tab: a
+  // sign-out that leaves a working credential behind is not a sign-out.
+  assert.match(
+    app,
+    /fetch\("\/api\/auth\/logout", \{ method: "POST"/,
+    "clicking it has to reach the endpoint that clears the cookie",
+  );
+  assert.match(app, /sessionStorage\.removeItem\(AUTH_KEY\)/, "and forget the shared token too");
+  assert.match(
+    app,
+    /location\.replace\("\/login"\)/,
+    "then land on the gate, replacing the history entry so Back cannot re-enter a dead console",
+  );
+});
+
 test("the console is laid out for the screen it is on", async () => {
   /*
    * `layout:check` proves all of this in a real browser — at 320, 390, 834 and

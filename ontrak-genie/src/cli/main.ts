@@ -10,6 +10,7 @@
  *   genie login                 sign in (browser-assisted)
  *   genie                       chat interactively
  *   genie ask "<task>"          one turn and exit
+ *   genie projects …            saved projects: list, save, open, export, import
  *   genie sessions | skills | models | whoami | logout
  *
  * In the REPL, a line that starts with `/` is a CLI command (`/help` lists
@@ -26,6 +27,7 @@ import { helpLines, matchCommands, parseCommand } from "./commands.js";
 import { configPath, resolveTarget, skillDirs, writeConfig, type ResolvedTarget } from "./config.js";
 import { emptyTurnSummary, reduceTurn, suggestFollowups, type TurnSummary } from "./followups.js";
 import { LoginFailure, browserLogin, cookieLogin, tokenLogin } from "./login.js";
+import { parseProjectsLine, ProjectUsageError, runProjects } from "./projects.js";
 import {
   MarkdownStream,
   Spinner,
@@ -66,6 +68,10 @@ export interface CliArgs {
   model?: string;
   session?: string;
   skill?: string;
+  /** `--out <file>`: where `genie projects export` writes its bundle. `-` is stdout. */
+  out?: string;
+  /** `--files`: with `genie projects remove`, delete the project's folder too. */
+  files: boolean;
   maxSteps?: number;
   json: boolean;
   yes: boolean;
@@ -82,6 +88,7 @@ export function parseArgs(argv: string[]): CliArgs {
     json: false,
     yes: false,
     color: true,
+    files: false,
     help: false,
     version: false,
   };
@@ -123,6 +130,14 @@ export function parseArgs(argv: string[]): CliArgs {
       case "--max-steps":
         args.maxSteps = Number.parseInt(takeValue(arg, i), 10);
         if (!arg.includes("=")) i += 1;
+        break;
+      case "--out":
+      case "-o":
+        args.out = takeValue(arg, i);
+        if (!arg.includes("=")) i += 1;
+        break;
+      case "--files":
+        args.files = true;
         break;
       case "--json":
         args.json = true;
@@ -167,6 +182,15 @@ usage:
   genie models [filter]        list models the gateway advertises
   genie help                   this text
 
+projects (a saved, named workspace directory; name, row number or id all work):
+  genie projects               list them, and say which one is open
+  genie projects new "<name>"  save one, and work in it
+  genie projects open <which>  make one the working directory
+  genie projects export [which] [--out <file>]  write it as one portable file
+  genie projects import <file>  load that file back as a new project (- is stdin)
+  genie projects rename <which> "<name>"        rename one
+  genie projects remove <which> [--files]       forget one (--files deletes its folder)
+
 options:
   --url <origin>               deployment to dial (default from config, else :3400)
   --token <value>              WEB_TOKEN bearer
@@ -176,6 +200,8 @@ options:
   --skill <name>               apply a skill to the task
   --max-steps <n>              step budget for this run
   --yes                        approve gated actions without asking (non-interactive)
+  --out <file>                 where "genie projects export" writes its bundle (- is stdout)
+  --files                      with "genie projects remove": delete the folder too
   --json                       machine-readable output where it applies
   --no-color                   plain output`;
 
@@ -226,6 +252,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       return commandSkills(theme);
     case "models":
       return await commandModels(client, args);
+    case "projects":
+      return await commandProjects(client, theme, args);
     default:
       process.stderr.write(`unknown command "${args.command}"\n\n${TOP_LEVEL_HELP}\n`);
       return 2;
@@ -335,6 +363,31 @@ function commandSkills(theme: Theme): number {
   process.stdout.write(`${theme.bold("skills")}\n`);
   for (const line of describeSkills(skills)) process.stdout.write(`${line}\n`);
   return 0;
+}
+
+/**
+ * `genie projects …` — see `projects.ts` for the verbs themselves.
+ *
+ * The exit code follows the CLI's rule: 2 is "the command line could not be
+ * carried out as written" (an unknown subcommand, a name that matches nothing, a
+ * file that is not there), and a refusal from the server is left to propagate so
+ * it exits 1 with the server's own message.
+ */
+async function commandProjects(client: GenieClient, theme: Theme, args: CliArgs): Promise<number> {
+  try {
+    const { invocation, options } = parseProjectsLine(args.rest, {
+      json: args.json,
+      out: args.out,
+      deleteFiles: args.files,
+    });
+    return await runProjects(client, theme, invocation, options);
+  } catch (error) {
+    if (error instanceof ProjectUsageError) {
+      process.stderr.write(`${error.message}\n`);
+      return 2;
+    }
+    throw error;
+  }
 }
 
 async function commandModels(client: GenieClient, args: CliArgs): Promise<number> {
@@ -935,6 +988,22 @@ async function handleCommand(
     case "approve":
     case "deny": {
       await decideApproval(client, theme, argv[0], command.name === "approve" ? "approve" : "deny");
+      return false;
+    }
+    case "projects": {
+      // A refusal here is printed and the REPL stays open: losing a whole console
+      // because a project name was misspelled is not a trade worth making. The
+      // flags come from the line, since the REPL's arguments are the line.
+      try {
+        const { invocation, options } = parseProjectsLine(argv, {
+          json: false,
+          out: undefined,
+          deleteFiles: false,
+        });
+        await runProjects(client, theme, invocation, options);
+      } catch (error) {
+        process.stdout.write(`${eventError(theme, (error as Error).message)}\n`);
+      }
       return false;
     }
     case "skills":

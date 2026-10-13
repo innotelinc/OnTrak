@@ -222,6 +222,13 @@ html {
 .status-dot.bad { background: var(--err); }
 #workspace-label { margin-top: 6px; font-size: 11px; word-break: break-all; }
 
+/* The account row: the address says who, the button says out. The same trade the
+   sweep row makes — the label truncates so the control keeps its size. Without
+   `flex: none` a long address squeezes `sign out` onto two lines, which reads as
+   a link rather than as the way out, and grows the row with it. */
+#account-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#account-row .btn-ghost { flex: none; }
+
 /* --- main --- */
 
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }

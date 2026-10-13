@@ -220,3 +220,141 @@ test("whoami reports the server, identity and plan", async () => {
   assert.match(result.stdout, /server\s+http/);
   assert.match(result.stdout, /approval\s+risky/);
 });
+
+/* -------------------------------------------------------------- projects -- */
+
+/** The flags every project call here needs, so a case reads as its own words. */
+const AT = ["--url", base, "--token", TOKEN];
+
+function jsonOf<T>(run: Run, what: string): T {
+  assert.equal(run.code, 0, `${what}: exit ${run.code}\n${run.stdout}\n${run.stderr}`);
+  return JSON.parse(run.stdout) as T;
+}
+
+test("a project is saved, exported to one file and loaded back", async () => {
+  // Save. `--json` rather than the sentence, because the test needs the
+  // directory the server derived, and the payload is the machine-readable path.
+  const saved = jsonOf<{ id: string; name: string; dir: string; path: string }>(
+    await runCli(["projects", "new", "E2E Project", "--json", ...AT]),
+    "projects new",
+  );
+  assert.equal(saved.name, "E2E Project");
+  assert.match(saved.dir, /^e2e-project-[0-9a-f]{6}$/, "the directory is derived from the name");
+
+  // Something for the bundle to carry: a file, in a subdirectory, written by
+  // this test and not by the CLI.
+  await fs.mkdir(path.join(saved.path, "src"), { recursive: true });
+  await fs.writeFile(path.join(saved.path, "src", "notes.md"), "carried in the bundle\n", "utf8");
+
+  // The list, as a person sees it: the row, and the open one marked.
+  const list = await runCli(["projects", ...AT]);
+  assert.equal(list.code, 0, `${list.stdout}\n${list.stderr}`);
+  assert.match(list.stdout, /E2E Project/);
+  assert.match(list.stdout, /\(open\)/);
+
+  // `-o -` is the pipe shape: the bundle on stdout, the sentence on stderr.
+  const piped = await runCli(["projects", "export", "-o", "-", ...AT]);
+  assert.equal(piped.code, 0, piped.stderr);
+  const pipedBundle = JSON.parse(piped.stdout) as { format: string; files: { path: string }[] };
+  assert.equal(pipedBundle.format, "genie.project");
+  assert.deepEqual(
+    pipedBundle.files.map((file) => file.path),
+    ["src/notes.md"],
+    "stdout must be the bundle and nothing else",
+  );
+
+  // Export to a path, using the open project by default.
+  const bundlePath = path.join(workspace, "e2e-bundle.json");
+  const exported = jsonOf<{ filename: string; files: number; path: string; skipped: string[] }>(
+    await runCli(["projects", "export", "--out", bundlePath, "--json", ...AT]),
+    "projects export",
+  );
+  assert.equal(exported.filename, "e2e-project.genie-project.json");
+  assert.equal(exported.files, 1);
+  assert.deepEqual(exported.skipped, []);
+  assert.equal(exported.path, bundlePath);
+
+  // Load it back. The name is taken, so the server counts rather than overwrites
+  // — which is also the proof that this is a new project and not the old one.
+  const loaded = jsonOf<{ project: { name: string; path: string }; files: number }>(
+    await runCli(["projects", "import", bundlePath, "--json", ...AT]),
+    "projects import",
+  );
+  assert.equal(loaded.project.name, "E2E Project (2)");
+  assert.notEqual(loaded.project.path, saved.path);
+  assert.equal(loaded.files, 1);
+  assert.equal(
+    await fs.readFile(path.join(loaded.project.path, "src", "notes.md"), "utf8"),
+    "carried in the bundle\n",
+    "the file must have survived the round trip through the terminal",
+  );
+});
+
+test("a project is named by its row number, not just its id", async () => {
+  // The import above opened its project, so it is the most recent and row 1.
+  const list = await runCli(["projects", "--json", ...AT]);
+  const projects = jsonOf<{ id: string; name: string }[]>(list, "projects --json");
+  const first = projects[0];
+  assert.ok(first !== undefined, "the round trip above should have left projects behind");
+
+  const opened = await runCli(["projects", "open", "1", ...AT]);
+  assert.equal(opened.code, 0, `${opened.stdout}\n${opened.stderr}`);
+  assert.match(opened.stdout, /^open\s/, "the confirmation names the project it opened");
+  assert.ok(opened.stdout.includes(first.name), `row 1 is ${first.name}:\n${opened.stdout}`);
+});
+
+test("a file that is not a bundle is refused, not half-loaded", async () => {
+  const notABundle = path.join(workspace, "not-a-bundle.json");
+  await fs.writeFile(notABundle, '{"hello":"world"}\n', "utf8");
+
+  const result = await runCli(["projects", "import", notABundle, ...AT]);
+  assert.equal(result.code, 1, "a refusal from the server is not a usage error");
+  assert.match(result.stderr, /not a Genie project bundle/);
+});
+
+test("a subcommand nobody defined is a usage error, and says what exists", async () => {
+  const result = await runCli(["projects", "wibble", ...AT]);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /unknown projects subcommand/);
+  assert.match(result.stderr, /export/);
+});
+
+test("naming a project that does not exist is a usage error, not a 404 page", async () => {
+  const result = await runCli(["projects", "open", "No Such Project", ...AT]);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /no project matches/);
+});
+
+test("remove forgets the project, and only --files deletes the work", async () => {
+  const kept = jsonOf<{ name: string; path: string }>(
+    await runCli(["projects", "new", "Keep Me", "--json", ...AT]),
+    "projects new",
+  );
+  await fs.writeFile(path.join(kept.path, "work.txt"), "the work\n", "utf8");
+
+  // The default cannot lose anything: the entry goes, the directory stays.
+  const removed = await runCli(["projects", "remove", "Keep Me", ...AT]);
+  assert.equal(removed.code, 0, `${removed.stdout}\n${removed.stderr}`);
+  assert.match(removed.stdout, /its folder is untouched/);
+  assert.equal(
+    await fs.readFile(path.join(kept.path, "work.txt"), "utf8"),
+    "the work\n",
+    "removing a project must not delete its files unless asked",
+  );
+  const listed = jsonOf<{ name: string }[]>(await runCli(["projects", "--json", ...AT]), "projects --json");
+  assert.equal(listed.some((project) => project.name === "Keep Me"), false);
+
+  // `--files` is the destructive spelling, and it is the only one that is.
+  const doomed = jsonOf<{ name: string; path: string }>(
+    await runCli(["projects", "new", "Delete Me", "--json", ...AT]),
+    "projects new",
+  );
+  const purged = await runCli(["projects", "remove", "Delete Me", "--files", ...AT]);
+  assert.equal(purged.code, 0, `${purged.stdout}\n${purged.stderr}`);
+  assert.match(purged.stdout, /its folder went with it/);
+  assert.equal(
+    await fs.stat(doomed.path).then(() => true, () => false),
+    false,
+    "--files is the whole point of the flag: the directory goes too",
+  );
+});

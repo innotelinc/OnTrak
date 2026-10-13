@@ -19,7 +19,7 @@ export interface SlashCommand {
   args?: string;
   summary: string;
   /** Section in `/help`. */
-  group: "session" | "model" | "gate" | "skills" | "account" | "cli";
+  group: "session" | "projects" | "model" | "gate" | "skills" | "account" | "cli";
 }
 
 export const COMMANDS: SlashCommand[] = [
@@ -31,6 +31,12 @@ export const COMMANDS: SlashCommand[] = [
   { name: "archive", summary: "Put the current chat away without deleting it.", group: "session" },
   { name: "unarchive", summary: "Bring the current chat back.", group: "session" },
   { name: "delete", args: "[id|number]", summary: "Delete a chat and its transcript (asks first).", group: "session" },
+  {
+    name: "projects",
+    args: "[list|new|open|export|import]",
+    summary: "Saved projects: list, save, open, rename, remove, export and import as one file.",
+    group: "projects",
+  },
   { name: "model", args: "[id]", summary: "Show or choose the model for this chat.", group: "model" },
   { name: "models", args: "[filter]", summary: "List the models the gateway advertises.", group: "model" },
   { name: "steps", args: "[n]", summary: "Show or set this chat's step budget.", group: "model" },
@@ -49,9 +55,10 @@ export const COMMANDS: SlashCommand[] = [
   { name: "quit", aliases: ["exit", "q"], summary: "Leave the CLI.", group: "cli" },
 ];
 
-const GROUP_ORDER: SlashCommand["group"][] = ["session", "model", "gate", "skills", "account", "cli"];
+const GROUP_ORDER: SlashCommand["group"][] = ["session", "projects", "model", "gate", "skills", "account", "cli"];
 const GROUP_TITLE: Record<SlashCommand["group"], string> = {
   session: "Chats",
+  projects: "Projects",
   model: "Model",
   gate: "Approvals",
   skills: "Skills",

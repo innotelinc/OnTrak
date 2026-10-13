@@ -338,6 +338,11 @@ by `src/test/cli-handoff.test.ts`.
 slash-command palette with Tab completion drawn from the same table `/help` uses;
 session list/resume/rename/archive/delete; model, step budget and offline
 per-chat settings; and a non-interactive `ask` whose exit code is the answer.
+- `[x]` **Projects, from the terminal.** `genie projects` saves, lists, opens,
+renames and forgets workspace projects, and moves one as a single portable file:
+`export` writes the bundle (or streams it with `-o -`, so two deployments can be
+piped together), `import` loads it back as a new project. The same routes the
+console's panel calls, and no project logic of its own.
 - `[x]` **Skills.** Markdown playbooks loaded from a personal directory, the
 environment or `./.genie/skills/`, composed into the message with the task last —
 no hidden system prompt, and `/last` shows what was sent.

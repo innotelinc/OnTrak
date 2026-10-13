@@ -31,12 +31,20 @@ import {
   suggestFollowups,
   summarizeEvents,
 } from "../cli/followups.js";
+import {
+  findProject,
+  formatProjectRow,
+  parseProjectsCommand,
+  parseProjectsLine,
+  ProjectUsageError,
+} from "../cli/projects.js";
 import { MarkdownStream, Theme, clip, renderDiff, summarizeArgs, wrap } from "../cli/render.js";
 import { composeSkillMessage, describeSkills, loadSkills, parseSkill, slug } from "../cli/skills.js";
 import { indexSessions } from "../cli/main.js";
 import { parseArgs } from "../cli/main.js";
 import type { AgentEvent } from "../agent.js";
 import type { FileDiff } from "../diff.js";
+import type { ProjectView } from "../projects.js";
 
 const plain = new Theme(false);
 
@@ -129,6 +137,121 @@ test("the help text carries every command", () => {
   for (const command of COMMANDS) {
     assert.ok(text.includes(`/${command.name}`), `${command.name} must appear in help`);
   }
+});
+
+/* --------------------------------------------------------------- projects */
+
+function view(overrides: Partial<ProjectView> & { name: string }): ProjectView {
+  return {
+    id: "11111111-2222-3333-4444-555555555555",
+    dir: "my-app-abc123",
+    description: "",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    openedAt: "2026-01-01T00:00:00.000Z",
+    path: "/sandbox/my-app-abc123",
+    exists: true,
+    active: false,
+    ...overrides,
+  };
+}
+
+test("`genie projects` on its own lists, and a subcommand can be spelled plainly", () => {
+  assert.deepEqual(parseProjectsCommand([]), { sub: "list", args: [] });
+  assert.deepEqual(parseProjectsCommand(["ls"]), { sub: "list", args: [] });
+  assert.deepEqual(parseProjectsCommand(["save", "My App"]), { sub: "new", args: ["My App"] });
+  assert.deepEqual(parseProjectsCommand(["rm", "2"]), { sub: "remove", args: ["2"] });
+  // Case is the user's, not a distinction worth making.
+  assert.deepEqual(parseProjectsCommand(["OPEN", "My App"]), { sub: "open", args: ["My App"] });
+});
+
+test("an undefined subcommand is reported with what exists, not guessed at", () => {
+  assert.throws(() => parseProjectsCommand(["wibble"]), ProjectUsageError);
+  assert.throws(() => parseProjectsCommand(["wibble"]), /try list, new, open, rename, remove, export or import/);
+});
+
+test("the projects flags are read from the line as well as from the shell", () => {
+  const plainOptions = { json: false, deleteFiles: false };
+
+  // `--out` before and after the words, detached and attached: all the same.
+  for (const rest of [
+    ["export", "--out", "bundle.json"],
+    ["export", "--out=bundle.json"],
+    ["--out", "bundle.json", "export"],
+  ]) {
+    const { invocation, options } = parseProjectsLine(rest, plainOptions);
+    assert.equal(invocation.sub, "export");
+    assert.deepEqual(invocation.args, []);
+    assert.equal(options.out, "bundle.json");
+  }
+
+  const remove = parseProjectsLine(["remove", "2", "--files"], plainOptions);
+  assert.deepEqual(remove.invocation.args, ["2"]);
+  assert.equal(remove.options.deleteFiles, true);
+  assert.equal(remove.options.out, undefined, "a flag nobody gave stays unset");
+
+  // `-` is a value, not a flag: it is how export means stdout and import stdin.
+  const piped = parseProjectsLine(["export", "-o", "-"], plainOptions);
+  assert.equal(piped.options.out, "-");
+  assert.deepEqual(piped.invocation.args, []);
+  assert.deepEqual(parseProjectsLine(["import", "-"], plainOptions).invocation.args, ["-"]);
+});
+
+test("a flag with no value is reported where it is read, not as a missing project", () => {
+  const options = { json: false, deleteFiles: false };
+  assert.throws(() => parseProjectsLine(["export", "--out"], options), /needs a file/);
+  assert.throws(() => parseProjectsLine(["wibble", "--wat"], options), /unknown option --wat/);
+});
+
+test("a subcommand is found as a word, never through the prototype", () => {
+  // `constructor` and `toString` are object keys before they are subcommands.
+  assert.throws(() => parseProjectsCommand(["constructor"]), ProjectUsageError);
+  assert.throws(() => parseProjectsCommand(["toString"]), ProjectUsageError);
+});
+
+test("a project can be named by its row, its name, or its id", () => {
+  const first = view({ name: "Alpha", id: "aaaaaaaa-0000-0000-0000-000000000000" });
+  const second = view({ name: "Beta", id: "bbbbbbbb-1111-1111-1111-111111111111", dir: "beta-def456" });
+  const projects = [first, second];
+
+  assert.equal(findProject("1", projects)?.name, "Alpha");
+  assert.equal(findProject("2", projects)?.name, "Beta");
+  assert.equal(findProject("beta", projects)?.name, "Beta", "a name is case-insensitive");
+  assert.equal(findProject("BETA", projects)?.name, "Beta");
+  assert.equal(findProject(second.id, projects)?.name, "Beta");
+  assert.equal(findProject("bbbbbbbb", projects)?.name, "Beta", "one unambiguous prefix is enough");
+
+  // A project can be called "2026", and a row cannot: the row wins, and a
+  // number that is not a row is still allowed to be the name.
+  const numbered = [view({ name: "2026", id: "cccccccc-0000-0000-0000-000000000000" })];
+  assert.equal(findProject("2026", numbered)?.name, "2026");
+  assert.equal(findProject("1", numbered)?.name, "2026", "row 1 is the row before the name");
+});
+
+test("an ambiguous or absent name resolves to nothing rather than a guess", () => {
+  const projects = [
+    view({ name: "one", id: "aaaa0000-0000-0000-0000-000000000000" }),
+    view({ name: "two", id: "aaaa1111-0000-0000-0000-000000000000" }),
+  ];
+  assert.equal(findProject("aaaa", projects), null, "two matches is not a choice to make for somebody");
+  assert.equal(findProject("9", projects), null, "row 9 of a two-row list is not a project");
+  assert.equal(findProject("nope", projects), null);
+  assert.equal(findProject("", projects), null);
+});
+
+test("a row says where the project is, and any reason to look twice", () => {
+  const row = formatProjectRow(3, view({ name: "My App", description: "the demo" }));
+  assert.match(row, /^ +3\s+My App/);
+  assert.match(row, /11111111/);
+  assert.match(row, /my-app-abc123/);
+  assert.match(row, /\(the demo\)/);
+
+  const open = formatProjectRow(1, view({ name: "Beta", active: true }));
+  assert.match(open, /\(open\)/);
+
+  // A registry entry whose directory is gone says so, rather than looking fine.
+  const missing = formatProjectRow(2, view({ name: "Gone", exists: false }));
+  assert.match(missing, /folder missing/);
 });
 
 /* ----------------------------------------------------------------- skills */

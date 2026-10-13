@@ -209,6 +209,9 @@ async function signInIfRequired() {
     const response = await fetch("/api/auth/status", { headers: withAuth() });
     if (!response.ok) return;
     const status = await response.json();
+    // The same answer names the session the console is holding, or says there is
+    // none — which is the whole of what the sidebar's sign-out row is drawn from.
+    renderAccount(status);
     if (status.oidc && !status.authenticated) {
       // The gate takes `next`, so a link into a page inside the console comes
       // back to it rather than always to the root. Today the console has one
@@ -220,6 +223,79 @@ async function signInIfRequired() {
     // Unreachable is not this function's problem — the loads below report that
     // the way they always have.
   }
+}
+
+/**
+ * Name the session the console is holding, and offer the way out of it.
+ *
+ * Both halves come from `/api/auth/status`, asked once at startup, because that
+ * is the only route that answers without a session — and it is the same answer
+ * the gate question needs, so asking twice would be asking for a second opinion
+ * on the same fact. With no identity there is nothing to show and nothing to
+ * end, so the row is hidden rather than drawn empty.
+ */
+function renderAccount(status) {
+  const row = $("#account-row");
+  const label = $("#account-label");
+  if (row === null || label === null) return;
+
+  const identity = status?.identity ?? null;
+  if (identity === null) {
+    row.classList.add("hidden");
+    label.textContent = "";
+    label.removeAttribute("title");
+    return;
+  }
+
+  // An address is what a person recognises; a name is what a provider may send
+  // instead; the subject is the one field that is always there.
+  const who =
+    identity.email !== "" ? identity.email : identity.name !== "" ? identity.name : identity.sub;
+  label.textContent = `signed in as ${who}`;
+  label.title = `Signed in at ${location.host} through its identity provider, as ${who}.`;
+  row.classList.remove("hidden");
+}
+
+/**
+ * End the session, and go back to the gate.
+ *
+ * Two credentials can be live at once — the session cookie, and the shared
+ * `WEB_TOKEN` a `?token=` link leaves in this tab — and sign-out means both are
+ * gone, because one that leaves a working credential behind is not a sign-out.
+ * The server clears its cookie; the token is this tab's to forget.
+ *
+ * Nothing is navigated to until the server has actually answered: a sign-out
+ * that failed reports the failure and leaves the controls live, rather than
+ * walking somebody to a gate while their session is still open behind it.
+ */
+async function signOut() {
+  const button = $("#sign-out");
+  if (button !== null) {
+    button.disabled = true;
+    button.textContent = "signing out…";
+  }
+
+  try {
+    const response = await fetch("/api/auth/logout", { method: "POST", headers: withAuth() });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  } catch (error) {
+    if (button !== null) {
+      button.disabled = false;
+      button.textContent = "sign out";
+    }
+    addErrorMessage(`Could not sign out: ${error.message}`);
+    return;
+  }
+
+  try {
+    sessionStorage.removeItem(AUTH_KEY);
+  } catch {
+    /* private mode: there was nowhere to remember it anyway */
+  }
+  authToken = "";
+  // `replace`, not `assign`: Back must not walk into a console whose session has
+  // just been ended, which would show a page that cannot load.
+  location.replace("/login");
 }
 
 function scrollToBottom(force = false) {
@@ -3993,6 +4069,10 @@ function wire() {
   $("#files-close").addEventListener("click", () => toggleFilesPanel(false));
   $("#files-new").addEventListener("click", () => void newWorkspaceFolder());
   $("#files-clear").addEventListener("click", () => armClear());
+  // The way out of the session the sidebar names. Hidden until `/api/auth/status`
+  // reports one, so this handler is only ever wired to a row that is on screen.
+  $("#sign-out").addEventListener("click", () => void signOut());
+
   $("#project-new").addEventListener("click", () => void createProject());
   $("#project-import").addEventListener("click", () => $("#project-import-file").click());
   $("#project-import-file").addEventListener("change", (event) => {

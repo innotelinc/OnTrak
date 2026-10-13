@@ -22,7 +22,16 @@
 
 import type { AgentEvent } from "../agent.js";
 import type { ApprovalDecision } from "../approval.js";
+import type { ProjectView } from "../projects.js";
 import type { Session, SessionSummary } from "../store.js";
+
+/**
+ * A project export or import carries every file in the project, so it is the one
+ * call here that is not a small JSON exchange. The budget is the same order as
+ * the server's own body limit rather than the 15s a status call gets, because a
+ * timeout on a bundle would be a failure invented by the client.
+ */
+const BUNDLE_TIMEOUT_MS = 120_000;
 
 /** A refusal from the server, carrying the status so a caller can tell them apart. */
 export class GenieError extends Error {
@@ -117,6 +126,32 @@ export interface ShareRecord {
   recipientEmail: string;
   createdAt: string;
   [key: string]: unknown;
+}
+
+/** What `GET /api/projects` answers with: the list, and which one is open. */
+export interface ProjectsPayload {
+  base: string;
+  /** Sandbox-relative directory the agent is working in ("" when it is not a project). */
+  active: string;
+  projects: ProjectView[];
+}
+
+/** One project as one portable file (`GET /api/projects/:id/export`). */
+export interface ProjectBundle {
+  /** The name a download would use — a slug, never a path. */
+  filename: string;
+  /** The encoded bundle itself. */
+  content: string;
+  files: number;
+  /** Relative paths deliberately left out (ignored and symlinked entries). */
+  skipped: string[];
+}
+
+/** What loading a bundle produced. */
+export interface ProjectLoad {
+  project: ProjectView;
+  files: number;
+  skipped: string[];
 }
 
 /** What a streaming turn calls back with. The last three are terminal. */
@@ -239,6 +274,88 @@ export class GenieClient {
 
   async shares(): Promise<{ sharedWithMe: ShareRecord[]; sharedByMe: ShareRecord[] }> {
     return this.json("/api/shares");
+  }
+
+  /** Every saved project, and which directory is currently the working one. */
+  projects(): Promise<ProjectsPayload> {
+    return this.json<ProjectsPayload>("/api/projects");
+  }
+
+  /**
+   * Save a project: a name, and the directory the server derives from it.
+   *
+   * `open` is passed through rather than decided here — the console opens what it
+   * creates and so does the CLI, but the default belongs on the server, which is
+   * the only place that knows what the working directory is right now.
+   */
+  async createProject(
+    name: string,
+    options: { description?: string; open?: boolean } = {},
+  ): Promise<ProjectView> {
+    const { project } = await this.json<{ project: ProjectView }>("/api/projects", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        ...(options.description === undefined ? {} : { description: options.description }),
+        open: options.open === true,
+      }),
+    });
+    return project;
+  }
+
+  /** Make a project the account's working directory. */
+  async openProject(id: string): Promise<ProjectView> {
+    const { project } = await this.json<{ project: ProjectView }>(
+      `/api/projects/${encodeURIComponent(id)}/open`,
+      { method: "POST" },
+    );
+    return project;
+  }
+
+  /** Rename a project, or change its note. */
+  async updateProject(id: string, patch: { name?: string; description?: string }): Promise<ProjectView> {
+    const { project } = await this.json<{ project: ProjectView }>(
+      `/api/projects/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: JSON.stringify(patch) },
+    );
+    return project;
+  }
+
+  /** Forget a project. `deleteFiles` also removes its directory. */
+  async deleteProject(id: string, deleteFiles = false): Promise<boolean> {
+    const query = deleteFiles ? "?files=delete" : "";
+    const { removed } = await this.json<{ removed: boolean }>(
+      `/api/projects/${encodeURIComponent(id)}${query}`,
+      { method: "DELETE" },
+    );
+    return removed;
+  }
+
+  /** A project as one portable file. */
+  exportProject(id: string): Promise<ProjectBundle> {
+    return this.json<ProjectBundle>(`/api/projects/${encodeURIComponent(id)}/export`, {
+      signal: AbortSignal.timeout(BUNDLE_TIMEOUT_MS),
+    });
+  }
+
+  /**
+   * Load a bundle as a *new* project.
+   *
+   * The bundle is the request body — it is posted as the file's own text, so
+   * nothing re-escapes it, which is what makes the bytes the console downloads
+   * and the bytes this sends the same bytes.
+   */
+  importProject(content: string, options: { name?: string; open?: boolean } = {}): Promise<ProjectLoad> {
+    const query = new URLSearchParams();
+    if (options.name !== undefined && options.name !== "") query.set("name", options.name);
+    if (options.open === true) query.set("open", "1");
+    const encodedQuery = query.toString();
+    const suffix = encodedQuery === "" ? "" : `?${encodedQuery}`;
+    return this.json<ProjectLoad>(`/api/projects/import${suffix}`, {
+      method: "POST",
+      body: content,
+      signal: AbortSignal.timeout(BUNDLE_TIMEOUT_MS),
+    });
   }
 
   async shareSession(sessionId: string, email: string): Promise<ShareRecord> {
