@@ -264,7 +264,13 @@ services:
       # directory rather than the socket file so a host without Incus yet — or a
       # remote/demo setup — gets an empty directory instead of Docker creating a
       # stray file where the daemon will later want its own socket.
+      - ./scenarios:/app/scenarios
       - /var/lib/incus:/var/lib/incus
+      # `incus` CLI, and `incus.remote: local` is the socket inside it. This is
+      # why the container is effectively a hypervisor admin. Mounted as the
+      # directory rather than the socket file so a host without Incus yet — or a
+      # remote/demo setup — gets an empty directory instead of Docker creating a
+      # stray file where the daemon will later want its own socket.
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
       interval: 30s
