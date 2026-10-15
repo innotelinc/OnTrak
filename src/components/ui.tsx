@@ -76,7 +76,7 @@ const SIZES: Record<ButtonSize, string> = {
 
 export function buttonClass(variant: ButtonVariant = "primary", size: ButtonSize = "md", className?: string) {
   return cn(
-    "inline-flex items-center justify-center border font-medium transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-55 focus-visible:outline-2 focus-visible:outline-offset-2",
+    "inline-flex items-center justify-center border font-medium transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-55 focus-visible:outline-2 focus-visible:outline-offset-2 hover:scale-[1.01] active:scale-[0.99]",
     VARIANTS[variant],
     SIZES[size],
     className,
@@ -352,5 +352,77 @@ export function Toggle({
         {description ? <span className="mt-0.5 block text-xs text-ink-soft">{description}</span> : null}
       </span>
     </label>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Enhanced UI Components                                                    */
+/* -------------------------------------------------------------------------- */
+
+export function Skeleton({ className }: { className?: string }) {
+  return (
+    <div className={cn("animate-pulse rounded-md bg-surface-muted/60", className)} aria-hidden />
+  );
+}
+
+export function SkeletonCard() {
+  return (
+    <div className="card-surface rounded-xl3 p-6">
+      <Skeleton className="h-6 w-2/3" />
+      <Skeleton className="mt-3 h-4 w-full" />
+      <Skeleton className="mt-2 h-4 w-5/6" />
+      <div className="mt-6 flex gap-3">
+        <Skeleton className="h-9 w-24" />
+        <Skeleton className="h-9 w-20" />
+      </div>
+    </div>
+  );
+}
+
+export function Tooltip({
+  content,
+  children,
+  className,
+}: {
+  content: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("group relative inline-block", className)}>
+      {children}
+      <span className="pointer-events-none absolute -top-10 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-lg bg-ink px-2.5 py-1.5 text-xs text-surface opacity-0 shadow-lg transition-opacity duration-200 group-hover:opacity-100">
+        {content}
+        <span className="absolute -bottom-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-ink" />
+      </span>
+    </div>
+  );
+}
+
+export function Spinner({ className }: { className?: string }) {
+  return (
+    <svg
+      className={cn("h-4 w-4 animate-spin text-current", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+    >
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+      />
+    </svg>
+  );
+}
+
+export function LoadingDots({ className }: { className?: string }) {
+  return (
+    <span className={cn("inline-flex gap-1", className)} aria-hidden>
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
+    </span>
   );
 }
