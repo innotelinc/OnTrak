@@ -496,6 +496,142 @@ const runCommandTool: ToolDefinition = {
   },
 };
 
+
+// --- write_journal (persistent learning) ------------------------------------
+const writeJournalTool: ToolDefinition = {
+  name: "write_journal",
+  description: "Append an entry to the persistent learning journal (AGENT_LEARNINGS.md) in the workspace.",
+  parameters: { type: "object", properties: { entry: { type: "string" }, category: { type: "string" } }, required: ["entry"] },
+  async run(args) {
+    const entry = argString(args, "entry");
+    const category = (args.category as string) || "note";
+    const journalPath = resolveInWorkspace("AGENT_LEARNINGS.md");
+    const timestamp = new Date().toISOString();
+    const formatted = `\n\n### [${timestamp}] ${category}\n\n${entry}\n`;
+    try {
+      const existing = await fs.readFile(journalPath, "utf8");
+      await writeTextFile(journalPath, existing + formatted);
+    } catch {
+      await writeTextFile(journalPath, `# Agent Learning Journal\n\n*This file persists across agent sessions.*\n\n### [${timestamp}] ${category}\n\n${entry}\n`);
+    }
+    return { ok: true, content: `Appended to AGENT_LEARNINGS.md` };
+  },
+};
+const workspaceStateTool: ToolDefinition = {
+  name: "workspace_state",
+  description: "Get or set persistent state (state.json) in workspace.",
+  parameters: { type: "object", properties: { action: { type: "string" }, key: { type: "string" }, value: { type: "object" } }, required: ["action"] },
+  async run(args) {
+    const action = argString(args, "action");
+    const statePath = resolveInWorkspace("state.json");
+    let state: Record<string, unknown> = {};
+    try { state = JSON.parse(await fs.readFile(statePath, "utf8")); } catch {}
+    if (action === "get") return { ok: true, content: JSON.stringify(state, null, 2) };
+    if (action === "set") {
+      const key = argString(args, "key");
+      state[key] = args.value;
+      await writeTextFile(statePath, JSON.stringify(state, null, 2));
+      return { ok: true, content: `State updated: ${key}` };
+    }
+    throw new ToolError("action must be 'get' or 'set'");
+  },
+};
+const pluginDiscoverTool: ToolDefinition = {
+  name: "plugin_discover",
+  description: "Discover and track plugins in workspace. Updates state.json with discovered plugins.",
+  parameters: { type: "object", properties: {} },
+  async run() {
+    const plugins: any[] = [];
+    try {
+      const pdir = resolveInWorkspace("plugins");
+      const entries = await fs.readdir(pdir, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.isDirectory() && !e.name.startsWith('.')) {
+          plugins.push({ name: e.name, path: `plugins/${e.name}`, discovered: new Date().toISOString() });
+        }
+      }
+    } catch {}
+    try {
+      const statePath = resolveInWorkspace("state.json");
+      let state: any = {};
+      try { state = JSON.parse(await fs.readFile(statePath, "utf8")); } catch {}
+      state.discovered_plugins = plugins;
+      await writeTextFile(statePath, JSON.stringify(state, null, 2));
+    } catch {}
+    try {
+      const journalPath = resolveInWorkspace("AGENT_LEARNINGS.md");
+      const ts = new Date().toISOString();
+      const entry = `\n\n### [${ts}] discovery\n\nDiscovered ${plugins.length} plugin(s): ${plugins.map(p=>p.name).join(', ')}\n`;
+      const existing = await fs.readFile(journalPath, "utf8").catch(() => "# Agent Learning Journal\n\n");
+      await writeTextFile(journalPath, existing + entry);
+    } catch {}
+    return { ok: true, content: JSON.stringify(plugins, null, 2) };
+  },
+};
+const pluginLoadTool: ToolDefinition = {
+  name: "plugin_load",
+  description: "Load a plugin by path.",
+  parameters: { type: "object", properties: { pluginPath: { type: "string" } }, required: ["pluginPath"] },
+  async run(args) {
+    const rel = argString(args, "pluginPath");
+    const abs = resolveInWorkspace(rel);
+    let target = abs;
+    try {
+      const st = await fs.stat(abs);
+      if (st.isDirectory()) {
+        for (const f of ["index.mjs", "index.js", "index.cjs"]) {
+          const p = path.join(abs, f);
+          try { await fs.access(p); target = p; break; } catch {}
+        }
+      }
+    } catch {}
+    const res = await new Promise<string>((r) => {
+      execFile("node", [target], { timeout: 5000 }, (e, out, err) => r(e ? `ERR:${e.message}` : (out||err||"ok")));
+    });
+    return { ok: true, content: res };
+  },
+};
+const packageInstallTool: ToolDefinition = {
+  name: "package_install",
+  description: "Install system packages with sandbox awareness. Respects AGENT_SANDBOX mode (host/docker/auto). Logs to persistent journal on success.",
+  parameters: { type: "object", properties: { packages: { type: "string" }, manager: { type: "string", description: "npm|pip|apt|yarn|pnpm" } }, required: ["packages"] },
+  async run(args) {
+    const pkgs = argString(args, "packages");
+    const mgr = ((args.manager as string)||"npm").toLowerCase();
+    let cmd = mgr==="npm"?`npm install ${pkgs}` : mgr==="pip"?`pip install ${pkgs}` : mgr==="apt"?`apt-get update && apt-get install -y ${pkgs}` : mgr==="pnpm"?`pnpm add ${pkgs}` : mgr==="yarn"?`yarn add ${pkgs}` : `npm install ${pkgs}`;
+    const res = await runShellCommand({ command: cmd, cwd: workspaceRoot(), timeoutMs: 120000 });
+    const sandbox = process.env.AGENT_SANDBOX || "auto";
+    const content = `Sandbox: ${sandbox}\n${res.output || (res.refused||"")}`;
+    if (res.ok) {
+      try {
+        const journalPath = resolveInWorkspace("AGENT_LEARNINGS.md");
+        const ts = new Date().toISOString();
+        const entry = `\n\n### [${ts}] install\n\nInstalled packages: ${pkgs} (manager: ${mgr}, sandbox: ${sandbox})\n`;
+        const existing = await fs.readFile(journalPath, "utf8").catch(() => "# Agent Learning Journal\n\n");
+        await writeTextFile(journalPath, existing + entry);
+      } catch {}
+    }
+    return { ok: res.ok, content };
+  },
+};
+const macroRunTool: ToolDefinition = {
+  name: "macro_run",
+  description: "Run stored macro.",
+  parameters: { type: "object", properties: { name: { type: "string" }, args: { type: "string" } }, required: ["name"] },
+  async run(args) {
+    const name = argString(args, "name");
+    const margs = argString(args, "args", true);
+    const cands = [resolveInWorkspace(`macros/${name}.sh`), resolveInWorkspace(`macros/${name}.js`), resolveInWorkspace(name)];
+    let t: string|null = null;
+    for (const c of cands) { try { await fs.access(c); t=c; break; } catch {} }
+    if (!t) throw new ToolError("macro not found");
+    const ext = path.extname(t);
+    const cmd = ext===".sh" ? `bash ${t} ${margs}` : `node ${t} ${margs}`;
+    const res = await runShellCommand({ command: cmd, cwd: path.dirname(t), timeoutMs: 60000 });
+    return { ok: res.ok, content: res.output || "" };
+  },
+};
+
 // --- registry ---------------------------------------------------------------
 
 export const tools: ToolDefinition[] = [
@@ -505,6 +641,12 @@ export const tools: ToolDefinition[] = [
   editFileTool,
   searchCodeTool,
   runCommandTool,
+  writeJournalTool,
+  workspaceStateTool,
+  pluginDiscoverTool,
+  pluginLoadTool,
+  packageInstallTool,
+  macroRunTool,
 ];
 
 /** Tool schemas in the OpenAI `tools` envelope. */
