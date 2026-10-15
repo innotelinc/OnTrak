@@ -1,17 +1,18 @@
 <div align="center">
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+# Ontrak Sync
 
-# 🛠️ Ontrak Sync
-
-**The Network's package and container update view — two managers that must never be confused, and one place that installs what a person approved.**
-
-**CodeOps · self-hosted · single responsibility**
+**The Network's package and container update view — monitoring with approval-gated updates.**
 
 [![CI](https://github.com/innotelinc/ontrak-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/innotelinc/ontrak-sync/actions/workflows/ci.yml)
 [![Conformity](https://github.com/innotelinc/ontrak-sync/actions/workflows/conform.yml/badge.svg)](https://github.com/innotelinc/ontrak-sync/actions/workflows/conform.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
+
+> **Part of the [OnTrak platform](../README.md) — TrainingOps for the Innotel Labs ecosystem**
+
+**🌐 [OnTrak Landing Page](https://innotelinc.github.io/OnTrak/)** • **[Landing Page](https://innotelinc.github.io/ontrak-sync)** • **[Documentation](./docs/)**
 
 ---
 

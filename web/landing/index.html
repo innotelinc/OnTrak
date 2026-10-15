@@ -163,7 +163,7 @@ npm install &amp;&amp; npm run docker:db &amp;&amp; npm run setup &amp;&amp; npm
       </div>
 
       <div class="stats">
-        <div class="stat"><div class="n"><em>6</em> products</div><div class="l">Training · Tix · Sentinel · Sync · Portal · Genie — plus the hands-on Lab</div></div>
+        <div class="stat"><div class="n"><em>7</em> products</div><div class="l">Training · Tix · Sentinel · Sync · Portal · Genie · Lab — the complete TrainingOps suite</div></div>
         <div class="stat"><div class="n">Graded <em>live</em> state</div><div class="l">Linux, Windows and Office simulations</div></div>
         <div class="stat"><div class="n">Hash-chained <em>audit</em></div><div class="l">Every privileged action, append-only</div></div>
         <div class="stat"><div class="n"><em>One</em> identity layer</div><div class="l">OIDC/SAML + SCIM, local fallback</div></div>
@@ -257,13 +257,33 @@ npm install &amp;&amp; npm run docker:db &amp;&amp; npm run setup &amp;&amp; npm
           </ul>
         </div>
         <div class="card">
-          <span class="tag">lab</span>
+          <span class="tag">Active</span>
           <h3>OnTrak Lab</h3>
           <p>The hands-on half of the same training: the scenarios above, run on real machines rather than in a browser. A session is a Linux container or a Windows guest stood up on demand, graded from its live state, and torn down when the work is handed in.</p>
           <ul>
             <li>Real machines behind the same grading contract — a correct fix is a correct fix</li>
             <li>An HTML5 console (SSH and RDP) in the browser, nothing to install</li>
             <li>One family name, <code>lab.ontrak.innotel.us</code>, in front of its own gateway</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="tag">Active</span>
+          <h3>OnTrak Portal</h3>
+          <p>The centralized front door: one sign-in, then the products a role belongs in. Routes by role and authorizes nothing — every product re-checks the caller itself.</p>
+          <ul>
+            <li>Unified authentication across all family products</li>
+            <li>Role-based product discovery and routing</li>
+            <li>Local account fallback via OnTrak Sync</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="tag">Active</span>
+          <h3>OnTrak Sync</h3>
+          <p>Network package and container update monitoring with approval workflows. Also owns the family's local account table for LAN deployments.</p>
+          <ul>
+            <li>Monitors package and container update status</li>
+            <li>Approval-gated updates with audit trail</li>
+            <li>Local account management and capability model</li>
           </ul>
         </div>
       </div>

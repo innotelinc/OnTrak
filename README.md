@@ -19,13 +19,16 @@
 > while [**OnTrak Tix**](ontrak-tix/README.md) runs the real desk beside it, with
 > clients, SLAs, billing and insurance-grade incident evidence;
 > [**OnTrak Sentinel**](ontrak-sentinel/README.md) is the directory and the
-> intrusion console; and [**OnTrak Sync**](ontrak-sync/README.md) keeps the
-> Network's packages and containers current and owns the family's local accounts.
-> [**OnTrak Portal**](ontrak-portal/README.md) is the front door: one sign-in,
-> then the products a role belongs in. Every product works on its own — it always
+> intrusion console; [**OnTrak Sync**](ontrak-sync/README.md) keeps the
+> Network's packages and containers current and owns the family's local accounts;
+> [**OnTrak Genie**](ontrak-genie/README.md) provides AI-assisted coding workflows;
+> and [**OnTrak Portal**](ontrak-portal/README.md) is the front door: one sign-in,
+> then the products a role belongs in. **[OnTrak Lab](ontrak-lab/README.md)** provides
+> hands-on practice on real machines. Every product works on its own — it always
 > has — and they consume Cerulean for identity and trust and share one audit
 > chain; no virtual machines and no terminal servers are required for any of them.
-> **Landing page:** [https://innotelinc.github.io/OnTrak/](https://innotelinc.github.io/OnTrak/)
+
+**🌐 [View the official landing page →](https://innotelinc.github.io/OnTrak/)**
 
 **Names, once.** *OnTrak* alone is this repository and the family of products inside
 it, never one product. The product in `src/` is **OnTrak IT Support Training**
@@ -35,6 +38,20 @@ it, never one product. The product in `src/` is **OnTrak IT Support Training**
 **OnTrak Lab** (capability id and host label `lab`): the Python platform that runs
 real machines for the hands-on half of a task, served from its own host rather than
 from the family stack `docker-compose.all.yml` starts.
+
+## Project Status
+
+| Component | Status | Description |
+| --- | --- | --- |
+| **OnTrak IT Support Training** | 🟢 Active | Core training platform with graded simulations (Linux, Windows, Office) |
+| **OnTrak Tix** | 🟡 In Development | MSP-grade service desk with tickets, SLAs, billing, incident evidence |
+| **OnTrak Sentinel** | 🟡 In Development | IdP + IDS/IPS with OIDC/SAML, SCIM, and detection capabilities |
+| **OnTrak Sync** | 🟢 Active | Network update monitoring and local account management |
+| **OnTrak Portal** | 🟢 Active | Unified front door for role-based product routing |
+| **OnTrak Genie** | 🟢 Active | AI coding agent with approval gates and workspace isolation |
+| **OnTrak Lab** | 🟢 Active | Hands-on practice on real disposable machines |
+
+**Roadmap:** See [ROADMAP.md](ROADMAP.md) and [ontrak-tix/ROADMAP.md](ontrak-tix/ROADMAP.md) for detailed plans.
 
 ---
 
@@ -653,26 +670,20 @@ caught a scrollable region without keyboard access on the landing page.
 
 ---
 
-## Sibling project
+## The OnTrak Ecosystem
 
-Five [**Innotel Labs**](INNOTEL-LABS.md) products share a stack, a design
-language and one identity layer:
+All [**Innotel Labs**](INNOTEL-LABS.md) products share a unified stack, design
+language, audit chain, and identity layer:
 
-- [**OnTrak Tix**](ontrak-tix/ROADMAP.md) — enterprise ticketing and
-  service management for IT desks and MSPs, with incident response and
-  insurance-grade, tamper-evident documentation.
-- [**OnTrak Sentinel**](ontrak-sentinel/ROADMAP.md) — identity (IdP) and
-  intrusion prevention (IDS/IPS).
-- [**OnTrak Sync**](ontrak-sync/README.md) — Network package and container update
-  monitoring and, on approval, updating; also the family's local account table.
-- [**OnTrak Portal**](ontrak-portal/README.md) — the centralized dashboard: one
-  sign-in, then the products a role belongs in.
+- [**OnTrak IT Support Training**](README.md) — Browser-based, auto-graded simulations (Linux, Windows, Office)
+- [**OnTrak Tix**](ontrak-tix/README.md) — Enterprise ticketing and MSP service desk with incident evidence
+- [**OnTrak Sentinel**](ontrak-sentinel/README.md) — Identity provider (IdP) and intrusion prevention (IDS/IPS)
+- [**OnTrak Sync**](ontrak-sync/README.md) — Network update monitoring and local account management
+- [**OnTrak Portal**](ontrak-portal/README.md) — Unified front door with role-based routing
+- [**OnTrak Genie**](ontrak-genie/README.md) — AI coding agent with approval gates
+- [**OnTrak Lab**](ontrak-lab/README.md) — Hands-on practice on real disposable machines
 
-OnTrak IT Support Training **trains** the technicians; OnTrak Tix is the tool
-they **work in**; OnTrak Sentinel protects both; OnTrak Sync keeps the machines
-underneath them current; and OnTrak Portal is where a person starts. They link via
-a ticket ↔ scenario bridge, a shared role vocabulary and a single identity
-provider.
+**How they work together:** Training **trains** technicians, Tix is where they **work**, Sentinel **protects** both, Sync keeps infrastructure **current**, Genie **accelerates** development workflows, Lab provides **hands-on practice**, and Portal is the **single entry point**. All products share a common role vocabulary, audit trail, and integrate seamlessly with the [Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack).
 
 ## 🏛️ Platform stack
 

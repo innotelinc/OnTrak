@@ -4,22 +4,19 @@
 [![Conformity](https://github.com/innotelinc/OnTrak/actions/workflows/conform.yml/badge.svg)](https://github.com/innotelinc/OnTrak/actions/workflows/conform.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
 
-An **enterprise ticketing and service-management platform** for internal IT
+> **Part of the [OnTrak platform](../README.md) — TrainingOps for the Innotel Labs ecosystem**
+
+An **enterprise-grade ticketing and service-management platform** for internal IT
 service desks and Managed Service Providers (MSPs). OnTrak Tix tracks every
 request, incident, change and problem from intake to closure, enforces SLAs,
-coordinates multi-client work for MSPs, and is the system of record for the
-people, assets and processes behind IT support.
+coordinates multi-client work for MSPs, and serves as the system of record for
+the people, assets and processes behind IT support.
 
-It is part of the [Innotel Labs](../INNOTEL-LABS.md) family, alongside
-[OnTrak IT Support Training](../README.md): the training product **trains** the
-technicians, OnTrak Tix is the tool they **work in**.
+It is part of the [Innotel Labs](../INNOTEL-LABS.md) family and the
+[Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack). 
+The training product **trains** technicians; OnTrak Tix is the tool they **work in**.
 
-The badges are the repository's, not this directory's: OnTrak Tix has no
-workflow of its own, because its jobs are the `tix` job of
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — the same run that
-lints, typechecks and tests the training app beside it. Conformity is the
-[Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack)
-audit, and the licence is the repository's MIT [`LICENSE`](../LICENSE).
+**🌐 [OnTrak Landing Page](https://innotelinc.github.io/OnTrak/)** • **[Documentation](./docs/)** • **[Roadmap](./ROADMAP.md)**
 
 ```
         ┌──────────────────────────┐            ┌──────────────────────────┐
@@ -70,6 +67,12 @@ reconstructed from memory.
   for adjusters and auditors.
 - **Integrations** — RMM and monitoring tools, chat, and a public REST API with
   webhooks.
+
+## Project Status
+
+**M0–M5 complete; M6 in progress.** Core ticketing, SLAs, incidents, evidence,
+clients, billing, automation, and API foundations are implemented. See
+[ROADMAP.md](./ROADMAP.md) for full milestone details.
 
 ## Status
 

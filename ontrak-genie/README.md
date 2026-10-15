@@ -2,9 +2,7 @@
 
 # OnTrak Genie
 
-**Your wish is my command.**
-
-**CodeOps · self-hosted · every write is visible while it is written**
+**AI coding agent with approval gates and workspace isolation.**
 
 [![CI](https://github.com/innotelinc/OnTrak/actions/workflows/ci.yml/badge.svg)](https://github.com/innotelinc/OnTrak/actions/workflows/ci.yml)
 [![Conformity](https://github.com/innotelinc/OnTrak/actions/workflows/conform.yml/badge.svg)](https://github.com/innotelinc/OnTrak/actions/workflows/conform.yml)
@@ -12,6 +10,10 @@
 [![Theme: Unity](https://img.shields.io/badge/theme-Unity-6366f1)](https://github.com/innotelinc/innotel-platform-stack/blob/main/standards/unity/README.md)
 
 </div>
+
+> **Part of the [OnTrak platform](../README.md) — TrainingOps for the Innotel Labs ecosystem**
+
+**🌐 [OnTrak Landing Page](https://innotelinc.github.io/OnTrak/)** • **[Landing Page](https://innotelinc.github.io/OnTrak/ontrak-genie/)** • **[Documentation](./docs/)**
 
 ---
 

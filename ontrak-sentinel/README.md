@@ -1,14 +1,20 @@
 # OnTrak Sentinel
 
+[![CI](https://github.com/innotelinc/OnTrak/actions/workflows/ci.yml/badge.svg)](https://github.com/innotelinc/OnTrak/actions/workflows/ci.yml)
+[![Conformity](https://github.com/innotelinc/OnTrak/actions/workflows/conform.yml/badge.svg)](https://github.com/innotelinc/OnTrak/actions/workflows/conform.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
+
+> **Part of the [OnTrak platform](../README.md) — TrainingOps for the Innotel Labs ecosystem**
+
 An **identity and network-defense platform**: a standards-compliant **Identity
 Provider (IdP)** and an **intrusion detection & prevention (IDS/IPS)** engine,
-sharing one identity-centric data model. An [Innotel Labs](../INNOTEL-LABS.md)
-product.
+sharing one identity-centric data model.
 
 OnTrak Sentinel is the security backbone of the Innotel Labs family. It issues
-identity for [OnTrak Tix](../ontrak-tix/README.md) and
-[OnTrak IT Support Training](../README.md), and it is the source of the security
-telemetry that drives their incident response.
+identity for [OnTrak Tix](../ontrak-tix/README.md), [OnTrak IT Support Training](../README.md),
+and all other family products, and serves as the source of security telemetry.
+
+**🌐 [OnTrak Landing Page](https://innotelinc.github.io/OnTrak/)** • **[Documentation](./docs/)** • **[Roadmap](./ROADMAP.md)**
 
 ```
         ┌──────────────────────────── OnTrak Sentinel ────────────────────────────┐

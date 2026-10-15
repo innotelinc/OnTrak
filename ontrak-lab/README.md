@@ -1,13 +1,18 @@
 <div align="center">
 
-# OnTrak
+# OnTrak Lab
 
-**IT Support Training Platform powered by Innotel OnTrak — Windows, Server, Office and Linux, ticketed and graded.**
+**Hands-on IT support training on real disposable machines.**
 
 [![CI](https://github.com/innotelinc/OnTrak/actions/workflows/ci.yml/badge.svg)](https://github.com/innotelinc/OnTrak/actions/workflows/ci.yml)
+[![Conformity](https://github.com/innotelinc/OnTrak/actions/workflows/conform.yml/badge.svg)](https://github.com/innotelinc/OnTrak/actions/workflows/conform.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
+
+> **Part of the [OnTrak platform](../README.md) — TrainingOps for the Innotel Labs ecosystem**
+
+**🌐 [OnTrak Landing Page](https://innotelinc.github.io/OnTrak/)** • **[Documentation](./docs/)**
 
 > **OnTrak** is the **IT Support Training Platform powered by Innotel OnTrak** — a
 > TrainingOps platform that stands up deliberately broken Windows, Server, Office and Linux

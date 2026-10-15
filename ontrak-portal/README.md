@@ -4,9 +4,13 @@
 
 **One sign-in, then the products your role belongs in.**
 
-**Control plane · self-hosted · no database of its own**
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
 
 </div>
+
+> **Part of the [OnTrak platform](../README.md) — TrainingOps for the Innotel Labs ecosystem**
+
+**🌐 [OnTrak Landing Page](https://innotelinc.github.io/OnTrak/)**
 
 ---
 
