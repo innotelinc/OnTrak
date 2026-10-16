@@ -311,12 +311,24 @@
       </main>
 
       <!--
+        One rail, three views: the preview, the workspace and publishing.
+
+        They were three separate surfaces — the preview a grid column of its own,
+        the workspace a `position: fixed` overlay, publishing a centred dialog — so
+        two of them open at once put one window on top of another, and the
+        workspace covered the very toolbar it was opened from. They are views of a
+        single column now: `data-view` says which, `open` says whether, and a view
+        that is not the current one is not rendered — so there is nothing to
+        stack, and nothing of the console's own to bury.
+      -->
+      <aside id="rail" class="rail" aria-label="Preview, workspace and publishing">
+      <!--
         The preview is a right-hand rail, not a strip under the conversation:
         the code and the app it makes are read side by side with the transcript
         that produced them, and the rail collapses to nothing (the toggle in the
         top bar) rather than being a fixed height the conversation has to pay for.
       -->
-      <aside id="preview" class="preview" aria-label="The app and the code being generated">
+      <aside id="preview" class="preview rail-view" aria-label="The app and the code being generated">
         <!--
           The grip on the rail's inner edge. Drag it to trade width between the
           conversation and the preview; ArrowLeft/ArrowRight do the same from the
@@ -425,25 +437,7 @@
         </div>
       </aside>
 
-      <!--
-        The rail, collapsed to an edge tab. Without it "collapsed" and "gone"
-        look the same: the only way back would be a button in a toolbar the user
-        has to find again, and the pane they just closed would read as one this
-        build does not have. So the control is always on screen, in the same
-        place, in both states.
-      -->
-      <button
-        id="preview-expand"
-        class="preview-expand hidden"
-        title="Open the preview pane"
-        aria-controls="preview"
-        aria-expanded="false"
-      >
-        <span class="preview-expand-glyph" aria-hidden="true">‹</span>
-        <span class="preview-expand-text">preview</span>
-      </button>
-
-      <aside class="files" id="files-panel" aria-label="Workspace files">
+      <aside class="files rail-view" id="files-panel" aria-label="Workspace files">
         <div class="files-head">
           <span class="brand">Workspace</span>
           <div class="files-actions">
@@ -547,6 +541,66 @@
         <div id="files-path" class="files-path mono">.</div>
         <div id="files-list" class="files-list"></div>
       </aside>
+
+      <div
+            id="hosting"
+            class="hosting rail-view hidden"
+            role="region"
+            aria-labelledby="hosting-title"
+            tabindex="-1"
+          >
+            <div class="viewer-head">
+              <span id="hosting-title" class="mono">publish &amp; host</span>
+              <div class="viewer-actions">
+                <button id="hosting-close" class="btn-ghost" aria-label="Close publishing">close</button>
+              </div>
+            </div>
+            <div class="viewer-content settings-form">
+              <p id="hosting-status" class="muted settings-note"></p>
+              <div id="hosting-plan" class="hosting-plan"></div>
+              <label class="field wide" for="hosting-name">
+                <span class="muted">your own name — leave empty for a free address on a port</span>
+                <div class="hosting-name-row">
+                  <input
+                    id="hosting-name"
+                    class="input-text"
+                    type="text"
+                    autocomplete="off"
+                    placeholder="acme"
+                    aria-label="Your preview subdomain"
+                  />
+                  <span id="hosting-suffix" class="mono muted"></span>
+                </div>
+              </label>
+              <div class="hosting-actions">
+                <button id="hosting-publish" class="btn-primary">publish</button>
+                <button id="hosting-buy" class="btn-ghost hidden">get your own name</button>
+              </div>
+              <div id="hosting-list" class="hosting-list"></div>
+            </div>
+            </div>
+
+      </aside>
+
+      <!--
+        The rail, collapsed to an edge tab. Without it "collapsed" and "gone"
+        look the same: the only way back would be a button in a toolbar the user
+        has to find again, and the pane they just closed would read as one this
+        build does not have. So the control is always on screen, in the same
+        place, in both states.
+      -->
+      <button
+        id="preview-expand"
+        class="preview-expand hidden"
+        title="Open the preview pane"
+        aria-controls="preview"
+        aria-expanded="false"
+      >
+        <span class="preview-expand-glyph" aria-hidden="true">‹</span>
+        <span class="preview-expand-text">preview</span>
+      </button>
+
+      
     </div>
 
     <!--
@@ -763,44 +817,7 @@
       </div>
     </div>
 
-    <div
-      id="hosting"
-      class="viewer hidden"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="hosting-title"
-      tabindex="-1"
-    >
-      <div class="viewer-head">
-        <span id="hosting-title" class="mono">publish &amp; host</span>
-        <div class="viewer-actions">
-          <button id="hosting-close" class="btn-ghost" aria-label="Close publishing">close</button>
-        </div>
-      </div>
-      <div class="viewer-content settings-form">
-        <p id="hosting-status" class="muted settings-note"></p>
-        <div id="hosting-plan" class="hosting-plan"></div>
-        <label class="field wide" for="hosting-name">
-          <span class="muted">your own name — leave empty for a free address on a port</span>
-          <div class="hosting-name-row">
-            <input
-              id="hosting-name"
-              class="input-text"
-              type="text"
-              autocomplete="off"
-              placeholder="acme"
-              aria-label="Your preview subdomain"
-            />
-            <span id="hosting-suffix" class="mono muted"></span>
-          </div>
-        </label>
-        <div class="hosting-actions">
-          <button id="hosting-publish" class="btn-primary">publish</button>
-          <button id="hosting-buy" class="btn-ghost hidden">get your own name</button>
-        </div>
-        <div id="hosting-list" class="hosting-list"></div>
-      </div>
-    </div>
+    
 
     <!--
       Skills and memory: what this agent is offered, and what this workspace has

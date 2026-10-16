@@ -466,6 +466,23 @@ function previewMaxWidth() {
   return Math.max(PREVIEW_MIN_WIDTH, Math.round(window.innerWidth * 0.7));
 }
 
+/*
+ * How tall the toolbar is, published as `--topbar-h`.
+ *
+ * Below 1080px the rail is a drawer, and it hangs from the bottom of the toolbar
+ * rather than from the top of the window: the buttons that open it are up there,
+ * and a drawer that covers the control which opened it cannot be used to close
+ * it. The height is measured rather than written down because the toolbar wraps —
+ * how many rows it takes is a fact about the current width, and the rail's inset
+ * has to follow the same fact.
+ */
+function measureTopbar() {
+  const bar = document.querySelector(".topbar");
+  if (bar === null) return;
+  const height = Math.round(bar.getBoundingClientRect().height);
+  document.documentElement.style.setProperty("--topbar-h", `${height}px`);
+}
+
 /** Apply a width, or `null` to hand the rail back to the stylesheet's default. */
 function applyPreviewWidth(px) {
   const rail = $("#preview");
@@ -554,6 +571,9 @@ function initPreviewResize() {
 
 function togglePreview(force) {
   const open = force === undefined ? !previewIsOpen() : force;
+  // One view at a time: opening this one collapses whichever of the other two the
+  // rail was showing (see `switchRailTo`).
+  if (open) switchRailTo("preview");
   $("#preview").classList.toggle("open", open);
   $("#toggle-preview").setAttribute("aria-expanded", open ? "true" : "false");
   // Collapse and expand are one control in two states, and exactly one of them
@@ -571,6 +591,7 @@ function togglePreview(force) {
   // Whether the code and the change share the pane depends on it being open, so
   // the layout has to be re-applied here rather than only when content arrives.
   applyPreviewLayout();
+  syncRail();
 }
 
 /** The chip in the pane's header. `level` is "ok", "bad" or nothing. */
@@ -3710,8 +3731,112 @@ function toggleSidebar(force) {
 function toggleFilesPanel(force) {
   const panel = $("#files-panel");
   const open = force === undefined ? !panel.classList.contains("open") : force;
+  if (open) switchRailTo("workspace");
   panel.classList.toggle("open", open);
-  $("#toggle-files").setAttribute("aria-expanded", open ? "true" : "false");
+  // The three buttons' `aria-expanded` is `syncRail`'s to write, because all three
+  // describe the rail rather than their own panel.
+  syncRail();
+}
+
+/* -------------------------------------------------------------------- rail */
+
+/*
+ * The right-hand rail: one column, three views — the preview, the workspace and
+ * publishing.
+ *
+ * The three were independent surfaces (a grid track, a `position: fixed` overlay
+ * and a centred dialog), which is why two of them could be open at once, one on
+ * top of the other, with the workspace covering the very toolbar that opened it.
+ * `syncRail` is the single place that reads their three states and says which view
+ * the rail is showing. The panels keep their own open/closed flags — and the tests
+ * that drive them — and the rail is *derived* from those flags rather than kept in
+ * step with them by hand, so the two cannot drift.
+ *
+ * `data-view` survives a collapse, so reopening the rail comes back to the view
+ * that was there: the pane a person was reading is not replaced by whichever
+ * button they happened to reach for next.
+ */
+const RAIL_VIEWS = ["preview", "workspace", "publish"];
+
+/** Which control opens each view — where focus goes back when one is left. */
+const RAIL_TOGGLES = { preview: "#toggle-preview", workspace: "#toggle-files", publish: "#hosting-open" };
+
+/** The view on screen, or `null` when the rail is collapsed. */
+function railOpenView() {
+  const rail = $("#rail");
+  if (!rail.classList.contains("open")) return null;
+  const view = rail.dataset.view;
+  return RAIL_VIEWS.includes(view) ? view : RAIL_VIEWS[0];
+}
+
+/** Say which view the rail is showing, from the panels' own flags. */
+function syncRail() {
+  const rail = $("#rail");
+  // Latest wins: every opener has already set its own flag before calling this,
+  // and the click that just happened is the newest of the three.
+  const view = !$("#hosting").classList.contains("hidden")
+    ? "publish"
+    : $("#files-panel").classList.contains("open")
+      ? "workspace"
+      : $("#preview").classList.contains("open")
+        ? "preview"
+        : null;
+  if (view !== null) rail.dataset.view = view;
+  rail.classList.toggle("open", view !== null);
+  // A control says whether *its* view is the one on screen, which is what a person
+  // is looking at — not whether some panel behind another one is technically open.
+  $("#toggle-preview").setAttribute("aria-expanded", view === "preview" ? "true" : "false");
+  $("#toggle-files").setAttribute("aria-expanded", view === "workspace" ? "true" : "false");
+  $("#hosting-open").setAttribute("aria-expanded", view === "publish" ? "true" : "false");
+  $("#preview-collapse").setAttribute("aria-expanded", view === "preview" ? "true" : "false");
+  // Collapse and expand are one control in two states, and exactly one of them is
+  // on screen: the edge tab is only hidden while the rail it stands for is open.
+  $("#preview-expand").classList.toggle("hidden", view !== null);
+}
+
+/** Leave the two views that are not `keep`. */
+function switchRailTo(keep) {
+  for (const view of RAIL_VIEWS) {
+    if (view !== keep) closeRailView(view);
+  }
+}
+
+/**
+ * Collapse one view on its way to another.
+ *
+ * This is the *switch* half of the rail, and it deliberately does not do what the
+ * preview's own close button does: switching away is not somebody saying they are
+ * done with the pane, so it must not mark it dismissed — that flag is what stops
+ * the next write from ever showing the preview again.
+ */
+function closeRailView(name) {
+  const panel = name === "preview" ? $("#preview") : name === "workspace" ? $("#files-panel") : $("#hosting");
+  const held = panel.contains(document.activeElement);
+  if (name === "preview") {
+    panel.classList.remove("open");
+    cancelLiveDiff();
+  } else if (name === "workspace") {
+    panel.classList.remove("open");
+  } else {
+    panel.classList.add("hidden");
+  }
+  // A view that goes away must not take the keyboard with it: the control that
+  // owns it is where focus was, so that is where it goes back to.
+  if (held) $(RAIL_TOGGLES[name]).focus();
+}
+
+/** Escape, or a click on the toggle of the view already showing: collapse it. */
+function closeRail() {
+  const view = railOpenView();
+  if (view === null) return;
+  if (view === "preview") {
+    togglePreview(false);
+    unwatchPreviewChanges();
+  } else if (view === "workspace") {
+    toggleFilesPanel(false);
+  } else {
+    closeHosting();
+  }
 }
 
 /* ---------------------------------------------------------------- terminal */
@@ -3848,16 +3973,20 @@ function recallTerminalCommand(delta) {
 let hostingInfoCache = null;
 
 function openHosting() {
+  switchRailTo("publish");
   $("#hosting").classList.remove("hidden");
-  $("#hosting-open").setAttribute("aria-expanded", "true");
+  // Focus still goes into the panel — publishing is a form, and the first thing a
+  // keyboard should meet is the field it is about. Not a modal any more, though:
+  // it shares the rail with the preview and the workspace instead of covering them.
   enterDialog($("#hosting"));
+  syncRail();
   void loadHosting();
 }
 
 function closeHosting() {
   $("#hosting").classList.add("hidden");
-  $("#hosting-open").setAttribute("aria-expanded", "false");
   leaveDialog($("#hosting"));
+  syncRail();
 }
 
 function money(cents) {
@@ -5320,7 +5449,11 @@ function wire() {
   initPreviewResize();
   // A resize can cross the docked/overlay breakpoint, so the width is re-applied
   // rather than left as pixels that no longer describe this layout.
-  window.addEventListener("resize", () => applyPreviewWidth(storedPreviewWidth()));
+  window.addEventListener("resize", () => {
+    applyPreviewWidth(storedPreviewWidth());
+    measureTopbar();
+  });
+  measureTopbar();
   $("#preview-run").addEventListener("click", () => {
     if (state.preview.mode === "app") {
       setPreviewMode("code");
@@ -5449,14 +5582,17 @@ function wire() {
   // so a listener per card would be a handler per render.
   $("#skills-list").addEventListener("click", onSkillListClick);
 
-  $("#hosting-open").addEventListener("click", () => openHosting());
+  // The toggle is a toggle in both directions: pressing it while its view is the
+  // one on screen collapses the rail, which is what a person reaching for it again
+  // means. The backdrop listener the dialog needed is gone with the dialog — a
+  // docked panel has no backdrop, and clicking its own padding is not a dismissal.
+  $("#hosting-open").addEventListener("click", () => {
+    if (railOpenView() === "publish") closeHosting();
+    else openHosting();
+  });
   $("#hosting-close").addEventListener("click", () => closeHosting());
   $("#hosting-publish").addEventListener("click", () => void publishHosting());
   $("#hosting-buy").addEventListener("click", () => buyHosting());
-  // Clicking the backdrop closes it; clicking inside does not.
-  $("#hosting").addEventListener("click", (event) => {
-    if (event.target === $("#hosting")) closeHosting();
-  });
   $("#workspace-pick").addEventListener("change", (event) => void chooseWorkspace(event.target.value));
 
   $("#chat-settings").addEventListener("click", () => toggleSettings());
@@ -5556,7 +5692,10 @@ function wire() {
     // is what the user is looking at, and dismissing that must not also hide
     // the panel underneath it.
     else if ($("#sidebar").classList.contains("open")) toggleSidebar(false);
-    else closeViewer();
+    // The file viewer is a modal on top of everything, so it goes first; the rail
+    // is under it and collapses only when nothing else is left to dismiss.
+    else if (!$("#viewer").classList.contains("hidden")) closeViewer();
+    else if (railOpenView() !== null) closeRail();
   });
 }
 

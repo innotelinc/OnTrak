@@ -295,9 +295,20 @@ details[open] > .section-head::before { content: "\25BE"; }
 
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
+/*
+ * The toolbar wraps, at every width rather than only on a phone.
+ *
+ * It used not to, and the row is wider than the conversation's column as soon as
+ * the rail is open: the last controls — `workspace`, `preview`, `publish` and
+ * `terminal` — were laid out past the end of their own track, under the rail,
+ * which paints after them. They were not merely clipped: they were unreachable,
+ * because the rail answered the click. Wrapping keeps every control inside the
+ * column it belongs to, whatever the rail's width.
+ */
 .topbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 12px;
   padding: 10px 16px;
@@ -305,7 +316,14 @@ details[open] > .section-head::before { content: "\25BE"; }
   background: var(--bg-panel);
 }
 
-.topbar-left, .topbar-right { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.topbar-left, .topbar-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  row-gap: 6px;
+  min-width: 0;
+}
 .chat-title {
   font-weight: 500;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -772,23 +790,18 @@ pre.code {
 /* --- files --- */
 
 /*
- * An overlay, not a docked third column. Docked, it took 280px from the pane the
- * code is written in, and a long line in the preview was what paid for it.
- * Closed is the default; the toggle in the top bar is the only way in and out.
+ * A view of the right-hand rail — see `.rail` — not the `position: fixed`
+ * overlay it used to be.
+ *
+ * As an overlay it landed on top of everything at once: the toolbar whose button
+ * opens it, the transcript, the composer and the preview. Its width is the rail's
+ * now, so what it costs the conversation is paid once, by one column.
  */
 .files {
-  display: none;
   flex-direction: column;
   background: var(--bg-panel);
-  border-left: 1px solid var(--border);
   min-height: 0;
-}
-.files.open {
-  display: flex;
-  position: fixed;
-  inset: 0 0 0 auto;
-  width: 340px;
-  z-index: 30;
+  width: min(340px, 90vw);
 }
 
 .files-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
@@ -1013,7 +1026,6 @@ pre.code {
  * still opens and closes it (`display` flips), which is the whole of "collapsible".
  */
 .preview {
-  display: none;
   flex-direction: column;
   flex: none;
   position: relative;
@@ -1021,10 +1033,8 @@ pre.code {
   min-width: 280px;
   max-width: 85vw;
   min-height: 0;
-  border-left: 1px solid var(--border);
   background: var(--bg-panel);
 }
-.preview.open { display: flex; }
 
 /*
  * The drag grip, straddling the rail's inner border. It overhangs into the
@@ -1227,6 +1237,55 @@ body.preview-resizing * { cursor: col-resize !important; }
   animation: blink 1s steps(2) infinite;
 }
 
+/* --- the right-hand rail ------------------------------------------------ */
+
+/*
+ * One column, three views: the preview, the workspace and publishing.
+ *
+ * They used to be three surfaces — the preview a grid track of its own, the
+ * workspace a `position: fixed` overlay and publishing a centred dialog — so two
+ * of them open at once put one window on top of another. Here `data-view` says
+ * which view, `open` says whether there is one at all, and a view that is not the
+ * current one is not rendered: there is nothing to stack, so nothing of the
+ * console's own can end up underneath something else.
+ *
+ * It is the third grid track (`auto`), so it takes width from the conversation
+ * only while it is open, and it never paints over it — which is what "docked"
+ * means and what an overlay could not promise.
+ */
+.rail { display: none; }
+.rail > .rail-view { display: none; }
+.rail.open {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+}
+/*
+ * `flex: 1` is what makes a view as tall as the rail: the preview used to be the
+ * grid child itself, so the grid handed it the full height and nobody had to say
+ * so. A view inside the rail is a flex item along the column's main axis, where
+ * the default is to size to content — which drew the pane 131px tall once.
+ */
+.rail.open > .rail-view { flex: 1; min-height: 0; }
+.rail.open[data-view="preview"] > #preview,
+.rail.open[data-view="workspace"] > #files-panel,
+.rail.open[data-view="publish"] > #hosting { display: flex; }
+
+/*
+ * Publishing, as a rail view rather than the centred dialog it was. It keeps the
+ * header/body split every panel in this console uses (`viewer-head`,
+ * `viewer-content`), so it reads as one of them rather than as a third thing.
+ */
+.hosting {
+  flex-direction: column;
+  width: min(560px, 46vw);
+  min-width: 320px;
+  max-width: 85vw;
+  min-height: 0;
+}
+
 /* Token colours: the four kinds the highlighter emits, plus JSON keys. */
 .tok-comment { color: var(--ink-faint); font-style: italic; }
 .tok-string { color: var(--ok); }
@@ -1318,20 +1377,24 @@ body.preview-resizing * { cursor: col-resize !important; }
  */
 
 @media (max-width: 1080px) {
-  /* Two tracks again — the preview becomes an overlay at this width, so it must
-     not reserve a third column that would squeeze the conversation. */
+  /* Two tracks again — the rail becomes a drawer at this width, so it must not
+     reserve a third column that would squeeze the conversation. */
   .app { grid-template-columns: 200px minmax(0, 1fr); }
-  .files.open { width: min(340px, 90vw); }
-  .preview {
+  /*
+   * The drawer starts *under* the toolbar rather than at the top of the window.
+   * The buttons that open it live up there, and a drawer that covers the control
+   * which opened it is a trap — which is exactly what it used to be. The height
+   * comes from `--topbar-h`, measured in `app.js`, because the toolbar wraps: how
+   * many rows it takes is a fact about the current width.
+   */
+  .rail.open {
     position: fixed;
-    inset: 0 0 0 auto;
+    inset: var(--topbar-h, 0px) 0 0 auto;
     width: min(520px, 92vw);
-    min-width: 0;
     z-index: 25;
     box-shadow: var(--shadow-pop);
   }
-  .topbar { flex-wrap: wrap; }
-  .topbar-right { flex-wrap: wrap; justify-content: flex-end; }
+  .rail.open > .rail-view { width: 100%; min-width: 0; max-width: none; }
   .preview-head { padding: 8px 12px; }
 }
 
@@ -1435,12 +1498,12 @@ body.preview-resizing * { cursor: col-resize !important; }
   /* The overlay rail is the viewport's width here, and its drag grip does
      nothing below the docked breakpoint anyway — so it goes, rather than
      sitting across the transcript as a 9px strip that swallows taps. */
-  .preview { width: 100vw; max-width: 100vw; }
+  .rail.open { width: 100vw; }
   .preview-resize { display: none; }
   .preview-head { padding: 8px 12px; }
   .preview-app-bar, .preview-app-actions { flex-wrap: wrap; }
 
-  .files.open { width: 100vw; }
+  .files { width: 100vw; }
   .file-entry, .project, .session { padding-top: 9px; padding-bottom: 9px; }
 
   .turn-progress { padding: 0 12px 8px; }
