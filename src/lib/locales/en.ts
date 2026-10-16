@@ -21,6 +21,7 @@ export const en = {
   "nav.controlRoom": "Control room",
   "nav.software": "Software & OS",
   "nav.people": "People",
+  "nav.tenancies": "Tenancies",
   "nav.audit": "Audit log",
   "nav.myScenarios": "My scenarios",
   "nav.myResults": "My results",
@@ -242,12 +243,15 @@ export const en = {
   "admin.integration.sso": "Single sign-on",
   "admin.integration.lti": "Learning platform (LTI)",
   "admin.integration.scim": "Directory sync (SCIM)",
+  "admin.integration.classroom": "AI classroom (AthenIQ)",
   "admin.integration.state.off": "off",
   "admin.integration.state.ready": "configured",
   "admin.integration.state.incomplete": "misconfigured",
   "admin.integration.off.sso": "No identity provider: people sign in with a local password.",
   "admin.integration.off.lti": "No learning platform can launch a scenario here.",
   "admin.integration.off.scim": "No directory connector can read or write accounts here.",
+  "admin.integration.off.classroom":
+    "No classroom host: a class carries its roster, attendance and price, and no generated lesson.",
   "admin.integration.incompleteHint":
     "This deployment refuses those requests, and the boot log names what to fix:",
   "admin.integration.notSet": "not set",
@@ -262,6 +266,8 @@ export const en = {
   "admin.integration.usersPath": "Users endpoint",
   "admin.integration.groupsPath": "Groups endpoint",
   "admin.integration.tokenEnv": "Token variable",
+  "admin.integration.host": "Classroom host",
+  "admin.integration.home": "Build a classroom",
   // Capabilities — one list of everything this deployment can reach, mirroring the
   // portal's catalogue. The names and taglines are the products' own, so the family
   // calls itself the same thing everywhere.
@@ -452,6 +458,17 @@ export const en = {
   "cohorts.packet.none": "No certificates to export yet",
   "cohorts.taughtBy": "taught by {name} · created {when}",
   "cohorts.deleteClass": "Delete class",
+  "cohorts.classroom": "AI classroom",
+  "cohorts.classroom.fromCourse": "from the course",
+  "cohorts.classroom.open": "Open the classroom",
+  "cohorts.classroom.none": "none attached",
+  "cohorts.classroom.address": "Classroom address",
+  "cohorts.classroom.save": "Save classroom",
+  "cohorts.classroom.build": "Build one",
+  "cohorts.feedback.title": "Funder feedback",
+  "cohorts.feedback.trainee": "Trainee survey",
+  "cohorts.feedback.employer": "Employer survey",
+  "cohorts.feedback.save": "Save surveys",
   "cohorts.roster": "Roster",
   "cohorts.nobody": "Nobody has joined yet. Share the code {code}.",
   "cohorts.mentor": "mentor",
@@ -693,6 +710,14 @@ export const en = {
   "student.description":
     "Every scenario below is a working machine that only exists in this browser tab. Work the ticket, then submit for grading.",
   "student.allResults": "All my results",
+  "student.classrooms.title": "Your AI classrooms",
+  "student.classrooms.hint":
+    "The interactive lesson your class is taught with, generated from the course you are enrolled in and hosted by AthenIQ.",
+  "student.classrooms.open": "Enter the classroom",
+  "student.feedback.title": "Funder feedback",
+  "student.feedback.hint":
+    "The funder of this class collects feedback on course quality. Tell them what the class was like.",
+  "student.feedback.open": "Open the survey",
   "student.stat.available": "Available now",
   "student.stat.availableHint": "scenarios cleared to run",
   "student.stat.average": "Average score",

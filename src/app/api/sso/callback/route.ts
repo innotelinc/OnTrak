@@ -100,7 +100,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const { user } = signedIn.value;
   await recordAudit(ssoSignInAudit(authorized.authorization, signedIn.value, config.issuer));
 
-  await createSession({ id: user.id, email: user.email, name: user.name, role: user.role, accent: user.accent });
+  await createSession({ id: user.id, email: user.email, name: user.name, role: user.role });
 
   return NextResponse.redirect(new URL(pending.returnTo || ROLE_HOME[user.role], originOf(request)));
 }

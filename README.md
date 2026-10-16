@@ -89,6 +89,31 @@ from the family stack `docker-compose.all.yml` starts.
   add packages by upload or download URL, and store license keys where the
   vendor requires one. Scenarios only become visible when everything they need
   is actually available.
+- **Funded training programs, one tenancy each** — a provider runs its own catalogue,
+  classes, seats and sponsored learners, and the platform operator creates the tenancies:
+  a funded program's ceilings (per instructional hour, per person per course, and an award
+  total), its training window, and the monthly report the funder is owed — all enforced by
+  the same pure rules the forms warn with. The employer side is enforced too, because the
+  funder pays per completed slot and only through an eligible employer: an employer carries
+  a FEIN and the expiration of its eligibility confirmation memo, no employer may take more
+  than the program's cap of slots from that provider over the contract term, and both doors
+  into a class — an administrator enrolling somebody and a learner joining with the class
+  code — ask the same question before the slot is delivered. The report separates what is
+  committed from what is reimbursable, which is completions only. The seeded
+  **Massachusetts Workforce Development** tenancy runs the FAST AI program end to end as the
+  worked example.
+- **The funder's course directory, and its feedback loop** — a listing carries the details
+  §3.3 asks each course for (number, topic areas, AI tools, target occupations, industries
+  and tasks, languages, credentials, and the most slots one offering may take) together with
+  the provider's own contact information; every course is drafted, published or taken down
+  again, and the catalogue exports as the file a provider submits to the funder. A class can
+  also carry the funder's trainee and employer survey addresses — the trainee's appears on the
+  learner's own page — and the enrolments and listings can be exported as CSV.
+- **AI classrooms, generated from the course** — a class can be taught with a multi-agent
+  lesson from **AthenIQ**, the family's learning platform, which runs **OpenMAIC**. OnTrak
+  generates the classroom specification from the course's own modules, objectives and
+  assessments, and each course or class carries the address of the classroom it was generated
+  into. See [docs/ai-classrooms.md](docs/ai-classrooms.md).
 - **PWA for phones** — installable, offline shell, mobile quick-key row on the
   virtual keyboard.
 
@@ -667,6 +692,7 @@ caught a scrollable region without keyboard access on the landing page.
 | [docs/moodle-lti.md](docs/moodle-lti.md) | Registering the training app in a real Moodle LTI 1.3 site, end to end: the keypair, the tool form, the identifiers back into `.env`, and the role mapping |
 | [INNOTEL-LABS.md](INNOTEL-LABS.md) | The Innotel Labs product family and how the five products fit together |
 | [docs/family-operations.md](docs/family-operations.md) | The family as deployed: the five hostnames, the Authentik role groups, and how to repair each sign-in path |
+| [docs/ai-classrooms.md](docs/ai-classrooms.md) | The AI classroom seam with AthenIQ and OpenMAIC: who owns what, how a specification is generated from a course, and how a class is given its classroom |
 | [ontrak-portal/README.md](ontrak-portal/README.md) | The centralized dashboard — one sign-in, then the products a role belongs in |
 | [ontrak-sync/README.md](ontrak-sync/README.md) | The Network's package and container update view, and the family's local accounts |
 | [ontrak-tix/docs/](ontrak-tix/docs/) | The service desk: tickets, SLAs, clients, billing, incidents, assurance |

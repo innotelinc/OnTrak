@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { requireSession } from "@/lib/auth";
 import { recordAudit } from "@/lib/audit";
 import { validateDefinition } from "@/lib/validate";
+import { joinCode } from "@/lib/cohort-rules";
 import { parseAssignmentForm } from "@/lib/assignment-rules";
 import { canDeleteScenario, parseScenarioMeta, slugify } from "@/lib/scenario-rules";
 import { gradeAttempt } from "@/lib/sim/grade";
@@ -219,11 +220,6 @@ export async function deleteScenario(formData: FormData): Promise<void> {
 /* -------------------------------------------------------------------------- */
 /*  Classes                                                                   */
 /* -------------------------------------------------------------------------- */
-
-function joinCode(): string {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  return Array.from({ length: 6 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
-}
 
 export async function createCohort(formData: FormData): Promise<void> {
   const instructor = await requireStaff();

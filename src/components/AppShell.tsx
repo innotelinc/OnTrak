@@ -20,6 +20,8 @@ export interface NavItem {
   icon: string;
   /** Message key for the nav group. */
   group: string;
+  /** Only the platform operator sees this item. */
+  operator?: boolean;
 }
 
 const ICONS = {
@@ -32,6 +34,7 @@ const ICONS = {
   chart: "M4 20V10M10 20V4M16 20v-7M22 20H2",
   play: "M7 4l12 8-12 8z",
   shield: "M12 3l8 4v6c0 4-3.4 7-8 8-4.6-1-8-4-8-8V7zM9.5 12l2 2 3.5-4",
+  tenants: "M4 21V8l8-5 8 5v13M9.5 21v-6h5v6M9.5 11.5h.01M14.5 11.5h.01",
 };
 
 const STAFF_NAV: NavItem[] = [
@@ -48,6 +51,10 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/admin", label: "nav.controlRoom", icon: ICONS.grid, group: "nav.administration" },
   { href: "/admin/software", label: "nav.software", icon: ICONS.software, group: "nav.administration" },
   { href: "/admin/users", label: "nav.people", icon: ICONS.users, group: "nav.administration" },
+  // Tenancies are the platform operator's, so this one is added by `navForRole` rather
+  // than living in the list: an administrator of one tenancy has no business opening a
+  // page that lists every organisation on the deployment.
+  { href: "/admin/tenants", label: "nav.tenancies", icon: ICONS.tenants, group: "nav.administration", operator: true },
   { href: "/admin/audit", label: "nav.audit", icon: ICONS.shield, group: "nav.administration" },
 ];
 
@@ -56,14 +63,16 @@ const STUDENT_NAV: NavItem[] = [
   { href: "/student/results", label: "nav.myResults", icon: ICONS.chart, group: "nav.training" },
 ];
 
-export function navForRole(role: string): NavItem[] {
-  if (role === "ADMIN") return [...ADMIN_NAV, ...STAFF_NAV];
+export function navForRole(role: string, platformAdmin = false): NavItem[] {
+  if (role === "ADMIN") {
+    return [...ADMIN_NAV.filter((item) => !item.operator || platformAdmin), ...STAFF_NAV];
+  }
   if (role === "INSTRUCTOR") return STAFF_NAV;
   return STUDENT_NAV;
 }
 
 interface AppShellProps {
-  user: { id: string; name: string; email: string; role: string; accent: string };
+  user: { id: string; name: string; email: string; role: string; accent: string; platformAdmin?: boolean };
   locale: Locale;
   children: React.ReactNode;
 }
@@ -73,7 +82,7 @@ export function AppShell({ user, locale, children }: AppShellProps) {
   const [open, setOpen] = useState(false);
   const messages = messagesFor(locale);
   const t = (key: string) => translate(messages, key);
-  const items = navForRole(user.role);
+  const items = navForRole(user.role, user.platformAdmin ?? false);
   const accent = accentFor(user.accent);
 
   // Close the mobile drawer whenever the route changes.

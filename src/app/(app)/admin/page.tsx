@@ -143,7 +143,7 @@ export default async function AdminHome({
         <h2 className="font-display text-lg font-semibold text-ink">{t("admin.integrations")}</h2>
         <p className="text-sm text-ink-soft">{t("admin.integrationsHint")}</p>
 
-        <div className="mt-4 grid gap-4 md:grid-cols-3">
+        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {integrations.map((integration) => (
             <Card key={integration.id}>
               <div className="flex items-center justify-between gap-3">

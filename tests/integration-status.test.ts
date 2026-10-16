@@ -3,7 +3,7 @@
  *
  * The console is where an operator finds out that a deployment is not configured the
  * way they think it is, so what these tests pin down is the *reading*, not the markup:
- * three states, the URLs a registration is actually reached at, and — the one that
+ * four states, the URLs a registration is actually reached at, and — the one that
  * matters most on a page somebody can screenshot — that a shared secret is reported as
  * the name of a variable and never as its value.
  *
@@ -32,7 +32,7 @@ function detail(status: IntegrationStatus, key: string): string | undefined {
   return status.details.find((entry) => entry.key === key)?.value;
 }
 
-test("status: an empty environment leaves all three off, and only SCIM still has endpoints", () => {
+test("status: an empty environment leaves all four off, and only SCIM still has endpoints", () => {
   const statuses = integrationStatuses({});
   assert.deepEqual(
     statuses.map((entry) => [entry.id, entry.state]),
@@ -40,6 +40,10 @@ test("status: an empty environment leaves all three off, and only SCIM still has
       ["sso", "off"],
       ["lti", "off"],
       ["scim", "off"],
+      // The AI classroom is off until a deployment names a host, for the same reason the
+      // lab is: a class without one is a class, and the card says so rather than drawing a
+      // link to a product nobody deployed.
+      ["classroom", "off"],
     ],
   );
   // With no provider and no platform there is nothing to name but the fact that it is off.

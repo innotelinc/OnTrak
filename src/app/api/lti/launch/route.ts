@@ -119,7 +119,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   await setLtiLaunch(ltiLaunchFacts(launch, new Date().toISOString()));
 
   const { user } = signedIn.value;
-  await createSession({ id: user.id, email: user.email, name: user.name, role: user.role, accent: user.accent });
+  await createSession({ id: user.id, email: user.email, name: user.name, role: user.role });
 
   return NextResponse.redirect(new URL(pending.returnTo || ROLE_HOME[user.role], originOf(request)), 303);
 }

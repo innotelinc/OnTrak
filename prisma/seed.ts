@@ -27,6 +27,7 @@ import {
 } from "../src/lib/templates";
 import { validateDefinition } from "../src/lib/validate";
 import { certificateForAttempt } from "../src/lib/certificates";
+import { seedFastAi } from "./seed-fast-ai";
 import type { Platform, Prisma, Role } from "@prisma/client";
 import type { ScenarioDefinition } from "../src/lib/sim/types";
 
@@ -359,6 +360,36 @@ async function main() {
   const instructor = users["instructor@ontrak.local"];
   const student = users["student@ontrak.local"];
 
+  /* ------------------------------------------------------ the platform tenancy */
+  // The operator's own tenancy, and the one the demo lab belongs to. It is what makes
+  // `platformAdmin` meaningful: the account that may create tenancies for specialised
+  // training programs sits in this one, and the demo classes are scoped to it like any
+  // other tenancy's classes are scoped to theirs.
+  const platform = await prisma.organization.upsert({
+    where: { slug: "ontrak-platform" },
+    create: {
+      name: "OnTrak",
+      slug: "ontrak-platform",
+      kind: "PLATFORM",
+      programType: "IT support training",
+      description: "The operator's own tenancy: the built-in catalogue and the demo lab.",
+      accent: "violet",
+    },
+    update: { kind: "PLATFORM" },
+  });
+
+  for (const person of PEOPLE) {
+    const user = users[person.email];
+    if (!user) continue;
+    await prisma.user.update({
+      where: { id: user.id },
+      // The administrator is the platform operator — the account that creates a tenancy
+      // for a specialised training program. Not a role: an operator who also teaches is
+      // still an instructor in the tenancy they belong to.
+      data: { organizationId: platform.id, platformAdmin: person.role === "ADMIN" },
+    });
+  }
+
   /* ---------------------------------------------------------- software */
   const software: Record<string, { id: string }> = {};
   for (const item of SOFTWARE) {
@@ -561,8 +592,9 @@ async function main() {
       description: "Tuesday afternoons, lab 3. First-line support fundamentals.",
       joinCode: "NET101",
       instructorId: instructor.id,
+      organizationId: platform.id,
     },
-    update: { name: "Networking 101 — Autumn", instructorId: instructor.id },
+    update: { name: "Networking 101 — Autumn", instructorId: instructor.id, organizationId: platform.id },
   });
 
   for (const email of ["student@ontrak.local", "katherine@ontrak.local", "linus@ontrak.local"]) {
@@ -696,6 +728,19 @@ async function main() {
     console.log(`  Demo certificate: ${scenario.title} — ${score}/${maxScore} for ${learnerName}.`);
   }
 
+  /* ------------------------------------------------- Fast AI training tenancy */
+  // A second tenancy, with its own program, catalogue and classes: the improvement this
+  // seed exists to demonstrate. See `prisma/seed-fast-ai.ts` for the content and the
+  // arithmetic, and the FAST AI request for qualifications for the rules behind it.
+  const fastAi = await seedFastAi(prisma, {
+    passwordHash,
+    administrator: { name: "Denise Okafor", email: "denise@ontrak.local" },
+    instructor: { name: "Marcus Bell", email: "marcus@ontrak.local" },
+  });
+  console.log(
+    `  FAST AI tenancy: ${fastAi.courseCount} courses, ${fastAi.classCount} classes, ${fastAi.enrollmentCount} enrolments.`,
+  );
+
   /* ------------------------------------------------------------- settings */
   await prisma.setting.upsert({
     where: { key: "seed.version" },
@@ -709,6 +754,13 @@ async function main() {
   console.log(`    instructor     instructor@ontrak.local  / ${DEMO_PASSWORD}`);
   console.log(`    student        student@ontrak.local     / ${DEMO_PASSWORD}`);
   console.log("\n  Student join code for the demo class: NET101");
+  console.log("\n  FAST AI tenancy (Massachusetts Workforce Development):");
+  console.log(`    administrator  denise@ontrak.local        / ${DEMO_PASSWORD}`);
+  console.log(`    instructor     marcus@ontrak.local        / ${DEMO_PASSWORD}`);
+  console.log(`    learners       maria@ontrak.local, devon@ontrak.local, yusuf@ontrak.local, priya@ontrak.local`);
+  console.log(
+    "  Its CommCorp report is at /admin/tenants (operator account admin@ontrak.local).",
+  );
   console.log("  Note: \"Close an open mail relay\" is deliberately blocked until the");
   console.log("        postfix package is enabled, and \"Asset reconciliation visit\"");
   console.log("        until the Contoso Asset Suite key is stored.");

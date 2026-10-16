@@ -15,6 +15,13 @@ export const DEMO_STUDENT_EMAILS = [
   "student@ontrak.local",
   "katherine@ontrak.local",
   "linus@ontrak.local",
+  // The FAST AI tenancy's learners, seeded by `prisma/seed-fast-ai.ts`. They are demo
+  // students of a different program, which is nothing special to a reset: the account
+  // stays and its attempts go, exactly as for the lab's own students.
+  "maria@ontrak.local",
+  "devon@ontrak.local",
+  "yusuf@ontrak.local",
+  "priya@ontrak.local",
 ] as const;
 
 /** Accounts created by the browser test runs, e.g. `a11y-1727000000000@ontrak.local`. */

@@ -25,6 +25,33 @@ enum Role {
   STUDENT
 }
 
+/// What a tenancy is for. The platform operator creates PROVIDER tenancies (a
+/// training provider running specialised programs); an EMPLOYER tenancy is the
+/// organisation whose people are trained and who usually pays for the seats
+/// (FAST AI's "pre-registered eligible Massachusetts employer"); PLATFORM is the
+/// operator's own tenancy, which is the only kind that may create the others.
+enum OrganizationKind {
+  PLATFORM
+  PROVIDER
+  EMPLOYER
+}
+
+/// Where one learner stands in one class. The FAST AI RFQ asks providers to report
+/// enrolment, attendance and completion, so all three are states of the same row
+/// rather than three separate records that can disagree with each other.
+enum EnrollmentStatus {
+  ENROLLED
+  ATTENDED
+  COMPLETED
+  WITHDRAWN
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  EXCUSED
+}
+
 enum Difficulty {
   FOUNDATION
   INTERMEDIATE
@@ -63,26 +90,229 @@ enum AttemptStatus {
 // Identity & classes
 // ---------------------------------------------------------------------------
 
+/// A tenant: one organisation's own training, with its own catalogue, classes,
+/// people and reports, all in one deployment. Every tenant-owned row carries this
+/// id, which is what makes "two organisations under one deployment" a query rather
+/// than a second deployment.
+model Organization {
+  id              String           @id @default(cuid())
+  name            String
+  /// Stable key for URLs, exports and filenames, so a report is identifiable
+  /// without the display name (which changes).
+  slug            String           @unique
+  kind            OrganizationKind @default(PROVIDER)
+  /// What this tenancy trains for, in the tenant's own words: "Focused AI Skills
+  /// Training (FAST AI)", "IT support apprenticeship", and so on.
+  programType     String?
+  description     String?
+  /// The employer facts FAST AI needs before a class is even schedulable: an
+  /// eligible Massachusetts employer has to be pre-registered with CommCorp first.
+  city            String?
+  state           String?
+  isPreRegistered Boolean          @default(false)
+  /// An employer's FEIN, and the expiration of the Eligibility Confirmation Memo
+  /// CommCorp issues it. A slot delivered to an employer without a current memo is
+  /// not reimbursable, so both are checked before anybody is enrolled.
+  fein                    String?
+  eligibilityMemoExpiresOn DateTime?
+  /// The training provider's contact details for the funder's course directory: the
+  /// RFQ expects its entries to say who to reach and how, and the provider to keep
+  /// that current. On an employer they are simply unset.
+  contactName             String?
+  contactEmail            String?
+  contactPhone            String?
+  /// Branding, so one deployment can carry more than one organisation's face.
+  displayName     String?
+  accent          String           @default("violet")
+  logoUrl         String?
+  active          Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  users            User[]       @relation("OrganizationMembers")
+  programs         Program[]
+  courses          Course[]
+  classes          Cohort[]     @relation("ClassProvider")
+  sponsoredClasses Cohort[]     @relation("ClassSponsor")
+  scenarios        Scenario[]
+  enrollments      Enrollment[]
+  attendances      Attendance[]
+
+  @@index([kind])
+}
+
+/// A funded training program inside one tenancy. The RFQ's rules live here because
+/// they are facts about the program, not about any one class: who pays, over what
+/// window, and the two ceilings a course price may not cross.
+model Program {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  name               String
+  /// Who is paying, and out of which fund: FAST AI is funded by the Workforce
+  /// Investment Trust Fund through Commonwealth Corporation.
+  funder             String?
+  fundName           String?
+  /// The window training may run inside (FAST AI: on or after 2027-02-01, complete
+  /// no later than 2028-06-30). Enforced when a class is scheduled.
+  startsOn           DateTime?
+  endsOn             DateTime?
+  /// The provider's award ceiling, and the two per-slot ceilings from the RFQ:
+  /// no more than this per instructional hour, and no more than this per person
+  /// per course, whichever is less.
+  awardCents         Int?
+  costPerHourCents   Int?
+  costPerPersonCents Int?
+  /// The pool the awards come out of across all providers, when the funder
+  /// publishes one (FAST AI's FY27 allocation is $1,615,000). Not the provider's
+  /// own ceiling — that is `awardCents`.
+  allocationCents    Int?
+  /// The contract the per-employer cap runs over, which is longer than the window
+  /// training is prioritised in (FAST AI: 2027-02-01 to 2029-01-31).
+  contractStartsOn   DateTime?
+  contractEndsOn     DateTime?
+  /// No employer may take more than this many slots from this provider over the
+  /// contract term; slots past it are not reimbursable, and the provider carries
+  /// that risk. Null means the program caps nothing.
+  employerSlotCap    Int?
+  /// The most courses the funder accepts from this provider in the round (FAST AI
+  /// accepts 20 and does not consider the rest).
+  maxCourses         Int?
+  /// How often the funder expects enrolment/attendance/completion figures.
+  reportingCadence   String?
+  notes              String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  courses      Course[]
+  classes      Cohort[]
+
+  @@index([organizationId])
+}
+
+/// One course in a provider's catalogue — what the RFQ calls an "approved course"
+/// published to the training directory. Its price is per training slot, and the
+/// program's two ceilings are checked against it, so a course cannot be published at
+/// a price the funder would refuse.
+model Course {
+  id                  String    @id @default(cuid())
+  organizationId      String
+  programId           String?
+  title               String
+  summary             String?
+  /// Applied and instructor-led is the RFQ's delivery requirement, so it is a field
+  /// rather than an assumption.
+  deliveryMode        String    @default("instructor-led")
+  /// How long the course runs; the hourly ceiling is checked against this.
+  instructionalHours  Int
+  /// The price of one training slot, in cents.
+  pricePerSlotCents   Int
+  /// Who the course is for, and what it assumes — the RFQ asks for training
+  /// contextualised to a worker's own role and tools, which starts with saying whose.
+  audience            String?
+  prerequisites       String?
+  /// The in-scope topic areas this course claims, one per line, from the program's
+  /// published list. A course has to claim at least one, and an area the list has
+  /// never seen is reported back rather than refused — the RFQ considers other
+  /// AI-related topics as needed.
+  topicAreas          String?
+  /// The number the provider gives this course in its submission, 1 to 20: what the
+  /// funder's paperwork, the budget form and the directory refer to a course by. It
+  /// has to be unique inside the catalogue, so two courses cannot answer to one number.
+  courseNumber        Int?
+  /// §3.3's remaining course details, each of which the funder expects for every
+  /// course it is asked to consider: the AI tools covered, the occupations and
+  /// industries the training is for, and the workplace tasks it addresses. One per
+  /// line, so the form that writes them is the form that reads them.
+  aiTools             String?
+  targetOccupations   String?
+  targetIndustries    String?
+  workplaceTasks      String?
+  /// Industry-recognised credentials the course earns — optional, because the RFQ
+  /// says "if any", and a course that earns none is not a worse course.
+  credentials         String?
+  /// Languages it is taught in other than English. Also optional: a course taught
+  /// entirely in English simply has nothing to say here.
+  languages           String?
+  /// The most training slots one offering of this course may take (§3.3, "Max number
+  /// of training slots per offering of course"). A class of it may not offer more
+  /// seats than this.
+  maxSlotsPerOffering Int?
+  /// The AI classroom this course is taught with: an OpenMAIC lesson generated from the
+  /// modules below. Null until a provider builds one and attaches it, and validated the
+  /// same way everywhere it is written or rendered (`src/lib/classroom-rules.ts`).
+  classroomUrl        String?
+  /// Set when the funder's directory has accepted the course. Awarded courses are
+  /// not published on the basis of the RFQ response alone, so a course starts
+  /// without it and gains it when CommCorp reviews the submitted details.
+  directoryApprovedAt DateTime?
+  /// Set when the listing is taken down again: CommCorp "reserves the right to
+  /// remove or suspend a course listing at will" (§4.4), and the provider is the one
+  /// who records that it happened and why.
+  listingSuspendedAt  DateTime?
+  listingNote         String?
+  active              Boolean   @default(true)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  program      Program?       @relation(fields: [programId], references: [id], onDelete: SetNull)
+  modules      CourseModule[]
+  classes      Cohort[]
+
+  @@index([organizationId])
+  @@index([programId])
+}
+
+/// A module of a course: the authored content. Objectives, the activity the learner
+/// does, and what is assessed — the shape a provider can actually teach from, and the
+/// shape a funder can read to see the training is applied rather than general literacy.
+model CourseModule {
+  id         String  @id @default(cuid())
+  courseId   String
+  position   Int
+  title      String
+  hours      Float
+  /// One objective per line.
+  objectives String
+  /// What the learner does in the module, with the tools they already use.
+  activity   String?
+  /// What is assessed, and how.
+  outcome    String?
+  course     Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, position])
+}
+
 model User {
-  id     String @id @default(cuid())
-  email  String @unique
-  name   String
+  id             String    @id @default(cuid())
+  email          String    @unique
+  name           String
   /// Local password, or `null` for an account that signs in only through the
   /// deployment's identity provider. Null is not "any password": `verifyPassword`
   /// refuses it, so such an account cannot be signed into with a guessed one.
-  passwordHash String?
+  passwordHash   String?
   /// The identity provider's stable subject (`sub`). Matching a later sign-in on
   /// this is what makes a rename in the directory a *move* rather than a second
   /// account with the first one's attempts and certificates orphaned.
-  externalId   String?   @unique
-  role         Role      @default(STUDENT)
-  active       Boolean   @default(true)
+  externalId     String?   @unique
+  role           Role      @default(STUDENT)
+  /// The tenancy this person belongs to. Every list, class and report they can see is
+  /// scoped to it.
+  organizationId String?
+  /// The platform operator: the account that creates tenancies for specialised training
+  /// programs. Deliberately a flag and not a fourth `Role`, because it is orthogonal to
+  /// what the person may do inside the tenancy they belong to — an operator who also
+  /// teaches is still an instructor there.
+  platformAdmin  Boolean   @default(false)
+  active         Boolean   @default(true)
   /// Stable color used for avatars so the UI stays colorful and friendly.
-  accent       String    @default("violet")
-  lastLoginAt  DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  accent         String    @default("violet")
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
+  organization      Organization?     @relation("OrganizationMembers", fields: [organizationId], references: [id], onDelete: SetNull)
   attempts          Attempt[]
   memberships       CohortMember[]
   cohortsTaught     Cohort[]          @relation("CohortInstructor")
@@ -91,25 +321,109 @@ model User {
   softwareCreated   SoftwarePackage[]
   auditEntries      AuditLog[]
   assignments       Assignment[]
+  enrollments       Enrollment[]
 
   @@index([role])
+  @@index([organizationId])
 }
 
+/// A class. In a funded program a class is also a scheduled, priced, sponsored
+/// offering, so the RFQ's fields live here beside the roster it already had.
 model Cohort {
-  id           String   @id @default(cuid())
-  name         String
-  description  String?
+  id                    String    @id @default(cuid())
+  name                  String
+  description           String?
   /// Short code students can type to join the class themselves.
-  joinCode     String   @unique
-  instructorId String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  joinCode              String    @unique
+  instructorId          String
+  /// The tenancy that runs this class. Null only for a class created before tenancy
+  /// existed, or by the operator outside any tenancy.
+  organizationId        String?
+  programId             String?
+  courseId              String?
+  /// The employer whose people are in this class and who is paying for the seats.
+  sponsorOrganizationId String?
+  /// When the class runs. A program with a window refuses a class outside it.
+  startsOn              DateTime?
+  endsOn                DateTime?
+  /// Hours as scheduled (the course holds its own), seats offered, and the price of one
+  /// seat. The price is checked against the program's per-hour and per-person ceilings.
+  instructionalHours    Int?
+  seats                 Int?
+  pricePerSlotCents     Int?
+  deliveryMode          String    @default("instructor-led")
+  location              String?
+  /// This sitting's own AI classroom, when the provider built one from the sponsoring
+  /// employer's material. It wins over the course's; a class with neither has no door, and
+  /// `effectiveClassroom` is the one place that question is answered.
+  classroomUrl          String?
+  /// The funder's two feedback instruments for this sitting (§4.5): the trainee survey on
+  /// course quality and the employer survey on the training's impact. Unset until a provider
+  /// has been given them at contracting; both are validated before they are ever rendered,
+  /// because a survey address is handed to learners.
+  traineeSurveyUrl      String?
+  employerSurveyUrl     String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
-  instructor  User           @relation("CohortInstructor", fields: [instructorId], references: [id], onDelete: Cascade)
-  members     CohortMember[]
-  assignments Assignment[]
+  instructor   User           @relation("CohortInstructor", fields: [instructorId], references: [id], onDelete: Cascade)
+  organization Organization?  @relation("ClassProvider", fields: [organizationId], references: [id], onDelete: SetNull)
+  sponsor      Organization?  @relation("ClassSponsor", fields: [sponsorOrganizationId], references: [id], onDelete: SetNull)
+  program      Program?       @relation(fields: [programId], references: [id], onDelete: SetNull)
+  course       Course?        @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  members      CohortMember[]
+  assignments  Assignment[]
+  enrollments  Enrollment[]
 
   @@index([instructorId])
+  @@index([organizationId])
+  @@index([courseId])
+}
+
+/// One learner in one class, carrying the three facts the funder is owed: that they
+/// enrolled, what they attended, and whether they completed.
+model Enrollment {
+  id                    String           @id @default(cuid())
+  cohortId              String
+  userId                String
+  /// The provider tenancy the class belongs to at the time of enrolment. Held on the
+  /// row as well as reachable through the class so a report never has to join to be
+  /// scoped, and so a class that later moves tenancy does not rewrite history.
+  organizationId        String
+  /// Who is paying for this seat (the sponsoring employer), when it is not the learner.
+  sponsorOrganizationId String?
+  status                EnrollmentStatus @default(ENROLLED)
+  enrolledAt            DateTime         @default(now())
+  completedAt           DateTime?
+  /// Summed from the attendance rows, kept here because it is what the report prints.
+  hoursAttended         Float            @default(0)
+  notes                 String?
+  organization          Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  cohort                Cohort           @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  user                  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attendances           Attendance[]
+
+  @@unique([cohortId, userId])
+  @@index([userId])
+  @@index([organizationId])
+}
+
+/// One sitting of one class, for one learner.
+model Attendance {
+  id             String           @id @default(cuid())
+  enrollmentId   String
+  organizationId String
+  sessionDate    DateTime
+  hours          Float
+  status         AttendanceStatus @default(PRESENT)
+  note           String?
+  createdAt      DateTime         @default(now())
+
+  enrollment   Enrollment   @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([enrollmentId, sessionDate])
+  @@index([organizationId])
 }
 
 model CohortMember {
@@ -178,38 +492,44 @@ model SoftwarePackage {
 // ---------------------------------------------------------------------------
 
 model Scenario {
-  id           String     @id @default(cuid())
-  slug         String     @unique
-  title        String
-  summary      String
+  id             String     @id @default(cuid())
+  slug           String     @unique
+  /// The tenancy that owns this scenario. Null is the shared catalogue: the built-in
+  /// scenarios every tenancy can assign. "Isolated catalogues" means a tenancy's own
+  /// scenarios are visible to it alone, and this column is the whole of that claim.
+  organizationId String?
+  title          String
+  summary        String
   /// Long-form markdown briefing shown before the timer starts.
-  description  String
-  platform     Platform
-  difficulty   Difficulty @default(INTERMEDIATE)
+  description    String
+  platform       Platform
+  difficulty     Difficulty @default(INTERMEDIATE)
   /// 'bash' | 'powershell' | 'office'
-  engine       String
-  timeLimitSec Int        @default(1800)
-  passScore    Int        @default(70)
-  published    Boolean    @default(false)
-  tags         String[]   @default([])
+  engine         String
+  timeLimitSec   Int        @default(1800)
+  passScore      Int        @default(70)
+  published      Boolean    @default(false)
+  tags           String[]   @default([])
   /// The full ScenarioDefinition JSON (see src/lib/sim/types.ts).
-  definition   Json
+  definition     Json
   /// OnTrak-dev provenance, for a scenario imported from the lab (docs/consolidation-audit.md
   /// §7 Step 5): objective ids and weights, the category, the workloads and lessons — none of
   /// which has a column here, and all of which a lab round-trip needs. Null for every scenario
   /// authored in this app. See src/lib/lab-scenario-import.ts.
-  labMeta      Json?
-  authorId     String
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  labMeta        Json?
+  authorId       String
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
-  author      User               @relation("ScenarioAuthor", fields: [authorId], references: [id], onDelete: Cascade)
-  software    ScenarioSoftware[]
-  attempts    Attempt[]
-  assignments Assignment[]
+  author       User               @relation("ScenarioAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  organization Organization?      @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  software     ScenarioSoftware[]
+  attempts     Attempt[]
+  assignments  Assignment[]
 
   @@index([platform, published])
   @@index([authorId])
+  @@index([organizationId])
 }
 
 /// A practice scenario drafted from solved support work.
@@ -224,23 +544,23 @@ model Scenario {
 /// `sourceRef` is the desk ticket's reference and is unique: a retried hand-off is
 /// one draft, not two, which is what makes the sweep safe to run on a schedule.
 model ScenarioDraft {
-  id          String     @id @default(cuid())
-  sourceRef   String     @unique
+  id           String     @id @default(cuid())
+  sourceRef    String     @unique
   /// Where it came from. `tix` today; a field rather than an assumption so an
   /// incident from Sentinel, or a document somebody uploaded, can use the same door.
-  source      String     @default("tix")
-  title       String
-  summary     String
-  description String
+  source       String     @default("tix")
+  title        String
+  summary      String
+  description  String
   /// 'bash' | 'powershell' | 'office' — the surface it was written for.
-  engine      String
-  difficulty  Difficulty @default(INTERMEDIATE)
-  objectives  String[]   @default([])
+  engine       String
+  difficulty   Difficulty @default(INTERMEDIATE)
+  objectives   String[]   @default([])
   /// The ordered steps: [{ objective, actions[], check }].
-  steps       Json
-  tags        String[]   @default([])
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  steps        Json
+  tags         String[]   @default([])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
   /// Set once an instructor has turned it into a scenario, or decided not to.
   reviewedById String?
   scenarioId   String?
@@ -320,12 +640,12 @@ model Attempt {
   /// The completion record issued when this attempt first cleared the pass mark.
   /// Stored rather than derived so the code a learner was handed keeps verifying
   /// after a re-grade — see `src/lib/certificates.ts`.
-  certificate           Json?
-  certificateIssuedAt   DateTime?
+  certificate          Json?
+  certificateIssuedAt  DateTime?
   /// Set when a re-grade dropped the attempt back below the pass mark, which
   /// revokes the record above. A self-contained record cannot carry this flag,
   /// so the product reads it here; `/verify` still only reports on the artifact.
-  certificateRevokedAt  DateTime?
+  certificateRevokedAt DateTime?
 
   /// The learning-platform launch this attempt came from, when it did: which
   /// platform, which subject, the Assignment & Grade Services line item the score
@@ -434,38 +754,38 @@ enum LabSessionState {
 /// the lab's `users` table is superseded by this app's identity (§3/C2), and a lab
 /// account that shadowed it would be a second place to revoke someone from.
 model LabSession {
-  id                Int              @id @default(autoincrement())
-  student           String
-  scenarioId        String
-  state             LabSessionState  @default(REQUESTED)
-  instance          String           @default("")
-  hostIp            String           @default("")
+  id               Int             @id @default(autoincrement())
+  student          String
+  scenarioId       String
+  state            LabSessionState @default(REQUESTED)
+  instance         String          @default("")
+  hostIp           String          @default("")
   /// Guest credentials for the console. Never rendered to a student-facing page
   /// (see `sessionToDict`, which omits them unless a console link is being minted).
-  rdpUser           String           @default("")
-  rdpPassword       String           @default("")
-  hintLevel         Int              @default(0)
-  checksRun         Int              @default(0)
-  bestScore         Float            @default(0)
-  resolved          Boolean          @default(false)
-  notes             String           @default("")
-  error             String           @default("")
+  rdpUser          String          @default("")
+  rdpPassword      String          @default("")
+  hintLevel        Int             @default(0)
+  checksRun        Int             @default(0)
+  bestScore        Float           @default(0)
+  resolved         Boolean         @default(false)
+  notes            String          @default("")
+  error            String          @default("")
   /// The catalogue entry the session was built on; empty means the scenario's own
   /// default, which is what scenarios written before the catalogue rely on.
-  workload          String           @default("")
-  timeLimitMinutes  Int              @default(0)
-  createdAt         DateTime         @default(now())
-  readyAt           DateTime?
-  expiresAt         DateTime?
-  lastActivityAt    DateTime         @default(now())
+  workload         String          @default("")
+  timeLimitMinutes Int             @default(0)
+  createdAt        DateTime        @default(now())
+  readyAt          DateTime?
+  expiresAt        DateTime?
+  lastActivityAt   DateTime        @default(now())
   /// When the work was handed in. NULL while the session is open: `PASSED` means
   /// both "resolved a check" and "submitted", and this is the column that tells
   /// them apart (so a double submit cannot grade a machine that is already gone).
-  completedAt       DateTime?
+  completedAt      DateTime?
 
-  results           LabResult[]
-  tickets           LabTicket[]
-  events            LabEvent[]
+  results LabResult[]
+  tickets LabTicket[]
+  events  LabEvent[]
 
   /// The two queries the portal and the sweeps actually run: one student's live
   /// sessions, and every session in a given state (the reaper's watch list).
@@ -480,16 +800,16 @@ model LabSession {
 /// outcome rows the student saw, even after a scenario's weights are edited — the
 /// alternative is a past grade that quietly changes its mind.
 model LabResult {
-  id         Int        @id @default(autoincrement())
+  id         Int      @id @default(autoincrement())
   sessionId  Int
   student    String
   scenarioId String
   score      Float
-  resolved   Boolean    @default(false)
+  resolved   Boolean  @default(false)
   report     Json
-  createdAt  DateTime   @default(now())
+  createdAt  DateTime @default(now())
 
-  session    LabSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session LabSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId])
   @@index([student, scenarioId])
@@ -508,17 +828,17 @@ model LabResult {
 /// `LabMeta` under `ticket_draft:<sessionId>`, because the lab is results-only and a draft
 /// in this table would appear in a marking record as if it had been handed in.
 model LabTicket {
-  id         Int        @id @default(autoincrement())
+  id         Int      @id @default(autoincrement())
   sessionId  Int
   student    String
   scenarioId String
   grade      Json
   values     Json
-  score      Float      @default(0)
-  submitted  Boolean    @default(false)
-  createdAt  DateTime   @default(now())
+  score      Float    @default(0)
+  submitted  Boolean  @default(false)
+  createdAt  DateTime @default(now())
 
-  session    LabSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session LabSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId])
   @@index([student])
@@ -531,13 +851,13 @@ model LabTicket {
 /// has since been removed — a failed destroy, a recycling — has to survive the row
 /// it describes, because that is exactly the one an operator needs to read.
 model LabEvent {
-  id        Int         @id @default(autoincrement())
+  id        Int      @id @default(autoincrement())
   kind      String
-  detail    String      @default("")
+  detail    String   @default("")
   sessionId Int?
-  createdAt DateTime    @default(now())
+  createdAt DateTime @default(now())
 
-  session   LabSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  session LabSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
 
   @@index([kind])
   @@index([sessionId, id])
@@ -580,22 +900,22 @@ model AuditLog {
 /// retry updates the delivery it belongs to instead of sending the same grading
 /// twice under a second id.
 model WebhookDelivery {
-  id         String   @id @default(cuid())
-  eventId    String   @unique
-  event      String
-  attemptId  String?
-  url        String
-  transport  String
+  id          String    @id @default(cuid())
+  eventId     String    @unique
+  event       String
+  attemptId   String?
+  url         String
+  transport   String
   /// PENDING until answered, then DELIVERED or FAILED.
-  status     String   @default("PENDING")
+  status      String    @default("PENDING")
   /// Tries so far, including the first: a consumer down for an hour is visible.
-  attempts   Int      @default(0)
-  lastStatus Int?
-  lastError  String?
+  attempts    Int       @default(0)
+  lastStatus  Int?
+  lastError   String?
   /// The canonical body that was signed, kept so a retry sends the same bytes.
-  body       Json
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  body        Json
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   deliveredAt DateTime?
 
   @@index([status, createdAt])

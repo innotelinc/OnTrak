@@ -42,9 +42,29 @@ export interface SessionUser {
   name: string;
   role: Role;
   accent: string;
+  /// The tenancy this person belongs to; every scoped read uses it (see lib/tenancy.ts).
+  organizationId: string | null;
+  /// The platform operator, who creates tenancies for specialised training programs.
+  platformAdmin: boolean;
 }
 
-export async function createSession(user: SessionUser): Promise<void> {
+/**
+ * What a session token carries.
+ *
+ * Deliberately *not* `SessionUser`: the token signs who someone is, and the tenancy they
+ * belong to is read from the database on every request instead. A person moved from one
+ * organisation to another — or made an operator — would otherwise keep the old answer
+ * until their cookie expired, which is exactly the bug a multi-tenant deployment cannot
+ * afford.
+ */
+export interface SessionClaims {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+}
+
+export async function createSession(user: SessionClaims): Promise<void> {
   const ttl = sessionTtlSeconds();
   const token = await new SignJWT({ email: user.email, role: user.role, name: user.name })
     .setProtectedHeader({ alg: ALGORITHM })
@@ -103,10 +123,27 @@ export async function getSession(): Promise<SessionUser | null> {
 
   const user = await prisma.user.findUnique({
     where: { id: claims.userId },
-    select: { id: true, email: true, name: true, role: true, accent: true, active: true },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+      accent: true,
+      active: true,
+      organizationId: true,
+      platformAdmin: true,
+    },
   });
   if (!user || !user.active) return null;
-  return { id: user.id, email: user.email, name: user.name, role: user.role, accent: user.accent };
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    accent: user.accent,
+    organizationId: user.organizationId,
+    platformAdmin: user.platformAdmin,
+  };
 }
 
 /** Throwing variant for pages and actions that require a signed-in user. */

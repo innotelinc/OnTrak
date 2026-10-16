@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { createSession, destroySession, hashPassword, pickAccent, ROLE_HOME, verifyPassword } from "@/lib/auth";
 import { recordAudit } from "@/lib/audit";
+import { classAdmission } from "@/lib/program-admission";
 import {
   allowSelfRegistration,
   CREDENTIALS,
@@ -42,7 +43,7 @@ export async function signIn(_prev: AuthState, formData: FormData): Promise<Auth
   }
 
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-  await createSession({ id: user.id, email: user.email, name: user.name, role: user.role, accent: user.accent });
+  await createSession({ id: user.id, email: user.email, name: user.name, role: user.role });
   await recordAudit({ actorId: user.id, action: "auth.sign_in", targetType: "user", targetId: user.id });
 
   redirect(safeRelativePath(formData.get("next")) ?? ROLE_HOME[user.role]);
@@ -81,6 +82,17 @@ export async function signUp(_prev: AuthState, formData: FormData): Promise<Auth
     return { fieldErrors: { joinCode: join.message } };
   }
 
+  // A funded class carries the funder's admission rules into the sign-up form as well. This is
+  // the second door into a class, and the one nobody has to be given access to walk through: a
+  // slot delivered to an employer without a current memo, or past its cap, is as unreimbursable
+  // whether an administrator enrolled the learner or the learner enrolled themselves. It is
+  // asked before the account exists so the answer is a field error the person can act on — ask
+  // the provider, or join a different class — rather than an account they cannot explain.
+  if (join.kind === "join" && cohort) {
+    const admission = await classAdmission(cohort);
+    if (admission.length > 0) return { fieldErrors: { joinCode: admission[0].message } };
+  }
+
   const user = await prisma.user.create({
     data: {
       name: parsed.data.name,
@@ -91,12 +103,26 @@ export async function signUp(_prev: AuthState, formData: FormData): Promise<Auth
     },
   });
 
-  // Joining a class by code puts the new student straight into the roster.
+  // Joining a class by code puts the new student straight into the roster — and, when the class
+  // belongs to a provider tenancy, into the enrolment the funder's report reads. The roster and
+  // the funder's figures describing the same class differently is the bug this prevents.
   if (join.kind === "join" && cohort) {
     await prisma.cohortMember.create({ data: { cohortId: cohort.id, userId: user.id } }).catch(() => undefined);
+    if (cohort.organizationId) {
+      await prisma.enrollment
+        .create({
+          data: {
+            cohortId: cohort.id,
+            userId: user.id,
+            organizationId: cohort.organizationId,
+            sponsorOrganizationId: cohort.sponsorOrganizationId,
+          },
+        })
+        .catch(() => undefined);
+    }
   }
 
-  await createSession({ id: user.id, email: user.email, name: user.name, role: user.role, accent: user.accent });
+  await createSession({ id: user.id, email: user.email, name: user.name, role: user.role });
   await recordAudit({ actorId: user.id, action: "auth.register", targetType: "user", targetId: user.id });
 
   redirect("/student");

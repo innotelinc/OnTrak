@@ -7,9 +7,11 @@ import { evaluateScenario, loadAvailabilityContext, platformLabel } from "@/lib/
 import { sweepExpiredAttempts } from "@/lib/scenarios";
 import { startAttempt } from "@/app/actions/student";
 import { isLabScenario, labDoorFromEnv, simulatedStartRefusal } from "@/lib/lab-rules";
+import { effectiveClassroom } from "@/lib/classroom-rules";
+import { feedbackLinks } from "@/lib/feedback-rules";
 import { clearedPassMark, scorePercent } from "@/lib/score-rules";
 import { Flash, PageHeader } from "@/components/PageHeader";
-import { Badge, Button, Card, EmptyState, ProgressBar } from "@/components/ui";
+import { Badge, Button, buttonClass, Card, EmptyState, ProgressBar } from "@/components/ui";
 import { formatDateTime, formatDuration, cn } from "@/lib/cn";
 import { getTranslator, type Translator } from "@/lib/i18n-server";
 
@@ -48,7 +50,7 @@ export default async function StudentHome({
   // Reconcile clocks first so the page never shows a stale "in progress" card.
   await sweepExpiredAttempts(user.id);
 
-  const [context, scenarios, running, history, assignments] = await Promise.all([
+  const [context, scenarios, running, history, assignments, classes] = await Promise.all([
     loadAvailabilityContext(),
     prisma.scenario.findMany({
       where: { published: true },
@@ -77,12 +79,48 @@ export default async function StudentHome({
       },
       orderBy: { createdAt: "desc" },
     }),
+    // The classes this learner is in, because a funded class carries an AI classroom: the
+    // generated lesson the course is taught with, hosted by AthenIQ. Membership is read the
+    // same two ways the assignments above are — the roster, and a funded enrolment — since a
+    // sponsored seat is a class membership too.
+    prisma.cohort.findMany({
+      where: {
+        organizationId: { not: null },
+        OR: [
+          { members: { some: { userId: user.id } } },
+          { enrollments: { some: { userId: user.id } } },
+        ],
+      },
+      include: {
+        course: { select: { title: true, classroomUrl: true } },
+        organization: { select: { name: true } },
+      },
+      orderBy: [{ startsOn: "asc" }, { createdAt: "asc" }],
+    }),
   ]);
 
   // Students only see work that is actually runnable; the blocker list is for staff.
   const available = scenarios
     .map((scenario) => ({ scenario, availability: evaluateScenario(scenario, context) }))
     .filter((entry) => entry.availability.available);
+
+  // Only the classes that actually have a classroom: an empty section on a learner's home is
+  // worse than none, and a class whose address was refused has a problem for its provider to
+  // fix (the tenancy's page says so) rather than a door for this page to draw.
+  const classrooms = classes
+    .map((klass) => ({
+      klass,
+      url: effectiveClassroom({ classroomUrl: klass.course?.classroomUrl ?? null }, klass).url,
+    }))
+    .filter((entry): entry is { klass: (typeof classes)[number]; url: string } => entry.url !== null);
+
+  // The funder's feedback instrument for a class (§4.5), where the provider has recorded one.
+  // A learner is the one asked for it, so this is where it belongs — and a class whose address
+  // was refused has a problem for its provider to fix (the tenancy's page says so) rather than
+  // a link for this page to draw.
+  const surveys = classes
+    .map((klass) => ({ klass, url: feedbackLinks(klass).trainee }))
+    .filter((entry): entry is { klass: (typeof classes)[number]; url: string } => entry.url !== null);
 
   const assignedIds = new Set(assignments.map((assignment) => assignment.scenarioId));
   const assignedScenarios = available.filter((entry) => assignedIds.has(entry.scenario.id));
@@ -145,6 +183,63 @@ export default async function StudentHome({
           <p className="mt-1 text-xs text-ink-faint">{t("student.stat.passedHint", { count: graded.length })}</p>
         </Card>
       </div>
+
+      {/* Classrooms — the AI lesson a funded class is taught with */}
+      {classrooms.length > 0 ? (
+        <section className="mt-8">
+          <h2 className="font-display text-lg font-semibold text-ink">{t("student.classrooms.title")}</h2>
+          <p className="text-sm text-ink-soft">{t("student.classrooms.hint")}</p>
+          <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+            {classrooms.map(({ klass, url }) => (
+              <li key={klass.id}>
+                <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
+                  <div className="min-w-0">
+                    <h3 className="font-display text-base font-semibold text-ink">
+                      {klass.course?.title ?? klass.name}
+                    </h3>
+                    <p className="mt-1 text-xs text-ink-faint">
+                      {[klass.name, klass.organization?.name].filter(Boolean).join(" · ")}
+                    </p>
+                  </div>
+                  {/* A plain anchor: the classroom is another product's page, so the client
+                      router has nothing to navigate to here. */}
+                  <a href={url} target="_blank" rel="noreferrer" className={buttonClass("primary", "sm")}>
+                    {t("student.classrooms.open")}
+                  </a>
+                </Card>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {/* The funder's feedback — the trainee half of §4.5, and the only thing on this page
+          that belongs to the funder rather than to the learner's own training. */}
+      {surveys.length > 0 ? (
+        <section className="mt-8">
+          <h2 className="font-display text-lg font-semibold text-ink">{t("student.feedback.title")}</h2>
+          <p className="text-sm text-ink-soft">{t("student.feedback.hint")}</p>
+          <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+            {surveys.map(({ klass, url }) => (
+              <li key={klass.id}>
+                <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
+                  <div className="min-w-0">
+                    <h3 className="font-display text-base font-semibold text-ink">
+                      {klass.course?.title ?? klass.name}
+                    </h3>
+                    <p className="mt-1 text-xs text-ink-faint">
+                      {[klass.name, klass.organization?.name].filter(Boolean).join(" · ")}
+                    </p>
+                  </div>
+                  <a href={url} target="_blank" rel="noreferrer" className={buttonClass("secondary", "sm")}>
+                    {t("student.feedback.open")}
+                  </a>
+                </Card>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {/* In progress */}
       {running.length > 0 ? (

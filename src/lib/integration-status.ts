@@ -1,12 +1,13 @@
 /**
- * What this deployment is wired to — the three registrations, read once.
+ * What this deployment is wired to — the four registrations, read once.
  *
  * The admin console is where an operator finds out that a deployment is *not*
- * configured the way they think it is, and there are three ways for that to be
+ * configured the way they think it is, and there are four ways for that to be
  * true here: nobody can sign in through a provider, no LMS can launch a scenario,
- * or no directory can sync accounts. Each one is decided by its own rules module —
- * `ssoConfigFromEnv`, `ltiConfigFromEnv`, and the SCIM token — and this module exists
- * so the console does not have to know all three, and so the three are described
+ * no directory can sync accounts, or no class has an AI classroom to be taught
+ * with. Each one is decided by its own rules module — `ssoConfigFromEnv`,
+ * `ltiConfigFromEnv`, the SCIM token, and `classroomConfigFromEnv` — and this module
+ * exists so the console does not have to know all four, and so the four are described
  * the same way.
  *
  * Two properties matter.
@@ -27,6 +28,7 @@
  * only presentation.
  */
 
+import { classroomConfigFromEnv, classroomHomeUrl } from "./classroom-rules";
 import { LTI_JWKS_PATH, LTI_LAUNCH_PATH, LTI_LOGIN_PATH, ltiConfigFromEnv } from "./lti-rules";
 import { ssoConfigFromEnv } from "./oidc-rules";
 import { SCIM_PATHS, SCIM_TOKEN_ENV } from "./scim-rules";
@@ -45,16 +47,16 @@ export interface IntegrationDetail {
 }
 
 export interface IntegrationStatus {
-  id: "sso" | "lti" | "scim";
+  id: "sso" | "lti" | "scim" | "classroom";
   state: IntegrationState;
   details: IntegrationDetail[];
   /** Why the routes refuse this one, when they do. Empty otherwise. */
   issues: string[];
 }
 
-/** The three, in the order an operator usually meets them. */
+/** The four, in the order an operator usually meets them. */
 export function integrationStatuses(env: Record<string, string | undefined> = process.env): IntegrationStatus[] {
-  return [ssoStatus(env), ltiStatus(env), scimStatus(env)];
+  return [ssoStatus(env), ltiStatus(env), scimStatus(env), classroomStatus(env)];
 }
 
 function ssoStatus(env: Record<string, string | undefined>): IntegrationStatus {
@@ -98,6 +100,30 @@ function ltiStatus(env: Record<string, string | undefined>): IntegrationStatus {
       // Both empty means launch-only: scenarios open, grades stay here.
       { key: "passback", value: config.tokenEndpoint ?? "" },
       { key: "keyId", value: config.keyId ?? "" },
+    ],
+  };
+}
+
+/**
+ * The AI classroom host — AthenIQ's OpenMAIC surface — as the console should describe it.
+ *
+ * `incomplete` means exactly what it means for the other three: a switch was set and the
+ * address was refused, so no class is offered a door and the reason is the operator's to fix.
+ * When it is ready the card names the host and its home, because that is the one address a
+ * provider needs to generate a classroom from a course's specification.
+ */
+function classroomStatus(env: Record<string, string | undefined>): IntegrationStatus {
+  const config = classroomConfigFromEnv(env);
+  if (!config.enabled) return { id: "classroom", state: "off", details: [], issues: [] };
+  if (!config.url) return { id: "classroom", state: "incomplete", details: [], issues: config.issues };
+
+  return {
+    id: "classroom",
+    state: "ready",
+    issues: [],
+    details: [
+      { key: "host", value: config.url },
+      { key: "home", value: classroomHomeUrl(config) ?? "" },
     ],
   };
 }
