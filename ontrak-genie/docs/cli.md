@@ -251,7 +251,10 @@ A skill is a markdown playbook with a name and a description, loaded from
 - `~/.config/ontrak-genie/skills/`,
 - `$ONTRAK_GENIE_SKILLS` (or `skillsDir` in the config),
 - `./.genie/skills/` — project-local, and it shadows a personal skill of the
-  same name.
+  same name,
+- `<AGENT_DATA_DIR>/skills/` — the deployment's own, read when this process is a
+  deployment's (it is the directory the console reads, so a skill added inside
+  the container is one every chat there is offered).
 
 ```markdown
 ---
@@ -264,10 +267,45 @@ Run the test suite, then the typecheck, then check the changelog …
 With no front matter the file name is the name and the first non-empty line is
 the description, so a directory of plain markdown still works.
 
+**A skill may also be a directory**: `<skills>/impeccable/SKILL.md` plus whatever
+it refers to — `reference/*.md`, templates, scripts. The playbook's body is what
+is used; the rest is on disk for the agent to read, and the composed message says
+where that directory is. A skill written as `description: >` (a YAML block scalar)
+is read as its text, not as `>`.
+
 `/skill release-check check v0.3` composes the playbook and the task into **one
 message**, fenced so the model can tell the instruction from the request, with
 the task last. There is no hidden system prompt: what was sent is what `/last`
 shows.
+
+### Installing one
+
+```bash
+genie skills add pbakaus/impeccable              # a github.com repository, or owner/repo
+genie skills add awesome-skills/code-review-skill --name review
+genie skills add acme/skills --path audit        # a repository that holds several
+genie skills add acme/skills --ref v2 --project  # a tag, and install into ./.genie/skills
+genie skills remove audit
+```
+
+The repository's own layout is worked out rather than required: `SKILL.md` at the
+root, `skills/<name>/SKILL.md`, or one markdown playbook on its own — and a
+repository that publishes the same skill for a dozen providers installs **once**,
+from the canonical copy. A repository that holds several *different* skills is
+refused until `--path` says which, and the other names are printed.
+
+`GITHUB_TOKEN` is read from the environment (or `--token`, or the deployment's
+`AGENT_GIT_TOKEN`) — a private repository needs one, and GitHub's hourly limit for
+anonymous callers is low enough that installing a handful of skills runs into it.
+
+What is installed is what the **console** sees too: the same directories are read
+by the server, per account (`§5` of [operations.md](operations.md)). In a
+deployment (`AGENT_DATA_DIR` set) `add` writes into the deployment's own skills
+directory rather than into a home directory the console never reads; on a laptop it
+writes into the person's own, which is the first directory the CLI reads back.
+`genie skills list` prints the directories it looked in, so where a skill landed is
+never a guess. Nothing is executed by an install — a skill is text this program
+reads.
 
 ## 7. Scripting
 

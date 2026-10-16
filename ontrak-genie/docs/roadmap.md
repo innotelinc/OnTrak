@@ -419,6 +419,30 @@ project is: the console's **run the project** in the Atlas block, or
 the preview already knew how — which is why the whole of it is a button and a
 subcommand rather than a second runner (`src/cli/remote.ts`, `public/app.js`).
 
+### Skills and memory `[x]`
+
+**Goal:** a session that starts where the last one finished, and a team's way of
+working that can be handed to the agent instead of retyped.
+
+- `[x]` **A skill is a playbook, and one can be installed.** `SKILL.md` with
+optional front matter, or a *directory* of one playbook plus its references; read
+from the project (`.genie/skills`), the account, and the deployment, in that order
+of precedence. `genie skills add <owner/repo>` fetches one from GitHub — working
+out the repository's own layout, installing a skill published for a dozen providers
+**once** from its canonical copy, refusing a repository that holds several until
+`--path` says which, and reading `GITHUB_TOKEN` because a private repository needs
+one and the anonymous rate limit is low (`src/skill-install.ts`, `src/skills.ts`).
+- `[x]` **The same skills in the console, per account.** The prompt carries a
+*menu* and the playbook arrives with `use_skill` when it is wanted, which is the
+difference between offering thirty skills and shipping thirty playbooks every turn
+(`src/skill-roots.ts`, `GET /api/skills`).
+- `[x]` **A project that remembers.** `MEMORY.md` in the workspace, injected into
+every turn, written with the `remember` tool — a file, so it is visible, diffable,
+revertable and committed with the code (`src/memory.ts`).
+- `[x]` **A pre-existing bug this work found:** the CLI's argv parser refused the
+subcommands' own flags, so `--key-file`, `--port` and `--dir` worked only inside
+the REPL and a shell answered "unknown option" for the syntax the help documented.
+
 ### v1.0 — The CodeOps surface `[x]`
 
 **Goal:** the counterpart, in a browser, of a terminal agent session — with the

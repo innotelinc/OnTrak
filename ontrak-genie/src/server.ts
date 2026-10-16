@@ -65,6 +65,8 @@ import {
   stopPreview as stopHostingPreview,
   sweepPreviews,
 } from "./preview-hosting.js";
+import { MEMORY_FILE, readMemorySync } from "./memory.js";
+import { loadSkillsForScope, skillRoots } from "./skill-roots.js";
 import {
   createProject as createWorkspaceProject,
   deleteProject as deleteWorkspaceProject,
@@ -1575,6 +1577,35 @@ async function handleApi(
    * checked against is the signed-in account's email, because that is the key
    * Magnate's subscription is stored under.
    */
+  /*
+   * Skills, and what this workspace remembers.
+   *
+   * Read-only, and deliberately so: a skill is a *file* that somebody installs
+   * (`genie skills add`, or an operator copying a directory into the deployment's
+   * skills dir), and the memory is a file in the workspace the agent edits. Neither
+   * needs a route that writes — a route that wrote would be a second, weaker way in
+   * than the tools that already exist, and this console is one place where the
+   * answer to "how do I add a skill" should be a command with a git URL in it.
+   *
+   * The list is what *this caller* can use: the project's `.genie/skills`, the
+   * account's, and the deployment's (`src/skill-roots.ts`).
+   */
+  if (pathname === "/api/skills" && method === "GET") {
+    const skills = loadSkillsForScope();
+    return sendJson(res, 200, {
+      dirs: skillRoots(),
+      skills: skills.map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        source: skill.source,
+        files: (skill.files ?? []).length,
+        dir: skill.dir ?? null,
+        ...(skill.provenance === undefined ? {} : { provenance: skill.provenance }),
+      })),
+      memory: { file: MEMORY_FILE, present: readMemorySync().trim() !== "" },
+    });
+  }
+
   if (pathname === "/api/hosting" && method === "GET") {
     const viewer = viewerOf(req);
     return sendJson(res, 200, await hostingInfo(viewer.email !== "" ? viewer.email : (viewer.userId ?? "")));

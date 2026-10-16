@@ -24,7 +24,14 @@ import readline from "node:readline";
 
 import { GenieClient, GenieError, type ChatRequest, type PendingApproval } from "./client.js";
 import { helpLines, matchCommands, parseCommand } from "./commands.js";
-import { configPath, resolveTarget, skillDirs, writeConfig, type ResolvedTarget } from "./config.js";
+import {
+  configPath,
+  defaultSkillsDir,
+  resolveTarget,
+  skillDirs,
+  writeConfig,
+  type ResolvedTarget,
+} from "./config.js";
 import { emptyTurnSummary, reduceTurn, suggestFollowups, type TurnSummary } from "./followups.js";
 import { LoginFailure, browserLogin, cookieLogin, tokenLogin } from "./login.js";
 import { parseProjectsLine, ProjectUsageError, runProjects } from "./projects.js";
@@ -44,7 +51,17 @@ import {
   supportsColor,
   terminalWidth,
 } from "./render.js";
-import { composeSkillMessage, describeSkills, loadSkills, type Skill } from "./skills.js";
+import {
+  SkillUsageError,
+  composeSkillMessage,
+  describeSkills,
+  loadSkills,
+  parseSkillsLine,
+  runSkills,
+  skillsHelpLines,
+  type Skill,
+  type SkillsOptions,
+} from "./skills.js";
 import type { AgentEvent } from "../agent.js";
 import type { Session, SessionSummary } from "../store.js";
 
@@ -159,8 +176,20 @@ export function parseArgs(argv: string[]): CliArgs {
         args.version = true;
         break;
       default:
-        if (name.startsWith("-") && name !== "-") {
-          // Unknown flags are a typo worth reporting rather than silently a task.
+        /*
+         * A flag this parser does not know is a typo worth reporting — unless the
+         * command owns the word, in which case it belongs to that command's own
+         * parser and this one must not touch it.
+         *
+         * `remote`, `skills` and `projects` each read their flags themselves
+         * (`remote.ts`, `skills.ts`, `projects.ts`), because the REPL has no argv
+         * at all: there, `--key-file` and `--dir` are just words on the line. This
+         * parser refusing them meant the documented flags worked *only* inside the
+         * REPL — `genie remote ssh host:/path --key-file id` from a shell exited
+         * with "unknown option --key-file", which is the opposite of what the help
+         * says. Passing them through makes a shell and the REPL the same grammar.
+         */
+        if (name.startsWith("-") && name !== "-" && !COMMANDS_OWNING_FLAGS.has(args.command)) {
           throw new Error(`unknown option ${name}`);
         }
         if (args.command === "") args.command = arg;
@@ -169,6 +198,15 @@ export function parseArgs(argv: string[]): CliArgs {
   }
   return args;
 }
+
+/**
+ * The commands whose flags are read by the command itself rather than by argv.
+ *
+ * This is the list that makes `genie remote ssh … --port 2222` and
+ * `genie skills add owner/repo --dir …` behave the same from a shell as they do
+ * typed into the REPL.
+ */
+const COMMANDS_OWNING_FLAGS = new Set(["remote", "skills", "projects"]);
 
 const TOP_LEVEL_HELP = `genie ${VERSION} — OnTrak Genie from the terminal
 
@@ -179,9 +217,11 @@ usage:
   genie logout                 forget the stored credential
   genie whoami                 show the server, identity and plan in force
   genie sessions [--json]      list chats
-  genie skills                 list available skills
   genie models [filter]        list models the gateway advertises
   genie help                   this text
+
+skills (a markdown playbook: how *we* do X here, written down once):
+${skillsHelpLines().join("\n")}
 
 projects (a saved, named workspace directory; name, row number or id all work):
   genie projects               list them, and say which one is open
@@ -253,7 +293,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     case "sessions":
       return await commandSessions(client, args);
     case "skills":
-      return commandSkills(theme);
+      return await commandSkills(theme, args);
     case "models":
       return await commandModels(client, args);
     case "projects":
@@ -364,11 +404,58 @@ async function commandSessions(client: GenieClient, args: CliArgs): Promise<numb
   return 0;
 }
 
-function commandSkills(theme: Theme): number {
-  const skills = loadSkills(skillDirs(process.cwd()));
-  process.stdout.write(`${theme.bold("skills")}\n`);
-  for (const line of describeSkills(skills)) process.stdout.write(`${line}\n`);
-  return 0;
+/**
+ * `genie skills [list|add|remove]`
+ *
+ * Listing keeps the greeting it always had; `add` is the new half, and it is the
+ * reason the playbooks are worth writing down — a skill from a public repository is
+ * one command away from being usable here *and* in the console
+ * (`src/skill-install.ts`). A `SkillUsageError` is the command line failing to be a
+ * command line: exit 2, like every other usage mistake, with the installer's own
+ * refusals at exit 1.
+ */
+async function commandSkills(theme: Theme, args: CliArgs): Promise<number> {
+  const dirs = skillDirs(process.cwd());
+  try {
+    const { invocation, options } = parseSkillsLine(args.rest, {
+      json: args.json,
+      project: false,
+    });
+    if (invocation.sub === "list" && !args.json) process.stdout.write(`${theme.bold("skills")}\n`);
+    return await runSkills({
+      invocation,
+      skills: loadSkills(dirs),
+      dirs,
+      installDir: skillInstallDir(process.cwd(), options),
+      theme,
+      options,
+      write: (line) => process.stdout.write(`${line}\n`),
+    });
+  } catch (error) {
+    if (error instanceof SkillUsageError) {
+      process.stderr.write(`${error.message}\n`);
+      return 2;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Where an installed skill is written.
+ *
+ * `--project` puts it in `./.genie/skills` — beside the code that uses it, so it
+ * can be committed and shared with a team. Otherwise `defaultSkillsDir` decides: the
+ * deployment's own skills directory when this process is a deployment's, and the
+ * user's own directory everywhere else. Both are directories `skillDirs` reads, so
+ * what was installed is what the next turn loads — a skill written somewhere
+ * nothing reads is a skill that appears to vanish.
+ */
+function skillInstallDir(cwd: string, options: SkillsOptions): string {
+  if (options.dir !== undefined && options.dir !== "") return options.dir;
+  if (options.project) return path.join(cwd, ".genie", "skills");
+  const dir = defaultSkillsDir(cwd);
+  if (dir === undefined) throw new SkillUsageError("no skills directory is configured");
+  return dir;
 }
 
 /**
@@ -1055,9 +1142,27 @@ async function handleCommand(
       }
       return false;
     }
-    case "skills":
-      for (const line of describeSkills(skills)) process.stdout.write(`${line}\n`);
+    case "skills": {
+      // The same bargain as `/projects` and `/remote`: a refusal is printed and the
+      // REPL stays open, and the flags come from the line, since the line is all
+      // there is here.
+      const dirs = skillDirs(process.cwd());
+      try {
+        const { invocation, options } = parseSkillsLine(argv, { json: false, project: false });
+        await runSkills({
+          invocation,
+          skills: loadSkills(dirs),
+          dirs,
+          installDir: skillInstallDir(process.cwd(), options),
+          theme,
+          options,
+          write: (line) => process.stdout.write(`${line}\n`),
+        });
+      } catch (error) {
+        process.stdout.write(`${eventError(theme, (error as Error).message)}\n`);
+      }
       return false;
+    }
     case "skill": {
       const name = argv[0] ?? "";
       const skill =

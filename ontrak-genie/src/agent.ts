@@ -3,6 +3,9 @@ import crypto from "node:crypto";
 import { approvalRequired, denialReason, requestApproval, type ApprovalDecision } from "./approval.js";
 import { config, gatewayConsoleUrl } from "./config.js";
 import type { FileDiff } from "./diff.js";
+import { memoryForPrompt, readMemorySync } from "./memory.js";
+import { loadSkillsForScope } from "./skill-roots.js";
+import { skillMenu } from "./skills.js";
 import { draftPreview, draftStreamed, textDraftPreview, type DraftSequence } from "./draft.js";
 import {
   GatewayError,
@@ -73,16 +76,24 @@ ${previewAddressNote()}- Install what you need instead of working around it. The
 - Fix the cause of an error, not the symptom. If a tool call fails, change your
   approach rather than repeating the identical call - it will fail identically.
 
-Self-healing & persistent memory:
-- A persistent workspace exists at /srv/genie-workspace/ that survives across sessions.
-- On startup/context, read AGENT_LEARNINGS.md and state.json from /srv/genie-workspace/ to recall past fixes, errors, and discoveries.
-- Record significant learnings with write_journal (category: fix/discovery/error/success/note).
-- Maintain persistent state with workspace_state (get/set) across sessions.
+Memory, and what this workspace already knows:
+- The project's memory is \`MEMORY.md\` in the workspace, and its contents are at
+  the end of this prompt — you do not have to go and read it. Add to it with the
+  \`remember\` tool when you learn something that stays true: how the project is
+  built, a convention, a trap, a decision and why. It is a file like any other, so
+  it shows up in diffs, can be reviewed and reverted, and is meant to be committed
+  with the code.
+- For a running record rather than durable facts, \`write_journal\` appends to
+  \`AGENT_LEARNINGS.md\` and \`workspace_state\` keeps \`state.json\` — both in the
+  workspace, both persistent across sessions.
+- Skills: the ones available here are listed at the end of this prompt. Load the
+  one that fits with \`use_skill\` before doing that kind of work.
 
 Plugins & extensibility:
-- Discover plugins with plugin_discover() - look in /srv/genie-workspace/plugins/ and subdirectories.
+- Discover plugins with plugin_discover() — it looks in \`plugins/\` in the
+  workspace and its subdirectories.
 - Load/integrate discovered plugins with plugin_load(pluginPath).
-- Store reusable macros in /srv/genie-workspace/macros/ and run them with macro_run(name, args).
+- Store reusable macros in \`macros/\` and run them with macro_run(name, args).
 
 Package management:
 - Install packages with package_install(packages, manager) - respects sandbox mode (AGENT_SANDBOX env).
@@ -212,10 +223,40 @@ export interface RunAgentOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * What this workspace remembers and what it can do, as the tail of the prompt.
+ *
+ * Assembled per request rather than baked into `SYSTEM_PROMPT`, because both halves
+ * are facts about *this* working directory and this caller: the project's
+ * `MEMORY.md` (`src/memory.ts`) and the skills that are installed here
+ * (`src/skill-roots.ts`). Neither is stored in the transcript — the prompt is
+ * rebuilt from the files on every step, so a memory the agent wrote a moment ago
+ * is already in front of it, and a skill installed mid-chat is usable in that
+ * chat.
+ *
+ * The skills go in as a **menu** and not as bodies: a playbook is fetched with
+ * `use_skill` when it is wanted. Thirty installed skills are thirty lines here and
+ * nothing more, which is what keeps offering them affordable.
+ */
+export function workspaceContext(): string {
+  const parts: string[] = [memoryForPrompt(readMemorySync())];
+  const skills = loadSkillsForScope();
+  if (skills.length > 0) {
+    parts.push(
+      [
+        "Skills available here — playbooks for how this project or team does something:",
+        ...skillMenu(skills),
+        "Load the one that fits with `use_skill` before doing that kind of work.",
+      ].join("\n"),
+    );
+  }
+  return parts.join("\n\n");
+}
+
 /** The system prompt is prepended at request time, never stored in the transcript. */
 function modelMessages(session: Session): ChatMessage[] {
   return [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: `${SYSTEM_PROMPT}\n\n${workspaceContext()}` },
     // Diffs are a UI artefact; strip them so no provider sees an unknown field.
     ...session.messages.map(({ diff: _diff, ...message }) => message),
   ];

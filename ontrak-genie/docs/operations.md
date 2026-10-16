@@ -1561,6 +1561,64 @@ risk is trust on first use: a first connection to a host that is already
 impersonated is trusted. `AGENT_REMOTE_ALLOWED_HOSTS` is the control for a
 deployment that wants to bound where the console may dial at all.
 
+## Skills, and what a workspace remembers
+
+Two things that make a deployment more than a fresh sandbox, and both of them are
+**files** rather than settings.
+
+### Skills
+
+A skill is a markdown playbook — `SKILL.md` with optional front matter, plus any
+reference files it needs. The server reads three directories, most specific first:
+
+| Where | What it is for |
+| --- | --- |
+| `<workspace>/.genie/skills/` | Committed beside the code, so a team shares it (the CLI reads this one too) |
+| `<AGENT_DATA_DIR>/skills/accounts/<account>/` | One person's own installs, on a shared deployment |
+| `<AGENT_DATA_DIR>/skills/` | The deployment's own: what everybody here gets without installing anything |
+
+A skill in a more specific place shadows one of the same name further out, exactly
+as the CLI's loader has always done one level down.
+
+The **CLI** reads the workspace's `.genie/skills` and the deployment's directory
+too, and inside the container it *writes* to the deployment's: with `AGENT_DATA_DIR`
+set, `genie skills add` does not put a skill in a home directory no chat reads.
+
+A console chat gets the **menu** — name and one-line description per skill, at the
+end of every prompt — and fetches a playbook with `use_skill` when it is wanted,
+which is the difference between offering thirty skills and shipping thirty
+playbooks' worth of tokens on every turn. `GET /api/skills` answers with what this
+caller can use, from which directories, and whether a `MEMORY.md` exists; there is
+deliberately no route that installs, because installing is `genie skills add`:
+
+```bash
+# On the deployment: `AGENT_DATA_DIR` is set there, so this lands in the volume the
+# console reads (`<AGENT_DATA_DIR>/skills`), and chats get it on their next turn.
+docker exec <genie-container> node dist/cli/main.js skills add pbakaus/impeccable
+# Or on a laptop, into the CLI's own directory:
+genie skills add pbakaus/impeccable
+# Somewhere else entirely, when a directory is named:
+genie skills add pbakaus/impeccable --dir /data/skills
+# A private repository needs a token; so does anything past GitHub's anonymous limit:
+GITHUB_TOKEN=... genie skills add acme/private-skills
+```
+
+Install, update and removal are the same command: an install replaces the
+directory, so a skill is always one repository at one ref, and `skills remove`
+refuses any directory the installer did not write (it is somebody's own file
+then, and not this command's to delete).
+
+### Memory
+
+`MEMORY.md` in the workspace is the project's memory. Its contents are appended to
+the system prompt on every step, so a session starts knowing what the last one
+worked out, and the agent adds to it with the `remember` tool — section by
+section, dated, newest last. Because it is a file it is visible in the file tree,
+appears in diffs, can be reverted like any other change, and is meant to be
+committed: memory that ships with the code is memory a team can review and revise.
+A workspace with no memory yet is told how to start one, rather than told to go and
+read a file that is not there.
+
 ## Configuration
 
 All optional — see `.env.example`.

@@ -4,6 +4,9 @@ import path from "node:path";
 
 import { changeSetSummary } from "./change-set.js";
 import { config } from "./config.js";
+import { MEMORY_FILE, appendMemory, readMemory, remember } from "./memory.js";
+import { loadSkillsForScope } from "./skill-roots.js";
+import { composeSkillMessage, describeSkills, findSkill } from "./skills.js";
 import { buildFileDiff, type FileDiff } from "./diff.js";
 import { stageChange } from "./proposals.js";
 import { workspaceRoot } from "./scope.js";
@@ -632,6 +635,131 @@ const macroRunTool: ToolDefinition = {
   },
 };
 
+// --- remember (the project's memory) ----------------------------------------
+
+/**
+ * Write one durable fact into the project's memory.
+ *
+ * A file the agent edits, not a side channel it talks into: the write goes through
+ * the same snapshot, diff and approval path as `write_file`, so it shows up in the
+ * change list and can be reviewed, reverted or corrected like anything else. That
+ * is the point of putting memory *in the workspace* — the prompt gets the file's
+ * contents every turn (`agent.ts`), and this is how they grow.
+ */
+const rememberTool: ToolDefinition = {
+  name: "remember",
+  description:
+    `Append one durable fact about this project to ${MEMORY_FILE}, its persistent memory. Use it for things that stay true: how the project is built, a convention, a trap, a decision and its reason. Not for progress notes within a task — those belong in the reply.`,
+  parameters: {
+    type: "object",
+    properties: {
+      entry: { type: "string", description: "The fact, one or two sentences, written for a reader who was not here." },
+      section: { type: "string", description: 'Which heading it belongs under, e.g. "Build", "Conventions", "Traps". Defaults to "Notes".' },
+    },
+    required: ["entry"],
+  },
+  async inspect(args) {
+    const entry = argString(args, "entry");
+    const before = await readMemory();
+    const content = appendMemory(before, { entry, ...(sectionArg(args) === undefined ? {} : { section: sectionArg(args) }) });
+    return {
+      summary: `Add to ${MEMORY_FILE}`,
+      diff: buildFileDiff(MEMORY_FILE, before, content),
+    };
+  },
+  async run(args) {
+    const entry = argString(args, "entry");
+    const section = sectionArg(args);
+    const input = { entry, ...(section === undefined ? {} : { section }) };
+
+    if (config.writeMode === "propose") {
+      const before = await readMemory();
+      const content = appendMemory(before, input);
+      const diff = buildFileDiff(MEMORY_FILE, before, content);
+      const set = stageChange({
+        path: MEMORY_FILE,
+        kind: before.trim() === "" ? "create" : "overwrite",
+        content,
+        added: diff.added,
+        removed: diff.removed,
+      });
+      return {
+        ok: true,
+        content: `Proposed adding to ${MEMORY_FILE}; staged for review (${changeSetSummary(set)}). Nothing has been written yet.`,
+        diff,
+      };
+    }
+
+    const outcome = await remember(input);
+    return {
+      ok: true,
+      content: `${outcome.created ? "Created" : "Updated"} ${outcome.rel} under "${outcome.section}" (${formatSize(outcome.bytes)}).`,
+      diff: outcome.diff,
+    };
+  },
+};
+
+function sectionArg(args: Record<string, unknown>): string | undefined {
+  const value = args.section;
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+}
+
+// --- skills -----------------------------------------------------------------
+
+/** What the caller can use, as the menu the prompt carries. */
+const listSkillsTool: ToolDefinition = {
+  name: "list_skills",
+  description:
+    "List the skills available here — markdown playbooks for how this project or team does something. Load one with use_skill.",
+  parameters: { type: "object", properties: {} },
+  async run() {
+    const skills = loadSkillsForScope();
+    if (skills.length === 0) {
+      return {
+        ok: true,
+        content: "No skills are installed. A skill is a markdown playbook (SKILL.md) in .genie/skills of this workspace, the account's skills directory, or the deployment's.",
+      };
+    }
+    return { ok: true, content: clamp(describeSkills(skills).join("\n")) };
+  },
+};
+
+/**
+ * Load one skill's playbook into the conversation.
+ *
+ * The body is fetched, not injected up front, because a skill is a whole method —
+ * the design one is twenty thousand characters and twenty reference files — and a
+ * turn that pays for every playbook to use none of them is a turn the user waits
+ * on for nothing. What the prompt carries is the menu; this is the click.
+ */
+const useSkillTool: ToolDefinition = {
+  name: "use_skill",
+  description:
+    "Load a skill's playbook and follow it for the current task. Use when a listed skill matches what the user asked for, or when they name one.",
+  parameters: {
+    type: "object",
+    properties: {
+      name: { type: "string", description: "The skill to load, as list_skills spells it." },
+      task: { type: "string", description: "What to apply it to. Omit only when the request is already clear." },
+    },
+    required: ["name"],
+  },
+  async run(args) {
+    const name = argString(args, "name");
+    const skills = loadSkillsForScope();
+    const skill = findSkill(skills, name);
+    if (skill === undefined) {
+      throw new ToolError(
+        skills.length === 0
+          ? `no skills are installed, so there is nothing called "${name}"`
+          : `no skill matches "${name}". Available: ${skills.map((entry) => entry.name).join(", ")}`,
+      );
+    }
+    const task = argString(args, "task", true);
+    return { ok: true, content: clamp(composeSkillMessage(skill, task)) };
+  },
+};
+
 // --- registry ---------------------------------------------------------------
 
 export const tools: ToolDefinition[] = [
@@ -647,6 +775,9 @@ export const tools: ToolDefinition[] = [
   pluginLoadTool,
   packageInstallTool,
   macroRunTool,
+  rememberTool,
+  listSkillsTool,
+  useSkillTool,
 ];
 
 /** Tool schemas in the OpenAI `tools` envelope. */

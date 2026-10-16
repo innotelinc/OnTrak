@@ -128,12 +128,47 @@ function firstNonEmpty(...values: (string | undefined)[]): string | undefined {
   return undefined;
 }
 
+/**
+ * The deployment's own skills directory, when this process is a deployment's.
+ *
+ * `AGENT_DATA_DIR` is what the container sets, and `<it>/skills` is where the
+ * *server* keeps the skills every account is offered (`src/skill-roots.ts`). Read
+ * from the environment rather than from `config.dataDir`, whose fallback is
+ * `./.agent`: that would make every laptop look like a deployment.
+ */
+export function deploymentSkillsDir(): string | undefined {
+  const dir = (process.env.AGENT_DATA_DIR ?? "").trim();
+  if (dir === "") return undefined;
+  return path.join(path.resolve(dir), "skills");
+}
+
 /** The directories a skill may be loaded from, most specific last. */
 export function skillDirs(cwd: string): string[] {
   const configured = (process.env.ONTRAK_GENIE_SKILLS ?? readConfig().skillsDir ?? "").trim();
+  const deployment = deploymentSkillsDir();
   return [
     path.join(path.dirname(configPath()), "skills"),
     ...(configured === "" ? [] : [configured]),
     path.join(cwd, ".genie", "skills"),
+    /*
+     * The deployment's, last — and this is the entry that makes `genie skills add`
+     * *inside the container* visible to the console. Without it the CLI installed
+     * into `/root/.config/ontrak-genie/skills`, which no chat ever reads, so the
+     * command appeared to work and changed nothing a person could see.
+     */
+    ...(deployment === undefined ? [] : [deployment]),
   ];
+}
+
+/**
+ * Where `genie skills add` writes when the line names no directory.
+ *
+ * The deployment's own skills directory when this process is one (`AGENT_DATA_DIR`
+ * set): a deployment is not a person, the console reads that directory and not
+ * this process's home, and a skill installed anywhere else would be a skill no chat
+ * is ever offered. Everywhere else it is the user's own directory — the first one
+ * `skillDirs` reads, so what was just installed is what the next turn loads.
+ */
+export function defaultSkillsDir(cwd: string): string | undefined {
+  return deploymentSkillsDir() ?? skillDirs(cwd)[0];
 }

@@ -1,137 +1,262 @@
 /**
- * Skills — reusable instructions the CLI can hand the agent.
+ * `genie skills` — the terminal's side of skills: what is installed, and adding
+ * one from a public repository.
  *
- * A skill is a markdown playbook with a name and a one-line description. It is
- * how a team writes down "how we do X here" once and then invokes it, rather
- * than typing the same paragraph of context into every chat.
+ * The model itself — parsing, the two on-disk shapes, loading, composing a
+ * playbook into a message — lives in `src/skills.ts`, because the *server* offers
+ * the same skills to a console chat and two copies of "what a skill is" would
+ * drift apart the first time one of them learned something. What is here is only
+ * what a terminal owns:
  *
- * The server takes a `message` and nothing else, so a skill is applied by
- * **composing the message**: the playbook's body is prepended to the task,
- * fenced off and labelled, so the model can tell the instruction from the
- * request. That is deliberately a composition and not a second system prompt —
- * there is no hidden state, and what was sent is what `/last` will show.
+ *   * **the subcommands.** `genie skills add <owner/repo>` is read here, so the
+ *     words are one table and an unknown one is a usage error listing what exists.
+ *   * **where installed skills go.** A person running this on a laptop means
+ *     `~/.config/ontrak-genie/skills`; `--project` means `./.genie/skills`, so a
+ *     skill can be committed beside the code that uses it.
+ *   * **the terminal's output.** A list with provenance, or a sentence.
  *
- * The format is the one everybody already writes: optional front matter for
- * `name` and `description`, then the body.
- *
- *   ---
- *   name: release-check
- *   description: Verify a release before tagging it
- *   ---
- *   Run the test suite, then the typecheck, then …
- *
- * With no front matter the file name is the name and the first non-empty line
- * is the description, because a directory of plain markdown should still work.
+ * The fetching and the validation are `src/skill-install.ts`, which is also what
+ * the console's install route calls — so `genie skills add` and the console cannot
+ * end up installing different things.
  */
 
-import fs from "node:fs";
-import path from "node:path";
+import {
+  describeSkills,
+  findSkill,
+  type Skill,
+} from "../skills.js";
+import {
+  installSkill,
+  parseGitHubRepo,
+  removeSkill,
+  type InstallOutcome,
+  type SkillFetcher,
+} from "../skill-install.js";
+import type { Theme } from "./render.js";
 
-export interface Skill {
-  /** Invoked as `/skill <name>`; lower-cased and slugged. */
-  name: string;
-  description: string;
-  /** Where it came from, shown by `/skills`. */
-  source: string;
-  body: string;
+export {
+  composeSkillMessage,
+  describeSkills,
+  findSkill,
+  loadSkills,
+  parseSkill,
+  readFrontMatter,
+  readSkillDir,
+  slug,
+  type Skill,
+  type SkillProvenance,
+} from "../skills.js";
+
+/** A `skills` line that cannot be carried out as written. Exit code 2. */
+export class SkillUsageError extends Error {}
+
+export type SkillsSub = "list" | "add" | "remove";
+
+const SUBCOMMANDS = new Map<string, SkillsSub>([
+  ["list", "list"],
+  ["ls", "list"],
+  ["add", "add"],
+  ["install", "add"],
+  ["remove", "remove"],
+  ["rm", "remove"],
+  ["uninstall", "remove"],
+]);
+
+export interface SkillsInvocation {
+  sub: SkillsSub;
+  /** The words after the subcommand. */
+  args: string[];
 }
 
-/** Slug a name into something typeable. */
-export function slug(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+export interface SkillsOptions {
+  /** Print the installer's own payload instead of a sentence. */
+  json: boolean;
+  /** Where an installed skill goes. Undefined means the caller's default. */
+  dir?: string;
+  /** `--project`: install into `./.genie/skills`, beside the code. */
+  project: boolean;
+  /** `--name`: what to call it, when the repository's own name is not it. */
+  name?: string;
+  /** `--ref`: a branch, tag or commit to install from. */
+  ref?: string;
+  /** `--path`: which skill inside the repository, when it holds several. */
+  path?: string;
+  /**
+   * A GitHub token: `--token`, else `GITHUB_TOKEN`, else the deployment's own
+   * `AGENT_GIT_TOKEN`. A private repository needs one, and GitHub's anonymous
+   * hourly limit is low enough that installing an estate's skills runs into it.
+   */
+  token?: string;
 }
 
-/** Parse one skill file. Returns null when there is nothing usable in it. */
-export function parseSkill(file: string, raw: string): Skill | null {
-  let body = raw.replace(/^\uFEFF/, "");
-  let name = "";
-  let description = "";
+/** The words after `skills`, read the same way from a shell and from the REPL. */
+export function parseSkillsCommand(rest: readonly string[]): SkillsInvocation {
+  const head = (rest[0] ?? "").toLowerCase();
+  // Bare `genie skills` lists, which is what somebody typing it wants to know.
+  if (head === "") return { sub: "list", args: [] };
+  const sub = SUBCOMMANDS.get(head);
+  if (sub === undefined) {
+    throw new SkillUsageError(`unknown skills subcommand "${rest[0] ?? ""}" — try list, add or remove`);
+  }
+  return { sub, args: rest.slice(1) };
+}
 
-  const front = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(body);
-  if (front) {
-    const matter = front[1] ?? "";
-    body = body.slice(front[0].length);
-    for (const line of matter.split(/\r?\n/)) {
-      const match = /^\s*([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/.exec(line);
-      if (!match) continue;
-      const key = (match[1] ?? "").toLowerCase();
-      const value = (match[2] ?? "").trim().replace(/^["']|["']$/g, "");
-      if (key === "name") name = value;
-      else if (key === "description") description = value;
+/** Read a whole `skills` line, flags included. */
+export function parseSkillsLine(
+  rest: readonly string[],
+  defaults: SkillsOptions,
+): { invocation: SkillsInvocation; options: SkillsOptions } {
+  const words: string[] = [];
+  const options: SkillsOptions = { ...defaults };
+
+  for (let index = 0; index < rest.length; index += 1) {
+    const word = rest[index] ?? "";
+    const split = word.indexOf("=");
+    const name = split === -1 ? word : word.slice(0, split);
+    const inline = split === -1 ? undefined : word.slice(split + 1);
+    const value = (): string => {
+      const found = inline ?? rest[index + 1] ?? "";
+      if (inline === undefined) index += 1;
+      return found;
+    };
+
+    switch (name) {
+      case "--dir":
+        options.dir = value();
+        break;
+      case "--project":
+        options.project = true;
+        break;
+      case "--name":
+        options.name = value();
+        break;
+      case "--ref":
+        options.ref = value();
+        break;
+      case "--path":
+        options.path = value();
+        break;
+      case "--token":
+        options.token = value();
+        break;
+      default:
+        if (name.startsWith("-") && name !== "-") {
+          throw new SkillUsageError(`unknown option ${name} for skills`);
+        }
+        words.push(word);
     }
   }
 
-  const trimmedBody = body.trim();
-  if (trimmedBody === "") return null;
-
-  if (name === "") name = path.basename(file).replace(/\.(md|markdown|txt)$/i, "");
-  if (description === "") {
-    description = trimmedBody.split("\n").find((line) => line.trim() !== "")?.trim() ?? "";
-    if (description.length > 120) description = `${description.slice(0, 117)}…`;
-  }
-
-  const slugged = slug(name);
-  if (slugged === "") return null;
-  return { name: slugged, description, source: file, body: trimmedBody };
+  return { invocation: parseSkillsCommand(words), options };
 }
 
-/** Every `*.md` skill in a directory, sorted by name. Missing dirs are simply empty. */
-export function loadSkills(dirs: string[]): Skill[] {
-  const byName = new Map<string, Skill>();
-  for (const dir of dirs) {
-    let entries: string[];
-    try {
-      entries = fs.readdirSync(dir);
-    } catch {
-      continue; // A directory that does not exist is not a problem.
-    }
-    for (const entry of entries) {
-      if (!/\.(md|markdown|txt)$/i.test(entry)) continue;
-      const file = path.join(dir, entry);
-      let raw: string;
-      try {
-        raw = fs.readFileSync(file, "utf8");
-      } catch {
-        continue;
-      }
-      const skill = parseSkill(file, raw);
-      if (skill === null) continue;
-      // Earlier directories win, so a project skill can shadow a personal one.
-      if (!byName.has(skill.name)) byName.set(skill.name, skill);
-    }
-  }
-  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+export interface SkillsContext {
+  invocation: SkillsInvocation;
+  /** What is installed right now, already loaded from `dirs`. */
+  skills: Skill[];
+  /** The directories skills come from, most specific first. */
+  dirs: string[];
+  /** Where `add` writes when nothing says otherwise. */
+  installDir: string;
+  theme: Theme;
+  options: SkillsOptions;
+  /** The network, injectable so a test can install from a fake repository. */
+  fetchImpl?: SkillFetcher;
+  write: (line: string) => void;
 }
 
-/**
- * Compose the message a skill turns into.
- *
- * The playbook is fenced and the task is left last, because a model reads the
- * end of a prompt most reliably and the task is what must not be missed.
- */
-export function composeSkillMessage(skill: Skill, task: string): string {
-  const header = `Applying skill "${skill.name}".`;
-  const request = task.trim() === "" ? "Do what the skill describes for this workspace." : task.trim();
+/** Run a `skills` line. */
+export async function runSkills(ctx: SkillsContext): Promise<number> {
+  switch (ctx.invocation.sub) {
+    case "list":
+      return listSkills(ctx);
+    case "add":
+      return await addSkill(ctx);
+    case "remove":
+      return await removeInstalledSkill(ctx);
+  }
+}
+
+function listSkills(ctx: SkillsContext): number {
+  if (ctx.options.json) {
+    ctx.write(JSON.stringify(ctx.skills, null, 2));
+    return 0;
+  }
+  for (const line of describeSkills(ctx.skills)) ctx.write(line);
+  ctx.write(
+    ctx.theme.gray(`  from ${ctx.dirs.join(", ")} — \`genie skills add <owner/repo>\` to install one`),
+  );
+  return 0;
+}
+
+async function addSkill(ctx: SkillsContext): Promise<number> {
+  const target = (ctx.invocation.args[0] ?? "").trim();
+  if (target === "") {
+    throw new SkillUsageError("which skill? `genie skills add <owner/repo>`, or a github.com URL");
+  }
+  const ref = parseGitHubRepo(target);
+  if (ref === null) {
+    throw new SkillUsageError(`"${target}" is not a GitHub repository — try owner/repo`);
+  }
+
+  const dir = ctx.options.dir ?? ctx.installDir;
+  const token = ctx.options.token ?? process.env.GITHUB_TOKEN ?? process.env.AGENT_GIT_TOKEN ?? "";
+  const outcome: InstallOutcome = await installSkill(
+    {
+      owner: ref.owner,
+      repo: ref.repo,
+      dir,
+      ...(ctx.options.name === undefined ? {} : { name: ctx.options.name }),
+      ...(ctx.options.ref === undefined ? {} : { ref: ctx.options.ref }),
+      ...(ctx.options.path === undefined ? {} : { path: ctx.options.path }),
+      ...(ctx.options.token === undefined ? {} : { token: ctx.options.token }),
+    },
+    ctx.fetchImpl === undefined ? {} : { fetchImpl: ctx.fetchImpl },
+  );
+
+  if (ctx.options.json) {
+    ctx.write(JSON.stringify(outcome, null, 2));
+    return 0;
+  }
+  const { skill, others } = outcome;
+  ctx.write(`installed ${skill.name} (${skill.files} files) into ${skill.dir}`);
+  if (skill.description !== "") ctx.write(ctx.theme.gray(`  ${skill.description}`));
+  if (others.length > 0) {
+    // A repository that holds several skills is the common case, so naming the
+    // others is the difference between a dead end and one more command.
+    ctx.write(
+      ctx.theme.gray(
+        `  also in ${ref.owner}/${ref.repo}: ${others.join(", ")} — add one with --path <name>`,
+      ),
+    );
+  }
+  return 0;
+}
+
+async function removeInstalledSkill(ctx: SkillsContext): Promise<number> {
+  const wanted = (ctx.invocation.args[0] ?? "").trim();
+  if (wanted === "") throw new SkillUsageError("which skill? `genie skills list` shows them");
+  const skill = findSkill(ctx.skills, wanted);
+  if (skill === undefined) throw new SkillUsageError(`no installed skill matches "${wanted}"`);
+  if (skill.dir === undefined) {
+    // A single markdown file is somebody's own file, in a directory this command
+    // does not own. Saying so is better than deleting it.
+    throw new SkillUsageError(
+      `${skill.name} is a single file at ${skill.source} — remove it by hand`,
+    );
+  }
+  const removed = await removeSkill(skill.dir);
+  ctx.write(`removed ${skill.name} (${removed.files} files) from ${skill.dir}`);
+  return 0;
+}
+
+/** The `skills` lines of `genie help`, defined beside the commands they describe. */
+export function skillsHelpLines(): string[] {
   return [
-    header,
-    "",
-    "<skill>",
-    skill.body,
-    "</skill>",
-    "",
-    "Task:",
-    request,
-  ].join("\n");
-}
-
-/** A compact list for `/skills`. */
-export function describeSkills(skills: Skill[]): string[] {
-  if (skills.length === 0) {
-    return ["no skills found — add a markdown file to ~/.config/ontrak-genie/skills or ./.genie/skills"];
-  }
-  return skills.map((skill) => `  ${skill.name.padEnd(18)} ${skill.description}`);
+    "  genie skills                        what is installed, and where from",
+    "  genie skills add <owner/repo>       install a skill from GitHub",
+    "      --name <name>  --ref <branch|tag>  --path <skill>  --project  --token <token>",
+    "      (GITHUB_TOKEN is read from the environment for a private repository)",
+    "  genie skills remove <name>          remove an installed skill",
+  ];
 }

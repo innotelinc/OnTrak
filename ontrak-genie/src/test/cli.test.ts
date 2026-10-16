@@ -24,7 +24,7 @@ import {
   parseCommand,
   tokenize,
 } from "../cli/commands.js";
-import { normalizeUrl, resolveTarget, writeConfig } from "../cli/config.js";
+import { configPath, defaultSkillsDir, normalizeUrl, resolveTarget, skillDirs, writeConfig } from "../cli/config.js";
 import {
   emptyTurnSummary,
   reduceTurn,
@@ -45,6 +45,12 @@ import {
   RemoteUsageError,
   runRemote,
 } from "../cli/remote.js";
+import {
+  SkillUsageError,
+  parseSkillsCommand,
+  parseSkillsLine,
+  runSkills,
+} from "../cli/skills.js";
 import type { GenieClient, RemoteList } from "../cli/client.js";
 import { MarkdownStream, Theme, clip, renderDiff, summarizeArgs, wrap } from "../cli/render.js";
 import { composeSkillMessage, describeSkills, loadSkills, parseSkill, slug } from "../cli/skills.js";
@@ -127,6 +133,27 @@ test("tokenize splits on whitespace but keeps quoted runs together", () => {
   assert.deepEqual(tokenize("   "), []);
 });
 
+test("a subcommand's own flags reach it from a shell, not only from the REPL", () => {
+  /*
+   * `genie remote ssh host:/path --key-file id` and `genie skills add a/b --dir x`
+   * read their flags themselves, because the REPL has no argv: there they are just
+   * words on the line. This parser once refused every one of them, so the flags
+   * the help documented worked only *inside* the REPL — and a shell answered
+   * "unknown option --key-file", which is the opposite of what the help said.
+   */
+  const skills = parseArgs(["skills", "add", "acme/skills", "--dir", "/tmp/x"]);
+  assert.equal(skills.command, "skills");
+  assert.deepEqual(skills.rest, ["add", "acme/skills", "--dir", "/tmp/x"], "passed through, value and all");
+
+  const remote = parseArgs(["remote", "ssh", "root@host:/srv", "--port", "2222"]);
+  assert.equal(remote.command, "remote");
+  assert.deepEqual(remote.rest, ["ssh", "root@host:/srv", "--port", "2222"]);
+
+  // A command that owns no such flags still gets the typo reported.
+  assert.throws(() => parseArgs(["whoami", "--wat"]), /unknown option --wat/);
+  assert.throws(() => parseArgs(["--wat"]), /unknown option --wat/);
+});
+
 test("the palette offers prefix matches only, and nothing once a space is typed", () => {
   assert.deepEqual(
     matchCommands("/re").map((command) => command.name),
@@ -147,7 +174,115 @@ test("the help text carries every command", () => {
   }
 });
 
+/* ----------------------------------------------------------------- skills */
+
+const SKILLS_OPTIONS = { json: false, project: false };
+
+test("the skills subcommands are one table, and a bare `skills` lists", () => {
+  assert.deepEqual(parseSkillsCommand([]), { sub: "list", args: [] });
+  assert.deepEqual(parseSkillsCommand(["ls"]), { sub: "list", args: [] });
+  assert.deepEqual(parseSkillsCommand(["install", "pbakaus/impeccable"]), {
+    sub: "add",
+    args: ["pbakaus/impeccable"],
+  });
+  assert.deepEqual(parseSkillsCommand(["uninstall", "audit"]), { sub: "remove", args: ["audit"] });
+  assert.throws(() => parseSkillsCommand(["wibble"]), /try list, add or remove/);
+  // A subcommand is found as a word, never through the prototype.
+  assert.throws(() => parseSkillsCommand(["constructor"]), SkillUsageError);
+});
+
+test("the skills flags are read from the line as well as from the shell", () => {
+  const parsed = parseSkillsLine(
+    ["add", "acme/skills", "--path", "audit", "--name=review", "--ref", "v1", "--project"],
+    SKILLS_OPTIONS,
+  );
+  assert.deepEqual(parsed.invocation, { sub: "add", args: ["acme/skills"] });
+  assert.equal(parsed.options.path, "audit");
+  assert.equal(parsed.options.name, "review");
+  assert.equal(parsed.options.ref, "v1");
+  assert.equal(parsed.options.project, true);
+  assert.equal(parsed.options.dir, undefined, "a flag nobody gave stays unset");
+
+  assert.throws(() => parseSkillsLine(["list", "--wat"], SKILLS_OPTIONS), /unknown option --wat/);
+});
+
+test("`genie skills add` installs from the line, and refuses a non-GitHub name", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "genie-cli-skills-"));
+  const lines: string[] = [];
+  const fetchImpl = (async (url: string) => {
+    if (url.includes("/git/trees/")) {
+      return { ok: true, status: 200, json: async () => ({ tree: [{ path: "skills/audit/SKILL.md", type: "blob" }] }) } as unknown as Response;
+    }
+    if (url.includes("/repos/")) {
+      return { ok: true, status: 200, json: async () => ({ default_branch: "main" }) } as unknown as Response;
+    }
+    return {
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => Buffer.from("---\nname: audit\ndescription: Review it\n---\nLook closely.\n"),
+    } as unknown as Response;
+  }) as unknown as typeof fetch;
+
+  const code = await runSkills({
+    invocation: { sub: "add", args: ["acme/skills"] },
+    skills: [],
+    dirs: [dir],
+    installDir: dir,
+    theme: plain,
+    options: { ...SKILLS_OPTIONS, path: "audit" },
+    fetchImpl,
+    write: (line) => lines.push(line),
+  });
+  assert.equal(code, 0);
+  assert.match(lines[0] ?? "", /^installed audit \(1 files\) into /);
+  assert.ok(fs.existsSync(path.join(dir, "audit", "SKILL.md")));
+
+  await assert.rejects(
+    () =>
+      runSkills({
+        invocation: { sub: "add", args: ["gitlab.com/acme/skill"] },
+        skills: [],
+        dirs: [dir],
+        installDir: dir,
+        theme: plain,
+        options: SKILLS_OPTIONS,
+        write: (line) => lines.push(line),
+      }),
+    /is not a GitHub repository/,
+  );
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 /* ----------------------------------------------------------------- remote */
+
+/* ---------------------------------------------------- where skills live */
+
+test("a deployment's CLI installs where the console looks, and reads it back", () => {
+  /*
+   * `AGENT_DATA_DIR` means this process is the *deployment's*, not a person's: the
+   * console reads `<it>/skills` and not this container's home, so a skill installed
+   * into `/root/.config/ontrak-genie/skills` was a command that reported success and
+   * changed nothing any chat could see.
+   */
+  const previous = process.env.AGENT_DATA_DIR;
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), "genie-cli-data-"));
+  try {
+    process.env.AGENT_DATA_DIR = data;
+    assert.equal(skillDirs("/app").at(-1), path.join(data, "skills"), "the deployment's is read too");
+    assert.equal(defaultSkillsDir("/app"), path.join(data, "skills"), "and it is where `add` writes");
+  } finally {
+    if (previous === undefined) delete process.env.AGENT_DATA_DIR;
+    else process.env.AGENT_DATA_DIR = previous;
+  }
+
+  // A laptop: no deployment to answer to, so the person's own directory wins.
+  assert.equal(defaultSkillsDir("/app"), path.join(path.dirname(configPath()), "skills"));
+  assert.equal(
+    skillDirs("/app").at(-1),
+    path.join("/app", ".genie", "skills"),
+    "and `./.genie/skills` is the last thing read",
+  );
+});
 
 const REMOTE_OPTIONS = {
   json: false,
