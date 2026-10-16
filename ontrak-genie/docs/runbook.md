@@ -11,7 +11,17 @@ reference, [threat-model.md](threat-model.md) is what the controls are defending
 Everything here assumes the family deployment: the OnTrak stack on
 `192.168.1.21`, the image from `ghcr.io/innotelinc/ontrak-genie`, the control
 plane on Distro (`192.168.1.61:20140`), Authentik at
-`https://auth.cerulean.innotel.us`, and OmniRoute at `192.168.1.71:20128`.
+`https://auth.cerulean.innotel.us`, and the model gateway at
+`https://gateway.innotel.us/v1` — OmniRoute, which on the LAN is the same service
+at `192.168.1.71:20128`.
+
+The gateway answers on that name and its OpenAI-compatible API has to stay
+reachable there: the edge proxy host for `gateway.innotel.us` serves `/v1`
+straight to OmniRoute, with no sign-in and no `return 403` in front of it, because
+the API authenticates with a key of its own. A caller who gets an HTML `403` from
+`openresty` instead of the gateway's JSON (`{"error":{"code":"AUTH_002",...}}`)
+is talking to an edge rule rather than to OmniRoute — check that proxy host's
+advanced configuration before looking at the gateway.
 
 ## 1. The one-line health check
 

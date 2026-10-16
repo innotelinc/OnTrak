@@ -67,8 +67,11 @@ stack_lib_forward_host() { # [explicit] <override> -> prints the forward host (p
 
 # ── agent / builder network ─────────────────────────────────────────────────
 # The network environment a builder deployment (Genie, and the app it runs)
-# needs so that both the app in its preview *and* the sandbox its commands run in
-# hold the **host's** LAN address rather than a docker bridge one.
+# needs so that the app in its preview holds the **host's** LAN address rather
+# than a docker bridge one. The sandbox's own network is deliberately *not* part
+# of this: it stays `none`, the product's default, unless an operator names
+# `bridge` or `host` on purpose — sharing the host's namespace with a command the
+# agent runs is a decision, not a side effect of publishing a preview.
 #
 # Why the deployment cannot answer this itself: inside a container every address
 # the process can see is its own bridge address (`172.x`), and a `172.x` address
@@ -94,7 +97,7 @@ stack_lib_agent_net_env() { # -> prints KEY=value lines
   if [ -n "$lan" ]; then
     printf 'AGENT_PREVIEW_HOST=%s\n' "${AGENT_PREVIEW_HOST:-all}"
     printf 'AGENT_PREVIEW_PUBLISH=%s\n' "${AGENT_PREVIEW_PUBLISH:-true}"
-    printf 'AGENT_SANDBOX_NETWORK=%s\n' "${AGENT_SANDBOX_NETWORK:-host}"
+    printf 'AGENT_SANDBOX_NETWORK=%s\n' "${AGENT_SANDBOX_NETWORK:-none}"
   else
     printf 'AGENT_PREVIEW_HOST=%s\n' "${AGENT_PREVIEW_HOST:-loopback}"
     printf 'AGENT_PREVIEW_PUBLISH=%s\n' "${AGENT_PREVIEW_PUBLISH:-false}"
