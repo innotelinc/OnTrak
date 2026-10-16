@@ -432,6 +432,15 @@
             >
               remote
             </button>
+            <button
+              id="skills-open"
+              class="btn-ghost mini"
+              title="See the skills the agent is offered here, and what this workspace remembers"
+              aria-controls="skills"
+              aria-expanded="false"
+            >
+              skills
+            </button>
             <button id="files-new" class="btn-ghost mini" title="Create a folder here">new folder</button>
             <button id="files-root" class="btn-ghost mini" title="Go to the working directory" aria-label="Go to the working directory">
               root
@@ -660,6 +669,57 @@
           <button id="hosting-buy" class="btn-ghost hidden">get your own name</button>
         </div>
         <div id="hosting-list" class="hosting-list"></div>
+      </div>
+    </div>
+
+    <!--
+      Skills and memory: what this agent is offered, and what this workspace has
+      learned.
+
+      Read-only, and deliberately so. A skill is a *file* somebody installs —
+      `genie skills add <owner/repo>` in the terminal, or an operator copying one
+      into the deployment — and the memory is a file the agent edits through its
+      own `remember` tool. A panel that wrote either would be a second, weaker way
+      in than the ones that already exist, which is why the answer to "how do I add
+      one" here is a command with a git URL in it rather than a button.
+
+      What is listed is what *this caller* can use: the project's `.genie/skills`,
+      the account's, then the deployment's, most specific first (skill-roots.ts).
+    -->
+    <div
+      id="skills"
+      class="viewer hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="skills-title"
+      tabindex="-1"
+    >
+      <div class="viewer-head">
+        <span id="skills-title" class="mono">skills &amp; memory</span>
+        <div class="viewer-actions">
+          <button id="skills-close" class="btn-ghost" aria-label="Close skills and memory">close</button>
+        </div>
+      </div>
+      <div class="viewer-content settings-form">
+        <p id="skills-status" class="muted settings-note"></p>
+
+        <section class="skills-block" aria-labelledby="skills-memory-heading">
+          <h2 id="skills-memory-heading" class="remote-heading">what this workspace remembers</h2>
+          <p id="skills-memory" class="muted settings-note"></p>
+        </section>
+
+        <section class="skills-block" aria-labelledby="skills-list-heading">
+          <h2 id="skills-list-heading" class="remote-heading">skills on offer</h2>
+          <div id="skills-list" class="skills-list"></div>
+        </section>
+
+        <p class="muted settings-note">
+          The model sees that menu at the start of every turn and loads a playbook
+          when one fits the work. Install another with
+          <span class="mono">genie skills add &lt;owner/repo&gt;</span> — a skill kept
+          in <span class="mono">.genie/skills</span> travels with the code, so
+          everyone who clones this workspace gets it.
+        </p>
       </div>
     </div>
 

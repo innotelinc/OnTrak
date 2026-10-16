@@ -708,6 +708,131 @@ try {
     }
   });
 
+  /**
+   * Skills and memory: the read-only view of what the model is offered.
+   *
+   * The rows come from `/api/skills` — the same route the prompt path reads — so
+   * what is checked is that the panel draws *that* answer, in its order, and that
+   * the count agrees with what the server said. A panel of this kind has one
+   * failure that looks like success: it opens, it looks plausible, and the list
+   * inside it is empty because the response shape was guessed wrong.
+   *
+   * Opening and closing are checked here too, because the two handlers are the
+   * panel's own: Escape unwinds on a list in `wire()`, and the backdrop click is
+   * bound per panel. The open is a **real mouse click**, not `.click()`: which
+   * control gets focus back when the panel closes is remembered from the click
+   * (`noteDialogOpener`), so a programmatic click would prove the handler while
+   * skipping the half that decides where the keyboard goes next.
+   */
+  await check("the skills panel draws the menu the model is given", async () => {
+    const endpoint = (pathname) =>
+      fetch(`${BASE}${pathname}`, {
+        headers: TOKEN === "" ? {} : { Authorization: `Bearer ${TOKEN}` },
+      });
+
+    const answer = await endpoint("/api/skills");
+    if (!answer.ok) throw new Error(`/api/skills answered ${answer.status}`);
+    const info = await answer.json();
+    const skills = Array.isArray(info.skills) ? info.skills : [];
+
+    const clickControl = async (selector) => {
+      const centre = await session.evaluate(`
+        const el = document.querySelector('${selector}');
+        if (el === null) throw new Error('no ${selector}');
+        const r = el.getBoundingClientRect();
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+      `);
+      await session.send("Input.dispatchMouseEvent", {
+        type: "mousePressed", x: centre.x, y: centre.y, button: "left", buttons: 1, clickCount: 1,
+      });
+      await session.send("Input.dispatchMouseEvent", {
+        type: "mouseReleased", x: centre.x, y: centre.y, button: "left", buttons: 0, clickCount: 1,
+      });
+      await sleep(80);
+    };
+
+    // The button lives in the workspace panel, which is closed by default — so the
+    // two clicks a person makes are the two clicks checked here.
+    await clickControl("#toggle-files");
+    const workspaceOpen = await session.waitFor(
+      `document.querySelector('#files-panel').classList.contains('open')`,
+      5_000,
+    );
+    if (!workspaceOpen) throw new Error("the workspace panel did not open");
+
+    await clickControl("#skills-open");
+    const opened = await session.waitFor(
+      `!document.querySelector('#skills').classList.contains('hidden')`,
+      5_000,
+    );
+    if (!opened) throw new Error("the skills panel did not open");
+
+    const drawn = await session.waitFor(
+      `document.querySelectorAll('#skills-list .skill-card').length === ${skills.length}`,
+      10_000,
+    );
+    if (!drawn) {
+      const seen = await session.evaluate(
+        "return document.querySelectorAll('#skills-list .skill-card').length;",
+      );
+      throw new Error(`the panel drew ${seen} rows, the route offered ${skills.length}`);
+    }
+
+    const rows = await session.evaluate(`
+      return [...document.querySelectorAll('#skills-list .skill-card')].map((card) => ({
+        name: (card.querySelector('.skill-name')?.textContent ?? '').trim(),
+        origin: (card.querySelector('.skill-origin')?.textContent ?? '').trim(),
+        description: (card.querySelector('.skill-description')?.textContent ?? '').trim(),
+      }));
+    `);
+
+    for (const [index, skill] of skills.entries()) {
+      const row = rows[index] ?? {};
+      // The name is shown the way it is invoked, because that is what a person
+      // types and what the model is told to load.
+      if (row.name !== `/${skill.name}`) {
+        throw new Error(`row ${index} shows ${JSON.stringify(row.name)}, expected /${skill.name}`);
+      }
+      if (row.origin === "") throw new Error(`row ${index} does not say where the skill came from`);
+      if ((skill.description ?? "") !== "" && row.description !== skill.description) {
+        throw new Error(`row ${index} dropped the description the route sent`);
+      }
+    }
+
+    // The memory is the other half of the panel, and it has to name the file:
+    // "remembered: yes" tells nobody where to look or how to correct it.
+    const memory = await session.evaluate(
+      "return (document.querySelector('#skills-memory')?.textContent ?? '').trim();",
+    );
+    if (!memory.includes("MEMORY.md")) throw new Error("the memory line does not name MEMORY.md");
+
+    // Escape closes it and hands focus back to the button that opened it, which
+    // is the contract every panel in here keeps (`leaveDialog`).
+    await session.evaluate(`
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      return true;`);
+    const closed = await session.waitFor(
+      `document.querySelector('#skills').classList.contains('hidden')`,
+      5_000,
+    );
+    if (!closed) throw new Error("Escape did not close the skills panel");
+
+    const back = await session.evaluate("return document.activeElement?.id ?? '';");
+    if (back !== "skills-open") throw new Error(`focus went to ${back || "nothing"}`);
+
+    // And the backdrop, which is the gesture a mouse reaches for (`layout:check`
+    // drives the drawer's scrim the same way).
+    await clickControl("#skills-open");
+    await session.evaluate("document.querySelector('#skills').click();");
+    const dismissed = await session.waitFor(
+      `document.querySelector('#skills').classList.contains('hidden')`,
+      5_000,
+    );
+    if (!dismissed) throw new Error("clicking the backdrop left the skills panel open");
+
+    return `${skills.length} skill row(s), memory line, Escape and backdrop both close it`;
+  });
+
   await check("accessibility basics are present", async () => {
     const missing = await session.evaluate(`
       const want = [
@@ -726,6 +851,10 @@ try {
         ['#files-clear[title]', 'labelled clear-workspace button'],
         ['#sweep[role="dialog"][aria-modal="true"]', 'sweep dialog'],
         ['#sweep-open[title]', 'labelled sweep button'],
+        ['#skills[role="dialog"][aria-modal="true"]', 'skills dialog'],
+        ['#skills-open[aria-controls="skills"]', 'skills button bound to its dialog'],
+        ['#skills-list', 'the skills list container'],
+        ['#skills-memory', 'the memory line'],
         ['#preview[aria-label]', 'labelled preview pane'],
         ['#toggle-preview[aria-controls="preview"]', 'preview toggle bound to the pane'],
         ['#preview-status[role="status"]', 'preview status line'],

@@ -3704,7 +3704,125 @@ function buyHosting() {
   window.open(url.toString(), "_blank", "noopener");
 }
 
-/* ------------------------------------------------------ remote workspaces */
+/* ------------------------------------------------------- skills & memory */
+
+/*
+ * What this agent is offered here, and what this workspace has learned.
+ *
+ * Read-only on purpose. A skill is a file somebody installs (`genie skills add` in
+ * the terminal, or an operator copying one into the deployment) and the memory is a
+ * file the agent edits through its own `remember` tool, so a panel that wrote
+ * either would be a second, weaker way in than the ones that already exist. This
+ * one reports what is there and names the command that adds more.
+ *
+ * The route answers for *this* caller — the project's `.genie/skills`, the
+ * account's, then the deployment's — and which of the three a skill came from is
+ * the part worth showing, so the roots are compared rather than re-derived here.
+ */
+
+async function openSkills() {
+  $("#skills").classList.remove("hidden");
+  $("#skills-open").setAttribute("aria-expanded", "true");
+  enterDialog($("#skills"));
+  await loadSkills();
+}
+
+function closeSkills() {
+  $("#skills").classList.add("hidden");
+  $("#skills-open").setAttribute("aria-expanded", "false");
+  leaveDialog($("#skills"));
+}
+
+async function loadSkills() {
+  const status = $("#skills-status");
+  let info;
+  try {
+    info = await api("/api/skills");
+  } catch (error) {
+    status.textContent = error.message;
+    return;
+  }
+  renderSkills(info);
+}
+
+/**
+ * Which of the three places a skill came from, in the words a person would use.
+ *
+ * The order is the loader's own precedence (`skillRoots`), so the names line up
+ * with which one would win if two skills shared a name.
+ */
+function skillOrigin(source, dirs) {
+  const names = ["this project", "your account", "this deployment"];
+  for (let index = 0; index < dirs.length; index += 1) {
+    const root = String(dirs[index] ?? "").replace(/\/+$/, "");
+    if (root !== "" && typeof source === "string" && source.startsWith(`${root}/`)) {
+      return names[index] ?? "elsewhere";
+    }
+  }
+  return "elsewhere";
+}
+
+function renderSkills(info) {
+  const status = $("#skills-status");
+  const list = $("#skills-list");
+  const skills = Array.isArray(info.skills) ? info.skills : [];
+  const dirs = Array.isArray(info.dirs) ? info.dirs.map(String) : [];
+  list.replaceChildren();
+
+  status.textContent =
+    skills.length === 0
+      ? "No skills are installed here, so none are offered to the model. A playbook dropped into .genie/skills of this workspace shows up on the next turn."
+      : `${skills.length} skill${skills.length === 1 ? "" : "s"} offered to the model in this chat, read from disk on every turn.`;
+
+  // The memory is a file in the workspace rather than a store of its own, and
+  // saying so is the point: it can be read, edited and committed like any other.
+  const memory = info.memory ?? {};
+  const file = typeof memory.file === "string" && memory.file !== "" ? memory.file : "MEMORY.md";
+  $("#skills-memory").textContent = memory.present
+    ? `${file} is in this workspace, and its contents go into the prompt at the start of every turn. The agent adds to it with the remember tool, so a note it wrote a moment ago is already in front of it — and an edit anyone makes by hand is too.`
+    : `No ${file} yet. The agent writes it with the remember tool the first time it learns something durable about this project, and it is a file like any other: it appears in the change list and can be corrected by hand.`;
+
+  for (const skill of skills) {
+    const card = document.createElement("article");
+    card.className = "skill-card";
+
+    const head = document.createElement("div");
+    head.className = "skill-head";
+    const name = document.createElement("span");
+    name.className = "skill-name mono";
+    name.textContent = `/${String(skill.name ?? "")}`;
+    const origin = document.createElement("span");
+    origin.className = "skill-origin muted";
+    origin.textContent = skillOrigin(skill.source, dirs);
+    head.append(name, origin);
+
+    const description = document.createElement("p");
+    description.className = "skill-description";
+    description.textContent = String(skill.description ?? "");
+    card.append(head, description);
+
+    // Only the parts that are true: a single markdown file has no extra files to
+    // count and nothing recorded about where it came from.
+    const notes = [];
+    const files = Number(skill.files ?? 0);
+    if (files > 0) notes.push(`${files} more file${files === 1 ? "" : "s"} it can read`);
+    const provenance = skill.provenance ?? null;
+    if (provenance !== null && typeof provenance.repo === "string" && provenance.repo !== "") {
+      const ref = typeof provenance.ref === "string" && provenance.ref !== "" ? `@${provenance.ref}` : "";
+      notes.push(`installed from ${provenance.repo}${ref}`);
+    }
+    if (notes.length > 0) {
+      const meta = document.createElement("p");
+      meta.className = "skill-meta muted mono";
+      meta.textContent = notes.join(" · ");
+      card.append(meta);
+    }
+
+    list.append(card);
+  }
+}/* ------------------------------------------------------ remote workspaces */
+
+
 
 /*
  * A folder on a server, and a repository on GitHub.
@@ -4744,6 +4862,13 @@ function wire() {
     if (event.target === $("#remote")) closeRemote();
   });
 
+  $("#skills-open").addEventListener("click", () => void openSkills());
+  $("#skills-close").addEventListener("click", () => closeSkills());
+  // Clicking the backdrop closes it; clicking inside does not.
+  $("#skills").addEventListener("click", (event) => {
+    if (event.target === $("#skills")) closeSkills();
+  });
+
   $("#hosting-open").addEventListener("click", () => openHosting());
   $("#hosting-close").addEventListener("click", () => closeHosting());
   $("#hosting-publish").addEventListener("click", () => void publishHosting());
@@ -4841,6 +4966,7 @@ function wire() {
     if (!$("#sweep").classList.contains("hidden")) closeSweep();
     else if (!$("#remote").classList.contains("hidden")) closeRemote();
     else if (!$("#hosting").classList.contains("hidden")) closeHosting();
+    else if (!$("#skills").classList.contains("hidden")) closeSkills();
     else if (!$("#appearance").classList.contains("hidden")) toggleAppearance(false);
     else if (!$("#settings").classList.contains("hidden")) toggleSettings(false);
     // The drawer is the last thing Escape reaches: anything open on top of it

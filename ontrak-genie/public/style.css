@@ -849,6 +849,30 @@ pre.code {
 .remote-state { flex: none; font-size: 11px; }
 .remote-state.warn-text { color: var(--warn); }
 
+/* --- skills & memory (inside the skills dialog) --- */
+
+/*
+ * The same two-block shape as the remote panel: what the thing is, then the list
+ * of them. Cards rather than rows for the skills, because a skill's description
+ * is a sentence and the row height that suits a name is exactly what truncates
+ * the part that decides whether you want it.
+ */
+.skills-block { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; }
+.skills-block:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+.skills-list { display: flex; flex-direction: column; gap: 8px; }
+.skill-card {
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-sunken);
+  font-size: 12.5px;
+}
+.skill-head { display: flex; align-items: baseline; gap: 8px; }
+.skill-name { font-weight: 600; overflow-wrap: anywhere; }
+.skill-origin { margin-left: auto; flex: none; font-size: 11px; }
+.skill-description { margin: 4px 0 0; color: var(--text-dim); line-height: 1.45; }
+.skill-meta { margin: 6px 0 0; font-size: 11px; }
+
 .files-path { padding: 8px 14px; font-size: 11px; color: var(--text-dim); border-bottom: 1px solid var(--border); word-break: break-all; }
 .files-list { flex: 1; overflow-y: auto; padding: 6px; min-height: 0; }
 
