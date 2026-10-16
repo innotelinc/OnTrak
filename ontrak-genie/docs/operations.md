@@ -1424,6 +1424,143 @@ is the misconfiguration to look for when a published URL asks a visitor to sign
 in: the console keeps `PREVIEW_ENABLED=false` by design, so it answers the
 wildcard with its own sign-in page rather than proxying anything.
 
+## Remote workspaces
+
+Three ways to work somewhere that is not this machine. All three are **console
+operations**, not agent tools: the model cannot dial a host or type a credential,
+and the routes sit behind the same authorization every `/api` route does
+(`src/remote.ts`).
+
+### A folder on a server, over SSH
+
+The folder is mounted with `sshfs` at `<AGENT_WORKSPACE>/.remotes/<id>` and made
+the working directory. That is the whole trick, and it is deliberate: every tool,
+the file tree, the diffs, the snapshots and the preview reach the remote tree
+through the *same* jail, because as far as they are concerned it is a directory.
+There is no second editor and no second path-resolution rule.
+
+- `.remotes` is a dot-directory, so the folder picker never offers it; a mount is
+  reported by the remote panel instead.
+- Mounts live in this process's memory, so they do not survive a restart. A saved
+  working directory under `.remotes` is cleared at boot with a line saying so,
+  rather than resolving every tool inside a directory with nothing behind it.
+- Every mount is **verified** before it is trusted: `sshfs` returns success for a
+  connection that has already died, so `/proc/self/mounts` is the authority, not
+  the exit status.
+- `run_command` executes inside the sandbox container. A FUSE mount is not
+  reliably reachable from inside one, so on a deployment whose workspace is a
+  remote mount, set `AGENT_SANDBOX=host` — the file tools are unaffected either way.
+
+```bash
+# The console: workspace panel → remote → a folder on a server.
+# The terminal:
+genie remote ssh deploy@git.example.com:/srv/app --key-file ~/.ssh/id_ed25519
+printf '%s' "$PASS" | genie remote ssh root@192.168.1.90:/srv/app --password-stdin
+genie remote            # what is connected, and whether it is still answering
+genie remote disconnect 1
+```
+
+### A repository on GitHub
+
+A token from the person using the console clones `owner/name` into the working
+directory, and the checkout is edited **in place**, so the preview runs the project
+as it changes. The token is supplied per git command and never stored: the clone
+rewrites `origin` back to the plain URL, so `.git/config` holds no live credential,
+and any token a git error echoes is redacted before it is returned. Branch, push
+and pull request go through GitHub's own API (`api.github.com`, `Bearer`).
+
+### Atlas — the ecosystem's forge, as an add-on
+
+[Atlas](https://github.com/innotelinc/atlas) runs the ecosystem's Gitea. With
+`AGENT_ATLAS_URL` set, the remote panel offers it: clone a repository, **create
+one and work in it** (the repository is created through Gitea's API and then cloned,
+so "create a project" is one action), push, and open a pull request. With
+`AGENT_ATLAS_SSH_HOST` set, the same panel fills the SSH form in with the machine,
+for working in a *folder* there instead.
+
+Two routes in, and they answer different questions:
+
+| Route | Credential | Gate |
+| --- | --- | --- |
+| **System** | `AGENT_ATLAS_USER` / `AGENT_ATLAS_PASSWORD` (the deployment's own) | none — an operator's own forge is not a subscription |
+| **Subscriber** | typed into the console, held for the session | `MAGNATE_ATLAS_PLAN` (default `atlas`), when Magnate is configured and there is an identity to key on |
+
+The forge verifies the credential itself (`GET /api/v1/user`) and the **login it
+answers with** is what is remembered, not the one that was typed. The plan is asked
+*before* the forge, so a refusal reads as an add-on with somewhere to subscribe
+rather than as a wrong password; and a Magnate that cannot be reached is not a
+refusal — it falls back to whether the deployment holds its own credential.
+
+```bash
+genie remote atlas                 # the deployment's own credential: no secret here
+genie remote new "my-project"      # create it on Atlas, clone it, work in it
+genie remote run                   # run the project the line above just made
+genie remote clone innotelinc/atlas
+genie remote push genie/fix-the-thing
+genie remote pr genie/fix-the-thing "Fix the thing" --branch main
+```
+
+**Where the address comes from, and the port that is easy to get wrong.**
+`AGENT_ATLAS_URL` is the address **Gitea** is published on, and everything Genie
+builds from it — the API calls, the clone URL, the push URL — follows that one
+value, so a wrong port fails at the first request rather than half-working. Atlas
+publishes Gitea on whatever `GITEA_HTTP_PORT` in `/opt/atlas/.env` says, which is
+**not** always 3000 (`docker ps` on the host names the published port directly);
+the same Gitea is reachable through its edge name, and either spelling works. Two
+checks worth running from the deployment before blaming the credential:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' "$AGENT_ATLAS_URL/api/v1/version"   # 200, 401/403, or a refusal
+curl -s -u "$AGENT_ATLAS_USER:$AGENT_ATLAS_PASSWORD" "$AGENT_ATLAS_URL/api/v1/user"
+```
+
+The second answers with the login it authenticated as (and `401` means the
+credential is wrong — note that Gitea's *own* admin account is not necessarily the
+host's root password). The credential Genie holds is normally an access token,
+which Gitea accepts in the password position:
+
+```bash
+docker exec -u git atlas-gitea gitea admin user generate-access-token \
+  --username admin --token-name genie-system --scopes all --raw
+```
+
+A token is the right shape for this setting: it is scoped, it is revocable on its
+own, and it is not the account's password.
+
+### Running what came from the forge
+
+A repository created or cloned from a forge **becomes the working directory**, so
+there is nothing extra to configure to run it: the project is where the agent
+works, and the preview runs it there. In the console, **run the project** in the
+Atlas block closes the panel and shows the app; the preview pane's own *run* does
+the same thing. In the terminal, `genie remote run` asks the server to start the
+project's **own** dev server — `npm run dev`, a `manage.py`, a static site — and
+prints where it is. `--command` overrides the guess; `--json` prints the status
+the pane reads. The server owns the process, so the terminal is free to exit.
+
+Any Gitea works here, not only Atlas: `genie remote` connects to whatever
+`http(s)` address it is given, and the API calls follow that address.
+
+### What the credentials are, and where they live
+
+Held **in this process's memory**, keyed by account exactly as the workspace scope
+is, and gone when it stops. Nothing is written into the workspace, into a config
+file or into a transcript. Two exceptions, both stated rather than hidden:
+
+- a **private key** has to exist as a file for `sshfs` to read it, so it is
+  written `0600` under `<AGENT_DATA_DIR>/remote/<account>/<id>/` for the life of the
+  mount and removed on disconnect and at shutdown;
+- a **password or key passphrase** never touches disk at all — it reaches
+  `sshpass` through `SSHPASS`, so it is not in a command line, in `ps`, or in a log
+  line that echoed a command.
+
+Host keys are pinned on first use (`StrictHostKeyChecking=accept-new`) into
+`<AGENT_DATA_DIR>/remote/known_hosts`, never into the operator's `~/.ssh`. A host
+key that *changes* is refused, which is the point of remembering it. The residual
+risk is trust on first use: a first connection to a host that is already
+impersonated is trusted. `AGENT_REMOTE_ALLOWED_HOSTS` is the control for a
+deployment that wants to bound where the console may dial at all.
+
 ## Configuration
 
 All optional — see `.env.example`.
@@ -1472,6 +1609,13 @@ All optional — see `.env.example`.
 | `MAGNATE_ENTITLEMENTS_URL`                  | *(empty)*                | Magnate's entitlement endpoint, consulted before a custom name is granted |
 | `ENTITLEMENTS_API_TOKEN`                    | *(empty)*                | The token Magnate expects on that endpoint |
 | `MAGNATE_GENIE_PLAN`                        | `genie`                  | The plan slug that entitles a custom preview name |
+| `AGENT_REMOTE_ENABLED`                      | `true`                   | Remote workspaces: SSH mounts, GitHub clones and the Atlas forge. `false` makes the routes refuse — see *Remote workspaces* |
+| `AGENT_REMOTE_ALLOWED_HOSTS`                | *(empty)*                | Hosts the console may dial, comma-separated (`*.example.com` allowed). Empty means whatever the caller names |
+| `AGENT_REMOTE_TIMEOUT_MS`                   | `30000`                  | How long one `sshfs` mount or one clone is given |
+| `AGENT_ATLAS_URL`                           | *(empty)*                | Atlas's Gitea base address — the address **Gitea** is published on, e.g. `http://192.168.1.90:3004` or `https://git.innotel.us` (not necessarily port 3000). Empty means the add-on is not offered |
+| `AGENT_ATLAS_SSH_HOST`                      | *(empty)*                | The same machine, for mounting a folder rather than cloning a repository |
+| `AGENT_ATLAS_USER` / `AGENT_ATLAS_PASSWORD` | *(empty)*                | This deployment's **own** Atlas credential: the system path, not gated on a plan. The user is a Gitea account; the password may be that account's password, an **access token** (what a deployment should hold), or a `vault://` reference |
+| `MAGNATE_ATLAS_PLAN`                        | `atlas`                  | The plan slug that entitles a caller without the deployment's own credential |
 | `WEB_TOKEN`                                 | *(empty)*                | Require this bearer token on `/api/*`    |
 | `CONTROL_PLANE_INTERNAL_URL`                | *(empty)*                | Distro control-plane origin. With the token below, every turn is attributed and quota-gated — see *Tenancy* |
 | `CONTROL_INTERNAL_TOKEN`                    | *(empty)*                | Control-plane service credential (`x-control-internal-token`), ideally the **scoped** one the plane issues for `surface=genie`; empty or a placeholder means tenancy is off. May be a `vault://` reference — see *Tenancy* and *Secrets (Cerulean Vault)* |

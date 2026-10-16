@@ -824,6 +824,31 @@ pre.code {
 .hosting-row .hosting-host { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hosting-row .hosting-actions { margin-left: auto; flex: none; }
 
+/* --- remote workspaces (inside the remote dialog) --- */
+
+/*
+ * Two blocks, each a form and its own buttons, above the list of what is
+ * connected. The grid is `auto-fit` rather than fixed columns so the panel stays
+ * usable in the narrow viewport the whole console is designed for.
+ */
+.remote-block { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; }
+.remote-block:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+.remote-heading { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--text); }
+.remote-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 12px; }
+.remote-grid .field.wide { grid-column: 1 / -1; }
+.remote-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+/* A pasted key keeps its own line breaks and stays narrow enough to read. */
+.remote-key {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  resize: vertical;
+  white-space: pre;
+  overflow-x: auto;
+}
+.remote-state { flex: none; font-size: 11px; }
+.remote-state.warn-text { color: var(--warn); }
+
 .files-path { padding: 8px 14px; font-size: 11px; color: var(--text-dim); border-bottom: 1px solid var(--border); word-break: break-all; }
 .files-list { flex: 1; overflow-y: auto; padding: 6px; min-height: 0; }
 

@@ -28,6 +28,7 @@ import { configPath, resolveTarget, skillDirs, writeConfig, type ResolvedTarget 
 import { emptyTurnSummary, reduceTurn, suggestFollowups, type TurnSummary } from "./followups.js";
 import { LoginFailure, browserLogin, cookieLogin, tokenLogin } from "./login.js";
 import { parseProjectsLine, ProjectUsageError, runProjects } from "./projects.js";
+import { parseRemoteLine, RemoteUsageError, remoteHelpLines, runRemote } from "./remote.js";
 import {
   MarkdownStream,
   Spinner,
@@ -191,6 +192,9 @@ projects (a saved, named workspace directory; name, row number or id all work):
   genie projects rename <which> "<name>"        rename one
   genie projects remove <which> [--files]       forget one (--files deletes its folder)
 
+remote (a folder on another machine, a GitHub repository, or Atlas):
+${remoteHelpLines().join("\n")}
+
 options:
   --url <origin>               deployment to dial (default from config, else :3400)
   --token <value>              WEB_TOKEN bearer
@@ -254,6 +258,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       return await commandModels(client, args);
     case "projects":
       return await commandProjects(client, theme, args);
+    case "remote":
+      return await commandRemote(client, theme, args);
     default:
       process.stderr.write(`unknown command "${args.command}"\n\n${TOP_LEVEL_HELP}\n`);
       return 2;
@@ -383,6 +389,32 @@ async function commandProjects(client: GenieClient, theme: Theme, args: CliArgs)
     return await runProjects(client, theme, invocation, options);
   } catch (error) {
     if (error instanceof ProjectUsageError) {
+      process.stderr.write(`${error.message}\n`);
+      return 2;
+    }
+    throw error;
+  }
+}
+
+/**
+ * `genie remote …`
+ *
+ * A `RemoteUsageError` is the command line failing to be a command line — an
+ * unknown subcommand, a target that is not `user@host:/path`, a flag with no
+ * value. Everything else is the server's to say, and propagates so the CLI exits
+ * 1 with its message rather than inventing one.
+ */
+async function commandRemote(client: GenieClient, theme: Theme, args: CliArgs): Promise<number> {
+  try {
+    const { invocation, options } = parseRemoteLine(args.rest, {
+      json: args.json,
+      passwordStdin: false,
+      tokenStdin: false,
+      github: false,
+    });
+    return await runRemote(client, theme, invocation, options);
+  } catch (error) {
+    if (error instanceof RemoteUsageError) {
       process.stderr.write(`${error.message}\n`);
       return 2;
     }
@@ -988,6 +1020,23 @@ async function handleCommand(
     case "approve":
     case "deny": {
       await decideApproval(client, theme, argv[0], command.name === "approve" ? "approve" : "deny");
+      return false;
+    }
+    case "remote": {
+      // The same bargain as `/projects`: a refusal is printed and the REPL stays
+      // open, and the flags come from the line rather than from this process's
+      // argv, since the line is all there is here.
+      try {
+        const { invocation, options } = parseRemoteLine(argv, {
+          json: false,
+          passwordStdin: false,
+          tokenStdin: false,
+          github: false,
+        });
+        await runRemote(client, theme, invocation, options);
+      } catch (error) {
+        process.stdout.write(`${eventError(theme, (error as Error).message)}\n`);
+      }
       return false;
     }
     case "projects": {

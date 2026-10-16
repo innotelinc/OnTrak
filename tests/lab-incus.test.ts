@@ -51,6 +51,8 @@ interface RecordedCall {
   argv: string[];
   timeoutSeconds: number;
   input: string | null;
+  /** The remote the call named through `INCUS_REMOTE`, or null for the local daemon. */
+  remote: string | null;
 }
 
 /** Answers in order, and shouts if a test asks for one more command than scripted. */
@@ -64,9 +66,14 @@ class ScriptedRunner implements Runner {
 
   async run(
     argv: readonly string[],
-    options: { timeoutSeconds: number; input?: string | undefined },
+    options: { timeoutSeconds: number; input?: string | undefined; env?: Record<string, string> | undefined },
   ): Promise<CommandResult> {
-    this.calls.push({ argv: [...argv], timeoutSeconds: options.timeoutSeconds, input: options.input ?? null });
+    this.calls.push({
+      argv: [...argv],
+      timeoutSeconds: options.timeoutSeconds,
+      input: options.input ?? null,
+      remote: options.env?.INCUS_REMOTE ?? null,
+    });
     const next = this.queue.shift();
     if (next === undefined) throw new Error(`the scripted runner has no answer for: ${argv.join(" ")}`);
     if (next instanceof Error) throw next;
@@ -99,15 +106,27 @@ class CliStandIn implements Runner {
 
   async run(
     argv: readonly string[],
-    options: { timeoutSeconds: number; input?: string | undefined },
+    options: { timeoutSeconds: number; input?: string | undefined; env?: Record<string, string> | undefined },
   ): Promise<CommandResult> {
-    this.calls.push({ argv: [...argv], timeoutSeconds: options.timeoutSeconds, input: options.input ?? null });
+    this.calls.push({
+      argv: [...argv],
+      timeoutSeconds: options.timeoutSeconds,
+      input: options.input ?? null,
+      remote: options.env?.INCUS_REMOTE ?? null,
+    });
+
+    // The global flag that does not exist. `incus list --remote lab` is
+    // `Error: unknown flag: --remote`, exit 1, on Incus 6 and 7 alike — in either
+    // position — and a caller that passes it fails *every* call it makes. Modelled
+    // here rather than tolerated, which is what makes putting it back a test failure
+    // instead of a lab that answers nothing.
+    if (argv.includes("--remote")) return die("unknown flag: --remote");
 
     // Drop the program name, then the global flags the way the CLI consumes them.
     const rest = argv.slice(1);
     let project: string | null = null;
-    while (rest.length > 0 && (rest[0] === "--project" || rest[0] === "--remote")) {
-      if (rest[0] === "--project") project = rest[1] ?? "";
+    while (rest.length > 0 && rest[0] === "--project") {
+      project = rest[1] ?? "";
       rest.splice(0, 2);
     }
 
@@ -450,26 +469,39 @@ test("incus: the client asks nothing the CLI refuses", async () => {
 // the process seam: argv, and every failure the CLI can produce
 // --------------------------------------------------------------------------- #
 
-test("incus: the remote and project flags are asked for, and omitted when absent", async () => {
+test("incus: the project flag is asked for, and the remote travels as INCUS_REMOTE", async () => {
+  // The remote is *not* a flag. `--remote` is LXD's spelling and this CLI has never
+  // had it, so a deployment pointed at a cluster endpoint or a separate lab host would
+  // have failed every call it made while its own pages still rendered. Incus selects a
+  // remote from the client's own configuration, and the one way a *caller* selects it
+  // is the `INCUS_REMOTE` environment variable — which is where this one has to be.
   const both = new ScriptedRunner([ok("[]")]);
   await new IncusClient(settingsWith({ remote: "lab", project: "ontrak" }), { runner: both }).listInstances();
-  assert.deepEqual(firstCall(both).argv, [
-    "incus",
-    "--remote",
-    "lab",
-    "--project",
-    "ontrak",
-    "list",
-    "--format=json",
-  ]);
+  assert.deepEqual(firstCall(both).argv, ["incus", "--project", "ontrak", "list", "--format=json"]);
+  assert.equal(firstCall(both).remote, "lab", "a named remote must be selected through the environment");
 
   const local = new ScriptedRunner([ok("[]")]);
   await new IncusClient(settingsWith({ remote: "local", project: "ontrak" }), { runner: local }).listInstances();
   assert.deepEqual(firstCall(local).argv, ["incus", "--project", "ontrak", "list", "--format=json"]);
+  assert.equal(firstCall(local).remote, null, "a host driving its own daemon has no remote to select");
 
   const bare = new ScriptedRunner([ok("[]")]);
   await new IncusClient(SETTINGS, { runner: bare }).listInstances();
   assert.deepEqual(firstCall(bare).argv, ["incus", "list", "--format=json"]);
+  assert.equal(firstCall(bare).remote, null);
+});
+
+test("incus: a named remote is never asked for as a flag", async () => {
+  // The stand-in refuses `--remote` exactly as the CLI does, so this is the test that
+  // fails if the flag ever comes back — rather than a real host discovering it.
+  const runner = new CliStandIn("default");
+  const client = new IncusClient(settingsWith({ remote: "i2", project: "ontrak" }), { runner });
+  await client.listInstances();
+  assert.ok(
+    askedLines(runner).every((line) => !line.includes("--remote")),
+    `the CLI has no --remote flag; the remote is INCUS_REMOTE: ${askedLines(runner).join(" | ")}`,
+  );
+  assert.equal(firstCall(runner).remote, "i2");
 });
 
 test("incus: a query call asks for no project flag", async () => {

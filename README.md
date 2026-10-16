@@ -11,8 +11,8 @@
 
 </div>
 
-> **OnTrak** is the **TrainingOps** platform of the [Innotel Labs](INNOTEL-LABS.md)
-> family and a member of the [Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack):
+> **OnTrak** is an **[Innotel Labs](INNOTEL-LABS.md) product** and the **TrainingOps** platform of the
+> [Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack):
 > one repository for the IT support operation. This app — **OnTrak IT Support
 > Training** — is an open source, browser-based training platform where students
 > fix deliberately broken machines and are graded from the resulting state,
@@ -28,7 +28,11 @@
 > has — and they consume Cerulean for identity and trust and share one audit
 > chain; no virtual machines and no terminal servers are required for any of them.
 
-**🌐 [View the official landing page →](https://innotelinc.github.io/OnTrak/)**
+**🌐 [Official GitHub Pages Landing →](https://innotelinc.github.io/OnTrak/)**
+
+## About
+
+**OnTrak** is an **Innotel Labs product** delivering the **TrainingOps** platform for the [Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack). Explore the interactive overview, product architecture, and live roadmap on the [GitHub Pages landing page](https://innotelinc.github.io/OnTrak/).
 
 **Names, once.** *OnTrak* alone is this repository and the family of products inside
 it, never one product. The product in `src/` is **OnTrak IT Support Training**

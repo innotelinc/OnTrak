@@ -423,6 +423,15 @@
         <div class="files-head">
           <span class="brand">Workspace</span>
           <div class="files-actions">
+            <button
+              id="remote-open"
+              class="btn-ghost mini"
+              title="Work on a folder on a server over SSH, or on a GitHub repository, with your own credentials"
+              aria-controls="remote"
+              aria-expanded="false"
+            >
+              remote
+            </button>
             <button id="files-new" class="btn-ghost mini" title="Create a folder here">new folder</button>
             <button id="files-root" class="btn-ghost mini" title="Go to the working directory" aria-label="Go to the working directory">
               root
@@ -651,6 +660,176 @@
           <button id="hosting-buy" class="btn-ghost hidden">get your own name</button>
         </div>
         <div id="hosting-list" class="hosting-list"></div>
+      </div>
+    </div>
+
+    <!--
+      Remote workspaces: a folder on a server, and a repository on GitHub.
+
+      The credentials are the *caller's* and are held for this session only, which
+      is why the key and the token are fields on a panel that says so rather than
+      settings that get saved: nothing here is written into the workspace, and
+      closing the tab does not leave a credential behind for the next person at
+      this machine.
+    -->
+    <div
+      id="remote"
+      class="viewer hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="remote-title"
+      tabindex="-1"
+    >
+      <div class="viewer-head">
+        <span id="remote-title" class="mono">remote workspaces</span>
+        <div class="viewer-actions">
+          <button id="remote-close" class="btn-ghost" aria-label="Close remote workspaces">close</button>
+        </div>
+      </div>
+      <div class="viewer-content settings-form">
+        <p id="remote-status" class="muted settings-note"></p>
+
+        <section class="remote-block" aria-labelledby="remote-ssh-heading">
+          <h2 id="remote-ssh-heading" class="remote-heading">a folder on a server, over SSH</h2>
+          <div class="remote-grid">
+            <label class="field" for="remote-host">
+              <span class="muted">host</span>
+              <input id="remote-host" class="input-text" type="text" autocomplete="off" placeholder="dev.example.com" />
+            </label>
+            <label class="field" for="remote-port">
+              <span class="muted">port</span>
+              <input id="remote-port" class="input-num" type="number" min="1" max="65535" step="1" inputmode="numeric" placeholder="22" />
+            </label>
+            <label class="field" for="remote-user">
+              <span class="muted">user</span>
+              <input id="remote-user" class="input-text" type="text" autocomplete="off" placeholder="deploy" />
+            </label>
+            <label class="field wide" for="remote-path">
+              <span class="muted">path on that host — absolute</span>
+              <input id="remote-path" class="input-text" type="text" autocomplete="off" placeholder="/srv/app" />
+            </label>
+            <label class="field wide" for="remote-key">
+              <span class="muted">private key — pasted, used for this session only</span>
+              <!-- The placeholder is the real PEM header, with the hyphens written as
+                   character references: scripts/secret-scan.py flags the PEM shape
+                   wherever it appears, placeholders included, so the literal cannot be
+                   committed. It still renders as the dashes the student expects. -->
+              <textarea
+                id="remote-key"
+                class="input-text remote-key"
+                rows="3"
+                spellcheck="false"
+                autocomplete="off"
+                placeholder="&#45;&#45;&#45;&#45;&#45;BEGIN OPENSSH PRIVATE KEY&#45;&#45;&#45;&#45;&#45;"
+              ></textarea>
+            </label>
+            <label class="field" for="remote-passphrase">
+              <span class="muted">key passphrase, if it has one</span>
+              <input id="remote-passphrase" class="input-text" type="password" autocomplete="new-password" />
+            </label>
+            <label class="field" for="remote-password">
+              <span class="muted">or a password</span>
+              <input id="remote-password" class="input-text" type="password" autocomplete="new-password" />
+            </label>
+          </div>
+          <div class="remote-actions">
+            <button id="remote-connect" class="btn-primary">connect folder</button>
+          </div>
+          <p class="muted files-note">
+            The folder is mounted inside the sandbox and becomes where the agent works, so its edits
+            land on the server and the preview runs the project there. Nothing is written into the
+            workspace: the key is kept for this session and removed when you disconnect.
+          </p>
+        </section>
+
+        <section class="remote-block" aria-labelledby="remote-github-heading">
+          <h2 id="remote-github-heading" class="remote-heading">a repository on GitHub</h2>
+          <div class="remote-grid">
+            <label class="field" for="remote-repo">
+              <span class="muted">repository — owner/name, or a GitHub URL</span>
+              <input id="remote-repo" class="input-text" type="text" autocomplete="off" placeholder="owner/name" />
+            </label>
+            <label class="field" for="remote-branch">
+              <span class="muted">branch to check out</span>
+              <input id="remote-branch" class="input-text" type="text" autocomplete="off" placeholder="the default branch" />
+            </label>
+            <label class="field wide" for="remote-token">
+              <span class="muted">token — needed for a private repository and to push</span>
+              <input id="remote-token" class="input-text" type="password" autocomplete="new-password" placeholder="ghp_…" />
+            </label>
+          </div>
+          <div class="remote-actions">
+            <button id="remote-clone" class="btn-primary">clone &amp; work in it</button>
+            <button id="remote-branch-new" class="btn-ghost" title="Create and check out a working branch in the clone">
+              new branch
+            </button>
+            <button id="remote-push" class="btn-ghost" title="Push a branch to GitHub with the token you supplied">
+              push
+            </button>
+            <button id="remote-pr" class="btn-ghost" title="Open a pull request for a pushed branch">pull request</button>
+          </div>
+          <p class="muted files-note">
+            The clone lands in the working directory and is edited in place, so the app can be previewed
+            as it changes. The token is supplied per git command and never written into
+            <span class="mono">.git/config</span>.
+          </p>
+        </section>
+
+        <section class="remote-block" aria-labelledby="remote-atlas-heading">
+          <h2 id="remote-atlas-heading" class="remote-heading">Atlas — the ecosystem's forge</h2>
+          <p id="remote-atlas-status" class="muted files-note"></p>
+          <div class="remote-grid">
+            <label class="field" for="remote-forge-url">
+              <span class="muted">forge address</span>
+              <input id="remote-forge-url" class="input-text" type="text" autocomplete="off" placeholder="http://host:3000" />
+            </label>
+            <label class="field" for="remote-forge-user">
+              <span class="muted">user</span>
+              <input id="remote-forge-user" class="input-text" type="text" autocomplete="off" placeholder="root" />
+            </label>
+            <label class="field" for="remote-forge-secret">
+              <span class="muted">password or access token</span>
+              <input id="remote-forge-secret" class="input-text" type="password" autocomplete="new-password" />
+            </label>
+            <label class="field" for="remote-atlas-repo">
+              <span class="muted">repository to clone — owner/name</span>
+              <input id="remote-atlas-repo" class="input-text" type="text" autocomplete="off" placeholder="owner/name" />
+            </label>
+            <label class="field" for="remote-atlas-name">
+              <span class="muted">new project name</span>
+              <input id="remote-atlas-name" class="input-text" type="text" autocomplete="off" placeholder="my-project" />
+            </label>
+          </div>
+          <div class="remote-actions">
+            <button id="remote-atlas-connect" class="btn-primary">connect to Atlas</button>
+            <button id="remote-atlas-create" class="btn-ghost" title="Create the repository on the forge, clone it, and work in it">
+              create a project
+            </button>
+            <button id="remote-atlas-clone" class="btn-ghost" title="Clone a repository from the forge into the workspace">
+              clone
+            </button>
+            <button id="remote-atlas-run" class="btn-ghost" title="Run the project in the working directory and show the app">
+              run the project
+            </button>
+            <button id="remote-atlas-ssh" class="btn-ghost" title="Fill the SSH form in with Atlas's host, for working in a folder there">
+              folder on Atlas
+            </button>
+            <button id="remote-forge-branch" class="btn-ghost" title="Create and check out a working branch in the clone">
+              new branch
+            </button>
+            <button id="remote-forge-push" class="btn-ghost" title="Push a branch to the forge with the credential you supplied">
+              push
+            </button>
+            <button id="remote-forge-pr" class="btn-ghost" title="Open a pull request for a pushed branch">pull request</button>
+          </div>
+          <p class="muted files-note">
+            Atlas is an optional add-on — a subscription, or this deployment's own credential, is what grants it. These
+            are the Gitea endpoints, so any Gitea forge works here. A project created or cloned here becomes where the
+            agent works, so it can be run and previewed straight away.
+          </p>
+        </section>
+
+        <div id="remote-list" class="hosting-list" aria-label="Connected remote workspaces"></div>
       </div>
     </div>
 

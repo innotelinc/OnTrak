@@ -179,6 +179,30 @@ test("the console offers a sign-out only where there is a session to end", async
   );
 });
 
+test("the remote panel can run what came from a forge", async () => {
+  /*
+   * A repository created on Atlas is created *and cloned*, so the project is
+   * already where the agent works — but nothing in the panel ran it, which left
+   * "create a project" as a way to get files rather than a way to use them. The
+   * route is the preview's own (`POST /api/preview/start`), so what runs from
+   * here is what the preview pane would run; what this pins is that the console
+   * reaches it, and that the pane reports the outcome rather than the dialog.
+   */
+  const html = await fs.readFile(path.join(PUBLIC_DIR, "index.html"), "utf8");
+  const app = await fs.readFile(path.join(PUBLIC_DIR, "app.js"), "utf8");
+
+  assert.match(html, /id="remote-atlas-run"/, "the Atlas block holds the control");
+  assert.match(
+    app,
+    /\$\s*\(\s*"#remote-atlas-run"\)\.addEventListener\("click"/,
+    "and the control is wired",
+  );
+  assert.match(app, /async function runAtlasProject\(/, "to a function of its own");
+  // It starts where a person would look for an app: the pane, not the panel.
+  assert.match(app, /setPreviewMode\("app"\);/, "the app view is what it opens");
+  assert.match(app, /if \(!previewAppRunning\(\)\) await startPreviewApp\(\);/);
+});
+
 test("the console is laid out for the screen it is on", async () => {
   /*
    * `layout:check` proves all of this in a real browser — at 320, 390, 834 and

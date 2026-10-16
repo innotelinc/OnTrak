@@ -55,6 +55,7 @@
  * goes wrong.
  */
 
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { Catalog, CatalogError, type CatalogEntry } from "./catalog";
@@ -1454,8 +1455,19 @@ export class SessionManager {
     const driver = options.driver ?? this.driverFor(scenario);
     const args = this.guestArgs(session);
     const linux = scenario.platform === LINUX;
-    const lib = linux ? this.shellLibSource() : this.libSource();
-    await driver.uploadFile(lib, this.join(scenario, "lib", linux ? SHELL_COMMON_LIB : COMMON_LIB), args);
+    // Everything in `scenarios/_lib` lands in the guest's `lib/` directory: the two
+    // platform libraries always, plus anything a scenario family needs there — the
+    // simulated directory service the identity scenarios run, for instance. Uploading
+    // the whole directory rather than naming files here is what lets a new shared tool
+    // ship without touching the session manager, and it is what the lab does
+    // (`ontrak-lab/ontrak/sessions.py`); naming only the platform library left every
+    // scenario whose `setup.sh` sources `lib/idp.py` unbuildable.
+    const libDir = join(this.settings.scenariosDir, "_lib");
+    for (const name of readdirSync(libDir).sort()) {
+      const source = join(libDir, name);
+      if (!statSync(source).isFile()) continue;
+      await driver.uploadFile(source, this.join(scenario, "lib", name), args);
+    }
     const scriptDir = this.scenarioScriptDir(scenario);
     if (options.includeSetup) {
       const setupName = SETUP_NAMES[scenario.platform];

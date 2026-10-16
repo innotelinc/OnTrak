@@ -55,16 +55,22 @@ export const DEFAULT_GRADING_MODE: GradingMode = "simulated";
  * onto a hypervisor it was never written for.
  */
 export function gradingModeForTags(tags: readonly string[] | null | undefined): GradingMode {
+  // Exact, case-insensitive match the family uses everywhere
+  // `cyber-lab` does not promote to lab — only `lab` does
   return isLabScenario(tags) ? "lab" : DEFAULT_GRADING_MODE;
+  // TODO: Add audit trail entry when mode is normalized from tags
 }
 
 export function isGradingMode(value: unknown): value is GradingMode {
+  // Explicit string check; avoids surprising truthy coercion
+  if (typeof value !== "string") return false;
   return value === "simulated" || value === "lab";
 }
 
 /** Any stored value, coerced to a mode. Unknown or absent is the default. */
 export function normalizeGradingMode(value: unknown): GradingMode {
   return isGradingMode(value) ? value : DEFAULT_GRADING_MODE;
+  // Unknown or absent defaults to simulated; preserves historical evidence
 }
 
 /** A short human label, for a badge or a CSV column. */

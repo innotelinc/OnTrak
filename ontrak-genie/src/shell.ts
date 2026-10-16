@@ -72,6 +72,17 @@ export interface ShellOptions {
   /** Absolute, already resolved against the workspace by the caller. */
   cwd: string;
   timeoutMs?: number;
+  /**
+   * Extra environment for this one command.
+   *
+   * Deliberately not the caller's whole environment: it exists for a single,
+   * narrow case — the remote mount in `remote.ts` hands `sshfs` a password or a
+   * key's passphrase through `SSHPASS`, so that a secret is never written into a
+   * command line, where the process list and any echoed error would hold it. The
+   * rules and the sandbox are unchanged by it: a value that reaches this field is
+   * one this program composed, not one a caller supplied.
+   */
+  env?: Record<string, string>;
 }
 
 /**
@@ -141,7 +152,7 @@ export async function runShellCommand(options: ShellOptions): Promise<ShellResul
     (resolve) => {
       const child = spawn(invocation.command, invocation.args, {
         cwd: sandbox.backend === "docker" ? workspaceRoot() : options.cwd,
-        env: { ...process.env, AGENT_WORKSPACE: workspaceRoot() },
+        env: { ...process.env, AGENT_WORKSPACE: workspaceRoot(), ...(options.env ?? {}) },
         detached: process.platform !== "win32",
         stdio: ["ignore", "pipe", "pipe"],
       });

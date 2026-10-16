@@ -154,6 +154,129 @@ export interface ProjectLoad {
   skipped: string[];
 }
 
+/* --- remote workspaces (v0.6) ------------------------------------------------ */
+
+/** One mounted folder, as `GET /api/remote` reports it. */
+export interface RemoteSshRow {
+  id: string;
+  label: string;
+  host: string;
+  user: string;
+  port: number;
+  path: string;
+  /** Sandbox-relative directory it is mounted at. */
+  rel: string;
+  mountPoint: string;
+  auth: "key" | "password";
+  connectedAt: string;
+  /** Whether the mount is still answering — re-checked when the list is read. */
+  live: boolean;
+}
+
+/** One GitHub clone the session holds a token for. */
+export interface RemoteGithubRow {
+  repo: string;
+  rel: string;
+  url: string;
+  branch: string | null;
+  /** True when a token is held; the token itself is never sent. */
+  credential: boolean;
+  connectedAt: string;
+}
+
+/** One forge (Gitea) connection. */
+export interface RemoteForgeRow {
+  host: string;
+  label: string;
+  user: string;
+  credential: boolean;
+  /** True when the credential is the deployment's own, not the caller's. */
+  system: boolean;
+  connectedAt: string;
+}
+
+/** One clone made from a forge. */
+export interface RemoteForgeClone {
+  repo: string;
+  rel: string;
+  url: string;
+  branch: string | null;
+}
+
+/** Atlas, and whether this account's plan includes it. */
+export interface RemoteAtlasInfo {
+  url: string;
+  configured: boolean;
+  sshHost: string;
+  systemUser: string;
+  systemCredential: boolean;
+  /** null when the plan could not be checked — which is not a refusal. */
+  entitled: boolean | null;
+  reason: string;
+  signupUrl: string;
+}
+
+/** Everything `GET /api/remote` answers with: one round trip for one feature. */
+export interface RemoteList {
+  enabled: boolean;
+  allowedHosts: string[];
+  ssh: RemoteSshRow[];
+  github: RemoteGithubRow[];
+  forge: RemoteForgeRow[];
+  forgeClones: RemoteForgeClone[];
+  atlas: RemoteAtlasInfo;
+}
+
+/**
+ * The running app, as `POST /api/preview/start` and `GET /api/preview` report it.
+ *
+ * The same shape the console's preview pane reads, because it is the same route:
+ * a project created or cloned from Atlas is run here the way any other project is.
+ */
+export interface PreviewStatus {
+  running: boolean;
+  /** The command that was started, or the one that would be. */
+  command: string | null;
+  cwd: string | null;
+  port: number | null;
+  /** Where the console reaches it, relative to the deployment (`/preview/`). */
+  url: string;
+  /** The LAN address, when the deployment publishes the port. */
+  address: string | null;
+  startedAt: string | null;
+  exitCode: number | null;
+  error: string | null;
+  log: string;
+  /** Up, but not answering yet — a framework still building. */
+  pending?: boolean;
+  /** True when the command was worked out from the project rather than named. */
+  detected?: boolean;
+}
+
+/** A created or opened pull request, however the host named its fields. */
+export interface RemotePullRequest {
+  number: number | null;
+  url: string | null;
+  state: string | null;
+  repo: string;
+  head: string;
+  base: string;
+}
+
+/** What a clone (or a created repository) answered with. */
+export interface RemoteCloneResult {
+  rel: string;
+  cwd?: string;
+  connection: {
+    repo: string;
+    rel: string;
+    url: string;
+    web?: string;
+    branch: string | null;
+    credential?: boolean;
+  };
+}
+
 /** What a streaming turn calls back with. The last three are terminal. */
 export interface ChatHandlers {
   onEvent: (event: AgentEvent) => void;
@@ -356,6 +479,119 @@ export class GenieClient {
       body: content,
       signal: AbortSignal.timeout(BUNDLE_TIMEOUT_MS),
     });
+  }
+
+  /* --- remote workspaces (v0.6) ------------------------------------------- */
+
+  /** The mounts, the clones, the forges and what Atlas is, in one call. */
+  remotes(): Promise<RemoteList> {
+    return this.json<RemoteList>("/api/remote");
+  }
+
+  /** Mount a folder over SSH and make it the working directory. */
+  connectSshFolder(input: {
+    host: string;
+    user: string;
+    path: string;
+    port?: number;
+    key?: string;
+    passphrase?: string;
+    password?: string;
+  }): Promise<{ rel: string; cwd: string; connection: RemoteSshRow }> {
+    return this.json("/api/remote/ssh", { method: "POST", body: JSON.stringify(input) });
+  }
+
+  /** Unmount a folder, and remove the key the session was holding for it. */
+  disconnectSshFolder(id: string): Promise<{ id: string; rel: string }> {
+    return this.json("/api/remote/ssh/disconnect", { method: "POST", body: JSON.stringify({ id }) });
+  }
+
+  /**
+   * Connect to a forge.
+   *
+   * `useSystem` asks for the deployment's own Atlas credential, which is the one
+   * shape that needs no secret here and is not gated on a plan.
+   */
+  connectForge(input: {
+    url?: string;
+    user?: string;
+    secret?: string;
+    useSystem?: boolean;
+  }): Promise<RemoteForgeRow & { url: string }> {
+    return this.json("/api/remote/forge/connect", { method: "POST", body: JSON.stringify(input) });
+  }
+
+  /** Create a repository on the forge, clone it, and work in it. */
+  createForgeProject(input: {
+    name: string;
+    description?: string;
+    url?: string;
+    private?: boolean;
+    autoInit?: boolean;
+  }): Promise<RemoteCloneResult> {
+    return this.json("/api/remote/forge/create", { method: "POST", body: JSON.stringify(input), signal: AbortSignal.timeout(120_000) });
+  }
+
+  /** Clone a repository from the forge into the working directory. */
+  cloneForgeRepo(input: { repo: string; url?: string; dir?: string; branch?: string }): Promise<RemoteCloneResult> {
+    return this.json("/api/remote/forge/clone", { method: "POST", body: JSON.stringify(input), signal: AbortSignal.timeout(120_000) });
+  }
+
+  /**
+   * Run the project's own dev server — the console's "run", over the same route.
+   *
+   * No command means the server works one out from the project (`npm run dev`, a
+   * `manage.py`, a static site), which is what makes a project cloned from a forge
+   * runnable without naming anything.
+   */
+  runProject(input: { command?: string; cwd?: string; port?: number } = {}): Promise<PreviewStatus> {
+    return this.json<PreviewStatus>("/api/preview/start", {
+      method: "POST",
+      body: JSON.stringify(input),
+      // A project's first start includes its install in the worst case, so this
+      // waits longer than a normal call rather than lying about a slow build.
+      signal: AbortSignal.timeout(120_000),
+    });
+  }
+
+  pushForgeBranch(input: { branch: string; dir?: string; url?: string }): Promise<{ branch: string; repo: string }> {
+    return this.json("/api/remote/forge/push", { method: "POST", body: JSON.stringify(input), signal: AbortSignal.timeout(120_000) });
+  }
+
+  openForgePullRequest(input: {
+    title: string;
+    head: string;
+    base?: string;
+    body?: string;
+    repo?: string;
+    url?: string;
+  }): Promise<RemotePullRequest> {
+    return this.json("/api/remote/forge/pr", { method: "POST", body: JSON.stringify(input) });
+  }
+
+  /** Clone a GitHub repository with a token, and work in it. */
+  cloneGithubRepo(input: {
+    repo: string;
+    dir?: string;
+    branch?: string;
+    token?: string;
+  }): Promise<RemoteCloneResult> {
+    return this.json("/api/remote/github/clone", { method: "POST", body: JSON.stringify(input), signal: AbortSignal.timeout(120_000) });
+  }
+
+  pushGithubBranch(input: { branch: string; dir?: string; repo?: string; token?: string }): Promise<{ branch: string; repo: string }> {
+    return this.json("/api/remote/github/push", { method: "POST", body: JSON.stringify(input), signal: AbortSignal.timeout(120_000) });
+  }
+
+  openGithubPullRequest(input: {
+    title: string;
+    head: string;
+    base?: string;
+    body?: string;
+    repo?: string;
+    token?: string;
+  }): Promise<RemotePullRequest> {
+    return this.json("/api/remote/github/pr", { method: "POST", body: JSON.stringify(input) });
   }
 
   async shareSession(sessionId: string, email: string): Promise<ShareRecord> {

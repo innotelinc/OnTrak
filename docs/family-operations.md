@@ -420,11 +420,12 @@ somebody's afternoon:
   what the product is.
 - **SAML and IdP-initiated sign-on** are not implemented; the flow is
   SP-initiated OIDC only.
-- **OnTrak Lab is the seventh name, and the only one this stack does not start.** It
-  is a peer deployment — its own Python tree here at `ontrak-lab/`, on its own host — and it
-  publishes exactly
-  one port: its own nginx, which serves its portal at `/` and its HTML5 console at
-  `/guacamole/`. This deployment runs one, at `https://lab.ontrak.innotel.us`, and the
+- **OnTrak Lab is the seventh name.** The machines are a peer deployment — its own Python
+  tree here at `ontrak-lab/`, on its own host — while the console that renders them runs in
+  *this* stack (`guacd` + `guacamole` in `docker-compose.all.yml`, publishing 8080, at the
+  `/guacamole/` path the name already forwards). A lab that runs its own control plane
+  publishes one port instead: its own nginx, serving its portal at `/` and its console at
+  `/guacamole/`. This deployment runs the console here, at `https://lab.ontrak.innotel.us`, and the
   two facts that wire it are `ONTRAK_LAB_ENABLED` and `ONTRAK_LAB_URL` in the root
   `.env`, with `ONTRAK_LAB_INTERNAL_URL` naming the same gateway by its published address
   for the portal's status light (server-side, inside the compose network). The name is
@@ -437,10 +438,14 @@ somebody's afternoon:
   zone spends `ontrak.` on the portal, so the lab's provisioner must not be pointed here
   — NPM would refuse the second claim rather than quietly move the front door.
 
-  **The portal's tile is the peer; the training range's fallback is here.** With
-  `ONTRAK_LAB_IN_APP` set, the training app also serves the ported control plane at
-  `/lab`, in demo mode (`ONTRAK_DEMO__ENABLED`, because this host has no `/dev/kvm`) —
-  the range a course can still reach when the peer is down. That half needs the lab's own
+  **The range is served here, out of a hypervisor that is not.** With `ONTRAK_LAB_IN_APP`
+  set, the training app serves the ported control plane at `/lab` with demo mode *off*: the
+  machines are real, and they run on the lab host, named by `ONTRAK_INCUS__REMOTE` (the Incus
+  remote `i2`, whose trust configuration compose mounts read-only into the service account's
+  own home). This host keeps the route the guests live on and the console gateway, and needs
+  no hypervisor of its own — which is also why the three lab secrets
+  (`ONTRAK_GUEST__PASSWORD`, `ONTRAK_PORTAL__SECRET`, `ONTRAK_GUAC__SECRET_KEY`) are required
+  here rather than absent. That half needs the lab's own
   data inside the container, which `docker-compose.deployment.yml` mounts read-only
   (`./scenarios` and `./src/lib/lab/data`); without the mount `/healthz` answers 503
   naming the missing tree. `npm run lab:import` writes the lab's 14 scenarios into the
@@ -460,9 +465,10 @@ somebody's afternoon:
   session back is the client in `integrations/lab-completion-client/`, installed on the
   lab host and pointed at this deployment's address and `ONTRAK_API_TOKEN`.
 
-  **Autostart is Docker's job, on both halves.** The lab's four control-plane containers
-  (`ontrak-portal`, `ontrak-gateway`, `ontrak-guacamole`, `ontrak-guacd`) and every
-  service in `docker-compose.all.yml` carry `restart: unless-stopped`, so the daemon
+  **Autostart is Docker's job, on both halves.** Every service in
+  `docker-compose.all.yml` — the console gateway's `guacd` and `guacamole` included — and
+  the lab host's own four control-plane containers (`ontrak-portal`, `ontrak-gateway`,
+  `ontrak-guacamole`, `ontrak-guacd`) carry `restart: unless-stopped`, so the daemon
   brings both stacks back after a reboot. The only `restart: "no"` services are the
   one-shot `lab-setup` and the migrate/seed jobs, which are meant to run once. There is
   deliberately no systemd unit that starts either stack — it would race the daemon's own

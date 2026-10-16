@@ -93,6 +93,24 @@ test("running one command", async (t) => {
     assert.equal(result.exitCode, 3);
     assert.equal(result.timedOut, false);
   });
+
+  /*
+   * The one thing a caller may add to the environment.
+   *
+   * A remote mount hands `sshfs` a password or a key passphrase through `SSHPASS`
+   * (`remote.ts`), so that a secret never reaches a command line — where the
+   * process list, an error echo and a transcript would all hold it. That promise
+   * is only as good as this actually reaching the child process.
+   */
+  await t.test("an extra environment variable reaches the command, and only that command", async () => {
+    const command = "printf '%s' \"$GENIE_TEST_SECRET\"";
+    const result = await runShellCommand({ command, cwd: scratch, env: { GENIE_TEST_SECRET: "hunter2" } });
+    assert.equal(result.ok, true);
+    assert.equal(result.output, "hunter2");
+
+    const without = await runShellCommand({ command, cwd: scratch });
+    assert.equal(without.output, "", "the value is not left in the process environment");
+  });
 });
 
 test("the terminal route", async (t) => {

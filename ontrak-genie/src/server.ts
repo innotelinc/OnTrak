@@ -89,6 +89,29 @@ import {
   pushBranch,
   RepoError,
 } from "./repo.js";
+import {
+  cloneForge,
+  cloneGitHub,
+  connectForge,
+  connectSsh,
+  createForgeRepo,
+  createGitHubBranch,
+  disconnectForge,
+  disconnectSsh,
+  listForgeClones,
+  listForges,
+  listGitHub,
+  listSsh,
+  openForgePullRequest,
+  openGitHubPullRequest,
+  pushForge,
+  pushGitHub,
+  remoteEnabled,
+  RemoteError,
+  resetRemoteSelection,
+  shutdownRemotes,
+} from "./remote.js";
+import { atlasInfo } from "./atlas.js";
 import { sandboxInfo } from "./sandbox.js";
 import { backendLabel, runShellCommand } from "./shell.js";
 import {
@@ -1677,6 +1700,298 @@ async function handleApi(
     }
   }
 
+  /*
+   * Remote workspaces (v0.6): a folder on a server, and a repository on GitHub.
+   *
+   * Both are console operations rather than agent tools, exactly as the repository
+   * feature above is, and both sit behind the same `/api` authorization. What is
+   * different is whose credential is used: the *caller's*, held in memory for this
+   * process and never written beside the workspace (see `remote.ts`). An SSH
+   * folder is mounted under the sandbox and made the working directory, so every
+   * tool and the preview reach it through the jail that already exists; a GitHub
+   * clone lands in the working directory and is edited in place.
+   */
+  if (pathname === "/api/remote" && method === "GET") {
+    // One round trip for one panel: the mounts, the GitHub clones, the forges this
+    // caller has connected, and what Atlas is and whether they may use it. The
+    // Atlas block is *reported* rather than hidden, because a deployment that has
+    // not configured it and an account whose plan does not include it are two
+    // different sentences, and the panel says which.
+    const viewer = viewerOf(req);
+    const identity = viewer.email !== "" ? viewer.email : (viewer.userId ?? "");
+    return sendJson(res, 200, {
+      enabled: remoteEnabled(),
+      allowedHosts: config.remoteAllowedHosts,
+      ssh: await listSsh(),
+      github: listGitHub(),
+      atlas: await atlasInfo(identity === "" ? null : identity),
+      forge: listForges(),
+      forgeClones: listForgeClones(),
+    });
+  }
+
+  if (pathname === "/api/remote/ssh" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      const connection = await connectSsh({
+        host: payload.host,
+        user: payload.user,
+        ...(payload.port === undefined ? {} : { port: payload.port }),
+        path: payload.path,
+        ...(payload.key === undefined ? {} : { key: payload.key }),
+        ...(payload.passphrase === undefined ? {} : { passphrase: payload.passphrase }),
+        ...(payload.password === undefined ? {} : { password: payload.password }),
+      });
+      // The reply names where the *next* request will work, because this one is
+      // still in the scope it began in — the same contract `POST /api/workspace`
+      // has, and for the same reason.
+      return sendJson(res, 201, {
+        connection,
+        rel: connection.rel,
+        cwd: connection.mountPoint,
+        dirs: await listWorkspaceDirs(),
+      });
+    } catch (error) {
+      if (error instanceof RemoteError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  if (pathname === "/api/remote/ssh/disconnect" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      const removed = await disconnectSsh(payload.id);
+      return sendJson(res, 200, { ...removed, dirs: await listWorkspaceDirs() });
+    } catch (error) {
+      if (error instanceof RemoteError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  if (pathname === "/api/remote/github/clone" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      const connection = await cloneGitHub({
+        repo: payload.repo,
+        ...(payload.dir === undefined ? {} : { dir: payload.dir }),
+        ...(payload.branch === undefined ? {} : { branch: payload.branch }),
+        ...(payload.token === undefined ? {} : { token: payload.token }),
+      });
+      return sendJson(res, 201, {
+        connection,
+        rel: connection.rel,
+        cwd: path.join(sandboxRoot(), connection.rel),
+        dirs: await listWorkspaceDirs(),
+      });
+    } catch (error) {
+      if (error instanceof RemoteError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  if (pathname === "/api/remote/github/branch" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      return sendJson(
+        res,
+        201,
+        await createGitHubBranch({
+          ...(payload.name === undefined ? {} : { name: payload.name }),
+          ...(payload.title === undefined ? {} : { title: payload.title }),
+          ...(payload.suffix === undefined ? {} : { suffix: payload.suffix }),
+        }),
+      );
+    } catch (error) {
+      // `createBranch` is the repository feature's own local-git rule, and its
+      // refusal is the caller's problem for the same reason a `RemoteError` is.
+      if (error instanceof RemoteError || error instanceof RepoError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  if (pathname === "/api/remote/github/push" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      return sendJson(
+        res,
+        200,
+        await pushGitHub({
+          branch: payload.branch,
+          ...(payload.dir === undefined ? {} : { dir: payload.dir }),
+          ...(payload.repo === undefined ? {} : { repo: payload.repo }),
+          ...(payload.token === undefined ? {} : { token: payload.token }),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof RemoteError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  if (pathname === "/api/remote/github/pr" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      return sendJson(
+        res,
+        201,
+        await openGitHubPullRequest({
+          repo: payload.repo,
+          title: payload.title,
+          head: payload.head,
+          ...(payload.base === undefined ? {} : { base: payload.base }),
+          ...(payload.body === undefined ? {} : { body: payload.body }),
+          ...(payload.token === undefined ? {} : { token: payload.token }),
+          ...(payload.dir === undefined ? {} : { dir: payload.dir }),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof RemoteError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  /*
+   * A forge the caller names — Gitea, which is what Atlas runs — or Atlas with
+   * this deployment's own credential.
+   *
+   * The same shape as the GitHub half above, and the same rule: the credential is
+   * the caller's (typed here, held in memory) or the deployment's, the repository
+   * is named `owner/name` and resolved against the address the caller named, and
+   * every git command runs through the shared executor. What Atlas adds is the
+   * *plan* check, which lives in `src/atlas.ts` rather than in these routes.
+   */
+  if (pathname === "/api/remote/forge/connect" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      return sendJson(
+        res,
+        201,
+        await connectForge({
+          ...(payload.url === undefined ? {} : { url: payload.url }),
+          ...(payload.user === undefined ? {} : { user: payload.user }),
+          ...(payload.secret === undefined ? {} : { secret: payload.secret }),
+          ...(payload.useSystem === undefined ? {} : { useSystem: payload.useSystem }),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof RemoteError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  if (pathname === "/api/remote/forge/disconnect" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      return sendJson(res, 200, disconnectForge(payload.url));
+    } catch (error) {
+      if (error instanceof RemoteError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  if (pathname === "/api/remote/forge/clone" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      const cloned = await cloneForge({
+        repo: payload.repo,
+        ...(payload.url === undefined ? {} : { url: payload.url }),
+        ...(payload.dir === undefined ? {} : { dir: payload.dir }),
+        ...(payload.branch === undefined ? {} : { branch: payload.branch }),
+      });
+      return sendJson(res, 201, {
+        connection: cloned,
+        rel: cloned.rel,
+        cwd: path.join(sandboxRoot(), cloned.rel),
+        dirs: await listWorkspaceDirs(),
+      });
+    } catch (error) {
+      if (error instanceof RemoteError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  if (pathname === "/api/remote/forge/create" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      const created = await createForgeRepo({
+        name: payload.name,
+        ...(payload.description === undefined ? {} : { description: payload.description }),
+        ...(payload.url === undefined ? {} : { url: payload.url }),
+        ...(payload.private === undefined ? {} : { private: payload.private }),
+        ...(payload.autoInit === undefined ? {} : { autoInit: payload.autoInit }),
+      });
+      return sendJson(res, 201, {
+        connection: created,
+        rel: created.rel,
+        cwd: path.join(sandboxRoot(), created.rel),
+        dirs: await listWorkspaceDirs(),
+      });
+    } catch (error) {
+      if (error instanceof RemoteError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  if (pathname === "/api/remote/forge/branch" && method === "POST") {
+    // Creating a branch is local git, so it is the repository feature's own rule
+    // (`createBranch`) rather than a second implementation.
+    const payload = await readJson(req);
+    try {
+      return sendJson(
+        res,
+        201,
+        await createGitHubBranch({
+          ...(payload.name === undefined ? {} : { name: payload.name }),
+          ...(payload.title === undefined ? {} : { title: payload.title }),
+          ...(payload.suffix === undefined ? {} : { suffix: payload.suffix }),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof RemoteError || error instanceof RepoError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  if (pathname === "/api/remote/forge/push" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      return sendJson(
+        res,
+        200,
+        await pushForge({
+          branch: payload.branch,
+          ...(payload.dir === undefined ? {} : { dir: payload.dir }),
+          ...(payload.url === undefined ? {} : { url: payload.url }),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof RemoteError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  if (pathname === "/api/remote/forge/pr" && method === "POST") {
+    const payload = await readJson(req);
+    try {
+      return sendJson(
+        res,
+        201,
+        await openForgePullRequest({
+          repo: payload.repo,
+          title: payload.title,
+          head: payload.head,
+          ...(payload.url === undefined ? {} : { url: payload.url }),
+          ...(payload.base === undefined ? {} : { base: payload.base }),
+          ...(payload.body === undefined ? {} : { body: payload.body }),
+          ...(payload.dir === undefined ? {} : { dir: payload.dir }),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof RemoteError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
   if (pathname === "/api/chat" && method === "POST") {
     return await handleChat(req, res);
   }
@@ -1869,6 +2184,13 @@ const isEntrypoint =
 
 if (isEntrypoint) {
   await ensureWorkspace();
+  // Mounts do not survive a restart, so a working directory saved under
+  // `.remotes` is a folder with nothing behind it. Put the console back on solid
+  // ground and say which one it was.
+  const clearedRemote = await resetRemoteSelection();
+  if (clearedRemote !== null) {
+    console.log(`  workspace cleared a saved remote working directory (${clearedRemote}); mounts do not survive a restart`);
+  }
   // Check the chain on a timer, so a model that has quietly stopped working is
   // visible in the UI before it costs a turn.
   startModelHealthLoop();
@@ -1956,7 +2278,9 @@ if (isEntrypoint) {
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
-      server.close(() => process.exit(0));
+      // Unmount the remote trees and drop their key files before leaving: a mount
+      // that outlives its process is a directory that answers like a hung share.
+      void shutdownRemotes().finally(() => server.close(() => process.exit(0)));
     });
   }
 }

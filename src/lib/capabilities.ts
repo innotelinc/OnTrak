@@ -51,8 +51,18 @@ import { SENTINEL_CONTROL_CENTER_PATH, sentinelStatus } from "./sentinel-status"
 
 export type CapabilityId = "training" | "tix" | "sentinel" | "sync" | "genie" | "lab";
 
+export type CapabilityRole = "ADMIN" | "SYSADMIN" | "ANALYST" | "TECHNICIAN" | "INSTRUCTOR" | "STUDENT";
+
 export interface Capability {
   id: CapabilityId;
+  /** The subdomain label on the family domain (`<host>.<baseDomain>`). */
+  host: string;
+  /** Which family roles belong in this product (mirrors `ontrak-portal/src/lib/portal-rules.ts`). */
+  roles: readonly CapabilityRole[];
+  /** Unauthenticated health probe path on the product's origin (`/health` or `/healthz`). */
+  healthPath: string;
+  /** Absolute probe URL when `url` is known, or null when unreachable/off. */
+  probeUrl: string | null;
   /** Absolute browser URL, or null when this deployment cannot reach it. */
   url: string | null;
   /** True when the deployment named it explicitly rather than relying on the family's names. */
@@ -70,6 +80,15 @@ export interface Capability {
   off?: true;
 }
 
+export interface CapabilitySummary {
+  total: number;
+  reachable: number;
+  named: number;
+  family: number;
+  off: number;
+  unreachable: number;
+}
+
 /** The Network's real name, so an unconfigured deployment still produces a link that resolves. */
 const DEFAULT_BASE_DOMAIN = "ontrak.innotel.us";
 
@@ -81,6 +100,26 @@ const HOSTS: Record<CapabilityId, string> = {
   sync: "sync",
   genie: "genie",
   lab: "lab",
+};
+
+/** The roles that belong in each product — the portal's own `roles` field. */
+const ROLES: Record<CapabilityId, readonly CapabilityRole[]> = {
+  training: ["STUDENT", "INSTRUCTOR", "ADMIN"],
+  tix: ["TECHNICIAN", "ADMIN", "SYSADMIN"],
+  sentinel: ["ANALYST", "ADMIN", "SYSADMIN"],
+  sync: ["SYSADMIN", "ADMIN"],
+  genie: ["SYSADMIN", "ADMIN"],
+  lab: ["STUDENT", "INSTRUCTOR", "ADMIN"],
+};
+
+/** The unauthenticated health probe path — `/healthz` for the Python lab peer, `/health` elsewhere. */
+const HEALTH_PATHS: Record<CapabilityId, string> = {
+  training: "/health",
+  tix: "/health",
+  sentinel: "/health",
+  sync: "/health",
+  genie: "/health",
+  lab: "/healthz",
 };
 
 /**
@@ -127,6 +166,35 @@ function withoutTrailingDots(value: string): string {
   return value.replace(/\.+$/, "");
 }
 
+/** Extract the origin (`scheme://host[:port]`) of an absolute URL so health probes hit the root rather than a console sub-path. */
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return withoutTrailingSlashes(url);
+  }
+}
+
+function buildCapability(
+  id: CapabilityId,
+  fields: { url: string | null; named: boolean; note: string | null; off?: true },
+): Capability {
+  const healthPath = HEALTH_PATHS[id];
+  const probeUrl = fields.url ? `${originOf(fields.url)}${healthPath}` : null;
+  const entry: Capability = {
+    id,
+    host: HOSTS[id],
+    roles: ROLES[id],
+    healthPath,
+    probeUrl,
+    url: fields.url,
+    named: fields.named,
+    note: fields.note,
+  };
+  if (fields.off) entry.off = true;
+  return entry;
+}
+
 export function capabilities(env: Record<string, string | undefined> = process.env): Capability[] {
   const baseDomain = withoutTrailingDots(read(env, "ONTRAK_PORTAL_BASE_DOMAIN") || DEFAULT_BASE_DOMAIN);
   // The scheme follows the deployment rather than being assumed: a family served over
@@ -141,11 +209,53 @@ export function capabilities(env: Record<string, string | undefined> = process.e
     if (id === "lab") return labCapability(env);
 
     const explicit = withoutTrailingSlashes(read(env, EXPLICIT_URL_ENV[id]));
-    if (explicit) return { id, url: explicit, named: true, note: null };
-    return { id, url: familyUrl(id), named: false, note: null };
+    if (explicit) return buildCapability(id, { url: explicit, named: true, note: null });
+    return buildCapability(id, { url: familyUrl(id), named: false, note: null });
   });
 
   return resolved;
+}
+
+/**
+ * Filter the family capability catalogue to the products a given role belongs in.
+ */
+export function capabilitiesForRole(
+  role: CapabilityRole,
+  env: Record<string, string | undefined> = process.env,
+): Capability[] {
+  return capabilities(env).filter((entry) => entry.roles.includes(role));
+}
+
+/**
+ * Roll the capability list into counts for the control room header / readiness checks.
+ */
+export function summarizeCapabilities(list: readonly Capability[]): CapabilitySummary {
+  let reachable = 0;
+  let named = 0;
+  let family = 0;
+  let off = 0;
+  let unreachable = 0;
+
+  for (const entry of list) {
+    if (entry.off) {
+      off += 1;
+    } else if (entry.url === null) {
+      unreachable += 1;
+    } else {
+      reachable += 1;
+      if (entry.named) named += 1;
+      else family += 1;
+    }
+  }
+
+  return {
+    total: list.length,
+    reachable,
+    named,
+    family,
+    off,
+    unreachable,
+  };
 }
 
 /**
@@ -159,21 +269,20 @@ export function capabilities(env: Record<string, string | undefined> = process.e
 function labCapability(env: Record<string, string | undefined>): Capability {
   const status = labConfigFromEnv(env);
   if (!status.enabled) {
-    return {
-      id: "lab",
+    return buildCapability("lab", {
       url: null,
       named: false,
       note: `${LAB_ENABLED_ENV} is not set, so this deployment does not run OnTrak Lab.`,
       off: true,
-    };
+    });
   }
   if (!status.url) {
-    return { id: "lab", url: null, named: false, note: status.issues.join(" ") || null };
+    return buildCapability("lab", { url: null, named: false, note: status.issues.join(" ") || null });
   }
   // The reader returns the lab's origin, so the link loses nothing and cannot double a
   // segment — and it is `named` for the same reason an explicit URL is: an operator
   // stated where the lab is.
-  return { id: "lab", url: status.url, named: true, note: null };
+  return buildCapability("lab", { url: status.url, named: true, note: null });
 }
 
 /**
@@ -190,15 +299,14 @@ function sentinelCapability(
 ): Capability {
   const status = sentinelStatus(env);
   if (status.state === "ready" && status.controlCenterUrl) {
-    return { id: "sentinel", url: status.controlCenterUrl, named: true, note: null };
+    return buildCapability("sentinel", { url: status.controlCenterUrl, named: true, note: null });
   }
   if (status.state === "incomplete") {
-    return { id: "sentinel", url: null, named: false, note: status.issues.join(" ") || null };
+    return buildCapability("sentinel", { url: null, named: false, note: status.issues.join(" ") || null });
   }
-  return {
-    id: "sentinel",
+  return buildCapability("sentinel", {
     url: `${scheme}://${HOSTS.sentinel}.${baseDomain}${SENTINEL_CONTROL_CENTER_PATH}`,
     named: false,
     note: null,
-  };
+  });
 }

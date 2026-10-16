@@ -759,12 +759,18 @@ jobs:
           ONTRAK_API_TOKEN=ci-only-not-a-production-secret-value \
             docker compose -f docker-compose.all.yml up -d --build
 
-          # Every product the family stack serves, at the address this job reaches it
+          # Every service the family stack serves, at the address this job reaches it
           # and the path it answers without a credential. Six products, seven
           # services — Sync's dashboard and its API are separate processes and both
           # have to be up — and all seven are waited for. The loop used to ask three
           # of them, and the steps below only ever asked the same three, so a product
           # that never came up left this job green.
+          #
+          # The eighth is not a product: the lab's console gateway is what renders a
+          # training machine in a student's browser, and a stack whose machines can be
+          # graded but never watched is exactly the outage this list exists to catch.
+          # Guacamole answers its own deployed path (`/guacamole/`) rather than
+          # `/health`.
           #
           # Each product answers `/health` with its own name. Sync's API is the one
           # exception and keeps its liveness on `/api/health`, because everything it
@@ -776,7 +782,8 @@ jobs:
           portal http://127.0.0.1:3300/health
           genie http://127.0.0.1:3400/health
           sync-api http://127.0.0.1:8420/api/health
-          sync-web http://127.0.0.1:8421/health"
+          sync-web http://127.0.0.1:8421/health
+          guacamole http://127.0.0.1:8080/guacamole/"
 
           missing=""
           for _ in $(seq 1 120); do
@@ -806,6 +813,13 @@ jobs:
 
       - name: The training app answers
         run: curl -fsS -o /dev/null http://127.0.0.1:3000/login
+
+      # The lab's console gateway, at the path this deployment serves the console on
+      # (`ONTRAK_GUAC__BASE_URL` keeps its trailing `/guacamole/`). No key is needed to
+      # fetch the webapp: the signed payload arrives per student, so the page answering
+      # is the part a stack can get wrong by not starting it at all.
+      - name: The console gateway answers
+        run: curl -fsS -o /dev/null http://127.0.0.1:8080/guacamole/
 
       - name: The desk answers
         run: curl -fsS -o /dev/null http://127.0.0.1:3001/sign-in

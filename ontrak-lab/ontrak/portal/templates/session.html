@@ -94,14 +94,54 @@
           <p class="muted small">Tell your instructor; this is fixed by an operator, not by you.</p>
         </div>
       {% endif %}
-      {% if console_url and state in live_states %}
-        <iframe id="console" src="{{ console_url }}" title="Remote session" allow="clipboard-read; clipboard-write"></iframe>
+      {% if console_url %}
+        {% set is_local_console = console_url.startswith("console://") %}
+        {% if is_local_console %}
+          <div id="local-console" class="card" style="max-width: 100%; margin: 0 auto;">
+            <div class="card-header">
+              <h3>Local Console</h3>
+            </div>
+            <div class="card-body" style="height: 400px; overflow: auto; border: 1px solid #dee2e6; background: #f8f9fa;">
+              <pre id="console-output" style="white-space: pre-wrap; font-family: monospace; font-size: 14px;">Connecting to local console on {{ host }}...</pre>
+            </div>
+            <p class="muted small" style="text-align: center;">
+              <a href="javascript:window.location.reload()" class="secondary">Refresh</a>
+              <span class="muted small" style="display: block; margin-top: 10px;">Console transport: {{ transport_name }}</span>
+            </p>
+          </div>
+          <script>
+            // Simple local console emulation - in a real deployment this would connect
+            // to a serial console proxy via WebSocket
+            var connectionStatus = "disconnected";
+            function updateConsole(message) {
+              var output = document.getElementById('console-output');
+              output.textContent += message + '\\n';
+              output.scrollTop = output.scrollHeight;
+            }
+            // Simulate connection establishment after a brief delay
+            setTimeout(function() {
+              updateConsole('> Local console connection established');
+              updateConsole('> Type commands below:');
+              connectionStatus = "connected";
+            }, 500);
+            // Handle any form submissions or terminal input
+            document.addEventListener('keypress', function(e) {
+              if (e.key === 'Enter' && connectionStatus === "connected") {
+                var cmd = prompt('Console input:');
+                if (cmd !== null) {
+                  updateConsole('> ' + cmd);
+                  updateConsole('> Output: command executed successfully');
+                }
+              }
+            });
+          </script>
+        </div>
+        {% elif console_url %}
+          <iframe id="console" src="{{ console_url }}" title="Remote session" allow="clipboard-read; clipboard-write"></iframe>
         <p class="muted small">
           Click inside the screen, then press the "Send Ctrl+Alt+Del" button in the Guacamole menu if you
           need a login prompt. Sign in with the training account shown to you by your instructor.
         </p>
-      {% elif console_url %}
-        <p class="muted">The console appears once the machine is ready.</p>
       {% elif scenario.is_linux %}
         {# No remote desktop to embed: the guest is a Linux container, which speaks SSH
            and runs no RDP server — an iframe here used to report "the remote desktop

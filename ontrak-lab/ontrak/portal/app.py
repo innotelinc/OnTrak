@@ -188,15 +188,24 @@ def redirect(path: str, request: Request, message: str = "", status_code: int = 
 
 
 def _session_link(request: Request, session) -> str:
-    """Signed Guacamole URL for one session, or an empty string."""
+    """Signed Guacamole URL or local console fallback for one session."""
     settings = _settings(request)
-    if not session.host_ip or not settings.guac.secret_key:
+    if not session.host_ip:
         return ""
-    try:
-        scenario = request.app.state.repo.get(session.scenario_id)
-        return guac.build_link(settings, session, scenario)
-    except (guac.GuacError, ScenarioError):
-        return ""
+    # If Guacamole is configured, use the signed Guacamole link
+    if settings.guac.secret_key:
+        try:
+            scenario = request.app.state.repo.get(session.scenario_id)
+            return guac.build_link(settings, session, scenario)
+        except (guac.GuacError, ScenarioError):
+            pass
+    # Fallback: local console showing host IP and connection info
+    host = session.host_ip
+    scenario = request.app.state.repo.get(session.scenario_id) if session.scenario_id else None
+    transport = "RDP"
+    if scenario and scenario.is_linux:
+        transport = "shell"
+    return f"console://{host}?transport={transport}&user={settings.guest.linux_user or 'root'}&port={settings.guest.ssh_port}"
 
 
 # The guests live on the lab's own bridge (10.20.0.0/24) and nothing routes to them

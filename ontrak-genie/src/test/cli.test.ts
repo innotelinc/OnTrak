@@ -38,6 +38,14 @@ import {
   parseProjectsLine,
   ProjectUsageError,
 } from "../cli/projects.js";
+import {
+  parseRemoteCommand,
+  parseRemoteLine,
+  parseRemoteTarget,
+  RemoteUsageError,
+  runRemote,
+} from "../cli/remote.js";
+import type { GenieClient, RemoteList } from "../cli/client.js";
 import { MarkdownStream, Theme, clip, renderDiff, summarizeArgs, wrap } from "../cli/render.js";
 import { composeSkillMessage, describeSkills, loadSkills, parseSkill, slug } from "../cli/skills.js";
 import { indexSessions } from "../cli/main.js";
@@ -122,7 +130,7 @@ test("tokenize splits on whitespace but keeps quoted runs together", () => {
 test("the palette offers prefix matches only, and nothing once a space is typed", () => {
   assert.deepEqual(
     matchCommands("/re").map((command) => command.name),
-    ["resume", "rename"],
+    ["resume", "rename", "remote"],
   );
   assert.deepEqual(matchCommands("/resume 3"), []);
   // Aliases count: `/ls` is `sessions`.
@@ -137,6 +145,251 @@ test("the help text carries every command", () => {
   for (const command of COMMANDS) {
     assert.ok(text.includes(`/${command.name}`), `${command.name} must appear in help`);
   }
+});
+
+/* ----------------------------------------------------------------- remote */
+
+const REMOTE_OPTIONS = {
+  json: false,
+  passwordStdin: false,
+  tokenStdin: false,
+  github: false,
+};
+
+/** Collect what a command writes, since the CLI's commands write to stdout. */
+function captureStdout(): { text: () => string; restore: () => void } {
+  const original = process.stdout.write.bind(process.stdout);
+  const chunks: string[] = [];
+  process.stdout.write = ((chunk: unknown) => {
+    chunks.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  return { text: () => chunks.join(""), restore: () => void (process.stdout.write = original) };
+}
+
+/** A client where only the calls a case makes exist. */
+function stubClient(overrides: Partial<GenieClient>): GenieClient {
+  return overrides as unknown as GenieClient;
+}
+
+test("a remote target is read the way ssh spells one, and a half one is refused", () => {
+  assert.deepEqual(parseRemoteTarget("root@192.168.1.90:/srv/app"), {
+    user: "root",
+    host: "192.168.1.90",
+    path: "/srv/app",
+  });
+  assert.deepEqual(parseRemoteTarget("deploy@dev.example.com:/srv/my app"), {
+    user: "deploy",
+    host: "dev.example.com",
+    path: "/srv/my app",
+  });
+  // The path is *not* checked here — the server owns that fence (`remote-rules.ts`)
+  // and would refuse a relative one — but a target with no user or no path is not a
+  // target at all, and saying so is better than a request that comes back refused.
+  for (const bad of ["192.168.1.90:/srv/app", "root@192.168.1.90", "root@:/srv", "@host:/x", ""]) {
+    assert.throws(() => parseRemoteTarget(bad), RemoteUsageError, `refused: ${bad}`);
+  }
+});
+
+test("`genie remote` on its own lists, and the subcommands are one table", () => {
+  assert.deepEqual(parseRemoteCommand([]), { sub: "list", args: [] });
+  assert.deepEqual(parseRemoteCommand(["ls"]), { sub: "list", args: [] });
+  assert.deepEqual(parseRemoteCommand(["mount", "root@h:/p"]), { sub: "ssh", args: ["root@h:/p"] });
+  assert.deepEqual(parseRemoteCommand(["create", "app"]), { sub: "new", args: ["app"] });
+  assert.deepEqual(parseRemoteCommand(["pull-request", "genie/x"]), { sub: "pr", args: ["genie/x"] });
+  assert.deepEqual(parseRemoteCommand(["run"]), { sub: "run", args: [] });
+  assert.throws(() => parseRemoteCommand(["wibble"]), /try list, ssh, disconnect, atlas, new, clone, run, push or pr/);
+  // A subcommand is found as a word, never through the prototype.
+  assert.throws(() => parseRemoteCommand(["constructor"]), RemoteUsageError);
+});
+
+test("the remote flags are read from the line as well as from the shell", () => {
+  const parsed = parseRemoteLine(
+    ["clone", "acme/widgets", "--github", "--dir", "app", "--branch=dev", "--token-stdin"],
+    REMOTE_OPTIONS,
+  );
+  assert.deepEqual(parsed.invocation, { sub: "clone", args: ["acme/widgets"] });
+  assert.equal(parsed.options.github, true);
+  assert.equal(parsed.options.dir, "app");
+  assert.equal(parsed.options.branch, "dev");
+  assert.equal(parsed.options.tokenStdin, true);
+  assert.equal(parsed.options.passwordStdin, false, "a flag nobody gave stays unset");
+
+  const ssh = parseRemoteLine(["ssh", "root@h:/p", "--key-file", "/tmp/id", "--port", "2222"], REMOTE_OPTIONS);
+  assert.equal(ssh.options.keyFile, "/tmp/id");
+  assert.equal(ssh.options.port, 2222);
+
+  // `--command` is what says "run this instead of what the project says", and a
+  // command with spaces in it survives quoting as one value.
+  const run = parseRemoteLine(["run", "--command", "npm run dev -- --host"], REMOTE_OPTIONS);
+  assert.deepEqual(run.invocation, { sub: "run", args: [] });
+  assert.equal(run.options.command, "npm run dev -- --host");
+  assert.equal(parseRemoteLine(["run"], REMOTE_OPTIONS).options.command, undefined);
+
+  assert.throws(() => parseRemoteLine(["list", "--wat"], REMOTE_OPTIONS), /unknown option --wat/);
+  assert.throws(() => parseRemoteLine(["ssh", "root@h:/p", "--port", "abc"], REMOTE_OPTIONS), /needs a number/);
+});
+
+test("`genie remote run` runs the project here, through the same route the pane uses", async () => {
+  const asked: Array<Record<string, unknown>> = [];
+  const status = {
+    running: true,
+    command: "npm run dev",
+    cwd: ".",
+    port: 5173,
+    url: "/preview/",
+    address: null,
+    startedAt: "2026-01-01T00:00:00.000Z",
+    exitCode: null,
+    error: null,
+    log: "",
+    detected: true,
+  };
+  const client = stubClient({
+    runProject: (async (input: Record<string, unknown>) => {
+      asked.push(input);
+      return status;
+    }) as unknown as GenieClient["runProject"],
+  });
+
+  const captured = captureStdout();
+  try {
+    const code = await runRemote(client, plain, { sub: "run", args: [] }, REMOTE_OPTIONS);
+    assert.equal(code, 0);
+  } finally {
+    captured.restore();
+  }
+
+  // No command: the server works one out from the project, which is what makes a
+  // repository created on a forge runnable without naming anything.
+  assert.deepEqual(asked, [{}]);
+  assert.match(captured.text(), /running `npm run dev` in \./);
+  assert.match(captured.text(), /listening on port 5173/);
+});
+
+test("`genie remote run` says what the server could not work out, and exits non-zero", async () => {
+  const captured = captureStdout();
+  let code = 0;
+  try {
+    code = await runRemote(
+      stubClient({
+        runProject: (async () => ({ running: false, command: null, cwd: null, port: null, url: "/preview/", address: null, startedAt: null, exitCode: null, error: "No command to run, and nothing here looks like an app.", log: "" })) as unknown as GenieClient["runProject"],
+      }),
+      plain,
+      { sub: "run", args: [] },
+      REMOTE_OPTIONS,
+    );
+  } finally {
+    captured.restore();
+  }
+
+  assert.equal(code, 1, "an app that could not be run is a failure, not a success");
+  assert.match(captured.text(), /nothing here looks like an app/);
+});
+
+test("a credential is never taken from a positional argument", async () => {
+  // `genie remote ssh root@host:/path` has nowhere to put a secret but a file or a
+  // pipe. A password in the words would land in a shell history and in `ps`.
+  await assert.rejects(
+    () => runRemote(stubClient({}), plain, { sub: "ssh", args: ["root@h:/p"] }, REMOTE_OPTIONS),
+    /a key or a password is required/,
+  );
+});
+
+test("`genie remote` prints what is connected, and where Atlas is", async () => {
+  const list: RemoteList = {
+    enabled: true,
+    allowedHosts: [],
+    ssh: [
+      {
+        id: "dev.example.com-1",
+        label: "deploy@dev.example.com:/srv/app",
+        host: "dev.example.com",
+        user: "deploy",
+        port: 22,
+        path: "/srv/app",
+        rel: ".remotes/dev.example.com-1",
+        mountPoint: "/sandbox/.remotes/dev.example.com-1",
+        auth: "key",
+        connectedAt: "2026-01-01T00:00:00.000Z",
+        live: true,
+      },
+    ],
+    github: [],
+    forge: [
+      {
+        host: "http://atlas.test:3000",
+        label: "atlas.test:3000",
+        user: "root",
+        credential: true,
+        system: true,
+        connectedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+    forgeClones: [],
+    atlas: {
+      url: "http://atlas.test:3000",
+      configured: true,
+      sshHost: "192.168.1.90",
+      systemUser: "root",
+      systemCredential: true,
+      entitled: null,
+      reason: "",
+      signupUrl: "",
+    },
+  };
+
+  const captured = captureStdout();
+  try {
+    const code = await runRemote(
+      stubClient({ remotes: async () => list }),
+      plain,
+      { sub: "list", args: [] },
+      REMOTE_OPTIONS,
+    );
+    assert.equal(code, 0);
+  } finally {
+    captured.restore();
+  }
+
+  const text = captured.text();
+  assert.match(text, /ssh\s+deploy@dev\.example\.com:\/srv\/app/);
+  assert.match(text, /forge\s+atlas\.test:3000 as root/);
+  assert.match(text, /Atlas: http:\/\/atlas\.test:3000 — this deployment has its own credential/);
+});
+
+test("switched off, the CLI says so rather than showing an empty list", async () => {
+  const captured = captureStdout();
+  try {
+    await runRemote(
+      stubClient({
+        remotes: async () => ({
+          enabled: false,
+          allowedHosts: [],
+          ssh: [],
+          github: [],
+          forge: [],
+          forgeClones: [],
+          atlas: {
+            url: "",
+            configured: false,
+            sshHost: "",
+            systemUser: "",
+            systemCredential: false,
+            entitled: null,
+            reason: "",
+            signupUrl: "",
+          },
+        }),
+      }),
+      plain,
+      { sub: "list", args: [] },
+      REMOTE_OPTIONS,
+    );
+  } finally {
+    captured.restore();
+  }
+  assert.match(captured.text(), /AGENT_REMOTE_ENABLED=false/);
 });
 
 /* --------------------------------------------------------------- projects */

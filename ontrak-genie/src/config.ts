@@ -296,6 +296,60 @@ export const config = {
   gitDefaultBranch: str("AGENT_GIT_DEFAULT_BRANCH", "main"),
 
   /**
+   * Remote workspaces (v0.6): a folder on a server over SSH, and a repository on
+   * GitHub — both with the **caller's own** credential rather than a deployment
+   * one.
+   *
+   * This is what `gitBaseUrl` above is not. There, the operator names one host
+   * and one token and every caller clones from it; here a person types the host,
+   * the path and the token, and the console holds them for that person's session
+   * only (see `remote.ts`). It is a different trust question — outbound, with a
+   * credential that is not this deployment's — which is why it is a separate
+   * switch rather than a widening of the repository feature.
+   *
+   * **On by default**, unlike `PREVIEW_ENABLED`: a preview opens a port to the
+   * network, while a remote mount never listens and dials only where the signed-in
+   * person pointed it, with a credential that is theirs. A deployment that would
+   * rather it were impossible sets `false` and the routes refuse rather than
+   * half-work; an operator who will allow it only to their own estate names the
+   * hosts in `AGENT_REMOTE_ALLOWED_HOSTS` (exact names, or `*.example.com`).
+   */
+  remoteEnabled: bool("AGENT_REMOTE_ENABLED", true),
+  remoteAllowedHosts: list("AGENT_REMOTE_ALLOWED_HOSTS"),
+  /**
+   * How long one `sshfs` mount or one clone is given before it is killed.
+   *
+   * Bounded separately from `AGENT_COMMAND_TIMEOUT_MS` because the failure it
+   * prevents is specific: an unreachable host, or a host that accepts a
+   * connection and then never answers, would otherwise hold a request for two
+   * minutes and leave the person watching a spinner with nothing to read.
+   */
+  remoteTimeoutMs: int("AGENT_REMOTE_TIMEOUT_MS", 30_000),
+
+  /**
+   * Atlas — the ecosystem's forge (Gitea), offered as an add-on.
+   *
+   * `AGENT_ATLAS_URL` is the forge's base address (Atlas runs Gitea, so this is
+   * Gitea's own address — on the family estate the machine answering on
+   * `.90`); `AGENT_ATLAS_SSH_HOST` is the same estate's *machine*, for mounting a
+   * folder rather than cloning a repository, and is separate because the forge and
+   * the host are two services that may be reached by different names. Empty by
+   * default, deliberately: no internal address is committed to this repository, and
+   * a deployment that has no Atlas simply does not offer the block.
+   *
+   * `AGENT_ATLAS_USER` and `AGENT_ATLAS_PASSWORD` are the deployment's **own**
+   * credential — the system path (`src/atlas.ts`), which is what lets Atlas be used
+   * directly on a deployment with no billing behind it. On a deployment that sells
+   * the add-on, the password is a `vault://` reference like every other secret
+   * here, and `MAGNATE_ATLAS_PLAN` is the slug Magnate sells it under.
+   */
+  atlasUrl: str("AGENT_ATLAS_URL", "").replace(/\/+$/, ""),
+  atlasSshHost: str("AGENT_ATLAS_SSH_HOST", ""),
+  atlasUser: str("AGENT_ATLAS_USER", ""),
+  atlasPassword: str("AGENT_ATLAS_PASSWORD", ""),
+  atlasPlan: str("MAGNATE_ATLAS_PLAN", "atlas"),
+
+  /**
    * Optional Authentik (OIDC) sign-in, for a deployment that puts this console
    * behind the family's identity provider. Off until the issuer, the client id
    * and the session secret are all set — see the header of `src/oidc.ts` for why

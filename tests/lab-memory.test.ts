@@ -206,7 +206,14 @@ test("memory: an added-but-absent image does not become the golden alias", async
  * here instead of being pattern-matched away, so that adding a *public* method still
  * fails this test loudly.
  */
-const CLIENT_PRIVATE_HELPERS = new Set(["base", "uidArgument"]);
+const CLIENT_PRIVATE_HELPERS = new Set([
+  "base",
+  "uidArgument",
+  // The remote is not a flag this CLI has, so the environment it needs is built here
+  // and handed to the runner: a private helper beside `base`, not part of the surface
+  // the in-memory client has to answer.
+  "remoteEnv",
+]);
 
 function prototypeMethodNames(ctor: { prototype: object }): string[] {
   return Object.getOwnPropertyNames(ctor.prototype).filter((name) => name !== "constructor");

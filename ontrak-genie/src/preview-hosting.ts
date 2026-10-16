@@ -32,6 +32,7 @@ import path from "node:path";
 import type { Duplex } from "node:stream";
 
 import { config } from "./config.js";
+import { checkEntitlement, EntitlementError } from "./entitlements.js";
 
 /** A registered preview: an address, the port behind it, and how it is served. */
 export interface Preview {
@@ -695,39 +696,28 @@ export async function stopPreview(name: string): Promise<boolean> {
 
 // --- Magnate entitlement ----------------------------------------------------
 
-/** The shape of the answer Magnate's entitlement API returns. */
-interface EntitlementAnswer {
-  entitled?: boolean | null;
-  reason?: string;
-}
-
 /**
  * Ask Magnate whether a subscriber may hold a custom preview name.
  *
  * A refusal is a refusal, but an unreachable Magnate is an *error* rather than a
  * silent "no": telling a paying subscriber their subscription is inactive when
- * the billing platform is simply down is the one wrong answer here.
+ * the billing platform is simply down is the one wrong answer here. The question
+ * itself is asked in one place for every plan Genie sells (`src/entitlements.ts`) —
+ * the `genie` plan here and Atlas's add-on there — so the contract with Magnate
+ * cannot drift between the two.
  */
 export async function magnateEntitled(user: string): Promise<boolean> {
-  const base = config.magnateEntitlementsUrl;
-  if (base === "") {
-    throw new PreviewError(
-      "MAGNATE_ENTITLEMENTS_URL is not set, so custom preview names are unavailable",
-    );
-  }
-  const url = `${base}?plan=${encodeURIComponent(config.magnatePlan)}&user=${encodeURIComponent(user)}`;
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (config.magnateEntitlementsToken !== "") {
-    headers.Authorization = `Bearer ${config.magnateEntitlementsToken}`;
-  }
-  let answer: EntitlementAnswer;
   try {
-    const response = await fetch(url, { headers, signal: AbortSignal.timeout(8_000) });
-    answer = (await response.json()) as EntitlementAnswer;
+    const answer = await checkEntitlement({
+      plan: config.magnatePlan,
+      user,
+      unavailable: "custom preview names are unavailable",
+    });
+    return answer.entitled === true;
   } catch (error) {
-    throw new PreviewError(`could not reach Magnate to check the entitlement: ${(error as Error).message}`);
+    if (error instanceof EntitlementError) throw new PreviewError(error.message);
+    throw error;
   }
-  return answer.entitled === true;
 }
 
 // --- reverse proxy ----------------------------------------------------------

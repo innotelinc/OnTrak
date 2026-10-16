@@ -124,6 +124,7 @@
           <a href="#tix">OnTrak Tix</a>
           <a href="#training">Training</a>
           <a href="#genie">Genie</a>
+          <a href="#roadmap">Roadmap</a>
           <a class="gh" href="https://github.com/innotelinc/OnTrak">GitHub ↗</a>
         </nav>
         <div class="ot-theme" role="group" aria-label="Colour theme" data-unity-switch><button type="button" data-theme-mode="system" aria-pressed="false">System</button><button type="button" data-theme-mode="light" aria-pressed="false">Light</button><button type="button" data-theme-mode="dark" aria-pressed="false">Dark</button></div>
@@ -289,6 +290,123 @@ npm install &amp;&amp; npm run docker:db &amp;&amp; npm run setup &amp;&amp; npm
       </div>
     </section>
 
+    <section id="ecosystem">
+      <div class="sec-head">
+        <h2>The Innotel Ecosystem</h2>
+        <p>Every Innotel Labs product — one job per platform, platform services consumed by business functions.</p>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <span class="tag">IdentityOps</span>
+          <h3>Authentik</h3>
+          <p>Single identity source for the entire Innotel Platform Stack — OIDC/OAuth2/SAML/SSO, MFA, SCIM provisioning, RBAC, and organizations. Every platform trusts the same identity.</p>
+          <a class="secondary" href="https://innotelinc.github.io/cerulean/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">SecretOps</span>
+          <h3>Cerulean Vault</h3>
+          <p>HashiCorp Vault KV v2 — the canonical secrets store. All secrets carry <code>vault://</code> references, never committed to repos. Secret rotation and auditing included.</p>
+          <a class="secondary" href="https://innotelinc.github.io/cerulean/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">TrustOps</span>
+          <h3>Cerulean</h3>
+          <p>Certificate lifecycle, ACME automation, PKI, and DNS with one wildcard cert per platform zone. All public hosts front the same Cerulean instance.</p>
+          <a class="secondary" href="https://innotelinc.github.io/cerulean/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">StorageOps</span>
+          <h3>ONYX</h3>
+          <p>Object storage, backups, snapshots, and object-lock (WORM) retention with legal hold. Per-tenant scoping via Vault paths.</p>
+          <a class="secondary" href="https://innotelinc.github.io/onyx/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">RevenueOps</span>
+          <h3>Magnate</h3>
+          <p>Billing, subscriptions, and entitlements. Checkout → webhook → Authentik <code>paid_users</code> group → access granted. Credit notes the only remedy.</p>
+          <a class="secondary" href="https://innotelinc.github.io/magnate/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">EdgeOps</span>
+          <h3>NPM Edge</h3>
+          <p>Public HTTP/S routing, TLS termination at the edge, and proxy host provisioning. Wildcard certs from Cerulean, CNAMEs from shared BIND.</p>
+          <a class="secondary" href="https://innotelinc.github.io/npm/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">MediaOps</span>
+          <h3>Monarch</h3>
+          <p>Streaming, media libraries, user profiles, and watch history. Free media auto-fetched; licensed media stays with the operator.</p>
+          <a class="secondary" href="https://innotelinc.github.io/monarch/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">VoiceOps</span>
+          <h3>Zeus</h3>
+          <p>VoIP, SIP, SMS, PBX, and PWA mobile client. SIP PBX with trunking, SMS gateway, and call routing with IVR.</p>
+          <a class="secondary" href="https://innotelinc.github.io/zeus/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">MailOps</span>
+          <h3>Oasis</h3>
+          <p>IMAP/SMTP mail server, CalDAV calendars, CardDAV contacts, and mail security with spam filtering and DMARC/DKIM/SPF.</p>
+          <a class="secondary" href="https://innotelinc.github.io/oasis/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">DocumentOps</span>
+          <h3>Signara</h3>
+          <p>Document signing, agreements, templates, audit trails, and legal holds. Sole signer of course certificates for the ecosystem.</p>
+          <a class="secondary" href="https://innotelinc.github.io/signara/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">AgentOps</span>
+          <h3>Capstone</h3>
+          <p>Voice AI agents, call screening, AI receptionists, speech processing, and telephony automation. Built on Zeus SIP foundation.</p>
+          <a class="secondary" href="https://innotelinc.github.io/capstone/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">CommunityOps</span>
+          <h3>Rizz Aura</h3>
+          <p>Leaderboards, reputation scoring, achievements, and cross-product ranking tables. Reputation can gate feature access across platforms.</p>
+          <a class="secondary" href="https://innotelinc.github.io/rizzaura/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">TransferOps</span>
+          <h3>zapit</h3>
+          <p>Ephemeral P2P transfer via WebRTC data channels — room codes, QR pairing, Zings (text snippets), relay fallback. Condition-keyed tracking (not alert-id keyed).</p>
+          <a class="secondary" href="https://innotelinc.github.io/zapit/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">LearningOps</span>
+          <h3>AthenIQ</h3>
+          <p>Course catalog, enrollment, assessments, AI interactive classrooms, and completion records. Emits evidence forwarded to Signara for signed certificates.</p>
+          <a class="secondary" href="https://innotelinc.github.io/atheniq/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">CodeOps</span>
+          <h3>Atlas</h3>
+          <p>Gitea repository hosting, CI/CD pipelines, issue/boards, package registry, and AI app builder via OmniRoute gateway.</p>
+          <a class="secondary" href="https://innotelinc.github.io/atlas/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">BuilderOps</span>
+          <h3>Distro</h3>
+          <p>Multi-tenant builder tenancy with per-user OmniRoute gateway keys, quota/usage enforcement, and spend tracking via Magnate integration.</p>
+          <a class="secondary" href="https://innotelinc.github.io/distro/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">FactoryOps</span>
+          <h3>Olympus</h3>
+          <p>Issue-to-PR automation with five factory workflows (prime, implement, validate, regress, triage), validation and safety, and operational visibility.</p>
+          <a class="secondary" href="https://innotelinc.github.io/olympus/">Landing page</a>
+        </div>
+        <div class="card">
+          <span class="tag">VideoOps</span>
+          <h3>PLUTUS</h3>
+          <p>Video ingestion, transcoding, catalog, and streaming delivery (HLS/DASH). Live streaming and AI video analysis.</p>
+          <a class="secondary" href="https://innotelinc.github.io/plutus/">Landing page</a>
+        </div>
+      </div>
+    </section>
+
     <section id="tix">
       <div class="sec-head">
         <h2>Inside OnTrak Tix</h2>
@@ -394,11 +512,36 @@ npm install &amp;&amp; npm run docker:db &amp;&amp; npm run setup &amp;&amp; npm
       </p>
     </section>
 
+    <section id="roadmap">
+      <div class="sec-head">
+        <h2>Project structure &amp; roadmap</h2>
+        <p>Current layout across the 7 OnTrak family products and milestone trajectory.</p>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <span class="tag">v1.0 – v1.2 · Shipped</span>
+          <h3>TrainingOps Core &amp; Real Drivers</h3>
+          <p>In-browser Linux, Windows 11, and Office simulators, WCAG AA accessibility sweep, instructor analytics, and real container/VM execution through <code>ontrak-lab/</code>.</p>
+        </div>
+        <div class="card">
+          <span class="tag">M1 – M6 · Shipped</span>
+          <h3>OnTrak Tix &amp; Incident Evidence</h3>
+          <p>Multi-client MSP desk, SLA resolution hierarchy, rate-card snapshotted billing, object-locked incident evidence, and signed assurance packets.</p>
+        </div>
+        <div class="card">
+          <span class="tag">Active · Next</span>
+          <h3>Family Readiness &amp; S4 Prevention</h3>
+          <p>Unified capability health probes across Portal, Sync, Genie, and Lab; Sentinel S4 active containment with safe-list &amp; blast-radius enforcement.</p>
+        </div>
+      </div>
+    </section>
+
     <footer>
-      <div>© 2026 OnTrak — TrainingOps for the Innotel platform stack. Training, ticketing and incident evidence, self-hosted.</div>
+      <div>© 2026 OnTrak — an Innotel Labs product. TrainingOps for the Innotel Platform Stack.</div>
       <div class="links">
         <a href="https://github.com/innotelinc/OnTrak">GitHub</a> ·
         <a href="https://github.com/innotelinc/OnTrak/blob/main/README.md">README</a> ·
+        <a href="https://github.com/innotelinc/OnTrak/blob/main/ROADMAP.md">Roadmap</a> ·
         <a href="https://github.com/innotelinc/OnTrak/blob/main/docs/stack.md">Stack role</a> ·
         <a href="https://github.com/innotelinc/innotel-platform-stack">Innotel Platform Stack</a>
       </div>
@@ -406,13 +549,21 @@ npm install &amp;&amp; npm run docker:db &amp;&amp; npm run setup &amp;&amp; npm
         Innotel Platform — <a href="https://innotelinc.github.io/cerulean/">Cerulean</a> (Trust) ·
         <a href="https://innotelinc.github.io/onyx/">ONYX</a> (Storage) ·
         <a href="https://innotelinc.github.io/magnate/">Magnate</a> (Revenue) ·
-        <a href="https://github.com/innotelinc/npm">NPM Edge</a> ·
+        <a href="https://innotelinc.github.io/npm/">NPM Edge</a> ·
         OnTrak (TrainingOps) ·
         <a href="https://innotelinc.github.io/zeus/">Zeus</a> (VoiceOps) ·
         <a href="https://innotelinc.github.io/oasis/">Oasis</a> (MailOps) ·
         <a href="https://innotelinc.github.io/signara/">Signara</a> (DocumentOps) ·
         <a href="https://innotelinc.github.io/atheniq/">AthenIQ</a> (LearningOps) ·
-        <a href="https://innotelinc.github.io/distro/">Distro</a> (BuilderOps)
+        <a href="https://innotelinc.github.io/distro/">Distro</a> (BuilderOps) ·
+        <a href="https://innotelinc.github.io/verifier/">Verifier</a> (PlatformOps) ·
+        <a href="https://innotelinc.github.io/capstone/">Capstone</a> (AgentOps) ·
+        <a href="https://innotelinc.github.io/rizzaura/">Rizz Aura</a> (CommunityOps) ·
+        <a href="https://innotelinc.github.io/zapit/">zapit</a> (TransferOps) ·
+        <a href="https://innotelinc.github.io/monarch/">Monarch</a> (MediaOps) ·
+        <a href="https://innotelinc.github.io/atlas/">Atlas</a> (CodeOps) ·
+        <a href="https://innotelinc.github.io/olympus/">Olympus</a> (FactoryOps) ·
+        <a href="https://innotelinc.github.io/plutus/">PLUTUS</a> (VideoOps)
       </div>
     </footer>
   </div>

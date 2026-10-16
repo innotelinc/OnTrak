@@ -7,11 +7,18 @@
  * every call here maps 1:1 onto a command someone can run by hand while debugging.
  * `--format=json` supplies the structured half.
  *
- * THREE CLI RULES THIS CLIENT IS BUILT AROUND, each one a mistake that stopped the
+ * FOUR CLI RULES THIS CLIENT IS BUILT AROUND, each one a mistake that stopped the
  * platform dead on a real host before it was understood. The ported test runs the
- * client against a stand-in that enforces all three, so putting any of them back
+ * client against a stand-in that enforces all four, so putting any of them back
  * fails a test rather than a class:
  *
+ *   * The remote is **not** a flag. `--remote` is LXD's spelling and this CLI has
+ *     never had it: `incus list --remote lab` is `Error: unknown flag: --remote`,
+ *     exit 1, on Incus 6 and 7 alike — so a range pointed at a cluster endpoint or a
+ *     separate lab host failed *every* call it made while its own pages still
+ *     rendered. Incus selects a remote from the client's own configuration, and the
+ *     one way a *caller* selects it is the `INCUS_REMOTE` environment variable, which
+ *     is what `remoteEnv()` sets. `base()` therefore never emits `--remote`.
  *   * `--format` is a flag of the *list* commands only. `image info`, `info` and
  *     `storage info` answer `Error: unknown flag: --format`, exit 1 — which made
  *     `imageExists()` answer false for every image and made every template build
@@ -84,7 +91,21 @@ export interface GuestExecOutput {
 export interface Runner {
   run(
     argv: readonly string[],
-    options: { timeoutSeconds: number; input?: string | undefined },
+    options: {
+      timeoutSeconds: number;
+      input?: string | undefined;
+      /**
+       * Environment *overrides* for this call, or `undefined` to inherit ours.
+       *
+       * A named Incus remote cannot be a command-line flag (see the module header),
+       * so it arrives here as `INCUS_REMOTE` and a real runner merges it over the
+       * process environment — one assignment, exactly the shape the Python's `_env`
+       * has. It is a short override map rather than a whole environment on purpose: a
+       * stand-in that records it says which remote a call was aimed at without
+       * copying every variable the test happened to run under.
+       */
+      env?: Record<string, string> | undefined;
+    },
   ): Promise<CommandResult>;
 }
 
@@ -195,6 +216,10 @@ export function parseMemoryMb(value: string): number {
  * Python's `capture` parameter has no counterpart here because no caller in the lab
  * passes `capture=False` — every call reads stdout and stderr, so the port always
  * pipes them rather than carrying a switch with one setting.
+ *
+ * `options.env` is merged *over* `process.env`, not used in its place: it is the
+ * caller's override map (today only `INCUS_REMOTE`), and a spawn handed a partial
+ * environment would otherwise run the CLI with no PATH at all.
  */
 export function processRunner(): Runner {
   return {
@@ -205,7 +230,10 @@ export function processRunner(): Runner {
           reject(new RunnerSpawnError("", "no program given to the runner"));
           return;
         }
-        const child = spawn(program, argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+        const child = spawn(program, argv.slice(1), {
+          stdio: ["pipe", "pipe", "pipe"],
+          env: options.env ? { ...process.env, ...options.env } : undefined,
+        });
         const out = child.stdout;
         const err = child.stderr;
         const stdin = child.stdin;
@@ -304,13 +332,27 @@ export class IncusClient {
 
   private base(project = true): string[] {
     const cmd = [this.binary];
-    if (this.settings.remote && this.settings.remote !== "local") {
-      cmd.push("--remote", this.settings.remote);
-    }
+    // The remote is deliberately absent here: it is not a flag this CLI has, and
+    // asking for it by name fails the call outright. It travels in the environment
+    // instead — see `remoteEnv()` below and the fourth rule in the module header.
     if (project && this.settings.project) {
       cmd.push("--project", this.settings.project);
     }
     return cmd;
+  }
+
+  /**
+   * The environment the CLI needs to reach the configured remote.
+   *
+   * `undefined` means "inherit ours", and that is the local case: a host driving its
+   * own daemon talks over the Unix socket and has no remote to select. A named remote
+   * is one `INCUS_REMOTE` assignment — the only way the CLI takes it, for the reason
+   * in `base()` — so the runner merges it over the process environment.
+   */
+  private remoteEnv(): Record<string, string> | undefined {
+    const remote = this.settings.remote;
+    if (!remote || remote === "local") return undefined;
+    return { INCUS_REMOTE: remote };
   }
 
   async run(args: readonly string[], options: RunOptions = {}): Promise<CommandResult> {
@@ -323,7 +365,11 @@ export class IncusClient {
     const effectiveTimeout = options.timeout && options.timeout > 0 ? options.timeout : this.timeout || DEFAULT_TIMEOUT;
     let result: CommandResult;
     try {
-      result = await this.runner.run(cmd, { timeoutSeconds: effectiveTimeout, input: options.input });
+      result = await this.runner.run(cmd, {
+        timeoutSeconds: effectiveTimeout,
+        input: options.input,
+        env: this.remoteEnv(),
+      });
     } catch (error) {
       if (error instanceof RunnerSpawnError) {
         throw new IncusError(args, 127, `${this.binary} not found on PATH: ${error.message}`);

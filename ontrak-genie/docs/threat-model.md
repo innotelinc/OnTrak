@@ -25,7 +25,10 @@ Read this beside [operations.md](operations.md) (the developer reference, whose
 
 ## 2. Trust boundaries
 
-Four, and each one is a place where a decision is made rather than a wall:
+Four, and each one is a place where a decision is made rather than a wall —
+plus one **outbound** boundary that v0.6 added and that is worth naming beside
+them (see *5. Outbound: remote workspaces* below), because it is the only place
+this console dials somewhere on a caller's word:
 
 ```
   browser ──(1)──> console ──(2)──> agent loop ──(3)──> tool: command / write ──(4)──> host
@@ -132,7 +135,38 @@ Per-account gateway keys never reach the browser: they are resolved per request
 from Distro's control plane and used server-side to spend, then discarded with
 the request.
 
-## 5. Out of scope, deliberately
+### 5. Outbound: remote workspaces
+
+A fifth boundary, of a different kind: not who may reach Genie, but where Genie
+may go on the word of a person who is signed in. `AGENT_REMOTE_ENABLED` (on by
+default), `AGENT_REMOTE_ALLOWED_HOSTS` (empty means any host) and the credential
+that is the caller's own together define it.
+
+What is *held*: nothing durable. A token lives in this process's memory, keyed by
+account; a private key is a `0600` file under `<AGENT_DATA_DIR>/remote/<account>/`
+for the life of the mount only, removed on disconnect and at shutdown; a password
+or passphrase reaches `sshpass` through `SSHPASS` rather than a command line, so it
+is not in `ps`; and a clone rewrites `origin` to the plain URL, so `.git/config` is
+never a place a later reader finds a live credential.
+
+What is *exposed*: an SSH mount is the remote machine's filesystem, read and
+written by an agent whose writes are gated the same way any other write is — the
+approval gate does not know whether the path is local, which is the point of
+mounting rather than of a second editor, and it is also why
+`AGENT_REMOTE_ALLOWED_HOSTS` exists for a deployment that does not want the
+console pointed anywhere. Host keys are pinned on first use
+(`StrictHostKeyChecking=accept-new`) into the data directory rather than the
+operator's `~/.ssh`; **the residual is trust on first use** — a first connection
+to a host that is already impersonated is trusted, exactly as it is for `git
+clone` or `ssh` run by hand. A host key that changes afterwards is refused.
+
+And the boundary a deployment must state for itself: a remote mount makes
+`run_command`'s container path unreliable (a FUSE mount inside a container), so a
+workspace that is a remote mount is a workspace where `AGENT_SANDBOX=host` is the
+honest setting — and `host` is the weaker sandbox, which is why it is written down
+here rather than discovered.
+
+## 6. Out of scope, deliberately
 
 - **Unattended host changes.** The autonomy ladder
   ([roadmap](roadmap.md) §5) puts L3 out of scope: an agent that changes a host
@@ -145,7 +179,7 @@ the request.
 - **Vendoring a provider SDK, or a second execution plane.** Atlas keeps the
   ecosystem's code and CI; Genie is a console over a workspace.
 
-## 6. Verifying the controls, not just reading them
+## 7. Verifying the controls, not just reading them
 
 Every claim above has a test behind it, and the ones that matter most are named
 here so a change that erodes one fails loudly:
@@ -157,5 +191,10 @@ here so a change that erodes one fails loudly:
 | A turn without an account is refused, not put on the shared key | `src/test/tenancy.test.ts` |
 | The ceiling counts where the turn is decided and resets with the day | `src/test/ceiling.test.ts` |
 | The gate times out closed, and records who decided | `src/test/approval.test.ts` |
+| A remote host and path cannot become an argument, and an allowlist is honoured | `src/test/remote.test.ts` |
+| A mount that is not there is a failure, and its key file goes with it | `src/test/remote.test.ts` |
+| A GitHub or forge token is verified by the host, never stored, and redacted from errors | `src/test/remote-forge.test.ts`, `src/test/remote.test.ts` |
+| Remote work off means refused, not half-on | `src/test/remote-disabled.test.ts` |
+| A secret reaches a command through the environment and not its arguments | `src/test/shell.test.ts` |
 | Sign-in is verified against the JWKS, not trusted | `src/test/oidc.test.ts`, `src/test/oidc-redirect.test.ts` |
 | A control-plane outage is reported, not swallowed | `src/test/controlplane-outage.test.ts` |

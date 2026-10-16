@@ -85,7 +85,9 @@ const DEFINITION_ENVELOPE = z.object({
   }),
   files: z.array(SEED_NODE).optional(),
   state: z.record(z.string(), z.unknown()).optional(),
+  // TODO: Consider defining a specific StateRecord type when the schema stabilizes
   docs: z.array(z.record(z.string(), z.unknown())).optional(),
+  // TODO: Consider defining a specific DocRecord type when the schema stabilizes
   checks: z.array(z.record(z.string(), z.unknown())).min(1, "A scenario needs at least one graded check."),
   hints: z.array(HINT).optional(),
   allowHints: z.boolean().optional(),
@@ -93,6 +95,7 @@ const DEFINITION_ENVELOPE = z.object({
   // Declared here even though the shape is checked by hand below: a key the envelope does not
   // name is *stripped* by zod, and a stripped overlay is a translation that silently vanishes.
   i18n: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
+  // TODO: Consider defining a specific I18nRecord type when the schema stabilizes
 });
 
 /** Every check kind the engine understands, used to catch typos early. */

@@ -37,6 +37,13 @@ export const COMMANDS: SlashCommand[] = [
     summary: "Saved projects: list, save, open, rename, remove, export and import as one file.",
     group: "projects",
   },
+  {
+    name: "remote",
+    args: "[list|ssh|atlas|new|clone|run|push|pr]",
+    summary:
+      "A folder on another machine, a GitHub repository, and Atlas: connect, clone, create, run, push and open a pull request.",
+    group: "projects",
+  },
   { name: "model", args: "[id]", summary: "Show or choose the model for this chat.", group: "model" },
   { name: "models", args: "[filter]", summary: "List the models the gateway advertises.", group: "model" },
   { name: "steps", args: "[n]", summary: "Show or set this chat's step budget.", group: "model" },

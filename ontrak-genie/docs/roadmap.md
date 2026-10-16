@@ -37,7 +37,11 @@ full developer reference.
 > through the same jail and gate). **0.5 shipped** — the **terminal client**:
 > `genie` drives the same server over the same API, with sign-in handed back to a
 > loopback, skills, follow-ups and the gate, and no runtime dependency
-> ([cli.md](cli.md)).
+> ([cli.md](cli.md)). **0.6 shipped** — **remote workspaces**: a folder on a
+> server mounted over SSH and worked in as if it were local, a GitHub repository
+> cloned with the caller's own token and edited in place, and **Atlas** (the
+> ecosystem's Gitea) as an add-on behind a Magnate plan — all with credentials
+> held in memory for the session rather than written beside the workspace.
 
 ## 1. Vision
 
@@ -359,6 +363,61 @@ sandbox's business, not the agent's tool set.
 **Open, plainly:** the CLI covers the console's core and the housekeeping around
 it. What it does not yet have is a propose-then-commit review, a web tool set, and
 commands over the sharing API (`/api/shares` is reachable but unwrapped).
+
+### v0.6 — Remote workspaces `[x]`
+
+**Goal:** the workspace stops having to be *this* machine — a folder on a
+server, a repository on GitHub, and the ecosystem's own forge — without growing a
+second jail, a second editor or a second credential store.
+
+- `[x]` **A folder on a server, mounted rather than reimplemented.** `sshfs` puts
+the remote tree at `<sandbox>/.remotes/<id>` and the console makes it the working
+directory, so every tool, the diff, the snapshots and the preview reach it through
+the jail that already exists — the whole of "remote support" is that the same
+code runs over a FUSE mount. Mounts are **verified** before they are trusted
+(`sshfs` reports success for a connection that has already died, so
+`/proc/self/mounts` is the authority), they live in this process's memory so a
+saved working directory under `.remotes` is cleared at boot rather than resolving
+into an empty directory, and they are unmounted and their key files removed at
+shutdown. Pure rules in `src/remote-rules.ts`; the process, the credential store
+and the routes in `src/remote.ts` and `server.ts`.
+- `[x]` **A repository on GitHub, with the caller's token.** `owner/name` — or a
+pasted URL, **of that host** — is cloned into the working directory and edited in
+place, so the preview runs the project as it changes; branch, push and pull request
+follow through `api.github.com`. The Gitea rules *discard* a URL's host because
+one base is the operator's; here the host is checked, so `gitlab.com/acme/x` is
+refused rather than quietly cloned from GitHub. The token is supplied per command,
+`origin` is rewritten to the plain URL, and every error path is redacted.
+- `[x]` **Atlas, as an add-on.** Atlas runs the ecosystem's Gitea, so the forge
+path is Gitea's own API: connect (verified by `GET /api/v1/user`, remembering the
+login the forge agreed to), clone, **create a repository and work in it in one
+step**, push, and open a pull request. Two ways in, and the difference is stated
+rather than assumed: this deployment's **own** credential is the system path and is
+not gated on a plan, while anyone else's is checked against `MAGNATE_ATLAS_PLAN`
+*first* so a refusal reads as an add-on with a signup link rather than as a wrong
+password — and a Magnate that cannot be reached is not a refusal
+(`src/atlas.ts`, `src/entitlements.ts`, `src/test/remote-forge.test.ts`).
+- `[x]` **Credentials that are the caller's, and stay theirs.** Held in this
+process's memory, keyed by account exactly as the workspace scope is, and gone when
+it stops; nothing is written into the workspace, a config file or a transcript. Two
+stated exceptions: a private key has to be a file for `sshfs` to read it (`0600`
+under `<AGENT_DATA_DIR>/remote/<account>/<id>/`, removed on disconnect and at
+shutdown), and a password or passphrase reaches `sshpass` through `SSHPASS` rather
+than a command line, so it is never in `ps`. Host keys pin on first use into the
+data directory, never into the operator's `~/.ssh`, and
+`AGENT_REMOTE_ALLOWED_HOSTS` bounds where the console may dial at all.
+- `[x]` **The same three from the terminal.** `genie remote` lists, mounts,
+disconnects, connects to Atlas, creates a project, clones, runs, pushes and opens a
+pull request — over the same routes, with a secret that is never a positional
+argument (`--key-file`, `--password-stdin`, `--token-stdin`), and with
+`genie remote atlas` needing no secret at all because the deployment already holds
+one.
+- `[x]` **Create it, then run it.** A repository created or cloned from a forge
+becomes the working directory, so the project it produced is run the way any other
+project is: the console's **run the project** in the Atlas block, or
+`genie remote run`, both over `POST /api/preview/start`. Nothing new runs the app —
+the preview already knew how — which is why the whole of it is a button and a
+subcommand rather than a second runner (`src/cli/remote.ts`, `public/app.js`).
 
 ### v1.0 — The CodeOps surface `[x]`
 

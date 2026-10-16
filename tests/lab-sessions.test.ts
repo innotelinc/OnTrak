@@ -217,6 +217,32 @@ test("sessions: a Linux scenario is driven by the shell transport", async () => 
   assert.equal(h.driver.scripts.length, 0, "no PowerShell was run at a Linux guest");
 });
 
+test("sessions: the whole shared library directory reaches the guest, not just the platform twin", async () => {
+  const h = harness();
+  // An identity scenario, because that is the family whose scripts need a shared tool
+  // beyond the platform library: `setup.sh` runs `lib/idp.py`, the simulated directory
+  // service the ticket is about.
+  builtTemplate(h, "id-group-membership", "ubuntu-24.04");
+
+  const session = await h.manager.allocate("Ada", "id-group-membership");
+  await h.manager.runChecks(session);
+
+  // The tree is the source of truth rather than a list kept in the manager: the lab ships
+  // *everything* in `scenarios/_lib` so a scenario family can add a shared tool without
+  // touching the session manager. Naming only the platform library is what left
+  // `id-group-membership` unbuildable — its setup ran `python3 .../lib/idp.py` against a
+  // machine where nothing had been written to that path.
+  const shipped = readdirSync(join(process.cwd(), "scenarios", "_lib")).sort();
+  assert.ok(shipped.includes("idp.py"), "the tree ships the directory service the identity scenarios run");
+  for (const name of shipped) {
+    const landed = `${h.settings.guest.linuxWorkDir}/lib/${name}`;
+    assert.ok(
+      h.shell.uploads.some((upload) => upload.remotePath === landed),
+      `scenarios/_lib/${name} reached ${landed}`,
+    );
+  }
+});
+
 test("sessions: asking twice for the scenario already running returns that machine", async () => {
   const h = harness();
   builtTemplate(h, "net-dns-failure");

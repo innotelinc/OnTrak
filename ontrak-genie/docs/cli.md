@@ -81,6 +81,7 @@ follow-up the last turn offered; anything else is a task.
 | `/resume <id\|number>` | Switch chat and print its stored transcript |
 | `/rename`, `/archive`, `/unarchive`, `/delete` | Housekeeping on the current chat |
 | `/projects [list\|new\|open\|rename\|remove\|export\|import]` | Saved projects — see §4. Names, `--out` and `--files` are read from the line |
+| `/remote [list\|ssh\|disconnect\|atlas\|new\|clone\|run\|push\|pr]` | A folder on another machine, GitHub, or Atlas — see §5. The flags are read from the line |
 | `/model [id]`, `/models [filter]` | Show or choose the model; list the catalog |
 | `/steps [n]`, `/offline [on\|off]` | Per-chat step budget and offline-gateway opt-out |
 | `/pending`, `/approve [id]`, `/deny [id]` | Answer a gate that opened on another turn |
@@ -190,7 +191,60 @@ The verbs and their flags, in full:
 `--json` prints the server's own payload instead of a sentence, where it applies —
 including the project the server made, which is how a script learns the directory.
 
-## 5. Skills
+## 5. Remote workspaces
+
+A **remote folder** is a directory on another machine, mounted over SSH and made
+the working directory — so every tool, the diff, the preview and the publish flow
+reach it without knowing it is remote. A **GitHub repository** is cloned with your
+own token into the working directory and edited in place. **Atlas** is the
+ecosystem's Gitea forge, offered as an add-on.
+
+All three are the console's, over the same routes, and the credentials are the
+same ones: held by the server for your session, never written into the workspace,
+and never taken from a command line here.
+
+```bash
+genie remote                              # what is connected, and where Atlas is
+genie remote ssh deploy@git.example.com:/srv/app --key-file ~/.ssh/id_ed25519
+printf '%s' "$PASS" | genie remote ssh root@192.168.1.90:/srv/app --password-stdin
+genie remote disconnect 1                 # a row number, a label, or an id
+genie remote atlas                        # this deployment's own Atlas credential
+genie remote new "my-project"             # create it on the forge, clone it, work in it
+genie remote clone innotelinc/atlas       # --github for GitHub, --token-stdin for a token
+genie remote run                          # run the project here (--command to say it yourself)
+genie remote push genie/fix-the-thing
+genie remote pr genie/fix-the-thing "Fix the thing" --branch main
+```
+
+**A secret is never an argument here.** `--key-file` names a file, and
+`--password-stdin` / `--token-stdin` read a pipe, so neither lands in a shell
+history or in `ps` — on a shared machine that is the difference between a tool
+and a habit. `--password <value>` exists for a throwaway host and is the spelling
+to avoid. A key is a *file* because that is what it is everywhere else.
+
+**The target is spelled the way ssh spells it** — `user@host:/absolute/path` — and
+the port is `--port`, never folded into the target: `host:2222:/path` is a shape
+ssh accepts and a person does not mean. The halves are checked by the server
+exactly as the console's fields are, so nothing here is a second, weaker parser.
+
+**`genie remote atlas` needs no secret at all.** It connects with the credential
+the deployment already holds for its own forge, which is the system path and is not
+gated on a plan; anyone else's credential is checked against the Atlas plan first,
+so a refusal reads as an add-on with somewhere to subscribe rather than as a
+failure to sign in.
+
+**`genie remote run` is the half that makes the rest usable.** It starts the
+project in the working directory — which is where a repository created or cloned
+from the forge was just put — through the same route the console's preview pane
+uses, so what runs here is what the pane would show. No command means the server
+works one out (`npm run dev`, `manage.py`, a static site); `--command` says it
+yourself; `--json` prints the status the pane reads. The server owns the process
+and the port, so this returns rather than holding the terminal.
+
+Anything Gitea works here, not only Atlas: `genie remote` talks to whatever
+`http(s)` address it is given, and the API calls follow that address.
+
+## 6. Skills
 
 A skill is a markdown playbook with a name and a description, loaded from
 
@@ -215,7 +269,7 @@ message**, fenced so the model can tell the instruction from the request, with
 the task last. There is no hidden system prompt: what was sent is what `/last`
 shows.
 
-## 6. Scripting
+## 7. Scripting
 
 `genie ask` is the non-interactive shape, and the exit code is the answer:
 
@@ -234,7 +288,7 @@ The server's refusals arrive as the server's own message: an unreachable host, a
 `401` with the sign-in hint, a `429` over quota, and a `400` for a bad port are
 all distinguished rather than flattened into "failed".
 
-## 7. Flags
+## 8. Flags
 
 | Flag | Meaning |
 | --- | --- |
@@ -259,7 +313,7 @@ config → default** (`http://127.0.0.1:3400`). The environment names are
 `ONTRAK_GENIE_URL`, `ONTRAK_GENIE_TOKEN`, `ONTRAK_GENIE_COOKIE`,
 `ONTRAK_GENIE_CONFIG` and `ONTRAK_GENIE_SKILLS`.
 
-## 8. What the CLI consumes
+## 9. What the CLI consumes
 
 | Endpoint | Used for |
 | --- | --- |
@@ -273,7 +327,7 @@ config → default** (`http://127.0.0.1:3400`). The environment names are
 | `GET/POST /api/projects`, `GET/PATCH/DELETE /api/projects/:id`, `POST /api/projects/:id/open` | Projects: listing, saving, renaming, forgetting, opening |
 | `GET /api/projects/:id/export`, `POST /api/projects/import` | A project as one portable file, and back |
 
-## 9. Building and running from source
+## 10. Building and running from source
 
 ```bash
 npm install

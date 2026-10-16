@@ -30,7 +30,10 @@
 # include three. Here each service is prefixed with its product, and the *values*
 # (images, build stages, commands, healthchecks) are the same as the product files.
 # Ports are the ones the family already reserves: 3000/5432 training,
-# 3001/5433 Tix, 8787/5434 Sentinel, 3400 Genie (which has no database).
+# 3001/5433 Tix, 8787/5434 Sentinel, 3400 Genie (which has no database), and 8080
+# for the lab's console gateway — the one service here that is not a product but the
+# training range's own, and the one name (`lab.ontrak.innotel.us`) the family's edge
+# already forwards for it.
 #
 # ## Which interface a port is published on
 #
@@ -170,12 +173,13 @@ services:
       # behaviour it had before the port. The lab's own settings
       # (`ONTRAK_<SECTION>__<KEY>`) arrive through the env file above.
       #
-      # This container is **not** a lab host — the image has neither `incus` nor
-      # `/dev/kvm` — so either run it in demo mode (`ONTRAK_DEMO__ENABLED=1`,
-      # which needs no host at all), or deploy the app where a hypervisor lives.
-      # Mounting the host's Incus socket is deliberately not done here: a worker
-      # that cannot schedule the processes it spawns fails later and more
-      # confusingly than one that never started.
+      # This container *is* the lab's control plane, and the hypervisor it drives is
+      # named by `ONTRAK_INCUS__REMOTE` ("i2" — the lab host this box already trusts,
+      # with its golden image and templates) rather than by a daemon on this box. The
+      # image carries the `incus` client for it, the client's trust configuration is
+      # mounted below, and the guests' network is routed here by
+      # `ontrak-lab-route.service`. A deployment with no hypervisor to reach says so
+      # with `ONTRAK_DEMO__ENABLED=1`, which needs no host at all.
       ONTRAK_LAB_ENABLED: ${ONTRAK_LAB_ENABLED:-}
       ONTRAK_LAB_URL: ${ONTRAK_LAB_URL:-}
       ONTRAK_LAB_IN_APP: ${ONTRAK_LAB_IN_APP:-}
@@ -187,6 +191,42 @@ services:
       - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
       - /etc/localtime:/etc/localtime:ro
       - ontrak-family-training-storage:/app/storage
+      # The lab's scenario tree, read by the ported control plane in this app
+      # (`src/lib/lab/`, served at `/lab`). The scenarios are data, not build
+      # input: the app reads them at runtime, so they are mounted rather than
+      # baked into the image — editing a scenario is then a reload, not a
+      # rebuild. Read-only, because the lab grades what a scenario *defines*
+      # and never rewrites it.
+      - ./scenarios:/app/scenarios:ro
+      # The host's Incus, so this app can be the lab's control plane instead of
+      # only linking to a peer's. The client in the image speaks to the daemon
+      # over this socket; `/dev/kvm` is what lets a scenario be a *machine*
+      # rather than a container. Both are only reachable if the process also
+      # holds the right groups — `group_add` below names them by gid, because a
+      # container cannot resolve the host's `incus-admin`/`kvm` names.
+      #
+      # The socket is the *single-host* way in, and a deployment pointed at a remote
+      # (as this one is) does not use it. It is kept because it costs nothing and
+      # makes the other mode a setting rather than an edit here.
+      - /var/lib/incus/unix.socket:/var/lib/incus/unix.socket
+      - /dev/kvm:/dev/kvm
+      # The Incus CLI's trust configuration, which is the client certificate the remote
+      # lab host has trusted plus the remote entry that names it — without it the
+      # container's CLI knows no remote at all and every call answers `The remote "i2"
+      # doesn't exist`, which is how a remote range fails every check while the stack
+      # itself looks healthy. Read-only, since a client has nothing to write here, and
+      # mounted at the *service account's* home because that is where the CLI looks
+      # (`$HOME/.config/incus`) and the entrypoint's `setpriv` drop leaves HOME there.
+      # The default is a readable copy of the operator's config directory: root's own is
+      # 0700 and root-owned, so the app user cannot read it where it lives.
+      - ${ONTRAK_INCUS_TRUST_DIR:-/etc/ontrak/incus-trust}:/home/nextjs/.config/incus:ro
+    # gid 988 is the host's `incus-admin` (owns the daemon socket, mode 660) and
+    # 993 its `kvm` (owns `/dev/kvm`, mode 660). Supplementary groups, so the
+    # server still runs as the unprivileged `nextjs` user — it can talk to Incus
+    # and open KVM, and nothing else changes.
+    group_add:
+      - "988"
+      - "993"
     healthcheck:
       test:
         - CMD
@@ -218,6 +258,79 @@ services:
     volumes:
       - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
       - /etc/localtime:/etc/localtime:ro
+
+  # ── Guacamole: the lab's browser console ───────────────────────────────────
+  # The training app's hands-on half hands a student a *machine*, and this is how
+  # they watch it: the app mints a signed, encrypted, single-use payload scoped to
+  # one guest (`src/lib/lab/guac.ts` — the `guacamole-auth-json` wire format) and the
+  # browser opens `${ONTRAK_GUAC__BASE_URL}#/?data=…` in an iframe. Nothing else
+  # renders a desktop, so without these two services `GET /lab/sessions/<id>/console`
+  # has no gateway to hand the link to and redirects back to the session saying so:
+  # the lab still starts, clones and grades machines, and no student can watch one
+  # being fixed.
+  #
+  # These are the lab's own two services from the lab's own compose file
+  # (`ontrak-lab/docker-compose.yml`), off-the-shelf upstream images: `guacd` does the
+  # RDP/SSH work and the webapp renders it. `guacd` opens its connection *to the
+  # guest's own address*, so it needs the route into the lab network (`10.20.0.0/24`,
+  # `ontrak-lab-route.service` on this host) exactly as the app does — container egress
+  # follows the host's routing table, so that unit is what this depends on.
+  guacd:
+    image: guacamole/guacd:1.6.0
+    restart: unless-stopped
+    init: true
+    environment:
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      - /etc/localtime:/etc/localtime:ro
+      # Only used when `guac.recording` is on, so an instructor can review a session
+      # afterwards. A named volume rather than a host path, like the rest of the
+      # family's state; both services share it because the webapp serves what guacd
+      # writes.
+      - ontrak-family-guac-recordings:/recordings
+
+  guacamole:
+    image: guacamole/guacamole:1.6.0
+    restart: unless-stopped
+    init: true
+    depends_on:
+      - guacd
+    ports:
+      # 8080 is the port the family already reserves for the lab: the edge forwards
+      # `lab.ontrak.innotel.us` here and carries the websocket upgrade the console
+      # tunnel needs (`scripts/cerulean-ontrak.py`), so the console gets a TLS name
+      # rather than a bare port students would have to be told about. The path is
+      # passed through unchanged, which is why `ONTRAK_GUAC__BASE_URL` keeps its
+      # trailing `/guacamole/`: the webapp is deployed there and generates
+      # base-relative URLs from it.
+      - "${ONTRAK_GUAC_BIND_HOST:-0.0.0.0}:${ONTRAK_GUAC_BIND_PORT:-8080}:8080"
+    environment:
+      TZ: ${TZ:-America/New_York}
+      GUACD_HOSTNAME: guacd
+      GUACD_PORT: "4822"
+      # guacamole-auth-json — and the one value that has to agree across two services:
+      # the app *signs* every console link with `ONTRAK_GUAC__SECRET_KEY` and this
+      # extension *verifies* it with `JSON_SECRET_KEY`, so one secret names both. When
+      # they drift the app keeps minting correct links, every student is answered
+      # "Permission denied", and neither log says why — which is why `doctor` posts a
+      # link it signed to this service and fails on the refusal.
+      JSON_ENABLED: "true"
+      JSON_SECRET_KEY: ${ONTRAK_GUAC__SECRET_KEY:-}
+      LOG_LEVEL: ${ONTRAK_GUAC__LOG_LEVEL:-info}
+    volumes:
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      - /etc/localtime:/etc/localtime:ro
+      - ontrak-family-guac-recordings:/recordings
+    healthcheck:
+      # The image is a Tomcat deployment; probe whichever HTTP client it ships.
+      test:
+        ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/guacamole/ >/dev/null 2>&1 || wget -q --spider http://127.0.0.1:8080/guacamole/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+
   tix-db:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -788,6 +901,7 @@ services:
       - ./data/vault/token/ontrak.token:/vault/token/ontrak.token:ro
 
 volumes:
+  ontrak-family-guac-recordings:
   ontrak-family-training-db:
   ontrak-family-training-storage:
   ontrak-family-tix-db:

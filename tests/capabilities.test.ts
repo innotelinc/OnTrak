@@ -12,7 +12,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { capabilities, type Capability, type CapabilityId } from "../src/lib/capabilities";
+import {
+  capabilities,
+  capabilitiesForRole,
+  summarizeCapabilities,
+  type Capability,
+  type CapabilityId,
+} from "../src/lib/capabilities";
 import { SENTINEL_CONTROL_CENTER_PATH } from "../src/lib/sentinel-status";
 
 const ORDER: readonly CapabilityId[] = ["training", "tix", "sentinel", "sync", "genie", "lab"];
@@ -136,7 +142,56 @@ test("capabilities: sentinel is delegated to its own reader", () => {
   // family link that would be a dead end.
   const refused = byId({ SENTINEL_CONSOLE_URL: "sentinel.example.test" });
   assert.equal(refused.get("sentinel")!.url, null);
+  assert.equal(refused.get("sentinel")!.probeUrl, null);
   assert.equal(refused.get("sentinel")!.named, false);
   assert.ok(refused.get("sentinel")!.note);
   assert.match(refused.get("sentinel")!.note!, /not an absolute URL/);
+});
+
+test("capabilities: probeUrl, roles, and summarizeCapabilities mirror the portal catalogue", () => {
+  const defaultList = capabilities({});
+  const summary = summarizeCapabilities(defaultList);
+  assert.deepEqual(summary, {
+    total: 6,
+    reachable: 5,
+    named: 0,
+    family: 5,
+    off: 1,
+    unreachable: 0,
+  });
+
+  const found = byId({
+    ONTRAK_TIX_BASE_URL: "https://desk.internal.test/subpath/",
+    ONTRAK_LAB_ENABLED: "on",
+    ONTRAK_LAB_URL: "http://10.0.0.5:8080/",
+    SENTINEL_CONSOLE_URL: "sentinel.example.test",
+  });
+  assert.equal(found.get("tix")!.probeUrl, "https://desk.internal.test/health");
+  assert.equal(found.get("lab")!.probeUrl, "http://10.0.0.5:8080/healthz");
+  assert.equal(found.get("sentinel")!.probeUrl, null);
+
+  assert.deepEqual(
+    summarizeCapabilities(Array.from(found.values())),
+    {
+      total: 6,
+      reachable: 5,
+      named: 2,
+      family: 3,
+      off: 0,
+      unreachable: 1,
+    },
+  );
+
+  assert.deepEqual(
+    capabilitiesForRole("STUDENT", {}).map((c) => c.id),
+    ["training", "lab"],
+  );
+  assert.deepEqual(
+    capabilitiesForRole("TECHNICIAN", {}).map((c) => c.id),
+    ["tix"],
+  );
+  assert.deepEqual(
+    capabilitiesForRole("SYSADMIN", {}).map((c) => c.id),
+    ["tix", "sentinel", "sync", "genie"],
+  );
 });

@@ -2671,12 +2671,21 @@ async function chooseWorkspace(path) {
     $("#workspace-note").textContent = error.message;
     return;
   }
-  // A different root is a different tree, so start it at the top rather than
-  // leaving the list on a path that only existed in the old one.
+  await afterWorkspaceChange();
+}
+
+/**
+ * Everything that has to follow the agent moving to a different tree.
+ *
+ * A different root is a different file tree, a different set of changed-marker
+ * files, and a different running app — the frame in the pane belongs to the
+ * workspace that produced it, so showing it under the new one's name would be a
+ * lie about what the person is looking at. Choosing a folder, connecting to a
+ * remote one and cloning a repository all end here.
+ */
+async function afterWorkspaceChange() {
   await loadFiles(".");
   await loadWorkspace();
-  // And a different preview: the running app belongs to a workspace, so the pane
-  // must not keep showing the old one's frame under the new one's name.
   unloadPreviewFrame();
   await refreshPreviewApp();
 }
@@ -3695,6 +3704,619 @@ function buyHosting() {
   window.open(url.toString(), "_blank", "noopener");
 }
 
+/* ------------------------------------------------------ remote workspaces */
+
+/*
+ * A folder on a server, and a repository on GitHub.
+ *
+ * The console has always worked in a directory it can see. This is how one that
+ * is somewhere else becomes such a directory: an SSH folder is mounted inside the
+ * sandbox and made the working directory, so the tools, the tree, the diffs and
+ * the preview reach it without knowing it is remote; a GitHub clone lands in the
+ * working directory and is edited where it lands.
+ *
+ * Both take the credential from the person typing it, and the panel says the one
+ * thing a credential field has to say — what happens to it. It is held for this
+ * session only, and never written into the workspace. The key field is emptied the
+ * moment it has been used, because a key left sitting in a textarea is a key on
+ * the screen.
+ */
+
+async function openRemote() {
+  $("#remote").classList.remove("hidden");
+  $("#remote-open").setAttribute("aria-expanded", "true");
+  enterDialog($("#remote"));
+  await loadRemote();
+}
+
+function closeRemote() {
+  $("#remote").classList.add("hidden");
+  $("#remote-open").setAttribute("aria-expanded", "false");
+  leaveDialog($("#remote"));
+}
+
+async function loadRemote() {
+  const status = $("#remote-status");
+  let info;
+  try {
+    info = await api("/api/remote");
+  } catch (error) {
+    status.textContent = error.message;
+    return;
+  }
+  renderRemote(info);
+}
+
+function renderRemote(info) {
+  const status = $("#remote-status");
+  const list = $("#remote-list");
+  const controls = [
+    $("#remote-connect"),
+    $("#remote-clone"),
+    $("#remote-branch-new"),
+    $("#remote-push"),
+    $("#remote-pr"),
+  ];
+  list.replaceChildren();
+
+  if (!info.enabled) {
+    status.textContent =
+      "Remote workspaces are switched off on this deployment (AGENT_REMOTE_ENABLED=false). The console still works in the sandbox.";
+    for (const control of controls) control.disabled = true;
+    return;
+  }
+  for (const control of controls) control.disabled = false;
+
+  const allowed = Array.isArray(info.allowedHosts) ? info.allowedHosts : [];
+  status.textContent =
+    allowed.length > 0
+      ? `This deployment reaches ${allowed.join(", ")} and nothing else.`
+      : "Any host you name can be reached. Credentials are held for this session only, and never written into the workspace.";
+
+  const ssh = Array.isArray(info.ssh) ? info.ssh : [];
+  const github = Array.isArray(info.github) ? info.github : [];
+  if (ssh.length === 0 && github.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "muted files-note";
+    empty.textContent = "Nothing is connected yet.";
+    list.append(empty);
+  }
+  for (const connection of ssh) list.append(remoteSshRow(connection));
+  for (const connection of github) list.append(remoteGitHubRow(connection));
+  for (const connection of Array.isArray(info.forge) ? info.forge : []) list.append(remoteForgeRow(connection));
+  for (const clone of Array.isArray(info.forgeClones) ? info.forgeClones : []) list.append(remoteForgeCloneRow(clone));
+
+  renderAtlas(info.atlas ?? null);
+}
+
+/*
+ * Atlas: the forge, if this deployment has one, and what the caller's plan says
+ * about it.
+ *
+ * The block reports three different things rather than hiding behind one, because
+ * "not configured", "your plan does not include it" and "we could not ask" are
+ * three different situations with three different answers — and the second one is
+ * where a subscription is sold.
+ */
+let atlasInfoCache = null;
+
+function renderAtlas(atlas) {
+  const status = $("#remote-atlas-status");
+  atlasInfoCache = atlas;
+  const controls = [
+    $("#remote-atlas-connect"),
+    $("#remote-atlas-create"),
+    $("#remote-atlas-clone"),
+    $("#remote-atlas-ssh"),
+    $("#remote-forge-branch"),
+    $("#remote-forge-push"),
+    $("#remote-forge-pr"),
+  ];
+
+  if (atlas === null || atlas.configured !== true) {
+    status.textContent =
+      "No Atlas is configured on this deployment (AGENT_ATLAS_URL), so its forge is not offered here.";
+    for (const control of controls) control.disabled = true;
+    return;
+  }
+  for (const control of controls) control.disabled = false;
+
+  $("#remote-forge-url").value = atlas.url;
+  const user = $("#remote-forge-user");
+  if (user.value === "" && atlas.systemUser !== "") user.value = atlas.systemUser;
+
+  const sentences = [`The forge is at ${atlas.url}.`];
+  if (atlas.systemCredential) {
+    sentences.push(`This deployment holds its own credential, connecting as ${atlas.systemUser}.`);
+  }
+  if (atlas.entitled === true) {
+    sentences.push("Your plan includes Atlas.");
+  } else if (atlas.entitled === false) {
+    sentences.push(
+      `Atlas is an add-on and your plan does not include it${atlas.reason ? `: ${atlas.reason}` : ""}.`,
+    );
+  } else if (atlas.reason) {
+    sentences.push(`${atlas.reason}.`);
+  }
+  if (atlas.signupUrl) sentences.push(`Subscribe at ${atlas.signupUrl}.`);
+  status.textContent = sentences.join(" ");
+}
+
+function remoteForgeRow(connection) {
+  const row = document.createElement("div");
+  row.className = "hosting-row";
+
+  const label = document.createElement("span");
+  label.className = "hosting-host";
+  label.textContent = `${connection.label} as ${connection.user}`;
+
+  const state = document.createElement("span");
+  state.className = "remote-state muted";
+  state.textContent = connection.system ? "deployment credential" : "connected";
+
+  const forget = document.createElement("button");
+  forget.type = "button";
+  forget.className = "btn-ghost mini";
+  forget.textContent = "disconnect";
+  forget.title = "Forget this forge's credential";
+  forget.addEventListener("click", async () => {
+    try {
+      await api("/api/remote/forge/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: connection.host }),
+      });
+      addNotice(`Disconnected from ${connection.label}.`);
+    } catch (error) {
+      addErrorMessage(error.message);
+    }
+    await loadRemote();
+  });
+
+  const actions = document.createElement("span");
+  actions.className = "hosting-actions";
+  actions.append(forget);
+  row.append(label, state, actions);
+  return row;
+}
+
+function remoteForgeCloneRow(clone) {
+  const row = document.createElement("div");
+  row.className = "hosting-row";
+
+  const label = document.createElement("span");
+  label.className = "hosting-host";
+  label.textContent = `${clone.repo}${clone.branch ? ` (${clone.branch})` : ""}`;
+  label.title = clone.url;
+
+  const state = document.createElement("span");
+  state.className = "remote-state muted";
+  state.textContent = "cloned";
+
+  const open = document.createElement("a");
+  open.className = "btn-ghost mini";
+  open.href = clone.url;
+  open.target = "_blank";
+  open.rel = "noopener";
+  open.textContent = "open";
+
+  const actions = remoteRowActions(clone.rel, null);
+  actions.prepend(open);
+  row.append(label, state, actions);
+  return row;
+}
+
+/** The two buttons every connected row ends with. */
+function remoteRowActions(rel, forget) {
+  const actions = document.createElement("span");
+  actions.className = "hosting-actions";
+
+  const use = document.createElement("button");
+  use.type = "button";
+  use.className = "btn-ghost mini";
+  use.textContent = "work here";
+  use.title = "Make this the directory the agent works in";
+  use.addEventListener("click", async () => {
+    await chooseWorkspace(rel);
+  });
+  actions.append(use);
+
+  if (forget !== null) actions.append(forget);
+  return actions;
+}
+
+function remoteSshRow(connection) {
+  const row = document.createElement("div");
+  row.className = "hosting-row";
+
+  const label = document.createElement("span");
+  label.className = "hosting-host";
+  label.textContent = connection.label;
+  label.title = `Mounted at ${connection.mountPoint}`;
+
+  const state = document.createElement("span");
+  state.className = "remote-state muted";
+  state.textContent = connection.live ? "connected" : "not answering";
+  if (!connection.live) state.classList.add("warn-text");
+
+  const forget = document.createElement("button");
+  forget.type = "button";
+  forget.className = "btn-ghost mini";
+  forget.textContent = "disconnect";
+  forget.title = "Unmount it and remove the key this session was holding";
+  forget.addEventListener("click", async () => {
+    try {
+      await api("/api/remote/ssh/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: connection.id }),
+      });
+      addNotice(`${connection.label} is disconnected, and its key is gone.`);
+    } catch (error) {
+      addErrorMessage(error.message);
+    }
+    await loadRemote();
+    await afterWorkspaceChange();
+  });
+
+  row.append(label, state, remoteRowActions(connection.rel, forget));
+  return row;
+}
+
+function remoteGitHubRow(connection) {
+  const row = document.createElement("div");
+  row.className = "hosting-row";
+
+  const label = document.createElement("span");
+  label.className = "hosting-host";
+  label.textContent = `${connection.repo}${connection.branch ? ` (${connection.branch})` : ""}`;
+  label.title = connection.url;
+
+  const state = document.createElement("span");
+  state.className = "remote-state muted";
+  state.textContent = connection.credential ? "token held" : "public";
+
+  const open = document.createElement("a");
+  open.className = "btn-ghost mini";
+  open.href = connection.url;
+  open.target = "_blank";
+  open.rel = "noopener";
+  open.textContent = "open";
+
+  const actions = remoteRowActions(connection.rel, null);
+  actions.prepend(open);
+  row.append(label, state, actions);
+  return row;
+}
+
+/** Empty the credential fields once the session has taken them. */
+function clearRemoteSecrets() {
+  for (const id of ["#remote-key", "#remote-passphrase", "#remote-password", "#remote-token", "#remote-forge-secret"]) {
+    $(id).value = "";
+  }
+}
+
+async function connectRemoteSsh() {
+  const button = $("#remote-connect");
+  const port = $("#remote-port").value.trim();
+  const body = {
+    host: $("#remote-host").value.trim(),
+    user: $("#remote-user").value.trim(),
+    path: $("#remote-path").value.trim(),
+    key: $("#remote-key").value,
+    passphrase: $("#remote-passphrase").value,
+    password: $("#remote-password").value,
+  };
+  if (port !== "") body.port = Number(port);
+
+  button.disabled = true;
+  button.textContent = "connecting…";
+  try {
+    const payload = await api("/api/remote/ssh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    addNotice(`${payload.connection.label} is mounted — the agent now works there.`);
+    clearRemoteSecrets();
+    await afterWorkspaceChange();
+  } catch (error) {
+    addErrorMessage(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "connect folder";
+    await loadRemote();
+  }
+}
+
+async function cloneRemoteGitHub() {
+  const button = $("#remote-clone");
+  const body = {
+    repo: $("#remote-repo").value.trim(),
+    branch: $("#remote-branch").value.trim(),
+    token: $("#remote-token").value.trim(),
+  };
+
+  button.disabled = true;
+  button.textContent = "cloning…";
+  try {
+    const payload = await api("/api/remote/github/clone", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    addNotice(`${payload.connection.repo} is cloned into ${payload.rel} — the agent now works there.`);
+    clearRemoteSecrets();
+    await afterWorkspaceChange();
+  } catch (error) {
+    addErrorMessage(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "clone & work in it";
+    await loadRemote();
+  }
+}
+
+async function newRemoteBranch() {
+  const title = window.prompt("New working branch — what is it for?", "");
+  if (title === null || title.trim() === "") return;
+  try {
+    const result = await api("/api/remote/github/branch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: title.trim() }),
+    });
+    addNotice(`On branch ${result.branch}.`);
+  } catch (error) {
+    addErrorMessage(error.message);
+  }
+}
+
+async function pushRemote() {
+  const branch = window.prompt("Push which branch?", "");
+  if (branch === null || branch.trim() === "") return;
+  try {
+    const result = await api("/api/remote/github/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ branch: branch.trim() }),
+    });
+    addNotice(`Pushed ${result.branch} to ${result.repo}.`);
+  } catch (error) {
+    addErrorMessage(error.message);
+  }
+}
+
+async function openRemotePullRequest() {
+  const title = window.prompt("Pull request title", "");
+  if (title === null || title.trim() === "") return;
+  const head = window.prompt("Branch to merge from", "");
+  if (head === null || head.trim() === "") return;
+  try {
+    const result = await api("/api/remote/github/pr", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: title.trim(), head: head.trim() }),
+    });
+    addNotice(result.url ? `Pull request #${result.number ?? ""} opened: ${result.url}` : "Pull request opened.");
+  } catch (error) {
+    addErrorMessage(error.message);
+  }
+}
+
+/*
+ * Atlas, and a forge you name.
+ *
+ * The credential typed here is verified by the forge itself before it is stored
+ * (`GET /api/v1/user`), so what the session holds is a login the server agreed to
+ * rather than one typed into a box. Empty user and password means "this
+ * deployment's own credential", which is the system path and is not gated on a
+ * plan; anyone else's is checked against the Atlas plan first.
+ */
+
+async function connectAtlas() {
+  const button = $("#remote-atlas-connect");
+  const body = {
+    url: $("#remote-forge-url").value.trim(),
+    user: $("#remote-forge-user").value.trim(),
+    secret: $("#remote-forge-secret").value.trim(),
+  };
+
+  button.disabled = true;
+  button.textContent = "connecting…";
+  try {
+    const info = await api("/api/remote/forge/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    addNotice(
+      `Connected to ${info.label} as ${info.user}${info.system ? " (this deployment's credential)" : ""}.`,
+    );
+    $("#remote-forge-secret").value = "";
+  } catch (error) {
+    addErrorMessage(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "connect to Atlas";
+    await loadRemote();
+  }
+}
+
+/**
+ * Create a repository on the forge and work in it.
+ *
+ * One action rather than two: the person asking for a project is asking for the
+ * repository *and* the checkout, and a repository nobody cloned is not somewhere
+ * to work.
+ */
+async function createAtlasProject() {
+  const name = $("#remote-atlas-name").value.trim();
+  if (name === "") {
+    addErrorMessage("A project name is required — it becomes the repository's name.");
+    return;
+  }
+  const button = $("#remote-atlas-create");
+  button.disabled = true;
+  button.textContent = "creating…";
+  try {
+    const payload = await api("/api/remote/forge/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, url: $("#remote-forge-url").value.trim() }),
+    });
+    addNotice(`${payload.connection.repo} is created and cloned into ${payload.rel} — the agent works there now.`);
+    $("#remote-atlas-name").value = "";
+    await afterWorkspaceChange();
+  } catch (error) {
+    addErrorMessage(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "create a project";
+    await loadRemote();
+  }
+}
+
+async function cloneAtlasRepo() {
+  const repo = $("#remote-atlas-repo").value.trim();
+  if (repo === "") {
+    addErrorMessage("A repository is named owner/name.");
+    return;
+  }
+  const button = $("#remote-atlas-clone");
+  button.disabled = true;
+  button.textContent = "cloning…";
+  try {
+    const payload = await api("/api/remote/forge/clone", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo, url: $("#remote-forge-url").value.trim() }),
+    });
+    addNotice(`${payload.connection.repo} is cloned into ${payload.rel} — the agent works there now.`);
+    $("#remote-atlas-repo").value = "";
+    await afterWorkspaceChange();
+  } catch (error) {
+    addErrorMessage(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "clone";
+    await loadRemote();
+  }
+}
+
+/**
+ * Run the project in the working directory, and show the app.
+ *
+ * The half that makes a project *created* on Atlas usable rather than merely
+ * present: `create a project` clones it and makes it where the agent works, and
+ * this runs it through the same route the preview pane's own "run" uses — so a
+ * project from a forge is run the way any other project is, and the pane shows the
+ * app rather than instructions for getting one.
+ *
+ * The pane is what reports the outcome, including "nothing here looks like an app":
+ * the server's own sentence lands in the pane's note, which is why this closes the
+ * dialog rather than keeping a copy of it on screen. A preview that is already up
+ * is left alone — starting again would replace a running app to say what the pane
+ * was already showing.
+ */
+async function runAtlasProject() {
+  const button = $("#remote-atlas-run");
+  button.disabled = true;
+  button.textContent = "running…";
+  try {
+    closeRemote();
+    setPreviewMode("app");
+    watchPreviewChanges();
+    await refreshPreviewApp();
+    if (!previewAppRunning()) await startPreviewApp();
+  } catch (error) {
+    addErrorMessage(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "run the project";
+  }
+}
+
+/**
+ * Fill the SSH form in with Atlas's own machine.
+ *
+ * A folder on Atlas is not a clone: it is the *host* — the same estate, mounted —
+ * so it goes through the SSH half of this panel and needs a key or a password
+ * there. This only saves the person from looking the address up, and says which
+ * field is still missing.
+ */
+function prefillAtlasSsh() {
+  const atlas = atlasInfoCache;
+  if (atlas === null || atlas.configured !== true) return;
+  let host = atlas.sshHost;
+  if (host === "") {
+    try {
+      host = new URL(atlas.url).hostname;
+    } catch {
+      host = "";
+    }
+  }
+  $("#remote-host").value = host;
+  if ($("#remote-user").value === "") $("#remote-user").value = atlas.systemUser;
+  // Whatever this person has already typed is left alone: the only thing missing
+  // is the credential, so that is where the cursor goes. The path is theirs to
+  // name — a guessed one would be a directory the agent works in by accident.
+  const missing = $("#remote-key").value.trim() === "" ? $("#remote-key") : $("#remote-password");
+  missing.focus();
+  addNotice(
+    host === ""
+      ? "Atlas has no host configured for a folder mount (AGENT_ATLAS_SSH_HOST)."
+      : `${host} is filled in above — add a private key or a password, then connect folder.`,
+  );
+}
+
+async function newForgeBranch() {
+  const title = window.prompt("New working branch — what is it for?", "");
+  if (title === null || title.trim() === "") return;
+  try {
+    const result = await api("/api/remote/forge/branch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: title.trim() }),
+    });
+    addNotice(`On branch ${result.branch}.`);
+  } catch (error) {
+    addErrorMessage(error.message);
+  }
+}
+
+async function pushToForge() {
+  const branch = window.prompt("Push which branch to the forge?", "");
+  if (branch === null || branch.trim() === "") return;
+  try {
+    const result = await api("/api/remote/forge/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ branch: branch.trim(), url: $("#remote-forge-url").value.trim() }),
+    });
+    addNotice(`Pushed ${result.branch} to ${result.repo}.`);
+  } catch (error) {
+    addErrorMessage(error.message);
+  }
+}
+
+async function openForgePullRequest() {
+  const title = window.prompt("Pull request title", "");
+  if (title === null || title.trim() === "") return;
+  const head = window.prompt("Branch to merge from", "");
+  if (head === null || head.trim() === "") return;
+  try {
+    const result = await api("/api/remote/forge/pr", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: title.trim(), head: head.trim(), url: $("#remote-forge-url").value.trim() }),
+    });
+    addNotice(result.url ? `Pull request #${result.number ?? ""} opened: ${result.url}` : "Pull request opened.");
+  } catch (error) {
+    addErrorMessage(error.message);
+  }
+}
+
 /*
  * The command palette, and what to do next.
  *
@@ -3724,6 +4346,7 @@ const PALETTE_ACTIONS = [
   { name: "files", desc: "open the workspace tree", run: () => toggleFilesPanel(true) },
   { name: "sweep", desc: "ask which models can actually call a tool", run: () => openSweep() },
   { name: "publish", desc: "put this workspace on the network", run: () => openHosting() },
+  { name: "remote", desc: "work on a folder over SSH, or a GitHub repository", run: () => openRemote() },
   { name: "model", desc: "choose the model for this chat", run: null },
 ];
 
@@ -4101,6 +4724,26 @@ function wire() {
     }
   });
 
+  $("#remote-open").addEventListener("click", () => openRemote());
+  $("#remote-close").addEventListener("click", () => closeRemote());
+  $("#remote-connect").addEventListener("click", () => void connectRemoteSsh());
+  $("#remote-clone").addEventListener("click", () => void cloneRemoteGitHub());
+  $("#remote-branch-new").addEventListener("click", () => void newRemoteBranch());
+  $("#remote-atlas-connect").addEventListener("click", () => void connectAtlas());
+  $("#remote-atlas-create").addEventListener("click", () => void createAtlasProject());
+  $("#remote-atlas-clone").addEventListener("click", () => void cloneAtlasRepo());
+  $("#remote-atlas-run").addEventListener("click", () => void runAtlasProject());
+  $("#remote-atlas-ssh").addEventListener("click", () => prefillAtlasSsh());
+  $("#remote-forge-branch").addEventListener("click", () => void newForgeBranch());
+  $("#remote-forge-push").addEventListener("click", () => void pushToForge());
+  $("#remote-forge-pr").addEventListener("click", () => void openForgePullRequest());
+  $("#remote-push").addEventListener("click", () => void pushRemote());
+  $("#remote-pr").addEventListener("click", () => void openRemotePullRequest());
+  // Clicking the backdrop closes it; clicking inside does not.
+  $("#remote").addEventListener("click", (event) => {
+    if (event.target === $("#remote")) closeRemote();
+  });
+
   $("#hosting-open").addEventListener("click", () => openHosting());
   $("#hosting-close").addEventListener("click", () => closeHosting());
   $("#hosting-publish").addEventListener("click", () => void publishHosting());
@@ -4196,6 +4839,7 @@ function wire() {
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     if (!$("#sweep").classList.contains("hidden")) closeSweep();
+    else if (!$("#remote").classList.contains("hidden")) closeRemote();
     else if (!$("#hosting").classList.contains("hidden")) closeHosting();
     else if (!$("#appearance").classList.contains("hidden")) toggleAppearance(false);
     else if (!$("#settings").classList.contains("hidden")) toggleSettings(false);

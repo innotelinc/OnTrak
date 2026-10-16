@@ -182,9 +182,11 @@ export function labDoor(config: LabConfig, env: Record<string, string | undefine
   // "none was given" — `labConfigFromEnv` reports both as one issue list, so the two
   // are told apart where they are still distinct: the variable itself.
   const stated = read(env, LAB_URL_ENV) !== "";
+  // Tracks whether an explicit URL was given; distinguishes from "none was given"
   const refused = config.enabled && config.url === null && stated;
 
   if (refused) return { kind: "misconfigured", issues: config.issues };
+  // in-app takes priority over external address
   if (TRUTHY.includes(read(env, LAB_IN_APP_ENV).toLowerCase())) {
     return { kind: "in-app", href: LAB_IN_APP_PATH };
   }
