@@ -382,6 +382,15 @@ function randomPassword(length: number, pick: (limit: number) => number): string
  * `chpasswd` rather than `passwd` — it does not prompt, and it *unlocks* an account a
  * scenario locked, which is exactly why it runs last.
  */
+/**
+ * How long a template's guest is given to shut down on its own before it is cut off.
+ *
+ * Generous rather than tight: this is the step that flushes the injected fault into
+ * the guest's disk, and a snapshot taken before that completes is a template with
+ * nothing wrong with it — the one outcome the build cannot detect afterwards.
+ */
+const TEMPLATE_GRACEFUL_STOP_SECONDS = 180;
+
 export function consoleTransportScript(guest: GuestSettings): string {
   const password = guest.password;
   const user = guest.linuxUser || "root";
@@ -900,14 +909,7 @@ export class SessionManager {
       }
       await this.provisionConsoleTransport(session, scenario, driver);
     } finally {
-      // Fault injection may leave the guest unresponsive (broken NIC, runaway CPU).
-      // Force-stop anyway: the snapshot must capture the fault, and a half-built template
-      // is worse than a hard power-off.
-      try {
-        await this.requireIncus().stopInstance(name, { force: true, timeout: 60 });
-      } catch (error) {
-        if (!(error instanceof IncusError)) throw error;
-      }
+      await this.stopGuestForgivingly(name);
     }
 
     await incus.createSnapshot(name, POOL_SNAPSHOT);
@@ -971,6 +973,41 @@ export class SessionManager {
       throw new SessionError(`${setupName} for ${scenario.id} never ran`);
     }
     return { result, combined };
+  }
+
+  /**
+   * Stop a template's guest — cleanly when it can be, by force when it cannot.
+   *
+   * The fault has to be *on disk* in the snapshot, and a VM's writes are not there
+   * yet: `--force` is a power cut, and whatever the guest had not flushed dies with
+   * it. That is exactly how the two Windows templates came out of a build whose own
+   * setup script had reported OK and whose fault was real in the running guest, and
+   * whose snapshot then carried none of it — while the Linux ones, whose container
+   * writes land immediately, kept theirs.
+   *
+   * So the guest is asked to stop first: a graceful stop flushes its filesystems and
+   * stops its services, and only then is the snapshot taken. A fault that broke the
+   * guest's own connectivity is the case that cannot answer, which is why the hard
+   * power-off stays — as the fallback, not as the default.
+   */
+  private async stopGuestForgivingly(name: string): Promise<void> {
+    const incus = this.requireIncus();
+    try {
+      await incus.stopInstance(name, { timeout: TEMPLATE_GRACEFUL_STOP_SECONDS });
+      return;
+    } catch (error) {
+      if (!(error instanceof IncusError)) throw error;
+      await this.store.logEvent(
+        "template_stop",
+        `${name}: the guest did not stop within ${TEMPLATE_GRACEFUL_STOP_SECONDS}s ` +
+          "(a fault that cut its own connectivity does this) — forcing",
+      );
+    }
+    try {
+      await incus.stopInstance(name, { force: true, timeout: 60 });
+    } catch (error) {
+      if (!(error instanceof IncusError)) throw error;
+    }
   }
 
   /**

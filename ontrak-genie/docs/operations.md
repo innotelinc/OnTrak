@@ -1010,6 +1010,62 @@ A single-page app with no build step (`public/`), served by the agent itself.
   inside a bundle are data, not trust — they are re-checked when the bundle is read
   and again, per file, against the sandbox fence, so a hand-edited bundle cannot
   write outside its own project.
+
+  **A zip, and the dependencies that come with it.** Most projects do not arrive as
+  this console's own bundle; they arrive as whatever the person has — an export
+  from a forge, a folder somebody compressed. `upload .zip` in the workspace panel
+  posts the archive's own bytes to `POST /api/projects/import-zip`, and it becomes a
+  *new* project exactly as a loaded bundle does. Three things are decided for the
+  person and stated in the log beside the list: a single wrapping folder is
+  stripped when every file shares it (``widgets-main/`` is what "Download ZIP"
+  produces, and leaving it would mean the agent stands one level above the
+  project), the directories the console already ignores (`node_modules`, `.git`,
+  build output) are left out and *named*, and the operating system's own litter
+  (`__MACOSX/`, `.DS_Store`) is dropped without being reported. The archive is read
+  by `src/zip.ts`: no dependency, ZIP64 included, every entry's CRC and length
+  verified, encrypted entries and compression methods it cannot unpack refused by
+  name, and bounded three ways before anything is written — the upload's size, the
+  entry count, and the total *uncompressed* size, with each entry inflated under a
+  ceiling of what the archive claims. Paths go through the same fence a bundle's do,
+  so a zip holding `../../etc/passwd` is refused before a project is made.
+
+  With `?install=1` the dependencies are installed before the upload answers, so a
+  person is handed a project they can actually run rather than one they have to
+  work out how to build. `src/project-install.ts` reads the stack from the *names*
+  of the files at the project root — `package.json` (and which lockfile, so `npm
+  ci`/`yarn`/`pnpm` is chosen), `requirements.txt`, `pyproject.toml`, `go.mod`,
+  `Cargo.toml`, `composer.json`, `Gemfile`, and a Java project is *named* as one
+  this image cannot build rather than half-built — and runs the steps through the
+  same sandboxed executor as everything else, which is where one constraint decides
+  the shape of every step: a sandboxed command's container has a read-only root
+  filesystem and does not outlive the command, so anything installed outside the
+  project is lost the moment the step ends. Python therefore gets a `.venv` *in the
+  project*, Go and Rust point their caches at `.gopath`/`.cargo` inside it, and
+  `node_modules` is already there. A failed step stops the ones after it, and both
+  the plan (`GET /api/projects/:id/stack`, which is what the console shows before
+  anything runs) and the report keep the installer's own words rather than a
+  summary of them. Installs need the network: with `AGENT_SANDBOX_NETWORK=none`
+  (the default) every downloading step fails, and the plan says so before anybody
+  watches it happen.
+
+  **Saving a project to a repository that does not exist yet.** `publish` — the
+  button in the same panel, `POST /api/publish` underneath — creates the repository
+  and puts the project in it: GitHub through `api.github.com` with the caller's own
+  token, or Atlas through the same Gitea API the Atlas block uses, with the
+  connected credential or the deployment's own `AGENT_ATLAS_USER`/`AGENT_ATLAS_PASSWORD`
+  when nobody has connected one. The order is load-bearing: the repository is created
+  empty (`auto_init: false`, because a seeded README is already a commit and the
+  project's first push would then be refused for having diverged), the project is
+  committed with an identity supplied *per command* (so a host with no `user.email`
+  still works, and nothing in anybody's git config is touched), `origin` is set to
+  the plain URL, and then the push carries the credential inline for that one
+  command — the same posture as a clone, so `.git/config` never holds a live token.
+  A repository that already exists is pushed into rather than refused, and when the
+  install step left dependencies in the project and there is no `.gitignore`, one is
+  written and *reported* rather than `node_modules` being committed. Afterwards the
+  directory **is** the clone: `origin` points at the new repository and the
+  credential is held for the session, so the push and pull-request controls work
+  from there on with nothing else to configure.
 - **Accessibility.** Landmarks and labelled controls, a skip link, visible focus
   rings, `aria-expanded` on the panel toggle, a dialog role with focus handling
   for the file viewer, and a polite live region that announces tool results,

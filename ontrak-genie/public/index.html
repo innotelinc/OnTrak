@@ -54,35 +54,59 @@
             close
           </button>
         </div>
-        <nav id="sessions" class="sessions" aria-label="Chat sessions"></nav>
+        <!--
+          Two blocks a person can fold, and what they fold is remembered.
+
+          The chat list is the sidebar's reason to exist, so it starts open and
+          keeps the scroll; the status rows are a readout rather than a
+          workspace, and on a narrow sidebar a column of dots costs room a chat
+          title would use better. Native `<details>`, so the toggle is a real
+          control — Enter and Space work it, a screen reader announces
+          expanded/collapsed, and the console's own Tab trap sees it — and the
+          fold is kept in this browser rather than on the account, the trade the
+          theme already makes (see `wireSections` in `app.js`).
+        -->
+        <details id="section-chats" class="sidebar-section sidebar-chats" data-section="chats" open>
+          <summary class="section-head">
+            <span class="section-title">chats</span>
+            <span id="sessions-count" class="section-note muted"></span>
+          </summary>
+          <nav id="sessions" class="sessions" aria-label="Chat sessions"></nav>
+        </details>
+
         <div class="sidebar-foot">
-          <div class="row">
-            <span class="status-dot" id="gateway-dot" aria-hidden="true"></span>
-            <span id="gateway-label" class="muted">checking gateway...</span>
-          </div>
-          <div class="row">
-            <span class="status-dot" id="sandbox-dot" aria-hidden="true"></span>
-            <span id="sandbox-label" class="muted">checking sandbox...</span>
-          </div>
-          <div class="row">
-            <span class="status-dot" id="models-dot" aria-hidden="true"></span>
-            <span id="models-label" class="muted">checking models...</span>
-            <button
-              id="sweep-open"
-              class="btn-ghost mini"
-              title="Ask the gateway which of its advertised models can actually make a tool call"
-            >
-              sweep
-            </button>
-          </div>
-          <div class="row">
-            <span class="status-dot" id="offline-dot" aria-hidden="true"></span>
-            <span id="offline-label" class="muted">checking offline fallback...</span>
-          </div>
-          <div class="row">
-            <span class="status-dot" id="usage-dot" aria-hidden="true"></span>
-            <span id="usage-label" class="muted">checking account usage...</span>
-          </div>
+          <details id="section-status" class="sidebar-section" data-section="status" open>
+            <summary class="section-head">
+              <span class="section-title">status</span>
+            </summary>
+            <div class="row">
+              <span class="status-dot" id="gateway-dot" aria-hidden="true"></span>
+              <span id="gateway-label" class="muted">checking gateway...</span>
+            </div>
+            <div class="row">
+              <span class="status-dot" id="sandbox-dot" aria-hidden="true"></span>
+              <span id="sandbox-label" class="muted">checking sandbox...</span>
+            </div>
+            <div class="row">
+              <span class="status-dot" id="models-dot" aria-hidden="true"></span>
+              <span id="models-label" class="muted">checking models...</span>
+              <button
+                id="sweep-open"
+                class="btn-ghost mini"
+                title="Ask the gateway which of its advertised models can actually make a tool call"
+              >
+                sweep
+              </button>
+            </div>
+            <div class="row">
+              <span class="status-dot" id="offline-dot" aria-hidden="true"></span>
+              <span id="offline-label" class="muted">checking offline fallback...</span>
+            </div>
+            <div class="row">
+              <span class="status-dot" id="usage-dot" aria-hidden="true"></span>
+              <span id="usage-label" class="muted">checking account usage...</span>
+            </div>
+          </details>
           <!--
             Who the console is signed in as, and the way out. Both come from
             `/api/auth/status`, the one route that answers without a session.
@@ -473,8 +497,18 @@
           <div class="files-projects-head">
             <span class="muted">projects</span>
             <span class="files-projects-actions">
+              <button
+                id="project-upload"
+                class="btn-ghost mini"
+                title="Upload a project as a .zip: it is unpacked as a new project, opened, and its dependencies installed"
+              >
+                upload .zip
+              </button>
               <button id="project-import" class="btn-ghost mini" title="Load a project bundle (.json) as a new project">
                 import
+              </button>
+              <button id="project-publish" class="btn-ghost mini" title="Create a GitHub or Atlas repository and save this project into it">
+                publish
               </button>
               <button id="project-new" class="btn-ghost mini" title="Create and open a new project">
                 new project
@@ -488,8 +522,27 @@
               accept=".json,application/json"
               aria-label="Choose a project bundle to load"
             />
+            <!--
+              The archive itself is the request body — the file is handed to
+              `fetch` unread, so a 40 MB upload is not decoded into a string in the
+              page first, and is not re-encoded on the way out.
+            -->
+            <input
+              id="project-upload-file"
+              class="hidden"
+              type="file"
+              accept=".zip,application/zip,application/x-zip-compressed"
+              aria-label="Choose a project archive to upload"
+            />
           </div>
           <div id="projects-list" class="projects-list" aria-label="Saved workspace projects"></div>
+          <!--
+            What the upload did: which folder was unwrapped, how many files
+            landed, what was left out, and every install step with its result. It
+            is a log rather than a sentence because a failed install is the case
+            that matters, and the installer's own words are the useful part.
+          -->
+          <pre id="project-import-log" class="files-import-log hidden" role="status" aria-live="polite"></pre>
         </div>
         <div id="files-path" class="files-path mono">.</div>
         <div id="files-list" class="files-list"></div>
@@ -584,6 +637,83 @@
           />
         </label>
         <p id="settings-note" class="muted settings-note"></p>
+      </div>
+    </div>
+
+    <!--
+      Publishing a project to a repository that does not exist yet.
+
+      The one thing this dialog has to say out loud is what happens afterwards:
+      the project's directory *becomes* the clone. `origin` is set to the new
+      repository and the credential is used for the single push (never written into
+      `.git/config`), so the push and pull-request controls work from here on with
+      nothing else to configure — which is what "and carry on working" means.
+
+      The GitHub token is asked for per publish rather than kept: it is the
+      caller's own credential, the server holds it for the session only, and a
+      password field that forgets is the honest shape for that.
+    -->
+    <div
+      id="publish"
+      class="viewer hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="publish-title"
+      tabindex="-1"
+    >
+      <div class="viewer-head">
+        <span id="publish-title" class="mono">save this project to a repository</span>
+        <div class="viewer-actions">
+          <button id="publish-close" class="btn-ghost" aria-label="Close publish">close</button>
+        </div>
+      </div>
+      <div class="viewer-content settings-form">
+        <label class="field" for="publish-target">
+          <span class="muted">where</span>
+          <select id="publish-target" class="select" aria-label="Which forge to create the repository on">
+            <option value="github">GitHub — github.com</option>
+            <option value="atlas">Atlas — this deployment's forge</option>
+          </select>
+        </label>
+        <label class="field wide" for="publish-name">
+          <span class="muted">repository name</span>
+          <input
+            id="publish-name"
+            class="input-text"
+            type="text"
+            aria-label="Repository name"
+            placeholder="my-project"
+          />
+        </label>
+        <label class="field wide" for="publish-description">
+          <span class="muted">description</span>
+          <input
+            id="publish-description"
+            class="input-text"
+            type="text"
+            aria-label="Repository description"
+            placeholder="saved from Genie"
+          />
+        </label>
+        <label class="field check" for="publish-private">
+          <input id="publish-private" type="checkbox" checked />
+          <span class="muted">private</span>
+        </label>
+        <label class="field wide" id="publish-token-field" for="publish-token">
+          <span class="muted">GitHub token — used for this push, never stored in the project</span>
+          <input
+            id="publish-token"
+            class="input-text"
+            type="password"
+            autocomplete="off"
+            aria-label="GitHub token"
+            placeholder="ghp_… or github_pat_…"
+          />
+        </label>
+        <p id="publish-note" class="muted settings-note"></p>
+        <div class="viewer-actions publish-actions">
+          <button id="publish-go" class="btn-primary">save it there</button>
+        </div>
       </div>
     </div>
 
@@ -703,13 +833,26 @@
       <div class="viewer-content settings-form">
         <p id="skills-status" class="muted settings-note"></p>
 
-        <section class="skills-block" aria-labelledby="skills-memory-heading">
-          <h2 id="skills-memory-heading" class="remote-heading">what this workspace remembers</h2>
+        <!--
+          The blocks below fold, like the sidebar's sections and for the same
+          reason: this panel is three answers to three different questions, and a
+          person who came for one of them should not scroll past the others. They
+          start open — each is a distinct part of a short panel, and hiding an
+          install field behind a click is a feature nobody finds — so what the
+          fold buys here is room for the person who wants it, not a default the
+          console made for them.
+        -->
+        <details class="skills-block panel-block" id="section-skills-memory" data-section="skills-memory" open>
+          <summary class="section-head">
+            <h2 id="skills-memory-heading" class="remote-heading">what this workspace remembers</h2>
+          </summary>
           <p id="skills-memory" class="muted settings-note"></p>
-        </section>
+        </details>
 
-        <section class="skills-block" aria-labelledby="skills-install-heading">
-          <h2 id="skills-install-heading" class="remote-heading">add one from GitHub</h2>
+        <details class="skills-block panel-block" id="section-skills-install" data-section="skills-install" open>
+          <summary class="section-head">
+            <h2 id="skills-install-heading" class="remote-heading">add one from GitHub</h2>
+          </summary>
           <form id="skills-install" class="skills-install" autocomplete="off">
             <label class="field wide" for="skills-repo">
               <span class="muted">repository</span>
@@ -735,10 +878,12 @@
             anybody else is offered. For a skill the whole deployment should have,
             an operator runs <span class="mono">genie skills add &lt;owner/repo&gt;</span>.
           </p>
-        </section>
+        </details>
 
-        <section class="skills-block" aria-labelledby="skills-list-heading">
-          <h2 id="skills-list-heading" class="remote-heading">skills on offer</h2>
+        <details class="skills-block panel-block" id="section-skills-list" data-section="skills-list" open>
+          <summary class="section-head">
+            <h2 id="skills-list-heading" class="remote-heading">skills on offer</h2>
+          </summary>
           <div id="skills-list" class="skills-list"></div>
           <p class="muted settings-note">
             The model sees that menu at the start of every turn and loads a playbook
@@ -746,7 +891,7 @@
             <span class="mono">.genie/skills</span> travels with the code, so
             everyone who clones this workspace gets it.
           </p>
-        </section>
+        </details>
       </div>
     </div>
 
@@ -776,8 +921,18 @@
       <div class="viewer-content settings-form">
         <p id="remote-status" class="muted settings-note"></p>
 
-        <section class="remote-block" aria-labelledby="remote-ssh-heading">
-          <h2 id="remote-ssh-heading" class="remote-heading">a folder on a server, over SSH</h2>
+        <!--
+          Three ways to get a working directory, and they are alternatives rather
+          than a sequence — so the SSH form opens and the other two are folded,
+          each behind a summary that names it. That is the whole of the default:
+          one click unfolds either one, and the fold is remembered per browser
+          (`wireSections`). On a phone this is the difference between a panel that
+          fits and three screens of forms nobody asked for yet.
+        -->
+        <details class="remote-block panel-block" id="section-remote-ssh" data-section="remote-ssh" open>
+          <summary class="section-head">
+            <h2 id="remote-ssh-heading" class="remote-heading">a folder on a server, over SSH</h2>
+          </summary>
           <div class="remote-grid">
             <label class="field" for="remote-host">
               <span class="muted">host</span>
@@ -828,10 +983,12 @@
             workspace: a password is handed to the mount and never written to disk, and a key is kept
             for this session only and removed when you disconnect.
           </p>
-        </section>
+        </details>
 
-        <section class="remote-block" aria-labelledby="remote-github-heading">
-          <h2 id="remote-github-heading" class="remote-heading">a repository on GitHub</h2>
+        <details class="remote-block panel-block" id="section-remote-github" data-section="remote-github">
+          <summary class="section-head">
+            <h2 id="remote-github-heading" class="remote-heading">a repository on GitHub</h2>
+          </summary>
           <div class="remote-grid">
             <label class="field" for="remote-repo">
               <span class="muted">repository — owner/name, or a GitHub URL</span>
@@ -861,10 +1018,12 @@
             as it changes. The token is supplied per git command and never written into
             <span class="mono">.git/config</span>.
           </p>
-        </section>
+        </details>
 
-        <section class="remote-block" aria-labelledby="remote-atlas-heading">
-          <h2 id="remote-atlas-heading" class="remote-heading">Atlas — the ecosystem's forge</h2>
+        <details class="remote-block panel-block" id="section-remote-atlas" data-section="remote-atlas">
+          <summary class="section-head">
+            <h2 id="remote-atlas-heading" class="remote-heading">Atlas — the ecosystem's forge</h2>
+          </summary>
           <p id="remote-atlas-status" class="muted files-note"></p>
           <div class="remote-grid">
             <label class="field" for="remote-forge-url">
@@ -915,7 +1074,7 @@
             are the Gitea endpoints, so any Gitea forge works here. A project created or cloned here becomes where the
             agent works, so it can be run and previewed straight away.
           </p>
-        </section>
+        </details>
 
         <div id="remote-list" class="hosting-list" aria-label="Connected remote workspaces"></div>
       </div>

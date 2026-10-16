@@ -41,7 +41,10 @@ full developer reference.
 > server mounted over SSH and worked in as if it were local, a GitHub repository
 > cloned with the caller's own token and edited in place, and **Atlas** (the
 > ecosystem's Gitea) as an add-on behind a Magnate plan — all with credentials
-> held in memory for the session rather than written beside the workspace.
+> held in memory for the session rather than written beside the workspace. **0.7
+> shipped** — **bring your own project**: an uploaded `.zip` becomes a project that
+> installs its own dependencies, and it or any other project can be saved to a new
+> GitHub or Atlas repository and carried on from there.
 
 ## 1. Vision
 
@@ -418,6 +421,53 @@ project is: the console's **run the project** in the Atlas block, or
 `genie remote run`, both over `POST /api/preview/start`. Nothing new runs the app —
 the preview already knew how — which is why the whole of it is a button and a
 subcommand rather than a second runner (`src/cli/remote.ts`, `public/app.js`).
+
+### v0.7 — Bring your own project `[x]`
+
+**Goal:** the work does not have to start here. A project arrives as an archive,
+and leaves as a repository — with the two things that make it usable done for the
+person rather than explained to them: its dependencies installed, and somewhere
+for it to live that is not one deployment's disk.
+
+- `[x]` **An uploaded `.zip` is a project.** `src/zip.ts` reads the format without
+  a dependency (the central directory plus `zlib.inflateRawSync`, ZIP64 included,
+  every entry's CRC and claimed length verified, encrypted entries and methods it
+  cannot unpack refused *by name*), and it is bounded three ways before anything is
+  written — the upload, the entry count, and the *uncompressed* size, with each
+  entry inflated under `maxOutputLength`, so a small archive cannot expand into the
+  memory it lied about. Every path goes through the same fence a project bundle's
+  does, which is why `../../etc/passwd` inside an archive is refused rather than
+  written. `src/project-zip.ts` decides what the archive *means*: the wrapping
+  folder is stripped when every file shares it (`repo-main/` is what an export
+  from a forge looks like), the directories the console ignores are left out and
+  reported, the operating system's litter is dropped without being reported, and
+  the result is a new project made the same way every other one is.
+- `[x]` **It installs its own dependencies, inside the project.**
+  `src/project-install.ts` reads the stack off the *names* of the files at the
+  project root and nothing else, so the plan is knowable before it runs (the
+  console shows the steps, `GET /api/projects/:id/stack`), and it runs them through
+  the same sandboxed executor the agent's `run_command` does. The decision that
+  shapes every step: a sandboxed command runs in a throwaway container whose root
+  filesystem is read-only, so anything installed *outside* the project is gone the
+  moment the step ends — which is why Python gets a `.venv` in the project rather
+  than a `pip install` into the interpreter, and why Go's and Rust's caches are
+  pointed at `.gopath`/`.cargo` inside it. A step that fails stops the rest, and
+  the installer's own output is returned whole, because that is what says why.
+  `POST /api/projects/:id/install` runs it, `POST /api/projects/import-zip` with
+  `?install=1` does the whole arrival in one call.
+- `[x]` **And it can be saved to a repository that does not exist yet.**
+  `POST /api/publish` takes a target of `github` or `atlas` and does the four
+  things in the order that works: create the repository (GitHub through
+  `api.github.com` with the caller's own token, Atlas through Gitea's API with the
+  connected credential or the deployment's own), commit what is here with an
+  identity supplied per command, point `origin` at the **plain** URL, and push once
+  with the credential inline — so `.git/config` holds no secret and the directory
+  *is* the clone afterwards, which is what makes the push and pull-request paths
+  above work from there on. A repository that already exists is pushed into rather
+  than refused, and a `.gitignore` is written — and *reported* — when the installer
+  left dependencies in the project, because committing `node_modules` is not what
+  "save my project" means (`src/remote-rules.ts` for the payloads, `src/remote.ts`
+  for the process, `src/test/remote-publish.test.ts` for the sequence).
 
 ### Skills and memory `[x]`
 

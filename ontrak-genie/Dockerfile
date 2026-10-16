@@ -43,12 +43,20 @@ COPY docker-entrypoint.sh ./docker-entrypoint.sh
 # Anything still missing can be installed at run time: this image is Alpine, has
 # network, and the container runs as root, so `apk add <pkg>` (or `pip`/`npm`)
 # works — the system prompt tells the agent to do exactly that rather than work
-# around a missing tool.
-RUN apk add --no-cache bash git ripgrep python3 py3-pip \
-        curl wget jq make gcc g++ musl-dev python3-dev libffi-dev openssl-dev \
-        unzip tar xz ca-certificates openssl \
-    && chmod +x /app/docker-entrypoint.sh \
-    && mkdir -p /workspace /data
+# around a missing tool.  # `fuse3` + `sshfs` + `openssh-client` + `sshpass` are what a **remote folder**
+  # needs: the mount is an `sshfs` mount, so it needs the `sshfs` binary, the
+  # `fusermount3` helper that comes with `fuse3`, the `ssh` it runs underneath, and
+  # `sshpass` for the password case (`sshfsCommand` passes the secret through
+  # `SSHPASS` rather than the command line). Installed here rather than left to the
+  # run-time `apk add` above, because a container that is recreated loses whatever
+  # was installed into its writable layer — a mounted folder would then fail as
+  # "sshfs: not found" on a deployment that had been working.
+  RUN apk add --no-cache bash git ripgrep python3 py3-pip \
+          curl wget jq make gcc g++ musl-dev python3-dev libffi-dev openssl-dev \
+          unzip tar xz ca-certificates openssl \
+          fuse3 sshfs openssh-client sshpass \
+      && chmod +x /app/docker-entrypoint.sh \
+      && mkdir -p /workspace /data
 
 EXPOSE 3400
 # The entrypoint resolves any `vault://` values (a no-op with none), then execs

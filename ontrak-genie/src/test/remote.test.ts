@@ -363,6 +363,25 @@ test("a password reaches the mount through the environment, never the command li
   assert.deepEqual(entries, []);
 });
 
+test("a password wins over a key when both are given, and the key is not written", async () => {
+  await resetWorkdir();
+  const { deps, calls } = fakeDeps();
+
+  const info = await connectSsh(
+    { host: "dev.example.com", user: "deploy", path: "/srv/app", key: KEY, password: "hunter2" },
+    deps,
+  );
+
+  assert.equal(info.auth, "password");
+  assert.deepEqual(calls[0]?.env, { SSHPASS: "hunter2" });
+  // The key is neither offered to sshfs nor left on disk for it to pick up: a
+  // connection that authenticates by password must not carry one at all.
+  assert.doesNotMatch(calls[0]?.command ?? "", /IdentityFile/);
+  assert.doesNotMatch(calls[0]?.command ?? "", /hunter2/);
+  const entries = await fs.readdir(path.join(DATA, "remote", "shared", info.id)).catch(() => []);
+  assert.deepEqual(entries, [], "nothing was written for the key either");
+});
+
 test("a host outside the allowlist, a missing credential, and a bad key are all refused before anything runs", async () => {
   await resetWorkdir();
   const { deps, calls } = fakeDeps();

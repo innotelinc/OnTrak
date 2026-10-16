@@ -91,6 +91,15 @@ import {
   parseArchive,
   ProjectArchiveError,
 } from "./project-archive.js";
+import { importZipProject } from "./project-zip.js";
+import {
+  detectProjectStack,
+  installEnvironmentNotes,
+  installProjectDependencies,
+  listProjectMarkers,
+} from "./project-install.js";
+import { MAX_ZIP_BYTES, ZipError } from "./zip.js";
+import { slugify } from "./repo-rules.js";
 import {
   cloneRepository,
   createBranch,
@@ -115,6 +124,7 @@ import {
   listSsh,
   openForgePullRequest,
   openGitHubPullRequest,
+  publishProject,
   pushForge,
   pushGitHub,
   remoteEnabled,
@@ -215,6 +225,26 @@ async function readBody(req: http.IncomingMessage, limit = 1_000_000): Promise<s
     chunks.push(buffer);
   }
   return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
+ * The same read, without the decode.
+ *
+ * A zip is bytes, not text: passing an uploaded archive through `readBody`'s
+ * `toString("utf8")` would replace every byte that is not valid UTF-8 and hand the
+ * reader a file that is subtly not the one somebody uploaded. One route needs this
+ * (`/api/projects/import-zip`), and it is the whole reason it exists.
+ */
+async function readBodyBuffer(req: http.IncomingMessage, limit = 1_000_000): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const buffer = chunk as Buffer;
+    size += buffer.length;
+    if (size > limit) throw new HttpError(413, "request body too large");
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks);
 }
 
 async function readJson(
@@ -1294,6 +1324,117 @@ async function handleApi(
   }
 
   /*
+   * A project as an uploaded `.zip` (`src/zip.ts`, `src/project-zip.ts`).
+   *
+   * The bundle route above takes a *document* this console wrote; this one takes
+   * whatever a person has: an export from their desk, a "Download ZIP" from a
+   * forge, a folder somebody compressed. The body is the archive's own bytes (not
+   * JSON, not base64), because a 40 MB project re-encoded as text is a 55 MB
+   * upload for no reason, and `?name=` / `?open=1` work exactly as they do for a
+   * bundle.
+   *
+   * `?install=1` is the part that makes an upload *usable*: the dependencies are
+   * installed before the response comes back, step by step, so a person is handed a
+   * project they can run rather than a directory they have to work out how to
+   * build. It is a query flag rather than the default because it is slow and it is
+   * a write into the project — the console asks for it, and a caller that just
+   * wants the files gets them without waiting for npm.
+   */
+  if (pathname === "/api/projects/import-zip" && method === "POST") {
+    const archive = await readBodyBuffer(req, MAX_ZIP_BYTES);
+    if (archive.length === 0) throw new HttpError(400, "an archive is required");
+
+    const nameParam = url.searchParams.get("name");
+    const openParam = url.searchParams.get("open");
+    const installParam = url.searchParams.get("install");
+
+    try {
+      const imported = await importZipProject(archive, {
+        ...(nameParam === null ? {} : { name: nameParam }),
+        open: openParam === "1" || openParam === "true",
+      });
+      const stack = detectProjectStack(imported.paths);
+      const install =
+        installParam === "1" || installParam === "true"
+          ? await installProjectDependencies({ dir: resolveInBase(imported.project.dir), stack })
+          : null;
+      return sendJson(res, 201, {
+        project: imported.project,
+        files: imported.files,
+        skipped: imported.skipped,
+        root: imported.root,
+        stack: { ...stack, notes: [...stack.notes, ...installEnvironmentNotes()] },
+        install,
+        dirs: await listWorkspaceDirs(),
+      });
+    } catch (error) {
+      if (error instanceof ZipError) throw new HttpError(400, error.message);
+      if (error instanceof ProjectError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  /*
+   * What an import *will* install, before it installs it.
+   *
+   * The plan is a pure function of the project's root file names
+   * (`src/project-install.ts`), so the console can show the steps beside a button
+   * and the person can read what is about to run. It is also the answer for a
+   * project that was made by hand rather than uploaded.
+   */
+  const projectStackMatch = /^\/api\/projects\/([^/]+)\/stack$/.exec(pathname);
+  if (projectStackMatch && method === "GET") {
+    const id = decodeURIComponent(projectStackMatch[1] ?? "");
+    const project = await getProject(id);
+    if (project === null) throw new HttpError(404, "project not found");
+    const stack = detectProjectStack(await listProjectMarkers(resolveInBase(project.dir)));
+    return sendJson(res, 200, {
+      project,
+      stack: { ...stack, notes: [...stack.notes, ...installEnvironmentNotes()] },
+    });
+  }
+
+  /*
+   * Install a project's dependencies, on demand.
+   *
+   * The same call the zip import makes, exposed so the button exists for a project
+   * that arrived another way: a clone, a hand-made directory, or an upload that was
+   * taken before the dependencies were ready. Every step runs through the *same*
+   * sandboxed executor the agent's `run_command` does — the guard list, the
+   * container, the process-group kill are not re-implemented here — and each step's
+   * output is returned whole, because the installer's own words are what a person
+   * needs when one fails.
+   */
+  const projectInstallMatch = /^\/api\/projects\/([^/]+)\/install$/.exec(pathname);
+  if (projectInstallMatch && method === "POST") {
+    const id = decodeURIComponent(projectInstallMatch[1] ?? "");
+    const project = await getProject(id);
+    if (project === null) throw new HttpError(404, "project not found");
+    const payload = await readJson(req, 64_000).catch(() => ({}) as Record<string, unknown>);
+
+    const stack = detectProjectStack(await listProjectMarkers(resolveInBase(project.dir)));
+    const report = await installProjectDependencies({
+      dir: resolveInBase(project.dir),
+      stack,
+      ...(typeof payload.timeoutMs === "number" ? { timeoutMs: payload.timeoutMs } : {}),
+    });
+    /*
+     * `200` even when a step failed, which is the same call `/api/terminal` makes
+     * for a command that exits non-zero: the *request* succeeded — the plan ran and
+     * there is a report — and the failure is in the report (`ok`, and which step).
+     * Answering `400` would fold "npm exited 1" into the same shape as "that project
+     * does not exist", and the console reads an error's `error` field, so the
+     * report — the installer's own output, the useful part — would be thrown away.
+     * A refusal that happens before anything runs is a different thing and comes
+     * back inside the report's step, where it belongs.
+     */
+    return sendJson(res, 200, {
+      ...report,
+      notes: [...stack.notes, ...installEnvironmentNotes()],
+    });
+  }
+
+  /*
    * The console's terminal.
    *
    * It runs through the *same* executor as the agent's `run_command`
@@ -2092,6 +2233,53 @@ async function handleApi(
           ...(payload.dir === undefined ? {} : { dir: payload.dir }),
         }),
       );
+    } catch (error) {
+      if (error instanceof RemoteError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  /*
+   * Saving a project to a **new** repository (`remote.ts`, `publishToGitHub` and
+   * `publishToForge`).
+   *
+   * Every route in this module's repository block *finds* a repository that already
+   * exists; this is the other direction, and it is the one a project that arrived
+   * as an uploaded zip needs — the work is on this disk and nowhere else. Create,
+   * point `origin`, commit, push: after it, the directory is a clone in every sense
+   * that matters, which is why the ordinary push and pull-request routes work from
+   * here on with no further setup.
+   *
+   * `projectId` names the project to publish, and is how the console asks: a
+   * project's directory is a sandbox path the console does not build, and its name
+   * is what a repository should be called. A plain `dir` is accepted too, for the
+   * working directory itself.
+   */
+  if (pathname === "/api/publish" && method === "POST") {
+    const payload = await readJson(req, 64_000);
+
+    let dir = typeof payload.dir === "string" ? payload.dir.trim() : "";
+    let name = typeof payload.name === "string" ? payload.name.trim() : "";
+    const projectId = typeof payload.projectId === "string" ? payload.projectId.trim() : "";
+    if (projectId !== "") {
+      const project = await getProject(projectId);
+      if (project === null) throw new HttpError(404, "project not found");
+      if (dir === "") dir = project.dir;
+      if (name === "") name = slugify(project.name);
+    }
+
+    try {
+      const published = await publishProject({
+        target: payload.target,
+        ...(name === "" ? {} : { name }),
+        ...(dir === "" ? {} : { dir }),
+        ...(payload.description === undefined ? {} : { description: payload.description }),
+        ...(payload.private === undefined ? {} : { private: payload.private }),
+        ...(payload.token === undefined ? {} : { token: payload.token }),
+        ...(payload.url === undefined ? {} : { url: payload.url }),
+        ...(payload.message === undefined ? {} : { message: payload.message }),
+      });
+      return sendJson(res, 201, published);
     } catch (error) {
       if (error instanceof RemoteError) throw new HttpError(400, error.message);
       throw error;

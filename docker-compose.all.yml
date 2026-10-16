@@ -807,6 +807,29 @@ services:
       # the platform's own token directory is the source — never the mount-wide
       # cerulean.token.
       - ./data/vault/token/ontrak.token:/vault/token/ontrak.token:ro
+    # A remote folder is mounted with `sshfs`, and FUSE is a *device* rather than a
+    # syscall. `AGENT_SANDBOX=host` above makes this container the one that runs
+    # sshfs, so all three belong here rather than on a sandbox's `docker run`:
+    # without the node every mount is answered "fuse: device /dev/fuse not found.
+    # Kernel module not loaded?"; without SYS_ADMIN the mount is refused as EPERM
+    # even when the node is there; and with both, Docker's own AppArmor profile
+    # (`docker-default`) still denies the `mount` the `fusermount3` helper makes.
+    # Each was measured on this deployment: any one of them missing is a failed
+    # mount, and all three present is a working one.
+    #
+    # `apparmor=unconfined` is the honest shape of the third one — it is not a
+    # capability scoped to FUSE but the profile taken off this container entirely.
+    # That is defensible here and only here: this container *is* the boundary the
+    # agent runs inside (`AGENT_SANDBOX=host`), it holds no other service's data,
+    # and `no-new-privileges` still applies. Narrow it with a host AppArmor profile
+    # that allows `mount` for `fuse` alone and name that profile instead if the
+    # host is shared with anything that cares.
+    devices:
+      - /dev/fuse:/dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor=unconfined
     ports:
       - "${ONTRAK_GENIE_BIND_HOST:-0.0.0.0}:${ONTRAK_GENIE_PORT:-3400}:3400"
       # The preview. One published port, because the app is one app: a second

@@ -34,7 +34,7 @@
  */
 
 import { config } from "./config.js";
-import { checkEntitlement, EntitlementError, signupUrlFor } from "./entitlements.js";
+import { checkEntitlement, EntitlementError, planPrice, signupUrlFor, type PlanPrice } from "./entitlements.js";
 
 export interface AtlasInfo {
   /** The forge's base address, e.g. `http://192.168.1.90:3000`. Empty: not configured. */
@@ -59,6 +59,15 @@ export interface AtlasInfo {
   reason: string;
   /** Where a person subscribes, when Magnate is configured. */
   signupUrl: string;
+  /**
+   * What the add-on costs, read from Magnate rather than written here.
+   *
+   * `null` when it cannot be said — no billing configured, or no such plan in the
+   * catalog yet — and the console then shows the plan and the signup link without
+   * a price, which is the honest panel. A number typed into this module would be a
+   * number nobody was ever charged.
+   */
+  price: PlanPrice | null;
 }
 
 export function atlasConfigured(): boolean {
@@ -67,20 +76,26 @@ export function atlasConfigured(): boolean {
 
 /** What the console shows about Atlas, and what it may do. */
 export async function atlasInfo(user: string | null): Promise<AtlasInfo> {
+  const configured = atlasConfigured();
   const info: AtlasInfo = {
     url: config.atlasUrl,
-    configured: atlasConfigured(),
+    configured,
     sshHost: config.atlasSshHost,
     systemUser: config.atlasUser,
     systemCredential: config.atlasUser !== "" && config.atlasPassword !== "",
     entitled: null,
     reason: "",
     signupUrl: signupUrlFor(config.atlasPlan),
+    // The price is the platform's own answer to "what does this cost", asked for
+    // only where there is a forge to sell access to. It is independent of *who* is
+    // asking — a person with no identity still sees what the add-on costs — so it
+    // is fetched before the early return below rather than with the entitlement.
+    price: configured ? await planPrice(config.atlasPlan) : null,
   };
 
   // Nothing to ask: no forge, no caller, or no billing to ask. The plan is a
   // question about a person, and there is no person here without an identity.
-  if (!info.configured || user === null || config.magnateEntitlementsUrl === "") return info;
+  if (!configured || user === null || config.magnateEntitlementsUrl === "") return info;
 
   try {
     const answer = await checkEntitlement({

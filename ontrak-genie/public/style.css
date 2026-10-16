@@ -140,7 +140,16 @@ html {
 
 .brand { font-weight: 600; letter-spacing: 0.01em; }
 
-.sessions { flex: 1; overflow-y: auto; padding: 8px; min-height: 0; }
+/*
+ * The chat list is a foldable section rather than the sidebar's bare scroll
+ * region. The section owns the scroll, so folding it hands the room back to the
+ * status rows and the theme switch below; and its header is sticky, because a
+ * list long enough to scroll is exactly the one where the control that hides the
+ * list would otherwise be the thing that scrolled away.
+ */
+.sidebar-chats { flex: 1; overflow-y: auto; min-height: 0; }
+.sidebar-chats > .section-head { position: sticky; top: 0; z-index: 1; background: var(--bg-panel); }
+.sessions { padding: 8px; }
 
 .session {
   display: block;
@@ -229,6 +238,59 @@ html {
 #account-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #account-row .btn-ghost { flex: none; }
 
+/* --- folds: the sidebar's sections, and a panel's blocks --- */
+
+/*
+ * One shape for every foldable thing in the console: the sidebar's two sections
+ * and the blocks inside the Skills and Remote panels. Native `<details>`, so the
+ * control is the platform's own — Enter and Space work whenever the summary has
+ * focus, expanded/collapsed is announced rather than inferred, and the console's
+ * Tab trap (which walks the panel's own tab stops) sees it like any other
+ * control.
+ *
+ * The marker is drawn here instead of left to the engine because the two engines
+ * disagree about it, and a fold whose affordance looks different on a phone is a
+ * fold somebody will not find. `min-height` is not decoration either: `summary`
+ * is a target, and the console's own layout check holds every target to the
+ * WCAG 2.5.8 floor of 24px.
+ */
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-dim);
+}
+.section-head::-webkit-details-marker { display: none; }
+.section-head::before { content: "\25B8"; flex: none; font-size: 9px; line-height: 1; }
+details[open] > .section-head::before { content: "\25BE"; }
+.section-head:hover { color: var(--text); }
+.section-title { flex: none; }
+/* A count or a note beside the label: pushed to the far edge, and never upper-cased
+   with the label it follows. */
+.section-note { margin-left: auto; font-weight: 400; letter-spacing: 0; text-transform: none; }
+
+/* The sidebar's own labels: small, quiet, and out of the way of the content. */
+.sidebar-section > .section-head {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 4px 0;
+}
+
+/*
+ * In a panel the summary *is* the block's heading, so it borrows the heading's
+ * type rather than the sidebar's, and the gap under it belongs to the heading
+ * only while the block is open — a closed block is a line of text, not a title
+ * with nothing under it.
+ */
+.panel-block > .section-head { min-height: 32px; }
+.panel-block > .section-head .remote-heading { margin: 0; }
+.panel-block[open] > .section-head { margin-bottom: 8px; }
+
 /* --- main --- */
 
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -271,6 +333,8 @@ html {
   cursor: pointer;
 }
 .btn-ghost:hover { background: var(--bg-hover); }
+/* The publish dialog's one action: right-aligned, because it commits something. */
+.publish-actions { justify-content: flex-end; }
 .btn-primary { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); font-weight: 500; }
 .topbar-right .field { display: flex; align-items: center; gap: 6px; }
 
@@ -740,6 +804,29 @@ pre.code {
 .files-workspace .select { width: 100%; }
 .files-note { margin: 0; font-size: 11px; line-height: 1.45; word-break: break-all; }
 .files-note:empty { display: none; }
+
+/*
+  The log an upload leaves behind: what was unpacked, what was left out, and every
+  install step with its result. Monospace and wrapped because the lines are
+  commands and file names, and bounded in height because a failing installer can
+  print hundreds of them — the panel has to stay a panel.
+*/
+.files-import-log {
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.files-import-log.hidden { display: none; }
 
 /* --- projects (inside the workspace panel) --- */
 

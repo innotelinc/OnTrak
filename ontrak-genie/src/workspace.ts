@@ -120,7 +120,11 @@ export async function listWorkspaceDirs(maxDepth = 3): Promise<string[]> {
 
 export type DirEntry = { name: string; path: string; type: "file" | "dir"; size: number };
 
-const IGNORED_DIRS = new Set([".git", "node_modules", ".agent", "dist", "__pycache__", ".venv"]);
+// `.gopath` and `.cargo` are here because the installer puts Go's and Rust's
+// caches there rather than in `$HOME` (see `src/project-install.ts`): a sandboxed
+// command's home directory does not survive the container, so the project is the
+// only place a dependency can live — and a dependency cache is not work.
+const IGNORED_DIRS = new Set([".git", "node_modules", ".agent", "dist", "__pycache__", ".venv", ".gopath", ".cargo"]);
 
 export async function listDirectory(abs: string): Promise<DirEntry[]> {
   const dirents = await fs.readdir(abs, { withFileTypes: true });

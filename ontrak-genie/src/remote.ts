@@ -68,9 +68,13 @@ import {
   gitHubApiUrl,
   gitHubAuthenticatedUrl,
   gitHubCloneUrl,
+  gitHubCreateRepoPayload,
+  gitHubCreateRepoUrl,
   gitHubHeaders,
   gitHubSlug,
   gitHubUrl,
+  gitHubUserUrl,
+  parseGitHubRepo,
   hostAllowed,
   isGitHubToken,
   isRemoteRel,
@@ -99,6 +103,7 @@ import {
   type PullRequest,
   type RepoRef,
 } from "./repo-rules.js";
+import { INSTALLED_PATHS } from "./project-install.js";
 import { createBranch, type GitResult, type GitRunner } from "./repo.js";
 import { sandboxRoot, selectedWorkspace, setSelectedWorkspace, accountDirName, currentScope } from "./scope.js";
 import { runShellCommand } from "./shell.js";
@@ -338,7 +343,16 @@ export interface ConnectSshInput {
   port?: unknown;
   user?: unknown;
   path?: unknown;
-  /** A PEM private key, pasted. Preferred over a password when both are given. */
+  /**
+   * A PEM private key, pasted. Used only when no password was given.
+   *
+   * The password wins when both arrive: a key has to exist as a *file* for
+   * `sshfs` to read it, while a password is handed to the child through the
+   * environment and never touches disk — so a caller offering both is offering
+   * the credential with less left behind, and a form that still submits a key it
+   * was filled in with earlier must not override the password typed to replace
+   * it.
+   */
   key?: unknown;
   /** The key's passphrase, when it has one. */
   passphrase?: unknown;
@@ -435,7 +449,11 @@ export async function connectSsh(input: ConnectSshInput, deps: RemoteDeps = defa
   if (key === "" && password === "") {
     throw new RemoteError("a private key or a password is required to reach that host");
   }
-  if (key !== "") {
+  // Decided here, before anything is written: the credential this mount will use
+  // is the one that gets validated, written and handed to `sshfs`, and it is the
+  // caller's password whenever they supplied one.
+  const auth: "key" | "password" = password !== "" ? "password" : "key";
+  if (auth === "key") {
     const reason = privateKeyReason(key);
     if (reason !== null) throw new RemoteError(reason);
   }
@@ -448,8 +466,7 @@ export async function connectSsh(input: ConnectSshInput, deps: RemoteDeps = defa
 
   const mountPoint = mountDirFor(sandboxRoot(), id);
   const rel = remoteRel(spec);
-  const secret = password !== "" ? password : passphrase;
-  const auth: "key" | "password" = key !== "" ? "key" : "password";
+  const secret = auth === "password" ? password : passphrase;
 
   // Whatever a previous attempt at *this* connection left behind goes now: this
   // directory holds one connection's credential, and a process that was killed
@@ -466,8 +483,10 @@ export async function connectSsh(input: ConnectSshInput, deps: RemoteDeps = defa
   await fs.mkdir(mountPoint, { recursive: true });
   await fs.mkdir(path.dirname(knownHostsFile()), { recursive: true });
 
+  // Written only when it is the credential this mount uses: a key file sitting
+  // beside a password connection is a secret on disk that nothing ever read.
   let keyFile: string | undefined;
-  if (key !== "") keyFile = await writeKeyFile(id, key);
+  if (auth === "key") keyFile = await writeKeyFile(id, key);
 
   const command = sshfsCommand(spec, {
     mountPoint,
@@ -1414,6 +1433,470 @@ export async function openForgePullRequest(
 
   const payload = await response.json().catch(() => ({}));
   return { ...parsePullRequest(payload), repo: repoSlug(ref), head, base };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Publishing a project to a new repository                                  */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Everything above this line *finds* a repository that already exists and works in
+ * it. This is the other direction, and it is the one a project that arrived as an
+ * uploaded zip needs: the work is on this disk and nowhere else, so "put it
+ * somewhere" means create the repository, commit what is here, and push it — and
+ * then keep working in the same directory, which is now a clone in every sense
+ * that matters (`origin` is set, and the credential is held for the session, so the
+ * push and pull-request paths above work from here on).
+ *
+ * The same two fences as every other write apply, restated because they are what
+ * makes this safe: the directory is resolved through `resolveInBase` (a `..` or an
+ * absolute path is refused before git is asked anything), and the credential is
+ * supplied to the push command alone — `origin` is rewritten to the *plain* URL
+ * first, so `.git/config` never holds a live token.
+ */
+
+/** The identity the first commit is made with, so a host with no git config works. */
+const GIT_IDENTITY_NAME = "OnTrak Genie";
+const GIT_IDENTITY_EMAIL = "genie@localhost";
+
+/** The header of a `.gitignore` this deployment writes for somebody. */
+const GITIGNORE_HEADER =
+  "# Added by OnTrak Genie: dependencies its installer put in this project.\n" +
+  "# Delete a line if you do want that directory in the repository.\n";
+
+async function pathExists(abs: string): Promise<boolean> {
+  try {
+    await fs.stat(abs);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The directory a publish works in: sandbox-relative in, absolute out, fenced.
+ *
+ * Defaults to the account's chosen working directory, which is the project a
+ * person is looking at when they press the button.
+ */
+function publishDir(requested: unknown): string {
+  const fallback = selectedWorkspace();
+  const rel = typeof requested === "string" && requested.trim() !== "" ? requested.trim() : fallback;
+  try {
+    return resolveInBase(rel.trim() === "" ? "." : rel);
+  } catch {
+    throw new RemoteError("that directory is outside the workspace");
+  }
+}
+
+/**
+ * Point `origin` at a repository, adding it or replacing it.
+ *
+ * Set before the push rather than after it, so a push that fails still leaves the
+ * directory saying where it belongs — and always the *plain* URL, never the one
+ * with the credential in it.
+ */
+async function pointOrigin(abs: string, plainUrl: string, run: GitRunner): Promise<void> {
+  const existing = await run("git remote get-url origin", abs);
+  const command = existing.ok
+    ? `git remote set-url origin ${shq(plainUrl)}`
+    : `git remote add origin ${shq(plainUrl)}`;
+  const result = await run(command, abs);
+  if (!result.ok) throw new RemoteError(`could not set the repository's address: ${result.output.trim()}`);
+}
+
+/** The `.gitignore` to write, or `null` when there is nothing of ours to ignore. */
+async function ignoreFileFor(abs: string): Promise<string | null> {
+  if (await pathExists(path.join(abs, ".gitignore"))) return null;
+  const lines: string[] = [];
+  for (const entry of INSTALLED_PATHS) {
+    if (await pathExists(path.join(abs, entry.replace(/\/$/, "")))) lines.push(entry);
+  }
+  return lines.length === 0 ? null : `${GITIGNORE_HEADER}${lines.join("\n")}\n`;
+}
+
+interface CommittedProject {
+  branch: string;
+  commit: string;
+  files: number;
+  /** True when this deployment had to write the `.gitignore` itself. */
+  ignoreFile: boolean;
+}
+
+/**
+ * Make a directory a repository with one committed snapshot of what is in it.
+ *
+ * Three details are deliberate:
+ *
+ *   * **An existing repository keeps its history and its branch.** A directory
+ *     that is already under version control is not re-initialised and its branch
+ *     is not renamed: this is a publish, and rewriting somebody's branch name is
+ *     not what they asked for. A *fresh* repository is put on the deployment's
+ *     default branch (`AGENT_GIT_DEFAULT_BRANCH`), so a new remote takes the
+ *     branch it was created with rather than one git happened to pick.
+ *   * **The commit has an identity, supplied per command.** A git host with no
+ *     `user.email` configured fails the commit outright, and "set up git identity"
+ *     is not a step a person uploading a zip should have to discover. It is passed
+ *     as `-c`, so it is this one command's and nothing in their config is touched.
+ *   * **The dependencies are not committed.** If the installer put `node_modules`
+ *     (or a virtualenv, or a module cache) in the project and there is no
+ *     `.gitignore`, one is written — and *reported*, because a file appearing in
+ *     somebody's project is a thing they should be told about. An existing
+ *     `.gitignore` is never touched.
+ */
+async function commitProject(abs: string, message: string, run: GitRunner): Promise<CommittedProject> {
+  const alreadyRepo = await run("git rev-parse --git-dir", abs);
+  if (!alreadyRepo.ok) {
+    const initialised = await run(`git init -b ${shq(config.gitDefaultBranch)}`, abs);
+    if (!initialised.ok) {
+      // git before 2.28 has no `-b`; the branch is made afterwards instead.
+      const plain = await run("git init", abs);
+      if (!plain.ok) {
+        throw new RemoteError(`could not start a repository here: ${plain.output.trim()}`);
+      }
+    }
+  }
+
+  let branch = config.gitDefaultBranch;
+  const hasCommit = await run("git rev-parse --verify HEAD", abs);
+  if (!hasCommit.ok) {
+    // Unborn branch: name it, so the new repository's default branch is this one.
+    await run(`git branch -M ${shq(config.gitDefaultBranch)}`, abs);
+  } else {
+    const head = await run("git symbolic-ref --short HEAD", abs);
+    const named = head.ok ? head.output.trim() : "";
+    if (named !== "") branch = named;
+  }
+
+  const ignoreFile = await ignoreFileFor(abs);
+  if (ignoreFile !== null) await fs.writeFile(path.join(abs, ".gitignore"), ignoreFile, "utf8");
+
+  const added = await run("git add -A", abs);
+  if (!added.ok) throw new RemoteError(`could not stage the project: ${added.output.trim()}`);
+
+  const committed = await run(
+    `git -c user.name=${shq(GIT_IDENTITY_NAME)} -c user.email=${shq(GIT_IDENTITY_EMAIL)} commit -m ${shq(message)}`,
+    abs,
+  );
+  if (!committed.ok) {
+    const output = committed.output.trim();
+    if (/nothing to commit|no changes added|nothing added to commit/i.test(output)) {
+      throw new RemoteError("there is nothing to publish: this project has no files");
+    }
+    throw new RemoteError(`could not commit the project: ${output}`);
+  }
+
+  const sha = await run("git rev-parse --short HEAD", abs);
+  const listed = await run("git ls-files", abs);
+  return {
+    branch,
+    commit: sha.ok ? sha.output.trim() : "",
+    files: listed.ok ? listed.output.split("\n").filter((line) => line.trim() !== "").length : 0,
+    ignoreFile: ignoreFile !== null,
+  };
+}
+
+/** Push the current branch of a project to a repository, with one command's credential. */
+async function pushProject(
+  abs: string,
+  branch: string,
+  authUrl: string,
+  secret: string,
+  run: GitRunner,
+  deps: RemoteDeps,
+): Promise<void> {
+  const pushed = await deps.run({
+    command: `git push ${shq(authUrl)} ${shq(`${branch}:refs/heads/${branch}`)}`,
+    cwd: abs,
+    // A first push carries the whole project, which is slower than the ordinary
+    // remote command this module bounds: the ordinary command timeout is the
+    // honest ceiling for "upload everything".
+    timeoutMs: config.commandTimeoutMs,
+  });
+  if (pushed.refused !== undefined) throw new RemoteError(redactToken(pushed.refused, secret));
+  if (!pushed.ok) throw new RemoteError(`could not push the project: ${redactToken(pushed.output.trim(), secret)}`);
+}
+
+export interface PublishProjectInput {
+  /** `github` for github.com, `atlas` for the Gitea this deployment knows. */
+  target?: unknown;
+  /** The repository name. Defaults to the directory's own name. */
+  name?: unknown;
+  description?: unknown;
+  /** Private unless the caller says otherwise: the ecosystem's repos are not public. */
+  private?: unknown;
+  /** Sandbox-relative; defaults to the account's chosen working directory. */
+  dir?: unknown;
+  /** A GitHub token, for `target: "github"`. */
+  token?: unknown;
+  /** A forge address, for `target: "atlas"`; defaults to the one connected. */
+  url?: unknown;
+  /** The first commit's message. */
+  message?: unknown;
+}
+
+export interface PublishProjectResult {
+  target: "github" | "forge";
+  /** `owner/name`. */
+  repo: string;
+  /** The repository's page, for a person to open. */
+  url: string;
+  /** Sandbox-relative working directory, which has not moved. */
+  rel: string;
+  branch: string;
+  commit: string;
+  /** How many files the commit carries. */
+  files: number;
+  /** True when this deployment wrote a `.gitignore` to keep dependencies out. */
+  ignoreFile: boolean;
+  /** True when that repository already existed and the work went into it. */
+  existing: boolean;
+}
+
+function publishPrivate(input: unknown): boolean {
+  return !(input === false || input === "false" || input === "public");
+}
+
+function publishMessage(input: unknown): string {
+  const message = typeof input === "string" ? input.replace(/\s+/g, " ").trim() : "";
+  return message === "" ? "Initial commit from OnTrak Genie" : message.slice(0, 200);
+}
+
+/** The token to create a repository with: the caller's, or the one this session holds. */
+function githubPublishToken(explicit: unknown, current: AccountRemotes): string {
+  const supplied = typeof explicit === "string" ? explicit.trim() : "";
+  if (supplied !== "") {
+    if (!isGitHubToken(supplied)) throw new RemoteError("that does not look like a GitHub token");
+    return supplied;
+  }
+  // A session that has already cloned from GitHub holds a token, and it belongs to
+  // exactly the account a repository created here would go into.
+  for (const connection of current.github.values()) {
+    if (connection.token !== "") return connection.token;
+  }
+  throw new RemoteError("a GitHub token is required to create a repository (paste one in the console)");
+}
+
+/**
+ * Create a repository on GitHub and save this project into it.
+ *
+ * The order matters and is not interchangeable: the repository is created *first*,
+ * because a commit with nowhere to go is a commit nobody can see, and the push is
+ * last, because everything before it is local and reversible.
+ *
+ * A repository that already exists is **not** an error. The name is the caller's
+ * `owner/name` namespace, and "create" is how a person expresses "save this there"
+ * even when there is already something at that name — so a 422 that says the
+ * repository exists is answered by pushing into it, with the honest possibility
+ * that the push is then refused for having diverged.
+ */
+export async function publishToGitHub(
+  input: PublishProjectInput,
+  deps: RemoteDeps = defaultDeps,
+): Promise<PublishProjectResult> {
+  assertEnabled();
+
+  const abs = publishDir(input.dir);
+  const current = slot();
+  const token = githubPublishToken(input.token, current);
+  const name = normalizeRepoName(input.name, path.basename(abs));
+  if (name === null) {
+    throw new RemoteError("a repository name is letters, digits, dots, dashes and underscores");
+  }
+
+  const description = typeof input.description === "string" ? input.description.trim() : "";
+  const response = await deps.fetchImpl(gitHubCreateRepoUrl(), {
+    method: "POST",
+    headers: gitHubHeaders(token),
+    body: JSON.stringify(
+      gitHubCreateRepoPayload({
+        name,
+        private: publishPrivate(input.private),
+        ...(description === "" ? {} : { description }),
+      }),
+    ),
+  });
+
+  let existing = false;
+  let ref: GitHubRef | null = null;
+  let web: string | null = null;
+
+  if (response.ok) {
+    const created = parseGitHubRepo(await response.json().catch(() => null));
+    ref = parseGitHubSpec(created.fullName ?? "");
+    web = created.htmlUrl;
+  } else {
+    const detail = await response.text().catch(() => "");
+    const conflict = response.status === 422 || response.status === 409;
+    if (!conflict || !/already exists/i.test(detail)) {
+      throw new RemoteError(
+        `could not create the repository: HTTP ${response.status}${detail ? ` — ${redactToken(detail.slice(0, 300), token)}` : ""}`,
+      );
+    }
+    // It exists: it is the token's own account, so ask who that is and push into it.
+    const who = await deps.fetchImpl(gitHubUserUrl(), { headers: gitHubHeaders(token) });
+    const login = who.ok ? (parseForgeUser(await who.json().catch(() => null)) ?? "") : "";
+    if (login === "") {
+      throw new RemoteError("a repository of that name already exists, and the account it belongs to could not be read");
+    }
+    ref = { owner: login, name };
+    existing = true;
+  }
+
+  if (ref === null) throw new RemoteError("GitHub did not say which repository was created");
+
+  // The order is load-bearing: there is no repository to add a remote to until
+  // the commit has made one, which is why `pointOrigin` comes after `commitProject`
+  // and not before it.
+  const run = gitRunner(deps);
+  const committed = await commitProject(abs, publishMessage(input.message), run);
+  await pointOrigin(abs, gitHubCloneUrl(ref), run);
+  await pushProject(abs, committed.branch, gitHubAuthenticatedUrl(ref, token), token, run, deps);
+
+  // Held for the session, so the push and pull-request paths work from here on.
+  rememberGitHub(current, ref, abs, token, committed.branch);
+  return {
+    target: "github",
+    repo: gitHubSlug(ref),
+    url: web ?? gitHubUrl(ref),
+    rel: toRelFromBase(abs),
+    branch: committed.branch,
+    commit: committed.commit,
+    files: committed.files,
+    ignoreFile: committed.ignoreFile,
+    existing,
+  };
+}
+
+/**
+ * Create a repository on the forge this session is connected to, and save a project
+ * into it.
+ *
+ * Atlas is this path and nothing more — it is a Gitea, `connectForge` has already
+ * proved the credential against it (`GET /api/v1/user`), and the deployment's own
+ * Atlas credential is used when nobody typed one (`src/atlas.ts` has that policy).
+ * The same order as the GitHub path: create, point `origin`, commit, push.
+ *
+ * A session with **no** connection yet still works when the deployment holds its
+ * own Atlas credential: it is the system path (`connectForge` makes the same
+ * choice for the same reason — making an operator retype what the deployment
+ * already holds is not a security property), and it is *registered* here so the
+ * push and pull-request paths that follow can find it. The plan is not consulted a
+ * second time: a connection the caller typed was already gated at connect time,
+ * and the deployment's own credential is not a subscription (see `src/atlas.ts`).
+ */
+export async function publishToForge(
+  input: PublishProjectInput,
+  deps: RemoteDeps = defaultDeps,
+): Promise<PublishProjectResult> {
+  assertEnabled();
+
+  let connection = forgeAt(input.url);
+  if (connection === null) {
+    const fallback = systemAtlasConnection();
+    const wanted =
+      input.url === undefined || input.url === null || input.url === "" ? null : parseGitHostUrl(input.url);
+    if (fallback !== null && (wanted === null || wanted === fallback.base)) {
+      connection = fallback;
+      // Held for the session like any other connection, because everything after
+      // this — a push, a pull request — looks the forge up by address.
+      slot().forge.set(connection.base, connection);
+    }
+  }
+  if (connection === null) throw new RemoteError("connect to the forge first");
+
+  const abs = publishDir(input.dir);
+  const name = normalizeRepoName(input.name, path.basename(abs));
+  if (name === null) {
+    throw new RemoteError("a repository name is letters, digits, dots, dashes and underscores");
+  }
+
+  const description = typeof input.description === "string" ? input.description.trim() : "";
+  const response = await deps
+    .fetchImpl(forgeApiUrl(connection.base, "user", "repos"), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: forgeAuthHeader(connection.user, connection.secret),
+      },
+      body: JSON.stringify(
+        forgeRepoPayload({
+          name,
+          private: publishPrivate(input.private),
+          autoInit: false,
+          ...(description === "" ? {} : { description }),
+        }),
+      ),
+    })
+    .catch((error: unknown) => {
+      throw new RemoteError(`could not reach ${connection.base}: ${(error as Error).message}`);
+    });
+
+  let existing = false;
+  let ref: RepoRef | null = null;
+  let web: string | null = null;
+  if (response.ok) {
+    const created = parseForgeRepo(await response.json().catch(() => null));
+    ref = parseRepoSpec(created.fullName ?? "");
+    web = created.htmlUrl;
+  } else {
+    const detail = await response.text().catch(() => "");
+    const conflict = response.status === 409 || response.status === 422;
+    if (!conflict) {
+      throw new RemoteError(
+        `could not create the repository: HTTP ${response.status}${detail ? ` — ${redactToken(detail.slice(0, 300), connection.secret)}` : ""}`,
+      );
+    }
+    ref = { owner: connection.user, name };
+    existing = true;
+  }
+
+  if (ref === null) throw new RemoteError("the forge did not say which repository was created");
+
+  const run = gitRunner(deps);
+  const committed = await commitProject(abs, publishMessage(input.message), run);
+  await pointOrigin(abs, forgeCloneUrl(connection.base, ref), run);
+  await pushProject(
+    abs,
+    committed.branch,
+    forgeAuthenticatedUrl(connection.base, ref, connection.user, connection.secret),
+    connection.secret,
+    run,
+    deps,
+  );
+
+  rememberForge(slot(), connection, ref, abs, committed.branch);
+  return {
+    target: "forge",
+    repo: repoSlug(ref),
+    url: web ?? forgeWebUrl(connection.base, ref),
+    rel: toRelFromBase(abs),
+    branch: committed.branch,
+    commit: committed.commit,
+    files: committed.files,
+    ignoreFile: committed.ignoreFile,
+    existing,
+  };
+}
+
+/**
+ * Save a project to a new repository, on whichever forge was named.
+ *
+ * The dispatcher is a function rather than a branch inside each path because the
+ * console has one button: "save this to a repository" with a choice beside it.
+ * `atlas` and `gitea` are accepted as names for the forge path, because a person
+ * who reads the console's Atlas panel will call it Atlas and the module that talks
+ * to it calls it a forge.
+ */
+export async function publishProject(
+  input: PublishProjectInput,
+  deps: RemoteDeps = defaultDeps,
+): Promise<PublishProjectResult> {
+  const target = typeof input.target === "string" ? input.target.trim().toLowerCase() : "";
+  if (target === "github") return publishToGitHub(input, deps);
+  if (target === "atlas" || target === "forge" || target === "gitea") return publishToForge(input, deps);
+  throw new RemoteError("a target of \"github\" or \"atlas\" is required");
 }
 
 /** The GitHub connections this account holds, for the console's list. */

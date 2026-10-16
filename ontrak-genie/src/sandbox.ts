@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 
 import { config } from "./config.js";
@@ -152,6 +153,35 @@ export interface SandboxRun {
 }
 
 /**
+ * Whether this host has a FUSE device a sandbox could be given.
+ *
+ * The device node is the answer, not the module: `fuse` is built into many of the
+ * kernels these deployments run, so `lsmod` says nothing while `/proc/filesystems`
+ * lists it and `/dev/fuse` exists. A `docker run --device /dev/fuse` on a host that
+ * has no such node is an error that fails the *whole* command, which is why this is
+ * asked before it is passed through rather than assumed.
+ */
+export function fuseDevicePresent(): boolean {
+  try {
+    return fs.existsSync("/dev/fuse");
+  } catch {
+    return false;
+  }
+}
+
+export interface SandboxRunOptions {
+  /**
+   * Give the container the FUSE device, so `sshfs` can mount a remote folder.
+   *
+   * Defaults to whether this host has one (see `fuseDevicePresent`): a machine
+   * without FUSE keeps the stricter container rather than losing every command to a
+   * docker error, and a machine with it can mount a remote folder without an
+   * operator working out that the sandbox was the reason it could not.
+   */
+  fuse?: boolean;
+}
+
+/**
  * Build the argument vector for one sandboxed command. Exported so the hardening
  * can be asserted directly in tests without needing a Docker daemon.
  */
@@ -159,7 +189,9 @@ export function sandboxInvocation(
   command: string,
   absCwd: string,
   containerName: string,
+  options: SandboxRunOptions = {},
 ): SandboxRun {
+  const fuse = options.fuse ?? fuseDevicePresent();
   const args = [
     "run",
     "--rm",
@@ -185,8 +217,19 @@ export function sandboxInvocation(
     "/tmp:rw,exec,size=512m",
     "--cap-drop",
     "ALL",
+    // A remote folder is mounted with `sshfs`, and FUSE needs three things that
+    // are not defaults here, each measured rather than assumed: the device node,
+    // or sshfs is answered "fuse: device /dev/fuse not found. Kernel module not
+    // loaded?"; SYS_ADMIN, or the mount is refused as EPERM even with the node;
+    // and an unconfined AppArmor profile, or Docker's own `docker-default` denies
+    // the `mount` that `fusermount3` makes. SYS_ADMIN is added back on top of
+    // `--cap-drop ALL` rather than by relaxing the drop, so every other capability
+    // stays gone — and all of it arrives only when this host has the device, so a
+    // host without FUSE keeps the stricter container it has today.
+    ...(fuse ? ["--device", "/dev/fuse", "--cap-add", "SYS_ADMIN"] : []),
     "--security-opt",
     "no-new-privileges",
+    ...(fuse ? ["--security-opt", "apparmor=unconfined"] : []),
     "--pids-limit",
     String(config.sandboxPids),
     "--memory",

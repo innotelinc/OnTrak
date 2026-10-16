@@ -1765,17 +1765,36 @@ function openModal() {
   return shown.length === 0 ? null : shown[shown.length - 1];
 }
 
+/**
+ * Whether a control is really there to be tabbed to.
+ *
+ * `offsetParent` is NOT that question, and the difference is a closed `<details>`
+ * (which the console is now full of): Chromium lays a closed block's controls out
+ * — they have a box, and their `offsetParent` is the panel — but the browser will
+ * not give them focus. A trap that counted them would take one for the panel's
+ * last stop, and Tab from the control above it would walk out of the dialog: the
+ * one thing `aria-modal="true"` promises cannot happen.
+ *
+ * `checkVisibility()` is the browser's own answer to "is this being rendered",
+ * and it is the same answer for a `display: none` subtree as for a block that is
+ * folded shut. Where it does not exist, an empty rectangle is the same fact by
+ * another route — which is what the old filter was reaching for.
+ */
+function isReachableTarget(element) {
+  if (typeof element.checkVisibility === "function") return element.checkVisibility();
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
 /** Everything inside a panel that a Tab should stop on, in tab order. */
 function tabStops(panel) {
   const selector =
     'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]),' +
-    ' textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-  return [...panel.querySelectorAll(selector)].filter(
-    // `offsetParent` is null for anything inside a `display: none` subtree, which
-    // is how the controls that are not relevant right now stay out of it: the
-    // viewer's `delete` before a file is open, `show change` before there is one.
-    (element) => element.offsetParent !== null,
-  );
+    // `summary` is a control the browser gives a tab stop to on its own, so a trap
+    // that did not know about it would hand Tab back to the page from the last
+    // block of a panel — the one place a modal must never fail.
+    ' textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+  return [...panel.querySelectorAll(selector)].filter(isReachableTarget);
 }
 
 /** Where focus goes when the last panel closes. */
@@ -2174,6 +2193,15 @@ async function loadSessions() {
     nav.append(heading);
     for (const share of sharedWithMe) nav.append(sharedRow(share));
   }
+
+  /*
+   * The list's own count, on the section's header. It is what makes folding the
+   * section lossless: a folded panel that still says how much is folded into it
+   * is a panel somebody can leave folded, and one that says nothing is a panel
+   * they have to open to find out what they are missing.
+   */
+  const total = sessions.length + sharedWithMe.length;
+  $("#sessions-count").textContent = total === 1 ? "1 chat" : `${total} chats`;
 }
 
 /** One chat somebody shared with you: open it read-only, or put it away. */
@@ -2868,6 +2896,19 @@ function projectRow(project) {
     await loadProjects();
   });
 
+  const install = document.createElement("button");
+  install.type = "button";
+  install.className = "btn-ghost mini";
+  install.textContent = "install";
+  install.title = project.exists
+    ? `Install “${project.name}”'s dependencies — the steps are shown in the log below before they run`
+    : `“${project.name}” has no folder left to install into`;
+  install.disabled = !project.exists;
+  install.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void installProjectById(project);
+  });
+
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "btn-ghost mini";
@@ -2894,7 +2935,7 @@ function projectRow(project) {
     await loadFiles(".");
   });
 
-  row.append(open, save, rename, remove);
+  row.append(open, install, save, rename, remove);
   return row;
 }
 
@@ -3013,6 +3054,288 @@ async function importProjectFromFile(file) {
   await loadWorkspace();
   await loadFiles(".");
   await refreshPreviewApp();
+}
+
+/*
+ * A project that arrives as a `.zip`.
+ *
+ * `upload .zip` is the whole feature in one control: the archive is POSTed as its
+ * own bytes, the server unpacks it into a *new* project with the wrapping folder
+ * stripped, opens it, and installs its dependencies before answering. So the file
+ * is handed to `fetch` unread — a 40 MB project is never decoded into a string in
+ * the page — and the response carries the install's step-by-step report, which is
+ * printed as a log rather than summarised: when an install fails, the installer's
+ * own words are the useful part.
+ */
+async function uploadProjectZip(file) {
+  const log = $("#project-import-log");
+  log.classList.remove("hidden");
+  log.textContent = `uploading ${file.name}…\nthe dependencies are installed before this finishes, so give it a moment.`;
+
+  let payload;
+  try {
+    payload = await api("/api/projects/import-zip?open=1&install=1", { method: "POST", body: file });
+  } catch (error) {
+    log.textContent = `${file.name}: ${error.message}`;
+    addErrorMessage(error.message);
+    return;
+  }
+
+  renderImportLog(payload);
+
+  const project = payload.project;
+  const files = Number(payload.files ?? 0);
+  const skipped = Array.isArray(payload.skipped) ? payload.skipped : [];
+  const install = payload.install;
+  const failed = install !== null && install !== undefined && install.ok !== true;
+  addNotice(
+    failed
+      ? `Loaded “${project.name}” — ${files} ${files === 1 ? "file" : "files"}, but the dependency install did not finish. See the log under the project list.`
+      : `Loaded “${project.name}” — ${files} ${files === 1 ? "file" : "files"} written to ${project.dir}` +
+          (install && install.ran > 0 ? ` and ${install.ran} install ${install.ran === 1 ? "step" : "steps"} run.` : ".") +
+          (skipped.length > 0 ? ` Left out: ${skipped.length} ${skipped.length === 1 ? "entry" : "entries"} (see the log).` : ""),
+  );
+
+  // A new project is a new working directory, so the tree, the picker and the
+  // preview all start from the top exactly as opening one does.
+  unloadPreviewFrame();
+  await loadProjects();
+  await loadWorkspace();
+  await loadFiles(".");
+  await refreshPreviewApp();
+}
+
+/**
+ * Install one project's dependencies, on request.
+ *
+ * The upload does this for a zip automatically, but a project can arrive other
+ * ways — a clone, a bundle, a folder made by hand, or a zip uploaded before this
+ * deployment had a network for installs — and "install the dependencies" is then
+ * a thing a person wants to ask for rather than a thing they have to remember the
+ * command for. The plan is fetched and printed *first* (`GET …/stack`), so the log
+ * says what is about to run even if it then fails, which is the whole reason the
+ * plan is a pure function of file names on the server side.
+ */
+async function installProjectById(project) {
+  const log = $("#project-import-log");
+  log.classList.remove("hidden");
+
+  let plan;
+  try {
+    plan = await api(`/api/projects/${encodeURIComponent(project.id)}/stack`);
+  } catch (error) {
+    addErrorMessage(error.message);
+    return;
+  }
+
+  const stack = plan?.stack ?? {};
+  const steps = Array.isArray(stack.steps) ? stack.steps : [];
+  const notes = Array.isArray(stack.notes) ? stack.notes : [];
+
+  if (steps.length === 0) {
+    log.textContent = [
+      `“${project.name}”: nothing to install — no manifest this console recognises.`,
+      ...notes.map((note) => `note: ${note}`),
+    ].join("\n");
+    return;
+  }
+
+  log.textContent = [`installing “${project.name}”…`, ...steps.map((step) => `${step.label}: ${step.command}`)].join("\n");
+
+  let report;
+  try {
+    report = await api(`/api/projects/${encodeURIComponent(project.id)}/install`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+  } catch (error) {
+    log.textContent = `${log.textContent}\n${error.message}`;
+    addErrorMessage(error.message);
+    return;
+  }
+
+  renderImportLog({ project, files: 0, root: null, skipped: [], stack: report.stack ?? stack, install: report });
+  const failed = report.ok !== true;
+  addNotice(
+    failed
+      ? `“${project.name}”: the dependency install did not finish. The log under the project list has the installer's own output.`
+      : `“${project.name}”: dependencies installed (${report.ran} ${report.ran === 1 ? "step" : "steps"}).`,
+  );
+}
+
+/** What an upload did, line by line: what landed, what did not, and what ran. */
+function renderImportLog(payload) {
+  const log = $("#project-import-log");
+  const lines = [];
+
+  if (typeof payload.root === "string" && payload.root !== "") {
+    lines.push(`unwrapped the folder “${payload.root}” — the project is what was inside it`);
+  }
+  // Absent for an install-only run, which is about the dependencies and has no
+  // files of its own to report.
+  const written = Number(payload.files ?? 0);
+  if (written > 0) lines.push(`${written} files written`);
+
+  const skipped = Array.isArray(payload.skipped) ? payload.skipped : [];
+  if (skipped.length > 0) {
+    const named = skipped.slice(0, 6).map((entry) => entry.path ?? String(entry));
+    lines.push(`left out: ${named.join(", ")}${skipped.length > named.length ? ` (+${skipped.length - named.length} more)` : ""}`);
+  }
+
+  const install = payload.install;
+  if (install === null || install === undefined) {
+    lines.push("dependencies: not installed (this deployment only installs them on request)");
+  } else if (install.ran === 0) {
+    lines.push("dependencies: nothing to install — no manifest this console recognises");
+  } else {
+    lines.push(`dependencies — ${install.where}`);
+    for (const step of install.steps) {
+      lines.push(`${step.ok ? "✓" : "✗"} ${step.label}: ${step.command}`);
+      // The tail of a failed step's output, because that is what says why.
+      if (!step.ok) {
+        const tail = String(step.output ?? "").trim().split("\n").slice(-14).join("\n");
+        if (tail !== "") lines.push(tail.split("\n").map((line) => `    ${line}`).join("\n"));
+        if (step.refused) lines.push(`    ${step.refused}`);
+      }
+    }
+    if (install.stopped === true) lines.push("stopped at the first failure — later steps were not attempted");
+  }
+
+  const notes = Array.isArray(payload.stack?.notes) ? payload.stack.notes : [];
+  for (const note of notes) lines.push(`note: ${note}`);
+
+  log.textContent = lines.join("\n");
+}
+
+/*
+ * Publishing a project to a repository that does not exist yet.
+ *
+ * The console asks for the two things only a person knows — which forge, and what
+ * to call the repository — and the server does the rest: create, point `origin`,
+ * commit, push. Which forges are actually available is asked rather than assumed:
+ * GitHub needs a token (asked for here, held for the session by the server and
+ * never written into the project), and Atlas needs either a connected forge or the
+ * deployment's own Atlas credential.
+ */
+function togglePublish(force) {
+  const dialog = $("#publish");
+  const open = force === undefined ? dialog.classList.contains("hidden") : force;
+  dialog.classList.toggle("hidden", !open);
+  $("#project-publish").setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) {
+    enterDialog(dialog);
+    void preparePublish();
+  } else {
+    leaveDialog(dialog);
+  }
+}
+
+/** Prefill the dialog: the project's own name, and which forges are usable. */
+async function preparePublish() {
+  const note = $("#publish-note");
+  const project = state.projectId === null ? null : state.projectsById.get(state.projectId) ?? null;
+
+  if (project === null) {
+    note.textContent = "Open a project first — publishing saves the project you are working in.";
+    $("#publish-go").disabled = true;
+    return;
+  }
+  $("#publish-go").disabled = false;
+
+  const name = $("#publish-name");
+  if (name.value.trim() === "") name.value = slugForRepo(project.name);
+
+  try {
+    const info = await api("/api/remote");
+    const atlas = info?.atlas ?? {};
+    const forges = Array.isArray(info?.forge) ? info.forge : [];
+    const where =
+      atlas.configured === true
+        ? forges.length > 0
+          ? `Atlas is ${atlas.url} (connected as ${forges[0].user}).`
+          : `Atlas is ${atlas.url}; the deployment's own credential will be used if this account has no connection to it.`
+        : "Atlas is not configured on this deployment (AGENT_ATLAS_URL).";
+    note.textContent =
+      `“${project.name}” is published from ${project.dir}, and its directory becomes the clone: ` +
+      `origin is set to the new repository, so pushing and pull requests work here afterwards. ${where}`;
+  } catch (error) {
+    note.textContent = error.message;
+  }
+
+  syncPublishTarget();
+}
+
+/** A repository name from a project name: lowercase, hyphens, no punctuation. */
+function slugForRepo(text) {
+  const slug = String(text ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60)
+    .replace(/-+$/, "");
+  return slug === "" ? "project" : slug;
+}
+
+/** Only GitHub needs a token, so its field appears only when GitHub is chosen. */
+function syncPublishTarget() {
+  const target = $("#publish-target").value;
+  $("#publish-token-field").classList.toggle("hidden", target !== "github");
+}
+
+async function publishActiveProject() {
+  const project = state.projectId === null ? null : state.projectsById.get(state.projectId) ?? null;
+  if (project === null) {
+    addErrorMessage("Open a project first — publishing saves the project you are working in.");
+    return;
+  }
+
+  const button = $("#publish-go");
+  const target = $("#publish-target").value;
+  const name = $("#publish-name").value.trim();
+  const description = $("#publish-description").value.trim();
+  const isPrivate = $("#publish-private").checked;
+  const token = $("#publish-token").value.trim();
+
+  button.disabled = true;
+  $("#publish-note").textContent = `creating ${name === "" ? project.name : name} on ${target === "github" ? "GitHub" : "Atlas"} and pushing the project…`;
+
+  let payload;
+  try {
+    payload = await api("/api/publish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: project.id,
+        target,
+        ...(name === "" ? {} : { name }),
+        ...(description === "" ? {} : { description }),
+        private: isPrivate,
+        ...(token === "" ? {} : { token }),
+      }),
+    });
+  } catch (error) {
+    $("#publish-note").textContent = error.message;
+    addErrorMessage(error.message);
+    return;
+  } finally {
+    button.disabled = false;
+  }
+
+  // Used for this one push and then forgotten in the page, as the server does.
+  $("#publish-token").value = "";
+  togglePublish(false);
+  addNotice(
+    `Saved “${project.name}” to ${payload.repo} — ${payload.files} ${payload.files === 1 ? "file" : "files"} on ${payload.branch}` +
+      (payload.commit === "" ? "" : ` (${payload.commit})`) +
+      (payload.ignoreFile ? "; a .gitignore was added so installed dependencies are not committed" : "") +
+      (payload.existing ? `; that repository already existed, so the work was pushed into it.` : ".") +
+      ` ${payload.url}`,
+  );
+  // The session now holds the repository, so the push and pull-request controls
+  // are usable from here on. `origin` in the project points at it too.
+  await loadProjects();
+  await loadRemote();
 }
 
 /**
@@ -3539,7 +3862,11 @@ function closeHosting() {
 
 function money(cents) {
   const dollars = cents / 100;
-  return dollars % 1 === 0 ? `$${dollars.toFixed(0)}` : `$${dollars.toFixed(2)}`;
+  // Grouped above a thousand: a per-class add-on can be priced in the thousands,
+  // and "$2750" beside "per class" reads as a much smaller number than it is.
+  return dollars % 1 === 0
+    ? `$${dollars.toLocaleString("en-US")}`
+    : `$${dollars.toFixed(2)}`;
 }
 
 async function loadHosting() {
@@ -4093,8 +4420,34 @@ function renderAtlas(atlas) {
   } else if (atlas.reason) {
     sentences.push(`${atlas.reason}.`);
   }
+  const cost = atlasPriceSentence(atlas.price);
+  if (cost !== "") sentences.push(cost);
   if (atlas.signupUrl) sentences.push(`Subscribe at ${atlas.signupUrl}.`);
   status.textContent = sentences.join(" ");
+}
+
+/**
+ * What the Atlas add-on costs, in Magnate's own numbers.
+ *
+ * The price is read from the billing platform rather than written here, so the
+ * panel and the checkout cannot drift apart. A price Magnate could not answer for
+ * is left out entirely: an empty sentence is the honest panel, and a number typed
+ * into this file would be one nobody was ever charged.
+ */
+function atlasPriceSentence(price) {
+  if (price === null || price === undefined) return "";
+  // A plan sold per unit is quoted beside its unit: the amount is what ONE
+  // class costs, and "$27.50/month" beside a per-class add-on would read as the
+  // price of the whole thing. Magnate decides the plan is per-unit; the panel
+  // only decides how to say it.
+  if (price.perUnit === true && price.billingUnit && price.pricePerUnitCents > 0) {
+    return `${price.name} costs ${money(price.pricePerUnitCents)} per ${price.billingUnit}, monthly.`;
+  }
+  const parts = [];
+  if (price.priceMonthlyCents >= 0) parts.push(`${money(price.priceMonthlyCents)}/month`);
+  if (price.priceYearlyCents > 0) parts.push(`${money(price.priceYearlyCents)}/year`);
+  if (parts.length === 0) return "";
+  return `${price.name} costs ${parts.join(" or ")}.`;
 }
 
 function remoteForgeRow(connection) {
@@ -4831,6 +5184,68 @@ function wirePalette() {
   });
 }
 
+/* --- folds: what a person collapsed, kept for this browser ------------------ */
+
+/*
+ * Every `<details data-section>` in the console is a fold somebody chose, and the
+ * choice is remembered. A `<details>` with no `data-section` still folds — the
+ * browser does that by itself — it is simply not remembered: the attribute is
+ * what marks a fold as a preference rather than as markup, and the `open` in the
+ * markup is what a section nobody has touched falls back to.
+ *
+ * `localStorage`, unlike the preview pane and the terminal, which keep their own
+ * state in `sessionStorage`: a fold is a preference about how a panel is laid
+ * out, not state belonging to one tab, and a person who folded the status rows
+ * yesterday means it today. It is the same trade the theme next door makes
+ * ("remembered in this browser rather than on the account"), down to the key's
+ * `ontrak.` prefix.
+ */
+const SECTIONS_KEY = "ontrak.sections";
+
+/** The remembered folds, or an empty map when there are none to read. */
+function storedSections() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SECTIONS_KEY) ?? "{}");
+    return parsed !== null && typeof parsed === "object" ? parsed : {};
+  } catch {
+    /* private mode, or a value written by something else: the markup stands */
+    return {};
+  }
+}
+
+function wireSections() {
+  for (const section of document.querySelectorAll("details[data-section]")) {
+    const key = section.dataset.section;
+    const remembered = storedSections()[key];
+    // Only a real boolean is applied: a stored `"false"` or a number is a value
+    // this console did not write, and guessing what it meant is how a section
+    // ends up open when `<details>` says it should be closed.
+    if (typeof remembered === "boolean") section.open = remembered;
+
+    /*
+     * `toggle` fires for the click on the summary, for the keyboard's Enter and
+     * Space, and for a change made from script — so there is no second place that
+     * has to agree about what the section's state is. The map is re-read on every
+     * change rather than held from boot: two tabs of this console are two places
+     * folding the same panel, and the tab that folded nothing must not write back
+     * a map that undoes the other one's fold.
+     *
+     * The listener is added *after* the stored state is applied, because setting
+     * `open` from script fires `toggle` too — and that first event would otherwise
+     * be written straight back as if the person had folded it themselves.
+     */
+    section.addEventListener("toggle", () => {
+      const all = storedSections();
+      all[key] = section.open;
+      try {
+        localStorage.setItem(SECTIONS_KEY, JSON.stringify(all));
+      } catch {
+        /* private mode: the fold just does not outlive the page */
+      }
+    });
+  }
+}
+
 function wire() {
   $("#composer").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -4948,6 +5363,11 @@ function wire() {
   // backdrop — the one gesture a person will try first.
   $("#sidebar-scrim").addEventListener("click", () => toggleSidebar(false));
 
+  // The foldable sections — the sidebar's, the Skills panel's and the Remote
+  // panel's — wired before anything can open a panel onto them, so a remembered
+  // fold is already in place when the panel is first shown.
+  wireSections();
+
   $("#toggle-files").addEventListener("click", () => toggleFilesPanel());
   $("#files-close").addEventListener("click", () => toggleFilesPanel(false));
   $("#files-new").addEventListener("click", () => void newWorkspaceFolder());
@@ -4964,6 +5384,16 @@ function wire() {
     event.target.value = "";
     if (file) void importProjectFromFile(file);
   });
+  $("#project-upload").addEventListener("click", () => $("#project-upload-file").click());
+  $("#project-upload-file").addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) void uploadProjectZip(file);
+  });
+  $("#project-publish").addEventListener("click", () => togglePublish());
+  $("#publish-close").addEventListener("click", () => togglePublish(false));
+  $("#publish-target").addEventListener("change", () => syncPublishTarget());
+  $("#publish-go").addEventListener("click", () => void publishActiveProject());
 
   $("#terminal-open").addEventListener("click", () => toggleTerminal());
   $("#terminal-close").addEventListener("click", () => toggleTerminal(false));
@@ -5118,6 +5548,9 @@ function wire() {
     else if (!$("#hosting").classList.contains("hidden")) closeHosting();
     else if (!$("#skills").classList.contains("hidden")) closeSkills();
     else if (!$("#appearance").classList.contains("hidden")) toggleAppearance(false);
+    // `#publish` sits between the two in the markup, and this chain is the same
+    // order read backwards (`openModal` says why), so it is dismissed here.
+    else if (!$("#publish").classList.contains("hidden")) togglePublish(false);
     else if (!$("#settings").classList.contains("hidden")) toggleSettings(false);
     // The drawer is the last thing Escape reaches: anything open on top of it
     // is what the user is looking at, and dismissing that must not also hide

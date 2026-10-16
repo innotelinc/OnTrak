@@ -247,6 +247,9 @@ test("Atlas is reported as configured, with the deployment's own credential", as
   // No Magnate configured, so there is no plan to check — and that is not a "no".
   assert.equal(info.entitled, null);
   assert.equal(info.signupUrl, "");
+  // And no price either: the add-on's cost is read from the platform that sells
+  // it, so with no platform there is nothing to quote — which is `null`, not $0.
+  assert.equal(info.price, null);
 });
 
 test("the verdict for a caller is the plan, unless the deployment has its own credential", () => {
@@ -259,6 +262,7 @@ test("the verdict for a caller is the plan, unless the deployment has its own cr
     entitled: null,
     reason: "",
     signupUrl: "https://magnate.test/signup?plan=atlas",
+    price: null,
   };
 
   // The system path is the operator's own access: no plan involved.

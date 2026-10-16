@@ -706,6 +706,134 @@ try {
     return `${walk.stops} controls, and back to #sweep-open`;
   });
 
+  /*
+   * The two controls an *uploaded* project arrives through, driven the way a
+   * person drives them: the file input and the publish dialog live in the
+   * workspace panel, and the dialog is a real modal like every other one — so it
+   * has to take focus, keep Tab inside itself, forget the GitHub token field when
+   * Atlas is chosen, and hand focus back on Escape.
+   *
+   * What is *not* checked here is the upload itself: a real .zip fixture belongs in
+   * `src/test/project-zip.test.ts`, where the assertion is about the files that
+   * land rather than about a file chooser either way.
+   */
+  await check("an uploaded project's controls are where a person expects them", async () => {
+    await send("Page.navigate", { url: `${base}/` });
+    const booted = await waitFor("document.querySelector('.composer-hint')");
+    if (!booted) throw new Error("the console did not boot");
+
+    await clickControl("#toggle-files");
+    const accepted = await evaluate(`
+      const upload = document.querySelector('#project-upload-file');
+      const publish = document.querySelector('#project-publish');
+      return {
+        upload: upload !== null && (upload.getAttribute('accept') ?? '').includes('.zip'),
+        publish: publish !== null,
+        log: document.querySelector('#project-import-log') !== null,
+      };
+    `);
+    if (!accepted.upload) throw new Error("the file input does not accept a .zip");
+    if (!accepted.publish) throw new Error("there is no publish control");
+    if (!accepted.log) throw new Error("there is nowhere for an upload's install log to go");
+
+    await clickControl("#project-publish");
+    const opened = await waitFor(`!document.querySelector('#publish').classList.contains('hidden')`, 5_000);
+    if (!opened) throw new Error("the publish dialog did not open");
+    const inside = await focusedIn("#publish");
+    if (!inside.inside) throw new Error(`focus is on ${inside.where}, not in the dialog`);
+
+    const said = await evaluate(`return document.querySelector('#publish-note').textContent.trim();`);
+    if (said === "") throw new Error("the dialog does not say where the project would go");
+
+    // The token is GitHub's requirement, so its field follows the choice.
+    const toggled = await evaluate(`
+      const select = document.querySelector('#publish-target');
+      const field = document.querySelector('#publish-token-field');
+      const before = field.classList.contains('hidden');
+      select.value = 'github';
+      select.dispatchEvent(new Event('change'));
+      const afterGithub = field.classList.contains('hidden');
+      select.value = 'atlas';
+      select.dispatchEvent(new Event('change'));
+      return { before, afterGithub, afterAtlas: field.classList.contains('hidden') };
+    `);
+    if (toggled.afterGithub) throw new Error("choosing GitHub did not ask for a token");
+    if (!toggled.afterAtlas) throw new Error("choosing Atlas left the GitHub token field on screen");
+
+    const walk = await tabWalk("#publish", 12);
+    if (walk.escaped !== null) throw new Error(walk.escaped);
+    await press("Escape");
+    const closed = await focusedIn("#publish");
+    if (closed.inside) throw new Error("Escape left the publish dialog open");
+    if (closed.where !== "project-publish") throw new Error(`focus went to ${closed.where}`);
+    return `${walk.stops} stops, and back to #project-publish`;
+  });
+
+  /*
+   * A project row, which is where the two actions of an uploaded project live for
+   * every *other* way one can arrive (a clone, a bundle, a folder made by hand):
+   * `install` and `export`/`publish`. Built through the API rather than by hand so
+   * the row is the one the console really draws, and removed again at the end so
+   * the check leaves the workspace as it found it.
+   *
+   * What is not clicked here is `install` itself: that runs a real installer, and
+   * this harness is for the console's shape, not for npm. The button's presence and
+   * its enabled state are what a row can get wrong.
+   */
+  await check("a project row offers the actions an uploaded project needs", async () => {
+    const headers = {
+      "Content-Type": "application/json",
+      ...(process.env.WEB_TOKEN ? { Authorization: `Bearer ${process.env.WEB_TOKEN}` } : {}),
+    };
+    const created = await fetch(`${base}/api/projects`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "layout check project" }),
+    });
+    if (!created.ok) throw new Error(`could not make a project to look at: HTTP ${created.status}`);
+    const { project } = await created.json();
+
+    try {
+      await send("Page.navigate", { url: `${base}/` });
+      const booted = await waitFor("document.querySelector('.composer-hint')");
+      if (!booted) throw new Error("the console did not boot");
+      await clickControl("#toggle-files");
+      const listed = await waitFor(`
+        [...document.querySelectorAll('#projects-list .project')]
+          .some((el) => el.textContent.includes('layout check project'))
+      `, 5_000);
+      if (!listed) throw new Error("the project is saved but the panel lists no row for it");
+
+      const found = await evaluate(`
+        const row = [...document.querySelectorAll('#projects-list .project')]
+          .find((el) => el.textContent.includes('layout check project'));
+        if (row === undefined) return null;
+        const buttons = [...row.querySelectorAll('button')].map((b) => ({
+          label: b.textContent.trim(),
+          disabled: b.disabled,
+          title: b.title,
+        }));
+        return buttons;
+      `);
+      if (found === null) throw new Error("the project is listed but drew no row");
+      const labels = found.map((b) => b.label);
+      for (const needed of ["install", "export", "rename", "remove"]) {
+        if (!labels.includes(needed)) throw new Error(`the row has no ${needed} button (${labels.join(", ")})`);
+      }
+      const install = found.find((b) => b.label === "install");
+      if (install.disabled) throw new Error("install is disabled on a project whose folder is there");
+      if (!/dependencies/.test(install.title)) throw new Error(`install does not say what it does: ${install.title}`);
+      return `row: ${labels.join(" · ")}`;
+    } finally {
+      // Gone again, and its folder with it: a layout check must not leave a project
+      // behind in whatever workspace it was pointed at.
+      await fetch(`${base}/api/projects/${encodeURIComponent(project.id)}?files=delete`, {
+        method: "DELETE",
+        headers,
+      });
+    }
+  });
+
   await check("a deep link's panel is not robbed of focus by the composer", async () => {
     await send("Page.navigate", { url: `${base}/?settings=appearance` });
     const booted = await waitFor("document.querySelector('.composer-hint')");
@@ -722,6 +850,107 @@ try {
     if (!at.open) throw new Error("?settings=appearance did not open the panel");
     if (!at.inside) throw new Error(`focus is on ${at.where} — the composer took it back`);
     return "focus is in the panel the link opened";
+  });
+
+  /* --------------------------------------------------------------- folds -- */
+
+  console.log("\nFoldable sections (desktop, real clicks)");
+
+  /*
+   * A fold is three promises, and this drives all three with the browser rather
+   * than reading the markup: a click on the header opens the block it names, a
+   * closed block's controls are out of the tab order (they are not rendered, and
+   * a control that is invisible but still tabbable is the failure this style of
+   * disclosure is prone to), and what was folded survives a reload.
+   *
+   * The Remote panel is where the defaults matter most — three alternative forms,
+   * one of them open — so it is the one unfolded here, and the sidebar's status
+   * rows are folded, because that is the one a person folds to give the chat list
+   * more room.
+   */
+  await check("a block opens on a real click, and a closed one is out of the tab order", async () => {
+    await send("Page.navigate", { url: `${base}/` });
+    const booted = await waitFor("document.querySelector('.composer-hint')");
+    if (!booted) throw new Error("the console did not boot");
+
+    // The panel's door is in the workspace panel, the same two clicks a person
+    // makes (`ui:smoke` walks them the same way).
+    await clickControl("#toggle-files");
+    await clickControl("#remote-open");
+    const opened = await waitFor(
+      `!document.querySelector('#remote').classList.contains('hidden')`,
+      5_000,
+    );
+    if (!opened) throw new Error("the remote panel did not open");
+
+    /*
+     * The question is *focusability*, not geometry, and the difference was worth
+     * measuring: Chromium lays a closed block's controls out — they have a box,
+     * and `offsetParent` is the panel — but refuses them focus. `checkVisibility`
+     * and a real `focus()` are the two facts that matter, because a control the
+     * browser will not focus is one the modal's Tab trap must not count.
+     */
+    const before = await evaluate(`
+      const section = document.querySelector('#section-remote-atlas');
+      const field = document.querySelector('#remote-atlas-repo');
+      field.focus();
+      return {
+        open: section.open,
+        rendered: field.checkVisibility(),
+        focusable: document.activeElement === field,
+        header: document.querySelector('#remote-atlas-heading').textContent.trim(),
+      };
+    `);
+    if (before.open) throw new Error("the Atlas block starts open, so there is nothing to unfold");
+    if (before.rendered || before.focusable) {
+      throw new Error(
+        "a control in a closed block is still rendered and focusable — Tab reaches what nobody can see",
+      );
+    }
+
+    /*
+     * And the Tab trap still holds with those blocks shut, which is the failure a
+     * closed block invites: a trap that counted them would take an unreachable
+     * control for the panel's last stop and let Tab walk out of the dialog.
+     */
+    const walk = await tabWalk("#remote", 20);
+    if (walk.escaped !== null) throw new Error(walk.escaped);
+    if (walk.stops < 6) throw new Error(`Tab reached only ${walk.stops} control(s)`);
+
+    await clickControl("#section-remote-atlas > summary");
+    const unfolded = await waitFor("document.querySelector('#section-remote-atlas').open", 5_000);
+    if (!unfolded) throw new Error("a click on the block's own header did not open it");
+    const shown = await evaluate(`
+      const field = document.querySelector('#remote-atlas-repo');
+      field.focus();
+      return field.checkVisibility() && document.activeElement === field;
+    `);
+    if (!shown) throw new Error("the block opened but its control still cannot be reached");
+    return `“${before.header}” — folded shut, ${walk.stops} stops still inside the dialog, open on one click`;
+  });
+
+  await check("what was folded is remembered, and nothing else moved", async () => {
+    // Folded through the real control, from the sidebar, with the workspace panel
+    // closed again so the click cannot land on an overlay instead of the summary.
+    await send("Page.navigate", { url: `${base}/` });
+    await waitFor("document.querySelector('.composer-hint')");
+    await clickControl("#section-status > summary");
+    const folded = await waitFor("document.querySelector('#section-status').open === false", 5_000);
+    if (!folded) throw new Error("a click on the status header did not fold the section");
+
+    await send("Page.navigate", { url: `${base}/` });
+    await waitFor("document.querySelector('.composer-hint')");
+    const after = await evaluate(`return {
+      status: document.querySelector('#section-status').open,
+      atlas: document.querySelector('#section-remote-atlas').open,
+      chats: document.querySelector('#section-chats').open,
+      count: document.querySelector('#sessions-count').textContent.trim(),
+    };`);
+    if (after.status) throw new Error("the section folded a moment ago came back open");
+    if (!after.atlas) throw new Error("the block unfolded before it was not remembered");
+    if (!after.chats) throw new Error("the chat list, which nobody folded, reloaded folded");
+    if (after.count === "") throw new Error("a folded chat list says nothing about what is in it");
+    return `folded sections reload folded, chats still open (${after.count})`;
   });
 
   /* --------------------------------------------------------- reduced motion -- */

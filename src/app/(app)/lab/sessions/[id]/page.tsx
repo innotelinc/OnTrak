@@ -159,6 +159,7 @@ export default async function LabSessionPage({
         sessionId={sessionId}
         available={url !== ""}
         address={address}
+        usable={isUsable(session.state)}
         reason={
           session.hostIp === ""
             ? "The machine has no address yet."

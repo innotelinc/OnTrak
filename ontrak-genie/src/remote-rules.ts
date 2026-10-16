@@ -415,6 +415,55 @@ export function gitHubApiUrl(ref: GitHubRef, ...segments: string[]): string {
   return `${GITHUB_API}/repos/${ref.owner}/${ref.name}${tail === "" ? "" : `/${tail}`}`;
 }
 
+/** Where a repository is created: GitHub's endpoint for the caller's own repos. */
+export function gitHubCreateRepoUrl(): string {
+  return `${GITHUB_API}/user/repos`;
+}
+
+/** Who the token belongs to, which is where a repository named here is created. */
+export function gitHubUserUrl(): string {
+  return `${GITHUB_API}/user`;
+}
+
+/**
+ * The JSON body GitHub's create-repository endpoint expects.
+ *
+ * `auto_init: false` is the decision worth stating: a repository seeded with a
+ * README already holds a commit, and pushing a project's own history at it is a
+ * non-fast-forward refusal — the project would be on this disk and nowhere else,
+ * which is the opposite of what "save it there" means. An empty repository takes
+ * the first push and makes that branch its default, which is exactly the desired
+ * outcome and needs no extra call to arrange.
+ */
+export function gitHubCreateRepoPayload(input: {
+  name: string;
+  description?: string;
+  private: boolean;
+}): Record<string, unknown> {
+  return {
+    name: input.name,
+    private: input.private,
+    auto_init: false,
+    ...(input.description !== undefined && input.description !== ""
+      ? { description: input.description }
+      : {}),
+  };
+}
+
+/** Read a repository GitHub created, out of whatever it answered. */
+export function parseGitHubRepo(payload: unknown): {
+  fullName: string | null;
+  htmlUrl: string | null;
+  defaultBranch: string | null;
+} {
+  const record = (payload ?? {}) as Record<string, unknown>;
+  return {
+    fullName: typeof record.full_name === "string" ? record.full_name : null,
+    htmlUrl: typeof record.html_url === "string" ? record.html_url : null,
+    defaultBranch: typeof record.default_branch === "string" ? record.default_branch : null,
+  };
+}
+
 /**
  * The headers GitHub requires, with the caller's token.
  *

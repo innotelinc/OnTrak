@@ -222,17 +222,23 @@ test("a11y: the lab console panel passes WCAG A/AA with and without a console", 
     reach: LAB_NETWORK,
   };
   const open = renderToStaticMarkup(
-    createElement(SessionConsole, { sessionId: 7, available: true, address }),
+    createElement(SessionConsole, { sessionId: 7, available: true, usable: true, address }),
   );
   const closed = renderToStaticMarkup(
     createElement(SessionConsole, {
       sessionId: 7,
       available: false,
+      usable: false,
       address: { ...address, host: "", target: "", user: "", transport: "" as const },
     }),
   );
+  // A session that ended while its console was open: the frame is gone and the panel says
+  // so, which is the state this component exists to reach rather than one it can skip.
+  const ended = renderToStaticMarkup(
+    createElement(SessionConsole, { sessionId: 7, available: true, usable: false, address }),
+  );
 
-  for (const html of [open, closed]) {
+  for (const html of [open, closed, ended]) {
     const results = await audit(html);
     assert.equal(results.violations.length, 0, `axe violations:\n${describeViolations(results)}`);
     assertControlsNamed(html);

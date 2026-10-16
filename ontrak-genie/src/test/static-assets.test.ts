@@ -292,6 +292,86 @@ test("every modal panel can hold focus the way it promises", async () => {
   assert.doesNotMatch(app, /state\.lastFocus/, "focus return should not be done twice");
 });
 
+test("every fold in the console is a real control that is remembered", async () => {
+  /*
+   * The console's folding is three things that can each fail silently: a
+   * `<details>` with no `<summary>` cannot be opened by anybody; one with no
+   * `data-section` folds for the session and is forgotten the moment the page is
+   * reloaded; and a fold whose script is not wired is drawn closed and never
+   * opens. None of those breaks a route, a type or a test that already exists.
+   *
+   * `layout:check` drives the behaviour in a real browser (a click, a reload, the
+   * tab order). This is the half that runs everywhere, on the markup and the
+   * stylesheet the browser is actually served.
+   */
+  const html = await fs.readFile(path.join(PUBLIC_DIR, "index.html"), "utf8");
+  const app = await fs.readFile(path.join(PUBLIC_DIR, "app.js"), "utf8");
+  const style = await fs.readFile(path.join(PUBLIC_DIR, "style.css"), "utf8");
+
+  // Found in the markup rather than listed here, so a fold added later is covered
+  // by the same rule instead of quietly sitting outside it.
+  const folds = [...html.matchAll(/<details\b[^>]*>([\s\S]*?)<\/details>/g)];
+  assert.ok(folds.length >= 8, `expected the console's folds, found ${folds.length}`);
+  const keys: string[] = [];
+  for (const [block] of folds) {
+    assert.match(block, /<summary\b/, "a <details> with no <summary> is a fold nobody can open");
+    assert.match(block, /data-section="([a-z0-9-]+)"/, "a fold nobody remembered is one somebody makes twice");
+    keys.push(/data-section="([a-z0-9-]+)"/.exec(block)?.[1] ?? "");
+  }
+  // Two folds sharing a key share one remembered value: folding either would
+  // silently fold the other on the next load.
+  assert.equal(new Set(keys).size, keys.length, `duplicate section keys: ${keys.join(", ")}`);
+
+  /*
+   * The two the sidebar is built around, pinned by name because their defaults
+   * are a decision rather than an accident: the chat list is what the sidebar is
+   * for, and the status rows are what folding it gives the room back to.
+   */
+  assert.match(html, /id="section-chats"[^>]*data-section="chats"[^>]*\bopen\b/);
+  assert.match(html, /id="section-status"[^>]*data-section="status"[^>]*\bopen\b/);
+  // And the count that makes folding the chat list lossless.
+  assert.match(html, /id="sessions-count"/, "a folded list has to still say how much is in it");
+  assert.match(app, /\$\("#sessions-count"\)\.textContent =/, "which the session load fills in");
+
+  /*
+   * The script. `summary` is a browser-provided tab stop, so it has to be in the
+   * list the modal trap walks — otherwise Tab from a panel's last block leaves
+   * the dialog, which is the one promise `aria-modal="true"` makes.
+   */
+  assert.match(app, /function wireSections\(/, "the folds have to be wired to anything");
+  assert.match(
+    app,
+    /querySelectorAll\("details\[data-section\]"\)/,
+    "from the markup, not a list that can fall behind it",
+  );
+  assert.match(app, /localStorage\.setItem\(SECTIONS_KEY/, "and remembered in this browser");
+  assert.match(app, /^\s*wireSections\(\);$/m, "wired from the console's own boot");
+  assert.match(app, /summary, \[tabindex/, "Tab has to know a summary is a stop");
+  /*
+   * And a folded block's controls have to stay *out* of that list, which is a
+   * question `offsetParent` does not answer: Chromium lays a closed block's fields
+   * out (they keep a box, and their `offsetParent` is the panel) and then refuses
+   * them focus. A trap that counted them would take one for the panel's last stop
+   * and let Tab leave the dialog.
+   */
+  assert.match(
+    app,
+    /typeof element\.checkVisibility === "function"/,
+    "the trap has to ask whether a control can really be focused",
+  );
+
+  // Two rules in the stylesheet, both of them about somebody being able to use
+  // the fold at all: the marker, and a target that clears the WCAG 2.5.8 floor
+  // (`layout:check` measures it in a browser; this catches its deletion).
+  assert.match(style, /\.section-head \{[\s\S]{0,400}?min-height: 28px/, "2.5.8");
+  assert.match(
+    style,
+    /details\[open\] > \.section-head::before/,
+    "the marker has to say which way the fold goes",
+  );
+  assert.match(style, /::-webkit-details-marker/, "and be the console's marker, not the engine's");
+});
+
 test("the follow-up rule is one module, served to the console", async () => {
   // The console and the CLI must offer the same next steps, so the browser runs
   // the CLI's compiled module rather than a second copy of the rule. `public/`

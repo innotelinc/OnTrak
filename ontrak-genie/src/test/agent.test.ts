@@ -411,6 +411,23 @@ test("sandbox command isolation", async (t) => {
     assert.ok(run.args.includes("--cpus"));
   });
 
+  await t.test("passes the FUSE device through, so a remote folder can be mounted", () => {
+    const wired = sandboxInvocation("sshfs", sandbox, "agent-cmd-fuse", { fuse: true });
+    assert.equal(wired.args[wired.args.indexOf("--device") + 1], "/dev/fuse");
+    assert.equal(wired.args[wired.args.indexOf("--cap-add") + 1], "SYS_ADMIN");
+    // The device buys back one capability, not the drop: everything else stays gone.
+    assert.equal(wired.args[wired.args.indexOf("--cap-drop") + 1], "ALL");
+    // `no-new-privileges` stays the first security option, and AppArmor is stood
+    // down behind it — without that the `mount` fusermount3 makes is denied even
+    // with the device and the capability in place.
+    assert.equal(wired.args[wired.args.indexOf("--security-opt") + 1], "no-new-privileges");
+    assert.ok(wired.args.includes("apparmor=unconfined"));
+
+    const bare = sandboxInvocation("echo hi", sandbox, "agent-cmd-nofuse", { fuse: false });
+    assert.equal(bare.args.includes("--device"), false, "a host without FUSE is never asked for one");
+    assert.equal(bare.args.includes("apparmor=unconfined"), false, "and its AppArmor stays on");
+  });
+
   await t.test("mounts only the workspace, and only there", () => {
     assert.equal(run.args[run.args.indexOf("-v") + 1], `${sandbox}:/workspace`);
     assert.equal(run.args[run.args.indexOf("-w") + 1], "/workspace");

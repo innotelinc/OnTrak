@@ -315,8 +315,14 @@ export interface ProjectImport {
   skipped: string[];
 }
 
-/** A name that is not already taken, by appending a count. */
-async function uniqueProjectName(base: string): Promise<string> {
+/**
+ * A name that is not already taken, by appending a count.
+ *
+ * Exported because a zip import (`project-zip.ts`) creates a project from a
+tree of files exactly as a bundle import does, and two imports that disagreed
+about what to do with a name already in use would be one behaviour and one bug.
+ */
+export async function uniqueProjectName(base: string): Promise<string> {
   const wanted = base.trim().slice(0, MAX_PROJECT_NAME).trim() || "imported project";
   const taken = new Set((await listProjects()).map((row) => row.name.trim().toLowerCase()));
   if (!taken.has(wanted.toLowerCase())) return wanted;
