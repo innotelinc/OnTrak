@@ -2183,7 +2183,22 @@ export class SessionManager {
     await this.store.logEvent("recycled", reason, session.id);
   }
 
+  /**
+   * The student's own "I am done with this machine": no grading, just the machine gone.
+   *
+   * Refused once the session is terminal, exactly like `reset` and `complete`. Destroying
+   * a machine takes as long as the hypervisor takes, and a student who gets no answer
+   * presses again — the reason this guard exists is a real session whose notes read
+   * `[student quit] [student quit] [student quit] [student quit] [student quit]` and whose
+   * log held five `recycled` events for one machine that had already gone. The second press
+   * recycles nothing and says so instead.
+   */
   async end(session: LabSession, reason = "student quit"): Promise<void> {
+    if (isTerminal(session.state)) {
+      throw new SessionError(
+        `session ${session.id} is already ${session.state}; there is nothing to end`,
+      );
+    }
     await this.recycle(session, reason);
   }
 

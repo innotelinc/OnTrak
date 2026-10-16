@@ -285,7 +285,16 @@ export async function endLabSession(formData: FormData): Promise<void> {
   const runtime = await runtimeOrFail(DASHBOARD);
   const sessionId = sessionIdFrom(formData);
   const session = await sessionOrFail(runtime, sessionId, DASHBOARD);
-  await runtime.manager.end(session);
+  // The refusal that reaches here is a double press: tearing a machine down takes as long
+  // as the hypervisor takes, so the second press arrives while the session is already
+  // terminal and `end` will not recycle it again. Say that, rather than failing with the
+  // error page a thrown SessionError would produce.
+  try {
+    await runtime.manager.end(session);
+  } catch (error) {
+    if (error instanceof SessionError) fail(DASHBOARD, error.message);
+    throw error;
+  }
   done(DASHBOARD, "Session ended and the machine was destroyed.");
 }
 

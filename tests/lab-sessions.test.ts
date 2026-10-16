@@ -369,6 +369,37 @@ test("sessions: reset throws the machine away and hands back a fresh one", async
   assert.ok((await eventsFor(h, reset)).includes("reset"));
 });
 
+test("sessions: ending a session a second time is refused, not recycled again", async () => {
+  const h = harness();
+  builtTemplate(h, "net-dns-failure");
+
+  const session = await h.manager.allocate("Ada", "net-dns-failure");
+  const instance = session.instance;
+  await h.manager.end(session);
+
+  assert.equal(session.state, "destroyed");
+  assert.equal([...h.incus.liveNames()].includes(instance), false, "the machine is gone");
+  assert.equal(
+    session.notes.split("[student quit]").length - 1,
+    1,
+    "ending once records one reason",
+  );
+
+  // The second press is the one a student makes while the first is still destroying the
+  // machine. It must not recycle a session that has already ended, or the reason and the
+  // `recycled` event pile up on a machine that is not there (the live portal's own log
+  // held five of each for one session).
+  await assert.rejects(
+    () => h.manager.end(session),
+    (error: unknown) => error instanceof SessionError && /nothing to end/.test(error.message),
+  );
+  assert.equal(
+    (await eventsFor(h, session)).filter((kind) => kind === "recycled").length,
+    1,
+    "one recycle event, not two",
+  );
+});
+
 test("sessions: complete records one result, ends the session and removes the machine", async () => {
   const h = harness();
   builtTemplate(h, "net-dns-failure");
