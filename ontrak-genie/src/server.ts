@@ -66,7 +66,16 @@ import {
   sweepPreviews,
 } from "./preview-hosting.js";
 import { MEMORY_FILE, readMemorySync } from "./memory.js";
-import { loadSkillsForScope, skillRoots } from "./skill-roots.js";
+import { installSkill, parseGitHubRepo, removeSkill } from "./skill-install.js";
+import {
+  accountOwnsSkill,
+  accountSkillDirFor,
+  accountSkillsDir,
+  loadSkillsForScope,
+  skillInstallToken,
+  skillRoots,
+} from "./skill-roots.js";
+import { slug } from "./skills.js";
 import {
   createProject as createWorkspaceProject,
   deleteProject as deleteWorkspaceProject,
@@ -1580,30 +1589,96 @@ async function handleApi(
   /*
    * Skills, and what this workspace remembers.
    *
-   * Read-only, and deliberately so: a skill is a *file* that somebody installs
-   * (`genie skills add`, or an operator copying a directory into the deployment's
-   * skills dir), and the memory is a file in the workspace the agent edits. Neither
-   * needs a route that writes — a route that wrote would be a second, weaker way in
-   * than the tools that already exist, and this console is one place where the
-   * answer to "how do I add a skill" should be a command with a git URL in it.
-   *
    * The list is what *this caller* can use: the project's `.genie/skills`, the
-   * account's, and the deployment's (`src/skill-roots.ts`).
+   * account's, and the deployment's, most specific first (`src/skill-roots.ts`).
+   *
+   * INSTALLING FROM HERE WRITES INTO THE CALLER'S OWN slice and nobody else's.
+   * That is the whole of the permission model: a console is shared, an account is
+   * not, so an install from a panel lands in `<AGENT_DATA_DIR>/skills/accounts/
+   * <account>/` — the directory whose precedence is exactly "this person's, above
+   * the deployment's" — and a deployment-wide skill stays an operator's copy or
+   * `genie skills add` from a shell. The work itself is `installSkill`, the same
+   * code the CLI runs, so the two cannot install different things; it is
+   * GitHub-only, and no part of what it fetches is executed.
+   *
+   * `removable` is answered here rather than worked out by the console: the rule
+   * is "this caller's own directory, and a directory this installer wrote" (the
+   * provenance file is the permission slip, `removeSkill`), and a rule spelled out
+   * in a browser is a rule that drifts from the one the route enforces.
    */
   if (pathname === "/api/skills" && method === "GET") {
     const skills = loadSkillsForScope();
+    const account = accountSkillsDir();
     return sendJson(res, 200, {
       dirs: skillRoots(),
+      account,
       skills: skills.map((skill) => ({
         name: skill.name,
         description: skill.description,
         source: skill.source,
         files: (skill.files ?? []).length,
         dir: skill.dir ?? null,
+        installed: skill.provenance !== undefined,
+        removable: accountOwnsSkill(skill.dir) && skill.provenance !== undefined,
         ...(skill.provenance === undefined ? {} : { provenance: skill.provenance }),
       })),
       memory: { file: MEMORY_FILE, present: readMemorySync().trim() !== "" },
     });
+  }
+
+  if (pathname === "/api/skills" && method === "POST") {
+    const payload = await readJson(req);
+    const repo = parseGitHubRepo(payload.repo);
+    if (repo === null) {
+      throw new HttpError(400, "name a GitHub repository as owner/repo — for example anthropics/skills");
+    }
+    const text = (key: string): string | undefined => {
+      const value = payload[key];
+      return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+    };
+    const name = text("name");
+    const ref = text("ref");
+    const which = text("path");
+    try {
+      const outcome = await installSkill({
+        owner: repo.owner,
+        repo: repo.repo,
+        dir: accountSkillsDir(),
+        token: skillInstallToken(),
+        ...(name === undefined ? {} : { name }),
+        ...(ref === undefined ? {} : { ref }),
+        ...(which === undefined ? {} : { path: which }),
+      });
+      return sendJson(res, 201, {
+        installed: {
+          name: outcome.skill.name,
+          description: outcome.skill.description,
+          files: outcome.skill.files,
+          dir: outcome.skill.dir,
+          repo: outcome.skill.repo,
+          ref: outcome.skill.ref,
+        },
+        others: outcome.others,
+        replaced: outcome.replaced,
+      });
+    } catch (error) {
+      throw new HttpError(400, (error as Error).message);
+    }
+  }
+
+  const skillNameMatch = /^\/api\/skills\/([^/]+)$/.exec(pathname);
+  if (skillNameMatch && method === "DELETE") {
+    const name = decodeURIComponent(skillNameMatch[1] ?? "");
+    const dir = accountSkillDirFor(name);
+    if (dir === null) throw new HttpError(400, "that is not a skill name");
+    try {
+      const removed = await removeSkill(dir);
+      return sendJson(res, 200, { removed: true, files: removed.files, name: slug(name) });
+    } catch (error) {
+      // A directory that is not there and one that is not this installer's are
+      // both "not yours to remove", and the refusal says which it was.
+      throw new HttpError(400, (error as Error).message);
+    }
   }
 
   if (pathname === "/api/hosting" && method === "GET") {

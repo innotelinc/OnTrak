@@ -676,15 +676,15 @@
       Skills and memory: what this agent is offered, and what this workspace has
       learned.
 
-      Read-only, and deliberately so. A skill is a *file* somebody installs —
-      `genie skills add <owner/repo>` in the terminal, or an operator copying one
-      into the deployment — and the memory is a file the agent edits through its
-      own `remember` tool. A panel that wrote either would be a second, weaker way
-      in than the ones that already exist, which is why the answer to "how do I add
-      one" here is a command with a git URL in it rather than a button.
+      The list is what *this caller* can use: the project's `.genie/skills`, the
+      account's, then the deployment's, most specific first (skill-roots.ts).
 
-      What is listed is what *this caller* can use: the project's `.genie/skills`,
-      the account's, then the deployment's, most specific first (skill-roots.ts).
+      Installing from here writes into the signed-in account's own slice and
+      nobody else's, so a shared console does not let one person change what
+      everybody is offered; a deployment-wide skill stays an operator's copy or
+      `genie skills add` from a shell, which is why the note below names both. The
+      memory is *not* writable from here at all: it is a file the agent edits with
+      its own `remember` tool, through the same gate and diff as any other write.
     -->
     <div
       id="skills"
@@ -708,18 +708,45 @@
           <p id="skills-memory" class="muted settings-note"></p>
         </section>
 
+        <section class="skills-block" aria-labelledby="skills-install-heading">
+          <h2 id="skills-install-heading" class="remote-heading">add one from GitHub</h2>
+          <form id="skills-install" class="skills-install" autocomplete="off">
+            <label class="field wide" for="skills-repo">
+              <span class="muted">repository</span>
+              <div class="skills-install-row">
+                <input
+                  id="skills-repo"
+                  class="input-text"
+                  type="text"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="owner/repo"
+                  aria-label="GitHub repository holding the skill to install"
+                />
+                <button type="submit" id="skills-install-run" class="btn-primary">install</button>
+              </div>
+            </label>
+          </form>
+          <p id="skills-install-note" class="muted settings-note">
+            A skill is a markdown playbook from a public GitHub repository, and it
+            is installed into <em>your</em> account on this deployment — the lane
+            that sits above the shared one and below this project's own
+            <span class="mono">.genie/skills</span>, so nothing here changes what
+            anybody else is offered. For a skill the whole deployment should have,
+            an operator runs <span class="mono">genie skills add &lt;owner/repo&gt;</span>.
+          </p>
+        </section>
+
         <section class="skills-block" aria-labelledby="skills-list-heading">
           <h2 id="skills-list-heading" class="remote-heading">skills on offer</h2>
           <div id="skills-list" class="skills-list"></div>
+          <p class="muted settings-note">
+            The model sees that menu at the start of every turn and loads a playbook
+            when one fits the work. A skill kept in
+            <span class="mono">.genie/skills</span> travels with the code, so
+            everyone who clones this workspace gets it.
+          </p>
         </section>
-
-        <p class="muted settings-note">
-          The model sees that menu at the start of every turn and loads a playbook
-          when one fits the work. Install another with
-          <span class="mono">genie skills add &lt;owner/repo&gt;</span> — a skill kept
-          in <span class="mono">.genie/skills</span> travels with the code, so
-          everyone who clones this workspace gets it.
-        </p>
       </div>
     </div>
 
@@ -768,8 +795,16 @@
               <span class="muted">path on that host — absolute</span>
               <input id="remote-path" class="input-text" type="text" autocomplete="off" placeholder="/srv/app" />
             </label>
+            <label class="field" for="remote-password">
+              <span class="muted">password — used for this session only, never written to disk</span>
+              <input id="remote-password" class="input-text" type="password" autocomplete="new-password" />
+            </label>
+            <label class="field" for="remote-passphrase">
+              <span class="muted">the key's passphrase, when you connect with a key</span>
+              <input id="remote-passphrase" class="input-text" type="password" autocomplete="new-password" />
+            </label>
             <label class="field wide" for="remote-key">
-              <span class="muted">private key — pasted, used for this session only</span>
+              <span class="muted">or a private key — pasted, used for this session only. If you fill in both this and the password, the password is the one used.</span>
               <!-- The placeholder is the real PEM header, with the hyphens written as
                    character references: scripts/secret-scan.py flags the PEM shape
                    wherever it appears, placeholders included, so the literal cannot be
@@ -783,14 +818,6 @@
                 placeholder="&#45;&#45;&#45;&#45;&#45;BEGIN OPENSSH PRIVATE KEY&#45;&#45;&#45;&#45;&#45;"
               ></textarea>
             </label>
-            <label class="field" for="remote-passphrase">
-              <span class="muted">key passphrase, if it has one</span>
-              <input id="remote-passphrase" class="input-text" type="password" autocomplete="new-password" />
-            </label>
-            <label class="field" for="remote-password">
-              <span class="muted">or a password</span>
-              <input id="remote-password" class="input-text" type="password" autocomplete="new-password" />
-            </label>
           </div>
           <div class="remote-actions">
             <button id="remote-connect" class="btn-primary">connect folder</button>
@@ -798,7 +825,8 @@
           <p class="muted files-note">
             The folder is mounted inside the sandbox and becomes where the agent works, so its edits
             land on the server and the preview runs the project there. Nothing is written into the
-            workspace: the key is kept for this session and removed when you disconnect.
+            workspace: a password is handed to the mount and never written to disk, and a key is kept
+            for this session only and removed when you disconnect.
           </p>
         </section>
 

@@ -860,6 +860,10 @@ pre.code {
 .skills-block { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; }
 .skills-block:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
 .skills-list { display: flex; flex-direction: column; gap: 8px; }
+/* The field and its button on one line, the way the hostname field does it. */
+.skills-install-row { display: flex; align-items: stretch; gap: 8px; }
+.skills-install-row .input-text { flex: 1; min-width: 0; }
+.skills-install-row .btn-primary { flex: none; }
 .skill-card {
   padding: 9px 11px;
   border: 1px solid var(--border);
@@ -872,6 +876,10 @@ pre.code {
 .skill-origin { margin-left: auto; flex: none; font-size: 11px; }
 .skill-description { margin: 4px 0 0; color: var(--text-dim); line-height: 1.45; }
 .skill-meta { margin: 6px 0 0; font-size: 11px; }
+/* Removal, at the foot of the card and out of the way of the playbook's own text.
+   The armed state is the shared `.btn-ghost.armed` rule, so the two-click guard
+   looks the same here as it does on a file or a session. */
+.skill-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
 
 .files-path { padding: 8px 14px; font-size: 11px; color: var(--text-dim); border-bottom: 1px solid var(--border); word-break: break-all; }
 .files-list { flex: 1; overflow-y: auto; padding: 6px; min-height: 0; }

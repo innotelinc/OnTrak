@@ -28,7 +28,7 @@ import path from "node:path";
 
 import { config } from "./config.js";
 import { accountDirName, currentScope, workspaceRoot } from "./scope.js";
-import { loadSkills, type Skill } from "./skills.js";
+import { loadSkills, slug, type Skill } from "./skills.js";
 
 /** Where installed, deployment-wide skills live. */
 export function deploymentSkillsDir(): string {
@@ -65,4 +65,49 @@ export function skillRoots(): string[] {
  */
 export function loadSkillsForScope(): Skill[] {
   return loadSkills(skillRoots());
+}
+
+/**
+ * The directory inside **this caller's own** skills directory that a name means,
+ * or null when the name cannot be one.
+ *
+ * The name arrives from the web, so it is slugged and then used as a single path
+ * segment: `..`, a slash and an empty name all slug away or fail, which is what
+ * keeps a name from being a path. Nothing here reads the disk — a caller that
+ * wants to know whether the directory exists asks `removeSkill`, which refuses
+ * anything this installer did not write.
+ */
+export function accountSkillDirFor(name: unknown): string | null {
+  if (typeof name !== "string") return null;
+  const slugged = slug(name);
+  if (slugged === "") return null;
+  return path.join(accountSkillsDir(), slugged);
+}
+
+/**
+ * Is this skill's directory one the caller may remove?
+ *
+ * True only for a skill under the account's own directory: the project's
+ * `.genie/skills` is committed beside the code and the deployment's is an
+ * operator's, so neither is a signed-in person's to delete from a panel. The
+ * provenance check is `removeSkill`'s — a directory somebody wrote by hand is not
+ * this installer's to remove even in the caller's own slice.
+ */
+export function accountOwnsSkill(dir: string | undefined): boolean {
+  if (typeof dir !== "string" || dir === "") return false;
+  const relative = path.relative(accountSkillsDir(), dir);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+/**
+ * The GitHub token an install from the console may spend.
+ *
+ * `GITHUB_TOKEN` is what a developer's machine and most deployments have; the
+ * deployment's own `AGENT_GIT_TOKEN` is the fallback, because on this estate that
+ * is the forge credential that already exists. Neither is required: a public
+ * repository installs anonymously, just at GitHub's low hourly limit.
+ */
+export function skillInstallToken(): string {
+  const fromEnv = (process.env.GITHUB_TOKEN ?? "").trim();
+  return fromEnv === "" ? config.gitToken : fromEnv;
 }

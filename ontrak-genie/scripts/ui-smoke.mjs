@@ -14,7 +14,15 @@
  *
  *   AGENT_UI_URL   default http://127.0.0.1:3400
  *   WEB_TOKEN      read from the environment, then from .env
+ *   AGENT_UI_COOKIE  a session cookie, for a console behind sign-in
  *   CHROME_PATH    only if the browser is somewhere unusual
+ *
+ * `AGENT_UI_URL` can be a deployment rather than a local server, and a deployment's
+ * console usually wants a session rather than a token — so `AGENT_UI_COOKIE` sets
+ * one (`ontrak_genie_session=…`, or the bare value) in the browser before the first
+ * page load. Without it, the checks that need an authenticated route report a skip
+ * naming the gate they met instead of failing on it. A check that cannot tell
+ * "signed out" from "broken" is a check somebody turns off.
  *
  * Uses Node's built-in WebSocket, so there is nothing to install.
  */
@@ -42,6 +50,22 @@ function envFromFile(key) {
 }
 
 const TOKEN = process.env.WEB_TOKEN ?? envFromFile("WEB_TOKEN");
+/**
+ * A session cookie, for a console whose gate is a sign-in rather than a token.
+ *
+ * Accepted as `name=value` or as the value alone — the name is the console's own
+ * (`ontrak_genie_session`), so pasting what a browser's devtools shows is enough.
+ */
+const COOKIE_ENV = (process.env.AGENT_UI_COOKIE ?? "").trim();
+const COOKIE =
+  COOKIE_ENV === ""
+    ? null
+    : (() => {
+        const split = COOKIE_ENV.indexOf("=");
+        return split === -1
+          ? { name: "ontrak_genie_session", value: COOKIE_ENV }
+          : { name: COOKIE_ENV.slice(0, split).trim(), value: COOKIE_ENV.slice(split + 1).trim() };
+      })();
 
 function findChrome() {
   const explicit = process.env.CHROME_PATH;
@@ -192,8 +216,23 @@ if (chromePath === null) {
   process.exit(0);
 }
 
+/**
+ * What this script's *own* requests carry.
+ *
+ * The page's requests take the session cookie by themselves; this process's do not,
+ * so a console behind sign-in has to be asked with the same credential the browser
+ * was given — otherwise the checks that read a route directly report "unauthorized"
+ * against a console that is answering perfectly well.
+ */
+const AUTH =
+  TOKEN !== ""
+    ? { Authorization: `Bearer ${TOKEN}` }
+    : COOKIE === null
+      ? {}
+      : { Cookie: `${COOKIE.name}=${COOKIE.value}` };
+
 const health = await fetch(`${BASE}/api/health`, {
-  headers: TOKEN === "" ? {} : { Authorization: `Bearer ${TOKEN}` },
+  headers: { ...AUTH },
 })
   .then((response) => response.json())
   .catch(() => null);
@@ -202,7 +241,7 @@ if (health === null) {
   console.error(`Could not reach the agent at ${BASE}. Start it first: npm start`);
   process.exit(1);
 }
-if (health.authRequired && TOKEN === "") {
+if (health.authRequired && TOKEN === "" && COOKIE === null) {
   console.error("The server requires WEB_TOKEN and none was found in the environment or .env.");
   process.exit(1);
 }
@@ -242,6 +281,35 @@ try {
   session = await connect(port);
   await session.send("Runtime.enable");
   await session.send("Page.enable");
+
+  /*
+   * The session first, then the page: Chrome was started on the URL above, so a
+   * cookie that has to be in place before `app.js` asks `/api/*` anything means
+   * setting it and loading the page again.
+   */
+  if (COOKIE !== null) {
+    await session.send("Network.enable");
+    /*
+     * `url` rather than `domain`: an address like 127.0.0.1 has no domain to set a
+     * cookie on, and asking for one is how a cookie silently fails to be sent. The
+     * answer is checked because `Network.setCookie` reports a refusal in its body
+     * instead of throwing, and a check that could not sign in would otherwise look
+     * like a check that found nothing.
+     */
+    const set = await session.send("Network.setCookie", {
+      name: COOKIE.name,
+      value: COOKIE.value,
+      url: `${BASE}/`,
+      path: "/",
+    });
+    if (set?.success !== true) {
+      console.error(
+        `The browser refused the ${COOKIE.name} cookie for ${BASE}: ${JSON.stringify(set)}`,
+      );
+      process.exit(1);
+    }
+    await session.send("Page.navigate", { url });
+  }
 
   /*
    * Boot is two things, and waiting on the first one alone is what used to make
@@ -514,9 +582,7 @@ try {
       ? "the sweep says why a usable model cannot be selected here"
       : "the models the sweep proved usable are reachable from the picker",
     async () => {
-      const response = await fetch(`${BASE}/api/models/sweep`, {
-        headers: TOKEN === "" ? {} : { Authorization: `Bearer ${TOKEN}` },
-      });
+      const response = await fetch(`${BASE}/api/models/sweep`, { headers: { ...AUTH } });
       const { sweep } = await response.json();
       const usable = (sweep?.results ?? [])
         .filter((result) => result.ok)
@@ -635,10 +701,7 @@ try {
     const api = (pathname, init = {}) =>
       fetch(`${BASE}${pathname}`, {
         ...init,
-        headers: {
-          "Content-Type": "application/json",
-          ...(TOKEN === "" ? {} : { Authorization: `Bearer ${TOKEN}` }),
-        },
+        headers: { "Content-Type": "application/json", ...AUTH },
       });
 
     const marker = "GENIE_SMOKE_APP";
@@ -725,12 +788,19 @@ try {
    * skipping the half that decides where the keyboard goes next.
    */
   await check("the skills panel draws the menu the model is given", async () => {
-    const endpoint = (pathname) =>
-      fetch(`${BASE}${pathname}`, {
-        headers: TOKEN === "" ? {} : { Authorization: `Bearer ${TOKEN}` },
-      });
+    const endpoint = (pathname) => fetch(`${BASE}${pathname}`, { headers: { ...AUTH } });
 
+    /*
+     * A deployment whose console is behind sign-in answers 401 here, and that is a
+     * property of the deployment rather than a fault in the panel: this check then
+     * reports a skip and names it, so the same script can be pointed at the live
+     * console (see `AGENT_UI_COOKIE` above) and tell a session apart from a bug
+     * instead of failing on somebody else's gate.
+     */
     const answer = await endpoint("/api/skills");
+    if (answer.status === 401 || answer.status === 403) {
+      return `skipped: ${BASE}/api/skills answers ${answer.status} — the console needs a session (AGENT_UI_COOKIE, or a WEB_TOKEN) and none was supplied`;
+    }
     if (!answer.ok) throw new Error(`/api/skills answered ${answer.status}`);
     const info = await answer.json();
     const skills = Array.isArray(info.skills) ? info.skills : [];
@@ -783,6 +853,11 @@ try {
         name: (card.querySelector('.skill-name')?.textContent ?? '').trim(),
         origin: (card.querySelector('.skill-origin')?.textContent ?? '').trim(),
         description: (card.querySelector('.skill-description')?.textContent ?? '').trim(),
+        // The two write controls, as drawn: a remove button that appears anywhere
+        // the route did not allow one, or that is missing where it did, is the
+        // whole permission model disagreeing with itself.
+        remove: card.querySelector('.skill-remove') !== null,
+        removeLabel: (card.querySelector('.skill-remove')?.textContent ?? '').trim(),
       }));
     `);
 
@@ -797,7 +872,47 @@ try {
       if ((skill.description ?? "") !== "" && row.description !== skill.description) {
         throw new Error(`row ${index} dropped the description the route sent`);
       }
+      if (row.remove !== (skill.removable === true)) {
+        throw new Error(
+          `row ${index} (${skill.name}): removable=${skill.removable === true} but the remove control ${row.remove ? "is" : "is not"} drawn`,
+        );
+      }
+      if (row.remove && row.removeLabel !== "remove") {
+        throw new Error(`row ${index} says ${JSON.stringify(row.removeLabel)} before a click`);
+      }
     }
+
+    /*
+     * The install field, which is the write half of the panel. What is checked here
+     * is the plumbing a person actually meets: a refusal arrives from the route, is
+     * shown where the field is, and installs nothing. The route itself — a real
+     * repository, provenance, removal, the refusals — is covered by
+     * `src/test/skills-route.test.ts`, because a browser check that downloads from
+     * GitHub would be a check that fails when GitHub is slow.
+     */
+    const install = await session.evaluate(`
+      const input = document.querySelector('#skills-repo');
+      input.value = 'not a repository';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('#skills-install').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      return Boolean(input.value);
+    `);
+    if (!install) throw new Error("the install field is not in the panel");
+
+    const refused = await session.waitFor(
+      `/owner\\/repo/.test(document.querySelector('#skills-install-note').textContent)`,
+      10_000,
+    );
+    if (!refused) {
+      const said = await session.evaluate(
+        "return (document.querySelector('#skills-install-note')?.textContent ?? '').trim();",
+      );
+      throw new Error(`the refusal was not shown in the panel (it says ${JSON.stringify(said)})`);
+    }
+    const stillSame = await session.evaluate(
+      `return document.querySelectorAll('#skills-list .skill-card').length === ${skills.length};`,
+    );
+    if (!stillSame) throw new Error("a refused install still changed the list");
 
     // The memory is the other half of the panel, and it has to name the file:
     // "remembered: yes" tells nobody where to look or how to correct it.
@@ -830,7 +945,7 @@ try {
     );
     if (!dismissed) throw new Error("clicking the backdrop left the skills panel open");
 
-    return `${skills.length} skill row(s), memory line, Escape and backdrop both close it`;
+    return `${skills.length} skill row(s) with the route's own remove gating, the install field refusing what the route refuses, memory line, Escape and backdrop both close it`;
   });
 
   await check("accessibility basics are present", async () => {
@@ -1198,9 +1313,9 @@ try {
    * noise the user learns to ignore.
    */
   await check("the pre-turn warning agrees with the chain health", async () => {
-    const current = await fetch(`${BASE}/api/health`, {
-      headers: TOKEN === "" ? {} : { Authorization: `Bearer ${TOKEN}` },
-    }).then((response) => response.json());
+    const current = await fetch(`${BASE}/api/health`, { headers: { ...AUTH } }).then((response) =>
+      response.json(),
+    );
 
     const warned = await session.evaluate(
       `return [...document.querySelectorAll('#messages .notice')].some((node) =>

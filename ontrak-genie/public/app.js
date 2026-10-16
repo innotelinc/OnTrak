@@ -3709,11 +3709,19 @@ function buyHosting() {
 /*
  * What this agent is offered here, and what this workspace has learned.
  *
- * Read-only on purpose. A skill is a file somebody installs (`genie skills add` in
- * the terminal, or an operator copying one into the deployment) and the memory is a
- * file the agent edits through its own `remember` tool, so a panel that wrote
- * either would be a second, weaker way in than the ones that already exist. This
- * one reports what is there and names the command that adds more.
+ * INSTALLING WRITES, AND ONLY INTO THE SIGNED-IN ACCOUNT'S OWN SLICE. That is the
+ * whole permission model, and it is the server's (`POST /api/skills`): a shared
+ * console must not let one person change what everybody is offered, so an install
+ * lands in the account's lane — above the deployment's, below this project's
+ * `.genie/skills` — and a deployment-wide skill is still an operator's copy or
+ * `genie skills add` from a shell. Removal follows the same rule and one more: only
+ * a directory the installer wrote (provenance) is anything this panel may delete,
+ * which is why the two write controls are driven by the route's answer rather than
+ * by what the markup happens to have.
+ *
+ * The memory is read here and written only by the agent, through its `remember`
+ * tool: it is a file in the workspace, so it goes through the same gate, diff and
+ * change list as any other edit rather than through a panel's side door.
  *
  * The route answers for *this* caller — the project's `.genie/skills`, the
  * account's, then the deployment's — and which of the three a skill came from is
@@ -3768,6 +3776,9 @@ function renderSkills(info) {
   const skills = Array.isArray(info.skills) ? info.skills : [];
   const dirs = Array.isArray(info.dirs) ? info.dirs.map(String) : [];
   list.replaceChildren();
+  // A re-render replaces the buttons an arm was pointing at, so an armed removal
+  // is dropped rather than left holding a node nobody can see.
+  disarmSkillRemove();
 
   status.textContent =
     skills.length === 0
@@ -3801,6 +3812,23 @@ function renderSkills(info) {
     description.textContent = String(skill.description ?? "");
     card.append(head, description);
 
+    // Removal is offered exactly where the route says it is allowed, and it takes
+    // two clicks with the label changing in between — the same guard the workspace
+    // clear uses, because a native confirm() cannot be answered in a headless run
+    // and a one-click delete beside a list of files is a trap.
+    if (skill.removable === true && typeof skill.name === "string") {
+      const actions = document.createElement("div");
+      actions.className = "skill-actions";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "btn-ghost mini skill-remove";
+      remove.dataset.name = skill.name;
+      remove.textContent = "remove";
+      remove.setAttribute("aria-label", `Remove the ${skill.name} skill from your account`);
+      actions.append(remove);
+      card.append(actions);
+    }
+
     // Only the parts that are true: a single markdown file has no extra files to
     // count and nothing recorded about where it came from.
     const notes = [];
@@ -3816,11 +3844,120 @@ function renderSkills(info) {
       meta.className = "skill-meta muted mono";
       meta.textContent = notes.join(" · ");
       card.append(meta);
-    }
-
-    list.append(card);
+    }    list.append(card);
   }
-}/* ------------------------------------------------------ remote workspaces */
+}
+
+/**
+ * The two-click removal, and the request behind the second click.
+ *
+ * `armed` holds the button and its timer, so a click elsewhere or a timeout puts
+ * the label back: the first click is a question, and an unanswered one has to stop
+ * asking.
+ */
+let skillRemoveArmed = null;
+
+function disarmSkillRemove() {
+  if (skillRemoveArmed === null) return;
+  clearTimeout(skillRemoveArmed.timer);
+  skillRemoveArmed.button.textContent = "remove";
+  skillRemoveArmed.button.classList.remove("armed");
+  skillRemoveArmed = null;
+}
+
+function onSkillListClick(event) {
+  const button = event.target instanceof Element ? event.target.closest(".skill-remove") : null;
+  if (button === null) return;
+  const name = button.dataset.name ?? "";
+  if (name === "") return;
+
+  if (skillRemoveArmed === null || skillRemoveArmed.button !== button) {
+    disarmSkillRemove();
+    button.textContent = "confirm remove";
+    button.classList.add("armed");
+    skillRemoveArmed = { button, timer: setTimeout(disarmSkillRemove, 5_000) };
+    return;
+  }
+
+  disarmSkillRemove();
+  void removeSkillFromPanel(name);
+}
+
+async function removeSkillFromPanel(name) {
+  const note = $("#skills-install-note");
+  try {
+    const result = await api(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
+    addNotice(`Removed the ${result.name ?? name} skill — ${result.files ?? 0} files.`);
+    note.textContent = `Removed ${result.name ?? name}.`;
+  } catch (error) {
+    addErrorMessage(error.message);
+    note.textContent = error.message;
+  }
+  await loadSkills();
+}
+
+/**
+ * Install one skill from a GitHub repository into this account's own lane.
+ *
+ * The message the server refuses with is shown as it came: it is the one that knows
+ * whether the repository has no skill in it, holds several (`--path`, spelled as
+ * the route's own words), or is private and needs a token. Nothing is guessed here,
+ * and nothing is retried with different arguments on the user's behalf.
+ */
+async function installSkillFromPanel() {
+  const input = $("#skills-repo");
+  const button = $("#skills-install-run");
+  const note = $("#skills-install-note");
+
+  /*
+   * `owner/repo`, and optionally `owner/repo#which-skill` — the fragment is this
+   * panel's spelling of the route's `path`, because a repository that publishes a
+   * dozen playbooks is common and "which one" is not something to guess at. The
+   * message a refusal comes back with names the alternatives, so the field only has
+   * to accept the answer.
+   */
+  const typed = input.value.trim();
+  const hash = typed.indexOf("#");
+  const repo = (hash === -1 ? typed : typed.slice(0, hash)).trim();
+  const which = hash === -1 ? "" : typed.slice(hash + 1).trim();
+  if (repo === "") {
+    note.textContent = "Name a repository as owner/repo.";
+    input.focus();
+    return;
+  }
+
+  button.disabled = true;
+  const was = button.textContent;
+  button.textContent = "installing…";
+  note.textContent = `Reading ${repo} from GitHub…`;
+  try {
+    const result = await api("/api/skills", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(which === "" ? { repo } : { repo, path: which }),
+    });
+    const skill = result.installed ?? {};
+    const others = Array.isArray(result.others) ? result.others : [];
+    addNotice(`Installed ${skill.name} from ${repo} — the agent can load it from the next turn.`);
+    note.textContent =
+      `${result.replaced === true ? "Replaced" : "Installed"} ${skill.name} (${skill.files ?? 0} files).` +
+      (others.length === 0 ? "" : ` That repository also holds ${others.join(", ")}.`);
+    input.value = "";
+  } catch (error) {
+    addErrorMessage(error.message);
+    // The route's refusal, plus the one thing this panel can do about it: a
+    // repository holding several skills says which, and the fragment picks one.
+    note.textContent = /several skills/.test(error.message)
+      ? `${error.message}. Add #<name> after the repository to pick one.`
+      : error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = was;
+  }
+  await loadSkills();
+}
+
+/* ------------------------------------------------------ remote workspaces */
 
 
 
@@ -4379,12 +4516,14 @@ function prefillAtlasSsh() {
   // Whatever this person has already typed is left alone: the only thing missing
   // is the credential, so that is where the cursor goes. The path is theirs to
   // name — a guessed one would be a directory the agent works in by accident.
-  const missing = $("#remote-key").value.trim() === "" ? $("#remote-key") : $("#remote-password");
+  // The password is what is missing first, because it is the credential the mount
+  // prefers: a pasted key beside it is the fallback, not the requirement.
+  const missing = $("#remote-password").value === "" ? $("#remote-password") : $("#remote-key");
   missing.focus();
   addNotice(
     host === ""
       ? "Atlas has no host configured for a folder mount (AGENT_ATLAS_SSH_HOST)."
-      : `${host} is filled in above — add a private key or a password, then connect folder.`,
+      : `${host} is filled in above — add a password or a private key, then connect folder.`,
   );
 }
 
@@ -4465,6 +4604,9 @@ const PALETTE_ACTIONS = [
   { name: "sweep", desc: "ask which models can actually call a tool", run: () => openSweep() },
   { name: "publish", desc: "put this workspace on the network", run: () => openHosting() },
   { name: "remote", desc: "work on a folder over SSH, or a GitHub repository", run: () => openRemote() },
+  // Reachable from the palette because the panel it opens lives behind the
+  // workspace drawer, and a phone is the screen that has least room for it.
+  { name: "skills", desc: "the skills the agent is offered, and what this workspace remembers", run: () => void openSkills() },
   { name: "model", desc: "choose the model for this chat", run: null },
 ];
 
@@ -4868,6 +5010,14 @@ function wire() {
   $("#skills").addEventListener("click", (event) => {
     if (event.target === $("#skills")) closeSkills();
   });
+
+  $("#skills-install").addEventListener("submit", (event) => {
+    event.preventDefault();
+    void installSkillFromPanel();
+  });
+  // One delegated listener for the whole list: the cards are rebuilt on every load,
+  // so a listener per card would be a handler per render.
+  $("#skills-list").addEventListener("click", onSkillListClick);
 
   $("#hosting-open").addEventListener("click", () => openHosting());
   $("#hosting-close").addEventListener("click", () => closeHosting());

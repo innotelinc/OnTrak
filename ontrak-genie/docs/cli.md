@@ -298,6 +298,13 @@ refused until `--path` says which, and the other names are printed.
 `AGENT_GIT_TOKEN`) — a private repository needs one, and GitHub's hourly limit for
 anonymous callers is low enough that installing a handful of skills runs into it.
 
+The **console** installs through the same code, but into the signed-in account's own
+lane (`<AGENT_DATA_DIR>/skills/accounts/<account>/`, or `…/skills/shared` on a
+deployment with no control plane) rather than the deployment's directory, so one
+person's install is not everybody's. It accepts `owner/repo` and `owner/repo#name`
+for the `--path` case, and removal there is limited to the same lane and to
+directories this installer wrote.
+
 What is installed is what the **console** sees too: the same directories are read
 by the server, per account (`§5` of [operations.md](operations.md)). In a
 deployment (`AGENT_DATA_DIR` set) `add` writes into the deployment's own skills

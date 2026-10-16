@@ -628,16 +628,23 @@ jobs:
   # the image executes, so a green run here is a green run against the shipped
   # shape rather than against the source.
   #
-  # The browser checks (`npm run ui:smoke`, part of `npm run check`) are
-  # deliberately not run here: they drive a real Chrome over the console, and they
-  # are the workstation gate before a push rather than a per-push cost.
+  # The browser checks (`npm run ui:smoke` and `npm run layout:check`, both part of
+  # `npm run check`) *are* run here, and they used to be skipped without saying so:
+  # they need a Chrome, and every runner this repository has installs none — so the
+  # checks that can only fail in a browser failed on nobody's machine but the one
+  # that happened to have Playwright. `scripts/smoke-run.sh` is what makes them
+  # runnable at all: it starts a stand-in gateway and a console of its own on
+  # scratch directories, seeds one change through the console's own chat route, and
+  # runs the checks against them. The checks that need a *model* still skip there —
+  # a runner has none — and they say so rather than passing quietly.
   genie:
     name: OnTrak Genie
     runs-on: ubuntu-latest
     # Bounded: without a ceiling a hang holds this runner for GitHub's six-hour
-    # default — minutes of real work, hours of waiting. The whole workflow's
-    # slowest job measures about three minutes; this is five times that.
-    timeout-minutes: 15
+    # default — minutes of real work, hours of waiting. Five minutes of tests plus a
+    # Chromium download, a browser sweep at four viewports and two console startups
+    # is what is inside this; twenty-five minutes is several times that.
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: ontrak-genie
@@ -678,6 +685,27 @@ jobs:
           set -euo pipefail
           cd scripts
           python3 -m unittest discover -s tests -q
+
+      # The same browser the Sync job drives its dashboard with, pinned to the same
+      # major, and cached between runs the way that job's is.
+      - name: Install Chromium
+        run: npx --yes playwright@1.63.0 install --with-deps chromium
+
+      # A console of the runner's own, a gateway that answers, one seeded change, and
+      # the two browser suites against them. `dist/` is already built above, which is
+      # what this needs (and what the image runs).
+      - name: Browser checks (the console a real Chrome drives)
+        run: bash scripts/smoke-run.sh
+
+      - name: The console's own log
+        if: failure()
+        run: |
+          for f in /tmp/genie-smoke-run-*/console.log /tmp/genie-smoke-run-*/gateway.log; do
+            [ -f "$f" ] || continue
+            echo "::group::$f"
+            tail -60 "$f"
+            echo "::endgroup::"
+          done
 
   # The family's front door, run like the products behind it. It had no job: its
   # typecheck, its unit tests and its copy check only ever ran on the machine of

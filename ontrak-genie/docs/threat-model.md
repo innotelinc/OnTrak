@@ -166,6 +166,37 @@ workspace that is a remote mount is a workspace where `AGENT_SANDBOX=host` is th
 honest setting — and `host` is the weaker sandbox, which is why it is written down
 here rather than discovered.
 
+### 5b. Outbound: a skill from the console
+
+The console can install a skill (`POST /api/skills`), which is a request from a
+signed-in person that makes this process fetch from **github.com** and write the
+result into that person's own skills directory —
+`<AGENT_DATA_DIR>/skills/accounts/<account>/`. Three properties are what make that
+narrow enough to ship:
+
+- **the host is fixed.** `parseGitHubRepo` accepts `owner/repo`, a github.com URL or
+  an scp-style address and *refuses* anything else, including a GitLab URL of the
+  same shape — the installer fetches from GitHub's API and raw host, so a host it
+  cannot serve is refused rather than treated as a GitHub path.
+- **the writer is confined.** The name a caller types is slugged and used as one path
+  segment (never a path), the install reads only files under the chosen skill root
+  of the repository, refuses absolute and climbing paths, and writes only inside the
+  account's own lane. Removal is narrower still: only a directory this installer
+  wrote (it carries `.source.json`, the permission slip) and only in that lane, so
+  the deployment's own skills and a project's `.genie/skills` are not reachable from
+  a browser.
+- **nothing is executed.** A skill is text this program reads. A `scripts/` file
+  inside one runs only if the agent later decides to run it, through the same guard,
+  sandbox and approval gate as any other command.
+
+The residual: an install spends the deployment's GitHub rate limit (or its token),
+and a skill that a person installs is a playbook the *model* will follow in that
+person's chats. A skill is instructions, not code, but it is instructions — review
+what you install, which is why the panel shows where each one came from.
+
+And a deployment that would rather sign every host-key decision has the same answer
+as remote workspaces: it is the caller's own lane or nothing.
+
 ## 6. Out of scope, deliberately
 
 - **Unattended host changes.** The autonomy ladder
@@ -195,6 +226,7 @@ here so a change that erodes one fails loudly:
 | A mount that is not there is a failure, and its key file goes with it | `src/test/remote.test.ts` |
 | A GitHub or forge token is verified by the host, never stored, and redacted from errors | `src/test/remote-forge.test.ts`, `src/test/remote.test.ts` |
 | Remote work off means refused, not half-on | `src/test/remote-disabled.test.ts` |
+| A skill name from the console is a name and never a path, installs land only in the caller's own lane, and only an installer-written directory can be removed | `src/test/skills-route.test.ts` |
 | A secret reaches a command through the environment and not its arguments | `src/test/shell.test.ts` |
 | Sign-in is verified against the JWKS, not trusted | `src/test/oidc.test.ts`, `src/test/oidc-redirect.test.ts` |
 | A control-plane outage is reported, not swallowed | `src/test/controlplane-outage.test.ts` |

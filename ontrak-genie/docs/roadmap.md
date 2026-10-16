@@ -436,6 +436,17 @@ one and the anonymous rate limit is low (`src/skill-install.ts`, `src/skills.ts`
 *menu* and the playbook arrives with `use_skill` when it is wanted, which is the
 difference between offering thirty skills and shipping thirty playbooks every turn
 (`src/skill-roots.ts`, `GET /api/skills`).
+- `[x]` **Installing from the console, with a scope that can be explained.** A
+panel lists what this caller is offered, installs one from GitHub into the
+signed-in account's own lane, and offers removal only where the route says the
+caller owns it — provenance and lane, both decided server-side so the panel cannot
+disagree with the route that enforces them (`POST /api/skills`,
+`DELETE /api/skills/<name>`, `src/test/skills-route.test.ts`).
+- `[x]` **The browser checks run in CI.** They needed a Chrome and a console to
+drive, and had neither on a runner — so `scripts/smoke-run.sh` starts a stand-in
+gateway and a console of its own, seeds one change through the real chat route, and
+runs `ui:smoke` and `layout:check` against them; the checks that need a model still
+skip there, and say so (`scripts/fake-gateway.mjs`, `.github/workflows/ci.yml`).
 - `[x]` **A project that remembers.** `MEMORY.md` in the workspace, injected into
 every turn, written with the `remember` tool — a file, so it is visible, diffable,
 revertable and committed with the code (`src/memory.ts`).

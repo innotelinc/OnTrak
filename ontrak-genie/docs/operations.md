@@ -1588,8 +1588,20 @@ A console chat gets the **menu** — name and one-line description per skill, at
 end of every prompt — and fetches a playbook with `use_skill` when it is wanted,
 which is the difference between offering thirty skills and shipping thirty
 playbooks' worth of tokens on every turn. `GET /api/skills` answers with what this
-caller can use, from which directories, and whether a `MEMORY.md` exists; there is
-deliberately no route that installs, because installing is `genie skills add`:
+caller can use, from which directories, and whether a `MEMORY.md` exists.
+
+The **console** can install and remove too, and the scope is the whole permission
+model: `POST /api/skills` writes into the signed-in account's own lane
+(`<AGENT_DATA_DIR>/skills/accounts/<account>/`, or `…/skills/shared` on a deployment
+with no control plane), so one person cannot change what everybody is offered, and
+`DELETE /api/skills/<name>` removes only a directory that installer wrote — the
+provenance file `.source.json` is the permission slip — and only inside that lane.
+A skill the deployment ships, or one committed in the project's `.genie/skills`, is
+not the console's to touch, and `GET /api/skills` says which rows are removable so
+the panel and the route cannot disagree. The install itself is the same
+`installSkill` the CLI runs, GitHub-only, with nothing it fetches executed.
+
+From a shell — for a laptop, for the whole deployment, or for a private repository:
 
 ```bash
 # On the deployment: `AGENT_DATA_DIR` is set there, so this lands in the volume the
@@ -1599,14 +1611,16 @@ docker exec <genie-container> node dist/cli/main.js skills add pbakaus/impeccabl
 genie skills add pbakaus/impeccable
 # Somewhere else entirely, when a directory is named:
 genie skills add pbakaus/impeccable --dir /data/skills
-# A private repository needs a token; so does anything past GitHub's anonymous limit:
+# A private repository needs a token; so does anything past GitHub's anonymous limit.
+# The console's route reads the same two: GITHUB_TOKEN, then the deployment's own
+# AGENT_GIT_TOKEN.
 GITHUB_TOKEN=... genie skills add acme/private-skills
 ```
 
-Install, update and removal are the same command: an install replaces the
-directory, so a skill is always one repository at one ref, and `skills remove`
-refuses any directory the installer did not write (it is somebody's own file
-then, and not this command's to delete).
+Install, update and removal are the same operation either way: an install replaces
+the directory, so a skill is always one repository at one ref, and removal refuses
+any directory the installer did not write (it is somebody's own file then, and not
+this installer's to delete).
 
 ### Memory
 
@@ -1765,7 +1779,7 @@ same `POST /api/approvals/:id` the browser card uses.
 ```bash
 npm run dev           # tsx watch (reload on change)
 npm run typecheck     # tsc --noEmit
-npm test              # node:test — 573 tests, no browser needed
+npm test              # node:test — 682 tests, no browser needed
 npm run ui:smoke      # drives the real UI in a headless Chromium
 npm run layout:check  # phone, tablet and desktop sizes, in a headless Chromium
 npm run model:health  # which advertised models really do tool calling
@@ -1774,6 +1788,7 @@ npm run offline:check # proves the offline fallback, with the gateway dead
 npm run draft:check   # how the configured gateway streams a file being written
 npm run live:check    # offline:check and draft:check, one after the other
 npm run sandbox:build # rebuild the run_command container image
+scripts/smoke-run.sh  # the two browser suites, against a console it starts itself
 ```
 
 `npm run check` runs the whole gate in the order that makes sense: `typecheck`,
@@ -1782,9 +1797,18 @@ the tests because the suite runs the compiled `dist/test/*.test.js`, not the
 TypeScript, and the last two come after it because they need a browser and a build
 behind them. `layout:check` starts its own shell on a scratch workspace and needs
 nothing else; `ui:smoke` needs a server to drive — start one first (or use the
-compose container, which is already on `ONTRAK_GENIE_PORT`) — so on a host with a
-browser but no running agent it is the one step that cannot pass. Both skip
-cleanly when there is no Chromium, which is what every CI runner has.
+compose container, which is already on `ONTRAK_GENIE_PORT`).
+
+`scripts/smoke-run.sh` is the way to run both when there is nothing to drive: it
+starts `scripts/fake-gateway.mjs` (a stand-in that answers `/v1/models` and streams a
+canned completion — no model, no network), starts a console of its own on scratch
+directories with two skills seeded in the panel, sends one turn through the chat
+route so the change list has a file in it, runs `ui:smoke` and `layout:check`
+against that, and stops everything again. It moves off a port something is already
+answering on, keeps its scratch directory when it fails, and is what the `genie`
+job in CI runs — the browser suites used to be skipped there for want of a Chrome,
+which meant they only ever ran on a machine that happened to have one. A browser is
+still required, and both suites skip cleanly without one.
 
 **`test` reads the deployment's `.env` when the gate is run from a directory that
 has one**, because `config.ts` loads it at import time. It cannot override a
@@ -1840,7 +1864,9 @@ are marked in the picker, the preview pane (including a real write, its
 highlighting, that the pane comes back after a page reload, and a report of
 whether a live diff was actually streamed — a whole call can arrive in one frame,
 in which case there is no window in which to stream one), the viewer's change
-rendering and its two-click delete, the accessibility landmarks, and
+rendering and its two-click delete, the skills panel (its rows against
+`GET /api/skills`, its remove controls against the route's own `removable` flag, and
+an install the route refuses), the accessibility landmarks, and
 (when `AGENT_APPROVAL` is on) two full prompts, one answered **Deny** and one
 **Approve** with a harmless `echo`, so it proves both paths and still executes
 nothing that changes anything. It also cross-checks what the panel renders against
@@ -1850,6 +1876,17 @@ message if no browser is present. The server must be running:
 
 ```bash
 npm start & npm run ui:smoke
+```
+
+`AGENT_UI_URL` may point at a deployment rather than a local server, and a
+deployment's console usually wants a **session** rather than a token: set
+`AGENT_UI_COOKIE` (`ontrak_genie_session=…`, or the value alone) and the script puts
+that cookie in the browser before the first page load. Without one, the checks that
+need an authenticated route report a skip naming the gate they met — a check that
+cannot tell "signed out" from "broken" is a check somebody turns off:
+
+```bash
+AGENT_UI_URL=https://genie.example.com AGENT_UI_COOKIE=ontrak_genie_session=… npm run ui:smoke
 ```
 
 It found a real bug on its first run: a denied approval emits a `tool_result`
