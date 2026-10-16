@@ -217,9 +217,17 @@ export default function LandingPage() {
                   <path d="M5 12h14M13 6l6 6-6 6" />
                 </svg>
               </ButtonLink>
-              <ButtonLink href="/login" variant="secondary" size="lg">
-                Instructor &amp; admin sign in
-              </ButtonLink>
+              {/*
+                One door, not three. "Instructor & admin sign in" read as a second, different
+                way in, and it is not: roles are decided by the identity provider after the
+                sign-in, and everybody — student, instructor, administrator — comes through
+                this same screen. So the second button says only what it does.
+              */}
+              {selfRegistration ? (
+                <ButtonLink href="/login" variant="secondary" size="lg">
+                  Sign in
+                </ButtonLink>
+              ) : null}
             </div>
 
             <p className="mt-4 max-w-xl text-sm text-ink-faint">
