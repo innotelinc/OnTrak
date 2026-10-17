@@ -12,7 +12,11 @@ import { joinCode } from "@/lib/cohort-rules";
 import { classAdmission } from "@/lib/program-admission";
 import {
   awardProblems,
+  completionProblems,
   courseSubmissionProblems,
+  credentialProblems,
+  foundationalContentProblems,
+  moduleHourProblems,
   offeringSeatProblems,
   priceProblems,
   scheduleProblems,
@@ -364,6 +368,19 @@ export async function createCourse(formData: FormData): Promise<void> {
     if (submission.length > 0) backTo(back, submission[0].message, false);
   }
 
+  // The funder's answers on course content, refused here for the same reason the price is.
+  // Material it does not fund cannot be submitted at all, and a credential the provider issues
+  // itself is not one the RFQ counts; both are cheaper to refuse than to lose at review.
+  const tenant = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { name: true },
+  });
+  const content = [
+    ...foundationalContentProblems({ title, text: [summary] }),
+    ...credentialProblems({ title, credentials, provider: tenant?.name ?? "" }),
+  ];
+  if (content.length > 0) backTo(back, content[0].message, false);
+
   const course = await prisma.course.create({
     data: {
       organizationId,
@@ -424,6 +441,17 @@ export async function addCourseModule(formData: FormData): Promise<void> {
   if (!title) backTo(back, "A module needs a title.", false);
   if (!objectives) backTo(back, "A module needs at least one objective.", false);
 
+  // The module is where a course would actually spend an hour on device setup, account access
+  // or browser use, and the funder answered that those are foundational rather than funded
+  // content (RFQ answers, 2026-10-13, §3). Refused at authoring, not after the course is built.
+  const activity = String(formData.get("activity") ?? "").trim() || null;
+  const outcome = String(formData.get("outcome") ?? "").trim() || null;
+  const content = foundationalContentProblems({
+    title: `${course.title} — ${title}`,
+    text: [title, objectives, activity, outcome],
+  });
+  if (content.length > 0) backTo(back, content[0].message, false);
+
   const last = await prisma.courseModule.findFirst({ where: { courseId }, orderBy: { position: "desc" } });
   await prisma.courseModule.create({
     data: {
@@ -432,8 +460,8 @@ export async function addCourseModule(formData: FormData): Promise<void> {
       title,
       hours: Number.isFinite(hours) && hours > 0 ? hours : 1,
       objectives,
-      activity: String(formData.get("activity") ?? "").trim() || null,
-      outcome: String(formData.get("outcome") ?? "").trim() || null,
+      activity,
+      outcome,
     },
   });
   await recordAudit({ actorId: user.id, action: "course.module", targetType: "course", targetId: courseId, detail: { title } });
@@ -456,13 +484,29 @@ export async function addCourseModule(formData: FormData): Promise<void> {
  */
 export async function setListingState(formData: FormData): Promise<void> {
   const courseId = String(formData.get("courseId") ?? "");
-  const course = await prisma.course.findUnique({ where: { id: courseId } });
+  const course = await prisma.course.findUnique({
+    where: { id: courseId },
+    include: { modules: { orderBy: { position: "asc" } } },
+  });
   if (!course) backTo("/admin/tenants", "That course no longer exists.", false);
   const user = await requireTenantAdmin(course.organizationId);
   const back = `/admin/tenants/${course.organizationId}`;
   const requested = String(formData.get("state") ?? "draft");
   const state = requested === "published" || requested === "suspended" ? requested : "draft";
   const note = String(formData.get("note") ?? "").trim() || null;
+
+  // Only instructor-led time may be listed, counted and priced, so a course whose modules do
+  // not add up to the hours it states is not something the funder's directory can carry. The
+  // check is here rather than on `addCourseModule` because a course is written module by
+  // module: the total is only meaningful once the provider says it is finished.
+  if (state === "published") {
+    const hours = moduleHourProblems({
+      title: course.title,
+      instructionalHours: course.instructionalHours,
+      modules: course.modules.map((module) => ({ title: module.title, hours: module.hours })),
+    });
+    if (hours.length > 0) backTo(back, hours[0].message, false);
+  }
   const approved = state === "draft" ? null : (course.directoryApprovedAt ?? new Date());
 
   await prisma.course.update({
@@ -597,6 +641,11 @@ export async function enrollLearner(formData: FormData): Promise<void> {
   const back = `/admin/tenants/${cohort.organizationId}`;
   if (!email) backTo(back, "An enrolment needs an email address.", false);
 
+  // An offering may include participants the program does not fund (RFQ answers, 2026-10-13,
+  // §2.2). Such a seat is still a seat in the class, but it is nobody's cap and nobody's
+  // reimbursement, so the flag is what the report and the per-employer arithmetic read.
+  const funded = String(formData.get("funded") ?? "true") !== "false";
+
   const admission = await classAdmission(cohort);
   if (admission.length > 0) backTo(back, admission[0].message, false);
 
@@ -613,10 +662,11 @@ export async function enrollLearner(formData: FormData): Promise<void> {
 
   await prisma.enrollment.upsert({
     where: { cohortId_userId: { cohortId, userId: learner.id } },
-    update: {},
+    update: { funded },
     create: {
       cohortId,
       userId: learner.id,
+      funded,
       organizationId: cohort.organizationId,
       sponsorOrganizationId: cohort.sponsorOrganizationId,
     },
@@ -689,14 +739,90 @@ export async function recordAttendance(formData: FormData): Promise<void> {
   backTo(back, `Attendance recorded: ${hours} hour(s).`);
 }
 
-/** Mark a learner complete, or withdraw them. Both are decisions, so both are recorded. */
-export async function setEnrollmentStatus(formData: FormData): Promise<void> {
+/**
+ * Record — or clear — that a learner completed the course's required assessment.
+ *
+ * A separate decision from attendance because the funder's answer separates them: the hours
+ * prove the training happened, and this proves the learner did the thing the course assesses
+ * (RFQ answers, 2026-10-13, §4). It is a timestamp rather than a checkbox so the record says
+ * when the provider saw it, which is what an auditor asks.
+ */
+export async function setAssessment(formData: FormData): Promise<void> {
   const enrollmentId = String(formData.get("enrollmentId") ?? "");
   const enrollment = await prisma.enrollment.findUnique({ where: { id: enrollmentId } });
   if (!enrollment) backTo("/admin/tenants", "That enrolment no longer exists.", false);
   const user = await requireTenantAdmin(enrollment.organizationId);
+  const back = `/admin/tenants/${enrollment.organizationId}`;
+  const recorded = String(formData.get("done") ?? "record") !== "clear";
+
+  await prisma.enrollment.update({
+    where: { id: enrollmentId },
+    data: { assessmentRecordedAt: recorded ? (enrollment.assessmentRecordedAt ?? new Date()) : null },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    action: "enrollment.assessment",
+    targetType: "enrollment",
+    targetId: enrollmentId,
+    detail: { recorded },
+  });
+  revalidatePath(back);
+  backTo(
+    back,
+    recorded
+      ? "Assessment recorded — the completion can now be reimbursed."
+      : "Assessment cleared; a completion without one is not reimbursable.",
+  );
+}
+
+/**
+ * Mark a learner complete, or withdraw them. Both are decisions, so both are recorded.
+ *
+ * A completion is also the slot the cap spends and the report bills, so it is checked against
+ * the funder's own test before it is written: all the course's instructional hours attended
+ * (recorded as a make-up or with another cohort of the same course, if that is how it was
+ * earned), and no earlier completed slot for the same trainee and course — "A slot may be
+ * reimbursed only once per trainee per course" (RFQ answers, 2026-10-13, §4). A completion
+ * that fails is a slot the provider would bill for and CommCorp would not pay for.
+ */
+export async function setEnrollmentStatus(formData: FormData): Promise<void> {
+  const enrollmentId = String(formData.get("enrollmentId") ?? "");
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { id: enrollmentId },
+    include: { user: true, cohort: { include: { course: true } } },
+  });
+  if (!enrollment) backTo("/admin/tenants", "That enrolment no longer exists.", false);
+  const user = await requireTenantAdmin(enrollment.organizationId);
   const requested = String(formData.get("status") ?? "COMPLETED");
   const status = requested === "WITHDRAWN" ? "WITHDRAWN" : requested === "ENROLLED" ? "ENROLLED" : "COMPLETED";
+  const back = `/admin/tenants/${enrollment.organizationId}`;
+
+  // The completion test is the funder's and applies to the seat it pays for. An unfunded
+  // participant still finishes the class, and their row says so without being a claim on money.
+  const course = enrollment.cohort.course;
+  if (status === "COMPLETED" && course && enrollment.funded) {
+    const prior = await prisma.enrollment.count({
+      where: {
+        userId: enrollment.userId,
+        organizationId: enrollment.organizationId,
+        status: "COMPLETED",
+        id: { not: enrollmentId },
+        cohort: { courseId: course.id },
+      },
+    });
+    const problems = completionProblems(
+      { title: course.title, instructionalHours: course.instructionalHours },
+      {
+        learnerEmail: enrollment.user.email,
+        hoursAttended: enrollment.hoursAttended,
+        // The assessment is a fact somebody records, so the field being set is the record.
+        assessmentComplete: enrollment.assessmentRecordedAt !== null,
+        priorReimbursements: prior,
+      },
+    );
+    if (problems.length > 0) backTo(back, problems[0].message, false);
+  }
 
   await prisma.enrollment.update({
     where: { id: enrollmentId },
@@ -707,9 +833,9 @@ export async function setEnrollmentStatus(formData: FormData): Promise<void> {
   });
 
   await recordAudit({ actorId: user.id, action: "enrollment.status", targetType: "enrollment", targetId: enrollmentId, detail: { status } });
-  revalidatePath(`/admin/tenants/${enrollment.organizationId}`);
+  revalidatePath(back);
   backTo(
-    `/admin/tenants/${enrollment.organizationId}`,
+    back,
     status === "COMPLETED" ? "Completion recorded." : `Enrolment marked ${status.toLowerCase()}.`,
   );
 }

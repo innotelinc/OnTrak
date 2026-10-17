@@ -11,6 +11,7 @@ import {
   enrollLearner,
   recordAttendance,
   scheduleClass,
+  setAssessment,
   setClassFeedback,
   setClassroom,
   setEnrollmentStatus,
@@ -199,6 +200,7 @@ export default async function TenantPage({
           status: enrollment.status,
           present: enrollment.attendances.filter((sitting) => sitting.status === "PRESENT").length,
           pricePerSlotCents: klass.pricePerSlotCents,
+          funded: enrollment.funded,
         })),
       );
     for (const usage of employerSlotUsage(slotRows, entry.employerSlotCap)) {
@@ -1128,7 +1130,7 @@ function ClassCard({
                 ? `${money(completedCount * klass.pricePerSlotCents)} reimbursable`
                 : null,
               usage && usage.cap !== null
-                ? `${usage.slotsUsed}/${usage.cap} employer slots used`
+                ? `${usage.slotsUsed}/${usage.cap} employer slots completed`
                 : null,
             ]
               .filter(Boolean)
@@ -1234,6 +1236,8 @@ function ClassCard({
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone={ENROLMENT_TONE[entry.status]}>{entry.status.toLowerCase()}</Badge>
+                {entry.funded ? null : <Badge tone="neutral">not funded</Badge>}
+                {entry.assessmentRecordedAt ? <Badge tone="teal">assessment</Badge> : null}
                 <span className="text-xs text-ink-faint">{entry.hoursAttended}h attended</span>
               </div>
             </div>
@@ -1270,6 +1274,19 @@ function ClassCard({
                 </Button>
               </form>
 
+              <form action={setAssessment} className="flex items-center gap-2">
+                <input type="hidden" name="enrollmentId" value={entry.id} />
+                <Button
+                  type="submit"
+                  name="done"
+                  value={entry.assessmentRecordedAt ? "clear" : "record"}
+                  variant="secondary"
+                  size="sm"
+                >
+                  {entry.assessmentRecordedAt ? "Clear assessment" : "Record assessment"}
+                </Button>
+              </form>
+
               <form action={setEnrollmentStatus} className="flex items-center gap-2">
                 <input type="hidden" name="enrollmentId" value={entry.id} />
                 <Button type="submit" name="status" value="COMPLETED" variant="success" size="sm">
@@ -1293,6 +1310,14 @@ function ClassCard({
         <label className="text-[11px] font-semibold text-ink-soft">
           <span className="mb-1 block">Name</span>
           <Input name="name" className="w-44 py-1.5 text-xs" />
+        </label>
+        {/* A participant the program does not fund can still sit the class; the funder's records
+            have to say which is which (RFQ answers, 2026-10-13, §2.2). The hidden field is the
+            unchecked answer, and it comes first so the checkbox's "true" wins when it is on. */}
+        <label className="flex items-center gap-2 pb-1.5 text-[11px] font-semibold text-ink-soft">
+          <input type="hidden" name="funded" value="false" />
+          <input type="checkbox" name="funded" value="true" defaultChecked className="size-4" />
+          <span>FAST AI-funded</span>
         </label>
         <Button type="submit" variant="secondary" size="sm">
           Enrol

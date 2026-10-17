@@ -2,10 +2,10 @@
 
 A funded class is taught in two places at once. **OnTrak** holds the part a funder pays for:
 the tenancy, the program's ceilings and window, the course as it was authored, the roster, the
-attendance, the completion, and the report that ships monthly. **AthenIQ** — the family's
-learning platform, `innotelinc/atheniq` — holds the classroom: a generated, multi-agent lesson
-with slides, quizzes, interactive simulations, an AI teacher and AI classmates who speak and
-draw, served by **OpenMAIC** (`THU-MAIC/OpenMAIC`, MIT) at `classroom.<domain>`.
+attendance, the completion, and the report filed on the contract's schedule. **AthenIQ** — the
+family's learning platform, `innotelinc/atheniq` — holds the classroom: a generated, multi-agent
+lesson with slides, quizzes, interactive simulations, an AI teacher and AI classmates who speak
+and draw, served by **OpenMAIC** (`THU-MAIC/OpenMAIC`, MIT) at `classroom.<domain>`.
 
 This page is the seam between the two. Nothing here is required: with
 `ONTRAK_CLASSROOM_ENABLED` unset, a class behaves exactly as it did before the seam existed.

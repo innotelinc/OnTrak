@@ -177,7 +177,11 @@ model Program {
   /// The most courses the funder accepts from this provider in the round (FAST AI
   /// accepts 20 and does not consider the rest).
   maxCourses         Int?
-  /// How often the funder expects enrolment/attendance/completion figures.
+  /// How often the funder expects enrolment/attendance/completion figures. Not every funder
+  /// publishes one: CommCorp answered that FAST AI's "reporting schedule, reimbursement
+  /// frequency, and the system providers will use to submit data will be detailed in the grant
+  /// contract" (RFQ answers, 2026-10-13, §4), so the seeded program says exactly that rather
+  /// than inventing a monthly obligation.
   reportingCadence   String?
   notes              String?
   createdAt          DateTime  @default(now())
@@ -397,6 +401,16 @@ model Enrollment {
   completedAt           DateTime?
   /// Summed from the attendance rows, kept here because it is what the report prints.
   hoursAttended         Float            @default(0)
+  /// Whether this seat is billed to the funder. An offering may include participants who are
+  /// not funded through FAST AI (RFQ answers, 2026-10-13, §2.2), and then "attendance and
+  /// completion records must identify which participants are FAST AI trainees". An unfunded
+  /// seat is reported as such and is paid for by nobody: it does not spend the employer's cap.
+  funded                Boolean          @default(true)
+  /// When the provider recorded the course's required assessment or activity as complete.
+  /// Null until then, because a completion without it is a slot CommCorp will not pay for:
+  /// "attendance records must show the trainee attended all instructional hours..., and the
+  /// trainee must complete any assessment or activity the course requires" (answers, §4).
+  assessmentRecordedAt  DateTime?
   notes                 String?
   organization          Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   cohort                Cohort           @relation(fields: [cohortId], references: [id], onDelete: Cascade)

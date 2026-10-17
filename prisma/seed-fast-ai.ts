@@ -552,7 +552,9 @@ export async function seedFastAi(
     employerSlotCap: FAST_AI_PROGRAM.employerSlotCap,
     maxCourses: FAST_AI_PROGRAM.maxCourses,
     reportingCadence: FAST_AI_PROGRAM.reportingCadence,
-    notes: `Training starts on or after ${FAST_AI_PROGRAM.startsOn} and is complete by ${FAST_AI_PROGRAM.endsOn}. No more than $300 per instructional hour per slot and $3,000 per person per course, whichever is less, and no employer may take more than ${FAST_AI_PROGRAM.employerSlotCap} slots over the contract term. Up to ${FAST_AI_PROGRAM.maxCourses} courses are accepted in this round.`,
+    // The cap is stated the way CommCorp answered it (RFQ answers, 2026-10-13, §4): it counts the
+    // slots the funder reimburses, so a withdrawal or a no-show is not one of them.
+    notes: `Training starts on or after ${FAST_AI_PROGRAM.startsOn} and is complete by ${FAST_AI_PROGRAM.endsOn}. No more than $300 per instructional hour per slot and $3,000 per person per course, whichever is less. No employer may take more than ${FAST_AI_PROGRAM.employerSlotCap} completed slots over the contract term — the cap counts what CommCorp reimburses, so seats that do not complete do not count against it. Up to ${FAST_AI_PROGRAM.maxCourses} courses are accepted in this round.`,
   };
   const existingProgram = await prisma.program.findFirst({
     where: { organizationId: tenant.id, name: programData.name },
@@ -712,10 +714,11 @@ export async function seedFastAi(
           userId: learner.id,
           organizationId: tenant.id,
           sponsorOrganizationId: sponsor.id,
+          funded: true,
         },
         // The status and hours are recomputed below from the sittings, so a re-seed
         // repairs an enrolment somebody edited by hand rather than preserving the edit.
-        update: { organizationId: tenant.id, sponsorOrganizationId: sponsor.id },
+        update: { organizationId: tenant.id, sponsorOrganizationId: sponsor.id, funded: true },
       });
       enrollmentCount += 1;
 
@@ -764,6 +767,10 @@ export async function seedFastAi(
           hoursAttended: attended,
           status: completed ? "COMPLETED" : attended > 0 ? "ATTENDED" : "ENROLLED",
           completedAt: completed ? day(entry.endsOn) : null,
+          // A completion the funder would pay for has the course's assessment behind it, so the
+          // seeded one carries the record rather than being an assertion with nothing under it
+          // (RFQ answers, 2026-10-13, §4).
+          assessmentRecordedAt: completed ? day(entry.endsOn) : null,
         },
       });
     }

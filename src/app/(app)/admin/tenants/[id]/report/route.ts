@@ -1,9 +1,9 @@
 /**
  * `GET /admin/tenants/[id]/report` — one tenancy's program figures as a CSV file.
  *
- * This is the file a provider attaches to its monthly report to the funder, so it says
- * who paid for what: the tenancy, the program, the class, the sponsor, and then one row
- * per learner with their enrolment, attendance and completion.
+ * This is the file a provider attaches to the report it files with the funder on the contract's
+ * schedule, so it says who paid for what: the tenancy, the program, the class, the sponsor, and
+ * then one row per learner with their enrolment, attendance and completion.
  *
  * Scoped to the tenancy in the path, with the same permission the page uses — an export
  * that answered for a tenancy the caller cannot see would be the whole point of tenancies

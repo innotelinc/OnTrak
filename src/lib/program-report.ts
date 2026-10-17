@@ -36,6 +36,13 @@ export interface ReportRow {
   slotValueCents: number | null;
   learnerName: string;
   learnerEmail: string;
+  /**
+   * Whether the seat is a FAST AI trainee's. An offering may carry participants the program does
+   * not fund, and the funder's own answer requires the records to say which is which
+   * (RFQ answers, 2026-10-13, §2.2). Such a row is still a person who attended a class, so it is
+   * exported — it is simply not the funder's enrolment, completion or money.
+   */
+  funded: boolean;
   status: string;
   enrolledOn: string;
   completedOn: string | null;
@@ -70,6 +77,7 @@ export interface ReportSource {
       enrolledAt: Date;
       completedAt: Date | null;
       hoursAttended: number;
+      funded: boolean;
       user: { name: string; email: string };
       attendances: readonly { status: string }[];
     }[];
@@ -99,6 +107,7 @@ export function reportRows(source: ReportSource): ReportRow[] {
           klass.pricePerSlotCents === null ? null : (klass.seats ?? 0) * klass.pricePerSlotCents,
         learnerName: enrollment.user.name,
         learnerEmail: enrollment.user.email,
+        funded: enrollment.funded,
         status: enrollment.status,
         enrolledOn: enrollment.enrolledAt.toISOString().slice(0, 10),
         completedOn: reportDay(enrollment.completedAt),
@@ -128,6 +137,7 @@ export const REPORT_HEADERS = [
   "slot_value_usd",
   "learner_name",
   "learner_email",
+  "fast_ai_funded",
   "enrolment_status",
   "enrolled_on",
   "completed_on",
@@ -158,6 +168,7 @@ export function reportCsv(rows: readonly ReportRow[]): string {
       dollars(row.slotValueCents),
       row.learnerName,
       row.learnerEmail,
+      row.funded ? "yes" : "no",
       row.status,
       row.enrolledOn,
       row.completedOn,
@@ -197,13 +208,19 @@ export interface ReportSummary {
  * Completion is a share of the *retained* learners (everyone who has not withdrawn), not
  * of everyone enrolled: a provider whose funder-eligible learners all finish should read
  * 100%, and counting a withdrawal against them would make that unreachable.
+ *
+ * The figures are the funder's, so they count funded rows only: a participant the program does
+ * not fund appears in the file, marked `fast_ai_funded=no`, but is not an enrolment CommCorp
+ * bought, a completion it pays for, or a learner it needs a rate from (answers, 2026-10-13,
+ * §2.2). Classes still count whether or not every seat in them is funded — the class happened.
  */
 export function reportSummary(rows: readonly ReportRow[]): ReportSummary {
-  const learners = new Set(rows.map((row) => row.learnerEmail));
+  const funded = rows.filter((row) => row.funded);
+  const learners = new Set(funded.map((row) => row.learnerEmail));
   const classes = new Set(rows.map((row) => `${row.tenantSlug}:${row.klass}`));
-  const completed = rows.filter((row) => row.status === "COMPLETED").length;
-  const withdrawn = rows.filter((row) => row.status === "WITHDRAWN").length;
-  const retained = rows.length - withdrawn;
+  const completed = funded.filter((row) => row.status === "COMPLETED").length;
+  const withdrawn = funded.filter((row) => row.status === "WITHDRAWN").length;
+  const retained = funded.length - withdrawn;
 
   // Seats and slot value repeat on every row of a class, so they are taken once per class
   // rather than summed per learner — summing them would multiply the award by the roster.
@@ -215,14 +232,14 @@ export function reportSummary(rows: readonly ReportRow[]): ReportSummary {
   }
 
   return {
-    enrolments: rows.length,
+    enrolments: funded.length,
     learners: learners.size,
     classes: classes.size,
     completed,
     withdrawn,
-    hoursAttended: Math.round(rows.reduce((sum, row) => sum + row.hoursAttended, 0) * 10) / 10,
+    hoursAttended: Math.round(funded.reduce((sum, row) => sum + row.hoursAttended, 0) * 10) / 10,
     committedCents: [...committed.values()].reduce((sum, value) => sum + value, 0),
-    reimbursableCents: rows
+    reimbursableCents: funded
       .filter((row) => row.status === "COMPLETED")
       .reduce((sum, row) => sum + (row.pricePerSlotCents ?? 0), 0),
     completionRate: retained === 0 ? null : completed / retained,

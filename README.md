@@ -92,11 +92,12 @@ from the family stack `docker-compose.all.yml` starts.
 - **Funded training programs, one tenancy each** — a provider runs its own catalogue,
   classes, seats and sponsored learners, and the platform operator creates the tenancies:
   a funded program's ceilings (per instructional hour, per person per course, and an award
-  total), its training window, and the monthly report the funder is owed — all enforced by
-  the same pure rules the forms warn with. The employer side is enforced too, because the
-  funder pays per completed slot and only through an eligible employer: an employer carries
-  a FEIN and the expiration of its eligibility confirmation memo, no employer may take more
-  than the program's cap of slots from that provider over the contract term, and both doors
+  total), its training window, and the report the funder is owed — all enforced by the same
+  pure rules the forms warn with. The employer side is enforced too, because the funder pays
+  per completed slot and only through an eligible employer: an employer carries a FEIN and
+  the expiration of its eligibility confirmation memo, no employer may take more than the
+  program's cap of slots from that provider over the contract term — the cap counts the
+  completions CommCorp reimburses, so seats that never finish do not spend it — and both doors
   into a class — an administrator enrolling somebody and a learner joining with the class
   code — ask the same question before the slot is delivered. The report separates what is
   committed from what is reimbursable, which is completions only. The seeded
@@ -541,6 +542,7 @@ what it blocked, together.
 | `npm run start` | Serve the production build. |
 | `npm run typecheck` | `tsc --noEmit`. |
 | `npm test` | Engine, grading, validator and desktop-surface test suite. |
+| `npm run verify:funded` | Drive the funded-program server actions against a throwaway database (see Testing). |
 | `npm run setup` | Generate the client, push the schema, reset attempts, seed demo data. |
 | `npm run db:migrate` | Create a versioned migration from `schema.prisma`. |
 | `npm run db:deploy` | Apply the committed migrations (what a deployment runs). |
@@ -665,6 +667,23 @@ It boots the app, audits the public pages plus the signed-in student dashboard
 and attempt workspace, and fails on every WCAG A/AA violation — `color-contrast`
 included. The accent palette was darkened to clear the AA floor, and the sweep
 caught a scrollable region without keyboard access on the landing page.
+
+The funded-program rules are pure and unit-tested, which proves what they decide
+rather than that anything asks them. The actions are where a rule becomes a
+refusal, so they are driven the way a form drives them — real writes, the real
+session check, the real tenancy permissions — against a throwaway database:
+
+```bash
+# a database of its own: the run creates and deletes rows
+createdb ontrak_actions_verify
+VERIFY_ACTIONS_DATABASE_URL=postgres://…/ontrak_actions_verify npx prisma migrate deploy
+VERIFY_ACTIONS_DATABASE_URL=postgres://…/ontrak_actions_verify npm run db:seed
+VERIFY_ACTIONS_DATABASE_URL=postgres://…/ontrak_actions_verify npm run verify:funded
+```
+
+It refuses to run when that variable is the app's own `DATABASE_URL`. Only the
+request plumbing (`redirect`, `cookies`, `next/cache`) is stubbed; see
+[`scripts/verify-funded-actions.ts`](scripts/verify-funded-actions.ts).
 
 ---
 

@@ -18,6 +18,12 @@ import {
  * delivered to ineligible employers, or in excess of the cap, are not reimbursable, and the
  * selected Applicant carries that risk".
  *
+ * What the cap counts is the funder's own answer, not this app's reading: "The 100-slot cap
+ * applies to slots reimbursed by CommCorp. Slots for trainees who withdraw, do not attend, or do
+ * not complete a course are not reimbursed and do not count toward the cap." (RFQ answers,
+ * 2026-10-13, §4.) So an employer is refused a seat when its *completions* have spent the
+ * allowance, and never refused one merely because more people enrolled than will finish.
+ *
  * Answered here rather than inside each action because a class has two doors: an administrator
  * enrolling somebody from the tenancy's page, and a learner joining with the class code from the
  * sign-up form. The second is the easy one to forget, and it is the one nobody has to be given
@@ -76,6 +82,7 @@ export async function classAdmission(cohort: {
     select: {
       status: true,
       enrolledAt: true,
+      funded: true,
       cohort: { select: { pricePerSlotCents: true } },
       attendances: { where: { status: "PRESENT" }, select: { id: true } },
     },
@@ -87,6 +94,7 @@ export async function classAdmission(cohort: {
     status: entry.status,
     present: entry.attendances.length,
     pricePerSlotCents: entry.cohort.pricePerSlotCents,
+    funded: entry.funded,
   }));
   const used = employerSlotUsage(rows, program.employerSlotCap)[0]?.slotsUsed ?? 0;
 

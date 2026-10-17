@@ -19,17 +19,24 @@ import {
   FAST_AI_DESCRIPTION_WORDS,
   FAST_AI_EMPLOYER_SLOT_CAP,
   FAST_AI_MAX_COURSES,
+  FAST_AI_PROGRAM,
   FAST_AI_TOPIC_AREAS,
+  completionProblems,
+  courseChangeProblems,
   courseSubmissionProblems,
+  credentialProblems,
   eligibilityProblems,
   employerSlotUsage,
+  foundationalContentProblems,
+  moduleHourProblems,
   offeringSeatProblems,
   slotRequestProblems,
   unrecognisedTopics,
   wordCount,
+  type CourseChangeShape,
   type EmployerSlotRow,
 } from "../src/lib/program-rules";
-import { reportSummary, type ReportRow } from "../src/lib/program-report";
+import { reportCsv, reportSummary, type ReportRow } from "../src/lib/program-report";
 
 /** One delivered slot, with everything but the fields under test defaulted. */
 function slot(overrides: Partial<EmployerSlotRow>): EmployerSlotRow {
@@ -40,6 +47,7 @@ function slot(overrides: Partial<EmployerSlotRow>): EmployerSlotRow {
     status: "COMPLETED",
     present: 2,
     pricePerSlotCents: 180_000,
+    funded: true,
     ...overrides,
   };
 }
@@ -48,7 +56,7 @@ function slot(overrides: Partial<EmployerSlotRow>): EmployerSlotRow {
 /*  The per-employer cap (RFQ §1.5, §4.1, §4.2)                               */
 /* -------------------------------------------------------------------------- */
 
-test("cap: delivered slots are counted across every class, not per class", () => {
+test("cap: completions are counted across every class, not per class", () => {
   // The RFQ counts them "per employer, per approved Applicant, over the contract term", so a
   // provider running four classes for one employer has one running total and one cap.
   const usage = employerSlotUsage(
@@ -62,48 +70,54 @@ test("cap: delivered slots are counted across every class, not per class", () =>
 
   assert.equal(usage.length, 1);
   assert.equal(usage[0].slotsUsed, 3);
+  assert.equal(usage[0].delivered, 3);
   assert.equal(usage[0].remaining, 97);
   assert.equal(usage[0].reimbursableCompletions, 3);
   assert.equal(usage[0].reimbursableCents, 540_000);
 });
 
-test("cap: it consumes slots in delivery order, so the last completions are the unpaid ones", () => {
+test("cap: it is spent in completion order, so the last completions are the unpaid ones", () => {
   const seven = Array.from({ length: 7 }, (_, index) =>
     slot({ enrolledOn: `2027-03-0${index + 1}` }),
   );
   const [usage] = employerSlotUsage(seven, 4);
 
   assert.equal(usage.slotsUsed, 7);
-  assert.equal(usage.slotsWithinCap, 4);
   assert.equal(usage.reimbursableCompletions, 4);
   assert.equal(usage.unreimbursedCompletions, 3, "the three completions past the cap");
   assert.equal(usage.remaining, 0);
   assert.equal(usage.reimbursableCents, 720_000, "four slots at $1,800, not seven");
 });
 
-test("cap: a withdrawal after attendance took a slot, one who never turned up did not", () => {
-  // A seat is delivered when somebody sat in it. Enrolment on its own is a plan, and a learner
-  // who withdrew after attending was trained — the funder pays nothing for that either way, but
-  // the slot is gone from the employer's allowance.
+test("cap: what was delivered but not completed spends nothing", () => {
+  // The funder's own answer (RFQ answers, 2026-10-13, §4): "The 100-slot cap applies to slots
+  // reimbursed by CommCorp. Slots for trainees who withdraw, do not attend, or do not complete a
+  // course are not reimbursed and do not count toward the cap." So a withdrawal after attendance
+  // is training the provider delivered and will not be paid for — a loss, not a spent slot — and
+  // an employer whose seats keep dropping out is not one slot closer to its cap.
   const [usage] = employerSlotUsage(
     [
       slot({ enrolledOn: "2027-03-01", status: "WITHDRAWN", present: 2 }),
       slot({ enrolledOn: "2027-03-02", status: "WITHDRAWN", present: 0 }),
       slot({ enrolledOn: "2027-03-03", status: "ENROLLED", present: 0 }),
+      slot({ enrolledOn: "2027-03-04", status: "ATTENDED", present: 2 }),
     ],
     FAST_AI_EMPLOYER_SLOT_CAP,
   );
 
-  assert.equal(usage.slotsUsed, 1);
+  assert.equal(usage.slotsUsed, 0, "no completions, no slots spent");
+  assert.equal(usage.delivered, 2, "two seats were sat in — the provider still ran the training");
   assert.equal(usage.completions, 0);
   assert.equal(usage.reimbursableCents, 0);
-  assert.equal(usage.remaining, 99);
+  assert.equal(usage.remaining, 100);
 });
 
-test("cap: completions delivered after the cap are delivered, completed and unpaid", () => {
-  // The failure this exists to make visible: 100 slots already taken, then two learners finish.
+test("cap: completions past a spent cap are completed and unpaid", () => {
+  // The failure this exists to make visible: 100 completions already paid for, then two learners
+  // finish. What took the cap was the *completions*, so attended-but-unfinished seats lead here
+  // just as fast as completed ones once they finish.
   const full = Array.from({ length: 100 }, (_, index) =>
-    slot({ status: "ATTENDED", enrolledOn: new Date(Date.UTC(2027, 0, 1, 0, index)), present: 1 }),
+    slot({ enrolledOn: new Date(Date.UTC(2027, 0, 1, 0, index)) }),
   );
   const [usage] = employerSlotUsage(
     [...full, slot({ enrolledOn: "2027-06-01" }), slot({ enrolledOn: "2027-06-02" })],
@@ -111,11 +125,11 @@ test("cap: completions delivered after the cap are delivered, completed and unpa
   );
 
   assert.equal(usage.slotsUsed, 102);
-  assert.equal(usage.slotsWithinCap, 100);
-  assert.equal(usage.completions, 2);
-  assert.equal(usage.reimbursableCompletions, 0, "the cap was already spent");
-  assert.equal(usage.unreimbursedCompletions, 2);
-  assert.equal(usage.reimbursableCents, 0);
+  assert.equal(usage.delivered, 102);
+  assert.equal(usage.completions, 102);
+  assert.equal(usage.reimbursableCompletions, 100);
+  assert.equal(usage.unreimbursedCompletions, 2, "the two that finished after the cap was spent");
+  assert.equal(usage.reimbursableCents, 18_000_000, "100 slots at $1,800");
 });
 
 test("cap: a program that caps nothing leaves every completion reimbursable", () => {
@@ -157,20 +171,28 @@ test("cap: employers are counted separately, and the one past its cap reads firs
   assert.equal(usage[1].remaining, 1);
 });
 
-test("cap: the next seat is refused in words, with the number that decided it", () => {
+test("cap: a seat is refused only once the employer's completions have spent the cap", () => {
   assert.deepEqual(
     slotRequestProblems({ employerName: "Charles River Home Care", slotsUsed: 96, cap: 100 }, 1),
     [],
     "the 97th slot is inside the cap",
   );
 
+  // Room left is room left: enrolling past it is the provider's risk, not a breach — only the
+  // completions inside the cap are paid for (RFQ answers, 2026-10-13, §4).
+  assert.deepEqual(
+    slotRequestProblems({ employerName: "Charles River Home Care", slotsUsed: 96, cap: 100 }, 8),
+    [],
+    "eight enrolments against four remaining slots is not refused; four of them can complete",
+  );
+
   const last = slotRequestProblems({ employerName: "Charles River Home Care", slotsUsed: 100, cap: 100 }, 1);
   assert.equal(last.length, 1);
-  assert.match(last[0].message, /all 100 of its slots/);
-  assert.match(last[0].message, /not reimbursable/);
+  assert.match(last[0].message, /completed all 100 of its slots/);
+  assert.match(last[0].message, /not reimbursable|nothing is reimbursable/);
 
-  const tooMany = slotRequestProblems({ employerName: "Charles River Home Care", slotsUsed: 96, cap: 100 }, 8);
-  assert.match(tooMany[0].message, /4 of its 100 slots left/);
+  const many = slotRequestProblems({ employerName: "Charles River Home Care", slotsUsed: 100, cap: 100 }, 3);
+  assert.match(many[0].message, /another 3 seats/);
 
   assert.deepEqual(
     slotRequestProblems({ employerName: "Any Employer", slotsUsed: 5_000, cap: null }, 1),
@@ -419,8 +441,269 @@ test("employer: the seeded sponsor is eligible for the whole contract term", () 
 });
 
 /* -------------------------------------------------------------------------- */
+/*  What the funder's answers changed (2026-10-13)                            */
+/* -------------------------------------------------------------------------- */
+
+/** Every line of a seeded course that teaches something — what the rules below read. */
+function teaches(course: (typeof FAST_AI_COURSES)[number]): string[] {
+  return [
+    course.summary,
+    course.audience,
+    ...course.modules.flatMap((module) => [
+      module.title,
+      ...module.objectives,
+      module.activity,
+      module.outcome,
+    ]),
+  ];
+}
+
+/** The provider the seeded catalogue is submitted by. */
+const SEEDED_PROVIDER = "Massachusetts Workforce Development";
+
+test("answers: basic digital skills are not funded content, and are named when a course teaches them", () => {
+  const device = foundationalContentProblems({
+    title: "Getting Started with AI",
+    text: ["Setting up your laptop before the first session"],
+  });
+  assert.equal(device.length, 1);
+  assert.match(device[0].message, /device setup/);
+  assert.match(device[0].message, /WTFP/);
+
+  const account = foundationalContentProblems({
+    title: "Getting Started with AI",
+    text: ["Creating an account in the assistant, then browsing to the tool"],
+  });
+  assert.match(account[0].message, /account access/);
+
+  const browser = foundationalContentProblems({
+    title: "Getting Started with AI",
+    text: ["Browser use and file management"],
+  });
+  assert.match(browser[0].message, /browser use/);
+
+  // Assumed, not taught: a prerequisite may say the learners have used a spreadsheet.
+  assert.deepEqual(
+    foundationalContentProblems({
+      title: "Getting Started with AI",
+      text: ["Applying AI to a task from your own workload"],
+    }),
+    [],
+  );
+});
+
+test("answers: the seeded catalogue spends no funded hour on foundational digital skills", () => {
+  for (const course of FAST_AI_COURSES) {
+    assert.deepEqual(
+      foundationalContentProblems({ title: course.title, text: teaches(course) }),
+      [],
+      `${course.title} teaches content the program does not fund`,
+    );
+  }
+});
+
+test("answers: a certificate the provider issues is not an industry-recognized credential", () => {
+  assert.deepEqual(
+    credentialProblems({ title: "Applied AI", credentials: "", provider: SEEDED_PROVIDER }),
+    [],
+    "a course that earns no credential claims none",
+  );
+  assert.deepEqual(
+    credentialProblems({
+      title: "Automating the Paperwork",
+      credentials: "Microsoft Office Specialist (optional, at the employer's request)",
+      provider: SEEDED_PROVIDER,
+    }),
+    [],
+    "a licensed vendor's certification is a third party's",
+  );
+
+  const own = credentialProblems({
+    title: "Applied AI",
+    credentials: "Certificate of Completion",
+    provider: SEEDED_PROVIDER,
+  });
+  assert.equal(own.length, 1);
+  assert.match(own[0].message, /industry-recognized credential/);
+  assert.match(own[0].message, /third party/);
+
+  const named = credentialProblems({
+    title: "Applied AI",
+    credentials: `${SEEDED_PROVIDER} certificate in applied AI`,
+    provider: SEEDED_PROVIDER,
+  });
+  assert.equal(named.length, 1, "a certificate the provider itself names does not count");
+});
+
+test("answers: every seeded course claims only credentials a third party issues", () => {
+  for (const course of FAST_AI_COURSES) {
+    assert.deepEqual(
+      credentialProblems({ title: course.title, credentials: course.credentials, provider: SEEDED_PROVIDER }),
+      [],
+      `${course.title} claims a credential of its own`,
+    );
+  }
+});
+
+test("answers: only instructor-led time is instructional, so a course's modules add up to its hours", () => {
+  const course = {
+    title: "Applied AI for the Frontline Role",
+    instructionalHours: 6,
+    modules: [
+      { title: "Where AI already sits in your work", hours: 1.5 },
+      { title: "Prompting for a real task", hours: 2 },
+      { title: "Checking the answer", hours: 1.5 },
+      { title: "Taking it back to the team", hours: 1 },
+    ],
+  };
+  assert.deepEqual(moduleHourProblems(course), []);
+
+  // An hour the learners do between sessions is supplemental: it may exist, but it may not be
+  // counted as instructional time or priced at up to $300 an hour.
+  const withHomework = moduleHourProblems({
+    ...course,
+    modules: [...course.modules, { title: "Between sessions", hours: 1 }],
+  });
+  assert.equal(withHomework.length, 1);
+  assert.match(withHomework[0].message, /teaches 7 instructor-led hours/);
+  assert.match(withHomework[0].message, /against the 6 it states/);
+  assert.match(withHomework[0].message, /between sessions/);
+
+  assert.match(
+    moduleHourProblems({ ...course, modules: [{ title: "One", hours: 3 }] })[0].message,
+    /teaches 3 instructor-led hours/,
+  );
+  assert.match(
+    moduleHourProblems({ ...course, modules: [] })[0].message,
+    /breaks them into no modules/,
+  );
+});
+
+test("answers: every seeded course's modules add up to the hours it states", () => {
+  for (const course of FAST_AI_COURSES) {
+    assert.deepEqual(
+      moduleHourProblems({
+        title: course.title,
+        instructionalHours: course.instructionalHours,
+        modules: course.modules.map((module) => ({ title: module.title, hours: module.hours })),
+      }),
+      [],
+      `${course.title}'s modules do not add up to its instructional hours`,
+    );
+  }
+});
+
+const COURSE_BEFORE: CourseChangeShape = {
+  title: "Applied AI for the Frontline Role",
+  objectives: ["Write a prompt that states the audience, the format and the constraint"],
+  topicAreas: ["Generative AI", "AI productivity applications"],
+  instructionalHours: 6,
+  deliveryMode: "instructor-led",
+  pricePerSlotCents: 180_000,
+};
+
+test("answers: the five protected elements need written approval; a tool swap does not", () => {
+  assert.deepEqual(courseChangeProblems(COURSE_BEFORE, { ...COURSE_BEFORE }), []);
+  assert.deepEqual(
+    courseChangeProblems(COURSE_BEFORE, {
+      ...COURSE_BEFORE,
+      topicAreas: [...COURSE_BEFORE.topicAreas].reverse(),
+    }),
+    [],
+    "the same topics in another order are the same topics",
+  );
+
+  const price = courseChangeProblems(COURSE_BEFORE, { ...COURSE_BEFORE, pricePerSlotCents: 240_000 });
+  assert.equal(price.length, 1);
+  assert.match(price[0].message, /per-slot price changed from \$1,800\.00 to \$2,400\.00/);
+  assert.match(price[0].message, /§4\.7/);
+
+  assert.match(
+    courseChangeProblems(COURSE_BEFORE, { ...COURSE_BEFORE, instructionalHours: 8 })[0].message,
+    /instructional hours changed from 6 to 8/,
+  );
+  assert.match(
+    courseChangeProblems(COURSE_BEFORE, { ...COURSE_BEFORE, deliveryMode: "hybrid" })[0].message,
+    /delivery format changed from instructor-led to hybrid/,
+  );
+  assert.match(
+    courseChangeProblems(COURSE_BEFORE, { ...COURSE_BEFORE, topicAreas: ["Generative AI"] })[0].message,
+    /core topics changed/,
+  );
+  assert.match(
+    courseChangeProblems(COURSE_BEFORE, {
+      ...COURSE_BEFORE,
+      objectives: [...COURSE_BEFORE.objectives, "Explain it to a colleague"],
+    })[0].message,
+    /learning objectives changed/,
+  );
+
+  // Two elements at once is two approvals, each named: a tool version, a prompt or an exercise
+  // never reaches this comparison, which is the freedom the funder's answer grants.
+  const both = courseChangeProblems(COURSE_BEFORE, {
+    ...COURSE_BEFORE,
+    instructionalHours: 8,
+    pricePerSlotCents: 240_000,
+  });
+  assert.equal(both.length, 2);
+});
+
+test("answers: a completion needs every instructional hour, the assessment, and one slot", () => {
+  const course = { title: "Applied AI for the Frontline Role", instructionalHours: 6 };
+  const done = { learnerEmail: "maria@ontrak.local", hoursAttended: 6, assessmentComplete: true };
+  assert.deepEqual(completionProblems(course, done), []);
+
+  const short = completionProblems(course, { ...done, hoursAttended: 4 });
+  assert.equal(short.length, 1);
+  assert.match(short[0].message, /attended 4/);
+  assert.match(short[0].message, /2 more hours/);
+  assert.match(short[0].message, /make-up/);
+
+  const unassessed = completionProblems(course, { ...done, assessmentComplete: false });
+  assert.equal(unassessed.length, 1);
+  assert.match(unassessed[0].message, /assessment or activity/);
+
+  const twice = completionProblems(course, { ...done, priorReimbursements: 1 });
+  assert.equal(twice.length, 1);
+  assert.match(twice[0].message, /only once per trainee per course/);
+
+  // Attendance is not a completion: four of six hours and no assessment is two problems, not one.
+  assert.equal(
+    completionProblems(course, { ...done, hoursAttended: 4, assessmentComplete: false }).length,
+    2,
+  );
+
+  // A caller with no assessment record says nothing rather than saying it failed, which is what
+  // the completion action does: the hours and the duplicate-slot test still run.
+  assert.deepEqual(
+    completionProblems(course, { learnerEmail: "maria@ontrak.local", hoursAttended: 6 }),
+    [],
+    "an unrecorded assessment is not a refusal",
+  );
+});
+
+test("answers: the reporting cadence is the contract's, not one this app invented", () => {
+  assert.notEqual(FAST_AI_PROGRAM.reportingCadence, "monthly");
+  assert.match(FAST_AI_PROGRAM.reportingCadence, /contract/);
+});
+
+/* -------------------------------------------------------------------------- */
 /*  What the funder pays (RFQ §4.1)                                           */
 /* -------------------------------------------------------------------------- */
+
+test("answers: an unfunded participant is in the class but not in the funder's arithmetic", () => {
+  // An offering may include participants the program does not fund (RFQ answers, 2026-10-13,
+  // §2.2): their seat is real, their completion is real, and neither is a slot CommCorp bought.
+  const [usage] = employerSlotUsage(
+    [slot({ status: "COMPLETED" }), slot({ status: "COMPLETED", funded: false })],
+    100,
+  );
+
+  assert.equal(usage.completions, 1, "only the funded completion is a completion to report");
+  assert.equal(usage.slotsUsed, 1, "an unfunded seat does not spend the employer's allowance");
+  assert.equal(usage.reimbursableCents, 180_000);
+  assert.equal(usage.delivered, 1);
+});
 
 function reportRow(overrides: Partial<ReportRow>): ReportRow {
   return {
@@ -440,6 +723,7 @@ function reportRow(overrides: Partial<ReportRow>): ReportRow {
     slotValueCents: 2_880_000,
     learnerName: "Maria Ferreira",
     learnerEmail: "maria@ontrak.local",
+    funded: true,
     status: "COMPLETED",
     enrolledOn: "2027-02-20",
     completedOn: "2027-03-16",
@@ -462,6 +746,25 @@ test("money: the funder pays for completions and for nothing else", () => {
   // Committed is the ceiling the class's seats add up to, not money earned: 16 × $1,800.
   assert.equal(summary.committedCents, 2_880_000);
   assert.ok(summary.reimbursableCents < summary.committedCents);
+});
+
+test("answers: an unfunded row is exported, marked, and paid for by nobody", () => {
+  const rows = [
+    reportRow({ learnerEmail: "maria@ontrak.local" }),
+    reportRow({ learnerEmail: "self.paying@example.com", funded: false }),
+  ];
+  const summary = reportSummary(rows);
+
+  assert.equal(summary.enrolments, 1, "the funder's enrolment figures are funded seats");
+  assert.equal(summary.completed, 1);
+  assert.equal(summary.reimbursableCents, 180_000, "one funded completion, not two");
+  assert.equal(summary.learners, 1);
+
+  // The file still carries the person: the funder asked to be able to tell which trainees are
+  // its own, not to have the others erased from the class they attended.
+  const csv = reportCsv(rows);
+  assert.match(csv, /self\.paying@example\.com,no,COMPLETED/);
+  assert.match(csv, /maria@ontrak\.local,yes,COMPLETED/);
 });
 
 test("money: a class nobody completed reimburses nothing", () => {
