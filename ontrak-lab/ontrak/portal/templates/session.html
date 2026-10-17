@@ -94,9 +94,11 @@
           <p class="muted small">Tell your instructor; this is fixed by an operator, not by you.</p>
         </div>
       {% endif %}
-      {% if console_url %}
-        {% set is_local_console = console_url.startswith("console://") %}
-        {% if is_local_console %}
+      {# One chain, not a wrapper: the branches below it are what explain a missing or
+         unusable console, so wrapping the whole chain in `if console_url` hid them
+         (and left the outer `if` without its `endif`). #}
+      {% set is_local_console = console_url and console_url.startswith("console://") %}
+      {% if is_local_console %}
           <div id="local-console" class="card" style="max-width: 100%; margin: 0 auto;">
             <div class="card-header">
               <h3>Local Console</h3>
