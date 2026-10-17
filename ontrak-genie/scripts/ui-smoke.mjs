@@ -640,6 +640,48 @@ try {
    * structure and the manual toggle - the drafting itself is covered by the
    * server tests, which can script a stream that arrives in fragments.
    */
+  await check("the workspace view opens from its tab and closes from the rail", async () => {
+    const opened = await session.evaluate(`
+      document.querySelector('#toggle-files').click();
+      const rail = document.querySelector('#rail');
+      const close = document.querySelector('#rail-close');
+      const strip = document.querySelector('#rail-tablist').getBoundingClientRect();
+      const box = close.getBoundingClientRect();
+      const own = document.querySelector('#files-close').getBoundingClientRect();
+      return {
+        view: rail.dataset.view,
+        open: rail.classList.contains('open'),
+        selected: document.querySelector('#rail-tab-workspace').getAttribute('aria-selected'),
+        label: close.getAttribute('aria-label'),
+        // Drawn means drawn: a control with a box, and inside the window it is in.
+        closeDrawn: box.width > 0 && box.height > 0 && box.right <= window.innerWidth + 1,
+        ownDrawn: own.width > 0 && own.height > 0 && own.right <= window.innerWidth + 1,
+        stripDrawn: strip.width > 0 && strip.height > 0,
+      };`);
+    if (!opened.open || opened.view !== "workspace") throw new Error("the workspace view did not open");
+    if (opened.selected !== "true") throw new Error("the workspace tab is not marked selected");
+    if (!opened.stripDrawn) throw new Error("the rail's tab strip is not drawn");
+    if (!opened.closeDrawn) throw new Error("the rail's close is not on screen");
+    if (!opened.ownDrawn) throw new Error("the workspace's own close is not on screen");
+    if (!/workspace/i.test(String(opened.label))) {
+      throw new Error(`the rail's close says “${opened.label}” over the workspace`);
+    }
+
+    const closed = await session.evaluate(`
+      document.querySelector('#rail-close').click();
+      const rail = document.querySelector('#rail');
+      return {
+        open: rail.classList.contains('open'),
+        expanded: document.querySelector('#toggle-files').getAttribute('aria-expanded'),
+        panel: document.querySelector('#files-panel').classList.contains('open'),
+      };`);
+    if (closed.open) throw new Error("the rail's close left the rail open");
+    if (closed.panel) throw new Error("the workspace panel is still open behind a closed rail");
+    if (closed.expanded !== "false") throw new Error("the toolbar button still claims the panel is open");
+
+    return "opens from the toolbar, closes from the rail, and both closes are drawn";
+  });
+
   await check("the preview pane opens, closes and describes itself", async () => {
     const closed = await session.evaluate(`
       document.querySelector('#preview-close').click();

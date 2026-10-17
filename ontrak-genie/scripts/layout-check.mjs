@@ -656,6 +656,116 @@ try {
     return desktop.media.coarse ? "the pointer reports coarse (assertion skipped)" : "targets stay as drawn";
   });
 
+  /*
+   * Every rail view, openable and closable, at both ends of the width range.
+   *
+   * This is the regression the rail's tab strip was built for. The workspace's
+   * header carried `margin-left: auto` on every `mini` button, so at a narrow
+   * width the controls spread across the line and the one control that leaves the
+   * view was pushed past the edge of its own panel — the failure was invisible at
+   * 1440px and total on a phone. So each view is opened from its tab, measured as
+   * drawn (not as declared), closed from the rail's own close, and the rail is
+   * read back to prove it actually collapsed.
+   */
+  /* Each view, its own toolbar button, and the rail's close. */
+  const RAIL_VIEWS = [
+    ["preview", "#toggle-preview", "#preview-close", "#preview"],
+    ["workspace", "#toggle-files", "#files-close", "#files-panel"],
+    ["publish", "#hosting-open", "#hosting-close", "#hosting"],
+  ];
+
+  /** How a rail view is drawn right now, measured rather than trusted. */
+  const viewState = (view, tab, panelClose, panel) =>
+    evaluate(`
+      const rail = document.querySelector('#rail');
+      const close = document.querySelector('#rail-close');
+      const shown = document.querySelector('${panel}');
+      const own = document.querySelector('${panelClose}');
+      const drawn = (el) => {
+        if (el === null) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && r.right <= window.innerWidth + 1 && r.left >= -1;
+      };
+      const strip = document.querySelector('#rail-tablist').getBoundingClientRect();
+      return {
+        view: rail.dataset.view,
+        open: rail.classList.contains('open'),
+        panelShown: getComputedStyle(shown).display !== 'none',
+        selected: document.querySelector('${tab}').getAttribute('aria-selected'),
+        oneStop: [...document.querySelectorAll('#rail-tablist [role="tab"]')].filter((t) => t.tabIndex === 0).length,
+        stripDrawn: strip.width > 0 && strip.height > 0,
+        closeDrawn: drawn(close),
+        closeLabel: close.getAttribute('aria-label'),
+        ownCloseDrawn: drawn(own),
+      };
+    `);
+
+  const assertView = (state, view, width) => {
+    if (!state.open || state.view !== view || !state.panelShown) {
+      throw new Error(`the ${view} view at ${width}px did not open (${JSON.stringify(state)})`);
+    }
+    if (state.selected !== "true") throw new Error(`the ${view} tab is not marked selected`);
+    if (state.oneStop !== 1) throw new Error(`${state.oneStop} tabs are Tab stops on ${view}, and a roving tabindex means one`);
+    if (!state.stripDrawn) throw new Error(`the tab strip is not drawn on the ${view} view at ${width}px`);
+    if (!state.closeDrawn) throw new Error(`the rail's close is outside the window on ${view} at ${width}px`);
+    if (!state.ownCloseDrawn) throw new Error(`the ${view} panel's own close is off screen at ${width}px`);
+    if (!String(state.closeLabel).toLowerCase().includes(view)) {
+      throw new Error(`the rail's close says “${state.closeLabel}” on the ${view} view`);
+    }
+  };
+
+  await check("every rail view opens, and closes from a close that is on screen", async () => {
+    const seen = [];
+    /*
+     * A narrow desktop is the width that matters here, and it is the one the other
+     * sections do not use: the rail is docked at `min(360px, 92vw)` while the
+     * window is 700px wide, so the panel is as narrow as a phone's and the window
+     * is not — which is exactly where a crowded header pushed its last control
+     * past the edge of both.
+     */
+    for (const [width, height, touch] of [[1440, 900, false], [700, 800, false], [320, 568, true]]) {
+      await at(width, height, { touch });
+      for (const [view, opener, panelClose, panel] of RAIL_VIEWS) {
+        // Opened from the toolbar, which is how a rail with no tabs yet is opened.
+        await clickControl(opener);
+        const tab = `#rail-tab-${view}`;
+        assertView(await viewState(view, tab, panelClose, panel), view, width);
+
+        // And closed from the rail's own close, which is the control this check exists for.
+        await clickControl("#rail-close");
+        const stillOpen = await evaluate("return document.querySelector('#rail').classList.contains('open');");
+        if (stillOpen) throw new Error(`the ${view} view at ${width}px stayed open after its close`);
+        seen.push(`${view}@${width}px`);
+      }
+    }
+    return seen.join(", ");
+  });
+
+  await check("the strip switches views without closing the rail", async () => {
+    await at(1440, 900);
+    await clickControl("#toggle-files");
+    for (const [view, , panelClose, panel] of RAIL_VIEWS) {
+      await clickControl(`#rail-tab-${view}`);
+      assertView(await viewState(view, `#rail-tab-${view}`, panelClose, panel), view, 1440);
+    }
+    return "preview, workspace and publish, one click apart";
+  });
+
+  await check("the keyboard has the same way out of a rail view", async () => {
+    await at(1440, 900);
+    await clickControl("#toggle-files");
+    await press("Escape");
+    const closed = await evaluate("return document.querySelector('#rail').classList.contains('open') === false;");
+    if (!closed) throw new Error("Escape left the workspace open");
+    // And the strip's own controls are the track: three tabs, one stop at a time.
+    const stops = await evaluate(`
+      const tabs = [...document.querySelectorAll('#rail-tablist [role="tab"]')];
+      return tabs.filter((tab) => tab.tabIndex === 0).length;
+    `);
+    if (stops !== 1) throw new Error(`${stops} tabs are in the tab order, and a roving tabindex means one`);
+    return "Escape closes it, and exactly one tab is a Tab stop";
+  });
+
   /* -------------------------------------------------------- dialog and focus -- */
 
   console.log("\nDialogs and focus (desktop, keyboard)");

@@ -323,12 +323,79 @@
       -->
       <aside id="rail" class="rail" aria-label="Preview, workspace and publishing">
       <!--
+        The rail's tabs.
+
+        The three views were reached from three buttons in the top toolbar, which
+        is where the *console's* controls live — so which pane was showing could
+        only be read from a row of buttons at the very top of the window, and
+        closing one meant finding its button again. A tab strip in the rail itself
+        says which view is showing where the view is, and it always carries a
+        close: one at the end of the strip that closes whatever is showing, and
+        one in each view's own header. A view that cannot be closed from itself is
+        a view a person gets stuck in.
+
+        `role="tablist"` with roving tabindex, arrow keys and Home/End — the
+        keyboard pattern a tab strip is expected to have — and the tabs are the
+        `aria-controls` half of the three panels below.
+      -->
+      <div class="rail-tabs">
+        <div id="rail-tablist" class="rail-tablist" role="tablist" aria-label="The rail's views">
+          <button
+            id="rail-tab-preview"
+            class="rail-tab"
+            type="button"
+            role="tab"
+            data-view="preview"
+            aria-controls="preview"
+            aria-selected="false"
+            tabindex="-1"
+          >
+            preview
+          </button>
+          <button
+            id="rail-tab-workspace"
+            class="rail-tab"
+            type="button"
+            role="tab"
+            data-view="workspace"
+            aria-controls="files-panel"
+            aria-selected="false"
+            tabindex="-1"
+          >
+            workspace
+          </button>
+          <button
+            id="rail-tab-publish"
+            class="rail-tab"
+            type="button"
+            role="tab"
+            data-view="publish"
+            aria-controls="hosting"
+            aria-selected="false"
+            tabindex="-1"
+          >
+            publish
+          </button>
+        </div>
+        <!-- One close for whatever is showing, in the strip's own corner: the
+             control that closes a view is where the view is, not only inside it. -->
+        <button id="rail-close" class="rail-close" type="button" aria-label="Close this view" title="Close this view">
+          <span aria-hidden="true">×</span>
+        </button>
+      </div>
+      <!--
         The preview is a right-hand rail, not a strip under the conversation:
         the code and the app it makes are read side by side with the transcript
         that produced them, and the rail collapses to nothing (the toggle in the
         top bar) rather than being a fixed height the conversation has to pay for.
       -->
-      <aside id="preview" class="preview rail-view" aria-label="The app and the code being generated">
+      <aside
+        id="preview"
+        class="preview rail-view"
+        role="tabpanel"
+        tabindex="-1"
+        aria-label="The app and the code being generated"
+      >
         <!--
           The grip on the rail's inner edge. Drag it to trade width between the
           conversation and the preview; ArrowLeft/ArrowRight do the same from the
@@ -437,7 +504,23 @@
         </div>
       </aside>
 
-      <aside class="files rail-view" id="files-panel" aria-label="Workspace files">
+      <aside
+        class="files rail-view"
+        id="files-panel"
+        role="tabpanel"
+        tabindex="-1"
+        aria-label="Workspace files"
+      >
+        <!--
+          The workspace's header, in two rows rather than one crowded line.
+
+          The controls were a single row of six, each with `margin-left: auto`
+          (the stylesheet's rule for a row's trailing button, applied to every
+          `mini`), so on a narrow rail they spread apart and `close` was pushed
+          past the edge — the one control that must never be missing. The row that
+          *navigates* (remote, skills, close) stays on the first line; the row that
+          *manages* the folder wraps under it, where crowding costs nothing.
+        -->
         <div class="files-head">
           <span class="brand">Workspace</span>
           <div class="files-actions">
@@ -459,8 +542,21 @@
             >
               skills
             </button>
+            <button id="files-close" class="btn-ghost mini pin-end" aria-label="Close the workspace panel" title="Close the workspace panel">
+              <span aria-hidden="true">×</span> close
+            </button>
+          </div>
+          <!-- What *changes* the folder, kept off the navigation row so neither
+               crowds the other out. -->
+          <div class="files-manage">
+            <span class="muted files-manage-label">this folder</span>
             <button id="files-new" class="btn-ghost mini" title="Create a folder here">new folder</button>
-            <button id="files-root" class="btn-ghost mini" title="Go to the working directory" aria-label="Go to the working directory">
+            <button
+              id="files-root"
+              class="btn-ghost mini"
+              title="Go to the working directory"
+              aria-label="Go to the working directory"
+            >
               root
             </button>
             <button
@@ -471,7 +567,6 @@
             >
               clear
             </button>
-            <button id="files-close" class="btn-ghost mini" aria-label="Close the workspace panel">close</button>
           </div>
         </div>
         <div class="files-workspace">
@@ -545,7 +640,7 @@
       <div
             id="hosting"
             class="hosting rail-view hidden"
-            role="region"
+            role="tabpanel"
             aria-labelledby="hosting-title"
             tabindex="-1"
           >

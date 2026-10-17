@@ -3769,6 +3769,94 @@ function railOpenView() {
   return RAIL_VIEWS.includes(view) ? view : RAIL_VIEWS[0];
 }
 
+/**
+ * The rail's tab strip.
+ *
+ * One place derives it from the same `view` the rail itself is derived from, so a
+ * tab cannot claim to be selected while a different panel is on screen — which is
+ * the failure a second copy of the state would inevitably produce.
+ *
+ * Roving tabindex, the pattern a tablist is expected to have: exactly one tab is a
+ * Tab stop (the selected one, or the first when nothing is open), and the arrow
+ * keys move between them.
+ */
+const RAIL_TABS = [
+  { view: "preview", id: "rail-tab-preview", label: "preview" },
+  { view: "workspace", id: "rail-tab-workspace", label: "workspace" },
+  { view: "publish", id: "rail-tab-publish", label: "publish" },
+];
+
+function syncRailTabs(view) {
+  const reachable = view ?? "preview";
+  for (const tab of RAIL_TABS) {
+    const button = $(`#${tab.id}`);
+    const selected = view === tab.view;
+    button.setAttribute("aria-selected", selected ? "true" : "false");
+    button.tabIndex = tab.view === reachable ? 0 : -1;
+  }
+  // The strip's own close says what it closes, because "close" beside three tabs
+  // is a question rather than a label.
+  const close = $("#rail-close");
+  const name = view === null ? null : (RAIL_TABS.find((tab) => tab.view === view)?.label ?? null);
+  close.disabled = name === null;
+  close.setAttribute("aria-label", name === null ? "Close this view" : `Close the ${name} view`);
+  close.title = close.getAttribute("aria-label");
+  close.classList.toggle("hidden", view === null);
+}
+
+/** Which panel a tab opens, and how — each arm is that panel's own open path. */
+function openRailView(view, focusPanel = false) {
+  if (view === "preview") {
+    togglePreview(true);
+    void showPreviewApp();
+  } else if (view === "workspace") {
+    toggleFilesPanel(true);
+  } else {
+    openHosting();
+  }
+  // A click on a tab is a request to *be* in that panel, so focus goes with it: the
+  // next Tab walks the panel's own controls rather than the console's.
+  if (focusPanel) $(`#${view === "workspace" ? "files-panel" : view}`).focus();
+}
+
+/**
+ * Wire the strip: click to switch, click the selected tab to close, arrows to move.
+ *
+ * The arrow keys follow focus, which is what a tablist is for: a person never has
+ * to press Space to see the thing they just moved to.
+ */
+function initRailTabs() {
+  for (const tab of RAIL_TABS) {
+    const button = $(`#${tab.id}`);
+    button.addEventListener("click", () => {
+      if (railOpenView() === tab.view) closeRail();
+      else openRailView(tab.view, true);
+    });
+    button.addEventListener("keydown", (event) => {
+      const index = RAIL_TABS.findIndex((entry) => entry.view === tab.view);
+      let next = null;
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+        next = RAIL_TABS[(index + 1) % RAIL_TABS.length];
+      } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+        next = RAIL_TABS[(index - 1 + RAIL_TABS.length) % RAIL_TABS.length];
+      } else if (event.key === "Home") {
+        next = RAIL_TABS[0];
+      } else if (event.key === "End") {
+        next = RAIL_TABS[RAIL_TABS.length - 1];
+      } else if (event.key === "Delete") {
+        // The strip's own close, from the keyboard, without leaving the tab.
+        if (railOpenView() === tab.view) closeRail();
+        return;
+      }
+      if (next === null) return;
+      event.preventDefault();
+      openRailView(next.view);
+      $(`#${next.id}`).focus();
+    });
+  }
+  $("#rail-close").addEventListener("click", () => closeRail());
+}
+
 /** Say which view the rail is showing, from the panels' own flags. */
 function syncRail() {
   const rail = $("#rail");
@@ -3792,6 +3880,7 @@ function syncRail() {
   // Collapse and expand are one control in two states, and exactly one of them is
   // on screen: the edge tab is only hidden while the rail it stands for is open.
   $("#preview-expand").classList.toggle("hidden", view !== null);
+  syncRailTabs(view);
 }
 
 /** Leave the two views that are not `keep`. */
@@ -5447,6 +5536,10 @@ function wire() {
     void showPreviewApp();
   });
   initPreviewResize();
+  // The rail's tab strip: the same views the toolbar opens, reachable where they
+  // are, each with a close on the control itself.
+  initRailTabs();
+  syncRailTabs(railOpenView());
   // A resize can cross the docked/overlay breakpoint, so the width is re-applied
   // rather than left as pixels that no longer describe this layout.
   window.addEventListener("resize", () => {

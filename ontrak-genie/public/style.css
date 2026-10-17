@@ -349,8 +349,46 @@ details[open] > .section-head::before { content: "\25BE"; }
   font: inherit;
   padding: 6px 11px;
   cursor: pointer;
+  /*
+   * A button that moves when it is pressed is a button a person can feel they
+   * hit, and 120ms is short enough that it reads as the interface answering
+   * rather than as an animation. The colour is a transition too, because the
+   * hover and pressed states are cheap to interpolate and jarring when they snap.
+   * `prefers-reduced-motion` zeroes all of it at the foot of this file.
+   */
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease,
+    box-shadow 120ms ease;
 }
 .btn-ghost:hover { background: var(--bg-hover); }
+/*
+ * A control that is *on* — an open panel, a pressed toggle — says so where it is,
+ * not only in a pane somewhere else. The three rail openers and the preview's two
+ * toggles all publish their state through `aria-expanded`/`aria-pressed`, which
+ * is what a screen reader announces and what this rule paints, so the visual and
+ * the announced state cannot disagree.
+ */
+.btn-ghost[aria-expanded="true"],
+.btn-ghost[aria-pressed="true"] {
+  background: color-mix(in oklab, var(--brand) 16%, var(--bg-raised));
+  border-color: color-mix(in oklab, var(--brand) 42%, var(--border));
+  color: var(--text);
+}
+/* Pressed is a half-pixel, not a bounce: the control stays where it is drawn. */
+.btn-ghost:active, .btn-primary:active, .btn-danger:active { transform: translateY(1px); }
+.btn-ghost:disabled, .btn-primary:disabled, .btn-danger:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-ghost:disabled:active, .btn-primary:disabled:active, .btn-danger:disabled:active { transform: none; }
+/*
+ * The end of a row. This used to be `.btn-ghost.mini`'s own rule, which put
+ * `margin-left: auto` on *every* mini button — so a row of three spread itself
+ * across the width, and the last control in a cramped header was pushed past the
+ * edge. The push belongs to the control that ends the row (`pin-end`), or to the
+ * group that holds them (`.files-actions`), never to a button class.
+ */
+.pin-end { margin-left: auto; }
 /* The publish dialog's one action: right-aligned, because it commits something. */
 .publish-actions { justify-content: flex-end; }
 .btn-primary { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); font-weight: 500; }
@@ -375,7 +413,15 @@ details[open] > .section-head::before { content: "\25BE"; }
   background: color-mix(in oklab, var(--bad) 12%, transparent);
 }
 
-.btn-ghost.mini { padding: 1px 7px; font-size: 11px; margin-left: auto; }
+/*
+ * A row's own small control.
+ *
+ * The 24px floor of WCAG 2.5.8 is met by the padding rather than by a `min-height`,
+ * so a row of them stays dense while every one of them is still a legal target —
+ * `layout:check` measures each one at three viewports and would fail otherwise.
+ * No `margin-left` here: see `.pin-end`.
+ */
+.btn-ghost.mini { padding: 3px 8px; font-size: 11px; line-height: 1.35; }
 
 /* Deleting a file is armed on the first click, not done by it. The button says
    so, in the colour reserved for things that cannot be undone. */
@@ -801,10 +847,41 @@ pre.code {
   flex-direction: column;
   background: var(--bg-panel);
   min-height: 0;
-  width: min(340px, 90vw);
+  width: min(360px, 92vw);
 }
 
-.files-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+/*
+ * The header is two lines that never fight for one: the title and the controls
+ * that open something else stay on top, and the folder's own controls wrap under
+ * them. `flex-wrap` plus `min-width: 0` is what makes it fluid — at 360px the
+ * workspace reads as one row, at 280px as two, and at no width is a control
+ * clipped instead of wrapped.
+ */
+.files-head {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.files-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+/* The folder's own controls: secondary, on their own line, never crowding close. */
+.files-manage {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  width: 100%;
+  min-width: 0;
+}
+.files-manage-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
 
 .files-workspace {
   display: flex;
@@ -1262,6 +1339,103 @@ body.preview-resizing * { cursor: col-resize !important; }
   background: var(--bg-panel);
   border-left: 1px solid var(--border);
 }
+
+/*
+ * The tab strip, and the close that belongs to it.
+ *
+ * It is sticky at the rail's top: a long file list or a long log scrolls under
+ * it, and the control that leaves the view is the one control that must not
+ * scroll away with the content it is about. The tabs sit on a recessed track and
+ * the selected one is lifted onto the panel's own surface, which is the whole
+ * visual vocabulary of a tab — no border tricks and no second colour.
+ */
+.rail-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--ink) 4%, var(--bg-panel)),
+    var(--bg-panel)
+  );
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-width: 0;
+}
+
+.rail-tablist {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--ink) 7%, transparent);
+  /* A rail can be narrower than three labels; the strip scrolls rather than
+     wrapping, so the close button beside it never moves. */
+  overflow-x: auto;
+  scrollbar-width: none;
+  min-width: 0;
+}
+.rail-tablist::-webkit-scrollbar { display: none; }
+
+.rail-tab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 5px 12px;
+  min-height: 26px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+.rail-tab:hover { color: var(--text); background: color-mix(in oklab, var(--ink) 8%, transparent); }
+.rail-tab[aria-selected="true"] {
+  color: var(--text);
+  background: var(--bg-panel);
+  box-shadow:
+    inset 0 0 0 1px var(--border),
+    0 1px 2px color-mix(in oklab, var(--ink) 18%, transparent);
+}
+
+.rail-close {
+  margin-left: auto;
+  flex: none;
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.rail-close:hover {
+  background: color-mix(in oklab, var(--bad) 14%, var(--bg-raised));
+  border-color: color-mix(in oklab, var(--bad) 45%, var(--border));
+  color: var(--text);
+}
+
+/* A panel a tab opens is a panel the tab strip is about: no outline of its own
+   when it takes focus programmatically, but keep the ring for a real Tab. */
+.rail-view:focus { outline: none; }
 /*
  * `flex: 1` is what makes a view as tall as the rail: the preview used to be the
  * grid child itself, so the grid handed it the full height and nobody had to say
