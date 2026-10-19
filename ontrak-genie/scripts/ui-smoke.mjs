@@ -790,24 +790,20 @@ try {
           url: document.querySelector('#preview-app-url').textContent.trim(),
           note: document.querySelector('#preview-app-note').textContent.trim(),
           emptyHidden: document.querySelector('#preview-app-empty').classList.contains('hidden'),
-          stopOffered: !document.querySelector('#preview-app-stop').classList.contains('hidden'),
         };`);
       if (!pane.emptyHidden) throw new Error("the pane still claims nothing is running");
-      if (!pane.stopOffered) throw new Error("a running app offers no way to stop it");
       if (!/\/preview\/ · port \d+/.test(pane.url)) throw new Error(`the pane does not say where the app is: "${pane.url}"`);
       if (!pane.note.includes(command)) {
         throw new Error("the pane does not say what it is running, so a wrong guess cannot be corrected");
       }
 
-      // Stopping is the pane's own button, and the view has to survive it.
-      await session.evaluate("document.querySelector('#preview-app-stop').click();");
-      const stopped = await session.waitFor(
-        `document.querySelector('#preview-app-empty').classList.contains('hidden') === false`,
-        10_000,
-      );
-      if (!stopped) throw new Error("the pane did not go back to saying nothing is running");
-      started = false;
-      return "started, rendered in the frame, and stopped";
+      /*
+       * The pane has no start or stop control any more: the server runs the app
+       * itself. This check starts it through the API because it has to inject a
+       * command into somebody's workspace, and stops it the same way — neither is
+       * a thing a person can do from the console.
+       */
+      return "started through the API, rendered in the frame";
     } finally {
       if (started) await api("/api/preview/stop", { method: "POST" }).catch(() => undefined);
     }

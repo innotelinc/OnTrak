@@ -14,6 +14,7 @@ import {
   discardChangeSet,
 } from "./proposals.js";
 import {
+  ensurePreview,
   previewDialHost,
   previewEvents,
   previewPort,
@@ -929,6 +930,13 @@ async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): 
      * errors for the same reason.
      */
     void finishTurn(turn, usage);
+    /*
+     * The app the turn may have just built. This is the "when building" half of
+     * automatic preview: the files have changed, so a preview that is not running
+     * is started and one that died is tried again. A running dev server is left to
+     * watch its own files — replacing it would cost its state for nothing.
+     */
+    void ensurePreview({ afterWork: true }).catch(() => undefined);
   }
 }
 
@@ -1761,6 +1769,11 @@ async function handleApi(
     // port once per read is what turns that into the app, or into the failure it
     // really was. The pane polls this, so the whole thing costs one connect.
     await recheckPreview();
+    // The app runs itself: a workspace that has something to start is started by
+    // the pane's own first read, so "run" is not a thing a person has to find.
+    // Deliberately not awaited — a poll answers with what is true now, and the
+    // next one reports the server coming up.
+    void ensurePreview().catch(() => undefined);
     return sendJson(res, 200, previewStatus());
   }
 

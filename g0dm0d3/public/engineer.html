@@ -350,6 +350,16 @@
   }
   .gate a.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
 
+  /*
+   * Collapsed: the pane keeps its header and hands its column back to the
+   * terminal. That is the pane's only control — starting and stopping the app is
+   * the server's job now, so there is no button here that could be wrong about it.
+   */
+  body.preview-collapsed .work { grid-template-columns: minmax(0, 1fr); }
+  body.preview-collapsed .preview .pv-body,
+  body.preview-collapsed .preview .pv-foot { display: none; }
+  body.preview-collapsed .preview { align-self: start; }
+
   @media (max-width: 1180px) {
     /*
      * One column: the terminal first, because it is what is being driven, and the
@@ -416,17 +426,16 @@
       <span class="pv-title">preview</span>
       <span class="pv-state" id="pv-state" role="status">checking…</span>
       <div class="pv-actions">
-        <button id="pv-run" type="button" title="Start the project and show it here">run</button>
-        <button id="pv-reload" type="button" title="Reload the app">reload</button>
-        <button id="pv-stop" type="button" title="Stop the app" hidden>stop</button>
         <button id="pv-log-toggle" type="button" title="Show the app's output">log</button>
+        <button id="pv-collapse" type="button" title="Collapse the pane — the header is the way back"
+                aria-controls="preview" aria-expanded="true">collapse</button>
         <a id="pv-open" href="/preview/" target="_blank" rel="noreferrer" title="Open the app in a tab" hidden>open</a>
       </div>
     </div>
     <div class="pv-body" id="pv-body">
       <div class="pv-empty" id="pv-empty">
-        <strong>Nothing running yet</strong>
-        <span>Ask Genie to build something, then press run. The app appears here.</span>
+        <strong>The app appears here</strong>
+        <span>It starts on its own when Genie builds something, and reloads as the files change.</span>
       </div>
       <iframe id="pv-frame" title="The app, running" src="about:blank" hidden></iframe>
       <pre id="pv-log" tabindex="0" hidden></pre>
@@ -586,8 +595,6 @@
     const log = $("pv-log");
     const title = empty.querySelector("strong");
 
-    $("pv-run").hidden = preview.running;
-    $("pv-stop").hidden = !preview.running;
     $("pv-open").hidden = !preview.running;
     $("pv-cmd").textContent = status.command
       ? `${status.cwd ?? "."} · ${status.command}`
@@ -633,41 +640,6 @@
       previewRender(await response.json());
     } catch {
       /* the next poll is the retry */
-    }
-  }
-
-  async function previewCall(path) {
-    const response = await fetch(path, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      previewState(body.error ?? `failed (HTTP ${response.status})`, "bad");
-      return null;
-    }
-    previewRender(body);
-    return body;
-  }
-
-  function previewReload() {
-    const frame = $("pv-frame");
-    frame.dataset.loaded = "1";
-    frame.src = `/preview/?t=${Date.now()}`;
-    frame.hidden = false;
-    $("pv-empty").hidden = true;
-  }
-
-  async function startPreview() {
-    $("pv-run").disabled = true;
-    previewState("starting", "starting");
-    try {
-      const status = await previewCall("api/preview/start");
-      if (status?.pending) setTimeout(previewPoll, 900);
-      line("preview · starting the app", "sys");
-    } finally {
-      $("pv-run").disabled = false;
     }
   }
 
@@ -1064,16 +1036,33 @@
     if (event.key === "Escape" && !$("ship-sheet").hidden) closeShip();
   });
 
-  $("pv-run").addEventListener("click", startPreview);
-  $("pv-stop").addEventListener("click", async () => {
-    $("pv-stop").disabled = true;
+  /*
+   * The one control: collapse, remembered. The app in the pane is started by the
+   * server after a turn and on the first status read — a person cannot start or
+   * stop it from here, which is the point: a preview that is a button is a preview
+   * that is empty until somebody finds the button.
+   */
+  const PREVIEW_COLLAPSED_KEY = "engineer.previewCollapsed";
+  function setPreviewCollapsed(collapsed) {
+    document.body.classList.toggle("preview-collapsed", collapsed);
+    const button = $("pv-collapse");
+    button.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    button.textContent = collapsed ? "expand" : "collapse";
     try {
-      await previewCall("api/preview/stop");
-    } finally {
-      $("pv-stop").disabled = false;
+      localStorage.setItem(PREVIEW_COLLAPSED_KEY, collapsed ? "1" : "0");
+    } catch {
+      /* storage is a convenience here, not a requirement */
     }
-  });
-  $("pv-reload").addEventListener("click", previewReload);
+  }
+  $("pv-collapse").addEventListener("click", () =>
+    setPreviewCollapsed(!document.body.classList.contains("preview-collapsed")),
+  );
+  try {
+    setPreviewCollapsed(localStorage.getItem(PREVIEW_COLLAPSED_KEY) === "1");
+  } catch {
+    setPreviewCollapsed(false);
+  }
+
   $("pv-log-toggle").addEventListener("click", () => {
     const log = $("pv-log");
     log.hidden = !log.hidden;

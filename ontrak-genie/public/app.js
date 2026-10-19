@@ -1078,10 +1078,6 @@ function applyPreviewApp(status) {
   empty.classList.toggle("hidden", running && !pending);
 
   $("#preview-frame").classList.toggle("hidden", !running || pending);
-  $("#preview-app-start").classList.toggle("hidden", running);
-  $("#preview-app-stop").classList.toggle("hidden", !running);
-  $("#preview-app-reload").classList.toggle("hidden", !running);
-
   const log = status.log ?? "";
   $("#preview-app-log-toggle").classList.toggle("hidden", log === "");
   $("#preview-app-log").textContent = log;
@@ -1128,41 +1124,6 @@ async function refreshPreviewApp() {
   }
 }
 
-async function startPreviewApp() {
-  const button = $("#preview-app-start");
-  button.disabled = true;
-  button.textContent = "starting";
-  try {
-    // No command: the server picks this project's own, which is the whole point
-    // of the button. Anything it could not work out is in `error`, on screen.
-    const status = await api("/api/preview/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    applyPreviewApp(status);
-    if (status.pending === true) schedulePreviewPending();
-    else cancelPreviewPending();
-  } catch (error) {
-    $("#preview-app-note").textContent = error.message;
-    $("#preview-app-note").classList.remove("hidden");
-  } finally {
-    button.disabled = false;
-    button.textContent = "run";
-  }
-}
-
-async function stopPreviewApp() {
-  cancelPreviewPending();
-  try {
-    applyPreviewApp(await api("/api/preview/stop", { method: "POST" }));
-  } catch {
-    /* stopping is idempotent; a refusal is worth a refresh, not a dialog */
-  }
-  unloadPreviewFrame();
-  await refreshPreviewApp();
-}
-
 /** Reload the app, coalescing the burst a single save produces. */
 function schedulePreviewReload() {
   if (!previewAppRunning()) return;
@@ -1206,13 +1167,10 @@ function unwatchPreviewChanges() {
  * not run anything by itself, but *clicking* preview should produce a picture of
  * the app rather than instructions for getting one.
  */
-async function showPreviewApp(autoStart = true) {
+async function showPreviewApp() {
   setPreviewMode("app");
   watchPreviewChanges();
   await refreshPreviewApp();
-  if (previewAppRunning()) return;
-  if (!autoStart) return;
-  if (previewApp.status !== null && previewApp.status.command) await startPreviewApp();
 }
 
 /* ---------------------------------------------------------------- approvals */
@@ -5165,7 +5123,6 @@ async function runAtlasProject() {
     setPreviewMode("app");
     watchPreviewChanges();
     await refreshPreviewApp();
-    if (!previewAppRunning()) await startPreviewApp();
   } catch (error) {
     addErrorMessage(error.message);
   } finally {
@@ -5672,12 +5629,6 @@ function wire() {
     if (state.preview.path !== null) void openFile(state.preview.path);
   });
 
-  $("#preview-app-start").addEventListener("click", () => void startPreviewApp());
-  $("#preview-app-stop").addEventListener("click", () => void stopPreviewApp());
-  $("#preview-app-reload").addEventListener("click", () => {
-    if (previewAppRunning()) loadPreviewFrame();
-    else void refreshPreviewApp();
-  });
   $("#preview-app-log-toggle").addEventListener("click", () => {
     const log = $("#preview-app-log");
     const open = log.classList.toggle("hidden");
@@ -5917,7 +5868,7 @@ autoGrow();
 if (storedPreviewOpen() === "1") {
   togglePreview(true);
   // Reopened, not started: reloading the console is not a request to run the app.
-  void showPreviewApp(false);
+  void showPreviewApp();
 } else if (storedPreviewOpen() === "0") state.preview.dismissed = true;
 // The width is restored whether or not the rail is open, so collapsing and
 // expanding does not quietly reset a drag the user made earlier.

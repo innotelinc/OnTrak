@@ -1111,10 +1111,23 @@ services:
       # leaves the deployment's env.
       WEB_TOKEN: ${WEB_TOKEN:-}
       G0DM0D3_TRUST_PROXY_HEADERS: ${G0DM0D3_TRUST_PROXY_HEADERS:-0}
+      # The family's OmniRoute, for the studio's own completions.
+      #
+      # Only the address lives here: the key a completion spends is the signed-in
+      # person's own, issued by the control plane below from their OIDC subject, and
+      # the studio never sees it (the browser calls `/api/gateway/v1/…` on this
+      # origin). Empty keeps the old behaviour — the page asks each visitor for a
+      # personal OpenRouter key — which is what a deployment without a gateway
+      # should do.
+      OMNIROUTE_URL: ${OMNIROUTE_URL:-}
+      OMNIROUTE_MODEL: ${G0DM0D3_GATEWAY_MODEL:-auto/chat}
       # The name the family's dashboard gives this product, and the plan Magnate sells
       # under it, so the tile and the page it opens cannot disagree — nor can the page
       # and the ledger row. `g0dm0d3` stays the ledger key it has always been.
-      PRODUCT_NAME: Uncensored Godmode
+      # The product's own name, not the repository's: the ledger key stays
+      # `g0dm0d3` (a rename there would orphan every charge already recorded),
+      # and what a person sees is the word on the page.
+      PRODUCT_NAME: UNCENSORED
       PRODUCT_TAGLINE: the agent with the guardrails off, one credit a run
       SUBSCRIBE_URL: https://subscribe.genie.innotel.us
       # The console is `genie.innotel.us`; `genie.ontrak.innotel.us` was a second

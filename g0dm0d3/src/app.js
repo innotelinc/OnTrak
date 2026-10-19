@@ -31,6 +31,15 @@ import net from "node:net";
 import tls from "node:tls";
 import { CreditError, creditStatus, refund, spend } from "./credits.js";
 import { entitlementFor } from "./entitlement.js";
+import {
+  GATEWAY_PATH,
+  GatewayError,
+  accountFor,
+  gatewayUrl,
+  quotaFor,
+  reportUsage,
+  usageFrom,
+} from "./gateway.js";
 
 export const HEALTH_PATH = "/health";
 
@@ -52,9 +61,35 @@ const PAGE = fs.readFileSync(new URL("../public/portal.html", import.meta.url), 
 const STUDIO = fs.readFileSync(new URL("../public/studio.html", import.meta.url), "utf8");
 const ENGINEER = fs.readFileSync(new URL("../public/engineer.html", import.meta.url), "utf8");
 
+/**
+ * The studio document, with the gateway this deployment uses written into it.
+ *
+ * The page is a vendored single file that knows nothing about this deployment, so
+ * the one fact it cannot work out for itself — where the family's models are — is
+ * injected at serve time rather than committed into 795 KB. Without a gateway the
+ * page keeps its old behaviour (ask the visitor for a personal OpenRouter key),
+ * which is the right answer for a deployment that has none.
+ *
+ * Cached per configuration, because the substitution is a string scan of the
+ * whole document and the configuration changes once per deploy.
+ */
+const studioDocuments = new Map();
+function studioDocument(config) {
+  if (config.gatewayUrl === "") return STUDIO;
+  const key = `${config.gatewayUrl}\u0000${config.gatewayModel}`;
+  const cached = studioDocuments.get(key);
+  if (cached !== undefined) return cached;
+
+  // `<` is escaped so a model id can never close the script element it lives in.
+  const settings = JSON.stringify({ baseUrl: GATEWAY_PATH, model: config.gatewayModel }).replace(/</g, "\\u003c");
+  const document = STUDIO.replace("</head>", `  <script>window.G0DM0D3_GATEWAY=${settings};</script>\n</head>`);
+  studioDocuments.set(key, document);
+  return document;
+}
+
 /** Which document a product's front door opens. */
 function entryPage(config) {
-  return config.slug === "engineer" ? ENGINEER : STUDIO;
+  return config.slug === "engineer" ? ENGINEER : studioDocument(config);
 }
 
 const MAX_MESSAGE = 8_000;
@@ -86,6 +121,17 @@ export function readConfig(env = process.env) {
     subscribeUrl: String(env.SUBSCRIBE_URL ?? "https://subscribe.genie.innotel.us").trim(),
     /** Where a subscriber goes to actually do the work. */
     workUrl: String(env.WORK_URL ?? "https://genie.ontrak.innotel.us").trim(),
+    /**
+     * The family's OmniRoute, as an OpenAI-compatible base (`…/v1`).
+     *
+     * The studio used to bring its own OpenRouter key, which put the spend on a
+     * person's card and the accounting nowhere. With this set, the page is served
+     * with a same-origin gateway instead, and every completion is paid for by the
+     * caller's own account through the control plane (see `gateway.js`).
+     */
+    gatewayUrl: gatewayUrl(env),
+    /** The model a completion asks for when the page does not name one. */
+    gatewayModel: String(env.OMNIROUTE_MODEL ?? env.G0DM0D3_GATEWAY_MODEL ?? "auto/chat").trim() || "auto/chat",
   };
 }
 
@@ -247,6 +293,186 @@ function log(line) {
   // One JSON line per event: the container's log is the only place a run's fate is
   // visible once the browser has the stream.
   process.stdout.write(`${JSON.stringify({ at: new Date().toISOString(), ...line })}\n`);
+}
+
+/** The two gateway paths the studio uses; anything else under the prefix is a 404. */
+const GATEWAY_ROUTES = new Set(["/models", "/chat/completions"]);
+
+/** A completion may hold a connection for a while; a dev chat is not a webhook. */
+const GATEWAY_TIMEOUT_MS = 15 * 60 * 1000;
+
+/**
+ * The studio's models, on this origin, paid for by the caller's own account.
+ *
+ * This is the whole point of the route: the browser sends no key, the page needs
+ * no CSP exception, and the credential the gateway sees is the one Distro issued
+ * to *this person* — resolved from the address the proxy vouched for, checked
+ * against their quota, and charged to their ledger line when the completion is
+ * done. A shared key would move one person's spend onto the operator, which is
+ * the problem this replaces.
+ *
+ * The streaming half is relayed byte for byte. Its usage frame is read on the way
+ * past (that is what `stream_options.include_usage` asks the gateway for) so the
+ * ledger records what the turn cost rather than "one request".
+ */
+async function handleGateway(req, res, config, email, subpath) {
+  if (config.gatewayUrl === "") {
+    return sendJson(res, 503, { error: "OMNIROUTE_URL is unset on this deployment", retryable: true });
+  }
+
+  /*
+   * The subscription, first and for the same reason the page asks: the gateway is
+   * the product's model access, and serving it to an account with no plan would
+   * make the page's gate a decoration. An unaskable billing service is a retry,
+   * never a paywall — `entitlement.js` has the three-state contract.
+   */
+  let entitlement;
+  try {
+    entitlement = await entitlementFor({ email, plan: config.slug });
+  } catch (error) {
+    return sendJson(res, 503, { error: `could not check the subscription: ${error.message}`, retryable: true });
+  }
+  if (entitlement.metered && entitlement.state === "not_entitled") {
+    log({ event: "gateway_subscription_required", email, plan: config.slug });
+    return sendJson(res, 403, {
+      error: `no ${config.name} subscription on this account`,
+      code: "subscription_required",
+      subscribeUrl: config.subscribeUrl,
+      plan: entitlement.plan,
+    });
+  }
+  if (entitlement.metered && entitlement.state === "unknown") {
+    return sendJson(res, 503, { error: `could not check the subscription: ${entitlement.reason}`, retryable: true });
+  }
+
+  let account;
+  try {
+    account = await accountFor(email);
+  } catch (error) {
+    log({ event: "gateway_identity_failed", email, error: error.message });
+    return sendJson(res, error instanceof GatewayError ? 503 : 500, { error: error.message, retryable: true });
+  }
+  if (account === null) {
+    // Not a customer with an empty wallet: nobody here can tell us who they are.
+    // Inventing an account for an address the plane has never seen would create a
+    // second identity for a person Genie already knows under another subject.
+    return sendJson(res, 403, {
+      error: `${email} has no account in the control plane, so there is no gateway key to spend`,
+      code: "no_account",
+    });
+  }
+
+  const body = subpath === "/models" ? undefined : await readJson(req).catch(() => ({}));
+  if (subpath === "/chat/completions") {
+    if (typeof body.model !== "string" || body.model.trim() === "") {
+      return sendJson(res, 400, { error: "model is required" });
+    }
+    const quota = await quotaFor(account.key);
+    if (!quota.allowed) {
+      const reasons = quota.reasons.length > 0 ? quota.reasons.join(", ") : "quota exhausted";
+      return sendJson(res, 429, { error: `this account cannot run another completion — ${reasons}`, code: "quota_exceeded", reasons: quota.reasons });
+    }
+    // Ask the gateway to report usage on the last streamed frame. Without it a
+    // streamed completion is one request and zero tokens in the ledger, which
+    // would make the token caps the plane keeps look unused forever.
+    if (body.stream === true && body.stream_options === undefined) {
+      body.stream_options = { include_usage: true };
+    }
+  }
+
+  let upstream;
+  try {
+    upstream = await fetch(`${config.gatewayUrl}${subpath}`, {
+      method: req.method,
+      headers: {
+        "content-type": "application/json",
+        ...(account.key === "" ? {} : { authorization: `Bearer ${account.key}` }),
+        accept: req.headers.accept ?? "*/*",
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
+    });
+  } catch (error) {
+    log({ event: "gateway_unreachable", email, error: error.message });
+    return sendJson(res, 502, { error: `the model gateway is not answering: ${error.message}`, retryable: true });
+  }
+
+  const contentType = upstream.headers.get("content-type") ?? "application/json";
+  if (!upstream.ok || upstream.body === null) {
+    const detail = await upstream.text().catch(() => "");
+    log({ event: "gateway_refused", email, status: upstream.status, detail: detail.slice(0, 300) });
+    // The gateway's own error, relayed: it names the model or the provider that
+    // failed, and rewriting it would only lose that.
+    res.writeHead(upstream.status, { "content-type": contentType, "cache-control": "no-store" });
+    return res.end(detail);
+  }
+
+  res.writeHead(upstream.status, { "content-type": contentType, "cache-control": "no-store" });
+
+  // The catalog is not a completion: there is nothing to attribute or record.
+  if (subpath === "/models") {
+    return res.end(await upstream.text());
+  }
+
+  if (!contentType.includes("text/event-stream")) {
+    const text = await upstream.text();
+    let parsed = null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = null;
+    }
+    // Recorded before the browser is told it is done: the row is what the
+    // completion is paid for, and a report that races the response can be lost to
+    // a restart between the two.
+    const usage = usageFrom(parsed ?? { model: body.model }, body.model);
+    await reportUsage(account.key, usage);
+    res.end(text);
+    log({ event: "gateway_completion", email, model: body.model, stream: false, usage });
+    return;
+  }
+
+  const decoder = new TextDecoder();
+  let pending = "";
+  let usage = null;
+  const inspect = (line) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) return;
+    const data = trimmed.slice(5).trim();
+    if (data === "" || data === "[DONE]") return;
+    try {
+      const frame = JSON.parse(data);
+      if (typeof frame?.usage === "object" && frame.usage !== null) usage = usageFrom(frame, body.model);
+    } catch {
+      // A frame this app does not need to understand is still the browser's frame.
+    }
+  };
+
+  try {
+    for await (const chunk of upstream.body) {
+      res.write(chunk);
+      pending += decoder.decode(chunk, { stream: true });
+      let at;
+      while ((at = pending.indexOf("\n")) >= 0) {
+        inspect(pending.slice(0, at));
+        pending = pending.slice(at + 1);
+      }
+      // A line that never ends is not a usage frame; do not grow a buffer for it.
+      if (pending.length > 65_536) pending = pending.slice(-4_096);
+    }
+    pending += decoder.decode();
+    if (pending !== "") inspect(pending);
+  } catch (error) {
+    // The browser has whatever frames arrived; a stream that died is still worth
+    // a log line, and stopping is the only honest thing left to do.
+    log({ event: "gateway_stream_failed", email, error: error.message });
+  }
+
+  // One request even if the provider reported no tokens: it was still a request.
+  // Awaited before the stream closes, for the same reason as the JSON path.
+  await reportUsage(account.key, usage ?? { tokensIn: 0, tokensOut: 0, requests: 1, model: body.model });
+  res.end();
+  log({ event: "gateway_completion", email, model: body.model, stream: true, usage: usage ?? null });
 }
 
 /**
@@ -584,6 +810,29 @@ export function createServer(config = readConfig()) {
         }
         if (url.pathname === "/api/run" && method === "POST") {
           return await handleRun(req, res, config);
+        }
+
+        /*
+         * The studio's models, on this origin.
+         *
+         * A prefix rather than a closed list of two paths, then a closed list of
+         * two paths: the page is what calls this, and `/api/gateway/v1/models` and
+         * `/api/gateway/v1/chat/completions` are the OpenAI-compatible names it
+         * already understands. Everything else under the prefix is this app's 404
+         * rather than a request forwarded to whatever the gateway might serve.
+         */
+        if (url.pathname === GATEWAY_PATH || url.pathname.startsWith(`${GATEWAY_PATH}/`)) {
+          const email = identityOf(req, config);
+          if (email === null) return sendJson(res, 401, { error: "sign in to use the model gateway" });
+          const subpath = url.pathname.slice(GATEWAY_PATH.length);
+          if (!GATEWAY_ROUTES.has(subpath)) return sendJson(res, 404, { error: "not found" });
+          if (subpath === "/chat/completions" && method !== "POST") {
+            return sendJson(res, 405, { error: "POST is the only method here" });
+          }
+          if (subpath === "/models" && method !== "GET" && method !== "HEAD") {
+            return sendJson(res, 405, { error: "GET is the only method here" });
+          }
+          return await handleGateway(req, res, config, email, subpath);
         }
 
         /*

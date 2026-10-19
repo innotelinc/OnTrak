@@ -517,23 +517,6 @@
               <span id="preview-app-url" class="mono muted">no app running</span>
               <span id="preview-app-note" class="preview-app-note muted"></span>
               <div class="preview-app-actions">
-                <button id="preview-app-start" class="btn-ghost" title="Run the project and show it here">
-                  run
-                </button>
-                <button
-                  id="preview-app-stop"
-                  class="btn-ghost hidden"
-                  title="Stop the running app"
-                >
-                  stop
-                </button>
-                <button
-                  id="preview-app-reload"
-                  class="btn-ghost hidden"
-                  title="Reload the app in this pane"
-                >
-                  reload
-                </button>
                 <button
                   id="preview-app-log-toggle"
                   class="btn-ghost hidden"
@@ -552,8 +535,8 @@
               sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals allow-downloads"
             ></iframe>
             <p id="preview-app-empty" class="preview-app-empty muted">
-              Nothing is running yet. Use <span class="mono">run</span> to start this project,
-              or ask the agent to start it.
+              The app appears here on its own once Genie builds one, and reloads as the files
+              change. Nothing to press.
             </p>
           </div>
           <div id="preview-diff" class="preview-diff hidden"></div>

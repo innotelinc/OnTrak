@@ -29,6 +29,19 @@ let genieReply = { status: 200, chunks: ['data: {"text":"hel"}\n\n', 'data: {"te
  */
 let entitlement = { entitled: true, plan: "free", service: false, reason: "subscribed" };
 
+/*
+ * The gateway half of the plane: who an address resolves to, which key pays, and
+ * whether the key may spend. Mutable per test because each of those has one
+ * interesting failure — an address the plane has never seen, a refusal, an
+ * outage — and they lead to three different statuses.
+ */
+let identities = [];
+let reports = [];
+let quotaAllowed = true;
+let quotaReasons = [];
+let resolveStatus = 200;
+const GATEWAY_KEY = "sk-the-users-own-key";
+
 const plane = http.createServer((req, res) => {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const chunks = [];
@@ -36,6 +49,24 @@ const plane = http.createServer((req, res) => {
   req.on("end", () => {
     const body = chunks.length === 0 ? {} : JSON.parse(Buffer.concat(chunks).toString("utf8"));
     const json = (payload) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(payload));
+    if (url.pathname === "/api/internal/identity/resolve") {
+      if (resolveStatus !== 200) return res.writeHead(resolveStatus, { "content-type": "application/json" }).end(JSON.stringify({ error: "user_not_found" }));
+      const email = url.searchParams.get("email");
+      if (email !== "atheniq@innotel.us") return res.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "user_not_found" }));
+      return json({ id: "u-1", email, sub: "sub-atheniq", plan: "free" });
+    }
+    if (url.pathname === "/api/internal/identity") {
+      identities.push({ ...body, token: req.headers["x-control-internal-token"] });
+      return json({ user: { id: "u-1", email: body.email }, oidcSub: body.sub, gatewayKey: GATEWAY_KEY, created: false, quota: { plan: "free" } });
+    }
+    if (url.pathname === "/api/internal/quota-check") {
+      // The gateway key *is* the credential here, exactly as Genie's gate does it.
+      return json({ allowed: quotaAllowed, reasons: quotaReasons, quota: { plan: "free" }, bearer: req.headers.authorization });
+    }
+    if (url.pathname === "/api/internal/usage-report") {
+      reports.push({ ...body, bearer: req.headers.authorization });
+      return json({ ok: true });
+    }
     if (url.pathname === "/api/internal/entitlement") {
       // this fake writes 200 and takes the payload alone, like the other branches
       return json({ email: url.searchParams.get("user"), plan_asked: url.searchParams.get("plan"), source: "distro", ...entitlement });
@@ -87,7 +118,37 @@ await new Promise((r) => genie.listen(0, "127.0.0.1", r));
 const planeOrigin = `http://127.0.0.1:${plane.address().port}`;
 const genieOrigin = `http://127.0.0.1:${genie.address().port}`;
 
+/*
+ * The gateway, as an OpenAI-compatible surface. What matters to the tests is the
+ * credential it is called with and the body it is handed — the response itself is
+ * relayed untouched, which is the point of the route.
+ */
+const gatewayCalls = [];
+let gatewayReply = {
+  status: 200,
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ model: "auto/chat", choices: [{ message: { role: "assistant", content: "ok" } }], usage: { prompt_tokens: 7, completion_tokens: 3 } }),
+};
+const gatewayServer = http.createServer((req, res) => {
+  const chunks = [];
+  req.on("data", (c) => chunks.push(c));
+  req.on("end", () => {
+    const text = Buffer.concat(chunks).toString("utf8");
+    gatewayCalls.push({
+      method: req.method,
+      path: req.url,
+      auth: req.headers.authorization,
+      body: text === "" ? null : JSON.parse(text),
+    });
+    res.writeHead(gatewayReply.status, gatewayReply.headers);
+    res.end(gatewayReply.body);
+  });
+});
+await new Promise((r) => gatewayServer.listen(0, "127.0.0.1", r));
+const gatewayOrigin = `http://127.0.0.1:${gatewayServer.address().port}`;
+
 const { createServer } = await import("../src/app.js");
+const { resetGatewayCache } = await import("../src/gateway.js");
 
 const config = {
   port: 0,
@@ -101,6 +162,8 @@ const config = {
   genieUrl: genieOrigin,
   genieToken: "genie-service-token",
   trustProxyHeaders: true,
+  gatewayUrl: gatewayOrigin,
+  gatewayModel: "auto/chat",
 };
 process.env.CONTROL_PLANE_INTERNAL_URL = planeOrigin;
 process.env.CONTROL_INTERNAL_TOKEN = "plane-token";
@@ -113,12 +176,26 @@ test.after(() => {
   app.close();
   plane.close();
   genie.close();
+  gatewayServer.close();
 });
 
 test.beforeEach(() => {
   charges.length = 0;
   grants.length = 0;
   genieCalls.length = 0;
+  gatewayCalls.length = 0;
+  identities.length = 0;
+  reports.length = 0;
+  quotaAllowed = true;
+  quotaReasons = [];
+  resolveStatus = 200;
+  gatewayReply = {
+    status: 200,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "auto/chat", choices: [{ message: { role: "assistant", content: "ok" } }], usage: { prompt_tokens: 7, completion_tokens: 3 } }),
+  };
+  // A cached gateway key would make one case's identity answer leak into the next.
+  resetGatewayCache();
   balance = 2;
   service = false;
   genieReply = { status: 200, chunks: ['data: {"text":"hel"}\n\n', 'data: {"text":"lo"}\n\n'], headers: { "content-type": "text/event-stream" } };
@@ -498,4 +575,197 @@ test("a ship without an identity never reaches Genie", async () => {
   });
   assert.equal(res.status, 401);
   assert.equal(genieCalls.length, 0);
+});
+
+/*
+ * The family gateway.
+ *
+ * The studio used to ask every visitor for a personal OpenRouter key: the spend
+ * landed on their card and the accounting landed nowhere. The route below is the
+ * other half of the fix — the page calls its own origin, and the server attaches
+ * the key Distro issued to *this person*, checks their quota, and records what the
+ * completion cost. So what these tests pin is attribution: whose key, whose quota,
+ * whose ledger row.
+ */
+
+const gatewayHeaders = { "content-type": "application/json", "x-auth-request-email": "atheniq@innotel.us" };
+
+test("the studio is served with the family gateway written into it", async () => {
+  const page = await (await fetch(`${base}/index.html`, { headers })).text();
+  assert.match(page, /window\.G0DM0D3_GATEWAY=/, "the page has to be told where the models are");
+  assert.match(page, /"baseUrl":"\/api\/gateway\/v1"/, "same origin: no CSP exception and no key in the browser");
+  assert.match(page, /"model":"auto\/chat"/);
+});
+
+test("a completion spends the caller's own gateway key, and records the usage", async () => {
+  const res = await fetch(`${base}/api/gateway/v1/chat/completions`, {
+    method: "POST",
+    headers: gatewayHeaders,
+    body: JSON.stringify({ model: "anthropic/claude-sonnet-4", messages: [{ role: "user", content: "hi" }] }),
+  });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).choices[0].message.content, "ok");
+
+  const call = gatewayCalls.at(-1);
+  assert.equal(call.path, "/chat/completions");
+  assert.equal(call.auth, `Bearer ${GATEWAY_KEY}`, "the key Distro issued for this account, not the deployment's");
+  assert.equal(call.body.model, "anthropic/claude-sonnet-4", "the model id is the page's to choose");
+
+  assert.equal(identities.at(-1).email, "atheniq@innotel.us");
+  assert.equal(identities.at(-1).sub, "sub-atheniq", "the plane's subject, resolved from the proxy's address");
+  assert.equal(identities.at(-1).token, "plane-token");
+
+  const report = reports.at(-1);
+  assert.equal(report.bearer, `Bearer ${GATEWAY_KEY}`);
+  assert.equal(report.tokensIn, 7);
+  assert.equal(report.tokensOut, 3);
+  assert.equal(report.requests, 1);
+});
+
+test("a streamed completion is relayed frame for frame, and its usage frame is recorded", async () => {
+  gatewayReply = {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    body:
+      'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n' +
+      'data: {"model":"deepseek/deepseek-v4","choices":[{"delta":{"content":"lo"}}],"usage":{"prompt_tokens":11,"completion_tokens":5}}\n\n' +
+      "data: [DONE]\n\n",
+  };
+
+  const res = await fetch(`${base}/api/gateway/v1/chat/completions`, {
+    method: "POST",
+    headers: gatewayHeaders,
+    body: JSON.stringify({ model: "auto/chat", stream: true, messages: [{ role: "user", content: "hi" }] }),
+  });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type"), /text\/event-stream/);
+  const text = await res.text();
+  assert.match(text, /"hel"/);
+  assert.match(text, /"lo"/);
+  assert.match(text, /\[DONE\]/);
+
+  const call = gatewayCalls.at(-1);
+  assert.deepEqual(call.body.stream_options, { include_usage: true }, "without this a stream reports no tokens at all");
+  assert.equal(call.body.stream, true);
+
+  const report = reports.at(-1);
+  assert.equal(report.tokensIn, 11);
+  assert.equal(report.tokensOut, 5);
+  assert.equal(report.model, "deepseek/deepseek-v4", "the model that answered, not the one that was asked for");
+});
+
+test("an account the plane has never seen is a 403, not the deployment's shared key", async () => {
+  const res = await fetch(`${base}/api/gateway/v1/chat/completions`, {
+    method: "POST",
+    headers: { ...gatewayHeaders, "x-auth-request-email": "stranger@innotel.us" },
+    body: JSON.stringify({ model: "auto/chat", messages: [] }),
+  });
+  assert.equal(res.status, 403);
+  assert.equal((await res.json()).code, "no_account");
+  assert.equal(gatewayCalls.length, 0, "nothing reaches the gateway without somebody's own key");
+});
+
+test("no proxy identity means no gateway", async () => {
+  const res = await fetch(`${base}/api/gateway/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "auto/chat", messages: [] }),
+  });
+  assert.equal(res.status, 401);
+  assert.equal(gatewayCalls.length, 0);
+});
+
+test("a quota refusal never reaches the gateway", async () => {
+  quotaAllowed = false;
+  quotaReasons = ["daily request limit reached"];
+  const res = await fetch(`${base}/api/gateway/v1/chat/completions`, {
+    method: "POST",
+    headers: gatewayHeaders,
+    body: JSON.stringify({ model: "auto/chat", messages: [] }),
+  });
+  assert.equal(res.status, 429);
+  const body = await res.json();
+  assert.equal(body.code, "quota_exceeded");
+  assert.deepEqual(body.reasons, ["daily request limit reached"], "the plane's own words, not a generic refusal");
+  assert.equal(gatewayCalls.length, 0);
+});
+
+test("a non-subscriber cannot use the gateway the page would have hidden", async () => {
+  entitlement = { entitled: false, plan: "free", service: false, reason: "no subscription" };
+  const res = await fetch(`${base}/api/gateway/v1/chat/completions`, {
+    method: "POST",
+    headers: gatewayHeaders,
+    body: JSON.stringify({ model: "auto/chat", messages: [] }),
+  });
+  assert.equal(res.status, 403);
+  assert.equal((await res.json()).code, "subscription_required");
+  assert.equal(gatewayCalls.length, 0);
+  assert.equal(identities.length, 0, "not even a key is minted for an account that cannot use it");
+});
+
+test("a gateway refusal is relayed with its own status and words", async () => {
+  gatewayReply = {
+    status: 400,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ error: { message: "no provider for that model" } }),
+  };
+  const res = await fetch(`${base}/api/gateway/v1/chat/completions`, {
+    method: "POST",
+    headers: gatewayHeaders,
+    body: JSON.stringify({ model: "openrouter/nope", messages: [] }),
+  });
+  assert.equal(res.status, 400);
+  assert.match(await res.text(), /no provider for that model/);
+  assert.equal(reports.length, 0, "a completion that never ran is not a request in the ledger");
+});
+
+test("the models list is proxied with the caller's key", async () => {
+  gatewayReply = {
+    status: 200,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ data: [{ id: "auto/chat" }] }),
+  };
+  const res = await fetch(`${base}/api/gateway/v1/models`, { headers });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).data[0].id, "auto/chat");
+  assert.equal(gatewayCalls.at(-1).path, "/models");
+  assert.equal(gatewayCalls.at(-1).auth, `Bearer ${GATEWAY_KEY}`);
+});
+
+test("a path the page does not use is this app's 404, not the gateway's", async () => {
+  for (const path of ["/api/gateway/v1/admin", "/api/gateway/v1/../../auth", "/api/gateway/v2/chat/completions"]) {
+    const res = await fetch(`${base}${path}`, { headers });
+    assert.equal(res.status, 404, `${path} must not be forwarded`);
+  }
+  assert.equal(gatewayCalls.length, 0);
+});
+
+test("a completion without a model is refused before it is anyone's spend", async () => {
+  const res = await fetch(`${base}/api/gateway/v1/chat/completions`, {
+    method: "POST",
+    headers: gatewayHeaders,
+    body: JSON.stringify({ messages: [] }),
+  });
+  assert.equal(res.status, 400);
+  assert.equal(gatewayCalls.length, 0);
+});
+
+test("a deployment with no gateway keeps the studio as it was", async () => {
+  const plain = createServer({ ...config, gatewayUrl: "" });
+  await new Promise((r) => plain.listen(0, "127.0.0.1", r));
+  try {
+    const origin = `http://127.0.0.1:${plain.address().port}`;
+    const page = await (await fetch(`${origin}/index.html`, { headers })).text();
+    assert.doesNotMatch(page, /window\.G0DM0D3_GATEWAY=/, "no injection means the page asks for its own key");
+
+    const res = await fetch(`${origin}/api/gateway/v1/chat/completions`, {
+      method: "POST",
+      headers: gatewayHeaders,
+      body: JSON.stringify({ model: "auto/chat", messages: [] }),
+    });
+    assert.equal(res.status, 503);
+    assert.equal((await res.json()).retryable, true);
+  } finally {
+    await new Promise((r) => plain.close(r));
+  }
 });

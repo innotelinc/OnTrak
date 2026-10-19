@@ -868,3 +868,51 @@
   .glass,
   .glass-strong { background: var(--surface); }
 }
+
+/*
+ * LIQUID — the canvas a glass pane needs
+ *
+ * Adopted from Genie, where the console chrome was rebuilt as glass. The material
+ * itself is already here (the .glass primitives and the --glass-* tokens); what was
+ * missing is the half that makes it read as glass rather than as a translucent
+ * slab: a canvas with something on it. A pane blurred over one flat colour looks
+ * flat.
+ *
+ * Two soft colour fields, fixed behind everything, one the product's own tone and
+ * one the family brand. Both come from tokens, so a product opts in by putting
+ * class="liquid" on its body and gets its own colours in all six rendered states
+ * — no product writes a wash of its own.
+ *
+ * A system preference for less transparency wins over the effect: somebody who
+ * asked for it gets the opaque surface, not a blurrier one.
+ */
+.liquid { background: var(--canvas); }
+.liquid::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      760px 520px at 8% -12%,
+      color-mix(in oklab, var(--brand) 22%, transparent),
+      transparent 68%
+    ),
+    radial-gradient(
+      720px 560px at 104% 112%,
+      color-mix(in oklab, var(--tone, var(--brand)) 18%, transparent),
+      transparent 70%
+    ),
+    var(--canvas);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .liquid::before { background: var(--canvas); }
+  .glass,
+  .glass-strong {
+    background: var(--surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}

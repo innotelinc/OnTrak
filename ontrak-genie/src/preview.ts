@@ -676,6 +676,43 @@ export async function startPreview(options: {
 }
 
 /** Stop this workspace's dev server. Idempotent. */
+/**
+ * The app, without being asked.
+ *
+ * The console used to make "run my app" a button, which meant a pane that stayed
+ * empty until somebody found it — and a build that finished was indistinguishable
+ * from one that had not. Now there is nothing to find: the preview is started when
+ * there is something to start, from the two moments that make it true —
+ *
+ *   * after a turn (`afterWork`), because that is when files have just changed;
+ *   * on the status read the pane already polls, for a workspace that has never run.
+ *
+ * What it deliberately does **not** do is resurrect a preview that ran and exited.
+ * A crashed dev server is a fact about the project, and a poll that restarted it
+ * every three seconds would turn one broken build into a loop that hides the
+ * error. New work may start it again; nothing else may.
+ *
+ * It does not restart a running server either: a dev server watches its own files,
+ * so replacing it on every turn would throw away its state and its port for no
+ * gain. `recheckPreview` is what notices one that has died.
+ */
+let autoStarting: Promise<PreviewStatus> | null = null;
+
+export async function ensurePreview(options: { afterWork?: boolean } = {}): Promise<PreviewStatus> {
+  const status = previewStatus();
+  if (status.running || status.pending === true) return status;
+  // Nothing to run is not a failure, and must not spawn anything.
+  if (status.command === null && detectPreviewCommand() === null) return status;
+  if (options.afterWork !== true && status.startedAt !== null) return status;
+  // Two polls can land together; one start is enough, and a second would replace
+  // the first's port mid-bind.
+  if (autoStarting !== null) return autoStarting;
+  autoStarting = startPreview({}).finally(() => {
+    autoStarting = null;
+  });
+  return autoStarting;
+}
+
 export async function stopPreview(): Promise<PreviewStatus> {
   const root = workspaceRoot();
   const entry = running.get(keyFor(root));

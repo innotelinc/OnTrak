@@ -36,6 +36,7 @@ process.env.CONTROL_INTERNAL_TOKEN = "";
 
 const {
   detectPreviewCommand,
+  ensurePreview,
   findFreePort,
   portAnswers,
   previewEvents,
@@ -486,6 +487,31 @@ test("the preview, end to end", async (t) => {
 });
 
 /* ------------------------------------------------------------- change feed */
+
+test("the preview starts itself, and a crash is not a prompt to try again", async () => {
+  await resetPreview();
+  await write("package.json", JSON.stringify({ name: "fixture", scripts: { dev: "node server.js" } }));
+
+  // A workspace with an app is started by the status read the pane already
+  // makes; there is no button in between.
+  const started = await ensurePreview();
+  assert.equal(started.running, true, started.error ?? "a workspace with a dev script should start itself");
+  assert.equal(started.command, "npm run dev", "the project's own script, not one this console invented");
+  await stopPreview();
+
+  // A preview that ran and exited is a fact about the project. New work may try
+  // again; a poll must not, or a broken build restarts itself forever.
+  await write("package.json", JSON.stringify({ name: "fixture", scripts: { dev: "exit 7" } }));
+  const failed = await ensurePreview({ afterWork: true });
+  assert.equal(failed.running, false);
+  assert.equal(failed.exitCode, 7, failed.error ?? "the fixture should have exited");
+
+  const polled = await ensurePreview();
+  assert.equal(polled.running, false, "a crashed preview must not be restarted by a status poll");
+  assert.equal(polled.exitCode, 7, "and it must still say why it is not running");
+
+  await remove("package.json");
+});
 
 test("the change feed", async (t) => {
   await t.test("a file change is announced once, and noise is not", async () => {

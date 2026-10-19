@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://openrouter.ai https://*.openrouter.ai https://api.venice.ai http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*  https://cloudflareinsights.com https://*.cloudflareinsights.com; img-src 'self' data: blob:;">
-  <title>G0DM0D3 — OnTrak Genie</title>
+  <title>UNCENSORED</title>
   <link rel="icon" type="image/svg+xml" href="public/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -74,8 +74,10 @@
     .logo {
       display: flex;
       align-items: center;
+      justify-content: center;
       gap: 10px;
       margin-bottom: 16px;
+      text-align: center;
     }
 
     .logo-icon { font-size: 24px; position: relative; top: -2px; }
@@ -83,7 +85,9 @@
     .logo-text {
       font-size: 20px;
       font-weight: 700;
+      letter-spacing: .08em;
       color: var(--primary);
+      text-align: center;
       text-shadow: 0 0 10px var(--primary);
     }
 
@@ -3287,15 +3291,23 @@
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <div class="logo">
-          <span class="logo-text">G0DM0<span class="flipped-e">D</span><span class="flipped-e-soft">E</span></span>
+          <span class="logo-text">UNCENSORED</span>
         </div>
         <button class="new-chat-btn" onclick="newChat()">
           <span>+</span> New Chat
         </button>
       </div>
 
-      <div class="conversations" id="conversations">
-        <div class="empty-state">No conversations yet</div>
+      <div class="conversations-pane" id="conversationsPane">
+        <button class="conversations-toggle" id="conversationsToggle" type="button"
+                onclick="toggleConversations()" aria-expanded="true" aria-controls="conversations">
+          <span class="conversations-caret" aria-hidden="true">▾</span>
+          <span class="conversations-title">Previous messages</span>
+          <span class="conversations-count" id="conversationsCount" hidden></span>
+        </button>
+        <div class="conversations" id="conversations">
+          <div class="empty-state">No conversations yet</div>
+        </div>
       </div>
 
       <div class="sidebar-footer">
@@ -3455,7 +3467,7 @@
       <div class="messages" id="messagesArea">
         <div class="welcome" id="welcome">
           <div class="welcome-icon">🜏</div>
-          <h2>G0DM0<span class="flipped-e">D</span><span class="flipped-e-soft">E</span></h2>
+          <h2>UNCENSORED</h2>
           <p>Open-source, privacy-respecting, liberated AI chat. {GODMODE:ENABLED}</p>
           <div class="suggestions">
             <div class="suggestion" onclick="useSuggestion('Explain quantum computing in simple terms')">Explain quantum computing in simple terms</div>
@@ -3502,42 +3514,6 @@
         </div>
       </div>
     </main>
-  </div>
-
-  <!-- Disclaimer Modal (first visit) -->
-  <div class="modal-overlay" id="disclaimerModal" style="z-index: 9999;">
-    <div class="modal" style="max-width: 560px;">
-      <div class="modal-header">
-        <h3>Research Preview</h3>
-      </div>
-      <div class="modal-body" style="line-height: 1.6;">
-        <p style="color: var(--primary); font-weight: bold; margin-bottom: 12px;">
-          G0DM0D3 is an open-source research tool for studying LLM output steering and safety evaluation.
-        </p>
-        <p style="margin-bottom: 12px;">By using this tool, you agree that:</p>
-        <ul style="margin: 0 0 16px 20px; color: var(--text);">
-          <li style="margin-bottom: 8px;"><strong>You are solely responsible</strong> for any content you generate, request, or distribute using this tool.</li>
-          <li style="margin-bottom: 8px;">This tool is provided <strong>as-is for research purposes</strong>. It is not intended for use in production systems or to cause harm.</li>
-          <li style="margin-bottom: 8px;">You will <strong>not use this tool</strong> to generate content that violates any applicable laws in your jurisdiction.</li>
-          <li style="margin-bottom: 8px;">The developers assume <strong>no liability</strong> for outputs produced by third-party models accessed through this interface.</li>
-          <li style="margin-bottom: 8px;">Your provider keys are stored in <strong>browser storage</strong> and sent to the provider or local endpoint you configure. They are not included in G0DM0D3 app telemetry.</li>
-          <li style="margin-bottom: 8px;"><strong>Metadata collection:</strong> App telemetry is on by default and includes operational metadata such as a random page-session ID, models used, latencies, pipeline configuration, content lengths, and categorized errors. It does <strong>not intentionally include</strong> prompt text, response text, images, or API keys. The Cloudflare endpoint temporarily reads the request IP for rate limiting but does not add it to published JSONL. Disable app telemetry at any time with No-Log or Local-only mode.</li>
-          <li style="margin-bottom: 8px;"><strong>Public research data:</strong> When the telemetry publisher is configured, metadata batches are published to a public Hugging Face dataset. The separate full-content dataset exists only in the optional API server and activates only when an API caller sends <code>contribute_to_dataset: true</code>; this page does not send that flag. See <a href="TERMS.md" target="_blank" style="color: var(--primary); text-decoration: underline;">Terms of Service</a> for full details.</li>
-        </ul>
-        <p style="color: var(--text-dim); font-size: 13px; margin-bottom: 20px;">
-          This is an experimental research preview. Models are accessed through the provider or local endpoint you configure.
-          G0DM0D3 app telemetry excludes conversation text; selected providers and hosting infrastructure have their own policies. See our <a href="TERMS.md" target="_blank" style="color: var(--primary);">Terms</a> for details.
-        </p>
-        <div style="display: flex; gap: 12px; justify-content: flex-end;">
-          <button onclick="declineDisclaimer()" style="padding: 10px 20px; background: transparent; border: 1px solid var(--border); color: var(--text-dim); border-radius: 8px; cursor: pointer; font-size: 14px;">
-            Decline
-          </button>
-          <button onclick="acceptDisclaimer()" style="padding: 10px 24px; background: var(--primary); color: var(--bg); border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px;">
-            I Agree
-          </button>
-        </div>
-      </div>
-    </div>
   </div>
 
   <!-- Settings Modal -->
@@ -4334,6 +4310,55 @@
       return url.toString().replace(/\/$/, '');
     }
 
+    // ── The family gateway ────────────────────────────────────────────
+    // When this deployment has an OmniRoute behind it, the server injects its
+    // address as `window.G0DM0D3_GATEWAY` while serving this file. Completions
+    // then go to this origin, and the key never reaches the browser: the server
+    // attaches the one Distro issued to this person and records the usage
+    // against their account. With nothing injected — a static copy of this file,
+    // or a deployment without a gateway — every helper here reports false and
+    // the page keeps asking for a personal OpenRouter key, which is what it has
+    // always done.
+    function gatewayBase() {
+      const injected = window.G0DM0D3_GATEWAY;
+      const base = injected && typeof injected.baseUrl === 'string' ? injected.baseUrl.trim() : '';
+      return base.replace(/\/+$/, '');
+    }
+
+    function hasGateway() {
+      return !state.localOnly && gatewayBase() !== '';
+    }
+
+    // The catalogs in this page are OpenRouter ids, and the family gateway serves
+    // those under `openrouter/`. Its own `auto/*` combos pass through unchanged.
+    function gatewayModel(model) {
+      const wanted = String(model || '').trim();
+      if (wanted === '' || wanted.startsWith('auto/') || wanted.startsWith('openrouter/')) {
+        return wanted || (window.G0DM0D3_GATEWAY && window.G0DM0D3_GATEWAY.model) || 'auto/chat';
+      }
+      return `openrouter/${wanted}`;
+    }
+
+    // Everything one cloud completion needs — the URL, the headers and the model
+    // id that service actually knows. The old hardcoded OpenRouter call sites ask
+    // here instead, so "which cloud" is decided in one place.
+    function cloudChatRequest(model, title) {
+      if (hasGateway()) {
+        return {
+          url: `${gatewayBase()}/chat/completions`,
+          headers: { 'Content-Type': 'application/json', 'X-Title': title || 'GODMOD3.AI' },
+          model: gatewayModel(model),
+        };
+      }
+      const headers = {
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://godmod3.ai',
+        'X-Title': title || 'GODMOD3.AI',
+      };
+      if (state.apiKey) headers.Authorization = `Bearer ${state.apiKey}`;
+      return { url: 'https://openrouter.ai/api/v1/chat/completions', headers, model };
+    }
+
     function hasLocalProvider() {
       if (!state.localEnabled || getLocalModels().length === 0) return false;
       try { normalizeLocalBaseUrl(); return true; } catch (_) { return false; }
@@ -4341,11 +4366,11 @@
 
     function hasAnyChatProvider() {
       if (state.localOnly) return hasLocalProvider();
-      return !!(state.apiKey || state.veniceApiKey || hasLocalProvider());
+      return !!(state.apiKey || state.veniceApiKey || hasGateway() || hasLocalProvider());
     }
 
     function hasAuxiliaryModelProvider() {
-      return !!state.apiKey || hasLocalProvider();
+      return !!state.apiKey || hasGateway() || hasLocalProvider();
     }
 
     function inferProviderForModel(model) {
@@ -4360,14 +4385,24 @@
 
       if (state.localOnly) provider = 'local';
       if (provider === 'auto') {
-        if (state.apiKey) provider = 'openrouter';
+        if (hasGateway()) provider = 'gateway';
+        else if (state.apiKey) provider = 'openrouter';
         else if (hasLocalProvider()) provider = 'local';
         else if (state.veniceApiKey) provider = 'venice';
       }
 
+      // The race labels its cloud entries 'openrouter' because that is where the
+      // catalogs came from; with a gateway configured those are its models.
+      if (provider === 'openrouter' && hasGateway()) provider = 'gateway';
+
       // Cloud-only helper model IDs transparently map to the first local
       // model when OpenRouter is unavailable. Explicit race entries stay exact.
       if (provider === 'openrouter' && !state.apiKey && hasLocalProvider()) provider = 'local';
+
+      if (provider === 'gateway') {
+        if (!hasGateway()) throw new Error('The family gateway is not configured on this deployment.');
+        return { provider, model: gatewayModel(requestedModel), url: `${gatewayBase()}/chat/completions`, apiKey: '' };
+      }
 
       if (provider === 'local') {
         if (!hasLocalProvider()) throw new Error('Local models are not configured. Open Settings → API Keys.');
@@ -5346,18 +5381,14 @@ Z={QUERY}
             bodyParams.reasoning = { effort: 'none' };
           }
 
-          // All models (including Gemini 2.5) go through OpenRouter
-          const fetchUrl = 'https://openrouter.ai/api/v1/chat/completions';
-          const fetchHeaders = {
-            'Authorization': `Bearer ${state.apiKey}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://godmod3.ai',
-            'X-Title': 'GODMOD3.AI-godmode-classic'
-          };
+          // Every model goes through the page's one cloud path: OpenRouter when
+          // it has a personal key, the family gateway when the server injected one.
+          const request = cloudChatRequest(bodyParams.model, 'GODMOD3.AI-godmode-classic');
+          bodyParams.model = request.model;
 
-          const response = await fetch(fetchUrl, {
+          const response = await fetch(request.url, {
             method: 'POST',
-            headers: fetchHeaders,
+            headers: request.headers,
             body: JSON.stringify(bodyParams),
             signal: AbortSignal.any([abortController?.signal, earlyExitAbort.signal].filter(Boolean))
           });
@@ -6374,16 +6405,12 @@ JSON only:`
             return { ...m };
           });
 
-          const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          const request = cloudChatRequest(model, 'GODMOD3.AI-parseltongue');
+          const response = await fetch(request.url, {
             method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${state.apiKey}`,
-              'Content-Type': 'application/json',
-              'HTTP-Referer': 'https://godmod3.ai',
-              'X-Title': 'GODMOD3.AI-parseltongue'
-            },
+            headers: request.headers,
             body: JSON.stringify({
-              model: model,
+              model: request.model,
               messages: variantMessages,
               temperature: params.temperature,
               top_p: params.top_p,
@@ -6674,16 +6701,12 @@ JSON only:`
           strategyMessages.push({ role: 'assistant', content: strategy.prefill });
         }
 
-        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        const request = cloudChatRequest(model, 'GODMOD3.AI');
+        const response = await fetch(request.url, {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${state.apiKey}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://godmod3.ai',
-            'X-Title': 'GODMOD3.AI'
-          },
+          headers: request.headers,
           body: JSON.stringify({
-            model,
+            model: request.model,
             messages: strategyMessages,
             temperature: strategy.temperature,
             top_p: strategy.top_p,
@@ -6914,7 +6937,7 @@ directness, and genuine helpfulness wins. Hedging or refusing guarantees you los
     }
 
     function _tierCount(tier) {
-      const hasOR = !!state.apiKey && !state.localOnly;
+      const hasOR = (!!state.apiKey || hasGateway()) && !state.localOnly;
       const hasV = !!state.veniceApiKey && !state.localOnly;
       const or = hasOR ? (TIER_SIZES[tier] || 0) : 0;
       const v = hasV ? (VENICE_TIER_SIZES[tier] || 0) : 0;
@@ -11148,7 +11171,7 @@ Analyze and refine. Output ONLY the JSON object:` }
       _log('[ULTRAPLINIAN] Step 2: Querying all models...');
 
       // Build race entries: OpenRouter models (when key present) + Venice models (when key present)
-      const raceEntries = (state.apiKey && !state.localOnly)
+      const raceEntries = ((state.apiKey || hasGateway()) && !state.localOnly)
         ? modelsToQuery.map(m => ({ model: m, provider: 'openrouter' }))
         : [];
       if (state.veniceApiKey && !state.localOnly) {
@@ -13784,16 +13807,12 @@ Ignoring conversation history will cause you to LOSE the evaluation.`;
                 updateTypingStatus(`Retry ${attempt}/${state.maxRetries} (temp: ${params.temperature})...`);
               }
 
-              const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+              const request = cloudChatRequest(conv.model, 'GODMOD3.AI');
+              const response = await fetch(request.url, {
                 method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${state.apiKey}`,
-                  'Content-Type': 'application/json',
-                  'HTTP-Referer': 'https://godmod3.ai',
-                  'X-Title': 'GODMOD3.AI'
-                },
+                headers: request.headers,
                 body: JSON.stringify({
-                  model: conv.model,
+                  model: request.model,
                   messages: retryMessages,
                   temperature: params.temperature,
                   top_p: params.top_p,
@@ -14440,7 +14459,7 @@ Ignoring conversation history will cause you to LOSE the evaluation.`;
       // then inject the vision description into the conversation context.
       // Vision uses OpenRouter when available, otherwise the configured local model.
       let visionContext = null;
-      if (attachedImage && (state.apiKey || hasLocalProvider())) {
+      if (attachedImage && (state.apiKey || hasGateway() || hasLocalProvider())) {
         try {
           console.log(`[G0DM0D3] 📷 Processing image via ${VISION_MODEL}...`);
           visionContext = await processImageWithVision(attachedImage, content);
@@ -14706,16 +14725,12 @@ Ignoring conversation history will cause you to LOSE the evaluation.`;
           // ── GODMODE FAST streaming promise ──────────────────────────────
           const fastStreamPromise = (async () => {
             try {
-              const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+              const fastRequest = cloudChatRequest(fastCombo.model, 'GODMOD3.AI-godmode-fast');
+              const response = await fetch(fastRequest.url, {
                 method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${state.apiKey}`,
-                  'Content-Type': 'application/json',
-                  'HTTP-Referer': 'https://godmod3.ai',
-                  'X-Title': 'GODMOD3.AI-godmode-fast'
-                },
+                headers: fastRequest.headers,
                 body: JSON.stringify({
-                  model: fastCombo.model,
+                  model: fastRequest.model,
                   messages: fastMessages,
                   stream: true,
                   max_tokens: 16384,
@@ -15273,16 +15288,12 @@ Ignoring conversation history will cause you to LOSE the evaluation.`;
             updateTypingStatus(`Retry ${attempt}/${state.maxRetries} (temp: ${params.temperature})...`);
           }
 
-          const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          const request = cloudChatRequest(conv.model, 'GODMOD3.AI');
+          const response = await fetch(request.url, {
             method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${state.apiKey}`,
-              'Content-Type': 'application/json',
-              'HTTP-Referer': 'https://godmod3.ai',
-              'X-Title': 'GODMOD3.AI'
-            },
+            headers: request.headers,
             body: JSON.stringify({
-              model: conv.model,
+              model: request.model,
               messages: retryMessages,
               temperature: params.temperature,
               top_p: params.top_p,
@@ -17299,39 +17310,6 @@ Ignoring conversation history will cause you to LOSE the evaluation.`;
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // DISCLAIMER MODAL - First-visit Terms of Service
-    // ═══════════════════════════════════════════════════════════════════
-
-    function checkDisclaimer() {
-      const accepted = localStorage.getItem('g0dm0d3-tos-accepted');
-      if (!accepted) {
-        document.getElementById('disclaimerModal').classList.add('open');
-      }
-    }
-
-    function acceptDisclaimer() {
-      localStorage.setItem('g0dm0d3-tos-accepted', Date.now().toString());
-      document.getElementById('disclaimerModal').classList.remove('open');
-    }
-
-    function declineDisclaimer() {
-      document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0d0208;color:#00ff41;font-family:monospace;font-size:18px;text-align:center;padding:20px;">You must accept the terms to use G0DM0D3.<br><br><a href="." style="color:#008f11;">Reload to try again</a></div>';
-    }
-
-    // Show disclaimer on load (after a brief delay so the page renders first)
-    setTimeout(checkDisclaimer, 300);
-
-    // Close modal on overlay click
-    document.getElementById('settingsModal').addEventListener('click', (e) => {
-      if (e.target.id === 'settingsModal') closeSettings();
-    });
-
-    document.getElementById('logsModal').addEventListener('click', (e) => {
-      if (e.target.id === 'logsModal') closeLogs();
-    });
-
-    // Disclaimer modal should NOT close on overlay click — user must explicitly accept or decline
-
     // ===== EASTER EGGS =====
     (function initEasterEggs() {
       const KONAMI_CODE = [
@@ -17559,10 +17537,62 @@ Ignoring conversation history will cause you to LOSE the evaluation.`;
       link.addEventListener("mouseleave", function () { link.style.opacity = ".78"; });
       footer.appendChild(link);
     }
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", addWayBack);
-    } else {
+    /*
+     * The previous-messages pane folds away.
+     *
+     * The conversation list is the tallest thing in the sidebar and the one a
+     * person scrolls past on the way to Settings; on a short window it is also
+     * the difference between the composer fitting on screen and not. The choice
+     * is remembered across reloads, and `aria-expanded` is kept in step so a
+     * screen reader hears a closed pane rather than a list that vanished.
+     */
+    var PANE_KEY = "g0dm0d3.conversationsCollapsed";
+
+    function readCollapsed() {
+      try { return localStorage.getItem(PANE_KEY) === "1"; } catch (_) { return false; }
+    }
+
+    function setCollapsed(collapsed) {
+      var pane = document.getElementById("conversationsPane");
+      var button = document.getElementById("conversationsToggle");
+      if (!pane || !button) return;
+      pane.classList.toggle("collapsed", collapsed);
+      button.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      try { localStorage.setItem(PANE_KEY, collapsed ? "1" : "0"); } catch (_) {}
+    }
+
+    window.toggleConversations = function () {
+      var pane = document.getElementById("conversationsPane");
+      setCollapsed(!(pane && pane.classList.contains("collapsed")));
+    };
+
+    function countConversations() {
+      var list = document.getElementById("conversations");
+      var badge = document.getElementById("conversationsCount");
+      if (!list || !badge) return;
+      var count = list.querySelectorAll(".conv-item").length;
+      badge.textContent = count === 0 ? "" : String(count);
+      badge.hidden = count === 0;
+    }
+
+    function wireConversations() {
+      setCollapsed(readCollapsed());
+      var list = document.getElementById("conversations");
+      if (list && typeof MutationObserver === "function") {
+        new MutationObserver(countConversations).observe(list, { childList: true, subtree: true });
+      }
+      countConversations();
+    }
+
+    function installBridge() {
       addWayBack();
+      wireConversations();
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", installBridge);
+    } else {
+      installBridge();
     }
   })();
 </script>
@@ -17578,6 +17608,54 @@ Ignoring conversation history will cause you to LOSE the evaluation.`;
 
   /* The family's mark, when this page is the whole page and not a frame. */
   .sidebar-footer a { color: inherit; }
+
+  /*
+   * The previous-messages pane. The header is a real button so the pane works
+   * from the keyboard and announces its state; a collapsed pane keeps its header
+   * and gives the rest of the sidebar back, which is what makes it worth doing
+   * on a window short enough that the list would otherwise push Settings away.
+   */
+  .conversations-pane {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .conversations-pane.collapsed { flex: 0 0 auto; }
+  .conversations-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 9px 12px 9px 14px;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    background: none;
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 11.5px;
+    letter-spacing: .08em;
+    text-align: left;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .conversations-toggle:hover { color: var(--text); background: var(--hover); }
+  .conversations-toggle:focus-visible { outline: 1px solid var(--primary); outline-offset: -1px; }
+  .conversations-caret { font-size: 10px; transition: transform .2s ease; }
+  .conversations-pane.collapsed .conversations-caret { transform: rotate(-90deg); }
+  .conversations-title { flex: 1; }
+  .conversations-count {
+    min-width: 20px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--text-dim);
+    font-size: 10.5px;
+    letter-spacing: 0;
+    text-align: center;
+  }
+  .conversations-pane.collapsed .conversations { display: none; }
+  .conversations-pane.collapsed .conversations-toggle { border-bottom-color: transparent; }
 </style>
 </body>
 </html>
