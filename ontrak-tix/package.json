@@ -1,8 +1,8 @@
 {
   "name": "ontrak-tix",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "OnTrak Tix — enterprise ticketing and service management for IT desks and MSPs. An Innotel Labs product.",
+  "description": "OnTrak Tix \u2014 enterprise ticketing and service management for IT desks and MSPs. An Innotel Labs product.",
   "license": "MIT",
   "engines": {
     "node": ">=20.11"

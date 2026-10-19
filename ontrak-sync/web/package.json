@@ -1,8 +1,8 @@
 {
   "name": "ontrak-sync-web",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
-  "description": "Ontrak Sync dashboard — Network package and container update monitoring",
+  "description": "Ontrak Sync dashboard \u2014 Network package and container update monitoring",
   "scripts": {
     "dev": "next dev -p 8421",
     "build": "next build",
