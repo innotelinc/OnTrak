@@ -15,6 +15,17 @@
  * platform is simply down is the one wrong answer here. Each caller decides what
  * to do about that — a preview name is refused, while Atlas falls back to the
  * deployment's own credential when it holds one.
+ *
+ * Since 2026-10-18 the question goes through the control plane
+ * (`/api/internal/entitlement` on Distro) rather than straight to Magnate, so the
+ * answer carries the whole subscription: Magnate's verdict, the plan's limits,
+ * and the rule that a service account has no limits at all. Two things follow,
+ * and both are handled here rather than at each call site:
+ *
+ *   * the credential changes with the route — Distro's internal route wants
+ *     `x-control-internal-token`, Magnate's public one wants a `Bearer`;
+ *   * a service account is `entitled: true` with no limits, so a preview name or
+ *     an Atlas class is granted and nothing downstream tries to meter it.
  */
 
 import { config } from "./config.js";
@@ -22,16 +33,48 @@ import { config } from "./config.js";
 /** A question that could not be answered at all, as opposed to answered "no". */
 export class EntitlementError extends Error {}
 
+/**
+ * What a plan allows, when the answer came from the control plane.
+ *
+ * `null` throughout means "no limit", which is not the same as zero: a service
+ * account is unlimited, and a plan that meters only spend leaves the token caps
+ * unset. Callers must not read `null` as "nothing allowed".
+ */
+export interface PlanLimits {
+  requestsPerDay: number | null;
+  tokensPerDay: number | null;
+  spendCapUsd: number | null;
+}
+
 export interface Entitlement {
   /** `false` is a real refusal; `null` means it could not be checked. */
   entitled: boolean | null;
   reason: string;
+  /** The plan the answer was keyed on, as the authority named it. */
+  plan: string;
+  /** Whether the subscriber is a service account (no subscription, no limits). */
+  service: boolean;
+  /** What the plan meters, or `null` when the answer carried none. */
+  limits: PlanLimits | null;
 }
 
-/** The shape of the answer Magnate's entitlement API returns. */
+/**
+ * The shape of the answer, which is Magnate's contract whether the request went
+ * to Magnate or to the control plane in front of it. The extra fields are
+ * optional because a deployment still pointed straight at Magnate gets the
+ * older, smaller answer.
+ */
 interface EntitlementAnswer {
   entitled?: boolean | null;
   reason?: string;
+  plan?: string;
+  service?: boolean;
+  limits?: { requests_per_day?: number | null; tokens_per_day?: number | null; spend_cap_usd?: number | null } | null;
+}
+
+/** Whether a number from the answer is a real cap (not absent, not negative). */
+function cap(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 export interface EntitlementQuestion {
@@ -45,6 +88,23 @@ export interface EntitlementQuestion {
    * names are unavailable".
    */
   unavailable: string;
+}
+
+/**
+ * Whether an endpoint is the control plane's internal entitlement route.
+ *
+ * Matched on the path rather than on the host: the plane runs on a container
+ * address in one deployment and behind the edge in another, and the one thing
+ * that stays true is the route it serves. A trailing slash is tolerated because
+ * both forms appear in real `.env` files.
+ */
+export function isControlPlaneRoute(endpoint: string): boolean {
+  try {
+    const path = new URL(endpoint).pathname.replace(/\/+$/, "");
+    return path === "/api/internal/entitlement";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -62,7 +122,16 @@ export async function checkEntitlement(question: EntitlementQuestion): Promise<E
   }
   const url = `${base}?plan=${encodeURIComponent(question.plan)}&user=${encodeURIComponent(question.user)}`;
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (config.magnateEntitlementsToken !== "") {
+  if (isControlPlaneRoute(base)) {
+    // Distro's internal route authenticates a service with its shared internal
+    // token, not with a billing bearer. Without it the route refuses outright,
+    // and since this is a *configuration* question rather than a refusal it is
+    // reported as an error instead of being allowed to look like "no".
+    if (config.controlToken === "") {
+      throw new EntitlementError(`MAGNATE_ENTITLEMENTS_URL points at the control plane but CONTROL_INTERNAL_TOKEN is unset, so ${question.unavailable}`);
+    }
+    headers["x-control-internal-token"] = config.controlToken;
+  } else if (config.magnateEntitlementsToken !== "") {
     headers.Authorization = `Bearer ${config.magnateEntitlementsToken}`;
   }
 
@@ -74,9 +143,19 @@ export async function checkEntitlement(question: EntitlementQuestion): Promise<E
     throw new EntitlementError(`could not reach Magnate to check the entitlement: ${(error as Error).message}`);
   }
 
+  const raw = answer.limits;
   return {
     entitled: answer.entitled === true,
     reason: typeof answer.reason === "string" ? answer.reason : "",
+    plan: typeof answer.plan === "string" && answer.plan !== "" ? answer.plan : question.plan,
+    service: answer.service === true,
+    limits: raw === null || raw === undefined
+      ? null
+      : {
+          requestsPerDay: cap(raw.requests_per_day),
+          tokensPerDay: cap(raw.tokens_per_day),
+          spendCapUsd: cap(raw.spend_cap_usd),
+        },
   };
 }
 
@@ -88,13 +167,9 @@ export async function checkEntitlement(question: EntitlementQuestion): Promise<E
  * setting could point at a different environment and sell the wrong thing.
  */
 export function signupUrlFor(plan: string): string {
-  const base = config.magnateEntitlementsUrl;
-  if (base === "") return "";
-  try {
-    return `${new URL(base).origin}/signup?plan=${encodeURIComponent(plan)}`;
-  } catch {
-    return "";
-  }
+  const origin = magnateOrigin();
+  if (origin === "") return "";
+  return `${origin}/signup?plan=${encodeURIComponent(plan)}`;
 }
 
 /**
@@ -105,6 +180,9 @@ export function signupUrlFor(plan: string): string {
  * Magnate publishes its own catalog at `/api/plans`, so a panel asks *it* rather
  * than hardcoding anything — which is also what makes a price change on the
  * billing side a change nobody has to mirror here.
+ *
+ * Asked of the *API* origin (`magnateApiOrigin`), not the shop: the shop is a
+ * human page and answers a JSON request with HTML.
  */
 export interface PlanPrice {
   slug: string;
@@ -136,13 +214,46 @@ export interface PlanPrice {
  * the wrong thing.
  */
 export function magnateOrigin(): string {
-  const configured = config.magnateEntitlementsUrl;
-  if (configured === "") return "";
-  try {
-    return new URL(configured).origin;
-  } catch {
-    return "";
+  // No entitlement endpoint means no billing on this deployment at all, and a
+  // console with no billing has nothing to sell — the empty string is the
+  // contract several call sites already branch on, so it comes first.
+  if (config.magnateEntitlementsUrl === "") return "";
+  return originOf([config.magnatePublicUrl, config.magnateEntitlementsUrl]);
+}
+
+/**
+ * Where Magnate's API answers — the catalog and the account tools.
+ *
+ * Split from the shop by the estate's own layout: `subscribe.innotel.us` is a
+ * page per service (and answers every other path with HTML), while
+ * `app.magnate.innotel.us` is the API. A reader that asked the shop for JSON got
+ * a 200 and no plans, which is exactly the silent nothing this module is written
+ * to avoid — so the API gets its own setting and falls back to the entitlement
+ * endpoint, which is right whenever one host does everything.
+ */
+export function magnateApiOrigin(): string {
+  // Same contract as the shop above: a deployment with no billing configured has
+  // no price to quote, so an API host typed into a `.env` alone must not conjure
+  // one. `null` is what a panel renders as "no price", and it has to stay reachable.
+  if (config.magnateEntitlementsUrl === "") return "";
+  if (config.magnateApiUrl !== "") {
+    const api = originOf([config.magnateApiUrl]);
+    if (api !== "") return api;
   }
+  return originOf([config.magnateEntitlementsUrl]);
+}
+
+/** The first candidate that parses as a URL, as an origin. `""` when none does. */
+function originOf(candidates: string[]): string {
+  for (const candidate of candidates) {
+    if (candidate === "") continue;
+    try {
+      return new URL(candidate).origin;
+    } catch {
+      continue;
+    }
+  }
+  return "";
 }
 
 /** Coerce one row of Magnate's public plan catalog into the shape a console renders. */
@@ -194,7 +305,7 @@ export async function planPrice(service: string): Promise<PlanPrice | null> {
   const cached = priceCache.get(service);
   if (cached !== undefined && Date.now() - cached.at < PRICE_TTL_MS) return cached.price;
 
-  const origin = magnateOrigin();
+  const origin = magnateApiOrigin();
   if (origin === "") return null;
   let price: PlanPrice | null = null;
   try {

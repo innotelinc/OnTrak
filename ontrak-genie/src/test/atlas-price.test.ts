@@ -66,6 +66,16 @@ const magnate = http.createServer((req, res) => {
 await new Promise<void>((resolve) => magnate.listen(0, "127.0.0.1", resolve));
 const port = (magnate.address() as { port: number }).port;
 process.env.MAGNATE_ENTITLEMENTS_URL = `http://127.0.0.1:${port}/api/entitlements`;
+// Explicitly empty for the same reason as the endpoint above: the operator's
+// `.env` sets the public shop (subscribe.innotel.us), and node's env-file loading
+// does not override a variable already in the environment — so without this the
+// catalog query would leave the LAN and this test would assert against production.
+process.env.MAGNATE_PUBLIC_URL = "";
+// The API origin is pinned empty for the same reason as the others: the
+// operator's `.env` sets it (app.magnate.innotel.us) and node's env-file
+// loading does not override a live variable, so without this the price read
+// would leave the test for production.
+process.env.MAGNATE_API_URL = "";
 
 const { atlasInfo } = await import("../atlas.js");
 const { planPrice, resetPriceCache } = await import("../entitlements.js");

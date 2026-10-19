@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { changeSetSummary } from "./change-set.js";
+import { mcpToolSnapshot } from "./mcp-tools.js";
 import { config } from "./config.js";
 import { MEMORY_FILE, appendMemory, readMemory, remember } from "./memory.js";
 import { loadSkillsForScope } from "./skill-roots.js";
@@ -780,9 +781,21 @@ export const tools: ToolDefinition[] = [
   useSkillTool,
 ];
 
+/**
+ * Every tool a turn may call: the console's own, then anything the MCP servers offer.
+ *
+ * The MCP half is read from a snapshot rather than discovered here, because this
+ * function is synchronous and discovery is not — a turn awaits `primeMcpTools()`
+ * before its tool list is built. Keeping the two apart is what lets a bridge
+ * failure degrade to "the console's own tools still work".
+ */
+export function allTools(): ToolDefinition[] {
+  return [...tools, ...mcpToolSnapshot()];
+}
+
 /** Tool schemas in the OpenAI `tools` envelope. */
 export function toolSchemas(): unknown[] {
-  return tools.map((tool) => ({
+  return allTools().map((tool) => ({
     type: "function",
     function: {
       name: tool.name,
@@ -812,11 +825,12 @@ function parseToolArguments(name: string, rawArguments: string): ParsedArgs {
 
 /** Execute a tool by name, turning every failure into a message for the model. */
 export async function runTool(name: string, rawArguments: string): Promise<ToolOutcome> {
-  const tool = tools.find((candidate) => candidate.name === name);
+  const available = allTools();
+  const tool = available.find((candidate) => candidate.name === name);
   if (!tool) {
     return {
       ok: false,
-      content: `Unknown tool "${name}". Available tools: ${tools.map((t) => t.name).join(", ")}`,
+      content: `Unknown tool "${name}". Available tools: ${available.map((t) => t.name).join(", ")}`,
     };
   }
 
@@ -839,7 +853,7 @@ export async function runTool(name: string, rawArguments: string): Promise<ToolO
  * caller should let `runTool` produce the real result (and the real error).
  */
 export async function previewTool(name: string, rawArguments: string): Promise<ToolPreview | null> {
-  const tool = tools.find((candidate) => candidate.name === name);
+  const tool = allTools().find((candidate) => candidate.name === name);
   if (!tool?.inspect) return null;
 
   const parsed = parseToolArguments(name, rawArguments);

@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G0DM0D3 — OnTrak</title>
+<!--
+  One page, no build step, no framework: it talks to two endpoints (`/api/session`
+  and `/api/run`) and streams the answer as it arrives. The credit line is the
+  point of the page — it is shown before anything is spent, and again after.
+-->
+<style>
+  :root { color-scheme: dark; --bg: #0d0f14; --panel: #151924; --line: #242b3a; --ink: #e6e9f0; --dim: #8b93a7; --accent: #7c5cff; --warn: #ffb454; --bad: #ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 18px 22px; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 17px; letter-spacing: .08em; }
+  header .who { margin-left: auto; color: var(--dim); font-size: 13px; }
+  main { max-width: 880px; margin: 0 auto; padding: 22px; display: grid; gap: 14px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; color: var(--dim); font-size: 13px; }
+  .pill { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; }
+  .pill b { color: var(--ink); font-weight: 600; }
+  .pill.bad { border-color: var(--bad); color: var(--bad); }
+  textarea { width: 100%; min-height: 120px; resize: vertical; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font: inherit; }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  button { background: var(--accent); color: white; border: 0; border-radius: 8px; padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .55; cursor: progress; }
+  button.ghost { background: transparent; border: 1px solid var(--line); color: var(--dim); }
+  #note { color: var(--dim); font-size: 13px; min-height: 18px; }
+  #note.bad { color: var(--bad); }
+  #out { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-height: 160px; white-space: pre-wrap; word-break: break-word; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #out:empty::before { content: "nothing yet"; color: var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <h1>G0DM0D3</h1>
+  <span class="who" id="who">checking sign-in…</span>
+</header>
+<main>
+  <div class="bar">
+    <span class="pill">credits left <b id="balance">—</b></span>
+    <span class="pill">per run <b id="perrun">—</b></span>
+    <span class="pill">price <b id="price">—</b></span>
+    <span class="pill" id="plan">—</span>
+  </div>
+  <textarea id="prompt" placeholder="Describe what you want the agent to do…"></textarea>
+  <div class="row">
+    <button id="run">Run</button>
+    <button id="stop" class="ghost" disabled>Stop</button>
+    <span id="note"></span>
+  </div>
+  <pre id="out"></pre>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let controller = null;
+
+  const money = (n) => (typeof n === "number" ? `$${n.toFixed(2)}` : "—");
+
+  function paint(s) {
+    $("who").textContent = s.email ?? "not signed in";
+    $("balance").textContent = s.unlimited ? "unlimited" : (s.balance ?? "—");
+    $("perrun").textContent = s.creditsPerRun ?? "—";
+    $("price").textContent = money(s.pricePerCreditUsd);
+    const metered = s.metered !== false;
+    $("plan").textContent = metered ? (s.allowed ? "ready" : "out of credits") : "unmetered deployment";
+    $("plan").classList.toggle("bad", metered && !s.allowed);
+  }
+
+  async function refresh() {
+    const res = await fetch("/api/session", { headers: { accept: "application/json" } });
+    if (!res.ok) { $("who").textContent = "not signed in"; $("note").textContent = "sign in through SSO to run anything"; return; }
+    paint(await res.json());
+  }
+
+  function note(text, bad) { $("note").textContent = text; $("note").classList.toggle("bad", Boolean(bad)); }
+
+  async function run() {
+    const message = $("prompt").value.trim();
+    if (message === "") return note("write something to run", true);
+    $("out").textContent = "";
+    $("run").disabled = true;
+    $("stop").disabled = false;
+    note("charging and starting…");
+    controller = new AbortController();
+    try {
+      const res = await fetch("/api/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message, runId: crypto.randomUUID() }),
+        signal: controller.signal,
+      });
+      if (!res.ok || !res.body) {
+        const detail = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        note(`${detail.error ?? `HTTP ${res.status}`}${detail.refunded ? " — credit refunded" : ""}`, true);
+        await refresh();
+        return;
+      }
+      note("running");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // SSE frames are "\n\n"-separated; render each one's data as it lands.
+        let cut;
+        while ((cut = buffer.indexOf("\n\n")) !== -1) {
+          const frame = buffer.slice(0, cut);
+          buffer = buffer.slice(cut + 2);
+          for (const line of frame.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const data = line.slice(5).trim();
+            if (data === "" || data === "[DONE]") continue;
+            try {
+              const event = JSON.parse(data);
+              const text = event.text ?? event.delta ?? event.message ?? "";
+              if (text) $("out").textContent += text;
+            } catch { $("out").textContent += data; }
+          }
+        }
+      }
+      note("done");
+    } catch (error) {
+      note(error.name === "AbortError" ? "stopped — the run is not refunded once it has started" : error.message, true);
+    } finally {
+      $("run").disabled = false;
+      $("stop").disabled = true;
+      controller = null;
+      await refresh().catch(() => {});
+    }
+  }
+
+  $("run").addEventListener("click", run);
+  $("stop").addEventListener("click", () => controller?.abort());
+  refresh().catch(() => note("could not read the session", true));
+</script>
+</body>
+</html>

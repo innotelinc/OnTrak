@@ -58,6 +58,79 @@ COPY docker-entrypoint.sh ./docker-entrypoint.sh
       && chmod +x /app/docker-entrypoint.sh \
       && mkdir -p /workspace /data
 
+# --- REA (reverse engineering), and the MCP server it registers -------------
+#
+# The console speaks MCP (see `src/mcp.ts`), and REA is the first server it has: a
+# reverse-engineering toolkit whose 200-odd tools let a turn answer questions about
+# a *shipped* artifact — a binary, an Electron app, an APK, firmware — instead of
+# only about source it already has.
+#
+# Everything needed is installed here rather than at run time, for the reason the
+# sshfs block below gives: this image is recreated on every deploy, and a container
+# that lost its `rea` on the way would look like a broken skill. That includes the
+# prerequisites REA checks for itself:
+#
+#   * `procps` — REA refuses to launch an analysis child unless `ps -axo` works,
+#     which is how it verifies process ownership on Linux. Alpine's busybox `ps`
+#     does not accept `-axo`, so without this every native launch is refused with a
+#     capability error that reads like a missing engine;
+#   * a **full JDK** — Ghidra is Java, and REA checks for the JDK rather than the
+#     runtime: its headless pipeline wants the development tools that ship with it.
+#     `jre-headless` is smaller and was measured to fail that check with
+#     "accepted a 64-bit full JDK 21 or newer", which is a provider that looks
+#     installed and then refuses every native launch.
+#
+# `gcompat` (with `libstdc++`) is what makes Ghidra's decompiler run here at all:
+# the helper binaries it ships are linked against glibc, and on Alpine's musl their
+# loader is missing — the failure reads "Exec failed, error: 2 (No such file or
+# directory)" for a file that plainly exists. Measured: without these, Ghidra
+# imports a binary and then every decompile fails; with them, the same import
+# decompiles.
+RUN apk add --no-cache procps openjdk21-jdk gcompat libstdc++
+# Named explicitly as well as found on PATH: a process started with a scrubbed
+# environment (a sandbox, a service manager) finds `java` by this variable or not
+# at all, and REA treats a missing one as an unusable Ghidra.
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+
+# The analyser itself, and the two things that make its installation *count*:
+#
+#   * its bundled skill is copied where the entrypoint seeds deployment skills from,
+#     so `reverse-engineer-anything` is available to every account with nothing to
+#     install — and it is copied from the *installed package*, so it always matches
+#     the version pinned here;
+#   * `/root/.agents/mcp.json` is the shared path the agent ecosystem writes MCP
+#     registrations to, and the path this console reads (`MCP_CONFIG_PATHS`). Seeding
+#     it in the image means a freshly created container is already registered, and a
+#     person re-running `rea setup` later only has to agree to what it proposes.
+ARG REA_AGENTS_VERSION=6.7.0
+RUN npm install -g --no-fund --no-audit "rea-agents@${REA_AGENTS_VERSION}" \
+ && mkdir -p /opt/genie-default-skills /root/.agents \
+ && cp -a /usr/local/lib/node_modules/rea-agents/skills/reverse-engineer-anything \
+          /opt/genie-default-skills/ \
+ && printf '%s\n' '{ "mcpServers": { "rea": { "command": "rea", "args": ["--mcp"] } } }' \
+          > /root/.agents/mcp.json \
+ && rea --version
+
+# Ghidra, the native-analysis engine REA expects by default. Downloaded at build
+# time because a 400 MB tarball per container start is a worse trade than a larger
+# image, and pinned to a release REA names as verified rather than to "latest".
+#
+# `GHIDRA_INSTALL_DIR` is the variable REA reads; the symlink means the version
+# appears once here and nowhere else.
+ARG GHIDRA_VERSION=12.1.4
+ARG GHIDRA_BUILD=20260921
+RUN curl -fsSL -o /tmp/ghidra.zip \
+      "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_BUILD}.zip" \
+ && unzip -q /tmp/ghidra.zip -d /opt \
+ && rm -f /tmp/ghidra.zip \
+ && ln -s "/opt/ghidra_${GHIDRA_VERSION}_PUBLIC" /opt/ghidra
+ENV GHIDRA_INSTALL_DIR=/opt/ghidra
+
+# This deployment's own default skills. Copied over the analyser's one above, so a
+# name collision is resolved in favour of the file that is reviewed in this
+# repository; the entrypoint is what puts them in front of the accounts.
+COPY default-skills /opt/genie-default-skills/
+
 EXPOSE 3400
 # The entrypoint resolves any `vault://` values (a no-op with none), then execs
 # the server — so a reference that cannot be resolved stops the container.

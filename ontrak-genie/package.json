@@ -1,10 +1,10 @@
 {
   "name": "ontrak-genie",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "OnTrak Genie — the family's coding agent: a browser console and a terminal CLI that drive an agent over a sandboxed workspace, stream its tool calls, and gate risky commands behind a decision. An Innotel Labs product.",
+  "description": "OnTrak Genie \u2014 the family's coding agent: a browser console and a terminal CLI that drive an agent over a sandboxed workspace, stream its tool calls, and gate risky commands behind a decision. An Innotel Labs product.",
   "engines": {
     "node": ">=20.11"
   },

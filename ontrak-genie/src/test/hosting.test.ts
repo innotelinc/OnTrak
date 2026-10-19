@@ -19,6 +19,11 @@ process.env.AGENT_DATA_DIR = path.join(scratch, ".agent");
 // An endpoint that will never answer, so the plan read takes its fallback path.
 process.env.MAGNATE_ENTITLEMENTS_URL = "http://127.0.0.1:9/api/entitlements";
 process.env.MAGNATE_GENIE_PLAN = "genie";
+// The API origin is pinned empty for the same reason as the others: the
+// operator's `.env` sets it (app.magnate.innotel.us) and node's env-file
+// loading does not override a live variable, so without this the price read
+// would leave the test for production.
+process.env.MAGNATE_API_URL = "";
 
 const { FALLBACK_PLAN, hostingInfo, hostingPlan, resetPlanCache, subscribeUrl } = await import(
   "../hosting.js"

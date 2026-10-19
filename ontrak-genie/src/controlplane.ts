@@ -425,3 +425,47 @@ export async function reportControlPlaneOutage(plane: ControlPlaneConfig): Promi
     // the next attempt rather than dropping the only record of the outage.
   }
 }
+
+/**
+ * Record a build action in the control plane's audit log.
+ *
+ * This is the `build.*` trail Distro's admin panel reads, and it is where those
+ * rows come from now that the old build plane is retired: Genie is the surface
+ * that builds, so it is the surface that has to say what left it. One action is
+ * written today — an export, because the bundle becomes another system's input.
+ *
+ * Best-effort and after the response, for the same reason the ledger is: a
+ * record that could not be written must not fail something the person already
+ * has. Unlike the ledger it is not silent — a missing audit row is a missing
+ * answer to "who took this out" — so the failure is logged on this side.
+ */
+export type BuildAction = "build.export";
+
+export async function auditBuild(
+  plane: ControlPlaneConfig,
+  input: {
+    action: BuildAction;
+    /** The OIDC subject; the plane resolves it to the account. Empty when nobody is signed in. */
+    sub: string;
+    email?: string;
+    targetId?: string;
+    meta?: Record<string, unknown>;
+  },
+): Promise<void> {
+  try {
+    await call(plane, "/api/internal/audit", {
+      method: "POST",
+      headers: { "x-control-internal-token": plane.token },
+      body: {
+        action: input.action,
+        ...(input.sub === "" ? {} : { sub: input.sub }),
+        ...(input.email ? { actorEmail: input.email } : {}),
+        ...(input.targetId ? { targetId: input.targetId } : {}),
+        ...(input.meta ? { meta: input.meta } : {}),
+      },
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown error";
+    console.error(`could not record ${input.action} in the tenancy service: ${detail}`);
+  }
+}

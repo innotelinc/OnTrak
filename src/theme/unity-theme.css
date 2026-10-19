@@ -86,6 +86,7 @@
   --tone-sentinel: #b0246a;
   --tone-sync: #05685e;
   --tone-genie: #7c3aed;
+  --tone-engineer: #0f766e;
   --tone-lab: #b45309;
   --tone-unity: #0891b2;
 
@@ -146,6 +147,7 @@
     --tone-sentinel: #ff7cb4;
     --tone-sync: #3fd3c1;
     --tone-genie: #c4b5fd;
+    --tone-engineer: #5eead4;
     --tone-lab: #fbbf24;
     --tone-unity: #67e8f9;
 
@@ -191,6 +193,7 @@
   --tone-sentinel: #ff7cb4;
   --tone-sync: #3fd3c1;
   --tone-genie: #c4b5fd;
+  --tone-engineer: #5eead4;
   --tone-lab: #fbbf24;
   --tone-unity: #67e8f9;
 
@@ -223,6 +226,7 @@
   --tone-sentinel: #9d174d;
   --tone-sync: #0f766e;
   --tone-genie: #7c3aed;
+  --tone-engineer: #0f766e;
   --tone-lab: #a16207;
   --tone-unity: #0891b2;
 
@@ -265,6 +269,7 @@
   --tone-sentinel: #ff7b72;
   --tone-sync: #56d4dd;
   --tone-genie: #d0bcff;
+  --tone-engineer: #5eead4;
   --tone-lab: #fbbf24;
   --tone-unity: #67e8f9;
 
@@ -307,6 +312,7 @@
     --tone-sentinel: #ff7b72;
     --tone-sync: #56d4dd;
     --tone-genie: #d0bcff;
+    --tone-engineer: #5eead4;
     --tone-lab: #fbbf24;
     --tone-unity: #67e8f9;
 
@@ -356,6 +362,7 @@
   --tone-sentinel: #0e7f9c;
   --tone-sync: #0f766e;
   --tone-genie: #7c3aed;
+  --tone-engineer: #0f766e;
   --tone-lab: #b45309;
   --tone-unity: #0891b2;
 
@@ -398,6 +405,7 @@
   --tone-sentinel: #4fd0e8;
   --tone-sync: #56d4dd;
   --tone-genie: #d0bcff;
+  --tone-engineer: #5eead4;
   --tone-unity: #67e8f9;
 
   --shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 14px 34px -14px rgb(0 0 0 / 70%);
@@ -440,6 +448,7 @@
     --tone-sentinel: #4fd0e8;
     --tone-sync: #56d4dd;
     --tone-genie: #d0bcff;
+    --tone-engineer: #5eead4;
     --tone-unity: #67e8f9;
 
     --shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 14px 34px -14px rgb(0 0 0 / 70%);

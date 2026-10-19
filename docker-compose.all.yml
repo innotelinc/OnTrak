@@ -923,6 +923,88 @@ services:
       # than letting it come up holding the reference as a secret.
       - ./data/vault/token/ontrak.token:/vault/token/ontrak.token:ro
 
+  # G0DM0D3 — the metered front door to Genie.
+  #
+  # It holds no model key and no ledger: a run is charged in the control plane and
+  # performed by Genie, and this container is the short path between the two. That
+  # is also why it has no volume — nothing here is worth keeping, and a restart
+  # must not lose a balance (the plane holds it).
+  #
+  # Not published. The only way in is the SSO proxy in front of it (see
+  # `g0dm0d3-sso`), which is what makes the identity header trustworthy; publishing
+  # this port would let anyone on the LAN claim to be anybody by setting a header.
+  # G0DM0D3's sign-in.
+  #
+  # The family's products sign in themselves; this one cannot, because it is not a
+  # product — it is a page in front of Genie. So the sign-in is a proxy: oauth2-proxy
+  # authenticates the person against the same `ontrak` OIDC client the console and
+  # the portal use, and passes the address on in `x-auth-request-email`. That header
+  # is why the app behind it trusts it: this container is the only way in.
+  #
+  # Gated by group, not by "has an account": G0DM0D3 runs an agent that reads and
+  # runs code, which is what `ontrak-sysadmins` and `ontrak-admins` are for.
+  g0dm0d3-sso:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.8.2
+    restart: unless-stopped
+    env_file:
+      - path: g0dm0d3-sso/.env
+        required: false
+    environment:
+      TZ: ${TZ:-America/New_York}
+    ports:
+      # Published on the LAN address the edge forwards to, and nowhere else.
+      - "${G0DM0D3_SSO_BIND:-192.168.1.21}:8094:4180"
+    depends_on:
+      - g0dm0d3
+    command:
+      - --provider=oidc
+      - --oidc-issuer-url=https://auth.cerulean.innotel.us/application/o/ontrak/
+      - --oidc-groups-claim=groups
+      - "--scope=openid email profile groups"
+      - --email-domain=*
+      - --insecure-oidc-allow-unverified-email
+      - --allowed-group=ontrak-sysadmins
+      - --allowed-group=ontrak-admins
+      - --skip-provider-button=true
+      - --cookie-secure=true
+      - --cookie-samesite=lax
+      - --whitelist-domain=.innotel.us
+      - --reverse-proxy=true
+      - --set-xauthrequest=true
+      - --pass-user-headers=true
+      - --upstream=http://g0dm0d3:8080
+      - --http-address=0.0.0.0:4180
+      - --redirect-url=https://uc.genie.innotel.us/oauth2/callback
+      - --silence-ping-logging=true
+
+  g0dm0d3:
+    build:
+      context: g0dm0d3
+    image: innotel/g0dm0d3:${G0DM0D3_IMAGE_TAG:-main}
+    restart: unless-stopped
+    env_file:
+      - path: g0dm0d3/.env
+        required: false
+    environment:
+      TZ: ${TZ:-America/New_York}
+      PORT: "8080"
+      # The agent that does the work, on this compose network.
+      GENIE_URL: http://genie-app:3400
+      # Genie's shared bearer: the service credential this app calls it with. It is
+      # the same value the console accepts, so it is long and random and never
+      # leaves the deployment's env.
+      WEB_TOKEN: ${WEB_TOKEN:-}
+      G0DM0D3_TRUST_PROXY_HEADERS: ${G0DM0D3_TRUST_PROXY_HEADERS:-0}
+    depends_on:
+      - genie-app
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   ontrak-family-guac-recordings:
   ontrak-family-training-db:

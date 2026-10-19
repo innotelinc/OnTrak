@@ -63,6 +63,19 @@ const MARKS = {
    * own (`--tone-lab`) rather than the training range's violet-on-shield, so a tile
    * for each is legible side by side.
    */
+  /**
+   * Looking *into* a build: a lens over the shield, with the handle as the tool.
+   *
+   * Engineer is the family's instrument — the one product whose work begins with a
+   * thing that already exists and has no source — so its stroke is the shape of
+   * taking something apart to see it, rather than of producing something new.
+   */
+  engineer: {
+    tone: "engineer",
+    label: "OnTrak Engineer",
+    strokes: ["M20.5 22.5 a6.5 6.5 0 1 0 0.01 0", "M25.2 27.2 l5.3 5.3"],
+    dot: { cx: 20.5, cy: 22.5, r: 1.7 },
+  },
   lab: {
     tone: "lab",
     label: "OnTrak Lab",

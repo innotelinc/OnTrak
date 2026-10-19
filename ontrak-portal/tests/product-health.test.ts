@@ -41,6 +41,9 @@ const EXPECTED_HEALTH: Record<string, string> = {
   sentinel: "/health",
   sync: "/health",
   genie: "/health",
+  // Engineer is served by the Genie console's edge under its own name and answers
+  // the same unauthenticated `/health` the console does, so it is probed the same way.
+  engineer: "/health",
   lab: "/healthz",
 };
 

@@ -27,4 +27,33 @@ if [ -n "$VAULT_EXPORTS" ]; then
   eval "$VAULT_EXPORTS"
 fi
 
+# ── Deployment skills ───────────────────────────────────────────────────
+# The accounts' skills live in the data volume (`/data/skills`), which outlives
+# this container and is therefore *older* than the image on every deploy. The image
+# carries the skills a deployment ships with — the analyser's own instructions and
+# this repo's additions — in `/opt/genie-default-skills`, and they are copied in
+# here rather than at build time because a build cannot write into a volume.
+#
+# The copy is idempotent and it owns only what it placed: a name the image does not
+# ship is left exactly as the operator or an account left it, and a name the image
+# *does* ship is refreshed only when its contents actually changed — which is what
+# makes an updated image update the skill, instead of a silent once-ever copy.
+SKILL_SEED=/opt/genie-default-skills
+if [ -d "$SKILL_SEED" ]; then
+  mkdir -p /data/skills
+  for src in "$SKILL_SEED"/*; do
+    [ -d "$src" ] || continue
+    name=$(basename "$src")
+    dest="/data/skills/$name"
+    sum=$(find "$src" -type f -exec sha256sum {} + | sort -k2 | sha256sum | cut -d' ' -f1)
+    if [ -f "$dest/.image-sum" ] && [ "$(cat "$dest/.image-sum")" = "$sum" ]; then
+      continue
+    fi
+    rm -rf "$dest"
+    cp -a "$src" "$dest"
+    printf '%s\n' "$sum" > "$dest/.image-sum"
+    echo "skills: installed $name"
+  done
+fi
+
 exec "$@"

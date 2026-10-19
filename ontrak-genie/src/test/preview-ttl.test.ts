@@ -43,6 +43,11 @@ process.env.PREVIEW_TTL_MS = String(CUSTOM_TTL_MS);
 process.env.PREVIEW_FREE_TTL_MS = String(FREE_TTL_MS);
 process.env.PREVIEW_SWEEP_INTERVAL_MS = "0";
 process.env.MAGNATE_ENTITLEMENTS_URL = `http://127.0.0.1:${magnatePort}/api/entitlements`;
+// The API origin is pinned empty for the same reason as the others: the
+// operator's `.env` sets it (app.magnate.innotel.us) and node's env-file
+// loading does not override a live variable, so without this the price read
+// would leave the test for production.
+process.env.MAGNATE_API_URL = "";
 process.env.AGENT_SANDBOX = "host";
 
 const { createPreview, previewPublic, removePreview, resetPreviewCache } = await import(

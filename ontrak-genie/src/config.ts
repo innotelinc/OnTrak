@@ -194,6 +194,20 @@ export const DEFAULT_FREE_MODELS = [
  */
 export const DEFAULT_FREE_PLANS = ["free", "trial", "community"] as const;
 
+/**
+ * One MCP server this console can start.
+ *
+ * `command` and `args` are spawned directly, never through a shell: a server
+ * configuration is data, and a data field that reached a shell would be a command
+ * injection with a friendly name.
+ */
+export interface McpServerConfig {
+  name: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
 export const config = {
   port: int("PORT", 3400),
   host: str("HOST", "127.0.0.1"),
@@ -264,6 +278,42 @@ export const config = {
 
   workspace: path.resolve(str("AGENT_WORKSPACE", "./workspace")),
   dataDir: path.resolve(str("AGENT_DATA_DIR", "./.agent")),
+
+  /**
+   * MCP servers, as a JSON array (or an `{"mcpServers": {…}}` object).
+   *
+   * The console's own list. Tools written by an analyser's own installer arrive
+   * instead through `mcpConfigPaths`, which is the same file every other agent
+   * reads — see `src/mcp-config.ts` for why both exist.
+   */
+  mcpServers: str("MCP_SERVERS", ""),
+  /**
+   * Agent config files to read MCP servers from, in order.
+   *
+   * `/root/.agents/mcp.json` is the shared path the analyser ecosystem writes to;
+   * `<data dir>/mcp.json` is this deployment's own file. A file that is absent is
+   * simply skipped, so the default is safe on a fresh checkout.
+   */
+  mcpConfigPaths: listOrDefault("MCP_CONFIG_PATHS", [
+    "/root/.agents/mcp.json",
+    path.join(str("AGENT_DATA_DIR", "./.agent"), "mcp.json"),
+  ]),
+  /**
+   * How long to wait for a server's handshake and tool listing.
+   *
+   * Generous next to a network call because a first run may be unpacking a
+   * downloaded analyser; short enough that a server which never answers cannot
+   * hold a turn open.
+   */
+  mcpStartupTimeoutMs: nonNegativeInt("MCP_STARTUP_TIMEOUT_MS", 20_000),
+  /**
+   * How long one delegated tool call may take.
+   *
+   * Five minutes by default: a reverse-engineering pass or a decompile is a real
+   * computation, and a timeout that interrupted one mid-flight would lose the work
+   * without saying so.
+   */
+  mcpToolTimeoutMs: nonNegativeInt("MCP_TOOL_TIMEOUT_MS", 300_000),
 
   maxSteps: int("AGENT_MAX_STEPS", 30),
   commandTimeoutMs: int("AGENT_COMMAND_TIMEOUT_MS", 120_000),
@@ -509,6 +559,33 @@ export const config = {
   magnateEntitlementsUrl: str("MAGNATE_ENTITLEMENTS_URL", ""),
   magnateEntitlementsToken: str("ENTITLEMENTS_API_TOKEN", ""),
   magnatePlan: str("MAGNATE_GENIE_PLAN", "genie"),
+  /**
+   * Where a *person* buys, as opposed to where a *server* asks.
+   *
+   * The two moved apart when the entitlement question was routed through the
+   * control plane: `MAGNATE_ENTITLEMENTS_URL` now names Distro's internal route
+   * (LAN only, internal token), while the signup page and the public plan
+   * catalog are still Magnate's on the edge. Deriving the origin from the
+   * entitlement endpoint would send buyers to the Distro container's port, so
+   * the public address is its own setting.
+   *
+   * Empty means unset, which falls back to the entitlement endpoint's origin —
+   * the behaviour before this split — rather than defaulting to a production
+   * hostname the code cannot know is the right one for a given deployment. A
+   * deployment that points `MAGNATE_ENTITLEMENTS_URL` at the control plane
+   * therefore has to set this, or its signup link leads to a container port.
+   */
+  magnatePublicUrl: str("MAGNATE_PUBLIC_URL", ""),
+  /**
+   * Where Magnate's *API* answers, when that is not the shop.
+   *
+   * The shop and the API are two hosts in this estate: people buy on
+   * `subscribe.innotel.us` (a page per service), while the catalog and the
+   * account tools are `app.magnate.innotel.us`. Asking the shop for JSON gets
+   * HTML and, quietly, no price. Empty means unset, which asks the entitlement
+   * endpoint's own origin — the single-host case this started as.
+   */
+  magnateApiUrl: str("MAGNATE_API_URL", ""),
 
   /**
    * Distro's control plane, for per-identity accounts, quota and accounting.
@@ -521,6 +598,16 @@ export const config = {
    */
   controlPlaneUrl: str("CONTROL_PLANE_INTERNAL_URL", ""),
   controlToken: str("CONTROL_INTERNAL_TOKEN", ""),
+
+  /**
+   * Whether a service caller may name the person it acts for (G0DM0D3).
+   *
+   * Off unless a deployment says otherwise, because a header is an identity only
+   * when something that checks identities is the only thing that can set it: with
+   * this on, a request holding the shared `WEB_TOKEN` and an `x-genie-actor`
+   * address has its turn attributed to that account. See `src/actor.ts`.
+   */
+  trustedActorHeader: bool("TRUSTED_ACTOR_HEADER", false),
 
   /**
    * The ceiling *Genie* enforces on an account's turns per day, independent of

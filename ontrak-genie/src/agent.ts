@@ -21,7 +21,8 @@ import { modelHealth } from "./modelHealth.js";
 import { autoFreeChain } from "./modelSelect.js";
 import { deriveTitle, saveSession, type Session } from "./store.js";
 import { lanAddress } from "./network.js";
-import { previewTool, runTool, toolSchemas, tools, type ToolOutcome } from "./tools.js";
+import { allTools, previewTool, runTool, toolSchemas, type ToolOutcome } from "./tools.js";
+import { primeMcpTools } from "./mcp-tools.js";
 
 /**
  * What the agent should say about where the app is reachable.
@@ -465,8 +466,13 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
     models: chain.map((target) => target.model),
   };
 
+  // The MCP servers are asked what they offer before the tool list is built: a
+  // turn that could not see a delegated tool would answer as though the analysis
+  // were impossible. A server that does not answer costs the turn its tools and
+  // nothing else.
+  await primeMcpTools();
   const schemas = toolSchemas();
-  const toolNames = new Set(tools.map((tool) => tool.name));
+  const toolNames = new Set(allTools().map((tool) => tool.name));
   let steps = 0;
 
   // Weak models can wedge on one failing call. Track repeats so we can nudge the

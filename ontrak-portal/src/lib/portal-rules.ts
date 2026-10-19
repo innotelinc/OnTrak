@@ -38,7 +38,7 @@ export type Role =
   | "STUDENT";
 
 /** The keys are also the subdomain labels — see `urlFor`. */
-export type ProductKey = "its" | "tix" | "sentinel" | "sync" | "genie" | "lab";
+export type ProductKey = "its" | "tix" | "sentinel" | "sync" | "genie" | "engineer" | "lab";
 
 export interface Product {
   key: ProductKey;
@@ -61,7 +61,7 @@ export interface Product {
    * the lab got `--tone-lab`. Nothing else changes with it — a tone is a label, and the
    * bold name on the tile is the signal (see the theme's README).
    */
-  tone: "training" | "desk" | "security" | "operations" | "agent" | "lab";
+  tone: "training" | "desk" | "security" | "operations" | "agent" | "engineer" | "lab";
   /**
    * A product this repository does not serve, which a deployment may not run at all.
    *
@@ -140,6 +140,24 @@ export const PRODUCTS: readonly Product[] = [
     tone: "agent",
     // Every product answers `/health` without a credential; the console is no
     // exception, and it reports without starting a turn or touching the gateway.
+    health: "/health",
+  },
+  {
+    key: "engineer",
+    name: "OnTrak Engineer",
+    tagline:
+      "Reverse engineer a shipped application with an agent: point it at a build and get back how it works, with the evidence.",
+    // The same people Genie is for, and for the same reason: it reads and runs
+    // code, and it exists to be used *by* the people who build and operate systems
+    // rather than talked about by everyone else.
+    audience: "sysadmins and builders",
+    host: "re",
+    roles: ["SYSADMIN", "ADMIN"],
+    // Its own tone, like every other product: the family's marks are one
+    // silhouette each, so the colour is what makes two tiles legible side by side.
+    tone: "engineer",
+    // It is served on the Genie host's edge under its own name, and answers the
+    // same unauthenticated `/health` the console does.
     health: "/health",
   },
   {

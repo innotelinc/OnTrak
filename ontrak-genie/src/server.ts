@@ -23,8 +23,16 @@ import {
   stopPreview,
 } from "./preview.js";
 import { config } from "./config.js";
-import { controlPlaneEnabled, readControlPlaneConfig, reportControlPlaneOutage } from "./controlplane.js";
+import {
+  auditBuild,
+  controlPlaneEnabled,
+  readControlPlaneConfig,
+  reportControlPlaneOutage,
+} from "./controlplane.js";
+import { actorEnabled, actorSession } from "./actor.js";
+import type { Session } from "./oidc.js";
 import { buildFileDiff } from "./diff.js";
+import { ENGINEER_PRODUCT, chargeProject, creditStatusFor, engineerConfigured } from "./engineer.js";
 import { modelHealth, startModelHealthLoop } from "./modelHealth.js";
 import { autoFreeChain } from "./modelSelect.js";
 import {
@@ -537,6 +545,26 @@ async function serveStatic(res: http.ServerResponse, pathname: string): Promise<
   }
 }
 
+/**
+ * Who this request belongs to, for the routes that have to know.
+ *
+ * A signed-in person answers with their own session. A service does not: it presents
+ * the deployment's shared bearer and the address it acts for, and only where the
+ * deployment turned that on (`TRUSTED_ACTOR_HEADER`) — see `actor.ts` for why the
+ * header alone is worth nothing.
+ *
+ * One function rather than two call sites is the point. They had already begun to
+ * disagree: the API scope asked `sessionFrom`, so a service's request was refused
+ * with "sign in" *before* the chat route — which does know about actor callers — was
+ * ever reached.
+ */
+async function callerFor(req: http.IncomingMessage): Promise<Session | null> {
+  const session = sessionFrom(req);
+  if (session !== null) return session;
+  if (!actorEnabled()) return null;
+  return await actorSession(req);
+}
+
 // --- auth -------------------------------------------------------------------
 
 /**
@@ -769,7 +797,21 @@ async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): 
    * clearer answer than an SSE frame saying the same thing. Nothing about the
    * chat is created until the turn is allowed to run.
    */
-  const started = await beginTurn(sessionFrom(req));
+  /*
+   * Who this turn belongs to. A person arrives with their own session; a service
+   * (G0DM0D3) arrives with the shared bearer and the address it acts for, and that
+   * is only read when the deployment turned `TRUSTED_ACTOR_HEADER` on — see
+   * `actor.ts` for why the header alone is worth nothing. Either way the result is
+   * an account the plane knows, never an invented one; an actor request the plane
+   * cannot answer is an outage (503, retryable), not a 401.
+   */
+  let caller: Session | null;
+  try {
+    caller = await callerFor(req);
+  } catch (error) {
+    throw new HttpError(503, `could not identify the account this turn belongs to: ${(error as Error).message}`);
+  }
+  const started = await beginTurn(caller);
   if (!started.ok) throw new HttpError(started.status, started.message);
   const { turn } = started;
   // The same plan the gate just read, so the model and the key agree on who pays.
@@ -909,6 +951,53 @@ async function handleApi(
       /** True when turns are attributed and quota-gated through the control plane. */
       tenancy: controlPlaneEnabled(),
     });
+  }
+
+  if (pathname === "/api/engineer" && method === "GET") {
+    // The metered add-on, from the console that runs it (v1.1). Never throws: with
+    // no control plane, or one that is down, this answers `gated: false` and the
+    // console keeps working -- an operator's own machine must not stop analysing
+    // because billing is unset.
+    const email = sessionFrom(req)?.email ?? "";
+    const status = await creditStatusFor(email);
+    return sendJson(res, 200, {
+      product: ENGINEER_PRODUCT,
+      configured: engineerConfigured(),
+      email,
+      ...status,
+    });
+  }
+
+  if (pathname === "/api/engineer/charge" && method === "POST") {
+    // One credit per project, charged in the plane. The project id is the
+    // idempotency key, so a retry, a reload, or a second tab charges once -- which
+    // is why a call without one is refused here rather than charged again later.
+    const email = sessionFrom(req)?.email ?? "";
+    if (email === "") {
+      return sendJson(res, 401, { ok: false, code: "signed_out", error: "sign in to spend Engineer credits" });
+    }
+    const payload = await readJson(req).catch(() => ({}) as Record<string, unknown>);
+    const raw = typeof payload.reference === "string" ? payload.reference.trim() : "";
+    if (raw === "") {
+      return sendJson(res, 400, {
+        ok: false,
+        code: "reference_required",
+        error: "a charge must name the project it is for, so a retry is free",
+      });
+    }
+    try {
+      const charge = await chargeProject(email, raw);
+      // 402 is the honest status for "you have no credits left": a refusal the
+      // person can act on, not a failure of the request.
+      return sendJson(res, charge.allowed ? 200 : 402, { ok: charge.allowed, product: ENGINEER_PRODUCT, ...charge });
+    } catch (error) {
+      return sendJson(res, 503, {
+        ok: false,
+        code: "plane_unreachable",
+        error: (error as Error).message,
+        retryable: true,
+      });
+    }
   }
 
   if (pathname === "/api/account/usage" && method === "GET") {
@@ -1278,12 +1367,36 @@ async function handleApi(
     if (project === null) throw new HttpError(404, "project not found");
     try {
       const exported = await exportProject(project);
-      return sendJson(res, 200, {
+      sendJson(res, 200, {
         filename: exported.filename,
         content: exported.content,
         files: exported.archive.files.length,
         skipped: exported.archive.skipped,
       });
+      /*
+       * The one thing this console does that leaves the system, and so the row
+       * Distro's builder audit has to see now that the old build plane is
+       * retired. Written after the response and best-effort: the bytes are
+       * already the caller's, and a plane that is down must not fail a file
+       * somebody has.
+       */
+      const plane = readControlPlaneConfig();
+      if (plane !== null) {
+        const session = sessionFrom(req);
+        void auditBuild(plane, {
+          action: "build.export",
+          sub: session?.sub ?? "",
+          ...(session?.email ? { email: session.email } : {}),
+          targetId: project.id,
+          meta: {
+            project: project.name,
+            filename: exported.filename,
+            files: exported.archive.files.length,
+            skipped: exported.archive.skipped,
+          },
+        });
+      }
+      return;
     } catch (error) {
       if (error instanceof ProjectArchiveError) throw new HttpError(400, error.message);
       throw error;
@@ -2364,7 +2477,13 @@ export function createServer(): http.Server {
            * and a shared bearer carries no subject to key on. Serving the shared
            * workspace instead would be the leak this exists to close.
            */
-          const scope = await scopeFor(sessionFrom(req));
+          let scopeCaller: Session | null;
+          try {
+            scopeCaller = await callerFor(req);
+          } catch (error) {
+            throw new HttpError(503, `could not identify the account this request belongs to: ${(error as Error).message}`);
+          }
+          const scope = await scopeFor(scopeCaller);
           if (!scope.ok) throw new HttpError(scope.status, scope.message);
           await runInScope(scope.scope, () => handleApi(req, res, url));
           return;

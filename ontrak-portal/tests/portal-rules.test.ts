@@ -82,8 +82,16 @@ describe("the catalogue", () => {
     assert.deepEqual(productsFor("INSTRUCTOR").map((p) => p.key), ["its", "lab"]);
     assert.deepEqual(productsFor("TECHNICIAN").map((p) => p.key), ["tix"]);
     assert.deepEqual(productsFor("ANALYST").map((p) => p.key), ["sentinel"]);
-    assert.deepEqual(productsFor("SYSADMIN").map((p) => p.key), ["tix", "sentinel", "sync", "genie"]);
-    assert.deepEqual(productsFor("ADMIN").map((p) => p.key), ["its", "tix", "sentinel", "sync", "genie", "lab"]);
+    assert.deepEqual(productsFor("SYSADMIN").map((p) => p.key), ["tix", "sentinel", "sync", "genie", "engineer"]);
+    assert.deepEqual(productsFor("ADMIN").map((p) => p.key), [
+      "its",
+      "tix",
+      "sentinel",
+      "sync",
+      "genie",
+      "engineer",
+      "lab",
+    ]);
   });
 
   it("does not show a student the sysadmin's product", () => {
@@ -176,11 +184,13 @@ describe("the catalogue", () => {
   });
 
   it("keeps every product that is not optional in the fleet, whatever the addresses say", () => {
-    // A deployment that configures nothing still draws the five products it always runs,
-    // at the derived names — the optional rule narrows nothing else.
+    // A deployment that configures nothing still draws every product it always runs,
+    // at the derived names — the optional rule narrows nothing else. Engineer is one
+    // of them: it is served by the console's own edge, so it is not the catalogue's
+    // one optional entry.
     assert.deepEqual(
       tilesFor("ADMIN").map((tile) => tile.key),
-      ["its", "tix", "sentinel", "sync", "genie"],
+      ["its", "tix", "sentinel", "sync", "genie", "engineer"],
     );
     assert.equal(runsHere(product("its")!), true);
     assert.equal(runsHere(product("lab")!), false);
@@ -400,6 +410,7 @@ describe("the README's role table", () => {
     sentinel: "Sentinel",
     sync: "Sync",
     genie: "Genie",
+    engineer: "Engineer",
     lab: "the lab",
   };
 
