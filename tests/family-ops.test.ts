@@ -207,6 +207,12 @@ const CELL_NAME: Record<string, string> = {
   sentinel: "Sentinel",
   sync: "Sync",
   genie: "Genie",
+  // The two add-ons live under Genie's name, and their tiles say so — but the role
+  // table names them in their own right, because "which group do I put a new
+  // sysadmin in" is answered by the product they are being given, not by where its
+  // hostname sits.
+  engineer: "Engineer",
+  godmode: "Godmode",
   lab: "the lab",
 };
 

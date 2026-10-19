@@ -50,7 +50,16 @@ const PORTAL_RULES = path.join("ontrak-portal", "src", "lib", "portal-rules.ts")
  * dashboard draws no lab tile at all until a deployment sets both — so the light skipped
  * here is one this stack never draws.
  */
-const NOT_IN_FAMILY_STACK = new Set(["lab"]);
+/**
+ * Services the portal draws no light for, and the job therefore does not wait on.
+ *
+ * `lab` is a peer deployment this stack does not run. The two others are the sign-in
+ * proxies in front of G0DM0D3 and Engineer: they are the front door of a product, not
+ * a product — unauthenticated they answer a redirect to the identity provider, so a
+ * "health" probe of one proves only that it is redirecting. The products behind them
+ * are what the lights watch.
+ */
+const NOT_IN_FAMILY_STACK = new Set(["lab", "engineer-portal-sso", "g0dm0d3-sso"]);
 
 function read(file: string): string {
   return readFileSync(path.join(process.cwd(), file), "utf8");
@@ -126,6 +135,37 @@ function publishedPorts(block: string[]): { host: string; container: string }[] 
 
 function isPort(field: string | undefined): boolean {
   return field !== undefined && /^\d+$/.test(field);
+}
+
+/**
+ * The ports a service listens on *inside* the network, published or not.
+ *
+ * `ports:` is how a service is reached from the host, and `expose:` is how it says
+ * what it listens on when nothing outside should reach it. A service behind its own
+ * sign-in proxy declares `expose:` on purpose — G0DM0D3 and Engineer's portal are
+ * reachable only through the proxy that authenticates the person, and publishing
+ * their port would let anyone claim to be anybody with a header. So "does this light
+ * name a port it listens on?" has to read both, or it calls a correct address wrong.
+ */
+function exposedPorts(block: string[]): string[] {
+  const ports: string[] = [];
+  let inside = false;
+  for (const line of block) {
+    if (/^ {4}expose:\s*$/.test(line)) {
+      inside = true;
+      continue;
+    }
+    if (/^ {4}\S/.test(line)) inside = false;
+    if (!inside) continue;
+    const entry = /^\s*-\s*"?(\d+)"?\s*$/.exec(line)?.[1];
+    if (entry) ports.push(entry);
+  }
+  return ports;
+}
+
+/** Every container port a service answers on, however it is reached. */
+function listeningPorts(block: string[]): Set<string> {
+  return new Set([...publishedPorts(block).map((port) => port.container), ...exposedPorts(block)]);
 }
 
 /** A `${VAR:?message}` whose value is the operator's, and is required to be there. */
@@ -223,7 +263,11 @@ function filesUnder(dir: string): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) found.push(...filesUnder(full));
-    else if (entry.name.endsWith(".ts")) found.push(full);
+    // `.js` and `.mjs` too: the two add-on consoles (G0DM0D3 and Engineer's portal)
+    // are plain ESM with no build step, and a scan that reads only TypeScript
+    // declares their `HEALTH_PATH` missing — which reads as "does not answer" for a
+    // service that answers fine.
+    else if (/\.(ts|js|mjs)$/.test(entry.name)) found.push(full);
   }
   return found;
 }
@@ -293,7 +337,9 @@ test("family-stack: the job waits for every product the stack serves", () => {
   for (const [name, block] of serviceBlocks()) {
     // The databases are the stack's own business: nothing outside dials them, and the
     // products answer for them. A one-shot job (a migrate, a seed) has no address.
-    if (name.endsWith("-db")) continue;
+    // The sign-in proxies are the front door of a product rather than a product, and
+    // an unauthenticated probe of one is a redirect to the identity provider.
+    if (name.endsWith("-db") || NOT_IN_FAMILY_STACK.has(name)) continue;
     const ports = publishedPorts(block);
     if (!ports.length) continue;
     if (!ports.some((port) => job.includes(`127.0.0.1:${port.host}`))) {
@@ -338,7 +384,7 @@ test("family-stack: every light the portal draws is aimed at a service that answ
     }
     // The right-hand side of the mapping: the portal runs *inside* the network, so it
     // dials the service by name and the port the process listens on.
-    if (!publishedPorts(block).some((published) => published.container === port)) {
+    if (!listeningPorts(block).has(port)) {
       problems.push(`${name}=${assigned} asks ${service} on ${port}, which it does not listen on`);
       continue;
     }

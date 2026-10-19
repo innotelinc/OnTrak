@@ -908,6 +908,8 @@ jobs:
           Sentinel SENTINEL /health
           Sync SYNC /health
           Genie GENIE /health
+          Engineer ENGINEER /health
+          Godmode GODMODE /health
           PROBES
 
       # A registered client is the half of single sign-on that can silently not
