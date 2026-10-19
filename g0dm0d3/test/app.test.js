@@ -264,6 +264,20 @@ test("a run without a subscription is refused with the plan to buy, and nothing 
   assert.equal(balance, 2, "and their credits, if any, are untouched");
 });
 
+test("the page offers a way in and a way to top up", async () => {
+  // Both are the difference between a console somebody can use and one that tells
+  // them what is wrong with them: an unsigned visitor needs a button pointed at the
+  // proxy's own sign-in, and a subscriber who has spent every credit needs one
+  // pointed at the plans — the run box already stays on the page for them.
+  const page = await (await fetch(`${base}/`)).text();
+
+  assert.match(page, /href="\/oauth2\/sign_in"/, "the sign-in link is in the markup, not assembled later");
+  assert.match(page, /id="signin-cta"/, "and it is the button the page reveals when the session is refused");
+  assert.match(page, /\/oauth2\/sign_in\?rd=/, "it carries a return path back to this page");
+  assert.match(page, /id="credits-cta"/, "the out-of-credits offer is on the page too");
+  assert.match(page, /Out of credits/, "with a heading that says which state it is for");
+});
+
 test("billing that cannot answer is a retry, never a paywall", async () => {
   // `entitled: null` is the plane saying it could not get a verdict out of billing.
   entitlement = { entitled: null, plan: "free", service: false, reason: "HTTP 404", source: "unreachable" };

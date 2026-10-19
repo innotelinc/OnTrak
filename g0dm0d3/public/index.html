@@ -32,6 +32,9 @@
   #out { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-height: 160px; white-space: pre-wrap; word-break: break-word; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
   #out:empty::before { content: "nothing yet"; color: var(--dim); }
   #paywall { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 8px; }
+  #signin, #credits { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 8px; }
+  #signin h2, #credits h2 { margin: 0; font-size: 16px; }
+  #signin p, #credits p { margin: 0; color: var(--dim); }
   #paywall h2 { margin: 0; font-size: 16px; }
   #paywall p { margin: 0; color: var(--dim); }
   a.cta { display: inline-block; background: var(--accent); color: white; text-decoration: none; border-radius: 8px; padding: 9px 16px; font-weight: 600; }
@@ -56,6 +59,17 @@
     <p><a id="paywall-cta" class="cta" href="#" rel="noopener">See the plans</a></p>
     <p class="dim" id="paywall-work"></p>
   </section>
+  <section id="signin" hidden>
+    <h2>Sign in to continue</h2>
+    <p id="signin-copy"></p>
+    <p><a id="signin-cta" class="cta" href="/oauth2/sign_in">Sign in</a></p>
+  </section>
+  <section id="credits" hidden>
+    <h2 id="credits-title">Out of credits</h2>
+    <p id="credits-copy"></p>
+    <p><a id="credits-cta" class="cta" href="#" rel="noopener">Add more credits</a></p>
+    <p class="dim" id="credits-work"></p>
+  </section>
   <textarea id="prompt" placeholder="Describe what you want the agent to do…"></textarea>
   <div class="row">
     <button id="run">Run</button>
@@ -67,6 +81,9 @@
 <script>
   const $ = (id) => document.getElementById(id);
   let controller = null;
+  // Named where a person can see it, because the first question a console has to
+  // answer is "who does this think I am".
+  const signedInAs = "nothing here can start a run until you do";
 
   const money = (n) => (typeof n === "number" ? `$${n.toFixed(2)}` : "—");
 
@@ -78,10 +95,27 @@
     const subscription = s.entitlement?.state ?? "unknown";
     const blocked = Boolean(s.entitlement?.metered) && subscription === "not_entitled";
     const uncheckable = Boolean(s.entitlement?.metered) && subscription === "unknown";
+    // Subscribed, and out of credits: the run box stays exactly where it is,
+    // because the work is one purchase away rather than behind a wall. Hiding it
+    // would tell a paying customer they are not one.
+    const shortOnCredits = Boolean(s.entitlement?.metered) && !blocked && s.allowed === false;
+    $("signin").hidden = true;
     $("paywall").hidden = !(blocked || uncheckable);
+    $("credits").hidden = !shortOnCredits;
     $("prompt").hidden = blocked;
     $("run").hidden = blocked;
     $("stop").hidden = blocked;
+    if (shortOnCredits) {
+      const price = money(s.pricePerCreditUsd);
+      $("credits-title").textContent = `${s.name ?? "This console"} is out of credits`;
+      $("credits-copy").textContent =
+        `${s.email ?? "this account"} has ${s.balance ?? 0} left, and a run costs ${s.creditsPerRun ?? 1}` +
+        (price === "—" ? "." : ` (${price} a credit, bought from Magnate).`);
+      $("credits-cta").href = s.subscribeUrl ?? "#";
+      $("credits-work").textContent = s.workUrl
+        ? `Running the agent itself is ${s.workUrl}; this page is the metered front door in front of it.`
+        : "";
+    }
     if (blocked || uncheckable) {
       $("paywall-title").textContent = blocked ? `A subscription is needed for ${s.name ?? "this product"}` : "We cannot check your subscription right now";
       $("paywall-copy").textContent = blocked
@@ -102,7 +136,23 @@
 
   async function refresh() {
     const res = await fetch("/api/session", { headers: { accept: "application/json" } });
-    if (!res.ok) { $("who").textContent = "not signed in"; $("note").textContent = "sign in through SSO to run anything"; return; }
+    if (!res.ok) {
+      // Not signed in is a state with an action, so it gets a button rather than a
+      // sentence: the link is the SSO proxy's own entry point, and `rd` brings the
+      // person back here once the provider has answered.
+      const back = window.location.pathname + window.location.search;
+      $("who").textContent = "not signed in";
+      $("note").textContent = "sign in to run anything";
+      $("prompt").hidden = true;
+      $("run").hidden = true;
+      $("stop").hidden = true;
+      $("paywall").hidden = true;
+      $("credits").hidden = true;
+      $("signin").hidden = false;
+      $("signin-copy").textContent = `This console runs as whoever the platform's sign-in says you are; ${signedInAs}.`;
+      $("signin-cta").href = "/oauth2/sign_in?rd=" + encodeURIComponent(back);
+      return;
+    }
     paint(await res.json());
   }
 
