@@ -571,6 +571,29 @@ async function callerFor(req: http.IncomingMessage): Promise<Session | null> {
   return await actorSession(req);
 }
 
+/**
+ * The address a request belongs to, for the routes that report a balance.
+ *
+ * `/api/addons` and `/api/engineer` are read-only and render for whoever got here,
+ * and both ways in — a session cookie and a service acting for somebody — end up at
+ * the same account. `sessionFrom` alone answered the second case with nobody: a
+ * person who reached the console from OnTrak Engineer or Uncensored Godmode saw
+ * "not metered on this deployment" rather than their balance.
+ *
+ * A plane that cannot be reached while resolving is reported as "no address", which
+ * is the same answer a signed-out visitor gets: the row still draws, and it says
+ * the balance could not be read rather than that there is nothing to spend.
+ */
+async function callerEmailFor(req: http.IncomingMessage): Promise<string> {
+  const session = sessionFrom(req);
+  if (session !== null) return session.email;
+  try {
+    return (await callerFor(req))?.email ?? "";
+  } catch {
+    return "";
+  }
+}
+
 // --- auth -------------------------------------------------------------------
 
 /**
@@ -964,7 +987,7 @@ async function handleApi(
     // no control plane, or one that is down, this answers `gated: false` and the
     // console keeps working -- an operator's own machine must not stop analysing
     // because billing is unset.
-    const email = sessionFrom(req)?.email ?? "";
+    const email = await callerEmailFor(req);
     const status = await creditStatusFor(email);
     return sendJson(res, 200, {
       product: ENGINEER_PRODUCT,
@@ -978,7 +1001,12 @@ async function handleApi(
     // The two add-ons and their balances, for the console's own list. Same posture
     // as `/api/engineer`: never an error page, always a row — an add-on whose
     // balance could not be read says so in its own line.
-    const email = sessionFrom(req)?.email ?? "";
+    //
+    // The caller, not the cookie: a service acting for somebody has no cookie, and
+    // asking the plane about an empty address answered "not metered here" for an
+    // account that is metered. Whoever got past the API scope is who the rows
+    // belong to.
+    const email = await callerEmailFor(req);
     return sendJson(res, 200, {
       email,
       topUpUrl: config.addonsTopUpUrl,

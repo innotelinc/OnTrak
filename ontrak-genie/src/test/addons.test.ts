@@ -40,6 +40,15 @@ const plane = http.createServer((req, res) => {
     res.writeHead(500, { "content-type": "application/json" }).end("{}");
     return;
   }
+  // Who an address is, for a service acting for somebody. `x-genie-actor` is only
+  // an identity once a proxy that checks identities can set it, and this is the
+  // lookup that turns the address into the subject the turn belongs to.
+  if (url.pathname === "/api/internal/identity/resolve" && req.method === "GET") {
+    res
+      .writeHead(200, { "content-type": "application/json" })
+      .end(JSON.stringify({ id: "u-addons", email: "atheniq@innotel.us", sub: "sub-addons", service: false }));
+    return;
+  }
   // Who the signed-in account is. The tenancy gate asks this before any route that
   // needs an account, so the fake answers it with the one subject the cookie names.
   if (url.pathname === "/api/internal/identity" && req.method === "POST") {
@@ -88,6 +97,10 @@ process.env.CONTROL_INTERNAL_TOKEN = "internal-token-for-tests";
 process.env.ONTRAK_OIDC_ISSUER = "https://idp.invalid";
 process.env.ONTRAK_OIDC_CLIENT_ID = "ontrak-genie";
 process.env.ONTRAK_OIDC_SESSION_SECRET = "test-session-secret-value";
+// A service (G0DM0D3, REA) arrives with the shared bearer and the address it acts
+// for, so the add-on rows are read for *that* account rather than nobody's.
+process.env.TRUSTED_ACTOR_HEADER = "1";
+process.env.WEB_TOKEN = "console-token-for-tests";
 
 const { addonCatalog, addonStatuses } = await import("../engineer.js");
 const { createServer } = await import("../server.js");
@@ -175,6 +188,25 @@ test("the route refuses a caller it cannot name, and draws both rows for the acc
     asked.every((call) => call.user === "atheniq@innotel.us"),
     true,
     "the rows must be this account's, not an empty string's",
+  );
+});
+
+test("a service acting for somebody reads that account's balances, not an empty account's", async () => {
+  const response = await fetch(`${base}/api/addons`, {
+    headers: {
+      authorization: "Bearer console-token-for-tests",
+      "x-genie-actor": "atheniq@innotel.us",
+    },
+  });
+  assert.equal(response.status, 200);
+  const payload = (await response.json()) as { email: string; addons: { credits: { balance: number | null } }[] };
+
+  assert.equal(payload.email, "atheniq@innotel.us", "the actor is who these rows belong to");
+  assert.equal(payload.addons[0]?.credits.balance, 3);
+  assert.equal(
+    asked.every((call) => call.user === "atheniq@innotel.us"),
+    true,
+    "an empty address would read as the deployment having no metering at all",
   );
 });
 
