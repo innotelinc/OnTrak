@@ -88,6 +88,7 @@
   --tone-genie: #7c3aed;
   --tone-engineer: #0f766e;
   --tone-lab: #b45309;
+  --tone-godmode: #b91c1c;
   --tone-unity: #0891b2;
 
   --shadow-card: 0 1px 2px rgb(25 20 48 / 5%), 0 10px 30px -14px rgb(25 20 48 / 18%);
@@ -149,6 +150,7 @@
     --tone-genie: #c4b5fd;
     --tone-engineer: #5eead4;
     --tone-lab: #fbbf24;
+    --tone-godmode: #fca5a5;
     --tone-unity: #67e8f9;
 
     --shadow-card: 0 1px 2px rgb(0 0 0 / 30%), 0 12px 32px -14px rgb(0 0 0 / 60%);
@@ -195,6 +197,7 @@
   --tone-genie: #c4b5fd;
   --tone-engineer: #5eead4;
   --tone-lab: #fbbf24;
+  --tone-godmode: #fca5a5;
   --tone-unity: #67e8f9;
 
   --shadow-card: 0 1px 2px rgb(0 0 0 / 30%), 0 12px 32px -14px rgb(0 0 0 / 60%);
@@ -228,6 +231,7 @@
   --tone-genie: #7c3aed;
   --tone-engineer: #0f766e;
   --tone-lab: #a16207;
+  --tone-godmode: #b91c1c;
   --tone-unity: #0891b2;
 
   --shadow-card: 0 1px 2px rgb(16 23 29 / 5%), 0 10px 30px -14px rgb(16 23 29 / 18%);
@@ -271,6 +275,7 @@
   --tone-genie: #d0bcff;
   --tone-engineer: #5eead4;
   --tone-lab: #fbbf24;
+  --tone-godmode: #fca5a5;
   --tone-unity: #67e8f9;
 
   --shadow-card: 0 1px 2px rgb(0 0 0 / 34%), 0 12px 32px -14px rgb(0 0 0 / 62%);
@@ -314,6 +319,7 @@
     --tone-genie: #d0bcff;
     --tone-engineer: #5eead4;
     --tone-lab: #fbbf24;
+    --tone-godmode: #fca5a5;
     --tone-unity: #67e8f9;
 
     --shadow-card: 0 1px 2px rgb(0 0 0 / 34%), 0 12px 32px -14px rgb(0 0 0 / 62%);
@@ -364,6 +370,7 @@
   --tone-genie: #7c3aed;
   --tone-engineer: #0f766e;
   --tone-lab: #b45309;
+  --tone-godmode: #b91c1c;
   --tone-unity: #0891b2;
 
   --shadow-card: 0 1px 2px rgb(7 26 43 / 5%), 0 10px 30px -14px rgb(7 26 43 / 18%);
@@ -406,6 +413,8 @@
   --tone-sync: #56d4dd;
   --tone-genie: #d0bcff;
   --tone-engineer: #5eead4;
+  --tone-lab: #fbbf24;
+  --tone-godmode: #fda4af;
   --tone-unity: #67e8f9;
 
   --shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 14px 34px -14px rgb(0 0 0 / 70%);
@@ -449,6 +458,8 @@
     --tone-sync: #56d4dd;
     --tone-genie: #d0bcff;
     --tone-engineer: #5eead4;
+    --tone-lab: #fbbf24;
+    --tone-godmode: #fda4af;
     --tone-unity: #67e8f9;
 
     --shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 14px 34px -14px rgb(0 0 0 / 70%);

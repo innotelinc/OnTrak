@@ -55,15 +55,6 @@ const MARKS = {
     strokes: ["M24 15 l2.6 6.4 6.4 2.6 -6.4 2.6 -2.6 6.4 -2.6 -6.4 -6.4 -2.6 6.4 -2.6 z"],
   },
   /**
-   * The simulated range's real-machine sibling: a terminal, with a prompt waiting.
-   *
-   * The lab is the one product here whose mark is not a shape *about* the work but the
-   * surface the work happens on, because that is what it is — the same scenario the
-   * tick above describes, run on a machine instead of in a browser. Its tone is its
-   * own (`--tone-lab`) rather than the training range's violet-on-shield, so a tile
-   * for each is legible side by side.
-   */
-  /**
    * Looking *into* a build: a lens over the shield, with the handle as the tool.
    *
    * Engineer is the family's instrument — the one product whose work begins with a
@@ -76,6 +67,30 @@ const MARKS = {
     strokes: ["M20.5 22.5 a6.5 6.5 0 1 0 0.01 0", "M25.2 27.2 l5.3 5.3"],
     dot: { cx: 20.5, cy: 22.5, r: 1.7 },
   },
+  /**
+   * Genie's star, left open.
+   *
+   * Godmode runs the same agent as Genie — the difference is not a different job but
+   * a different set of limits — so its stroke is Genie's own shape with the loop left
+   * unclosed. One silhouette per product still holds; what changed is that the star
+   * no longer closes on itself.
+   */
+  godmode: {
+    tone: "godmode",
+    label: "Uncensored Godmode",
+    strokes: [
+      "M24 14.5 l2.9 6 6.6 0.8 -4.8 4.6 1.2 6.5 -5.9 -3.2 -5.9 3.2 1.2 -6.5 -4.8 -4.6 6.6 -0.8",
+    ],
+  },
+  /**
+   * The simulated range's real-machine sibling: a terminal, with a prompt waiting.
+   *
+   * The lab is the one product here whose mark is not a shape *about* the work but the
+   * surface the work happens on, because that is what it is — the same scenario the
+   * tick above describes, run on a machine instead of in a browser. Its tone is its
+   * own (`--tone-lab`) rather than the training range's violet-on-shield, so a tile
+   * for each is legible side by side.
+   */
   lab: {
     tone: "lab",
     label: "OnTrak Lab",

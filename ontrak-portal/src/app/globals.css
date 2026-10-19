@@ -122,6 +122,8 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .tile--security::before { background: var(--tone-sentinel); }
 .tile--operations::before { background: var(--tone-sync); }
 .tile--agent::before { background: var(--tone-genie); }
+.tile--engineer::before { background: var(--tone-engineer); }
+.tile--godmode::before { background: var(--tone-godmode); }
 .tile--lab::before { background: var(--tone-lab); }
 
 .tile__top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }

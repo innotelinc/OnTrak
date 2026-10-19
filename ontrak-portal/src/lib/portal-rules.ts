@@ -37,8 +37,10 @@ export type Role =
   | "INSTRUCTOR"
   | "STUDENT";
 
-/** The keys are also the subdomain labels — see `urlFor`. */
-export type ProductKey = "its" | "tix" | "sentinel" | "sync" | "genie" | "engineer" | "lab";
+/** The catalogue's own names for its products — the label a URL is built from is
+ * the entry's `host`, not this key (see `urlFor`). */
+export type ProductKey =
+  | "its" | "tix" | "sentinel" | "sync" | "genie" | "engineer" | "godmode" | "lab";
 
 export interface Product {
   key: ProductKey;
@@ -50,6 +52,17 @@ export interface Product {
   audience: string;
   /** The subdomain label. `<label>.ontrak.innotel.us`, or the apex for the portal. */
   host: string;
+  /**
+   * The base domain this product lives under, when it is not the deployment's.
+   *
+   * One label plus the portal's base domain is right for every product the family
+   * stack serves, and wrong for the two Genie add-ons: Engineer and Godmode are
+   * reached under Genie's own name (`re.genie.innotel.us`, `uc.genie.innotel.us`)
+   * rather than under a second OnTrak subdomain. They say so once, here, instead of
+   * asking every deployment to restate an address it does not configure — and a
+   * deployment that changes its own base domain does not silently break them.
+   */
+  domain?: string;
   /** Which roles are shown this product. */
   roles: readonly Role[];
   /**
@@ -61,7 +74,9 @@ export interface Product {
    * the lab got `--tone-lab`. Nothing else changes with it — a tone is a label, and the
    * bold name on the tile is the signal (see the theme's README).
    */
-  tone: "training" | "desk" | "security" | "operations" | "agent" | "engineer" | "lab";
+  tone:
+    | "training" | "desk" | "security" | "operations"
+    | "agent" | "engineer" | "godmode" | "lab";
   /**
    * A product this repository does not serve, which a deployment may not run at all.
    *
@@ -152,12 +167,35 @@ export const PRODUCTS: readonly Product[] = [
     // rather than talked about by everyone else.
     audience: "sysadmins and builders",
     host: "re",
+    // `re.genie.innotel.us`: an add-on to Genie lives under Genie's name, not under
+    // a second OnTrak subdomain.
+    domain: "genie.innotel.us",
     roles: ["SYSADMIN", "ADMIN"],
     // Its own tone, like every other product: the family's marks are one
     // silhouette each, so the colour is what makes two tiles legible side by side.
     tone: "engineer",
     // It is served on the Genie host's edge under its own name, and answers the
     // same unauthenticated `/health` the console does.
+    health: "/health",
+  },
+  {
+    key: "godmode",
+    name: "Uncensored Godmode",
+    tagline:
+      "The agent with the guardrails off: describe the change, watch it write and run the code, one credit a run.",
+    // The same people Genie and Engineer are for, and for a stronger reason: this is
+    // the most powerful front door in the family, so it is the narrowest audience.
+    audience: "sysadmins and builders",
+    host: "uc",
+    // Under Genie's name: `uc.genie.innotel.us`.
+    domain: "genie.innotel.us",
+    roles: ["SYSADMIN", "ADMIN"],
+    // Its own tone: the one tile here that starts with no refusals should not look
+    // like the one beside it. The name on the tile is still the signal.
+    tone: "godmode",
+    // The same unauthenticated `/health` the console answers. The subscription gate
+    // is in front of the *work*, never in front of the liveness probe — a portal
+    // that could not ask would draw a green light nobody tested.
     health: "/health",
   },
   {
@@ -228,7 +266,9 @@ export function product(key: string): Product | null {
  * rather than a relative path that silently 404s on the portal's own origin.
  */
 export function urlFor(entry: Product, baseDomain = "ontrak.innotel.us", secure = true): string {
-  return `${secure ? "https" : "http"}://${entry.host}.${baseDomain}`;
+  // A product that names its own domain wins over the deployment's: the Genie
+  // add-ons are under `genie.innotel.us` wherever the portal itself is served.
+  return `${secure ? "https" : "http"}://${entry.host}.${entry.domain ?? baseDomain}`;
 }
 
 /**

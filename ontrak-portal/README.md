@@ -29,6 +29,8 @@ out by being refused something at 9am. With it, there is one address:
 | **Analysts** | [sentinel.ontrak.innotel.us](https://sentinel.ontrak.innotel.us) — identity and intrusion detection |
 | **Sysadmins** | [sync.ontrak.innotel.us](https://sync.ontrak.innotel.us) — Network package and container updates |
 | **Sysadmins and builders** | [genie.ontrak.innotel.us](https://genie.ontrak.innotel.us) — the browser coding console |
+| **Sysadmins and builders** | [re.genie.innotel.us](https://re.genie.innotel.us) — Engineer: the reverse-engineering add-on, inside Genie |
+| **Sysadmins and builders** | [uc.genie.innotel.us](https://uc.genie.innotel.us) — Uncensored Godmode: the agent with the guardrails off, by subscription |
 | **Everyone** | [ontrak.innotel.us](https://ontrak.innotel.us) — this portal |
 
 ## The one rule
@@ -60,7 +62,7 @@ account table:
 | `INSTRUCTOR` | training, the lab | `range-instructors`, `ontrak-instructors` |
 | `TECHNICIAN` | the desk | `ontrak-desk` |
 | `ANALYST` | Sentinel | `ontrak-analysts` |
-| `SYSADMIN` | the desk, Sentinel, Sync, Genie, Engineer | `ontrak-sysadmins` |
+| `SYSADMIN` | the desk, Sentinel, Sync, Genie, Engineer, Godmode | `ontrak-sysadmins` |
 | `ADMIN` | everything, plus account management | `ontrak-admins` |
 
 A group that matches nothing falls back to `STUDENT` — the *least* privileged role

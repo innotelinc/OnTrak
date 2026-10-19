@@ -44,6 +44,9 @@ const EXPECTED_HEALTH: Record<string, string> = {
   // Engineer is served by the Genie console's edge under its own name and answers
   // the same unauthenticated `/health` the console does, so it is probed the same way.
   engineer: "/health",
+  // Godmode is the same server as Engineer with a different name and plan, behind
+  // the same SSO, so it answers the same unauthenticated `/health`.
+  godmode: "/health",
   lab: "/healthz",
 };
 

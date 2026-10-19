@@ -82,7 +82,9 @@ describe("the catalogue", () => {
     assert.deepEqual(productsFor("INSTRUCTOR").map((p) => p.key), ["its", "lab"]);
     assert.deepEqual(productsFor("TECHNICIAN").map((p) => p.key), ["tix"]);
     assert.deepEqual(productsFor("ANALYST").map((p) => p.key), ["sentinel"]);
-    assert.deepEqual(productsFor("SYSADMIN").map((p) => p.key), ["tix", "sentinel", "sync", "genie", "engineer"]);
+    assert.deepEqual(productsFor("SYSADMIN").map((p) => p.key), [
+      "tix", "sentinel", "sync", "genie", "engineer", "godmode",
+    ]);
     assert.deepEqual(productsFor("ADMIN").map((p) => p.key), [
       "its",
       "tix",
@@ -90,6 +92,7 @@ describe("the catalogue", () => {
       "sync",
       "genie",
       "engineer",
+      "godmode",
       "lab",
     ]);
   });
@@ -103,6 +106,13 @@ describe("the catalogue", () => {
     assert.equal(canOpen("ANALYST", "genie"), false);
     assert.equal(canOpen("SYSADMIN", "genie"), true);
     assert.equal(canOpen("SYSADMIN", "sync"), true);
+    // Godmode runs the same agent with no refusals, so it is the narrowest of
+    // all: the people who write and operate the code, and nobody else.
+    assert.equal(canOpen("STUDENT", "godmode"), false);
+    assert.equal(canOpen("TECHNICIAN", "godmode"), false);
+    assert.equal(canOpen("ANALYST", "godmode"), false);
+    assert.equal(canOpen("SYSADMIN", "godmode"), true);
+    assert.equal(canOpen("ADMIN", "godmode"), true);
     assert.equal(canOpen("ANALYST", "tix"), false);
     // The lab is for the training audience: a student belongs in it, the desk does not.
     assert.equal(canOpen("STUDENT", "lab"), true);
@@ -125,6 +135,26 @@ describe("the catalogue", () => {
     assert.ok(sync);
     assert.equal(urlFor(sync, "ontrak.innotel.us"), "https://sync.ontrak.innotel.us");
     assert.equal(urlFor(sync, "lab.test", false), "http://sync.lab.test");
+  });
+
+  it("links the Genie add-ons under Genie's own name, whatever the base domain is", () => {
+    // Engineer and Godmode are part of Genie rather than products with an address of
+    // their own, so they answer under `genie.innotel.us`. A portal served from any
+    // base domain has to draw the same two links: deriving them from the deployment's
+    // base domain is how the dashboard once pointed at `re.ontrak.innotel.us`, a name
+    // that no longer exists.
+    assert.equal(urlFor(product("engineer")!, "ontrak.innotel.us"), "https://re.genie.innotel.us");
+    assert.equal(urlFor(product("godmode")!, "ontrak.innotel.us"), "https://uc.genie.innotel.us");
+    assert.equal(urlFor(product("godmode")!, "example.test"), "https://uc.genie.innotel.us");
+
+    const tiles = tilesFor("SYSADMIN", { baseDomain: "ontrak.innotel.us" });
+    assert.equal(tiles.find((tile) => tile.key === "engineer")?.url, "https://re.genie.innotel.us");
+    assert.equal(tiles.find((tile) => tile.key === "godmode")?.url, "https://uc.genie.innotel.us");
+    // The tile is where the product is; a student is not shown it at all.
+    assert.deepEqual(
+      tilesFor("STUDENT").filter((tile) => tile.key === "godmode"),
+      [],
+    );
   });
 
   it("marks exactly one primary tile, and only for a role that has products", () => {
@@ -190,7 +220,7 @@ describe("the catalogue", () => {
     // one optional entry.
     assert.deepEqual(
       tilesFor("ADMIN").map((tile) => tile.key),
-      ["its", "tix", "sentinel", "sync", "genie", "engineer"],
+      ["its", "tix", "sentinel", "sync", "genie", "engineer", "godmode"],
     );
     assert.equal(runsHere(product("its")!), true);
     assert.equal(runsHere(product("lab")!), false);
@@ -411,6 +441,7 @@ describe("the README's role table", () => {
     sync: "Sync",
     genie: "Genie",
     engineer: "Engineer",
+    godmode: "Godmode",
     lab: "the lab",
   };
 
