@@ -538,12 +538,47 @@ model Scenario {
   author       User               @relation("ScenarioAuthor", fields: [authorId], references: [id], onDelete: Cascade)
   organization Organization?      @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   software     ScenarioSoftware[]
+  revisions    ScenarioRevision[]
   attempts     Attempt[]
   assignments  Assignment[]
 
   @@index([platform, published])
   @@index([authorId])
   @@index([organizationId])
+}
+
+/// One shape a scenario has had (v1.4).
+///
+/// The live row is the newest shape; a revision is a shape that a save replaced.
+/// Append-only, so rolling back writes a new revision instead of deleting the ones
+/// after it: an attempt carries the score it earned under the definition it ran, and
+/// history that can be edited cannot be cited in a class packet.
+///
+/// `snapshot` holds what an attempt depends on (src/lib/versions-rules.ts) — the
+/// definition, pass mark, time limit, platform, engine and the copy — and not the
+/// slug, which is the catalog's unique address.
+model ScenarioRevision {
+  id          String   @id @default(cuid())
+  scenarioId  String
+  /// 1-based, increasing within the scenario. The live row is not a revision: a
+  /// revision is always the shape *before* the save that wrote it.
+  revision    Int
+  /// The replaced scenario, as it ran.
+  snapshot    Json
+  /// A one-line account of what the save changed, in an instructor's terms
+  /// (`describeDiff`). Stored rather than recomputed so the list reads as history
+  /// even after later edits.
+  summary     String   @default("")
+  authorId    String?
+  /// Who made the edit, kept as an address too: an account can be renamed or
+  /// deleted, and the record of who changed a graded artifact should not go with it.
+  authorEmail String?
+  createdAt   DateTime @default(now())
+
+  scenario Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+
+  @@unique([scenarioId, revision])
+  @@index([scenarioId, createdAt])
 }
 
 /// A practice scenario drafted from solved support work.

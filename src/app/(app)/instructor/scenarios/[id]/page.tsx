@@ -6,7 +6,7 @@ import { requireSession } from "@/lib/auth";
 import { evaluatePackage, evaluateScenario, loadAvailabilityContext } from "@/lib/availability";
 import { toDefinition } from "@/lib/scenarios";
 import { serializeDefinition } from "@/lib/templates";
-import { createAssignment, deleteAssignment, detachSoftware } from "@/app/actions/instructor";
+import { createAssignment, deleteAssignment, detachSoftware, restoreScenarioRevision } from "@/app/actions/instructor";
 import { ScenarioEditor } from "@/components/instructor/ScenarioEditor";
 import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, Button, ButtonLink, Card, Field, Input, Select, Textarea } from "@/components/ui";
@@ -41,6 +41,7 @@ export default async function EditScenarioPage({
         orderBy: { createdAt: "desc" },
       },
       author: { select: { name: true } },
+      revisions: { orderBy: { revision: "desc" }, take: 30 },
       _count: { select: { attempts: true } },
     },
   });
@@ -137,6 +138,84 @@ export default async function EditScenarioPage({
         />
         </LocaleProvider>
       </div>
+
+      {/* ---------------------------------------------------- revision history */}
+      <section className="mt-10">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="font-display text-lg font-semibold text-ink">{t("scenarios.detail.history")}</h2>
+            <p className="mt-1 text-sm text-ink-soft">
+              Every change that could move a score, newest first. A learner&apos;s attempt keeps the score it earned;
+              this is how you see what it ran.
+            </p>
+          </div>
+          {scenario.revisions.length ? (
+            <Badge tone="neutral">{scenario.revisions.length} revision(s)</Badge>
+          ) : null}
+        </div>
+
+        {scenario.revisions.length === 0 ? (
+          <Card className="mt-4">
+            <p className="text-sm text-ink-soft">
+              No revisions yet. The next save that changes a check, the pass mark or the time limit records the shape
+              it replaces here.
+            </p>
+          </Card>
+        ) : (
+          <Card className="mt-4 p-0">
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Revision</th>
+                    <th>When</th>
+                    <th>By</th>
+                    <th>What changed</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scenario.revisions.map((revision) => {
+                    const preview = revision.snapshot as {
+                      title?: string;
+                      passScore?: number;
+                      timeLimitSec?: number;
+                      definition?: { checks?: unknown[] };
+                    };
+                    const checkCount = Array.isArray(preview.definition?.checks) ? preview.definition.checks.length : 0;
+                    return (
+                      <tr key={revision.id}>
+                        <td>
+                          <div className="font-medium text-ink">v{revision.revision}</div>
+                          <div className="text-xs text-ink-faint">{preview.title ?? scenario.title}</div>
+                        </td>
+                        <td className="text-sm text-ink-soft">{formatDateTime(revision.createdAt)}</td>
+                        <td className="text-sm text-ink-soft">{revision.authorEmail ?? revision.authorId ?? "—"}</td>
+                        <td className="text-sm text-ink-soft">
+                          {revision.summary || "—"}
+                          <div className="text-xs text-ink-faint">
+                            {checkCount} check(s) · pass {preview.passScore ?? scenario.passScore}% ·{" "}
+                            {Math.round((preview.timeLimitSec ?? scenario.timeLimitSec) / 60)}m
+                          </div>
+                        </td>
+                        <td>
+                          <form action={restoreScenarioRevision}>
+                            <input type="hidden" name="scenarioId" value={scenario.id} />
+                            <input type="hidden" name="revisionId" value={revision.id} />
+                            <Button variant="secondary" size="sm" type="submit">
+                              {t("scenarios.detail.restore")}
+                            </Button>
+                          </form>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+      </section>
 
       {/* --------------------------------------------------------- assignments */}
       <section className="mt-10">

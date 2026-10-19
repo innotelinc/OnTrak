@@ -9,6 +9,13 @@ import { validateDefinition } from "@/lib/validate";
 import { joinCode } from "@/lib/cohort-rules";
 import { parseAssignmentForm } from "@/lib/assignment-rules";
 import { canDeleteScenario, parseScenarioMeta, slugify } from "@/lib/scenario-rules";
+import {
+  describeDiff,
+  diffSnapshots,
+  rollbackSnapshot,
+  shouldRevise,
+  snapshotOf,
+} from "@/lib/versions-rules";
 import { gradeAttempt } from "@/lib/sim/grade";
 import { ATTEMPT_STATUS_LABELS, coerceSubmittedState, toDefinition } from "@/lib/scenarios";
 import { attemptScopeFor } from "@/lib/attempt-scope";
@@ -92,6 +99,44 @@ export async function saveScenario(formData: FormData): Promise<void> {
     definition: definition as unknown as object,
   };
 
+  /*
+   * Editing a graded artifact is a change somebody has to be able to read back.
+   * Before the row is overwritten, the shape it is about to lose is written to
+   * `ScenarioRevision` — but only when the edit can move a score (see
+   * `shouldRevise`): renaming a scenario or rewriting its briefing is a write, not
+   * a revision, and a history full of copy-edits buries the edit that mattered.
+   *
+   * The revision is counted under the scenario, and the pair is unique, so two
+   * saves racing each other cannot write the same revision number twice.
+   */
+  const previous = id
+    ? await prisma.scenario.findUnique({ where: { id }, select: { title: true, summary: true, description: true, platform: true, engine: true, difficulty: true, timeLimitSec: true, passScore: true, tags: true, definition: true, _count: { select: { revisions: true } } } })
+    : null;
+  let revisionNote = "";
+  if (previous) {
+    const before = snapshotOf(previous as unknown as Parameters<typeof snapshotOf>[0]);
+    const after = snapshotOf({ ...data } as unknown as Parameters<typeof snapshotOf>[0]);
+    if (shouldRevise(before, after)) {
+      const nextRevision = (previous._count?.revisions ?? 0) + 1;
+      const diff = diffSnapshots(before, after);
+      revisionNote = ` Version ${nextRevision}: ${describeDiff(diff)}.`;
+      await prisma.scenarioRevision
+        .create({
+          data: {
+            scenarioId: id!,
+            revision: nextRevision,
+            snapshot: before as unknown as object,
+            summary: describeDiff(diff),
+            authorId: author.id,
+            authorEmail: author.email,
+          },
+        })
+        // A scenario that vanished underneath the save is reported below, where the
+        // update finds nothing; failing here would report the wrong cause.
+        .catch(() => null);
+    }
+  }
+
   const saved = id
     ? await prisma.scenario.update({ where: { id }, data }).catch(() => null)
     : await prisma.scenario.create({ data: { ...data, authorId: author.id } });
@@ -123,7 +168,7 @@ export async function saveScenario(formData: FormData): Promise<void> {
     `/instructor/scenarios/${saved.id}`,
     `Saved "${meta.title}" — ${result.totalPoints} points across ${definition.checks.length} checks${
       result.issues.some((issue) => issue.level === "warning") ? " (with warnings)" : ""
-    }.`,
+    }.${revisionNote}`,
   );
 }
 
@@ -562,6 +607,91 @@ export async function regradeAttempt(formData: FormData): Promise<void> {
   backTo(
     `/instructor/attempts/${attemptId}`,
     `Re-graded: ${report.score}/${report.maxScore}.${certificateNote}`,
+  );
+}
+
+/**
+ * Restore a scenario to a shape it used to have.
+ *
+ * Not an undo of the history: rolling back is a *new* save carrying the old shape,
+ * so the revision that was rolled back from stays in the list and the rollback
+ * itself is the newest revision. The slug is kept — it is the catalog's unique
+ * address, and an old one may have been taken since — and the scenario's software
+ * dependencies are left alone for the same reason: they are a catalog fact, not a
+ * scoring one.
+ */
+export async function restoreScenarioRevision(formData: FormData): Promise<void> {
+  const author = await requireStaff();
+  const scenarioId = String(formData.get("scenarioId") ?? "");
+  const revisionId = String(formData.get("revisionId") ?? "");
+
+  const revision = await prisma.scenarioRevision.findFirst({ where: { id: revisionId, scenarioId } });
+  if (!revision) backTo(`/instructor/scenarios/${scenarioId}`, "That revision no longer exists.", false);
+
+  let restored;
+  try {
+    restored = rollbackSnapshot(revision);
+  } catch (error) {
+    backTo(`/instructor/scenarios/${scenarioId}`, (error as Error).message, false);
+  }
+
+  const current = await prisma.scenario.findUnique({
+    where: { id: scenarioId },
+    select: { title: true, summary: true, description: true, platform: true, engine: true, difficulty: true, timeLimitSec: true, passScore: true, tags: true, definition: true, _count: { select: { revisions: true } } },
+  });
+  if (!current) backTo("/instructor/scenarios", "That scenario no longer exists.", false);
+
+  // Record what the rollback replaces, exactly as a save does: the shape being
+  // restored had to come *from* somewhere, and the one it replaces is history too.
+  const before = snapshotOf(current as unknown as Parameters<typeof snapshotOf>[0]);
+  const nextRevision = (current._count?.revisions ?? 0) + 1;
+  await prisma.scenarioRevision
+    .create({
+      data: {
+        scenarioId,
+        revision: nextRevision,
+        snapshot: before as unknown as object,
+        summary: `rolled back to revision ${revision.revision}`,
+        authorId: author.id,
+        authorEmail: author.email,
+      },
+    })
+    .catch(() => null);
+
+  await prisma.scenario.update({
+    where: { id: scenarioId },
+    data: {
+      title: restored.title,
+      summary: restored.summary,
+      description: restored.description,
+      platform: restored.platform as never,
+      engine: restored.engine,
+      difficulty: restored.difficulty as never,
+      timeLimitSec: restored.timeLimitSec,
+      passScore: restored.passScore,
+      tags: restored.tags,
+      definition: restored.definition as unknown as object,
+    },
+  });
+
+  await recordAudit({
+    actorId: author.id,
+    action: "scenario.rollback",
+    targetType: "scenario",
+    targetId: scenarioId,
+    detail: {
+      revision: revision.revision,
+      revisionId: revision.id,
+      replaced: describeDiff(diffSnapshots(before, restored)),
+    },
+  });
+
+  revalidatePath(`/instructor/scenarios/${scenarioId}`);
+  revalidatePath("/instructor/scenarios");
+  revalidatePath("/student");
+  backTo(
+    `/instructor/scenarios/${scenarioId}`,
+    `Restored revision ${revision.revision} (${revision.summary || "no summary"}). That rollback is now the newest revision, so nothing is lost.`,
   );
 }
 

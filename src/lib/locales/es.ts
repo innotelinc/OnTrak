@@ -332,6 +332,8 @@ export const es: Messages = {
   "scenarios.detail.all": "Todos los escenarios",
   "scenarios.detail.attempts": "Intentos",
   "scenarios.detail.updated": "actualizado {when}",
+  "scenarios.detail.history": "Historial de revisiones",
+  "scenarios.detail.restore": "Restaurar",
   "scenarios.detail.assignments": "Tareas",
   "scenarios.detail.assignmentsHint":
     "Entrega este escenario a una clase o a un estudiante, con fecha límite, tiempo y límite de intentos opcionales.",

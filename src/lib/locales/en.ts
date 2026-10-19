@@ -350,6 +350,8 @@ export const en = {
   "scenarios.detail.all": "All scenarios",
   "scenarios.detail.attempts": "Attempts",
   "scenarios.detail.updated": "updated {when}",
+  "scenarios.detail.history": "Revision history",
+  "scenarios.detail.restore": "Restore",
   "scenarios.detail.assignments": "Assignments",
   "scenarios.detail.assignmentsHint":
     "Hand this scenario to a class or to one student, with an optional deadline, time override and attempt cap.",
