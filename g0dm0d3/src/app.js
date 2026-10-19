@@ -161,6 +161,10 @@ function sendGate(res, req, status = 401) {
 <title>Sign in — OnTrak</title>
 <style>
   :root { color-scheme: dark light; }
+  /* The panel is a width plus 30px of padding: without border-box that is 60px
+     more than the screen, which is a sideways scrollbar on the one page a phone
+     sees when it is being sold something. */
+  * { box-sizing: border-box; }
   body { margin: 0; min-height: 100dvh; display: grid; place-items: center;
     font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     background: radial-gradient(900px 600px at 20% -10%, #1d2a3a, transparent 60%), #0b0f14; color: #e8ecf3; }
@@ -211,6 +215,10 @@ function sendPlanGate(res, config, entitlement, status = 403) {
 <title>${title} — OnTrak</title>
 <style>
   :root { color-scheme: dark light; }
+  /* The panel is a width plus 30px of padding: without border-box that is 60px
+     more than the screen, which is a sideways scrollbar on the one page a phone
+     sees when it is being sold something. */
+  * { box-sizing: border-box; }
   body { margin: 0; min-height: 100dvh; display: grid; place-items: center;
     font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     background: radial-gradient(900px 600px at 20% -10%, #1d2a3a, transparent 60%), #0b0f14; color: #e8ecf3; }
