@@ -479,6 +479,10 @@
   let busy = false;
   const history = [];
   let historyAt = -1;
+  // A turn refreshes the credit line by asking the session again, and the banner
+  // belongs to opening the page rather than to every refresh: printing it twice
+  // made the transcript look like the tab had reloaded mid-answer.
+  let greeted = false;
 
   const line = (text, cls = "") => {
     const el = document.createElement("div");
@@ -856,7 +860,10 @@
       $("plan").classList.add("bad");
       gate("credits", s);
     }
-    banner(s);
+    if (!greeted) {
+      banner(s);
+      greeted = true;
+    }
   }
 
   function approvalCard(event) {
@@ -1034,6 +1041,7 @@
     out.textContent = "";
     const s = { name: "OnTrak Engineer", tagline: "reverse engineering, with the evidence" };
     banner(s);
+    greeted = true;
   }
   $("clear").addEventListener("click", clear);
 
