@@ -28,6 +28,7 @@
 import fs from "node:fs";
 import http from "node:http";
 import { CreditError, creditStatus, refund, spend } from "./credits.js";
+import { entitlementFor } from "./entitlement.js";
 
 export const HEALTH_PATH = "/health";
 
@@ -47,6 +48,22 @@ export function readConfig(env = process.env) {
     genieToken: String(env.WEB_TOKEN ?? "").trim(),
     /** Set by the deployment that actually runs a proxy in front; never by default. */
     trustProxyHeaders: String(env.G0DM0D3_TRUST_PROXY_HEADERS ?? "") === "1",
+    /**
+     * Which product this instance is the front door of.
+     *
+     * One program serves both portals — Engineer's and G0DM0D3's — because they ask
+     * the same two questions (is this account subscribed, has it any credits left)
+     * and differ only in what they are called and which ledger line they spend.
+     */
+    slug: String(env.PRODUCT_SLUG ?? env.G0DM0D3_PRODUCT ?? "g0dm0d3").trim() || "g0dm0d3",
+    name: String(env.PRODUCT_NAME ?? "G0DM0D3").trim() || "G0DM0D3",
+    tagline:
+      String(env.PRODUCT_TAGLINE ?? "the agent, one credit a run").trim() ||
+      "the agent, one credit a run",
+    /** Where somebody without a subscription is sent. */
+    subscribeUrl: String(env.SUBSCRIBE_URL ?? "https://subscribe.genie.innotel.us").trim(),
+    /** Where a subscriber goes to actually do the work. */
+    workUrl: String(env.WORK_URL ?? "https://genie.ontrak.innotel.us").trim(),
   };
 }
 
@@ -115,6 +132,32 @@ async function handleRun(req, res, config) {
   if (message.length > MAX_MESSAGE) return sendJson(res, 400, { error: `message is longer than ${MAX_MESSAGE} characters` });
   if (runId.length < 8) return sendJson(res, 400, { error: "runId is required (it is what makes a retry free)" });
   if (config.genieUrl === "") return sendJson(res, 503, { error: "GENIE_URL is unset on this deployment", retryable: true });
+
+  /*
+   * The subscription check, before the money and before the model.
+   *
+   * Three answers, three different pages: a subscriber runs, a non-subscriber is
+   * offered one, and an answer nobody could get is a retry rather than a paywall —
+   * see `entitlement.js` for why that distinction is not pedantry.
+   */
+  let entitlement;
+  try {
+    entitlement = await entitlementFor({ email, plan: config.slug });
+  } catch (error) {
+    return sendJson(res, 503, { error: `could not check the subscription: ${error.message}`, retryable: true });
+  }
+  if (entitlement.metered && entitlement.state === "not_entitled") {
+    log({ event: "subscription_required", email, runId, plan: config.slug });
+    return sendJson(res, 403, {
+      error: `no ${config.name} subscription on this account`,
+      code: "subscription_required",
+      subscribeUrl: config.subscribeUrl,
+      plan: entitlement.plan,
+    });
+  }
+  if (entitlement.metered && entitlement.state === "unknown") {
+    return sendJson(res, 503, { error: `could not check the subscription: ${entitlement.reason}`, retryable: true });
+  }
 
   let charge;
   try {
@@ -224,8 +267,22 @@ export function createServer(config = readConfig()) {
         if (url.pathname === "/api/session" && method === "GET") {
           const email = identityOf(req, config);
           if (email === null) return sendJson(res, 401, { error: "sign in to use this console" });
+          // The subscription first: a page with no subscription is not a page with
+          // no credits, and telling a non-subscriber "you have 0 credits" is the
+          // wrong sentence — there is nothing to buy credits against yet.
+          const entitlement = await entitlementFor({ email, plan: config.slug });
           const status = await creditStatus({ email, product: config.product });
-          return sendJson(res, 200, { email, product: config.product, creditsPerRun: config.creditsPerRun, ...status });
+          return sendJson(res, 200, {
+            email,
+            product: config.product,
+            name: config.name,
+            tagline: config.tagline,
+            subscribeUrl: config.subscribeUrl,
+            workUrl: config.workUrl,
+            entitlement,
+            creditsPerRun: config.creditsPerRun,
+            ...status,
+          });
         }
         if (url.pathname === "/api/run" && method === "POST") {
           return await handleRun(req, res, config);

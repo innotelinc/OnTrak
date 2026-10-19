@@ -22,6 +22,13 @@ let balance = 2;
 let service = false;
 let genieReply = { status: 200, chunks: ['data: {"text":"hel"}\n\n', 'data: {"text":"lo"}\n\n'], headers: { "content-type": "text/event-stream" } };
 
+/**
+ * What the plane answers about a subscription: `entitled`, `not entitled`, or an
+ * answer nobody could get. Mutable, because the three states lead to three
+ * different pages and the tests are about telling them apart.
+ */
+let entitlement = { entitled: true, plan: "free", service: false, reason: "subscribed" };
+
 const plane = http.createServer((req, res) => {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const chunks = [];
@@ -29,6 +36,10 @@ const plane = http.createServer((req, res) => {
   req.on("end", () => {
     const body = chunks.length === 0 ? {} : JSON.parse(Buffer.concat(chunks).toString("utf8"));
     const json = (payload) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(payload));
+    if (url.pathname === "/api/internal/entitlement") {
+      // this fake writes 200 and takes the payload alone, like the other branches
+      return json({ email: url.searchParams.get("user"), plan_asked: url.searchParams.get("plan"), source: "distro", ...entitlement });
+    }
     if (url.pathname === "/api/internal/credits") {
       if (service) return json({ allowed: true, unlimited: true, balance: null, credits_per_project: 1, price_per_credit_usd: 5 });
       return json({ allowed: balance > 0, unlimited: false, balance, credits_per_project: 1, price_per_credit_usd: 5, reason: balance > 0 ? "credits available" : "no credits left" });
@@ -81,6 +92,11 @@ const { createServer } = await import("../src/app.js");
 const config = {
   port: 0,
   product: "g0dm0d3",
+  slug: "g0dm0d3",
+  name: "G0DM0D3",
+  tagline: "the agent, one credit a run",
+  subscribeUrl: "https://subscribe.genie.innotel.us",
+  workUrl: "https://genie.ontrak.innotel.us",
   creditsPerRun: 1,
   genieUrl: genieOrigin,
   genieToken: "genie-service-token",
@@ -106,6 +122,7 @@ test.beforeEach(() => {
   balance = 2;
   service = false;
   genieReply = { status: 200, chunks: ['data: {"text":"hel"}\n\n', 'data: {"text":"lo"}\n\n'], headers: { "content-type": "text/event-stream" } };
+  entitlement = { entitled: true, plan: "free", service: false, reason: "subscribed" };
 });
 
 const headers = { "content-type": "application/json", "x-auth-request-email": "atheniq@innotel.us" };
@@ -217,4 +234,53 @@ test("a service account is unlimited and is never refunded anything", async () =
   const res = await fetch(`${base}/api/run`, { method: "POST", headers, body: JSON.stringify({ message: "go", runId: "run-ffffffff" }) });
   assert.equal(res.status, 502);
   assert.equal(grants.length, 0, "nothing was charged, so a refund row would be noise");
+});
+
+test("the session says whether there is a subscription, and where to get one", async () => {
+  const res = await fetch(`${base}/api/session`, { headers });
+  const body = await res.json();
+  assert.equal(body.entitlement.state, "entitled");
+  assert.equal(body.name, "G0DM0D3");
+  assert.equal(body.subscribeUrl, "https://subscribe.genie.innotel.us");
+});
+
+test("a page with no subscription is an offer, not an empty wallet", async () => {
+  entitlement = { entitled: false, plan: "free", service: false, reason: "no subscription" };
+  const res = await fetch(`${base}/api/session`, { headers });
+  const body = await res.json();
+  assert.equal(body.entitlement.state, "not_entitled");
+  assert.equal(body.subscribeUrl, "https://subscribe.genie.innotel.us");
+});
+
+test("a run without a subscription is refused with the plan to buy, and nothing is charged", async () => {
+  entitlement = { entitled: false, plan: "free", service: false, reason: "no subscription" };
+  const res = await fetch(`${base}/api/run`, { method: "POST", headers, body: JSON.stringify({ message: "go", runId: "run-nosub-0001" }) });
+  assert.equal(res.status, 403);
+  const body = await res.json();
+  assert.equal(body.code, "subscription_required");
+  assert.equal(body.subscribeUrl, "https://subscribe.genie.innotel.us");
+  assert.equal(charges.length, 0, "a non-subscriber is not charged");
+  assert.equal(genieCalls.length, 0, "and nothing runs");
+  assert.equal(balance, 2, "and their credits, if any, are untouched");
+});
+
+test("billing that cannot answer is a retry, never a paywall", async () => {
+  // `entitled: null` is the plane saying it could not get a verdict out of billing.
+  entitlement = { entitled: null, plan: "free", service: false, reason: "HTTP 404", source: "unreachable" };
+  const session = await (await fetch(`${base}/api/session`, { headers })).json();
+  assert.equal(session.entitlement.state, "unknown");
+
+  const res = await fetch(`${base}/api/run`, { method: "POST", headers, body: JSON.stringify({ message: "go", runId: "run-unknown-01" }) });
+  assert.equal(res.status, 503);
+  const body = await res.json();
+  assert.equal(body.retryable, true);
+  assert.equal(body.code, undefined, "an outage must not answer with a plan to buy");
+  assert.equal(charges.length, 0);
+});
+
+test("a service account is subscribed by rule, and still runs", async () => {
+  entitlement = { entitled: true, service: true, plan: "service", reason: "service account: no subscription, no limits" };
+  const res = await fetch(`${base}/api/run`, { method: "POST", headers, body: JSON.stringify({ message: "go", runId: "run-service-01" }) });
+  assert.equal(res.status, 200);
+  assert.equal(charges.length, 1);
 });

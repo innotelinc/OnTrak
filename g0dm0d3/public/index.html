@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>G0DM0D3 — OnTrak</title>
+<title>OnTrak</title>
 <!--
   One page, no build step, no framework: it talks to two endpoints (`/api/session`
   and `/api/run`) and streams the answer as it arrives. The credit line is the
@@ -31,11 +31,16 @@
   #note.bad { color: var(--bad); }
   #out { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-height: 160px; white-space: pre-wrap; word-break: break-word; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
   #out:empty::before { content: "nothing yet"; color: var(--dim); }
+  #paywall { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 8px; }
+  #paywall h2 { margin: 0; font-size: 16px; }
+  #paywall p { margin: 0; color: var(--dim); }
+  a.cta { display: inline-block; background: var(--accent); color: white; text-decoration: none; border-radius: 8px; padding: 9px 16px; font-weight: 600; }
+  .dim { color: var(--dim); font-size: 13px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>G0DM0D3</h1>
+  <h1 id="product">OnTrak</h1>
   <span class="who" id="who">checking sign-in…</span>
 </header>
 <main>
@@ -45,6 +50,12 @@
     <span class="pill">price <b id="price">—</b></span>
     <span class="pill" id="plan">—</span>
   </div>
+  <section id="paywall" hidden>
+    <h2 id="paywall-title">A subscription is needed here</h2>
+    <p id="paywall-copy"></p>
+    <p><a id="paywall-cta" class="cta" href="#" rel="noopener">See the plans</a></p>
+    <p class="dim" id="paywall-work"></p>
+  </section>
   <textarea id="prompt" placeholder="Describe what you want the agent to do…"></textarea>
   <div class="row">
     <button id="run">Run</button>
@@ -61,6 +72,26 @@
 
   function paint(s) {
     $("who").textContent = s.email ?? "not signed in";
+    if (s.name) { $("product").textContent = s.name; document.title = `${s.name} — OnTrak`; }
+    // A non-subscriber is not a customer with an empty balance: the page they get is
+    // the offer, and the run box is not shown at all.
+    const subscription = s.entitlement?.state ?? "unknown";
+    const blocked = Boolean(s.entitlement?.metered) && subscription === "not_entitled";
+    const uncheckable = Boolean(s.entitlement?.metered) && subscription === "unknown";
+    $("paywall").hidden = !(blocked || uncheckable);
+    $("prompt").hidden = blocked;
+    $("run").hidden = blocked;
+    $("stop").hidden = blocked;
+    if (blocked || uncheckable) {
+      $("paywall-title").textContent = blocked ? `A subscription is needed for ${s.name ?? "this product"}` : "We cannot check your subscription right now";
+      $("paywall-copy").textContent = blocked
+        ? `${s.email ?? "this account"} has no ${s.name ?? "product"} subscription, so there is nothing to spend. Subscribing turns this page into the run box — the credits are one per run, and a run that never starts is refunded.`
+        : `The billing service did not answer, so this page will not guess. Nothing has been refused; try again in a moment.`;
+      $("paywall-cta").hidden = !blocked;
+      $("paywall-cta").href = s.subscribeUrl ?? "#";
+      $("paywall-work").textContent = `Already subscribed? ${s.workUrl ? s.workUrl : "the console"} is where the work happens, and this page is its metered front door.`;
+      note(blocked ? "subscribe to run" : "billing unreachable", blocked);
+    }
     $("balance").textContent = s.unlimited ? "unlimited" : (s.balance ?? "—");
     $("perrun").textContent = s.creditsPerRun ?? "—";
     $("price").textContent = money(s.pricePerCreditUsd);
@@ -94,7 +125,12 @@
       });
       if (!res.ok || !res.body) {
         const detail = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        note(`${detail.error ?? `HTTP ${res.status}`}${detail.refunded ? " — credit refunded" : ""}`, true);
+        if (detail.code === "subscription_required") {
+          note(detail.error, true);
+          if (detail.subscribeUrl) { $("paywall").hidden = false; $("paywall-cta").href = detail.subscribeUrl; }
+        } else {
+          note(`${detail.error ?? `HTTP ${res.status}`}${detail.refunded ? " — credit refunded" : ""}`, true);
+        }
         await refresh();
         return;
       }
