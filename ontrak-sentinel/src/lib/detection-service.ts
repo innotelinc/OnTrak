@@ -56,6 +56,7 @@ import {
 import { assignmentRefusal } from "./alert-assignment-rules";
 import {
   alertNotification,
+  severityAtLeast,
   type AlertNotifier,
   type NotifyOutcome,
 } from "./alert-notify";
@@ -239,6 +240,16 @@ export class DetectionService {
      * debugging a noisy correlation actually wants.
      */
     private readonly correlationRules: readonly CorrelationRule[] = CORRELATION_RULES,
+    /**
+     * The lowest severity that reaches a transport, or `null` for every severity.
+     *
+     * Last for the same reason every collaborator above is: existing wiring and tests
+     * keep working unchanged, and an unconfigured pipeline behaves exactly as before.
+     * The floor is applied here rather than inside a transport because the queue is the
+     * product and the transport is somebody else's: a LOW alert that is not mailed is
+     * still raised, still in the console, and the chain says why it did not travel.
+     */
+    private readonly notifyFloor: string | null = null,
   ) {}
 
   /** The rules, so a deployment can see what it is running and at which version. */
@@ -638,6 +649,20 @@ export class DetectionService {
    */
   private async notify(record: AlertRecord): Promise<void> {
     if (this.notifier === null) return;
+
+    // A floor turns "one transport for every alert" into "mail only when it matters".
+    // The alert itself is untouched: it stays in the queue and the console, and the
+    // chain records the skip, so "nobody was told" is an answer a reader can find.
+    if (this.notifyFloor !== null && !severityAtLeast(record.severity, this.notifyFloor)) {
+      await this.append(record.organizationId, "guard.alert.notify.skipped", record.id, {
+        transport: this.notifier.name,
+        ruleId: record.ruleId,
+        severity: record.severity,
+        floor: this.notifyFloor,
+        reason: `${record.severity} is below the delivery floor ${this.notifyFloor}`,
+      });
+      return;
+    }
 
     let outcome: NotifyOutcome;
     try {

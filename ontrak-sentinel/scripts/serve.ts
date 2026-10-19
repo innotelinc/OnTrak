@@ -80,7 +80,7 @@ import {
 } from "../src/lib/enforcement-service";
 import { PrismaEnforcementStore, type EnforcementPrismaClient } from "../src/lib/enforcement-store-prisma";
 import { planeFromEnv } from "../src/lib/enforcement-plane";
-import { notifierChain, notifierFromEnv } from "../src/lib/alert-notify";
+import { notifyFloorFromEnv, notifierChain, notifierFromEnv } from "../src/lib/alert-notify";
 import { tixTransportFromEnv } from "../src/lib/tix-alert-transport";
 import {
   MemorySuppressionStore,
@@ -474,10 +474,16 @@ async function main(): Promise<void> {
   // first-party adapter because it is the other half of this repository and its contract has
   // to have one definition. Either alone, or neither, behaves exactly as before.
   const alertNotifier = notifierChain([notifierFromEnv(process.env), tixTransportFromEnv(process.env)]);
+  // Non-critical alerts stay in the queue and the console; only the floor and above
+  // reach a transport. A mailbox that fires on every LOW row is the one nobody reads
+  // when a CRITICAL arrives, and `SENTINEL_ALERT_NOTIFY_MIN_SEVERITY=ALL` is the way
+  // back to mailing everything.
+  const notifyFloor = notifyFloorFromEnv(process.env);
   console.log(
     alertNotifier === null
       ? "[sentinel] alert delivery: no transport configured — alerts are raised into the queue only"
-      : `[sentinel] alert delivery: ${alertNotifier.name}`,
+      : `[sentinel] alert delivery: ${alertNotifier.name}` +
+        (notifyFloor === null ? " (every severity)" : ` (floor ${notifyFloor})`),
   );
   const detection = new DetectionService(
     alertStore,
@@ -489,6 +495,8 @@ async function main(): Promise<void> {
     threatIntel,
     alertNotifier,
     suppressions,
+    undefined,
+    notifyFloor,
   );
 
   // Access reviews (S2). The deprovisioning port is the SCIM service rather than a second

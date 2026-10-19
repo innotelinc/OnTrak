@@ -91,6 +91,43 @@ export interface AlertNotifier {
 }
 
 /**
+ * Severity, in the order that decides whether somebody is told.
+ *
+ * A deployment that mails on every alert is a deployment whose mailbox nobody reads
+ * by the time a critical one arrives, so delivery is allowed a floor. The ranking is
+ * explicit rather than lexical ("HIGH" < "LOW" alphabetically) and a severity this
+ * build does not know sorts at the bottom: an unrecognised string cannot page.
+ */
+const SEVERITY_ORDER = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
+
+/** What a deployment that does not say otherwise gets: only critical alerts travel. */
+export const DEFAULT_NOTIFY_FLOOR = "CRITICAL";
+
+function severityRank(severity: string): number {
+  const index = (SEVERITY_ORDER as readonly string[]).indexOf(String(severity).trim().toUpperCase());
+  return index < 0 ? -1 : index;
+}
+
+/** Whether an alert at `severity` is loud enough to be delivered at `floor`. */
+export function severityAtLeast(severity: string, floor: string): boolean {
+  return severityRank(severity) >= severityRank(floor);
+}
+
+/**
+ * The delivery floor a deployment's environment describes, or `null` for no floor.
+ *
+ * Unset means `CRITICAL`: mail on everything is the noise this floor exists to stop.
+ * `ALL` (or `OFF`) is the explicit way back to delivering every severity, and an
+ * unparseable value is treated as the default rather than as "all" — a typo must not
+ * quietly turn the pager back on for every LOW row.
+ */
+export function notifyFloorFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
+  const raw = String(env.SENTINEL_ALERT_NOTIFY_MIN_SEVERITY ?? DEFAULT_NOTIFY_FLOOR).trim().toUpperCase();
+  if (raw === "" || raw === "ALL" || raw === "OFF") return null;
+  return (SEVERITY_ORDER as readonly string[]).includes(raw) ? raw : DEFAULT_NOTIFY_FLOOR;
+}
+
+/**
  * Several transports, told in order.
  *
  * A deployment that wants a pager *and* the desk is not asking for anything unusual, and the

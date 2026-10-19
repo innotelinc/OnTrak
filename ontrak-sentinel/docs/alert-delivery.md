@@ -33,7 +33,18 @@ SENTINEL_ALERT_WEBHOOK_URL=https://hooks.innotel.us/sentinel/alerts
 SENTINEL_ALERT_WEBHOOK_TOKEN=…
 # Optional: how long to wait before treating the transport as unreachable (default 5000)
 SENTINEL_ALERT_WEBHOOK_TIMEOUT_MS=5000
+# Optional: only deliver this severity and above (default CRITICAL)
+SENTINEL_ALERT_NOTIFY_MIN_SEVERITY=CRITICAL
 ```
+
+**Only critical alerts are mailed by default.** `SENTINEL_ALERT_NOTIFY_MIN_SEVERITY`
+is the floor: `LOW`, `MEDIUM`, `HIGH` or `CRITICAL` (case-insensitive), or `ALL`
+(equivalently `OFF`) to deliver every severity again. A severity this build does
+not recognise is treated as `CRITICAL` rather than `ALL`, so a typo cannot
+quietly turn the mailbox back on for every LOW row. A skipped alert is **not**
+suppressed: it is raised, it is in the console, and the chain records
+`guard.alert.notify.skipped` with the severity, the floor and the transport, so
+"why was I not told?" has an answer that is not a guess.
 
 At startup the console prints which transport this deployment has, or that it has none:
 

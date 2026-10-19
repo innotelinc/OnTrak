@@ -1,0 +1,572 @@
+/*
+ * ═══════════════════════════════════════════════════════════════════════════
+ * GENIE — liquid glass
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The console's chrome, rebuilt as glass. A layer over `style.css` and
+ * `chat-surface.css` rather than a rewrite of either: the layout those files
+ * describe is right — conversation in the middle, chats on the left, the rail on
+ * the right — and what was wrong was the *material*. Every surface was an opaque
+ * slab with a 1px rule, which on a dark scheme reads as a row of boxes and on a
+ * light one as a printed form.
+ *
+ * What changes here is only the surface and the spacing:
+ *
+ *   · the page gets an ambient wash (two soft colour fields), so there is
+ *     something for the glass to be glass *over*; a translucent pane on a flat
+ *     canvas is indistinguishable from a flat pane.
+ *   · the sidebar, the conversation and the rail are panes of the same width and
+ *     the same radius — symmetry is the point, not decoration: the eye reads the
+ *     two columns as a pair, and the conversation as the page between them.
+ *   · the toolbar becomes one segmented rail instead of eight loose buttons, and
+ *     it, the composer and the dialogs are the same glass. The rail's own tabs
+ *     already looked like this; now the rest of the console does too.
+ *
+ * Everything is built from the Unity tokens (`--glass-*`, `--surface`, `--ink`),
+ * so "liquid" is a texture and not a second palette: light mode, dark mode, the
+ * operations scheme and a product's own scheme all get the same treatment in
+ * their own colours. No colour is written literally below except the ambient
+ * wash, which is derived from the brand and the product tone.
+ *
+ * The one rule that is not cosmetic: below `backdrop-filter` support, the glass
+ * falls back to the opaque surface (the theme's `@supports` block does the same
+ * for `.glass`); text on a moving background is not a style choice worth keeping.
+ */
+
+/* ── the pane width, once ─────────────────────────────────────────────────── */
+
+:root {
+  /*
+   * One number for both columns. They used to disagree — 240px on the left and
+   * whatever the rail's content asked for on the right — so opening the preview
+   * moved the conversation off centre. `clamp` keeps them readable on a laptop
+   * without letting them eat a 4K screen.
+   */
+  --genie-column: clamp(268px, 22vw, 340px);
+  --genie-radius: 20px;
+  --genie-gutter: 14px;
+  --genie-bar: 58px;
+}
+
+/* ── the canvas the glass sits on ─────────────────────────────────────────── */
+
+html,
+body {
+  background: var(--canvas);
+}
+
+/*
+ * Fixed, not scrolling, and behind everything: the wash has to stay still while
+ * the transcript moves, or the glass would look like it is sliding over a
+ * blotchy page rather than sitting on light.
+ */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      760px 520px at 8% -12%,
+      color-mix(in oklab, var(--brand) 22%, transparent),
+      transparent 68%
+    ),
+    radial-gradient(
+      720px 560px at 104% 112%,
+      color-mix(in oklab, var(--tone-genie) 18%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      520px 420px at 52% 46%,
+      color-mix(in oklab, var(--canvas) 70%, transparent),
+      transparent 72%
+    );
+}
+
+/* A dark scheme needs more tint for the same glow to be visible at all. */
+:root[data-mode="dark"] body::before,
+:root:not([data-mode="light"]) body::before {
+  opacity: 0.9;
+}
+
+/* ── the frame ────────────────────────────────────────────────────────────── */
+
+.app {
+  grid-template-columns: var(--genie-column) minmax(0, 1fr) auto;
+  gap: var(--genie-gutter);
+  padding: var(--genie-gutter);
+  /*
+   * `100dvh` with padding inside a border-box is still the viewport: the padding
+   * comes out of the content, so the frame never grows a scrollbar of its own.
+   * The `100vh` fallback above it is `style.css`'s, kept for older engines.
+   */
+  height: 100dvh;
+}
+
+.sidebar,
+.main,
+.rail.open {
+  border-radius: var(--genie-radius);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-shadow);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  overflow: hidden;
+}
+
+/*
+ * The sidebar is the most opaque of the three: it holds a list, and a list read
+ * through a moving transcript would be a worse list. The conversation is the
+ * clearest — it is *about* reading — and the rail sits between them.
+ */
+.sidebar {
+  background: var(--glass-tint);
+  border-right: 1px solid var(--glass-line);
+}
+
+.main {
+  background: var(--glass-tint-soft);
+  border: 1px solid var(--glass-line);
+}
+
+.rail.open {
+  width: var(--genie-column);
+  background: var(--glass-tint);
+  border-left: 1px solid var(--glass-line);
+}
+
+/*
+ * A rail view fills the rail — it does not ask for a width of its own.
+ *
+ * The preview used to be `min(560px, 46vw)` with a 280px floor because it *was*
+ * the grid column; now the column is the rail, and a pane that insists on 560px
+ * inside a 300px rail pushes its own close button past the edge. The expanded
+ * state (`.preview.live`, which wants to be wide) is a *dialog* concern rather
+ * than a rail one, so it fills the rail here and the expand control still takes
+ * it full width. `min-width: 0` is what lets the header fold rather than spill.
+ */
+.rail.open > .rail-view,
+.rail.open .preview,
+.rail.open .files,
+.rail.open .hosting {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
+.rail.open .preview.live {
+  width: 100%;
+}
+
+/* The preview header carries a title, an address and three actions; in a narrow
+   rail it wraps instead of clipping the control that closes it. */
+.rail.open .preview-head,
+.rail.open .preview-app-bar {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.rail.open .preview-app-actions {
+  flex-wrap: wrap;
+}
+
+/* The two column heads are the same height as the top bar, so the three panes
+   start their content on one line. */
+.sidebar-head,
+.rail-tabs {
+  min-height: var(--genie-bar);
+  padding: 10px 14px;
+}
+
+.sidebar-head {
+  border-bottom: 1px solid var(--glass-line);
+}
+
+.rail-tabs {
+  border-bottom: 1px solid var(--glass-line);
+  background: color-mix(in oklab, var(--ink) 4%, transparent);
+}
+
+/*
+ * The brand is the one place the console says which product it is, so it gets
+ * the family's mark rather than a heavier font: a small glass chip with the
+ * product tone behind "OG".
+ */
+.sidebar-head .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.sidebar-head .brand::before {
+  content: "OG";
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 9px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--brand);
+  background: color-mix(in oklab, var(--brand) 14%, transparent);
+  border: 1px solid color-mix(in oklab, var(--brand) 32%, transparent);
+  box-shadow: 0 1px 0 color-mix(in oklab, #ffffff 35%, transparent) inset;
+}
+
+/* ── the toolbar ──────────────────────────────────────────────────────────── */
+
+.topbar {
+  min-height: var(--genie-bar);
+  padding: 9px 14px;
+  gap: 10px;
+  background: transparent;
+  border-bottom: 1px solid var(--glass-line);
+}
+
+.chat-title {
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.topbar-right {
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+/* A group of controls on one recessed track — the same shape as the rail's tabs,
+   which is what makes the top bar and the rail read as one system. */
+.toolbar {
+  /*
+   * `flex`, not `inline-flex`, and `line-height: 1`: as an inline-level box the
+   * track picked up the parent's line strut — 20px of empty line box around a
+   * 44px row of buttons — which is why the bar measured 72px on a phone and 55px
+   * on a desktop for a single row of controls. Explicit block-level flex has no
+   * strut to inherit.
+   */
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  line-height: 1;
+  padding: 3px;
+  border-radius: 13px;
+  border: 1px solid var(--glass-line);
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
+  box-shadow: 0 1px 0 color-mix(in oklab, #ffffff 30%, transparent) inset;
+  min-width: 0;
+}
+
+.toolbar-status {
+  padding: 3px 4px;
+}
+
+.toolbar-status:empty,
+.toolbar-status:has(> .badge.hidden:only-child) {
+  display: none;
+}
+
+.toolbar-actions {
+  gap: 2px;
+}
+
+.toolbar .btn-ghost.bar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 10px;
+  padding: 6px 11px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  font-weight: 550;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.toolbar .btn-ghost.bar-item .ico {
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.9;
+}
+
+.toolbar .btn-ghost.bar-item:hover {
+  background: color-mix(in oklab, var(--ink) 9%, transparent);
+  color: var(--ink);
+}
+
+/*
+ * Selected is the raised surface, not a coloured fill: on glass, a coloured pill
+ * is the only saturated thing on the page and pulls the eye away from the
+ * conversation. The rail's tabs already make this trade, and a console should be
+ * consistent about what "open" looks like.
+ */
+.toolbar .btn-ghost.bar-item[aria-expanded="true"],
+.toolbar .btn-ghost.bar-item[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow:
+    inset 0 0 0 1px var(--glass-line),
+    0 1px 3px color-mix(in oklab, var(--ink) 16%, transparent);
+}
+
+/*
+ * A fixed-height rule, centred, rather than a stretched one. `align-self:
+ * stretch` made the divider as tall as the track it was in, and because the
+ * track was sized by its contents this became circular on a phone: the bar grew
+ * to 72px to hold a 58px divider holding a 44px button. A 18px rule is what the
+ * group separators look like everywhere else in the family.
+ */
+.toolbar-sep {
+  width: 1px;
+  height: 18px;
+  align-self: center;
+  margin: 0 3px;
+  background: var(--glass-line);
+}
+
+.toolbar .field {
+  padding: 0 6px;
+}
+
+.toolbar .select {
+  background: transparent;
+  border-color: transparent;
+  padding: 5px 6px;
+}
+
+.toolbar .select:hover,
+.toolbar .select:focus-visible {
+  background: color-mix(in oklab, var(--ink) 7%, transparent);
+  border-color: var(--glass-line);
+}
+
+/*
+ * Fold the words before the console folds: eight labels plus a model name is
+ * more than a 1280px laptop can hold beside an open rail. The icons stay, and
+ * the `title`/`aria-label` on each button names it for anyone who needs the
+ * word — which is asserted in `layout:check` rather than left to chance.
+ */
+@media (max-width: 1500px) {
+  .toolbar .btn-ghost.bar-item .lbl { display: none; }
+  .toolbar .btn-ghost.bar-item { padding: 7px 9px; }
+  .toolbar .btn-ghost.bar-item .ico { font-size: 13px; }
+}
+
+/* ── the conversation ─────────────────────────────────────────────────────── */
+
+.messages {
+  padding: 26px clamp(16px, 4vw, 40px) 10px;
+}
+
+.msg {
+  max-width: 780px;
+}
+
+/* ── the composer ─────────────────────────────────────────────────────────── */
+
+.composer {
+  width: min(100% - 28px, 840px);
+  margin: 0 auto 12px;
+  padding: 9px 10px 9px 14px;
+  border-radius: 16px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass-tint-strong);
+  box-shadow: var(--glass-shadow);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+.composer:focus-within {
+  border-color: color-mix(in oklab, var(--brand) 55%, var(--glass-line));
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--brand) 14%, transparent),
+    var(--glass-shadow);
+}
+
+.composer textarea {
+  font-size: 14.5px;
+}
+
+/* ── the rail, the dialogs, the terminal ──────────────────────────────────── */
+
+.rail-tablist {
+  background: color-mix(in oklab, var(--ink) 7%, transparent);
+  border: 1px solid var(--glass-line);
+}
+
+/*
+ * Four words and a close in one column of glass. At the old 12px/12px padding the
+ * strip needed more width than the rail has, so the last tab sat under the close
+ * button: the tab was still in the DOM, but the control a mouse actually hit was
+ * the close. The labels are shortened to the size of the track they are on, which
+ * is the fix the alternative — a scrolling strip — cannot give, because a tab you
+ * have to scroll to is a tab that looks missing.
+ */
+.rail-tab {
+  padding: 5px 8px;
+  font-size: 11px;
+  letter-spacing: 0;
+  /*
+   * The strip has four words and a close in one column, and the column is the
+   * same width as the chat list. A tab that cannot fit shrinks and ellipsises;
+   * it does not push the next one under the close button, which is what
+   * `nowrap` + no shrink did — the publish tab was in the DOM and *under* a
+   * different control, so the click hit the close instead. Truncation the mouse
+   * can still reach beats a label that looks present and is not.
+   */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rail-tab[aria-selected="true"] {
+  background: var(--surface);
+  box-shadow:
+    inset 0 0 0 1px var(--glass-line),
+    0 1px 3px color-mix(in oklab, var(--ink) 16%, transparent);
+}
+
+.viewer {
+  inset: 7vh 8vw;
+  border-radius: var(--genie-radius);
+  border: 1px solid var(--glass-line);
+  background: var(--glass-tint-strong);
+  box-shadow: var(--glass-shadow-pop);
+  -webkit-backdrop-filter: blur(28px) saturate(var(--glass-saturate));
+  backdrop-filter: blur(28px) saturate(var(--glass-saturate));
+}
+
+.viewer-head {
+  border-bottom: 1px solid var(--glass-line);
+}
+
+.terminal {
+  border-top: 1px solid var(--glass-line);
+  background: color-mix(in oklab, var(--ink) 5%, transparent);
+}
+
+/*
+ * The sign-in gate is the same family of surface: one card of glass on the wash,
+ * with the mark inside it. It is not a pane of the console — there is no console
+ * around it yet — so it is centred and generous rather than 100dvh-wide.
+ */
+.gate {
+  background: var(--glass-tint-strong);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-shadow-pop);
+  -webkit-backdrop-filter: blur(26px) saturate(var(--glass-saturate));
+  backdrop-filter: blur(26px) saturate(var(--glass-saturate));
+}
+
+/* ── the drawer and the narrow layout ─────────────────────────────────────── */
+
+@media (max-width: 1080px) {
+  :root { --genie-gutter: 10px; }
+  .app { grid-template-columns: clamp(210px, 24vw, 248px) minmax(0, 1fr); }
+  .rail.open {
+    width: clamp(280px, 42vw, 420px);
+    border-radius: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  :root { --genie-gutter: 0px; --genie-bar: 54px; }
+  .app { grid-template-columns: minmax(0, 1fr); gap: 0; padding: 0; }
+
+  /* The drawer is the page's edge; a rounded pane floating 14px off a phone's
+     bezel would waste the width the list needs. */
+  .sidebar,
+  .main,
+  .rail.open {
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+
+  .topbar {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  /*
+   * Two rows, not three. `display: contents` lifts the two toolbars out of their
+   * wrapper so they can share the top bar's own row flow: the handle and the chat
+   * name on the left, the model picker on their right, and the actions on a row of
+   * their own below. Before this the wrapper was one flex item, so "stack the
+   * toolbars" cost a whole extra row and a 197px header on a 390px screen.
+   */
+  .topbar-right {
+    display: contents;
+  }
+
+  .toolbar {
+    border-radius: 11px;
+    gap: 0;
+  }
+
+  .toolbar-status {
+    order: 1;
+    flex: 0 1 auto;
+    min-width: 0;
+    margin-left: auto;
+  }
+
+  /* The word does not fit beside a model name on a phone; the picker names
+     itself with `aria-label` and the selected option. */
+  .toolbar-status .lbl {
+    display: none;
+  }
+
+  .toolbar-actions {
+    order: 2;
+    flex: 1 1 100%;
+    justify-content: space-between;
+  }
+
+  .toolbar .btn-ghost.bar-item {
+    padding: 8px 10px;
+  }
+
+  /* A thumb target is 44px, and the icons are the whole label here. */
+  .toolbar .btn-ghost.bar-item .ico {
+    font-size: 15px;
+  }
+
+  .composer {
+    width: calc(100% - 20px);
+    margin-bottom: 10px;
+    border-radius: 14px;
+  }
+
+  .messages {
+    padding: 18px 14px 6px;
+  }
+
+  .viewer {
+    inset: 0;
+    border-radius: 0;
+  }
+}
+
+/* Someone who asked for less motion asked for less light too: the wash is the
+   only animated thing here, and there is none — but a fully transparent pane is
+   still a harder surface to read, so it is made more opaque, not less. */
+@media (prefers-reduced-transparency: reduce) {
+  .sidebar,
+  .main,
+  .rail.open,
+  .composer,
+  .viewer {
+    background: var(--surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  body::before { display: none; }
+}

@@ -31,6 +31,13 @@
       mode and the family theme are unaffected.
     -->
     <link rel="stylesheet" href="/chat-surface.css" />
+    <!--
+      The glass skin: the same three panes, the same conversation, a different
+      material. It is a layer over the two stylesheets above rather than a
+      rewrite — see the file's own header for why the wash, the equal columns and
+      the segmented toolbar are the whole of the change.
+    -->
+    <link rel="stylesheet" href="/liquid-glass.css" />
   </head>
   <body>
     <a class="skip-link" href="#input">Skip to the message box</a>
@@ -160,88 +167,117 @@
             <span id="chat-title" class="chat-title">New chat</span>
           </div>
           <div class="topbar-right">
-            <span id="gateway-badge" class="badge offline hidden" role="status"></span>
-            <span id="approval-badge" class="badge hidden"></span>
             <!--
-              Up when the transcript on screen was shared with you. It says so
-              in words rather than only turning the composer off: a disabled
-              box with no reason beside it reads like a fault.
+              One toolbar, two groups. The row used to be eight loose text
+              buttons of different widths, which read as a wall of words and
+              wrapped over the conversation on a laptop. Grouping them by what
+              they act on — the *panels* on the left, the *console's own
+              settings* on the right — gives the eye two shapes instead of
+              eight, and the segmented rail they sit on is the same control
+              vocabulary as the rail's own tabs.
+
+              The identifiers are unchanged: every id here is bound in app.js,
+              and this is a layer over the markup rather than a replacement for
+              it. `.ico` is decoration (`aria-hidden`) and `.lbl` is the word a
+              screen reader announces; below 1500px the words fold to their
+              icons, and each button's `title`/`aria-label` still names it.
             -->
-            <span id="share-badge" class="badge hidden" role="status"></span>
-            <!--
-              The model this deployment is serving, when the account does not
-              choose one. Shown instead of the picker rather than beside it: the
-              answer to "which model am I on?" should not be a menu the person
-              cannot use.
-            -->
-            <span id="model-auto" class="badge hidden" role="status"></span>
-            <label class="field" for="model" id="model-field">
-              <span class="muted">model</span>
-              <select id="model" class="select" aria-label="Model"></select>
-            </label>
-            <button
-              id="chat-settings"
-              class="btn-ghost"
-              title="This chat's model settings: fallback models, local fallback, step budget"
-              aria-controls="settings"
-              aria-expanded="false"
-            >
-              settings
-            </button>
-            <button
-              id="appearance-open"
-              class="btn-ghost"
-              title="Light or dark, and the colour scheme"
-              aria-controls="appearance"
-              aria-expanded="false"
-            >
-              appearance
-            </button>
-            <button
-              id="toggle-files"
-              class="btn-ghost"
-              title="Toggle the workspace panel"
-              aria-controls="files-panel"
-              aria-expanded="false"
-            >
-              workspace
-            </button>
-            <button
-              id="toggle-preview"
-              class="btn-ghost"
-              title="Run this project and watch it change as the agent edits it"
-              aria-controls="preview"
-              aria-expanded="false"
-            >
-              preview
-            </button>
-            <button
-              id="addons-open"
-              class="btn-ghost"
-              title="The two agent add-ons and what is left to spend on each"
-              aria-controls="addons"
-              aria-expanded="false"
-            >
-              add-ons
-            </button>
-            <button
-              id="hosting-open"
-              class="btn-ghost"
-              title="Put this workspace on the network under *.DOMAIN — free on a port address, $5/mo or $50/yr for your own name"
-              aria-controls="hosting"
-              aria-expanded="false"
-            >
-              publish
-            </button>
-            <button
-              id="terminal-open"
-              class="btn-ghost"
-              title="Run a shell command in this workspace"
-              aria-controls="terminal"
-              aria-expanded="false"
-            >
-              terminal
-            </button>
+            <div class="toolbar toolbar-status" role="group" aria-label="Session state">
+              <span id="gateway-badge" class="badge offline hidden" role="status"></span>
+              <span id="approval-badge" class="badge hidden"></span>
+              <!--
+                Up when the transcript on screen was shared with you. It says so
+                in words rather than only turning the composer off: a disabled
+                box with no reason beside it reads like a fault.
+              -->
+              <span id="share-badge" class="badge hidden" role="status"></span>
+              <!--
+                The model this deployment is serving, when the account does not
+                choose one. Shown instead of the picker rather than beside it:
+                the answer to "which model am I on?" should not be a menu the
+                person cannot use.
+              -->
+              <span id="model-auto" class="badge hidden" role="status"></span>
+              <label class="field" for="model" id="model-field">
+                <!-- A label a sighted person can read, but not one that takes
+                     a column of its own once the toolbar folds. -->
+                <span class="muted lbl">model</span>
+                <select id="model" class="select" aria-label="Model"></select>
+              </label>
+            </div>
+            <div class="toolbar toolbar-actions" role="group" aria-label="Panels and tools">
+              <button
+                id="toggle-files"
+                class="btn-ghost bar-item"
+                title="Toggle the workspace panel"
+                aria-label="Workspace"
+                aria-controls="files-panel"
+                aria-expanded="false"
+              >
+                <span class="ico" aria-hidden="true">▦</span><span class="lbl">workspace</span>
+              </button>
+              <button
+                id="toggle-preview"
+                class="btn-ghost bar-item"
+                title="Run this project and watch it change as the agent edits it"
+                aria-label="Preview"
+                aria-controls="preview"
+                aria-expanded="false"
+              >
+                <span class="ico" aria-hidden="true">▶</span><span class="lbl">preview</span>
+              </button>
+              <button
+                id="hosting-open"
+                class="btn-ghost bar-item"
+                title="Put this workspace on the network under *.DOMAIN — free on a port address, $5/mo or $50/yr for your own name"
+                aria-label="Publish"
+                aria-controls="hosting"
+                aria-expanded="false"
+              >
+                <span class="ico" aria-hidden="true">⤴</span><span class="lbl">publish</span>
+              </button>
+              <button
+                id="terminal-open"
+                class="btn-ghost bar-item"
+                title="Run a shell command in this workspace"
+                aria-label="Terminal"
+                aria-controls="terminal"
+                aria-expanded="false"
+              >
+                <span class="ico" aria-hidden="true">❯</span><span class="lbl">terminal</span>
+              </button>
+              <span class="toolbar-sep" aria-hidden="true"></span>
+              <button
+                id="addons-open"
+                class="btn-ghost bar-item"
+                title="The two agent add-ons and what is left to spend on each"
+                aria-label="Add-ons"
+                aria-controls="addons"
+                aria-expanded="false"
+              >
+                <span class="ico" aria-hidden="true">✦</span><span class="lbl">add-ons</span>
+              </button>
+              <button
+                id="chat-settings"
+                class="btn-ghost bar-item"
+                title="This chat's model settings: fallback models, local fallback, step budget"
+                aria-label="Chat settings"
+                aria-controls="settings"
+                aria-expanded="false"
+              >
+                <span class="ico" aria-hidden="true">⚙</span><span class="lbl">settings</span>
+              </button>
+              <button
+                id="appearance-open"
+                class="btn-ghost bar-item"
+                title="Light or dark, and the colour scheme"
+                aria-label="Appearance"
+                aria-controls="appearance"
+                aria-expanded="false"
+              >
+                <span class="ico" aria-hidden="true">◐</span><span class="lbl">appearance</span>
+              </button>
+            </div>
           </div>
         </header>
 

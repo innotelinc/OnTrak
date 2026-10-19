@@ -26,6 +26,15 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY public ./public
 COPY package.json ./
+
+# `genie` on PATH.
+#
+# The package has declared this binary since 0.3.0 (`"bin": {"genie":
+# "dist/cli/main.js"}`), but nothing installs the package's own bin links:
+# `npm ci` installs *dependencies*, and the image copies `dist/` in by hand. So
+# the CLI existed, ran, and could not be invoked by the name every document and
+# the RE portal use. One symlink makes the declared interface real.
+RUN chmod +x dist/cli/main.js && ln -sf /app/dist/cli/main.js /usr/local/bin/genie
 # The Vault resolver and the entrypoint that runs it. `scripts/` is otherwise
 # dockerignored (see .dockerignore); this is the one file from it the image needs.
 COPY scripts/vault-env.mjs ./scripts/vault-env.mjs

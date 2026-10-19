@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OnTrak</title>
+<!--
+  One page, no build step, no framework: it talks to two endpoints (`/api/session`
+  and `/api/run`) and streams the answer as it arrives. The credit line is the
+  point of the page — it is shown before anything is spent, and again after.
+-->
+<style>
+  :root { color-scheme: dark; --bg: #0d0f14; --panel: #151924; --line: #242b3a; --ink: #e6e9f0; --dim: #8b93a7; --accent: #7c5cff; --warn: #ffb454; --bad: #ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 18px 22px; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 17px; letter-spacing: .08em; }
+  header .who { margin-left: auto; color: var(--dim); font-size: 13px; }
+  main { max-width: 880px; margin: 0 auto; padding: 22px; display: grid; gap: 14px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; color: var(--dim); font-size: 13px; }
+  .pill { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; }
+  .pill b { color: var(--ink); font-weight: 600; }
+  .pill.bad { border-color: var(--bad); color: var(--bad); }
+  textarea { width: 100%; min-height: 120px; resize: vertical; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font: inherit; }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  button { background: var(--accent); color: white; border: 0; border-radius: 8px; padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .55; cursor: progress; }
+  button.ghost { background: transparent; border: 1px solid var(--line); color: var(--dim); }
+  #note { color: var(--dim); font-size: 13px; min-height: 18px; }
+  #note.bad { color: var(--bad); }
+  #out { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-height: 160px; white-space: pre-wrap; word-break: break-word; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #out:empty::before { content: "nothing yet"; color: var(--dim); }
+  #paywall { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 8px; }
+  #signin, #credits { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 8px; }
+  #signin h2, #credits h2 { margin: 0; font-size: 16px; }
+  #signin p, #credits p { margin: 0; color: var(--dim); }
+  #paywall h2 { margin: 0; font-size: 16px; }
+  #paywall p { margin: 0; color: var(--dim); }
+  a.cta { display: inline-block; background: var(--accent); color: white; text-decoration: none; border-radius: 8px; padding: 9px 16px; font-weight: 600; }
+  .dim { color: var(--dim); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="product">OnTrak</h1>
+  <span class="who" id="who">checking sign-in…</span>
+</header>
+<main>
+  <div class="bar">
+    <span class="pill">credits left <b id="balance">—</b></span>
+    <span class="pill">per run <b id="perrun">—</b></span>
+    <span class="pill">price <b id="price">—</b></span>
+    <span class="pill" id="plan">—</span>
+  </div>
+  <section id="paywall" hidden>
+    <h2 id="paywall-title">A subscription is needed here</h2>
+    <p id="paywall-copy"></p>
+    <p><a id="paywall-cta" class="cta" href="#" rel="noopener">See the plans</a></p>
+    <p class="dim" id="paywall-work"></p>
+  </section>
+  <section id="signin" hidden>
+    <h2>Sign in to continue</h2>
+    <p id="signin-copy"></p>
+    <p><a id="signin-cta" class="cta" href="/oauth2/sign_in">Sign in</a></p>
+  </section>
+  <section id="credits" hidden>
+    <h2 id="credits-title">Out of credits</h2>
+    <p id="credits-copy"></p>
+    <p><a id="credits-cta" class="cta" href="#" rel="noopener">Add more credits</a></p>
+    <p class="dim" id="credits-work"></p>
+  </section>
+  <textarea id="prompt" placeholder="Describe what you want the agent to do…"></textarea>
+  <div class="row">
+    <button id="run">Run</button>
+    <button id="stop" class="ghost" disabled>Stop</button>
+    <span id="note"></span>
+  </div>
+  <pre id="out"></pre>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let controller = null;
+  // Named where a person can see it, because the first question a console has to
+  // answer is "who does this think I am".
+  const signedInAs = "nothing here can start a run until you do";
+
+  const money = (n) => (typeof n === "number" ? `$${n.toFixed(2)}` : "—");
+
+  function paint(s) {
+    $("who").textContent = s.email ?? "not signed in";
+    if (s.name) { $("product").textContent = s.name; document.title = `${s.name} — OnTrak`; }
+    // A non-subscriber is not a customer with an empty balance: the page they get is
+    // the offer, and the run box is not shown at all.
+    const subscription = s.entitlement?.state ?? "unknown";
+    const blocked = Boolean(s.entitlement?.metered) && subscription === "not_entitled";
+    const uncheckable = Boolean(s.entitlement?.metered) && subscription === "unknown";
+    // Subscribed, and out of credits: the run box stays exactly where it is,
+    // because the work is one purchase away rather than behind a wall. Hiding it
+    // would tell a paying customer they are not one.
+    const shortOnCredits = Boolean(s.entitlement?.metered) && !blocked && s.allowed === false;
+    $("signin").hidden = true;
+    $("paywall").hidden = !(blocked || uncheckable);
+    $("credits").hidden = !shortOnCredits;
+    $("prompt").hidden = blocked;
+    $("run").hidden = blocked;
+    $("stop").hidden = blocked;
+    if (shortOnCredits) {
+      const price = money(s.pricePerCreditUsd);
+      $("credits-title").textContent = `${s.name ?? "This console"} is out of credits`;
+      $("credits-copy").textContent =
+        `${s.email ?? "this account"} has ${s.balance ?? 0} left, and a run costs ${s.creditsPerRun ?? 1}` +
+        (price === "—" ? "." : ` (${price} a credit, bought from Magnate).`);
+      $("credits-cta").href = s.subscribeUrl ?? "#";
+      $("credits-work").textContent = s.workUrl
+        ? `Running the agent itself is ${s.workUrl}; this page is the metered front door in front of it.`
+        : "";
+    }
+    if (blocked || uncheckable) {
+      $("paywall-title").textContent = blocked ? `A subscription is needed for ${s.name ?? "this product"}` : "We cannot check your subscription right now";
+      $("paywall-copy").textContent = blocked
+        ? `${s.email ?? "this account"} has no ${s.name ?? "product"} subscription, so there is nothing to spend. Subscribing turns this page into the run box — the credits are one per run, and a run that never starts is refunded.`
+        : `The billing service did not answer, so this page will not guess. Nothing has been refused; try again in a moment.`;
+      $("paywall-cta").hidden = !blocked;
+      $("paywall-cta").href = s.subscribeUrl ?? "#";
+      $("paywall-work").textContent = `Already subscribed? ${s.workUrl ? s.workUrl : "the console"} is where the work happens, and this page is its metered front door.`;
+      note(blocked ? "subscribe to run" : "billing unreachable", blocked);
+    }
+    $("balance").textContent = s.unlimited ? "unlimited" : (s.balance ?? "—");
+    $("perrun").textContent = s.creditsPerRun ?? "—";
+    $("price").textContent = money(s.pricePerCreditUsd);
+    const metered = s.metered !== false;
+    $("plan").textContent = metered ? (s.allowed ? "ready" : "out of credits") : "unmetered deployment";
+    $("plan").classList.toggle("bad", metered && !s.allowed);
+  }
+
+  async function refresh() {
+    const res = await fetch("/api/session", { headers: { accept: "application/json" } });
+    if (!res.ok) {
+      // Not signed in is a state with an action, so it gets a button rather than a
+      // sentence: the link is the SSO proxy's own entry point, and `rd` brings the
+      // person back here once the provider has answered.
+      const back = window.location.pathname + window.location.search;
+      $("who").textContent = "not signed in";
+      $("note").textContent = "sign in to run anything";
+      $("prompt").hidden = true;
+      $("run").hidden = true;
+      $("stop").hidden = true;
+      $("paywall").hidden = true;
+      $("credits").hidden = true;
+      $("signin").hidden = false;
+      $("signin-copy").textContent = `This console runs as whoever the platform's sign-in says you are; ${signedInAs}.`;
+      $("signin-cta").href = "/oauth2/sign_in?rd=" + encodeURIComponent(back);
+      return;
+    }
+    paint(await res.json());
+  }
+
+  function note(text, bad) { $("note").textContent = text; $("note").classList.toggle("bad", Boolean(bad)); }
+
+  async function run() {
+    const message = $("prompt").value.trim();
+    if (message === "") return note("write something to run", true);
+    $("out").textContent = "";
+    $("run").disabled = true;
+    $("stop").disabled = false;
+    note("charging and starting…");
+    controller = new AbortController();
+    try {
+      const res = await fetch("/api/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message, runId: crypto.randomUUID() }),
+        signal: controller.signal,
+      });
+      if (!res.ok || !res.body) {
+        const detail = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        if (detail.code === "subscription_required") {
+          note(detail.error, true);
+          if (detail.subscribeUrl) { $("paywall").hidden = false; $("paywall-cta").href = detail.subscribeUrl; }
+        } else {
+          note(`${detail.error ?? `HTTP ${res.status}`}${detail.refunded ? " — credit refunded" : ""}`, true);
+        }
+        await refresh();
+        return;
+      }
+      note("running");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // SSE frames are "\n\n"-separated; render each one's data as it lands.
+        let cut;
+        while ((cut = buffer.indexOf("\n\n")) !== -1) {
+          const frame = buffer.slice(0, cut);
+          buffer = buffer.slice(cut + 2);
+          for (const line of frame.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const data = line.slice(5).trim();
+            if (data === "" || data === "[DONE]") continue;
+            try {
+              const event = JSON.parse(data);
+              const text = event.text ?? event.delta ?? event.message ?? "";
+              if (text) $("out").textContent += text;
+            } catch { $("out").textContent += data; }
+          }
+        }
+      }
+      note("done");
+    } catch (error) {
+      note(error.name === "AbortError" ? "stopped — the run is not refunded once it has started" : error.message, true);
+    } finally {
+      $("run").disabled = false;
+      $("stop").disabled = true;
+      controller = null;
+      await refresh().catch(() => {});
+    }
+  }
+
+  $("run").addEventListener("click", run);
+  $("stop").addEventListener("click", () => controller?.abort());
+  refresh().catch(() => note("could not read the session", true));
+</script>
+</body>
+</html>

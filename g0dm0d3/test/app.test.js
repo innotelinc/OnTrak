@@ -280,7 +280,10 @@ test("the page offers a way in and a way to top up", async () => {
   // them what is wrong with them: an unsigned visitor needs a button pointed at the
   // proxy's own sign-in, and a subscriber who has spent every credit needs one
   // pointed at the plans — the run box already stays on the page for them.
-  const page = await (await fetch(`${base}/`)).text();
+  //
+  // The metered page is `/metered` now: `/` is the door to the product's own UI,
+  // and this is the console's credit-facing half, kept where it was.
+  const page = await (await fetch(`${base}/metered`, { headers })).text();
 
   assert.match(page, /href="\/oauth2\/sign_in"/, "the sign-in link is in the markup, not assembled later");
   assert.match(page, /id="signin-cta"/, "and it is the button the page reveals when the session is refused");
@@ -301,6 +304,95 @@ test("billing that cannot answer is a retry, never a paywall", async () => {
   assert.equal(body.retryable, true);
   assert.equal(body.code, undefined, "an outage must not answer with a plan to buy");
   assert.equal(charges.length, 0);
+});
+
+test("the front door sends an unauthenticated request to sign in, not to the app", async () => {
+  // A request that came around the proxy used to receive the whole application.
+  // The page then 401'd its own session call, which is a page that looks broken;
+  // a gate with one link is the honest answer.
+  for (const path of ["/", "/index.html", "/studio", "/metered"]) {
+    const res = await fetch(`${base}${path}`);
+    assert.equal(res.status, 401, `${path} must not be served without an identity`);
+    const page = await res.text();
+    assert.match(page, /\/oauth2\/sign_in\?rd=/, `${path} must offer the proxy's sign-in`);
+    assert.doesNotMatch(page, /modeSwitcher/, `${path} must not leak the studio`);
+  }
+});
+
+test("with an identity the front door redirects to index.html", async () => {
+  const res = await fetch(`${base}/`, { headers, redirect: "manual" });
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get("location"), "/index.html");
+
+  // The query is carried across: `?embed=1` is how the console embeds the page
+  // without a second menu bar, and dropping it on the redirect would restore it.
+  const embedded = await fetch(`${base}/?embed=1`, { headers, redirect: "manual" });
+  assert.equal(embedded.headers.get("location"), "/index.html?embed=1");
+});
+
+test("index.html is the studio for G0DM0D3", async () => {
+  const res = await fetch(`${base}/index.html`, { headers });
+  assert.equal(res.status, 200);
+  const page = await res.text();
+  assert.match(page, /id="modeSwitcher"/, "the studio's own mode switcher is on the page");
+  assert.match(page, /data-godmode-embed/, "and the embed rule that removes the duplicate bar");
+  assert.doesNotMatch(page, /id="signin-cta"/, "the studio is not the metered page");
+});
+
+test("the portal page is closed without a subscription, and offers one", async () => {
+  // The studio brings its own model key and never calls `/api/run`, so serving
+  // the page to a signed-in account with no plan would hand over the product.
+  // The page is part of the product: it is gated like the run.
+  entitlement = { entitled: false, plan: null, service: false, reason: "no subscription" };
+  const res = await fetch(`${base}/index.html`, { headers });
+  assert.equal(res.status, 403);
+  const page = await res.text();
+  assert.match(page, /No G0DM0D3 subscription/);
+  assert.match(page, /See the plans/, "a non-subscriber is offered the plans, not a dead end");
+  assert.match(page, /https:\/\/subscribe\.genie\.innotel\.us/);
+  assert.doesNotMatch(page, /modeSwitcher/, "and not one byte of the studio");
+});
+
+test("billing that cannot answer closes the portal as a retry, not a paywall", async () => {
+  entitlement = { entitled: null, plan: null, service: false, reason: "HTTP 404", source: "unreachable" };
+  const res = await fetch(`${base}/index.html`, { headers });
+  assert.equal(res.status, 503);
+  const page = await res.text();
+  assert.match(page, /subscription check is unavailable/);
+  assert.match(page, /Reload/);
+  assert.doesNotMatch(page, /See the plans/, "an outage must not sell a plan");
+  assert.doesNotMatch(page, /modeSwitcher/);
+});
+
+test("the Engineer instance opens a Genie CLI, not the studio", async () => {
+  const engineer = createServer({ ...config, slug: "engineer", product: "engineer", name: "OnTrak Engineer" });
+  await new Promise((r) => engineer.listen(0, "127.0.0.1", r));
+  try {
+    const origin = `http://127.0.0.1:${engineer.address().port}`;
+    const res = await fetch(`${origin}/index.html`, { headers });
+    assert.equal(res.status, 200);
+    const page = await res.text();
+    assert.match(page, /id="form"[^>]*class="prompt"|class="prompt"/, "the terminal prompt is the page");
+    assert.match(page, /REA MCP attached/);
+    assert.doesNotMatch(page, /modeSwitcher/, "the studio is the other product's page");
+  } finally {
+    await new Promise((r) => engineer.close(r));
+  }
+});
+
+test("an approval is relayed to Genie with the service bearer", async () => {
+  genieReply = { status: 200, chunks: [JSON.stringify({ resolved: true })], headers: { "content-type": "application/json" } };
+  const res = await fetch(`${base}/api/approve`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ id: "approval-1", decision: "approve" }),
+  });
+  assert.equal(res.status, 200);
+  const call = genieCalls.at(-1);
+  assert.equal(call.path, "/api/approvals/approval-1");
+  assert.equal(call.body.decision, "approve");
+  assert.equal(call.auth, "Bearer genie-service-token");
+  assert.equal(call.actor, "atheniq@innotel.us");
 });
 
 test("a service account is subscribed by rule, and still runs", async () => {

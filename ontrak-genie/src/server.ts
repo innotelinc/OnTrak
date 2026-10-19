@@ -306,6 +306,10 @@ const STATIC_FILES: Record<string, { file: string; type: string; root?: string }
   // The chat surface: the conversation column, the composer, the command palette
   // and the follow-up chips, layered over `style.css` (see `public/chat-surface.css`).
   "/chat-surface.css": { file: "chat-surface.css", type: "text/css; charset=utf-8" },
+  // The glass skin over both of the above: panes, toolbar, composer. A separate
+  // file rather than an edit so the layout stylesheets stay reviewable as what
+  // they are — the console's structure — and the material stays one layer.
+  "/liquid-glass.css": { file: "liquid-glass.css", type: "text/css; charset=utf-8" },
   // The family theme, served inline rather than bundled: this app has no bundler, and
   // both files are byte-identical copies of `theme/unity-theme.{css,js}` checked by
   // `theme/tests/test_theme_copies.py`.

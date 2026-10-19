@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OnTrak Engineer — Genie CLI</title>
+<!--
+  OnTrak Engineer, as a terminal.
+
+  Genie is the agent; this is its command line, in a tab. A turn is posted to
+  `/api/run`, which spends one credit in the control plane and relays Genie's own
+  event stream, unchanged. Every event the agent emits is drawn the way a CLI
+  would draw it: assistant text as text, a tool call as a `[tool]` line, a
+  refusal as an error on stderr, and the next prompt when the turn is done.
+
+  It is a *client* of the same agent the console drives, not a second agent, and
+  the REA toolkit is attached on the server (MCP → `rea --mcp`, Ghidra for native
+  analysis). Nothing here pretends to run locally: the banner says where the work
+  happens, and the credit line says what it costs.
+-->
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0a0c11;
+    --glass: rgb(22 27 36 / 62%);
+    --glass-strong: rgb(22 27 36 / 86%);
+    --line: rgb(255 255 255 / 10%);
+    --line-bright: rgb(255 255 255 / 18%);
+    --ink: #e8ecf3;
+    --dim: #95a0b3;
+    --faint: #6b778a;
+    --brand: #5eead4;
+    --brand-ink: #04211d;
+    --bad: #ff8a80;
+    --warn: #ffc157;
+    --ok: #6ee7a0;
+    --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --radius: 18px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background:
+      radial-gradient(900px 600px at 12% -10%, rgb(94 234 212 / 14%), transparent 62%),
+      radial-gradient(800px 620px at 96% 108%, rgb(124 58 237 / 18%), transparent 66%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.55 var(--sans);
+    display: grid;
+    grid-template-rows: auto 1fr;
+    min-height: 100dvh;
+  }
+
+  /* ── one bar, and it is the only navigation on the page ──────────────── */
+  header.bar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--line);
+    background: var(--glass);
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: .01em; }
+  .brand .mark {
+    display: grid; place-items: center;
+    width: 28px; height: 28px; border-radius: 9px;
+    background: color-mix(in srgb, var(--brand) 16%, transparent);
+    border: 1px solid color-mix(in srgb, var(--brand) 38%, transparent);
+    color: var(--brand); font: 700 10px/1 var(--mono);
+  }
+  .brand .sub { color: var(--faint); font-weight: 450; font-size: 12px; }
+  .bar .who { margin-left: auto; color: var(--dim); font-size: 12px; }
+  .pill {
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: 4px 11px; font: 500 12px/1.2 var(--mono); color: var(--dim);
+    background: var(--glass);
+    white-space: nowrap;
+  }
+  .pill b { color: var(--ink); }
+  .pill.bad { border-color: color-mix(in srgb, var(--bad) 50%, transparent); color: var(--bad); }
+
+  /* ── the terminal ────────────────────────────────────────────────────── */
+  main { padding: 18px; min-height: 0; display: flex; }
+  .terminal {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    max-width: 1080px;
+    margin: 0 auto;
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--glass);
+    backdrop-filter: blur(22px) saturate(140%);
+    -webkit-backdrop-filter: blur(22px) saturate(140%);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 8%) inset, 0 28px 70px -34px rgb(0 0 0 / 80%);
+    overflow: hidden;
+  }
+  .term-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--ink) 4%, transparent);
+    font: 11.5px/1.4 var(--mono); color: var(--dim);
+  }
+  .dots { display: flex; gap: 6px; }
+  .dots i { width: 9px; height: 9px; border-radius: 50%; display: block; background: var(--line-bright); }
+  .dots i:first-child { background: #ff5f57; }
+  .dots i:nth-child(2) { background: #febc2e; }
+  .dots i:nth-child(3) { background: #28c840; }
+  .term-head .spacer { margin-left: auto; }
+  .term-head button {
+    font: inherit; color: var(--dim); background: transparent;
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 4px 9px; cursor: pointer;
+  }
+  .term-head button:hover { color: var(--ink); border-color: var(--line-bright); }
+
+  #out {
+    overflow-y: auto;
+    padding: 16px 18px 8px;
+    font: 13px/1.62 var(--mono);
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-height: 0;
+  }
+  #out .line { margin: 0 0 2px; }
+  #out .sys { color: var(--faint); }
+  #out .cmd { color: var(--ink); }
+  #out .cmd::before { content: "❯ "; color: var(--brand); }
+  #out .tool { color: var(--info, #6cc0ff); }
+  #out .ok { color: var(--ok); }
+  #out .warn { color: var(--warn); }
+  #out .err { color: var(--bad); }
+  #out .answer { color: var(--ink); }
+  #out .banner { color: var(--dim); }
+
+  form.prompt {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--line);
+    background: var(--glass-strong);
+  }
+  form.prompt .sigil { color: var(--brand); font: 700 13px/1 var(--mono); }
+  form.prompt .host { color: var(--faint); font: 11.5px/1 var(--mono); white-space: nowrap; }
+  #input {
+    flex: 1; min-width: 0;
+    background: transparent; border: 0; outline: 0;
+    color: var(--ink); font: 13px/1.5 var(--mono);
+    padding: 6px 2px;
+  }
+  #input::placeholder { color: var(--faint); }
+  form.prompt button {
+    border: 1px solid color-mix(in srgb, var(--brand) 55%, transparent);
+    background: color-mix(in srgb, var(--brand) 18%, transparent);
+    color: var(--brand); border-radius: 9px;
+    font: 600 12px/1 var(--sans); padding: 8px 14px; cursor: pointer;
+  }
+  form.prompt button:disabled { opacity: .5; cursor: progress; }
+  form.prompt button.stop {
+    border-color: color-mix(in srgb, var(--bad) 55%, transparent);
+    background: color-mix(in srgb, var(--bad) 15%, transparent);
+    color: var(--bad);
+  }
+
+  /* ── the gate ────────────────────────────────────────────────────────── */
+  .gate {
+    position: fixed; inset: 0; z-index: 20;
+    display: grid; place-items: center; padding: 24px;
+    background: rgb(6 8 12 / 72%);
+    backdrop-filter: blur(10px);
+  }
+  .gate[hidden] { display: none; }
+  .gate .card {
+    width: min(440px, 100%);
+    border: 1px solid var(--line); border-radius: 20px;
+    background: var(--glass-strong);
+    box-shadow: 0 30px 80px -30px rgb(0 0 0 / 85%);
+    padding: 26px;
+    display: grid; gap: 12px;
+  }
+  .gate h2 { margin: 0; font-size: 18px; }
+  .gate p { margin: 0; color: var(--dim); font-size: 13.5px; }
+  .gate a {
+    display: inline-block; text-align: center; text-decoration: none;
+    background: var(--brand); color: var(--brand-ink);
+    border-radius: 10px; padding: 10px 14px; font-weight: 650; font-size: 13.5px;
+  }
+  .gate a.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+
+  @media (max-width: 720px) {
+    main { padding: 10px; }
+    header.bar { padding: 10px 12px; flex-wrap: wrap; row-gap: 8px; }
+    .bar .who { margin-left: 0; }
+    .terminal { border-radius: 14px; }
+  }
+</style>
+</head>
+<body>
+<header class="bar">
+  <span class="brand"><span class="mark">RE</span> OnTrak Engineer <span class="sub">/ genie cli</span></span>
+  <span class="pill" id="balance" hidden>credits <b>—</b></span>
+  <span class="pill" id="plan" hidden>—</span>
+  <span class="who" id="who">checking sign-in…</span>
+</header>
+
+<main>
+  <section class="terminal" aria-label="Genie CLI">
+    <div class="term-head">
+      <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>genie — rea toolkit</span>
+      <span class="spacer"></span>
+      <span id="state">ready</span>
+      <button id="clear" type="button" title="Clear the transcript (Ctrl+L)">clear</button>
+    </div>
+    <div id="out" role="log" aria-live="polite" aria-label="Output"></div>
+    <form class="prompt" id="form">
+      <span class="sigil" aria-hidden="true">❯</span>
+      <span class="host" id="host">genie</span>
+      <input id="input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
+             placeholder="describe a binary, an app or a firmware image — or ask what the agent can do" />
+      <button id="send" type="submit">run</button>
+      <button id="stop" type="button" class="stop" hidden>stop</button>
+    </form>
+  </section>
+</main>
+
+<div class="gate" id="gate" hidden>
+  <div class="card">
+    <h2 id="gate-title">Sign in to continue</h2>
+    <p id="gate-copy">This is a private console. Sign in with the family account to open it.</p>
+    <a id="gate-cta" href="/oauth2/sign_in?rd=%2F">Sign in</a>
+    <p id="gate-work" style="display:none"></p>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const out = $("out");
+  let controller = null;
+  let busy = false;
+  const history = [];
+  let historyAt = -1;
+
+  const line = (text, cls = "") => {
+    const el = document.createElement("div");
+    el.className = `line ${cls}`;
+    el.textContent = text;
+    out.appendChild(el);
+    out.scrollTop = out.scrollHeight;
+    return el;
+  };
+
+  const atBottom = () => out.scrollHeight - out.scrollTop - out.clientHeight < 40;
+
+  // A run id is what makes a retry free: the control plane deduplicates on it, so
+  // it is minted once per submitted line, not once per network attempt.
+  const newRunId = () =>
+    (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+
+  function banner(s) {
+    line(`genie 0.3.0 · ${s.name ?? "OnTrak Engineer"} · ${s.tagline ?? "reverse engineering, with the evidence"}`, "banner");
+    line("REA MCP attached · Ghidra 12.1.4 for native analysis · everything runs server-side", "sys");
+    line("type /help for commands · Ctrl+L clears · ↑/↓ recalls", "sys");
+    line("");
+  }
+
+  function gate(kind, s = {}) {
+    $("gate").hidden = false;
+    if (kind === "signin") {
+      $("gate-title").textContent = "Sign in to continue";
+      $("gate-copy").textContent = "This is a private console. Sign in with the family account to open it.";
+      $("gate-cta").textContent = "Sign in";
+      $("gate-cta").href = "/oauth2/sign_in?rd=" + encodeURIComponent("/");
+      $("gate-cta").className = "";
+      return;
+    }
+    if (kind === "credits") {
+      $("gate-title").textContent = `${s.name ?? "OnTrak Engineer"} is out of credits`;
+      $("gate-copy").textContent =
+        `${s.email ?? "this account"} has ${s.balance ?? 0} left, and a run costs ${s.creditsPerRun ?? 1}.`;
+      $("gate-cta").textContent = "Add credits";
+      $("gate-cta").href = s.subscribeUrl ?? "#";
+      return;
+    }
+    $("gate-title").textContent = "No subscription on this account";
+    $("gate-copy").textContent = s.error ?? `There is no ${s.name ?? "Engineer"} plan on this account yet.`;
+    $("gate-cta").textContent = "See the plans";
+    $("gate-cta").href = s.subscribeUrl ?? "#";
+  }
+
+  async function session() {
+    let response;
+    try {
+      response = await fetch("api/session", { headers: { accept: "application/json" } });
+    } catch {
+      $("who").textContent = "offline";
+      line("could not reach the console — check the connection and reload", "err");
+      return;
+    }
+    if (response.status === 401) {
+      $("who").textContent = "not signed in";
+      gate("signin");
+      return;
+    }
+    const s = await response.json().catch(() => ({}));
+    $("who").textContent = s.email ?? "signed in";
+    document.title = `${s.name ?? "OnTrak Engineer"} — Genie CLI`;
+    if (typeof s.balance === "number" || s.unlimited) {
+      $("balance").hidden = false;
+      $("balance").innerHTML = `credits <b>${s.unlimited ? "∞" : s.balance}</b>`;
+    }
+    if (s.entitlement?.metered) {
+      const state = s.entitlement.state;
+      $("plan").hidden = false;
+      $("plan").textContent = state === "entitled" ? "subscriber" : state;
+      $("plan").classList.toggle("bad", state !== "entitled");
+      if (state === "not_entitled") return gate("paywall", s);
+      if (state === "unknown") {
+        line("the subscription check is unavailable right now — runs will be refused until it answers", "warn");
+      }
+    }
+    if (s.allowed === false) {
+      $("plan").classList.add("bad");
+      gate("credits", s);
+    }
+    banner(s);
+  }
+
+  function approvalCard(event) {
+    const wrap = document.createElement("div");
+    wrap.className = "line warn";
+    wrap.textContent = `approval needed · ${event.name} — ${event.summary}`;
+    out.appendChild(wrap);
+    const row = document.createElement("div");
+    row.className = "line";
+    const yes = document.createElement("button");
+    yes.textContent = "approve";
+    const no = document.createElement("button");
+    no.textContent = "deny";
+    for (const button of [yes, no]) {
+      button.type = "button";
+      button.style.cssText =
+        "margin-right:8px;border:1px solid var(--line-bright);background:transparent;color:inherit;" +
+        "border-radius:7px;padding:3px 10px;font:12px var(--mono);cursor:pointer";
+    }
+    const decide = async (decision) => {
+      yes.disabled = no.disabled = true;
+      row.textContent = `${decision === "approve" ? "approved" : "denied"} — ${event.name}`;
+      row.className = "line sys";
+      try {
+        await fetch("api/approve", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: event.id, decision }),
+        });
+      } catch {
+        /* the turn will report its own timeout */
+      }
+    };
+    yes.addEventListener("click", () => decide("approve"));
+    no.addEventListener("click", () => decide("deny"));
+    row.append(yes, no);
+    out.appendChild(row);
+    out.scrollTop = out.scrollHeight;
+  }
+
+  async function run(message) {
+    if (busy || message.trim() === "") return;
+    const command = message.trim();
+    history.push(command);
+    historyAt = history.length;
+    line(command, "cmd");
+    out.appendChild(document.createElement("div")).className = "line";
+
+    const runId = newRunId();
+    controller = new AbortController();
+    busy = true;
+    $("send").disabled = true;
+    $("stop").hidden = false;
+    $("state").textContent = "running";
+
+    let answer = line("", "answer");
+    let wrote = false;
+
+    try {
+      const response = await fetch("api/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: command, runId }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        if (response.status === 401) gate("signin");
+        else if (response.status === 403) gate("paywall", body);
+        else if (response.status === 402) gate("credits", body);
+        line(body.error ?? `the run was refused (HTTP ${response.status})`, "err");
+        if (body.refunded) line("credit refunded — nothing ran", "sys");
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+        for (const frame of frames) {
+          const eventName = /^event:\s*(.+)$/m.exec(frame)?.[1]?.trim();
+          const data = frame.split("\n").filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim()).join("");
+          if (eventName === "error") {
+            let message = data;
+            try { message = JSON.parse(data).error ?? data; } catch { /* plain text */ }
+            line(message, "err");
+            continue;
+          }
+          if (data === "") continue;
+          let event;
+          try { event = JSON.parse(data); } catch { continue; }
+          if (event.type === "text") {
+            answer.textContent += event.text;
+            wrote = true;
+            if (atBottom()) out.scrollTop = out.scrollHeight;
+          } else if (event.type === "tool_call") {
+            if (answer.textContent === "") answer.remove();
+            line(`[tool] ${event.name}`, "tool");
+            answer = line("", "answer");
+          } else if (event.type === "tool_result") {
+            line(`[${event.ok ? "ok" : "fail"}] ${event.name}`, event.ok ? "sys" : "err");
+          } else if (event.type === "notice") {
+            line(event.text, "warn");
+          } else if (event.type === "error") {
+            line(event.message, "err");
+          } else if (event.type === "approval_request") {
+            if (answer.textContent === "") answer.remove();
+            approvalCard(event);
+            answer = line("", "answer");
+          } else if (event.type === "done") {
+            if (answer.textContent === "") answer.remove();
+            line(`— done in ${event.steps} step${event.steps === 1 ? "" : "s"}`, "sys");
+          }
+        }
+      }
+      if (answer.textContent === "") answer.remove();
+      if (!wrote) line("(no answer)", "sys");
+    } catch (error) {
+      if (error.name !== "AbortError") line(`stream failed: ${error.message}`, "err");
+      else line("stopped", "warn");
+    } finally {
+      controller = null;
+      busy = false;
+      $("send").disabled = false;
+      $("stop").hidden = true;
+      $("state").textContent = "ready";
+      $("input").focus();
+      session().catch(() => {});
+    }
+  }
+
+  $("form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const value = $("input").value;
+    $("input").value = "";
+    run(value);
+  });
+
+  $("input").addEventListener("keydown", (event) => {
+    if (event.key === "ArrowUp" && history.length > 0) {
+      event.preventDefault();
+      historyAt = Math.max(0, historyAt - 1);
+      $("input").value = history[historyAt] ?? "";
+    } else if (event.key === "ArrowDown") {
+      event.preventDefault();
+      historyAt = Math.min(history.length, historyAt + 1);
+      $("input").value = history[historyAt] ?? "";
+    } else if (event.key === "l" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      clear();
+    }
+  });
+
+  function clear() {
+    out.textContent = "";
+    const s = { name: "OnTrak Engineer", tagline: "reverse engineering, with the evidence" };
+    banner(s);
+  }
+  $("clear").addEventListener("click", clear);
+
+  $("stop").addEventListener("click", () => controller?.abort());
+
+  out.addEventListener("click", (event) => {
+    if (event.target.tagName === "BUTTON" && event.target.textContent === "Sign in") {
+      location.href = "/oauth2/sign_in?rd=%2F";
+    }
+  });
+
+  session().catch((error) => line(`could not start: ${error.message}`, "err"));
+  $("input").focus();
+</script>
+</body>
+</html>

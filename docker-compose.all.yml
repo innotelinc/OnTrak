@@ -972,7 +972,11 @@ services:
       # "Add more credits" button landed on a page that has no Engineer plan on it
       # at all — the offer was one redirect away from the person who needed it.
       SUBSCRIBE_URL: https://subscribe.genie.innotel.us
-      WORK_URL: https://genie.ontrak.innotel.us
+      # The console is `genie.innotel.us`; `genie.ontrak.innotel.us` was a second
+      # name for the same thing and has been retired. A link that 404s is worse
+      # than no link, especially from the page whose whole job is to hand somebody
+      # the agent.
+      WORK_URL: https://genie.innotel.us
     depends_on:
       - genie-app
     expose:
@@ -1113,7 +1117,11 @@ services:
       PRODUCT_NAME: Uncensored Godmode
       PRODUCT_TAGLINE: the agent with the guardrails off, one credit a run
       SUBSCRIBE_URL: https://subscribe.genie.innotel.us
-      WORK_URL: https://genie.ontrak.innotel.us
+      # The console is `genie.innotel.us`; `genie.ontrak.innotel.us` was a second
+      # name for the same thing and has been retired. A link that 404s is worse
+      # than no link, especially from the page whose whole job is to hand somebody
+      # the agent.
+      WORK_URL: https://genie.innotel.us
     depends_on:
       - genie-app
     expose:

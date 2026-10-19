@@ -32,8 +32,28 @@ import { entitlementFor } from "./entitlement.js";
 
 export const HEALTH_PATH = "/health";
 
-/** The one page this app serves, read once at start-up. */
-const PAGE = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+/**
+ * The pages this app serves, read once at start-up.
+ *
+ * One program, three surfaces, chosen by the product the instance is a front
+ * door of:
+ *
+ *   studio.html     G0DM0D3's own single-file interface, at `uc.genie.innotel.us`
+ *   engineer.html   the Genie CLI terminal, at `re.genie.innotel.us`
+ *   portal.html     the metered chat this app grew from, kept at `/metered`
+ *
+ * Reading them at start-up is deliberate: a page that is re-read per request
+ * can be half-written by a deploy while somebody is loading it, and none of
+ * these is large enough for holding it to matter.
+ */
+const PAGE = fs.readFileSync(new URL("../public/portal.html", import.meta.url), "utf8");
+const STUDIO = fs.readFileSync(new URL("../public/studio.html", import.meta.url), "utf8");
+const ENGINEER = fs.readFileSync(new URL("../public/engineer.html", import.meta.url), "utf8");
+
+/** Which document a product's front door opens. */
+function entryPage(config) {
+  return config.slug === "engineer" ? ENGINEER : STUDIO;
+}
 
 const MAX_MESSAGE = 8_000;
 const MAX_RUN_ID = 100;
@@ -117,6 +137,100 @@ export function identityOf(req, config) {
     if (email !== "") return email;
   }
   return null;
+}
+
+/**
+ * The page a request without an identity gets.
+ *
+ * Behind the SSO proxy this is unreachable in normal operation — the proxy
+ * answers first. It exists because \"unreachable in normal operation\" is the
+ * definition of a gate that is only a deployment assumption: a request that came
+ * around the proxy used to be handed the whole application, and the first thing
+ * it did was 401 its own session call. A page with one honest link is what that
+ * request gets now.
+ *
+ * No `WWW-Authenticate` header: this is a browser page, not a challenge for a
+ * password dialog to answer.
+ */
+function sendGate(res, req, status = 401) {
+  const target = req.url ?? "/";
+  const rd = encodeURIComponent(target.startsWith("/") ? target : "/");
+  res.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+  res.end(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — OnTrak</title>
+<style>
+  :root { color-scheme: dark light; }
+  body { margin: 0; min-height: 100dvh; display: grid; place-items: center;
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: radial-gradient(900px 600px at 20% -10%, #1d2a3a, transparent 60%), #0b0f14; color: #e8ecf3; }
+  main { width: min(430px, calc(100% - 32px)); padding: 30px;
+    border: 1px solid rgb(255 255 255 / 12%); border-radius: 20px;
+    background: rgb(20 26 34 / 78%); backdrop-filter: blur(20px) saturate(140%);
+    box-shadow: 0 30px 80px -30px rgb(0 0 0 / 80%); }
+  h1 { margin: 0 0 8px; font-size: 19px; }
+  p { margin: 0 0 16px; color: #9aa6b8; }
+  a { display: block; text-align: center; text-decoration: none; font-weight: 650;
+    background: #7c5cff; color: #fff; border-radius: 11px; padding: 11px 14px; }
+  .dim { margin: 14px 0 0; font-size: 12.5px; color: #707d90; }
+</style></head>
+<body><main>
+  <h1>Sign in to continue</h1>
+  <p>This console is behind the family's single sign-on. Nothing is served to a request without a session.</p>
+  <a href="/oauth2/sign_in?rd=${rd}">Sign in with OnTrak</a>
+  <p class="dim">You will come back to the page you asked for.</p>
+</main></body></html>`);
+}
+
+/**
+ * The page a signed-in account without a plan gets.
+ *
+ * The run endpoint has always answered a non-subscriber with 403 and a link to
+ * the plans; the page in front of it answered with the whole application. That
+ * made the portal free for anyone with an SSO account, because the studio brings
+ * its own model key and never calls this app's run route. A page is part of the
+ * product, so it is gated like one: the subscription is asked before a byte of
+ * the studio is served.
+ *
+ * An unaskable billing service is deliberately not a paywall. `unknown` gets 503
+ * and a reload, because telling a subscriber to buy what they already own during
+ * an outage is worse than telling them to try again.
+ */
+function sendPlanGate(res, config, entitlement, status = 403) {
+  const unknown = entitlement.state === "unknown";
+  const title = unknown ? "The subscription check is unavailable" : `No ${config.name} subscription`;
+  const copy = unknown
+    ? `This console could not ask billing whether ${config.name} is on this account. Nothing was changed; reload in a moment.`
+    : `${config.name} is sold as a subscription. This account does not have one yet, so the portal stays closed.`;
+  const cta = unknown
+    ? `<a href="">Reload</a>`
+    : `<a href="${config.subscribeUrl}">See the plans</a>`;
+  res.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+  res.end(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title} — OnTrak</title>
+<style>
+  :root { color-scheme: dark light; }
+  body { margin: 0; min-height: 100dvh; display: grid; place-items: center;
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: radial-gradient(900px 600px at 20% -10%, #1d2a3a, transparent 60%), #0b0f14; color: #e8ecf3; }
+  main { width: min(430px, calc(100% - 32px)); padding: 30px;
+    border: 1px solid rgb(255 255 255 / 12%); border-radius: 20px;
+    background: rgb(20 26 34 / 78%); backdrop-filter: blur(20px) saturate(140%);
+    box-shadow: 0 30px 80px -30px rgb(0 0 0 / 80%); }
+  h1 { margin: 0 0 8px; font-size: 19px; }
+  p { margin: 0 0 16px; color: #9aa6b8; }
+  a { display: block; text-align: center; text-decoration: none; font-weight: 650;
+    background: #7c5cff; color: #fff; border-radius: 11px; padding: 11px 14px; }
+  .dim { margin: 14px 0 0; font-size: 12.5px; color: #707d90; text-align: center; }
+  .dim a { display: inline; padding: 0; background: none; color: #9aa6b8; text-decoration: underline; font-weight: 450; }
+</style></head>
+<body><main>
+  <h1>${title}</h1>
+  <p>${copy}</p>
+  ${cta}
+  <p class="dim"><a href="${config.workUrl}">Back to Genie</a></p>
+</main></body></html>`);
 }
 
 function log(line) {
@@ -275,9 +389,50 @@ export function createServer(config = readConfig()) {
         if (url.pathname === HEALTH_PATH && method === "GET") {
           return sendJson(res, 200, { ok: true, product: config.product });
         }
-        if ((url.pathname === "/" || url.pathname === "/index.html") && method === "GET") {
+        /*
+         * The front door goes to `index.html`, and every door is gated.
+         *
+         *   /            -> 302 /index.html   (after the identity check)
+         *   /index.html  -> the product's own page
+         *   /studio      -> 302 /index.html   (the name G0DM0D3's docs use)
+         *   /metered     -> the credit meter this app grew from
+         *
+         * The redirect is not a decoration: "go to the index" is what the
+         * deployment asks for, and a 302 keeps one canonical document so a
+         * bookmark, a shared link and a cached page all resolve to the same URL.
+         */
+        if (method === "GET" && (url.pathname === "/" || url.pathname === "/studio")) {
+          if (identityOf(req, config) === null) return sendGate(res, req);
+          const query = url.search === "" ? "" : url.search;
+          res.writeHead(302, { location: `/index.html${query}`, "cache-control": "no-store" });
+          return res.end();
+        }
+        if (method === "GET" && (url.pathname === "/index.html" || url.pathname === "/metered")) {
+          const email = identityOf(req, config);
+          if (email === null) return sendGate(res, req);
+          /*
+           * The product's own page is subscription-gated; the metered console is
+           * not, because it is where an account without a plan is told about one
+           * and where it buys credits. Gating the page matters: the studio brings
+           * its own model key, so serving it to a non-subscriber would hand over
+           * the product without ever touching this app's run route.
+           */
+          if (url.pathname === "/index.html") {
+            const entitlement = await entitlementFor({ email, plan: config.slug });
+            if (entitlement.metered && entitlement.state !== "entitled") {
+              log({
+                event: "portal_subscription_required",
+                email,
+                plan: config.slug,
+                state: entitlement.state,
+                reason: entitlement.reason,
+              });
+              return sendPlanGate(res, config, entitlement, entitlement.state === "unknown" ? 503 : 403);
+            }
+          }
+          const page = url.pathname === "/metered" ? PAGE : entryPage(config);
           res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-          return res.end(PAGE);
+          return res.end(page);
         }
         if (url.pathname === "/api/session" && method === "GET") {
           const email = identityOf(req, config);
@@ -301,6 +456,38 @@ export function createServer(config = readConfig()) {
         }
         if (url.pathname === "/api/run" && method === "POST") {
           return await handleRun(req, res, config);
+        }
+        /*
+         * Approvals, relayed.
+         *
+         * A risky command stops until somebody answers, and the terminal is the
+         * somebody: without this route the engineer page could watch a turn ask
+         * for permission and have no way to give it. The decision is Genie's to
+         * record — this app only carries it there with the service bearer.
+         */
+        if (url.pathname === "/api/approve" && method === "POST") {
+          const email = identityOf(req, config);
+          if (email === null) return sendJson(res, 401, { error: "sign in to approve anything" });
+          const body = await readJson(req).catch(() => ({}));
+          const id = typeof body.id === "string" ? body.id.trim() : "";
+          const decision = body.decision === "approve" ? "approve" : body.decision === "deny" ? "deny" : "";
+          if (id === "" || decision === "") return sendJson(res, 400, { error: "id and decision are required" });
+          if (config.genieUrl === "") return sendJson(res, 503, { error: "GENIE_URL is unset on this deployment" });
+          try {
+            const upstream = await fetch(`${config.genieUrl}/api/approvals/${encodeURIComponent(id)}`, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                ...(config.genieToken === "" ? {} : { authorization: `Bearer ${config.genieToken}` }),
+                "x-genie-actor": email,
+              },
+              body: JSON.stringify({ decision }),
+            });
+            const answer = await upstream.json().catch(() => ({}));
+            return sendJson(res, upstream.status, answer);
+          } catch (error) {
+            return sendJson(res, 502, { error: `Genie is not answering: ${error.message}` });
+          }
         }
         return sendJson(res, 404, { error: "not found" });
       } catch (error) {

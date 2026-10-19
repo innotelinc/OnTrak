@@ -570,4 +570,46 @@ test("ports", async (t) => {
     // reach, so a request for any port has to produce a real one.
     assert.ok((await findFreePort(0)) > 0);
   });
+
+  await t.test("the console's own port is never handed to a preview", async () => {
+    // The collision this prevents is the one nobody sees until the pane is blank:
+    // the console and the app it is showing fighting over one listener. Both the
+    // console's `PORT` and the port a deployment may publish for the pane are
+    // reserved, so neither can be preferred or allocated.
+    for (const reserved of [3400, 5173]) {
+      const chosen = await findFreePort(reserved);
+      assert.notEqual(chosen, reserved, `${reserved} belongs to the console`);
+    }
+  });
+
+  await t.test("an allocated port is inside the published preview range", async () => {
+    // An OS-assigned ephemeral port is outside every published range, so a
+    // preview on one would be a preview nothing can open through the proxy.
+    const chosen = await findFreePort(0);
+    assert.ok(chosen >= 4000 && chosen <= 4999, `expected 4000-4999, got ${chosen}`);
+  });
+
+  await t.test("the port in the status is the port the app actually opened", async () => {
+    // A number outside the range and outside the common-port list, so only a real
+    // look at the process tree can find it. This is the "match the running port
+    // with the script" promise: the pane follows the socket, not a guess.
+    const probe = net.createServer();
+    const odd = await new Promise<number>((resolve) => {
+      probe.listen(0, "127.0.0.1", () => resolve((probe.address() as AddressInfo).port));
+    });
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+
+    await write(
+      "odd.js",
+      `require("node:http").createServer((req, res) => res.end("odd")).listen(${odd}, "127.0.0.1");\n`,
+    );
+    try {
+      const status = await startPreview({ command: "node odd.js" });
+      assert.equal(status.running, true, status.error ?? "the fixture should have started");
+      assert.equal(status.port, odd, "the reported port must be the one the app is on");
+      assert.equal(await portAnswers(odd), true);
+    } finally {
+      await stopPreview();
+    }
+  });
 });

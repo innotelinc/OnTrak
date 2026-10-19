@@ -293,8 +293,38 @@ async function waitForPortFree(port: number, timeoutMs = 2_000): Promise<void> {
   }
 }
 
-/** A free port, preferring the configured one so a project's usual URL keeps working. */
+/**
+ * Ports this console holds itself, which a preview must never take.
+ *
+ * `PORT` is the console's own listener. A preview handed that number collides
+ * with the process serving the console: the app either fails to bind (and the
+ * pane reports the *project* as broken) or, when the console listens on a
+ * wildcard address, shadows it from this process's point of view. Either way the
+ * preview window and the server it is embedded in are the same socket, which is
+ * exactly the collision this reservation prevents.
+ *
+ * `AGENT_PREVIEW_PORT` is the one number a deployment may publish for the preview
+ * pane, so it is reserved for the same reason: a project cannot be *the* preview
+ * if the console already answers on that port.
+ */
+function reservedPorts(): Set<number> {
+  return new Set(
+    [config.port, config.previewPort].filter((port) => Number.isInteger(port) && port > 0),
+  );
+}
+
+/**
+ * A unique free port for one preview, preferring the one it had last time.
+ *
+ * The preferred number is honoured only when it is both free *and* not one this
+ * console owns; otherwise the next free number in the configured preview range is
+ * used. The range matters: an OS-assigned ephemeral port is outside every
+ * published range, so a preview that landed on one would be a preview nobody
+ * could open through the proxy. Never asking for port zero is what guarantees the
+ * number handed back is one the pane can actually dial.
+ */
 export async function findFreePort(preferred: number): Promise<number> {
+  const reserved = reservedPorts();
   const free = async (port: number): Promise<boolean> =>
     await new Promise<boolean>((resolve) => {
       const server = net.createServer();
@@ -303,19 +333,87 @@ export async function findFreePort(preferred: number): Promise<number> {
       server.listen(port, previewDialHost());
     });
 
-  // Zero or less is "no preference", not port zero: handing that number back
-  // would ask the app to listen somewhere the proxy could never reach.
-  if (preferred > 0 && (await free(preferred))) return preferred;
-  // Ask the OS for one; the exact number does not matter, being reachable does.
-  return await new Promise<number>((resolve, reject) => {
-    const server = net.createServer();
-    server.once("error", reject);
-    server.listen(0, previewDialHost(), () => {
-      const address = server.address();
-      const port = typeof address === "object" && address !== null ? address.port : preferred;
-      server.close(() => resolve(port));
-    });
-  });
+  if (preferred > 0 && !reserved.has(preferred) && (await free(preferred))) return preferred;
+
+  for (let port = config.previewPortStart; port <= config.previewPortEnd; port += 1) {
+    if (reserved.has(port)) continue;
+    if (await free(port)) return port;
+  }
+  throw new Error(
+    `no free preview port in ${config.previewPortStart}-${config.previewPortEnd}`,
+  );
+}
+
+/**
+ * The TCP ports this process — and anything it spawned — is listening on.
+ *
+ * A dev server does not always honour `PORT`: Vite, Astro and friends take their
+ * port from a config file, and some tools start on their own default and only
+ * then consider the environment. Guessing a short list of common numbers (3000,
+ * 5173, 8080…) follows the usual cases and misses every unusual one, so the
+ * process tree is asked instead. `/proc` is the only source that answers "which
+ * socket does *this* command own" without extra tools, which is why the fallback
+ * to the common-port list still exists for systems without it.
+ */
+export function listeningPortsOf(pid: number): number[] {
+  if (process.platform !== "linux") return [];
+  const inodes = new Set<string>();
+  const pending = [pid];
+  const seen = new Set<number>();
+  while (pending.length > 0) {
+    const current = pending.shift()!;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    try {
+      for (const task of fs.readdirSync(`/proc/${current}/task`)) {
+        const children = fs.readFileSync(`/proc/${current}/task/${task}/children`, "utf8");
+        for (const child of children.trim().split(/\s+/)) {
+          if (child !== "") pending.push(Number(child));
+        }
+      }
+    } catch {
+      /* the process went away between the listing and the read */
+    }
+    try {
+      for (const fd of fs.readdirSync(`/proc/${current}/fd`)) {
+        try {
+          const target = fs.readlinkSync(`/proc/${current}/fd/${fd}`);
+          const match = /^socket:\[(\d+)\]$/.exec(target);
+          const inode = match?.[1];
+          if (inode !== undefined) inodes.add(inode);
+        } catch {
+          /* a descriptor closed while it was being read */
+        }
+      }
+    } catch {
+      /* no permission, or gone */
+    }
+  }
+  if (inodes.size === 0) return [];
+
+  const ports = new Set<number>();
+  for (const table of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    let text: string;
+    try {
+      text = fs.readFileSync(table, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split("\n").slice(1)) {
+      const columns = line.trim().split(/\s+/);
+      const state = columns[3];
+      const inode = columns[9];
+      const local = columns[1];
+      if (state === undefined || inode === undefined || local === undefined) continue;
+      // `0A` is TCP_LISTEN; anything else is a connection, not a door.
+      if (state !== "0A" || !inodes.has(inode)) continue;
+      const hex = local.split(":")[1];
+      if (hex === undefined) continue;
+      const port = Number.parseInt(hex, 16);
+      if (Number.isInteger(port) && port > 0) ports.add(port);
+    }
+  }
+  return [...ports];
 }
 
 function appendLog(entry: PreviewProcess, chunk: Buffer): void {
@@ -468,6 +566,13 @@ export async function startPreview(options: {
   const absCwd = resolveInWorkspace(runCwd);
   const port = await findFreePort(options.port ?? previous ?? config.previewPort);
 
+  // "Match the running port with the script": a command that names `{port}` gets
+  // the number this preview actually reserved, so the script and the window are
+  // the same socket instead of two numbers that happen to agree. `PORT` in the
+  // environment covers frameworks that read it; the token covers the ones that
+  // take a flag (`vite --port {port}`), which cannot be told any other way.
+  const commandLine = command.replace(/\{port\}/g, String(port));
+
   // What is already listening, before this start. Only a port that was silent
   // and then answers can be this command's — a port that answered all along
   // belongs to somebody else, and adopting it would show one account another's
@@ -477,7 +582,7 @@ export async function startPreview(options: {
   );
   const wasQuiet = new Set(before.filter(([, answers]) => !answers).map(([candidate]) => candidate));
 
-  const child = spawn("bash", ["-lc", command], {
+  const child = spawn("bash", ["-lc", commandLine], {
     cwd: absCwd,
     env: {
       ...process.env,
@@ -494,7 +599,7 @@ export async function startPreview(options: {
 
   const entry: PreviewProcess = {
     child,
-    command,
+    command: commandLine,
     cwd: runCwd,
     port,
     startedAt: new Date().toISOString(),
@@ -520,14 +625,38 @@ export async function startPreview(options: {
   const answeredOnPort = entry.exitCode === null && (await waitForAnswer(port, READY_GRACE_MS));
 
   if (entry.exitCode === null && !answeredOnPort) {
-    // It ignored PORT. Follow it to whichever quiet port it took instead.
-    for (const candidate of COMMON_PORTS) {
-      if (candidate === port || !wasQuiet.has(candidate)) continue;
-      if (await waitForAnswer(candidate, READY_PROBE_MS)) {
-        entry.port = candidate;
-        appendLog(entry, Buffer.from(`\n[preview] the app ignored PORT and is listening on ${candidate}.\n`));
-        break;
+    // It ignored PORT. Ask the process tree which socket it opened rather than
+    // guessing from a list of popular ports; a framework on 4321, 24678 or any
+    // number of its own is still this preview's app, and the pane has to dial it.
+    let adopted: number | null = null;
+    const deadline = Date.now() + READY_GRACE_MS;
+    while (entry.exitCode === null && adopted === null && Date.now() < deadline) {
+      const candidates = child.pid === undefined ? [] : listeningPortsOf(child.pid);
+      for (const candidate of candidates) {
+        if (candidate === port || candidate === config.port) continue;
+        if (await portAnswers(candidate, READY_PROBE_MS)) {
+          adopted = candidate;
+          break;
+        }
       }
+      if (adopted === null) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (adopted === null) {
+      // `/proc` unavailable (or no child pid): keep the old, coarser guess.
+      for (const candidate of COMMON_PORTS) {
+        if (candidate === port || !wasQuiet.has(candidate) || candidate === config.port) continue;
+        if (await waitForAnswer(candidate, READY_PROBE_MS)) {
+          adopted = candidate;
+          break;
+        }
+      }
+    }
+    if (adopted !== null) {
+      entry.port = adopted;
+      appendLog(
+        entry,
+        Buffer.from(`\n[preview] the app ignored PORT and is listening on ${adopted}; following it.\n`),
+      );
     }
   }
 

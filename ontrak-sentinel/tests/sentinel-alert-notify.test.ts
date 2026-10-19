@@ -25,7 +25,9 @@ import {
   HttpAlertNotifier,
   RecordingAlertNotifier,
   alertNotification,
+  notifyFloorFromEnv,
   notifierFromEnv,
+  severityAtLeast,
   type AlertNotification,
   type AlertNotifier,
   type NotifyOutcome,
@@ -83,7 +85,7 @@ function makeIds(tag: string, startMs: number): DetectionIds & { advance(ms: num
   };
 }
 
-async function harness(notifier: AlertNotifier | null) {
+async function harness(notifier: AlertNotifier | null, notifyFloor: string | null = null) {
   const audit = new OrganizationAuditLog(sha256);
   const entities = new MemoryIdentityStore();
   const store = new MemoryAlertStore();
@@ -101,6 +103,9 @@ async function harness(notifier: AlertNotifier | null) {
     sha256,
     null,
     notifier,
+    null,
+    undefined,
+    notifyFloor,
   );
 
   const created = await spine.bootstrapOrganization(
@@ -114,6 +119,21 @@ async function harness(notifier: AlertNotifier | null) {
   const actor: IdentityActor = { id: created.value.admin.id, organizationId, role: "ADMIN" };
   return { audit, store, detection, ids, spine, organizationId, actor };
 }
+
+/** A telnet egress: SG-SIG-001 fires at HIGH, which is below the default floor. */
+const telnetEgress = () => ({
+  kind: "NETWORK" as const,
+  source: "NETFLOW" as const,
+  at: AT,
+  sensor: "fw-1",
+  sourceAddress: "203.0.113.7",
+  sourcePort: 51234,
+  destinationAddress: "10.0.0.5",
+  destinationPort: 23,
+  protocol: "tcp",
+  direction: "OUTBOUND" as const,
+  attributes: {},
+});
 
 const authEvent = (outcome: string, at: number, sourceAddress = "203.0.113.7") => ({
   kind: "AUTH",
@@ -189,6 +209,53 @@ test("an alert is delivered once, when it is raised", async () => {
   const rows = notified(h.audit, h.organizationId, "guard.alert.notified");
   assert.equal(rows.length, 1);
   assert.equal((rows[0]?.detail as { transport?: string }).transport, "recording");
+});
+
+test("a HIGH alert is not mailed at the CRITICAL floor, and the skip is on the chain", async () => {
+  const notifier = new RecordingAlertNotifier();
+  const h = await harness(notifier, "CRITICAL");
+
+  const recorded = await h.detection.record(h.organizationId, [telnetEgress()]);
+  assert.equal(recorded.alerts.length, 1);
+  assert.equal(recorded.alerts[0]?.severity, "HIGH");
+
+  // The alert is still raised and still in the queue: a floor is about the mailbox,
+  // not about whether the detection happened.
+  assert.equal(notifier.delivered.length, 0);
+  const alerts = await h.detection.alerts(h.actor);
+  assert.ok(alerts.ok, alerts.ok ? "" : alerts.error);
+  assert.equal(alerts.value.length, 1);
+
+  const skipped = notified(h.audit, h.organizationId, "guard.alert.notify.skipped");
+  assert.equal(skipped.length, 1);
+  assert.equal((skipped[0]?.detail as { severity?: string }).severity, "HIGH");
+  assert.equal((skipped[0]?.detail as { floor?: string }).floor, "CRITICAL");
+  assert.equal(notified(h.audit, h.organizationId, "guard.alert.notified").length, 0);
+});
+
+test("a CRITICAL alert still travels at the CRITICAL floor", async () => {
+  const notifier = new RecordingAlertNotifier();
+  const h = await harness(notifier, "CRITICAL");
+
+  await h.detection.ingest(h.organizationId, "SYSLOG", credentialStuffing(), {
+    sensor: "idp-collector",
+  });
+
+  assert.equal(notifier.delivered.length, 1);
+  assert.equal(notified(h.audit, h.organizationId, "guard.alert.notified").length, 1);
+  assert.equal(notified(h.audit, h.organizationId, "guard.alert.notify.skipped").length, 0);
+});
+
+test("the delivery floor defaults to CRITICAL and ALL is the way back", () => {
+  assert.equal(notifyFloorFromEnv({}), "CRITICAL");
+  assert.equal(notifyFloorFromEnv({ SENTINEL_ALERT_NOTIFY_MIN_SEVERITY: "high" }), "HIGH");
+  assert.equal(notifyFloorFromEnv({ SENTINEL_ALERT_NOTIFY_MIN_SEVERITY: "ALL" }), null);
+  assert.equal(notifyFloorFromEnv({ SENTINEL_ALERT_NOTIFY_MIN_SEVERITY: "nonsense" }), "CRITICAL");
+  assert.equal(severityAtLeast("CRITICAL", "CRITICAL"), true);
+  assert.equal(severityAtLeast("HIGH", "CRITICAL"), false);
+  assert.equal(severityAtLeast("HIGH", "LOW"), true);
+  // An unknown severity sorts below LOW: a typo cannot page.
+  assert.equal(severityAtLeast("SEVERE", "LOW"), false);
 });
 
 test("a repeat refreshes the alert and does not deliver it again", async () => {
