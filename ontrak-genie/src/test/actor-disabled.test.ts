@@ -21,6 +21,20 @@ const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "actor-disabled-"));
 process.env.AGENT_WORKSPACE = path.join(scratch, "workspace");
 process.env.AGENT_DATA_DIR = path.join(scratch, ".agent");
 
+/*
+ * Run where no `.env` can be found.
+ *
+ * `config.ts` loads the repository's own `.env` at import (`process.loadEnvFile`),
+ * and in this deployment that file sets `TRUSTED_ACTOR_HEADER=1`. Without this, the
+ * file would measure the deployment instead of the fallback it exists to prove —
+ * which is exactly how it first failed, once the line was added to the env file.
+ */
+const home = process.cwd();
+process.chdir(scratch);
+process.on("exit", () => {
+  process.chdir(home);
+});
+
 let asked = 0;
 const plane = http.createServer((_req, res) => {
   asked += 1;
@@ -37,6 +51,7 @@ const { actorEnabled, actorSession } = await import("../actor.js");
 
 test.after(() => {
   plane.close();
+  process.chdir(home);
 });
 
 test("the switch is off by default", () => {
