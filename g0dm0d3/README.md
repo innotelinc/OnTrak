@@ -19,7 +19,8 @@ browser ──▶ oauth2-proxy ──▶ g0dm0d3 ──▶ Genie  /api/chat   (S
   hands the prompt to Genie. A second ledger here would eventually disagree with the
   first, and the second one is always the one that is wrong.
 * **Identity comes from the proxy, and only when the deployment says so.** The
-  signed-in address arrives as `x-auth-request-email` from oauth2-proxy. With
+  signed-in address arrives as `x-forwarded-email` from oauth2-proxy (it accepts
+  `x-auth-request-email` too, which is what an nginx `auth_request` deployment gets). With
   `G0DM0D3_TRUST_PROXY_HEADERS` unset every request is refused — a header anyone can
   set is not a login.
 * **The run id is the idempotency key.** A double-submit, a retried `fetch` or a

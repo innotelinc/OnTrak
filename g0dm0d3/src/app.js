@@ -93,15 +93,30 @@ async function readJson(req) {
 /**
  * Who is asking.
  *
- * `x-auth-request-email` is oauth2-proxy's answer, and the only identity this app
- * accepts. A request without one is not "anonymous with a free run": it is a caller
+ * oauth2-proxy is the only source of identity this app accepts, and which header
+ * carries it depends on how the proxy is wired — the two modes differ:
+ *
+ *   * `x-auth-request-email` is set when the proxy is nginx's `auth_request`
+ *     backend, where its answer travels as *response* headers back to nginx
+ *     (`--set-xauthrequest`);
+ *   * `x-forwarded-email` is what the proxy puts on the request it forwards when
+ *     it reverse-proxies the app itself (`--pass-user-headers`).
+ *
+ * Both consoles deploy the second shape. Reading only the first meant a signed-in
+ * person got a page that immediately 401'd on its own `/api/session`, which the
+ * browser showed as a sign-in loop.
+ *
+ * A request carrying neither is not "anonymous with a free run": it is a caller
  * that came around the proxy, and the answer is 401.
  */
 export function identityOf(req, config) {
   if (!config.trustProxyHeaders) return null;
-  const raw = req.headers["x-auth-request-email"];
-  const email = String(Array.isArray(raw) ? raw[0] : (raw ?? "")).trim().toLowerCase();
-  return email === "" ? null : email;
+  for (const name of ["x-auth-request-email", "x-forwarded-email"]) {
+    const raw = req.headers[name];
+    const email = String(Array.isArray(raw) ? raw[0] : (raw ?? "")).trim().toLowerCase();
+    if (email !== "") return email;
+  }
+  return null;
 }
 
 function log(line) {

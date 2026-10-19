@@ -1027,7 +1027,10 @@ services:
   # The family's products sign in themselves; this one cannot, because it is not a
   # product — it is a page in front of Genie. So the sign-in is a proxy: oauth2-proxy
   # authenticates the person against the same `ontrak` OIDC client the console and
-  # the portal use, and passes the address on in `x-auth-request-email`. That header
+  # the portal use, and passes the address on in `x-forwarded-email`
+  # (`--pass-user-headers`). `--set-xauthrequest` is not the one that reaches this
+  # app: it fills *response* headers, which is what nginx's auth_request mode
+  # reads. The app accepts either, but the forwarded one is what it gets here. That header
   # is why the app behind it trusts it: this container is the only way in.
   #
   # Gated by group, not by "has an account": G0DM0D3 runs an agent that reads and

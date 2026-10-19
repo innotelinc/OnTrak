@@ -149,6 +149,17 @@ test("a header is not a login when the deployment has not said to trust it", asy
   await new Promise((r) => strict.close(r));
 });
 
+test("the identity header the proxy actually forwards is accepted", async () => {
+  // --set-xauthrequest only fills response headers; what reaches this app from
+  // the reverse proxy is X-Forwarded-Email. Reading it is what makes a signed-in
+  // person a session instead of a sign-in loop.
+  const res = await fetch(`${base}/api/session`, {
+    headers: { "x-forwarded-email": "atheniq@innotel.us" },
+  });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).email, "atheniq@innotel.us");
+});
+
 test("the session shows the balance and the price before anything is spent", async () => {
   const res = await fetch(`${base}/api/session`, { headers });
   assert.equal(res.status, 200);
