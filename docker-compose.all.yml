@@ -966,7 +966,12 @@ services:
       G0DM0D3_PRODUCT: engineer
       PRODUCT_NAME: OnTrak Engineer
       PRODUCT_TAGLINE: reverse engineer a shipped application, with the evidence
-      SUBSCRIBE_URL: https://subscribe.ontrak.innotel.us
+      # The family page, not OnTrak's own: Engineer is sold as Genie credits, and
+      # `subscribe.genie.innotel.us` is the page that lists the Engineer plan
+      # ($5 a credit) beside the subdomain. Pointed at `subscribe.ontrak...` the
+      # "Add more credits" button landed on a page that has no Engineer plan on it
+      # at all — the offer was one redirect away from the person who needed it.
+      SUBSCRIBE_URL: https://subscribe.genie.innotel.us
       WORK_URL: https://genie.ontrak.innotel.us
     depends_on:
       - genie-app
