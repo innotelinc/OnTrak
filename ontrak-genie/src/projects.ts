@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { sandboxRoot, sessionsDir, setSelectedWorkspace } from "./scope.js";
+import { sandboxRoot, selectedWorkspace, sessionsDir, setSelectedWorkspace } from "./scope.js";
 import { isDirectory, resolveInBase } from "./workspace.js";
 
 /**
@@ -218,6 +218,144 @@ export async function createProject(options: CreateProjectOptions): Promise<Proj
 
   if (options.open === true) await setSelectedWorkspace(project.dir);
   return { ...project, path: abs, exists: true, active: options.open === true };
+}
+
+/**
+ * Directories never copied when an unprojected workspace becomes a project.
+ *
+ * A sandbox root is not always a project: a terminal session can leave loose
+ * files at the top of an account's slice. Turning that into a project means
+ * making a directory for it, and the one thing that must not be copied is the
+ * installed-dependencies tree — hundreds of megabytes this module can recreate
+ * from a lockfile, and a commit that would otherwise carry them.
+ */
+const COPY_SKIP = new Set(["node_modules", ".venv", ".cache", ".remotes", ".git"]);
+
+/**
+ * Copy an unprojected workspace into a directory made for it.
+ *
+ * Only the top level is walked here; `fs.cp` carries each entry down, filtered
+ * so no `node_modules` or virtualenv is copied from any depth. A file that cannot
+ * be read is left out rather than failing the adoption — the project is still a
+ * project, and the count of copied top-level entries is what the caller reports.
+ */
+async function copyWorkspaceInto(dest: string, base: string, destDir: string): Promise<number> {
+  let entries: string[];
+  try {
+    entries = await fs.readdir(base);
+  } catch {
+    return 0;
+  }
+  let copied = 0;
+  for (const entry of entries) {
+    if (entry === destDir || COPY_SKIP.has(entry)) continue;
+    try {
+      await fs.cp(path.join(base, entry), path.join(dest, entry), {
+        recursive: true,
+        force: false,
+        errorOnExist: false,
+        filter: (src) => {
+          const parts = path.relative(base, src).split(path.sep);
+          return parts[0] !== destDir && !parts.some((part) => COPY_SKIP.has(part));
+        },
+      });
+      copied += 1;
+    } catch {
+      /* an unreadable entry stays out of the project rather than failing it */
+    }
+  }
+  return copied;
+}
+
+export interface AdoptProjectOptions {
+  /** What to call it. May be empty when the directory is already a project. */
+  name: unknown;
+  description?: string;
+  /** Sandbox-relative directory. Defaults to the account's chosen one. */
+  dir?: unknown;
+  /** Make it the working directory once it is a project. */
+  open?: boolean;
+}
+
+export interface AdoptedProject extends ProjectView {
+  /** True when the directory was already in the registry. */
+  existing: boolean;
+  /** Top-level entries copied, when an unprojected root was adopted. */
+  copied: number;
+}
+
+/**
+ * Save a workspace as a project without moving it.
+ *
+ * A project is a name beside a directory, so "save this as a project" is either a
+ * registry row for a directory that already exists, or — when the workspace is
+ * the sandbox root, where a row may not point — a directory made for the work and
+ * copied into. Neither path invents a second store: the files stay the files.
+ *
+ * Re-adopting a directory that is already a project returns that project under
+ * its own name. That is what makes a ship button idempotent: pressing it again
+ * after more edits pushes the same project rather than failing on a name clash.
+ */
+export async function adoptProject(options: AdoptProjectOptions): Promise<AdoptedProject> {
+  const base = sandboxRoot();
+  const requested = typeof options.dir === "string" ? options.dir.trim().replace(/\\/g, "/") : "";
+  const rel = requested === "" ? selectedWorkspace() : requested.replace(/^\/+|\/+$/g, "");
+
+  let abs: string;
+  try {
+    abs = rel === "" ? base : resolveInBase(rel);
+  } catch {
+    throw new ProjectError("that directory is outside the workspace");
+  }
+  if (!(await isDirectory(abs))) throw new ProjectError("that directory is not in this workspace");
+
+  const rows = await readRegistry();
+  const byDir = rows.find((row) => path.join(base, row.dir) === abs);
+  if (byDir !== undefined) {
+    byDir.openedAt = new Date().toISOString();
+    await writeRegistry(rows);
+    if (options.open === true) await setSelectedWorkspace(byDir.dir);
+    return {
+      ...byDir,
+      path: abs,
+      exists: true,
+      active: options.open === true || selectedWorkspace() === byDir.dir,
+      existing: true,
+      copied: 0,
+    };
+  }
+
+  const name = normalizeProjectName(options.name);
+  if (rows.length >= MAX_PROJECTS) {
+    throw new ProjectError(`this account already has ${MAX_PROJECTS} projects`);
+  }
+  if (nameTaken(rows, name)) throw new ProjectError(`a project named "${name}" already exists`);
+
+  const relative = path.relative(base, abs).split(path.sep).join("/");
+  if (relative === "") {
+    // The root cannot be a project directory (a row may not be "."), so the work
+    // gets one of its own and is copied into it. This is the only case that
+    // duplicates bytes, and it is the case where there is nowhere else to point.
+    const project = await createProject({ name, description: options.description });
+    const copied = await copyWorkspaceInto(path.join(base, project.dir), base, project.dir);
+    if (options.open === true) await setSelectedWorkspace(project.dir);
+    return { ...project, active: options.open === true, existing: false, copied };
+  }
+
+  const now = new Date().toISOString();
+  const project: Project = {
+    id: crypto.randomUUID(),
+    name,
+    dir: relative,
+    description: normalizeDescription(options.description),
+    createdAt: now,
+    updatedAt: now,
+    openedAt: now,
+  };
+  rows.push(project);
+  await writeRegistry(rows);
+  if (options.open === true) await setSelectedWorkspace(project.dir);
+  return { ...project, path: abs, exists: true, active: options.open === true, existing: false, copied: 0 };
 }
 
 export interface UpdateProjectOptions {

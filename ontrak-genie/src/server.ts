@@ -106,6 +106,7 @@ import {
   ProjectArchiveError,
 } from "./project-archive.js";
 import { importZipProject } from "./project-zip.js";
+import { defaultShipTarget, shipProject, ShipError } from "./ship.js";
 import {
   detectProjectStack,
   installEnvironmentNotes,
@@ -1411,6 +1412,41 @@ async function handleApi(
    * and creates a *new* project from it: a name already in use gets a count, so
    * loading the same bundle twice is two projects rather than one overwritten.
    */
+  /*
+   * Ship: the terminal's one button.
+   *
+   * A terminal has no project list, so publishing from it would otherwise begin
+   * with a noun the caller does not have. This route makes the workspace that
+   * noun — adopt, then commit and push through the console's own publish path —
+   * and returns the project beside the repository so a page can say both things
+   * that happened.
+   */
+  if (pathname === "/api/ship" && method === "GET") {
+    // The project the workspace already is, if any: a terminal that has been
+    // shipped before should offer the same name rather than invent a second one.
+    const active = (await listProjects(selectedWorkspace())).find((row) => row.active) ?? null;
+    return sendJson(res, 200, {
+      target: defaultShipTarget(),
+      atlas: config.atlasUrl !== "",
+      github: config.gitToken !== "",
+      remote: config.remoteEnabled,
+      project: active === null ? null : { id: active.id, name: active.name, dir: active.dir },
+    });
+  }
+
+  if (pathname === "/api/ship" && method === "POST") {
+    const payload = await readJson(req, 64_000);
+    try {
+      return sendJson(res, 201, await shipProject(payload));
+    } catch (error) {
+      if (error instanceof ShipError) {
+        return sendJson(res, 400, { error: error.message, project: error.project });
+      }
+      if (error instanceof ProjectError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
   const projectExportMatch = /^\/api\/projects\/([^/]+)\/export$/.exec(pathname);
   if (projectExportMatch && method === "GET") {
     const id = decodeURIComponent(projectExportMatch[1] ?? "");
@@ -2551,7 +2587,14 @@ export function createServer(): http.Server {
          */
         if (url.pathname === "/preview" || url.pathname.startsWith("/preview/")) {
           if (!isAuthorized(req, url)) throw new HttpError(401, "unauthorized");
-          const previewScope = await scopeFor(sessionFrom(req));
+          /*
+           * The same caller the API sees, not only a browser session: OnTrak
+           * Engineer reaches this proxy with the service bearer and the address
+           * it acts for, and its preview is that account's preview. Asking for a
+           * session here alone made `/preview/` answer "sign in" to the one page
+           * that exists to embed it.
+           */
+          const previewScope = await scopeFor(await callerFor(req));
           if (!previewScope.ok) throw new HttpError(previewScope.status, previewScope.message);
           await runInScope(previewScope.scope, () => proxyPreview(req, res, url));
           return;
@@ -2566,7 +2609,7 @@ export function createServer(): http.Server {
          */
         if (previewPort() !== null) {
           if (!isAuthorized(req, url)) throw new HttpError(401, "unauthorized");
-          const appScope = await scopeFor(sessionFrom(req));
+          const appScope = await scopeFor(await callerFor(req));
           if (!appScope.ok) throw new HttpError(appScope.status, appScope.message);
           await runInScope(appScope.scope, () => proxyAppRoot(req, res, url));
           return;
@@ -2613,7 +2656,7 @@ export function createServer(): http.Server {
             duplex.destroy();
             return;
           }
-          const scope = await scopeFor(sessionFrom(req));
+          const scope = await scopeFor(await callerFor(req));
           if (!scope.ok) {
             duplex.destroy();
             return;

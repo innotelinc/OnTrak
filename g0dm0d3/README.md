@@ -41,6 +41,20 @@ browser ──▶ oauth2-proxy ──▶ g0dm0d3 ──▶ Genie  /api/chat   (S
 | `GET /api/session` | proxy | identity, balance, credits per run, price per credit |
 | `POST /api/run` | proxy + plan | `{message, runId, sessionId?}` → SSE, after one charge |
 | `POST /api/approve` | proxy | `{id, decision}` → Genie's approval route, with the service bearer |
+| `GET /api/preview` | proxy | Genie's preview status for the caller's workspace |
+| `POST /api/preview/start` | proxy | run the project's dev server (the command is Genie's to choose) |
+| `POST /api/preview/stop` | proxy | stop it |
+| `GET /preview/…` | proxy | the running app, byte for byte, on this origin |
+| `GET /api/ship` | proxy | where a ship can go, and the project this workspace already is |
+| `POST /api/ship` | proxy | `{name, target, message?}` → Genie adopts the workspace as a project, commits and pushes it |
+
+The preview is proxied rather than iframed from Genie: the app's own fetch, cookies
+and asset URLs then behave exactly as they will when it is deployed, and the pane
+needs no second host, port or certificate. A dev server's absolute runtime URLs
+(`/@vite/client`, `/_next/…`) are forwarded too, and its hot-reload socket with
+them. `GET /api/ship` and `POST /api/ship` are Genie's project and git work, not
+this app's: the terminal has files but no project noun, so the route adopts the
+workspace as a project and then uses the console's own publish path.
 
 `POST /api/run` answers, before any stream: `400` for a missing run id or message,
 `401` without an identity, `402` with `{balance}` when there are no credits, `403`
@@ -69,7 +83,7 @@ an unaskable billing service gets a reload, never a paywall — see
 ## Tests
 
 ```sh
-npm test          # 25 tests, no network: a fake plane and a fake Genie
+npm test          # 31 tests, no network: a fake plane and a fake Genie
 ```
 
 They pin the parts that are money: no identity means no run, no run id means no

@@ -401,3 +401,101 @@ test("a service account is subscribed by rule, and still runs", async () => {
   assert.equal(res.status, 200);
   assert.equal(charges.length, 1);
 });
+
+/*
+ * The app beside the terminal, and the button that leaves the machine.
+ *
+ * Both are the same shape as every other route here: identity comes from the
+ * proxy, and nothing reaches Genie without the service bearer and the address it
+ * acts for. The preview is bytes and the ship is one JSON call — this app parses
+ * neither, which is what lets the preview be whatever the project made.
+ */
+
+test("the preview status is Genie's, asked as the signed-in person", async () => {
+  genieReply = {
+    status: 200,
+    chunks: [JSON.stringify({ running: true, command: "npm run dev", cwd: ".", pending: false })],
+    headers: { "content-type": "application/json" },
+  };
+  const res = await fetch(`${base}/api/preview`, { headers });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).command, "npm run dev");
+  const call = genieCalls.at(-1);
+  assert.equal(call.path, "/api/preview");
+  assert.equal(call.auth, "Bearer genie-service-token");
+  assert.equal(call.actor, "atheniq@innotel.us");
+});
+
+test("starting a preview forwards the request, not a command of this app's own", async () => {
+  genieReply = {
+    status: 200,
+    chunks: [JSON.stringify({ running: true, command: "python3 -m http.server $PORT", pending: true })],
+    headers: { "content-type": "application/json" },
+  };
+  const res = await fetch(`${base}/api/preview/start`, { method: "POST", headers, body: JSON.stringify({}) });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).pending, true);
+  assert.equal(genieCalls.at(-1).path, "/api/preview/start");
+  assert.equal(genieCalls.at(-1).actor, "atheniq@innotel.us");
+});
+
+test("the running app is proxied unchanged under /preview/", async () => {
+  genieReply = {
+    status: 200,
+    chunks: ["<!doctype html><title>app</title>"],
+    headers: { "content-type": "text/html; charset=utf-8" },
+  };
+  const res = await fetch(`${base}/preview/`, { headers });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type"), /text\/html/);
+  assert.match(await res.text(), /<title>app<\/title>/);
+  assert.equal(genieCalls.at(-1).path, "/preview/");
+  assert.equal(genieCalls.at(-1).actor, "atheniq@innotel.us");
+});
+
+test("a preview without a proxy identity is the sign-in page, not the app", async () => {
+  genieReply = { status: 200, chunks: ["<html>secret</html>"], headers: { "content-type": "text/html" } };
+  const res = await fetch(`${base}/preview/`);
+  assert.equal(res.status, 401);
+  assert.doesNotMatch(await res.text(), /secret/);
+  assert.equal(genieCalls.length, 0, "nothing is asked of Genie for an anonymous preview");
+});
+
+test("ship saves the project, commits and pushes through Genie, and relays both halves", async () => {
+  genieReply = {
+    status: 201,
+    chunks: [
+      JSON.stringify({
+        project: { id: "p1", name: "disputebee", dir: "disputebee-abcd12", existing: true, copied: 0 },
+        publish: { repo: "a039/disputebee", url: "http://192.168.1.90:3004/a039/disputebee", branch: "main", commit: "abc123", files: 12 },
+      }),
+    ],
+    headers: { "content-type": "application/json" },
+  };
+  const res = await fetch(`${base}/api/ship`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name: "disputebee", target: "atlas", message: "Ship it" }),
+  });
+  assert.equal(res.status, 201);
+  const body = await res.json();
+  assert.equal(body.project.name, "disputebee");
+  assert.equal(body.publish.files, 12);
+
+  const call = genieCalls.at(-1);
+  assert.equal(call.path, "/api/ship");
+  assert.equal(call.body.name, "disputebee");
+  assert.equal(call.body.target, "atlas");
+  assert.equal(call.auth, "Bearer genie-service-token");
+  assert.equal(call.actor, "atheniq@innotel.us");
+});
+
+test("a ship without an identity never reaches Genie", async () => {
+  const res = await fetch(`${base}/api/ship`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "x", target: "atlas" }),
+  });
+  assert.equal(res.status, 401);
+  assert.equal(genieCalls.length, 0);
+});

@@ -19,6 +19,7 @@ process.env.AGENT_WORKSPACE = path.join(scratch, "workspace");
 process.env.AGENT_DATA_DIR = path.join(scratch, ".agent");
 
 const {
+  adoptProject,
   createProject,
   deleteProject,
   getProject,
@@ -138,5 +139,62 @@ test("the project registry", async (t) => {
     assert.equal(await deleteProject("not-a-project", true), false);
     assert.equal(await updateProject("not-a-project", { name: "x" }), null);
     assert.equal(await openProject("not-a-project"), null);
+  });
+});
+
+/*
+ * Saving a workspace that is not a project yet.
+ *
+ * The ship button's first half: a terminal has files but no project noun, and
+ * publishing needs one. Two shapes worth pinning — a chosen directory becomes a
+ * row without moving its files, and the sandbox root (which cannot be a row) is
+ * copied into a directory of its own. Re-adopting must reuse, not duplicate, or a
+ * second press of ship would fail on the name the first one just took.
+ */
+test("adopting a workspace as a project", async (t) => {
+  await t.beforeEach(async () => {
+    for (const project of await listProjects()) await deleteProject(project.id, true);
+    await setSelectedWorkspace("");
+    for (const entry of await fs.readdir(sandboxRoot())) {
+      await fs.rm(path.join(sandboxRoot(), entry), { recursive: true, force: true });
+    }
+  });
+
+  await t.test("a chosen directory becomes a row and keeps its files in place", async () => {
+    const dir = path.join(sandboxRoot(), "existing-work");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "index.html"), "<h1>still here</h1>\n");
+    await setSelectedWorkspace("existing-work");
+
+    const adopted = await adoptProject({ name: "Existing Work", open: true });
+    assert.equal(adopted.dir, "existing-work");
+    assert.equal(adopted.existing, false);
+    assert.equal(selectedWorkspace(), "existing-work", "the project is the working directory");
+    assert.equal(await fs.readFile(path.join(dir, "index.html"), "utf8"), "<h1>still here</h1>\n");
+    assert.equal((await listProjects()).length, 1);
+  });
+
+  await t.test("adopting the same directory again reuses the project, even unnamed", async () => {
+    await fs.mkdir(path.join(sandboxRoot(), "twice"), { recursive: true });
+    await setSelectedWorkspace("twice");
+    const first = await adoptProject({ name: "Twice" });
+
+    const again = await adoptProject({ name: undefined });
+    assert.equal(again.id, first.id);
+    assert.equal(again.existing, true);
+    assert.equal((await listProjects()).length, 1, "a second press is a push, not a second project");
+  });
+
+  await t.test("the sandbox root is copied into a project of its own", async () => {
+    await fs.writeFile(path.join(sandboxRoot(), "notes.md"), "root work\n");
+    await fs.mkdir(path.join(sandboxRoot(), "node_modules", "left-pad"), { recursive: true });
+    await fs.writeFile(path.join(sandboxRoot(), "node_modules", "left-pad", "index.js"), "module.exports = 1;\n");
+
+    const adopted = await adoptProject({ name: "Root Work", open: true });
+    assert.notEqual(adopted.dir, "", "a row may not point at the sandbox itself");
+    assert.equal(adopted.copied, 1, "the loose file was copied and node_modules was not");
+    assert.equal(await fs.readFile(path.join(sandboxRoot(), adopted.dir, "notes.md"), "utf8"), "root work\n");
+    await assert.rejects(() => fs.stat(path.join(sandboxRoot(), adopted.dir, "node_modules")));
+    assert.equal(selectedWorkspace(), adopted.dir);
   });
 });

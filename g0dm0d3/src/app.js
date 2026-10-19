@@ -27,6 +27,8 @@
 
 import fs from "node:fs";
 import http from "node:http";
+import net from "node:net";
+import tls from "node:tls";
 import { CreditError, creditStatus, refund, spend } from "./credits.js";
 import { entitlementFor } from "./entitlement.js";
 
@@ -248,6 +250,124 @@ function log(line) {
 }
 
 /**
+ * A path that belongs to the running app rather than to this console.
+ *
+ * The preview pane is iframed under `/preview/`, and the console rewrites the
+ * document's root-relative URLs. What it cannot rewrite is a URL a bundle builds
+ * at runtime (`/@vite/client`, `/_next/webpack-hmr`, a dynamic import). Those
+ * arrive at this origin's root, so they are forwarded to Genie — which forwards
+ * them to the app — instead of being answered with this app's 404.
+ *
+ * Deliberately narrow: a path with a file extension, or one under a framework's
+ * own prefix. Everything else stays this console's namespace, including its 404.
+ */
+function looksLikePreviewAsset(pathname) {
+  if (/^\/(?:@|_next\/|assets?\/|static\/|src\/|node_modules\/|public\/)/.test(pathname)) return true;
+  return /\.[a-z0-9]{1,8}$/i.test(pathname);
+}
+
+/** The headers every call to Genie carries, whoever made it. */
+function genieHeaders(req, config, email) {
+  return {
+    ...(config.genieToken === "" ? {} : { authorization: `Bearer ${config.genieToken}` }),
+    "x-genie-actor": email,
+    ...(req.headers["content-type"] === undefined ? {} : { "content-type": req.headers["content-type"] }),
+    accept: req.headers.accept ?? "*/*",
+  };
+}
+
+/** Just enough of a response to be the response: type, caching, redirects. */
+const RELAYED_HEADERS = ["content-type", "cache-control", "location", "etag", "last-modified", "content-disposition"];
+
+/**
+ * Forward one request to Genie, unchanged, as the signed-in person.
+ *
+ * No body is parsed on the way through. A preview document, an image, a project
+ * bundle and a ship request are all just bytes to this app; parsing them would be
+ * a second implementation of somebody else's format, and the preview is the one
+ * place where the content type is whatever the project decided it is.
+ */
+async function forwardToGenie(req, res, config, email, pathAndQuery, timeoutMs = 60_000) {
+  if (config.genieUrl === "") return sendJson(res, 503, { error: "GENIE_URL is unset on this deployment", retryable: true });
+
+  let upstream;
+  try {
+    upstream = await fetch(`${config.genieUrl}${pathAndQuery}`, {
+      method: req.method,
+      headers: genieHeaders(req, config, email),
+      ...(req.method === "GET" || req.method === "HEAD" ? {} : { body: req, duplex: "half" }),
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    return sendJson(res, 502, { error: `Genie is not answering: ${error.message}`, retryable: true });
+  }
+
+  const headers = {};
+  for (const name of RELAYED_HEADERS) {
+    const value = upstream.headers.get(name);
+    if (value !== null) headers[name] = value;
+  }
+  res.writeHead(upstream.status, { ...headers, "cache-control": headers["cache-control"] ?? "no-store" });
+  if (upstream.body === null) return res.end();
+  try {
+    for await (const chunk of upstream.body) res.write(chunk);
+  } finally {
+    res.end();
+  }
+}
+
+/**
+ * The preview's own socket.
+ *
+ * A dev server's hot reload is a WebSocket at an absolute path on this origin,
+ * and a proxy that does not carry the upgrade leaves the app in a reconnect loop
+ * that looks like a bug in the app. The two sockets are one pipe once the
+ * handshake is written, exactly as Genie's own proxy does it.
+ */
+function attachPreviewUpgrade(server, config) {
+  server.on("upgrade", (req, socket, head) => {
+    const email = identityOf(req, config);
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const previewPath = url.pathname === "/preview" || url.pathname.startsWith("/preview/");
+    if (email === null || config.genieUrl === "" || !(previewPath || looksLikePreviewAsset(url.pathname))) {
+      socket.destroy();
+      return;
+    }
+
+    let target;
+    try {
+      target = new URL(config.genieUrl);
+    } catch {
+      socket.destroy();
+      return;
+    }
+    const secure = target.protocol === "https:";
+    const port = Number(target.port === "" ? (secure ? 443 : 80) : target.port);
+    const upstream = secure
+      ? tls.connect({ host: target.hostname, port, servername: target.hostname }, onConnect)
+      : net.connect({ host: target.hostname, port }, onConnect);
+
+    function onConnect() {
+      const headers = { ...req.headers, ...genieHeaders(req, config, email), host: target.host };
+      const lines = [`GET ${url.pathname}${url.search} HTTP/1.1`];
+      for (const [name, value] of Object.entries(headers)) {
+        if (value === undefined) continue;
+        lines.push(`${name}: ${Array.isArray(value) ? value.join(", ") : value}`);
+      }
+      upstream.write(`${lines.join("\r\n")}\r\n\r\n`);
+      if (head.length > 0) upstream.write(head);
+      socket.pipe(upstream);
+      upstream.pipe(socket);
+    }
+
+    upstream.on("error", () => socket.destroy());
+    socket.on("error", () => upstream.destroy());
+    socket.on("close", () => upstream.destroy());
+  });
+}
+
+/**
  * The run itself: charge, ask Genie, relay.
  *
  * Everything before the first upstream byte can still be refused cleanly with a
@@ -389,7 +509,7 @@ async function handleRun(req, res, config) {
 }
 
 export function createServer(config = readConfig()) {
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       const method = req.method ?? "GET";
@@ -465,6 +585,59 @@ export function createServer(config = readConfig()) {
         if (url.pathname === "/api/run" && method === "POST") {
           return await handleRun(req, res, config);
         }
+
+        /*
+         * The app, running, beside the terminal.
+         *
+         * Three calls and a byte pipe. The status is polled rather than pushed
+         * because it is one small JSON answer and the pane only needs to know
+         * when to show the frame; the app itself, once it is up, is proxied
+         * unchanged under `/preview/` so its own fetch, cookies and asset URLs
+         * behave exactly as they will when it is deployed. Identity comes from
+         * the proxy, as everywhere else, and is forwarded as `x-genie-actor` so
+         * the preview belongs to the same account as the turn that wrote it.
+         */
+        if (url.pathname === "/api/preview" && method === "GET") {
+          const email = identityOf(req, config);
+          if (email === null) return sendJson(res, 401, { error: "sign in to see a preview" });
+          return await forwardToGenie(req, res, config, email, "/api/preview");
+        }
+        if ((url.pathname === "/api/preview/start" || url.pathname === "/api/preview/stop") && method === "POST") {
+          const email = identityOf(req, config);
+          if (email === null) return sendJson(res, 401, { error: "sign in to run a preview" });
+          return await forwardToGenie(req, res, config, email, url.pathname, 90_000);
+        }
+
+        /*
+         * Ship: save this workspace as a project in Genie, commit, push.
+         *
+         * The work is Genie's, and so is the git: this app only carries the one
+         * request there with the service bearer and the address it acts for. A
+         * project that was created before a push that failed is in the error's
+         * `project`, because "saved but not pushed" is a real outcome a person
+         * needs the name of.
+         */
+        if (url.pathname === "/api/ship" && method === "GET") {
+          const email = identityOf(req, config);
+          if (email === null) return sendJson(res, 401, { error: "sign in to ship anything" });
+          return await forwardToGenie(req, res, config, email, "/api/ship");
+        }
+        if (url.pathname === "/api/ship" && method === "POST") {
+          const email = identityOf(req, config);
+          if (email === null) return sendJson(res, 401, { error: "sign in to ship anything" });
+          return await forwardToGenie(req, res, config, email, "/api/ship", 180_000);
+        }
+
+        /*
+         * The running app's bytes. `/preview/foo` is `/foo` to Genie's preview
+         * proxy, and Genie rewrites the document's root-relative URLs back under
+         * `/preview/`, so both ends agree on where the app lives.
+         */
+        if (url.pathname === "/preview" || url.pathname.startsWith("/preview/")) {
+          const email = identityOf(req, config);
+          if (email === null) return sendGate(res, req);
+          return await forwardToGenie(req, res, config, email, `${url.pathname}${url.search}`);
+        }
         /*
          * Approvals, relayed.
          *
@@ -497,6 +670,17 @@ export function createServer(config = readConfig()) {
             return sendJson(res, 502, { error: `Genie is not answering: ${error.message}` });
           }
         }
+        /*
+         * Last, and only for a path that belongs to the app: a bundle's runtime
+         * URL, a favicon, a dynamic import. The console's own routes are a closed
+         * set and are matched above, so what reaches here is the preview's
+         * namespace — and a preview that renders is the whole point of the pane.
+         */
+        if ((method === "GET" || method === "HEAD") && looksLikePreviewAsset(url.pathname)) {
+          const email = identityOf(req, config);
+          if (email === null) return sendGate(res, req);
+          return await forwardToGenie(req, res, config, email, `${url.pathname}${url.search}`);
+        }
         return sendJson(res, 404, { error: "not found" });
       } catch (error) {
         const status = error instanceof CreditError ? 503 : 500;
@@ -505,6 +689,9 @@ export function createServer(config = readConfig()) {
       }
     })();
   });
+
+  attachPreviewUpgrade(server, config);
+  return server;
 }
 
 /* Started only when this file is the entry point, so a test can import it. */

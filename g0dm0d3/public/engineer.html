@@ -76,6 +76,16 @@
   }
   .brand .sub { color: var(--faint); font-weight: 450; font-size: 12px; }
   .bar .who { margin-left: auto; color: var(--dim); font-size: 12px; }
+  .bar .push { margin-left: 4px; }
+  .btn-ship {
+    border: 1px solid color-mix(in srgb, var(--brand) 55%, transparent);
+    background: color-mix(in srgb, var(--brand) 22%, transparent);
+    color: var(--brand); border-radius: 9px;
+    font: 650 12px/1 var(--sans); padding: 8px 14px; cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-ship:hover { background: color-mix(in srgb, var(--brand) 32%, transparent); }
+  .btn-ship:disabled { opacity: .55; cursor: progress; }
   .pill {
     border: 1px solid var(--line); border-radius: 999px;
     padding: 4px 11px; font: 500 12px/1.2 var(--mono); color: var(--dim);
@@ -85,15 +95,21 @@
   .pill b { color: var(--ink); }
   .pill.bad { border-color: color-mix(in srgb, var(--bad) 50%, transparent); color: var(--bad); }
 
-  /* ── the terminal ────────────────────────────────────────────────────── */
-  main { padding: 18px; min-height: 0; display: flex; }
-  .terminal {
-    flex: 1;
+  /* ── the terminal, and the app beside it ─────────────────────────────── */
+  main.work {
+    padding: 18px;
     min-height: 0;
     display: grid;
-    grid-template-rows: auto 1fr auto;
-    max-width: 1080px;
+    grid-template-columns: minmax(0, 1fr) minmax(340px, 0.82fr);
+    gap: 14px;
+    width: 100%;
+    max-width: 1720px;
     margin: 0 auto;
+  }
+  .terminal {
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto auto 1fr auto;
     width: 100%;
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -122,6 +138,38 @@
     padding: 4px 9px; cursor: pointer;
   }
   .term-head button:hover { color: var(--ink); border-color: var(--line-bright); }
+
+  /*
+   * The turn, while it happens.
+   *
+   * A terminal that only prints an answer when the turn is over is a terminal a
+   * person cannot tell from a hung one. This row says what the agent is doing —
+   * thinking, which tool, which step — and how long it has been doing it, from
+   * the first event rather than after the last.
+   */
+  .progress {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--brand) 6%, transparent);
+    font: 11.5px/1.4 var(--mono); color: var(--dim);
+    min-height: 34px;
+  }
+  .progress[hidden] { display: none; }
+  .progress .spinner {
+    width: 12px; height: 12px; flex: none;
+    border: 2px solid color-mix(in srgb, var(--brand) 28%, transparent);
+    border-top-color: var(--brand);
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  .progress.waiting .spinner { animation: none; border-top-color: var(--warn); }
+  .progress.done .spinner { animation: none; border-color: var(--ok); }
+  .progress .label { color: var(--ink); }
+  .progress .label b { color: var(--brand); font-weight: 600; }
+  .progress .elapsed { margin-left: auto; color: var(--faint); font-variant-numeric: tabular-nums; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .progress .spinner { animation-duration: 2.4s; } }
 
   #out {
     overflow-y: auto;
@@ -170,6 +218,113 @@
     color: var(--bad);
   }
 
+  /* ── the app, on the right ───────────────────────────────────────────── */
+  .preview {
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--glass);
+    backdrop-filter: blur(22px) saturate(140%);
+    -webkit-backdrop-filter: blur(22px) saturate(140%);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 8%) inset, 0 28px 70px -34px rgb(0 0 0 / 80%);
+    overflow: hidden;
+  }
+  .pv-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--ink) 4%, transparent);
+    font: 11.5px/1.4 var(--mono); color: var(--dim);
+    min-width: 0;
+  }
+  .pv-dot {
+    width: 8px; height: 8px; flex: none; border-radius: 50%;
+    background: var(--faint);
+  }
+  .pv-dot.live { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); }
+  .pv-dot.starting { background: var(--warn); }
+  .pv-dot.bad { background: var(--bad); }
+  .pv-title { color: var(--ink); font-weight: 600; white-space: nowrap; }
+  .pv-state {
+    color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .pv-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
+  .pv-actions button, .pv-actions a {
+    font: inherit; color: var(--dim); background: transparent;
+    border: 1px solid var(--line); border-radius: 7px;
+    padding: 3px 8px; cursor: pointer; text-decoration: none;
+  }
+  .pv-actions button:hover, .pv-actions a:hover { color: var(--ink); border-color: var(--line-bright); }
+  .pv-actions button:disabled { opacity: .5; cursor: progress; }
+  .pv-body { position: relative; min-height: 0; background: #fff; }
+  .pv-body.dark { background: #0b0f14; }
+  .pv-empty {
+    position: absolute; inset: 0;
+    display: grid; align-content: center; justify-items: center; gap: 6px;
+    padding: 24px; text-align: center;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    color: var(--dim); font-size: 13px;
+  }
+  .pv-empty[hidden] { display: none; }
+  .pv-empty strong { color: var(--ink); font-weight: 600; }
+  #pv-frame { width: 100%; height: 100%; border: 0; background: #fff; display: block; }
+  #pv-frame[hidden] { display: none; }
+  #pv-log {
+    position: absolute; inset: auto 0 0 0; max-height: 45%; overflow: auto; margin: 0;
+    padding: 10px 12px; background: var(--glass-strong);
+    font: 11px/1.5 var(--mono); color: var(--dim); white-space: pre-wrap;
+  }
+  #pv-log[hidden] { display: none; }
+  .pv-foot {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px; border-top: 1px solid var(--line);
+    font: 11px/1.4 var(--mono); color: var(--faint);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* ── ship ────────────────────────────────────────────────────────────── */
+  .sheet {
+    position: fixed; inset: 0; z-index: 25;
+    display: grid; place-items: center; padding: 24px;
+    background: rgb(6 8 12 / 72%);
+    backdrop-filter: blur(10px);
+  }
+  .sheet[hidden] { display: none; }
+  .sheet form {
+    width: min(470px, 100%);
+    border: 1px solid var(--line); border-radius: 20px;
+    background: var(--glass-strong);
+    box-shadow: 0 30px 80px -30px rgb(0 0 0 / 85%);
+    padding: 24px; display: grid; gap: 12px;
+  }
+  .sheet h2 { margin: 0; font-size: 18px; }
+  .sheet p { margin: 0; color: var(--dim); font-size: 13px; }
+  .sheet label { display: grid; gap: 5px; font: 11.5px/1.4 var(--mono); color: var(--faint); }
+  .sheet label.check { display: flex; align-items: center; gap: 8px; color: var(--dim); }
+  .sheet input[type=text], .sheet input[type=password], .sheet select {
+    width: 100%; background: var(--bg); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 9px;
+    padding: 9px 10px; font: 13px/1.4 var(--mono); outline: none;
+  }
+  .sheet input:focus, .sheet select:focus { border-color: color-mix(in srgb, var(--brand) 55%, transparent); }
+  .sheet .ship-status { min-height: 18px; font: 12px/1.5 var(--mono); color: var(--dim); }
+  .sheet .ship-status.bad { color: var(--bad); }
+  .sheet .ship-status.good { color: var(--ok); }
+  .ship-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+  .ship-actions button {
+    font: 600 12.5px/1 var(--sans); padding: 9px 14px; border-radius: 9px; cursor: pointer;
+    border: 1px solid var(--line); background: transparent; color: var(--dim);
+  }
+  .ship-actions button[type=submit] {
+    border-color: color-mix(in srgb, var(--brand) 55%, transparent);
+    background: color-mix(in srgb, var(--brand) 20%, transparent);
+    color: var(--brand);
+  }
+  .ship-actions button:disabled { opacity: .55; cursor: progress; }
+
   /* ── the gate ────────────────────────────────────────────────────────── */
   .gate {
     position: fixed; inset: 0; z-index: 20;
@@ -195,11 +350,29 @@
   }
   .gate a.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
 
+  @media (max-width: 1180px) {
+    /*
+     * One column: the terminal first, because it is what is being driven, and the
+     * app below it at a height that is still worth looking at. The pane keeps its
+     * own header, so "run" and "reload" stay one tap away when it is off-screen.
+     */
+    main.work { grid-template-columns: minmax(0, 1fr); }
+    .work .terminal { min-height: 62vh; }
+    .preview { min-height: 46vh; }
+  }
+
   @media (max-width: 720px) {
-    main { padding: 10px; }
+    main.work { padding: 10px; gap: 10px; }
     header.bar { padding: 10px 12px; flex-wrap: wrap; row-gap: 8px; }
     .bar .who { margin-left: 0; }
+    .bar .push { margin-left: auto; }
     .terminal { border-radius: 14px; }
+    .pv-head { padding: 8px 9px; gap: 6px; }
+    .pv-actions button, .pv-actions a { padding: 3px 6px; }
+    .preview { border-radius: 14px; min-height: 52vh; }
+    .progress { padding: 7px 10px; }
+    .sheet { padding: 12px; }
+    .sheet form { padding: 18px; }
   }
 </style>
 </head>
@@ -209,9 +382,10 @@
   <span class="pill" id="balance" hidden>credits <b>—</b></span>
   <span class="pill" id="plan" hidden>—</span>
   <span class="who" id="who">checking sign-in…</span>
+  <span class="push"><button class="btn-ship" id="ship" type="button" title="Save this workspace as a project in Genie, commit it, and push it">ship</button></span>
 </header>
 
-<main>
+<main class="work">
   <section class="terminal" aria-label="Genie CLI">
     <div class="term-head">
       <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -219,6 +393,11 @@
       <span class="spacer"></span>
       <span id="state">ready</span>
       <button id="clear" type="button" title="Clear the transcript (Ctrl+L)">clear</button>
+    </div>
+    <div class="progress" id="progress" hidden aria-live="polite">
+      <span class="spinner" aria-hidden="true"></span>
+      <span class="label" id="progress-label">thinking…</span>
+      <span class="elapsed" id="progress-elapsed">0:00</span>
     </div>
     <div id="out" role="log" aria-live="polite" aria-label="Output"></div>
     <form class="prompt" id="form">
@@ -230,7 +409,59 @@
       <button id="stop" type="button" class="stop" hidden>stop</button>
     </form>
   </section>
+
+  <aside class="preview" id="preview" aria-label="App preview">
+    <div class="pv-head">
+      <span class="pv-dot" id="pv-dot" aria-hidden="true"></span>
+      <span class="pv-title">preview</span>
+      <span class="pv-state" id="pv-state" role="status">checking…</span>
+      <div class="pv-actions">
+        <button id="pv-run" type="button" title="Start the project and show it here">run</button>
+        <button id="pv-reload" type="button" title="Reload the app">reload</button>
+        <button id="pv-stop" type="button" title="Stop the app" hidden>stop</button>
+        <button id="pv-log-toggle" type="button" title="Show the app's output">log</button>
+        <a id="pv-open" href="/preview/" target="_blank" rel="noreferrer" title="Open the app in a tab" hidden>open</a>
+      </div>
+    </div>
+    <div class="pv-body" id="pv-body">
+      <div class="pv-empty" id="pv-empty">
+        <strong>Nothing running yet</strong>
+        <span>Ask Genie to build something, then press run. The app appears here.</span>
+      </div>
+      <iframe id="pv-frame" title="The app, running" src="about:blank" hidden></iframe>
+      <pre id="pv-log" tabindex="0" hidden></pre>
+    </div>
+    <div class="pv-foot"><span id="pv-cmd">no app has been started</span></div>
+  </aside>
 </main>
+
+<div class="sheet" id="ship-sheet" hidden>
+  <form id="ship-form" aria-labelledby="ship-title">
+    <h2 id="ship-title">Ship this project</h2>
+    <p id="ship-note">Save the workspace as a project in Genie, commit it, and push it to a repository.</p>
+    <label>project name
+      <input id="ship-name" type="text" maxlength="64" required autocomplete="off" />
+    </label>
+    <label>repository
+      <select id="ship-target">
+        <option value="atlas">Atlas</option>
+        <option value="github">GitHub</option>
+      </select>
+    </label>
+    <label id="ship-token-row" hidden>github token
+      <input id="ship-token" type="password" autocomplete="off" spellcheck="false" />
+    </label>
+    <label>commit message
+      <input id="ship-message" type="text" maxlength="200" value="Shipped from OnTrak Engineer" />
+    </label>
+    <label class="check"><input id="ship-private" type="checkbox" checked /> private repository</label>
+    <p class="ship-status" id="ship-status" role="status"></p>
+    <div class="ship-actions">
+      <button type="button" id="ship-cancel">cancel</button>
+      <button type="submit" id="ship-go">save, commit, push</button>
+    </div>
+  </form>
+</div>
 
 <div class="gate" id="gate" hidden>
   <div class="card">
@@ -270,6 +501,300 @@
     line("REA MCP attached · Ghidra 12.1.4 for native analysis · everything runs server-side", "sys");
     line("type /help for commands · Ctrl+L clears · ↑/↓ recalls", "sys");
     line("");
+  }
+
+  /*
+   * What the turn is doing, while it does it.
+   *
+   * Genie emits `step`, `tool_call`, `tool_result`, `text` and `done` as the turn
+   * runs; the terminal used to read only the text, so a long analysis looked like
+   * a hung prompt. The row under the title bar is the same events, said out loud,
+   * with the elapsed time beside them — the question somebody watching actually
+   * has is "is it working, and on what".
+   */
+  const progressEl = $("progress");
+  const progressLabel = $("progress-label");
+  const progressElapsed = $("progress-elapsed");
+  let progressStarted = 0;
+  let progressTimer = null;
+  let progressHide = null;
+
+  const clock = (ms) => {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+  };
+
+  function progress(text, cls = "") {
+    clearTimeout(progressHide);
+    if (progressStarted === 0) progressStarted = Date.now();
+    progressEl.hidden = false;
+    progressEl.className = `progress ${cls}`.trim();
+    progressLabel.textContent = text;
+    progressElapsed.textContent = clock(Date.now() - progressStarted);
+    if (progressTimer === null) {
+      progressTimer = setInterval(() => {
+        progressElapsed.textContent = clock(Date.now() - progressStarted);
+      }, 1000);
+    }
+  }
+
+  function progressDone(text = "done") {
+    if (progressStarted === 0) return;
+    progress(text, "done");
+    progressElapsed.textContent = clock(Date.now() - progressStarted);
+    if (progressTimer !== null) clearInterval(progressTimer);
+    progressTimer = null;
+    progressHide = setTimeout(() => {
+      progressEl.hidden = true;
+      progressStarted = 0;
+    }, 5000);
+  }
+
+  const toolName = (name) => String(name ?? "a tool").replace(/_/g, " ");
+
+  /*
+   * The app, beside the terminal.
+   *
+   * The bytes are proxied under `/preview/` (the same origin, so the app's own
+   * fetch and cookies behave as they will when deployed); the status is polled,
+   * because it is one small answer and the pane only needs to know when to show
+   * the frame. `pending` is a real state — a framework still building — and is
+   * shown as "starting" rather than as a blank failure.
+   */
+  const preview = { running: false, pending: false, polled: null };
+
+  function previewState(text, cls = "") {
+    $("pv-state").textContent = text;
+    $("pv-dot").className = `pv-dot ${cls}`.trim();
+  }
+
+  function previewRender(status) {
+    if (status === null || typeof status !== "object") {
+      previewState("unavailable", "bad");
+      return;
+    }
+    preview.running = status.running === true;
+    preview.pending = status.pending === true;
+    preview.polled = status;
+
+    const frame = $("pv-frame");
+    const empty = $("pv-empty");
+    const log = $("pv-log");
+    const title = empty.querySelector("strong");
+
+    $("pv-run").hidden = preview.running;
+    $("pv-stop").hidden = !preview.running;
+    $("pv-open").hidden = !preview.running;
+    $("pv-cmd").textContent = status.command
+      ? `${status.cwd ?? "."} · ${status.command}`
+      : "no app has been started";
+    log.textContent = String(status.log ?? "").trim() === "" ? "(no output yet)" : status.log;
+
+    if (preview.running && preview.pending) {
+      empty.hidden = false;
+      frame.hidden = true;
+      title.textContent = "Starting…";
+      previewState("starting", "starting");
+      return;
+    }
+    if (preview.running) {
+      empty.hidden = true;
+      if (frame.hidden || frame.dataset.loaded !== "1") {
+        frame.dataset.loaded = "1";
+        frame.src = `/preview/?t=${Date.now()}`;
+      }
+      frame.hidden = false;
+      previewState("live", "live");
+      return;
+    }
+    frame.hidden = true;
+    frame.dataset.loaded = "";
+    empty.hidden = false;
+    if (typeof status.exitCode === "number" && status.exitCode !== 0) {
+      title.textContent = `The app exited (${status.exitCode})`;
+      previewState(`exited ${status.exitCode}`, "bad");
+    } else if (status.error) {
+      title.textContent = "The app did not start";
+      previewState("failed", "bad");
+    } else {
+      title.textContent = status.detected ? "Ready to run" : "Nothing running yet";
+      previewState(status.command ? "not running" : "nothing to run", "");
+    }
+  }
+
+  async function previewPoll() {
+    try {
+      const response = await fetch("api/preview", { headers: { accept: "application/json" } });
+      if (!response.ok) return;
+      previewRender(await response.json());
+    } catch {
+      /* the next poll is the retry */
+    }
+  }
+
+  async function previewCall(path) {
+    const response = await fetch(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      previewState(body.error ?? `failed (HTTP ${response.status})`, "bad");
+      return null;
+    }
+    previewRender(body);
+    return body;
+  }
+
+  function previewReload() {
+    const frame = $("pv-frame");
+    frame.dataset.loaded = "1";
+    frame.src = `/preview/?t=${Date.now()}`;
+    frame.hidden = false;
+    $("pv-empty").hidden = true;
+  }
+
+  async function startPreview() {
+    $("pv-run").disabled = true;
+    previewState("starting", "starting");
+    try {
+      const status = await previewCall("api/preview/start");
+      if (status?.pending) setTimeout(previewPoll, 900);
+      line("preview · starting the app", "sys");
+    } finally {
+      $("pv-run").disabled = false;
+    }
+  }
+
+  /*
+   * Ship: the workspace as a project, committed and pushed.
+   *
+   * The two things only a person knows are asked here — what to call it, and
+   * where it goes — and the client does no git at all. The server adopts the
+   * workspace as a project and then uses the console's own publish path, so this
+   * button cannot commit something the console would have refused.
+   */
+  function shipStatus(text, cls = "", href = "") {
+    const el = $("ship-status");
+    el.className = `ship-status ${cls}`.trim();
+    el.textContent = text;
+    if (href !== "") {
+      const link = document.createElement("a");
+      link.href = href;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = " open repository";
+      link.style.color = "inherit";
+      el.appendChild(link);
+    }
+  }
+
+  function syncShipTarget() {
+    const github = $("ship-target").value === "github";
+    $("ship-token-row").hidden = !github;
+  }
+
+  function defaultProjectName() {
+    const seed = history[0] ?? "engineer-project";
+    const slug = seed
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40)
+      .replace(/-+$/, "");
+    return slug === "" ? "engineer-project" : slug;
+  }
+
+  async function openShip() {
+    $("ship-sheet").hidden = false;
+    shipStatus("checking where this can go…");
+    $("ship-name").value = defaultProjectName();
+    try {
+      const response = await fetch("api/ship", { headers: { accept: "application/json" } });
+      if (response.status === 401) {
+        closeShip();
+        gate("signin");
+        return;
+      }
+      const info = await response.json().catch(() => ({}));
+      $("ship-target").value = info.target === "github" ? "github" : "atlas";
+      if (info.project?.name) $("ship-name").value = info.project.name;
+      $("ship-note").textContent = info.project
+        ? `This workspace is already the project “${info.project.name}”. Ship commits and pushes it again.`
+        : "Save this workspace as a project in Genie, commit it, and push it to a repository.";
+      shipStatus(
+        info.atlas === false && info.github === false
+          ? "No forge is configured on this deployment — a project can be saved, but the push will be refused."
+          : "",
+        info.atlas === false && info.github === false ? "bad" : "",
+      );
+    } catch (error) {
+      shipStatus(`could not ask where to ship: ${error.message}`, "bad");
+    }
+    syncShipTarget();
+    $("ship-name").focus();
+    $("ship-name").select();
+  }
+
+  function closeShip() {
+    $("ship-sheet").hidden = true;
+    $("ship-go").disabled = false;
+  }
+
+  async function submitShip(event) {
+    event.preventDefault();
+    const name = $("ship-name").value.trim();
+    const target = $("ship-target").value;
+    const token = $("ship-token").value.trim();
+    const message = $("ship-message").value.trim();
+    if (name === "") {
+      shipStatus("a project needs a name", "bad");
+      $("ship-name").focus();
+      return;
+    }
+    if (target === "github" && token === "") {
+      shipStatus("GitHub needs a token; paste one for this push", "bad");
+      $("ship-token").focus();
+      return;
+    }
+
+    $("ship-go").disabled = true;
+    shipStatus(`saving “${name}”, committing and pushing…`);
+    try {
+      const response = await fetch("api/ship", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name,
+          target,
+          ...(message === "" ? {} : { message }),
+          ...(token === "" ? {} : { token }),
+          private: $("ship-private").checked,
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        shipStatus(body.error ?? `ship failed (HTTP ${response.status})`, "bad");
+        if (body.project?.name) $("ship-name").value = body.project.name;
+        return;
+      }
+      const pushed = body.publish ?? {};
+      shipStatus(
+        `pushed “${body.project?.name ?? name}” to ${pushed.repo ?? "the repository"} — ${pushed.files ?? 0} ${
+          pushed.files === 1 ? "file" : "files"
+        } on ${pushed.branch ?? "main"}${pushed.existing ? " (the repository already existed)" : ""}.`,
+        "good",
+        pushed.url ?? "",
+      );
+      line(`— shipped ${body.project?.name ?? name} → ${pushed.url ?? pushed.repo ?? ""}`, "ok");
+      $("ship-token").value = "";
+      setTimeout(closeShip, 2200);
+    } catch (error) {
+      shipStatus(`ship failed: ${error.message}`, "bad");
+    } finally {
+      $("ship-go").disabled = false;
+    }
   }
 
   function gate(kind, s = {}) {
@@ -386,6 +911,8 @@
     $("send").disabled = true;
     $("stop").hidden = false;
     $("state").textContent = "running";
+    progressStarted = 0;
+    progress("thinking…");
 
     let answer = line("", "answer");
     let wrote = false;
@@ -432,12 +959,16 @@
             answer.textContent += event.text;
             wrote = true;
             if (atBottom()) out.scrollTop = out.scrollHeight;
+          } else if (event.type === "step") {
+            progress(`thinking… · step ${event.index}${event.of ? ` of ${event.of}` : ""}`);
           } else if (event.type === "tool_call") {
             if (answer.textContent === "") answer.remove();
             line(`[tool] ${event.name}`, "tool");
+            progress(`running ${toolName(event.name)}`);
             answer = line("", "answer");
           } else if (event.type === "tool_result") {
             line(`[${event.ok ? "ok" : "fail"}] ${event.name}`, event.ok ? "sys" : "err");
+            progress(`${toolName(event.name)} ${event.ok ? "finished" : "failed"} · thinking…`);
           } else if (event.type === "notice") {
             line(event.text, "warn");
           } else if (event.type === "error") {
@@ -445,10 +976,14 @@
           } else if (event.type === "approval_request") {
             if (answer.textContent === "") answer.remove();
             approvalCard(event);
+            progress(`waiting for approval · ${toolName(event.name)}`, "waiting");
             answer = line("", "answer");
+          } else if (event.type === "approval_result") {
+            progress(event.decision === "approve" ? "approved · continuing" : "denied · continuing", "");
           } else if (event.type === "done") {
             if (answer.textContent === "") answer.remove();
             line(`— done in ${event.steps} step${event.steps === 1 ? "" : "s"}`, "sys");
+            progressDone(`done · ${event.steps} step${event.steps === 1 ? "" : "s"}`);
           }
         }
       }
@@ -457,6 +992,7 @@
     } catch (error) {
       if (error.name !== "AbortError") line(`stream failed: ${error.message}`, "err");
       else line("stopped", "warn");
+      progressDone(error.name === "AbortError" ? "stopped" : "stopped · the stream failed");
     } finally {
       controller = null;
       busy = false;
@@ -464,7 +1000,11 @@
       $("stop").hidden = true;
       $("state").textContent = "ready";
       $("input").focus();
+      if (progressStarted !== 0 && progressTimer !== null) progressDone();
       session().catch(() => {});
+      // The turn may have written files. If the app is up, show the new ones
+      // rather than the page that was there when the turn began.
+      if (preview.running && !preview.pending) setTimeout(previewReload, 700);
     }
   }
 
@@ -504,6 +1044,38 @@
       location.href = "/oauth2/sign_in?rd=%2F";
     }
   });
+
+  $("ship").addEventListener("click", openShip);
+  $("ship-form").addEventListener("submit", submitShip);
+  $("ship-cancel").addEventListener("click", closeShip);
+  $("ship-target").addEventListener("change", syncShipTarget);
+  $("ship-sheet").addEventListener("click", (event) => {
+    if (event.target === $("ship-sheet")) closeShip();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !$("ship-sheet").hidden) closeShip();
+  });
+
+  $("pv-run").addEventListener("click", startPreview);
+  $("pv-stop").addEventListener("click", async () => {
+    $("pv-stop").disabled = true;
+    try {
+      await previewCall("api/preview/stop");
+    } finally {
+      $("pv-stop").disabled = false;
+    }
+  });
+  $("pv-reload").addEventListener("click", previewReload);
+  $("pv-log-toggle").addEventListener("click", () => {
+    const log = $("pv-log");
+    log.hidden = !log.hidden;
+    $("pv-log-toggle").textContent = log.hidden ? "log" : "hide log";
+  });
+
+  // The pane is polled rather than pushed: it is one small answer, and the only
+  // thing it has to notice is that a start finished building.
+  setInterval(previewPoll, 3000);
+  previewPoll();
 
   session().catch((error) => line(`could not start: ${error.message}`, "err"));
   $("input").focus();
