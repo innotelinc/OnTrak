@@ -400,6 +400,19 @@ export const config = {
   atlasPlan: str("MAGNATE_ATLAS_PLAN", "atlas"),
 
   /**
+   * The two add-ons this console can point somebody at, and where credits are bought.
+   *
+   * Engineer and Uncensored Godmode are front doors of their own, but they spend the
+   * same credit against the same account, so the console lists them together with a
+   * balance each and one place to top up. The addresses are configuration rather
+   * than constants because a deployment that does not run them must not link to
+   * them, and a deployment whose names differ must not send people to `innotel.us`.
+   */
+  addonEngineerUrl: str("GENIE_ENGINEER_URL", "https://re.genie.innotel.us").replace(/\/+$/, ""),
+  addonGodmodeUrl: str("GENIE_GODMODE_URL", "https://uc.genie.innotel.us").replace(/\/+$/, ""),
+  addonsTopUpUrl: str("GENIE_ADDONS_TOP_UP_URL", "https://subscribe.genie.innotel.us").replace(/\/+$/, ""),
+
+  /**
    * Optional Authentik (OIDC) sign-in, for a deployment that puts this console
    * behind the family's identity provider. Off until the issuer, the client id
    * and the session secret are all set — see the header of `src/oidc.ts` for why

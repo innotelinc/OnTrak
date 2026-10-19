@@ -3756,10 +3756,15 @@ function toggleFilesPanel(force) {
  * that was there: the pane a person was reading is not replaced by whichever
  * button they happened to reach for next.
  */
-const RAIL_VIEWS = ["preview", "workspace", "publish"];
+const RAIL_VIEWS = ["preview", "workspace", "publish", "addons"];
 
 /** Which control opens each view — where focus goes back when one is left. */
-const RAIL_TOGGLES = { preview: "#toggle-preview", workspace: "#toggle-files", publish: "#hosting-open" };
+const RAIL_TOGGLES = {
+  preview: "#toggle-preview",
+  workspace: "#toggle-files",
+  publish: "#hosting-open",
+  addons: "#addons-open",
+};
 
 /** The view on screen, or `null` when the rail is collapsed. */
 function railOpenView() {
@@ -3783,6 +3788,7 @@ function railOpenView() {
 const RAIL_TABS = [
   { view: "preview", id: "rail-tab-preview", label: "preview" },
   { view: "workspace", id: "rail-tab-workspace", label: "workspace" },
+  { view: "addons", id: "rail-tab-addons", label: "add-ons" },
   { view: "publish", id: "rail-tab-publish", label: "publish" },
 ];
 
@@ -3811,6 +3817,8 @@ function openRailView(view, focusPanel = false) {
     void showPreviewApp();
   } else if (view === "workspace") {
     toggleFilesPanel(true);
+  } else if (view === "addons") {
+    openAddons();
   } else {
     openHosting();
   }
@@ -3864,11 +3872,13 @@ function syncRail() {
   // and the click that just happened is the newest of the three.
   const view = !$("#hosting").classList.contains("hidden")
     ? "publish"
-    : $("#files-panel").classList.contains("open")
-      ? "workspace"
-      : $("#preview").classList.contains("open")
-        ? "preview"
-        : null;
+    : !$("#addons").classList.contains("hidden")
+      ? "addons"
+      : $("#files-panel").classList.contains("open")
+        ? "workspace"
+        : $("#preview").classList.contains("open")
+          ? "preview"
+          : null;
   if (view !== null) rail.dataset.view = view;
   rail.classList.toggle("open", view !== null);
   // A control says whether *its* view is the one on screen, which is what a person
@@ -3876,6 +3886,7 @@ function syncRail() {
   $("#toggle-preview").setAttribute("aria-expanded", view === "preview" ? "true" : "false");
   $("#toggle-files").setAttribute("aria-expanded", view === "workspace" ? "true" : "false");
   $("#hosting-open").setAttribute("aria-expanded", view === "publish" ? "true" : "false");
+  $("#addons-open").setAttribute("aria-expanded", view === "addons" ? "true" : "false");
   $("#preview-collapse").setAttribute("aria-expanded", view === "preview" ? "true" : "false");
   // Collapse and expand are one control in two states, and exactly one of them is
   // on screen: the edge tab is only hidden while the rail it stands for is open.
@@ -3899,7 +3910,13 @@ function switchRailTo(keep) {
  * the next write from ever showing the preview again.
  */
 function closeRailView(name) {
-  const panel = name === "preview" ? $("#preview") : name === "workspace" ? $("#files-panel") : $("#hosting");
+  const panel = name === "preview"
+    ? $("#preview")
+    : name === "workspace"
+      ? $("#files-panel")
+      : name === "addons"
+        ? $("#addons")
+        : $("#hosting");
   const held = panel.contains(document.activeElement);
   if (name === "preview") {
     panel.classList.remove("open");
@@ -3908,6 +3925,7 @@ function closeRailView(name) {
     panel.classList.remove("open");
   } else {
     panel.classList.add("hidden");
+    if (name === "addons") leaveDialog(panel);
   }
   // A view that goes away must not take the keyboard with it: the control that
   // owns it is where focus was, so that is where it goes back to.
@@ -3923,6 +3941,8 @@ function closeRail() {
     unwatchPreviewChanges();
   } else if (view === "workspace") {
     toggleFilesPanel(false);
+  } else if (view === "addons") {
+    closeAddons();
   } else {
     closeHosting();
   }
@@ -4058,6 +4078,93 @@ function recallTerminalCommand(delta) {
  * The console never grants a name itself — it asks, and the server checks the
  * subscription with Magnate before registering anything.
  */
+
+/* --------------------------------------------------------------- add-ons */
+
+/*
+ * What is left to spend on each add-on, and the way to buy more.
+ *
+ * The list is drawn from `/api/addons`, which reads the same control plane a run
+ * is charged against — so the number on screen is the number the next run spends,
+ * and a person who has none left is told so *here* rather than by a refusal after
+ * they have described the job. An add-on whose balance could not be read says that
+ * instead of showing a zero, because zero and unknown are different answers and
+ * only one of them is a reason to buy.
+ */
+let addonsCache = null;
+
+function openAddons() {
+  switchRailTo("addons");
+  $("#addons").classList.remove("hidden");
+  enterDialog($("#addons"));
+  syncRail();
+  void loadAddons();
+}
+
+function closeAddons() {
+  $("#addons").classList.add("hidden");
+  leaveDialog($("#addons"));
+  syncRail();
+}
+
+function addonRow(addon, topUpUrl) {
+  const row = document.createElement("div");
+  row.className = "addon";
+  const head = document.createElement("div");
+  head.className = "addon__head";
+  const name = document.createElement("strong");
+  name.textContent = addon.name;
+  const open = document.createElement("a");
+  open.className = "btn-ghost addon__open";
+  open.href = addon.url;
+  open.rel = "noopener";
+  open.textContent = "open";
+  head.append(name, open);
+  const note = document.createElement("p");
+  note.className = "addon__note";
+  const credits = addon.credits ?? {};
+  if (credits.gated === false) {
+    note.textContent = `${addon.tagline} Credits are not metered on this deployment.`;
+  } else if (credits.unlimited) {
+    note.textContent = `${addon.tagline} This account is the platform's own, so there is nothing to spend.`;
+  } else {
+    const left = credits.balance ?? 0;
+    const per = credits.creditsPerProject ?? 1;
+    const price = typeof credits.pricePerCreditUsd === "number" ? money(Math.round(credits.pricePerCreditUsd * 100)) : null;
+    note.textContent = left > 0
+      ? `${addon.tagline} ${left} credit${left === 1 ? "" : "s"} left (${per} a run${price ? `, ${price} a credit` : ""}).`
+      : `${addon.tagline} No credits left${price ? ` — ${price} a credit` : ""}.`;
+  }
+  row.append(head, note);
+  if (credits.gated !== false && !credits.unlimited && (credits.balance ?? 0) <= 0 && topUpUrl) {
+    const buy = document.createElement("a");
+    buy.className = "btn-primary addon__buy";
+    buy.href = topUpUrl;
+    buy.rel = "noopener";
+    buy.textContent = "add credits";
+    row.append(buy);
+  }
+  return row;
+}
+
+async function loadAddons() {
+  const list = $("#addons-list");
+  const status = $("#addons-status");
+  status.textContent = "reading balances…";
+  try {
+    addonsCache = await api("/api/addons");
+  } catch (error) {
+    addonsCache = null;
+    status.textContent = `could not read the add-ons: ${error.message}`;
+    list.replaceChildren();
+    return;
+  }
+  const addons = addonsCache?.addons ?? [];
+  status.textContent = addons.length === 0
+    ? "This deployment has no add-ons configured."
+    : "Two front doors on this account, and what is left on each.";
+  list.replaceChildren(...addons.map((addon) => addonRow(addon, addonsCache.topUpUrl)));
+}
 
 let hostingInfoCache = null;
 
@@ -5684,6 +5791,13 @@ function wire() {
     else openHosting();
   });
   $("#hosting-close").addEventListener("click", () => closeHosting());
+  // The add-ons toggle is a toggle in both directions too: pressing it while its
+  // view is the one on screen collapses the rail, like the other three.
+  $("#addons-open").addEventListener("click", () => {
+    if (railOpenView() === "addons") closeAddons();
+    else openAddons();
+  });
+  $("#addons-close").addEventListener("click", () => closeAddons());
   $("#hosting-publish").addEventListener("click", () => void publishHosting());
   $("#hosting-buy").addEventListener("click", () => buyHosting());
   $("#workspace-pick").addEventListener("change", (event) => void chooseWorkspace(event.target.value));

@@ -32,7 +32,13 @@ import {
 import { actorEnabled, actorSession } from "./actor.js";
 import type { Session } from "./oidc.js";
 import { buildFileDiff } from "./diff.js";
-import { ENGINEER_PRODUCT, chargeProject, creditStatusFor, engineerConfigured } from "./engineer.js";
+import {
+  ENGINEER_PRODUCT,
+  addonStatuses,
+  chargeProject,
+  creditStatusFor,
+  engineerConfigured,
+} from "./engineer.js";
 import { modelHealth, startModelHealthLoop } from "./modelHealth.js";
 import { autoFreeChain } from "./modelSelect.js";
 import {
@@ -965,6 +971,19 @@ async function handleApi(
       configured: engineerConfigured(),
       email,
       ...status,
+    });
+  }
+
+  if (pathname === "/api/addons" && method === "GET") {
+    // The two add-ons and their balances, for the console's own list. Same posture
+    // as `/api/engineer`: never an error page, always a row — an add-on whose
+    // balance could not be read says so in its own line.
+    const email = sessionFrom(req)?.email ?? "";
+    return sendJson(res, 200, {
+      email,
+      topUpUrl: config.addonsTopUpUrl,
+      engineerConfigured: engineerConfigured(),
+      addons: await addonStatuses(email),
     });
   }
 

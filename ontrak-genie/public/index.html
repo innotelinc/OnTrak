@@ -216,6 +216,15 @@
               preview
             </button>
             <button
+              id="addons-open"
+              class="btn-ghost"
+              title="The two agent add-ons and what is left to spend on each"
+              aria-controls="addons"
+              aria-expanded="false"
+            >
+              add-ons
+            </button>
+            <button
               id="hosting-open"
               class="btn-ghost"
               title="Put this workspace on the network under *.DOMAIN — free on a port address, $5/mo or $50/yr for your own name"
@@ -363,6 +372,18 @@
             tabindex="-1"
           >
             workspace
+          </button>
+          <button
+            id="rail-tab-addons"
+            class="rail-tab"
+            type="button"
+            role="tab"
+            data-view="addons"
+            aria-controls="addons"
+            aria-selected="false"
+            tabindex="-1"
+          >
+            add-ons
           </button>
           <button
             id="rail-tab-publish"
@@ -636,6 +657,34 @@
         <div id="files-path" class="files-path mono">.</div>
         <div id="files-list" class="files-list"></div>
       </aside>
+
+      <!--
+        The two agent add-ons.
+
+        Engineer and Uncensored Godmode are products with doors of their own, so
+        this view is a directory rather than a control panel: what each one costs a
+        run, how many are left, and where to buy more when there are none. The
+        balances are the control plane's own answer, which is the same one a run
+        spends against.
+      -->
+      <div
+            id="addons"
+            class="addons rail-view hidden"
+            role="tabpanel"
+            aria-labelledby="addons-title"
+            tabindex="-1"
+          >
+            <div class="viewer-head">
+              <span id="addons-title" class="mono">add-ons</span>
+              <div class="viewer-actions">
+                <button id="addons-close" class="btn-ghost" aria-label="Close add-ons">close</button>
+              </div>
+            </div>
+            <div class="viewer-content settings-form">
+              <p id="addons-status" class="muted settings-note"></p>
+              <div id="addons-list" class="addons-list"></div>
+            </div>
+          </div>
 
       <div
             id="hosting"

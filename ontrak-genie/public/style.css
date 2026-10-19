@@ -1737,3 +1737,20 @@ body.preview-resizing * { cursor: col-resize !important; }
     scroll-behavior: auto !important;
   }
 }
+
+/* ── the add-ons view ────────────────────────────────────────────────────────
+ * Two rows, each a product with a door of its own: the name and its open button on
+ * one line, what is left to spend underneath, and a buy button only when there is
+ * nothing left. The row is a directory entry, not a form — nothing here changes
+ * anything about the add-on. */
+.addons-list { display: grid; gap: 10px; }
+.addon {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line, var(--border, #2a2f37));
+  border-radius: 10px;
+}
+.addon__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.addon__note { margin: 0; color: var(--muted); font-size: 13px; }
+.addon__open, .addon__buy { justify-self: start; text-decoration: none; }

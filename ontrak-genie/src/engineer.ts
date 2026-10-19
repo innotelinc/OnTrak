@@ -35,6 +35,14 @@ import { controlPlaneEnabled, readControlPlaneConfig, type ControlPlaneConfig } 
 /** The product key every ledger row for this add-on uses. */
 export const ENGINEER_PRODUCT = "engineer";
 
+/**
+ * The other add-on, which is a front door of its own rather than part of Engineer.
+ *
+ * The ledger key is the one G0DM0D3 itself spends under, so a balance read here and
+ * a run started there cannot disagree about which pot of credits is being emptied.
+ */
+export const GODMODE_PRODUCT = "g0dm0d3";
+
 /** What the control plane answers about a balance. */
 export interface CreditStatus {
   /** Whether another project may be started. */
@@ -145,7 +153,10 @@ function parseStatus(payload: Record<string, unknown>): CreditStatus {
  * plane that is down either — a console must still render. It returns the ungated
  * answer with a reason saying why, and `gated: false` marks it as one.
  */
-export async function creditStatusFor(email: string): Promise<CreditStatus> {
+export async function creditStatusFor(
+  email: string,
+  product: string = ENGINEER_PRODUCT,
+): Promise<CreditStatus> {
   if (!controlPlaneEnabled()) return ungated("no control plane configured: credits are not metered here");
   const plane = readControlPlaneConfig();
   if (plane === null) return ungated("control plane not configured");
@@ -153,7 +164,7 @@ export async function creditStatusFor(email: string): Promise<CreditStatus> {
   try {
     const payload = await callCredits(
       plane,
-      `/api/internal/credits?user=${encodeURIComponent(email)}&product=${ENGINEER_PRODUCT}`,
+      `/api/internal/credits?user=${encodeURIComponent(email)}&product=${encodeURIComponent(product)}`,
     );
     if (payload.reason === "user_not_found") {
       // An account this console knows and the plane does not is a deployment
@@ -216,4 +227,61 @@ export async function chargeProject(email: string, reference: string | null): Pr
 /** True when this deployment has an MCP server that can actually analyse something. */
 export function engineerConfigured(): boolean {
   return config.mcpServers.trim() !== "" || config.mcpConfigPaths.length > 0;
+}
+
+/* ── the two add-ons, as the console lists them ───────────────────────────── */
+
+/** One add-on: what it is called, where it lives, and which ledger line it spends. */
+export interface Addon {
+  key: string;
+  name: string;
+  tagline: string;
+  /** The add-on's own front door — a product, not a path inside this console. */
+  url: string;
+  /** The product key its credits are kept under. */
+  product: string;
+}
+
+/**
+ * The catalogue, in the order it is shown.
+ *
+ * One entry per product key rather than per front door: Engineer has its tools in
+ * this console *and* a door of its own, and the row a person sees is the door.
+ */
+export function addonCatalog(): Addon[] {
+  return [
+    {
+      key: "engineer",
+      name: "OnTrak Engineer",
+      tagline: "Reverse engineer a shipped build, with the evidence kept.",
+      url: config.addonEngineerUrl,
+      product: ENGINEER_PRODUCT,
+    },
+    {
+      key: "godmode",
+      name: "Uncensored Godmode",
+      tagline: "The agent with the guardrails off, one run at a time.",
+      url: config.addonGodmodeUrl,
+      product: GODMODE_PRODUCT,
+    },
+  ];
+}
+
+export interface AddonStatus extends Addon {
+  credits: CreditStatus;
+}
+
+/**
+ * Every add-on, with what this account may spend on it.
+ *
+ * One call per add-on against the plane, in parallel: an add-on whose balance could
+ * not be read answers `gated: false` with the reason (see `creditStatusFor`), which
+ * is the honest answer for both a deployment with no billing and a plane that is
+ * down. Nothing here throws, because a console that cannot read a balance must
+ * still draw.
+ */
+export async function addonStatuses(email: string): Promise<AddonStatus[]> {
+  return Promise.all(
+    addonCatalog().map(async (addon) => ({ ...addon, credits: await creditStatusFor(email, addon.product) })),
+  );
 }
