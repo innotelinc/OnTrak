@@ -35,13 +35,23 @@ browser ──▶ oauth2-proxy ──▶ g0dm0d3 ──▶ Genie  /api/chat   (S
 | Route | Auth | What it does |
 | --- | --- | --- |
 | `GET /health` | none | `{"ok":true,"product":"g0dm0d3"}` — the portal's light |
-| `GET /` | none | the page (it reads the session itself) |
+| `GET /` | proxy | 302 to `/index.html`, carrying the query |
+| `GET /index.html` | proxy + plan | the product's own page (403 without a subscription, 503 when billing cannot answer) |
+| `GET /metered` | proxy | the credit-facing console, which is where a non-subscriber is offered the plans |
 | `GET /api/session` | proxy | identity, balance, credits per run, price per credit |
-| `POST /api/run` | proxy | `{message, runId, sessionId?}` → SSE, after one charge |
+| `POST /api/run` | proxy + plan | `{message, runId, sessionId?}` → SSE, after one charge |
+| `POST /api/approve` | proxy | `{id, decision}` → Genie's approval route, with the service bearer |
 
 `POST /api/run` answers, before any stream: `400` for a missing run id or message,
-`401` without an identity, `402` with `{balance}` when there are no credits, `502`
-with `{refunded}` when Genie refused or was unreachable, `503` when the plane is.
+`401` without an identity, `402` with `{balance}` when there are no credits, `403`
+with `{subscribeUrl}` when the account has no plan, `502` with `{refunded}` when
+Genie refused or was unreachable, `503` when the plane is.
+
+The page is gated like the run, and for a concrete reason: the studio brings its
+own model key and never calls `/api/run`, so serving it to any signed-in account
+would hand over the product. A signed-in account without a plan gets the plans;
+an unaskable billing service gets a reload, never a paywall — see
+`src/entitlement.js`.
 
 ## Configuration
 
@@ -59,9 +69,10 @@ with `{refunded}` when Genie refused or was unreachable, `503` when the plane is
 ## Tests
 
 ```sh
-npm test          # 11 tests, no network: a fake plane and a fake Genie
+npm test          # 25 tests, no network: a fake plane and a fake Genie
 ```
 
 They pin the parts that are money: no identity means no run, no run id means no
 charge, a duplicate run id costs one credit, an empty balance is a 402 that never
-reaches Genie, and a refused or unreachable Genie is refunded exactly once.
+reaches Genie, a non-subscriber is offered the plans on the page and on the run,
+and a refused or unreachable Genie is refunded exactly once.
