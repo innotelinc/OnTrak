@@ -1445,6 +1445,7 @@ body.preview-resizing * { cursor: col-resize !important; }
 .rail.open > .rail-view { flex: 1; min-height: 0; }
 .rail.open[data-view="preview"] > #preview,
 .rail.open[data-view="workspace"] > #files-panel,
+.rail.open[data-view="addons"] > #addons,
 .rail.open[data-view="publish"] > #hosting { display: flex; }
 
 /*
@@ -1453,6 +1454,20 @@ body.preview-resizing * { cursor: col-resize !important; }
  * `viewer-content`), so it reads as one of them rather than as a third thing.
  */
 .hosting {
+  flex-direction: column;
+  width: min(560px, 46vw);
+  min-width: 320px;
+  max-width: 85vw;
+  min-height: 0;
+}
+
+/*
+ * The add-ons view: the same column shape as the publishing view, because it is the
+ * same thing — a head, a scrolling body, and no overlay. Without this the panel had
+ * the browser's own defaults for both direction and width, which is why it drew as
+ * an empty rail even after the selector above started rendering it.
+ */
+.addons {
   flex-direction: column;
   width: min(560px, 46vw);
   min-width: 320px;

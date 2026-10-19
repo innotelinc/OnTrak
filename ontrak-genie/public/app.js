@@ -4131,8 +4131,12 @@ function addonRow(addon, topUpUrl) {
     const left = credits.balance ?? 0;
     const per = credits.creditsPerProject ?? 1;
     const price = typeof credits.pricePerCreditUsd === "number" ? money(Math.round(credits.pricePerCreditUsd * 100)) : null;
+    // A run costing one credit is what "one credit left" already means, so the
+    // per-run count is only worth saying when a run costs more than one.
+    const each = per > 1 ? `${per} credits a run` : "";
+    const costs = [each, price ? `${price} a credit` : ""].filter((part) => part !== "");
     note.textContent = left > 0
-      ? `${addon.tagline} ${left} credit${left === 1 ? "" : "s"} left (${per} a run${price ? `, ${price} a credit` : ""}).`
+      ? `${addon.tagline} ${left} credit${left === 1 ? "" : "s"} left${costs.length ? ` (${costs.join(", ")})` : ""}.`
       : `${addon.tagline} No credits left${price ? ` — ${price} a credit` : ""}.`;
   }
   row.append(head, note);
