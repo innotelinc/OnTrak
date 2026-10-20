@@ -48,6 +48,7 @@ from __future__ import annotations
 import json
 import logging
 import shlex
+import threading
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -57,6 +58,31 @@ from .config import Host, Settings
 from .policy import Policy
 from .registry import docker_login as _docker_login, registry_of as _registry_of
 from .remote import Result, docker_in_container, incus_exec, ssh
+
+# ── live progress, for the dashboard ─────────────────────────────────────────
+# The apply is one synchronous request, and the API says why it stays that way. So a
+# page that wants to show packages moving has to ask a second question while the
+# first one is being answered. This is that answer: what the apply in flight is
+# working on, written by the code doing the work and read by a route that decides
+# nothing. The verdicts themselves are not kept here — they are read back from the
+# findings rows, which are the record — so this is a position, not a claim.
+_PROGRESS_LOCK = threading.Lock()
+_PROGRESS: dict | None = None
+
+
+def _set_progress(**fields) -> None:
+    global _PROGRESS
+    with _PROGRESS_LOCK:
+        if _PROGRESS is None:
+            _PROGRESS = {}
+        _PROGRESS.update(fields)
+        _PROGRESS["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def read_progress() -> dict | None:
+    """A copy of the live position, or None when no apply is running here."""
+    with _PROGRESS_LOCK:
+        return dict(_PROGRESS) if _PROGRESS else None
 
 log = logging.getLogger("ontrak.apply")
 
@@ -457,6 +483,9 @@ def apply_findings(conn, settings: Settings, policy: Policy, *, finding_ids: lis
 
     run_id = db.start_run(conn, "apply", trigger)
     db.log(conn, f"apply started ({trigger}) for {len(rows)} finding(s)", run_id=run_id)
+    _set_progress(run_id=run_id, phase="running", total=len(rows),
+                  ids=[row["id"] for row in rows], current=[], host="", target="",
+                  started_at=datetime.now(timezone.utc).isoformat())
 
     by_host = {h.name: h for h in settings.hosts}
     grouped: dict[tuple[str, str], dict[str, list]] = {}
@@ -480,6 +509,12 @@ def apply_findings(conn, settings: Settings, policy: Policy, *, finding_ids: lis
                     totals["failed"] += 1
             continue
         container = None if target_name == host_name else target_name
+        # The whole target is announced before anything runs, because apt installs a
+        # target as one transaction: a per-package percentage inside it would be an
+        # animation rather than a measurement.
+        _set_progress(host=host_name, target=target_name,
+                      current=[{"id": row["id"], "package": row["package"], "manager": manager}
+                               for manager, bucket in managers.items() for row in bucket])
         outcome = Outcome(ok=True)
 
         if "apt" in managers:
@@ -568,6 +603,8 @@ def apply_findings(conn, settings: Settings, policy: Policy, *, finding_ids: lis
         totals["failed"] += outcome.failed
         messages.extend(outcome.messages)
         manual.extend(outcome.needs_manual)
+
+    _set_progress(phase="finished", current=[], host="", target="")
 
     for message in messages:
         db.log(conn, message, run_id=run_id)

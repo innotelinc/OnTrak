@@ -26,7 +26,8 @@
  */
 
 import type {
-  ApplyResult, ApproveResult, AppUser, Event, Identity, Finding, Host, Meta, Policy, Run,
+  ApplyProgress, ApplyResult, ApproveResult, AppUser, Event, Identity, Finding, Host, Meta,
+  Policy, Run,
   RollPassResult, Rollouts, RollUndoResult, ScanResult, SignInResult, Summary, Target,
   UserSession,
 } from "./types";
@@ -227,6 +228,8 @@ export const api = {
     return request<{ findings: Finding[]; count: number }>(`/api/findings${suffix}`);
   },
   runs: (limit = 40) => request<{ runs: Run[] }>(`/api/runs?limit=${limit}`),
+  /** Asked only while an apply is unanswered; `null` when nothing is running. */
+  applyProgress: () => request<{ progress: ApplyProgress | null }>("/api/apply/progress"),
   events: (limit = 200) => request<{ events: Event[] }>(`/api/events?limit=${limit}`),
 
   // `apply: true` records the decision and installs it in one call — the buttons

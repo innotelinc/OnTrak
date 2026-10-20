@@ -42,7 +42,8 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from . import __version__, db, identity, oidc, reconcile, rollout
-from .applier import apply_findings, apply_rollouts, approve_and_apply, undo_roll
+from .applier import (apply_findings, apply_rollouts, approve_and_apply, read_progress,
+                      undo_roll)
 from .config import Settings
 from .policy import Cron, CronError, Policy, describe, next_runs
 from .scan import host_admin_summary, scan_network
@@ -862,6 +863,65 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                host_names=body.hosts or None)
         finally:
             RUN_LOCK.release()
+
+    @app.get("/api/apply/progress", dependencies=[requires("sync:view")])
+    def apply_progress():
+        """What the apply in flight is doing, target by target and package by package.
+
+        The apply stays one synchronous POST, so this is the second question rather
+        than a stream: the position comes from the applier, and the verdicts are read
+        back from the findings rows it has already settled. A package reported as
+        applied was written as applied; nothing here is inferred from elapsed time.
+
+        `null` when nothing is running, which is the ordinary answer — the dashboard
+        only asks while its own apply is unanswered.
+        """
+        state = read_progress()
+        if not state or state.get("phase") != "running":
+            return {"progress": None}
+
+        ids = [int(item) for item in state.get("ids") or []]
+        counts: dict[str, int] = {}
+        if ids:
+            marks = ",".join("?" for _ in ids)
+            for row in conn.execute(
+                f"SELECT status, COUNT(*) AS n FROM findings WHERE id IN ({marks}) GROUP BY status",
+                ids,
+            ):
+                counts[row["status"]] = int(row["n"])
+
+        current = state.get("current") or []
+        statuses: dict[int, str] = {}
+        if current:
+            marks = ",".join("?" for _ in current)
+            for row in conn.execute(
+                f"SELECT id, status FROM findings WHERE id IN ({marks})",
+                [item["id"] for item in current],
+            ):
+                statuses[int(row["id"])] = row["status"]
+
+        applied = counts.get("applied", 0)
+        failed = counts.get("failed", 0)
+        return {"progress": {
+            "run_id": state.get("run_id"),
+            "host": state.get("host", ""),
+            "target": state.get("target", ""),
+            "total": int(state.get("total") or 0),
+            "done": applied + failed,
+            "applied": applied,
+            "failed": failed,
+            "started_at": state.get("started_at"),
+            "updated_at": state.get("updated_at"),
+            "packages": [
+                {"id": item["id"], "package": item["package"], "manager": item["manager"],
+                 # Only a settled row is a verdict: `approved` here means the target's
+                 # transaction is still open, which is what "applying" says.
+                 "state": ("applied" if statuses.get(int(item["id"])) == "applied"
+                           else "failed" if statuses.get(int(item["id"])) == "failed"
+                           else "applying")}
+                for item in current
+            ],
+        }}
 
     @app.post("/api/apply")
     def apply(body: ApplyRequest, actor: Actor = requires("sync:apply")):

@@ -445,6 +445,33 @@ export interface ScanResult {
   }[];
 }
 
+/**
+ * One package in the apply that is running, as the server reports it.
+ *
+ * `applying` is the honest state for the whole group a target is installing: apt
+ * takes the target as one transaction, so its packages settle together.
+ */
+export interface ApplyPackage {
+  id: number;
+  package: string;
+  manager: string;
+  state: "applying" | "applied" | "failed";
+}
+
+/** The live position of an apply: which target, which packages, how many settled. */
+export interface ApplyProgress {
+  run_id: number | null;
+  host: string;
+  target: string;
+  total: number;
+  done: number;
+  applied: number;
+  failed: number;
+  started_at: string | null;
+  updated_at: string | null;
+  packages: ApplyPackage[];
+}
+
 export interface ApplyResult {
   run_id: number | null;
   applied: number;

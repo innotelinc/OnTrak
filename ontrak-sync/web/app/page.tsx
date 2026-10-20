@@ -39,7 +39,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Empty, LoadError, ManagerTag, ReachablePill, RebootPill, When } from "@/components/bits";
 import { api } from "@/lib/api";
-import type { ApplyResult, Finding, Host, Run, ScanResult, Summary } from "@/lib/types";
+import type { ApplyProgress, ApplyResult, Finding, Host, Run, ScanResult, Summary }
+  from "@/lib/types";
 import { useAsync } from "@/lib/useAsync";
 
 /** The two phases of an update, so the progress bar can say which one is running. */
@@ -65,6 +66,7 @@ export default function DashboardPage() {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [packages, setPackages] = useState<ApplyProgress | null>(null);
 
   async function run(label: string, action: () => Promise<void>) {
     setBusy(label);
@@ -85,6 +87,31 @@ export default function DashboardPage() {
     runs.reload();
     failed.reload();
   }
+
+  // Polled only while an apply is unanswered — one question a second, and it stops
+  // the moment the POST returns. A poll that lost a race with that answer says
+  // nothing, so it is not surfaced.
+  useEffect(() => {
+    if (busy !== "update" && busy !== "retry") {
+      setPackages(null);
+      return;
+    }
+    let live = true;
+    const tick = async () => {
+      try {
+        const answer = await api.applyProgress();
+        if (live) setPackages(answer.progress);
+      } catch {
+        // The apply's own failure is the one worth showing.
+      }
+    };
+    void tick();
+    const id = window.setInterval(tick, 1200);
+    return () => {
+      live = false;
+      window.clearInterval(id);
+    };
+  }, [busy]);
 
   const data = summary.data;
   const hostRows = hosts.data?.hosts ?? [];
@@ -165,6 +192,7 @@ export default function DashboardPage() {
 
       {error ? <div className="note note--bad">{error}</div> : null}
       {progress ? <ProgressBar progress={progress} /> : null}
+      {packages ? <PackagePanel progress={packages} /> : null}
 
       <div className="cards">
         <div className={`card ${data && data.security > 0 ? "card--security" : ""}`}>
@@ -315,11 +343,54 @@ export default function DashboardPage() {
 }
 
 /**
+ * The packages the apply is working through, as the server reports them.
+ *
+ * `done` is a count read back from the findings rows and the listed packages are the
+ * target currently being installed, so this shows what the machines are doing rather
+ * than an estimate. The whole group of a target reads `applying` until its rows
+ * settle, because that is how apt runs it.
+ */
+function PackagePanel({ progress }: { progress: ApplyProgress }) {
+  const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+  const where = progress.target && progress.target !== progress.host
+    ? `${progress.host} / ${progress.target}`
+    : progress.host;
+  return (
+    <div className="note" role="status" aria-live="polite">
+      <div className="row-inline" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+        <span>Packages: {progress.done} of {progress.total} settled</span>
+        <span className="faint mono">{where || "—"}</span>
+      </div>
+      <div className="progress" aria-hidden="true">
+        <div className="progress__fill" style={{ width: `${Math.max(4, pct)}%` }} />
+      </div>
+      {progress.packages.length ? (
+        <div className="row-inline" style={{ marginTop: 8, flexWrap: "wrap" }}>
+          {progress.packages.map((item) => (
+            <span
+              key={item.id}
+              className={`pill pill--${item.state === "applied" ? "applied" : item.state === "failed" ? "failed" : "approved"}`}
+              title={`${item.manager} · ${item.state}`}
+            >
+              {item.package}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {progress.failed > 0 ? (
+        <p className="faint" style={{ margin: "8px 0 0" }}>
+          {progress.failed} failed so far — they appear under Failed updates when the apply ends.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * The progress of one update, for as long as it runs.
  *
- * The API answers in one response, so there is no per-package percentage to draw;
- * what is honest here is the *phase* — approving or applying — and that the work is
- * still going. The bar fills to where the phase sits in the two-step flow and
+ * This is the phase — approving or applying — and that the work is still going; the
+ * package-by-package half is `PackagePanel`, fed by the progress route. The bar fills to where the phase sits in the two-step flow and
  * animates while it is live, and the elapsed seconds count so a long apt run looks
  * like work rather than a hang.
  */
