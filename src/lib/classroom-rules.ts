@@ -67,7 +67,7 @@ import type { RuleProblem } from "./program-rules";
 /** The switch. Unset or false means no classroom is offered. */
 export const CLASSROOM_ENABLED_ENV = "ONTRAK_CLASSROOM_ENABLED";
 /**
- * The classroom host's base address, e.g. `https://classroom.ontrak.innotel.us` — AthenIQ's
+ * The classroom host's base address, e.g. `https://classroom.innotel.us` — AthenIQ's
  * OpenMAIC surface, which that repository calls `CLASSROOM_HOST`.
  */
 export const CLASSROOM_URL_ENV = "ONTRAK_CLASSROOM_URL";
