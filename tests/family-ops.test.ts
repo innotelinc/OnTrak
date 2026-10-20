@@ -213,6 +213,10 @@ const CELL_NAME: Record<string, string> = {
   // hostname sits.
   engineer: "Engineer",
   godmode: "Godmode",
+  // The classroom is AthenIQ's host rather than a service this stack starts, but a
+  // student is still shown it, so the guide has to name it — that table is where an
+  // operator decides which group to put somebody in.
+  class: "Class",
   lab: "the lab",
 };
 

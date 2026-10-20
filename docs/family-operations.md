@@ -78,8 +78,8 @@ to family roles by `ONTRAK_OIDC_ROLE_MAPPINGS` in each product's `.env`:
 
 | Authentik group | Role | Belongs in |
 | --- | --- | --- |
-| `ontrak-students` | `STUDENT` | training |
-| `range-instructors`, `ontrak-instructors` | `INSTRUCTOR` | training |
+| `ontrak-students` | `STUDENT` | training, Class |
+| `range-instructors`, `ontrak-instructors` | `INSTRUCTOR` | training, Class |
 | `ontrak-desk` | `TECHNICIAN` | Tix |
 | `ontrak-analysts` | `ANALYST` | Sentinel |
 | `ontrak-sysadmins` | `SYSADMIN` | Tix, Sentinel, Sync, Genie, Engineer, Godmode |
@@ -87,9 +87,11 @@ to family roles by `ONTRAK_OIDC_ROLE_MAPPINGS` in each product's `.env`:
 
 The last column is the portal's catalogue answering for each role
 (`ontrak-portal/src/lib/portal-rules.ts`), minus **OnTrak Lab**. The lab is the
-catalogue's one *optional* product, and this table lists the six the family stack
-starts — the lab is a name the edge serves, not a service here (§7), so it stays out
-of the rows while still being one of the names this deployment publishes. Add a person to a group in Authentik and
+catalogue's one *optional* product: the family stack enables neither
+`ONTRAK_LAB_ENABLED` nor `ONTRAK_LAB_URL`, so the dashboard draws no lab tile at all
+and it stays out of the rows (§7). **Class** is listed even though the lesson server
+runs on AthenIQ's host rather than in this compose file — every deployment draws that
+tile for a student, so the table has to say which group puts them in. Add a person to a group in Authentik and
 their access follows within one sign-in — nothing is copied into a product, which is why
 a change here needs no migration anywhere else.
 
