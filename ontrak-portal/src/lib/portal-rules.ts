@@ -40,7 +40,7 @@ export type Role =
 /** The catalogue's own names for its products — the label a URL is built from is
  * the entry's `host`, not this key (see `urlFor`). */
 export type ProductKey =
-  | "its" | "tix" | "sentinel" | "sync" | "genie" | "engineer" | "godmode" | "lab";
+  | "its" | "tix" | "sentinel" | "sync" | "genie" | "engineer" | "godmode" | "lab" | "class";
 
 export interface Product {
   key: ProductKey;
@@ -76,7 +76,7 @@ export interface Product {
    */
   tone:
     | "training" | "desk" | "security" | "operations"
-    | "agent" | "engineer" | "godmode" | "lab";
+    | "agent" | "engineer" | "godmode" | "lab" | "class";
   /**
    * A product this repository does not serve, which a deployment may not run at all.
    *
@@ -197,6 +197,21 @@ export const PRODUCTS: readonly Product[] = [
     // is in front of the *work*, never in front of the liveness probe — a portal
     // that could not ask would draw a green light nobody tested.
     health: "/health",
+  },
+  {
+    key: "class",
+    name: "OnTrak Class",
+    tagline:
+      "The classroom where a course is taught: lessons, checks and a record of what each learner finished, in the browser.",
+    audience: "students and instructors",
+    host: "class",
+    roles: ["STUDENT", "INSTRUCTOR", "ADMIN"],
+    // Its own tone rather than the training range's: both are teaching products,
+    // and two tiles in one colour is exactly the pair this token exists to stop.
+    tone: "class",
+    // No `health`: the deployment that serves this has not published an
+    // unauthenticated probe yet, and an absent one is drawn as "not checked"
+    // rather than as a green light nobody tested.
   },
   {
     key: "lab",

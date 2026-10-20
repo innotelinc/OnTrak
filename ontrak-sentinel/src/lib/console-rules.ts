@@ -674,85 +674,228 @@ export interface ConsoleOverviewView {
  * The console picks the `operations` scheme — the graphite-and-blue family the
  * operations consoles use — because that is what Sentinel is.
  */
-const STYLES = `
+const STYLES = `  /* ── base ────────────────────────────────────────────────────────────────
+     The console draws on the shared theme's primitives (ot-panel, ot-btn,
+     ot-field, ot-pill, ot-table) and adds only what is Sentinel's: the rail,
+     the tiles, the reading column and the palette. No raw colour appears in
+     this block; every value is a token, so a palette or mode change reaches
+     every screen without a second stylesheet. */
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
   body { margin: 0; font: 15px/1.55 var(--font-sans); background: var(--canvas); color: var(--ink); }
-  /* Scoped to the console's own reading column, so it cannot also stretch or pad the
-     masthead-and-footer frame the sign-in page sits in. The width is the one the
-     later rule used to repeat, so removing the duplicate changed nothing. */
-  body > main { max-width: 52rem; margin: 0 auto; padding: var(--space-6) var(--space-4) 4rem; }
-  h1 { font-size: 1.4rem; margin: 0 0 var(--space-1); letter-spacing: -.01em; }
-  h2 { font-size: .82rem; margin: var(--space-6) 0 var(--space-2); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); }
+  h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.01em; }
+  h1 { font-size: 1.55rem; margin: 0; }
+  h2 { font-size: .78rem; margin: var(--space-6) 0 var(--space-2); letter-spacing: .08em;
+       text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
   h3 { font-size: .95rem; margin: var(--space-4) 0 var(--space-1); }
   p { margin: .35rem 0; }
-  a { color: var(--brand); }
+  a { color: var(--brand); text-underline-offset: 2px; }
   code, pre { font-family: var(--mono); font-size: .85em; }
-  pre { background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: .75rem; overflow-x: auto; }
-  form { margin: .75rem 0; }
-  input, textarea { font: inherit; width: 100%; box-sizing: border-box; padding: .5rem .6rem; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); }
-  input:focus-visible, textarea:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 1px; }
-  textarea { font-family: var(--mono); font-size: .85em; resize: vertical; }
-  button { font: inherit; font-weight: 600; padding: .5rem .9rem; border-radius: var(--radius-sm); border: 1px solid transparent; background: var(--brand); color: var(--brand-ink); cursor: pointer; }
-  button:hover { filter: brightness(1.06); }
+  code { background: var(--surface-sunken); border-radius: 4px; padding: 1px 4px; }
+  pre { background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--radius-sm);
+        padding: .75rem; overflow-x: auto; }
+  :focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 2px; }
   .muted { color: var(--ink-faint); }
-  .flash, .error { border-radius: var(--radius-sm); padding: .6rem .75rem; margin: var(--space-4) 0; }
-  .flash { background: var(--ok-soft); border: 1px solid var(--ok); color: var(--ok); }
-  .error { background: var(--bad-soft); border: 1px solid var(--bad); color: var(--bad); }
-  .card { border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); padding: .9rem 1rem; margin: var(--space-2) 0; box-shadow: var(--shadow-card); }
+
+  /* ── the frame ──────────────────────────────────────────────────────────
+     A rail and a reading column. The rail is the product's whole map, so it
+     is grouped by what an operator is doing rather than listed alphabetically:
+     operations first (where a shift starts), then identity, then assurance. */
+  .app { display: grid; grid-template-columns: 15.5rem minmax(0, 1fr); min-height: 100vh; }
+  .rail {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4) var(--space-3);
+    background: color-mix(in oklab, var(--surface) 86%, transparent);
+    border-right: 1px solid var(--line);
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  }
+  .rail__brand { display: flex; align-items: center; gap: 10px; padding: 2px 6px; color: var(--ink); text-decoration: none; }
+  .rail__brand svg, .rail__brand .rail__mark { width: 30px; height: 30px; flex: none; }
+  .rail__brand strong { display: block; font-family: var(--font-display); font-size: .95rem; line-height: 1.15; }
+  .rail__brand small { display: block; color: var(--ink-faint); font-size: .72rem; letter-spacing: .02em; }
+  .rail__jump {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
+    font: inherit; font-size: .8rem; text-align: left; color: var(--ink-faint); cursor: pointer;
+    background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 7px 10px;
+  }
+  .rail__jump:hover { border-color: var(--brand-ring); color: var(--ink); }
+  .rail__jump kbd {
+    font: 600 .68rem/1 var(--mono); padding: 3px 5px; border-radius: 4px;
+    border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-soft);
+  }
+  .rail__nav { display: flex; flex-direction: column; gap: var(--space-4); }
+  .rail__group { display: flex; flex-direction: column; gap: 2px; }
+  .rail__label { margin: 0 0 4px; padding: 0 8px; font-size: .66rem; font-weight: 700; letter-spacing: .1em;
+                 text-transform: uppercase; color: var(--ink-faint); }
+  .rail__nav a {
+    display: flex; align-items: baseline; gap: 8px; padding: 7px 8px; border-radius: var(--radius-sm);
+    color: var(--ink-soft); text-decoration: none; font-size: .875rem; font-weight: 500;
+  }
+  .rail__nav a:hover { background: var(--surface-muted); color: var(--ink); }
+  .rail__nav a[aria-current="page"] {
+    background: var(--brand-soft); color: var(--brand); font-weight: 600;
+    box-shadow: inset 2px 0 0 var(--brand);
+  }
+  .rail__nav a span { margin-left: auto; font-size: .68rem; color: var(--ink-faint); font-weight: 400; }
+  .rail__nav a[aria-current="page"] span { color: var(--brand); }
+
+  .app__body { min-width: 0; display: flex; flex-direction: column; }
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap;
+    padding: var(--space-3) var(--space-5);
+    background: color-mix(in oklab, var(--canvas) 82%, transparent);
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  }
+  .topbar__crumb { margin-right: auto; font-size: .8rem; color: var(--ink-faint); letter-spacing: .02em; }
+  .topbar__crumb strong { color: var(--ink); font-weight: 600; }
+  .topbar__tools { display: flex; align-items: center; gap: var(--space-3); }
+  .topbar__tools form { margin: 0; }
+  .content { width: 100%; max-width: 62rem; padding: var(--space-6) var(--space-5) 5rem; }
+
+  .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4);
+               flex-wrap: wrap; margin-bottom: var(--space-5); }
+  .page-head .eyebrow { margin: 0 0 4px; font-size: .7rem; font-weight: 700; letter-spacing: .11em;
+                        text-transform: uppercase; color: var(--brand); }
+  .page-head__who { margin: 6px 0 0; font-size: .8rem; color: var(--ink-faint); }
+  .page-head__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+
+  /* ── surfaces ─────────────────────────────────────────────────────────── */
+  .card {
+    border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius);
+    padding: .9rem 1rem; margin: var(--space-3) 0; box-shadow: var(--shadow-card);
+  }
+  .card > h3:first-child, .card > p:first-child { margin-top: 0; }
+  .card > :last-child { margin-bottom: 0; }
+  .card--flush { padding: 0; overflow: hidden; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+                flex-wrap: wrap; padding: .7rem 1rem; border-bottom: 1px solid var(--line);
+                background: var(--surface-muted); }
+  .panel-head h2, .panel-head h3 { margin: 0; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase;
+                                   color: var(--ink-soft); font-weight: 600; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: var(--space-3);
+           margin: var(--space-4) 0; }
+  .tile { border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius);
+          padding: .8rem .9rem; box-shadow: var(--shadow-card); }
+  .tile__label { margin: 0; font-size: .68rem; font-weight: 700; letter-spacing: .09em;
+                 text-transform: uppercase; color: var(--ink-faint); }
+  .tile__value { margin: 4px 0 0; font-family: var(--font-display); font-size: 1.6rem; line-height: 1.1;
+                 font-variant-numeric: tabular-nums; }
+  .tile__hint { margin: 4px 0 0; font-size: .78rem; color: var(--ink-faint); }
+  .tile--ok { border-color: color-mix(in oklab, var(--ok) 45%, var(--line)); }
+  .tile--ok .tile__value { color: var(--ok); }
+  .tile--bad { border-color: color-mix(in oklab, var(--bad) 45%, var(--line)); }
+  .tile--bad .tile__value { color: var(--bad); }
+  .tile--attention { border-color: color-mix(in oklab, var(--attention) 45%, var(--line)); }
+  .tile--attention .tile__value { color: var(--attention); }
+
+  .empty { margin: 0; padding: 1.4rem 1rem; text-align: center; color: var(--ink-faint); font-size: .9rem; }
+
+  /* ── notices ──────────────────────────────────────────────────────────── */
+  .flash, .error { border-radius: var(--radius-sm); padding: .6rem .8rem; margin: var(--space-4) 0;
+                   font-size: .9rem; border: 1px solid transparent; }
+  .flash { background: var(--ok-soft); border-color: color-mix(in oklab, var(--ok) 55%, transparent); color: var(--ok); }
+  .error { background: var(--bad-soft); border-color: color-mix(in oklab, var(--bad) 55%, transparent); color: var(--bad); }
+
+  /* ── tables ───────────────────────────────────────────────────────────── */
   table { border-collapse: collapse; width: 100%; }
-  th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
-  select { font: inherit; padding: .35rem .5rem; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); }
-  /* Severity and control states. Colour comes from the theme's own tokens and nowhere
-     else, so the SOC palette and a light/dark switch both reach these two columns. */
-  .sev { font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
-  .sev-critical, .sev-high { color: var(--bad); }
-  .sev-medium { color: var(--ink-soft); }
-  .sev-low { color: var(--ink-faint); }
-  .control-ok { color: var(--ok); font-weight: 600; }
-  .control-warn { color: var(--ink-soft); font-weight: 600; }
-  .control-fail { color: var(--bad); font-weight: 600; }
-  /* One bar across the top, holding the section links and the two controls. It is
-     sticky because the evidence table runs long and the switch should still be to
-     hand at the bottom of it. */
-  .bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: var(--space-4);
-         flex-wrap: wrap; padding: var(--space-3) var(--space-4); background: var(--surface);
-         border-bottom: 1px solid var(--line); }
-  nav { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; margin-right: auto; }
-  nav a { color: var(--ink-soft); text-decoration: none; font-weight: 500; }
-  nav a:hover { color: var(--brand); }
-  .bar-actions { display: flex; align-items: center; gap: var(--space-3); }
-  .bar-actions form { margin: 0; }
+  th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: .68rem; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-faint);
+       font-weight: 600; background: var(--surface-muted); }
+  tbody tr:hover { background: color-mix(in oklab, var(--surface-muted) 55%, transparent); }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  /* ── controls ─────────────────────────────────────────────────────────── */
+  form { margin: .75rem 0; }
+  label { display: block; font-size: .82rem; font-weight: 600; color: var(--ink-soft); margin: var(--space-3) 0 var(--space-1); }
+  label input, label select, label textarea { margin-top: 4px; font-weight: 400; }
+  /* A filter row spells its controls out in a sentence ("Show [state] severity [x]"),
+     so a label in a paragraph is a word in that sentence, not a stacked field. */
+  p > label.muted { display: inline; margin: 0; font-weight: 400; }
+  input, textarea, select { font: inherit; width: 100%; padding: .45rem .6rem; border-radius: var(--radius-sm);
+                            border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); }
+  select { width: auto; }
+  textarea { font-family: var(--mono); font-size: .85em; resize: vertical; }
+  input:focus-visible, textarea:focus-visible, select:focus-visible {
+    outline: 2px solid var(--brand-ring); outline-offset: 1px; border-color: var(--brand);
+  }
+  button, .btn { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: .875rem;
+                 font-weight: 600; padding: .45rem .85rem; border-radius: var(--radius-sm);
+                 border: 1px solid transparent; background: var(--brand); color: var(--brand-ink); cursor: pointer; }
+  button:hover, .btn:hover { filter: brightness(1.06); text-decoration: none; }
   button.quiet { background: transparent; border-color: var(--line-strong); color: var(--ink-soft); font-weight: 500; }
   button.quiet:hover { background: var(--surface-muted); color: var(--ink); filter: none; }
-  ul { padding-left: 1.1rem; }
   .field { display: block; margin: var(--space-3) 0; }
-  .field label { display: block; font-weight: 600; font-size: .88rem; margin-bottom: var(--space-1); }
-  .field .hint { font-weight: 400; color: var(--ink-faint); }
-  /* The front door's frame and its gate are the theme's own primitives, and this console
-     is the one product whose stylesheet carries no reset of its own — the others get one
-     from their framework. So the two things the console's own base says differently are
-     said here, for the frame and for nothing else.
+  .field label, .field > span:first-child { display: block; font-weight: 600; font-size: .82rem;
+                                            margin-bottom: var(--space-1); color: var(--ink-soft); }
+  .field .hint, label .hint { font-weight: 400; color: var(--ink-faint); font-size: .78rem; }
+  .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: var(--space-3); }
+  ul { padding-left: 1.1rem; }
 
-     Boxes first: with the padding outside the stated width, the frame came out 44px
-     wider than Tix's and the gate card 58px wider, which is the same door drawn at a
-     slightly different size. Then type: every length in the theme's frame is in px, so
-     the console's 15px/1.55 base moved nothing but the line box — and that is a gate, a
-     button and a footer each a pixel taller than the same frame elsewhere. 16px on a 1.5
-     rhythm is what the other front doors render with, left in place by their frameworks
-     and the browser's own default. The console's own reading column keeps its box model
-     and its 15px/1.55: this is the front door, and only the front door. */
+  /* ── state ────────────────────────────────────────────────────────────── */
+  .sev { font-size: .68rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+         padding: 1px 6px; border-radius: var(--radius-pill); border: 1px solid transparent; }
+  .sev-critical { color: var(--bad); background: var(--bad-soft); border-color: color-mix(in oklab, var(--bad) 45%, transparent); }
+  .sev-high { color: var(--attention); background: var(--attention-soft); border-color: color-mix(in oklab, var(--attention) 45%, transparent); }
+  .sev-medium { color: var(--ink-soft); background: var(--surface-muted); border-color: var(--line-strong); }
+  .sev-low { color: var(--ink-faint); background: var(--surface-muted); border-color: var(--line); }
+  .control-ok { color: var(--ok); font-weight: 600; }
+  .control-warn { color: var(--attention); font-weight: 600; }
+  .control-fail { color: var(--bad); font-weight: 600; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 1px 9px; border-radius: var(--radius-pill);
+          border: 1px solid var(--line-strong); background: var(--surface-muted); color: var(--ink-soft);
+          font-size: .72rem; white-space: nowrap; }
+  .pill--ok { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
+  .pill--bad { border-color: var(--bad); color: var(--bad); background: var(--bad-soft); }
+  .pill--attention { border-color: var(--attention); color: var(--attention); background: var(--attention-soft); }
+
+  /* ── the palette ────────────────────────────────────────────────────────
+     A filter over the same links the rail draws, so it can never offer a page
+     that does not exist or hide one that does. It is a <dialog>, which gives
+     Escape and the focus trap from the browser instead of a script. */
+  .palette { width: min(34rem, 92vw); padding: 0; border: 1px solid var(--line-strong);
+             border-radius: var(--radius); background: var(--surface); color: var(--ink);
+             box-shadow: var(--shadow-pop); }
+  .palette::backdrop { background: color-mix(in oklab, var(--canvas) 20%, #000 45%); }
+  .palette input { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: .9rem 1rem; font-size: .95rem; }
+  .palette ul { list-style: none; margin: 0; padding: .35rem; max-height: 55vh; overflow-y: auto; }
+  .palette a { display: flex; align-items: baseline; gap: .6rem; padding: .5rem .7rem; border-radius: var(--radius-sm);
+               color: var(--ink); text-decoration: none; font-size: .88rem; }
+  .palette a:hover, .palette a[aria-selected="true"] { background: var(--brand-soft); color: var(--brand); }
+  .palette a small { margin-left: auto; color: var(--ink-faint); font-size: .7rem; }
+  .palette [hidden] { display: none; }
+
+  /* ── the front door ─────────────────────────────────────────────────────
+     The gate, the masthead and the footer come from the shared theme so this
+     door and every other product's are the same door. What is here is what
+     only this console's gate has. */
   .page, .gate { box-sizing: border-box; }
   .page { font-size: 16px; line-height: 1.5; }
-  /* No backticks in this block: the whole stylesheet is one template literal, and a
-     backtick in a comment would end it. The gate and the page frame around it (.page,
-     .masthead, .gate, .gate__mark-wrap, .gate__mark, .footer) come from the shared
-     theme, so this console's front door and the other products' are the same door.
-     What is left here is what only the console's gate has. */
   .gate p { margin: 0; }
   .gate .muted { font-size: .9rem; }
-  /* No provider configured: say so, rather than draw a control that cannot complete. */
   .gate .note { border-radius: var(--radius-sm); padding: .6rem .75rem; text-align: left;
     background: var(--surface-muted); border: 1px solid var(--line-strong); color: var(--ink-soft); font-size: .9rem; }
   .gate code { font-family: var(--mono); font-size: .85em; }
+
+  /* ── narrow ─────────────────────────────────────────────────────────────
+     One column, and the map becomes a scrollable strip above the page. The
+     rail's brand and search stay, because a signed-in operator on a phone
+     still needs both. */
+  @media (max-width: 860px) {
+    .app { grid-template-columns: minmax(0, 1fr); }
+    .rail { position: static; height: auto; gap: var(--space-3); border-right: 0; border-bottom: 1px solid var(--line); }
+    .rail__nav { flex-direction: row; gap: var(--space-3); overflow-x: auto; padding-bottom: 2px; }
+    .rail__group { flex-direction: row; align-items: center; gap: 2px; }
+    .rail__label { display: none; }
+    .rail__nav a { white-space: nowrap; }
+    .rail__nav a span { display: none; }
+    .content { padding: var(--space-4) var(--space-3) 4rem; }
+    .topbar { padding: var(--space-2) var(--space-3); }
+  }
 `;
 
 export interface ConsolePageInput {
@@ -771,89 +914,165 @@ export interface ConsolePageInput {
   brand?: boolean;
   /** The line under the product name when `brand` is set, if the page has one. */
   brandSub?: string;
+  /**
+   * The path this page *is*, so the rail can mark it.
+   *
+   * Passed by each renderer rather than derived from the title: two screens can share
+   * a word, and a nav that highlights the wrong link — or none — is a map that lies
+   * about where you are. Absent on the gate and on the refusals, which are not
+   * destinations.
+   */
+  current?: string;
+}
+
+/**
+ * The console's map.
+ *
+ * Grouped by what an operator is doing rather than listed in the order the milestones
+ * landed: a shift starts in Operations, an identity question is answered in Identity, and
+ * Assurance is the page somebody opens when a document has to leave the building. The
+ * order inside a group is the order a person asks the questions in — the queue, then what
+ * detection can see, then what it is matching against, then what it can stop.
+ *
+ * Enforcement is filtered for a non-administrator (see `navLinks`): a link to a refusal
+ * is worse than no link, and the service is still the gate.
+ */
+const NAV_GROUPS: readonly { label: string; links: readonly (readonly [string, string, string])[] }[] = [
+  {
+    label: "Operations",
+    links: [
+      [CONSOLE_PATHS.controlCenter, "Control center", "queue, coverage, prevention"],
+      [CONSOLE_PATHS.alerts, "Alerts", "what detection raised"],
+      [CONSOLE_PATHS.coverage, "Coverage", "what detection reads"],
+      [CONSOLE_PATHS.intel, "Threat intel", "indicators"],
+      [CONSOLE_PATHS.enforcement, "Enforcement", "administration"],
+    ],
+  },
+  {
+    label: "Identity",
+    links: [
+      [CONSOLE_PATHS.home, "Overview", "this session"],
+      [CONSOLE_PATHS.mfa, "Second factor", "authenticators"],
+      [CONSOLE_PATHS.policies, "Policies", "session rules"],
+      [CONSOLE_PATHS.directory, "Directories", "the source of people"],
+      [CONSOLE_PATHS.reviews, "Access reviews", "attestations"],
+      [CONSOLE_PATHS.provisioning, "Provisioning", "connector tokens"],
+    ],
+  },
+  {
+    label: "Assurance",
+    links: [[CONSOLE_PATHS.compliance, "Compliance", "posture and the signed packet"]],
+  },
+];
+
+/** The links this actor may see, and nothing about them the rail does not draw. */
+function navLinks(actor: ConsolePageInput["actor"]): (readonly [string, string, string, string])[] {
+  const out: (readonly [string, string, string, string])[] = [];
+  for (const group of NAV_GROUPS) {
+    for (const [path, label, hint] of group.links) {
+      if (path === CONSOLE_PATHS.enforcement && actor?.role !== "ADMIN") continue;
+      out.push([path, label, hint, group.label]);
+    }
+  }
+  return out;
 }
 
 /**
  * One page, wrapped.
  *
- * The nav is built here rather than by each page so a new console screen cannot
- * forget it, and so the set of screens is one list somebody can read.
+ * Two frames, and the difference is who is reading. A signed-in operator gets the app
+ * shell — the rail is the whole map, and it is drawn here rather than by each page so a
+ * new screen cannot forget it and so the set of screens is one list somebody can read.
+ * Everybody else gets the family's front door: the masthead naming the product and where
+ * it is reached, the gate, and a footer. The rail is deliberately not drawn there: every
+ * link in it leads to a page that would refuse a visitor.
  */
 export function consolePage(input: ConsolePageInput): string {
-  // The queue sits second because it is the one page an operator opens first, and the
-  // posture summary sits last because it is the page that summarizes all the others.
-  const nav = input.actor
-    ? `<nav class="muted"><a href="${CONSOLE_PATHS.controlCenter}">Control center</a>` +
-      `<a href="${CONSOLE_PATHS.home}">Overview</a>` +
-      `<a href="${CONSOLE_PATHS.alerts}">Alerts</a>` +
-      `<a href="${CONSOLE_PATHS.mfa}">Second factor</a>` +
-      `<a href="${CONSOLE_PATHS.policies}">Policies</a>` +
-      `<a href="${CONSOLE_PATHS.directory}">Directories</a>` +
-      `<a href="${CONSOLE_PATHS.reviews}">Access reviews</a>` +
-      `<a href="${CONSOLE_PATHS.intel}">Threat intel</a>` +
-      `<a href="${CONSOLE_PATHS.coverage}">Coverage</a>` +
-      `<a href="${CONSOLE_PATHS.provisioning}">Provisioning</a>` +
-      // Prevention is an administrator's surface, and the nav says so rather than offering
-      // a page that would refuse on arrival: a link to a refusal is worse than no link.
-      (input.actor.role === "ADMIN"
-        ? `<a href="${CONSOLE_PATHS.enforcement}">Enforcement</a>`
-        : "") +
-      `<a href="${CONSOLE_PATHS.compliance}">Compliance</a>` +
-      `</nav>`
-    : `<nav class="muted"><a href="${CONSOLE_PATHS.signIn}">Sign in</a></nav>`;
-
-  // The switch and the sign-out button share the bar's right-hand side, so the two
-  // things a person reaches for from any page are in the same place on every page.
-  const actions =
-    `<div class="bar-actions">${themeSwitch()}` +
-    (input.actor
-      ? `<form method="post" action="${CONSOLE_PATHS.logout}"><button type="submit" class="quiet">Sign out</button></form>`
-      : "") +
-    `</div>`;
-
-  // The display name is somebody else's text and is rendered here on purpose: a page
-  // that only ever shows an identifier makes a display name nothing more than
-  // decoration. It is escaped like everything else.
+  const links = navLinks(input.actor);
   const who = input.actor
-    ? `<p class="muted">${
+    ? `<p class="page-head__who">${
         input.actor.displayName && input.actor.displayName !== input.actor.identifier
           ? `${escapeHtml(input.actor.displayName)} · `
           : ""
-      }${escapeHtml(input.actor.identifier)} · ${escapeHtml(input.actor.organizationName)}</p>`
+      }${escapeHtml(input.actor.identifier)} · ${escapeHtml(input.actor.organizationName)}` +
+      (input.actor.role ? ` <span class="pill">${escapeHtml(input.actor.role)}</span>` : "") +
+      `</p>`
     : "";
-
-  // The sign-in page introduces the product; every other page leads with its own
-  // title, because the person is already inside and knows where they are.
-  const heading = input.brand
-    ? brandHead(input.brandSub)
-    : `<h1>${escapeHtml(input.title)}</h1>`;
 
   const notices =
     (input.error ? `<p class="error" role="alert">${escapeHtml(input.error)}</p>` : "") +
-    (input.flash ? `<p class="flash">${escapeHtml(input.flash)}</p>` : "");
+    (input.flash ? `<p class="flash" role="status">${escapeHtml(input.flash)}</p>` : "");
 
-  // The sign-in page is the one page that leads with the product mark, and it leads
-  // with it *inside* the gate card — the lockup, the notices and the one control read
-  // as a single centred column, the shape ontrak.innotel.us uses. Every other page is
-  // a signed-in operator's, who already knows where they are, so it keeps the plain
-  // heading in the reading column.
-  const inner = input.brand
-    ? `<div class="gate">${heading}${notices}${input.body}</div>`
-    : `${heading}${who}${notices}${input.body}`;
+  // The sign-in page introduces the product; every other page leads with its own title,
+  // because the person is already inside and knows where they are.
+  const heading = input.brand ? brandHead(input.brandSub) : `<h1>${escapeHtml(input.title)}</h1>`;
+  const eyebrow = input.brand || !input.actor ? "" : `<p class="eyebrow">OnTrak Sentinel</p>`;
 
-  // Two frames, one per kind of page.
-  //
-  // The sign-in page is a front door: a person arrives there from a link, having chosen
-  // nothing, so it wears the family's frame — the masthead naming the product and where
-  // it is reached, the gate, and a footer — which is the page shape every other OnTrak
-  // product shows (see `.page` in the shared theme). The console's own bar is
-  // deliberately not drawn there: every section link in it leads to a page that would
-  // refuse a signed-out visitor.
-  //
-  // Every other page is a signed-in operator's, and keeps the bar, where the section
-  // links are the point.
-  const shell = input.brand
-    ? `<div class="page">` +
+  const rail =
+    `<aside class="rail">` +
+    `<a class="rail__brand" href="${CONSOLE_PATHS.home}">` +
+    productMark("sentinel-rail-mark", "rail__mark", null) +
+    `<span><strong>Sentinel</strong><small>${escapeHtml(FAMILY_DOMAIN)}</small></span></a>` +
+    `<button type="button" class="rail__jump" data-palette-open>Jump to a page <kbd>Ctrl K</kbd></button>` +
+    `<nav class="rail__nav" aria-label="Console sections">` +
+    NAV_GROUPS.map(
+      (group) =>
+        `<div class="rail__group"><p class="rail__label">${escapeHtml(group.label)}</p>` +
+        group.links
+          .filter(([path]) => links.some(([visible]) => visible === path))
+          .map(
+            ([path, label, hint]) =>
+              `<a href="${path}"${input.current === path ? ` aria-current="page"` : ""} title="${escapeHtml(hint)}">` +
+              `${escapeHtml(label)}</a>`,
+          )
+          .join("") +
+        `</div>`,
+    ).join("") +
+    `</nav></aside>`;
+
+  const topbar =
+    `<header class="topbar">` +
+    `<span class="topbar__crumb">Sentinel <span aria-hidden="true">/</span> <strong>${escapeHtml(input.title)}</strong></span>` +
+    `<div class="topbar__tools">${themeSwitch()}` +
+    (input.actor
+      ? `<form method="post" action="${CONSOLE_PATHS.logout}"><button type="submit" class="quiet">Sign out</button></form>`
+      : "") +
+    `</div></header>`;
+
+  const content =
+    `<main class="content">` +
+    `<div class="page-head"><div>${eyebrow}${heading}${who}</div>` +
+    `<div class="page-head__actions">${
+      input.actor && input.current !== CONSOLE_PATHS.controlCenter
+        ? `<a class="btn" href="${CONSOLE_PATHS.controlCenter}">Open control center</a>`
+        : ""
+    }</div></div>` +
+    notices +
+    input.body +
+    `</main>`;
+
+  // The palette is drawn from the same list as the rail, so it cannot offer a page that
+  // does not exist or hide one that does.
+  const palette =
+    `<dialog class="palette" id="sentinel-palette" aria-label="Jump to a console page">` +
+    `<input type="search" id="sentinel-palette-input" placeholder="Jump to a page…" ` +
+    `aria-label="Jump to a console page" autocomplete="off" spellcheck="false">` +
+    `<ul>` +
+    links
+      .map(
+        ([path, label, hint, group]) =>
+          `<li><a href="${path}" data-label="${escapeHtml(`${group} ${label} ${hint}`.toLowerCase())}">` +
+          `${escapeHtml(label)}<small>${escapeHtml(group)}</small></a></li>`,
+      )
+      .join("") +
+    `</ul></dialog>`;
+
+  // The front door is the family's frame — mark, gate, footer — and the app shell is the
+  // rail and the reading column. A refusal with no actor sits behind the front-door frame
+  // too: there is nobody to draw a rail for.
+  const shell = input.actor
+    ? `<div class="app">${rail}<div class="app__body">${topbar}${content}</div></div>${palette}`
+    : `<div class="page">` +
       `<header class="masthead">` +
       `<a class="masthead__brand" href="${CONSOLE_PATHS.signIn}">` +
       productMark("sentinel-masthead-mark", "masthead__mark", null) +
@@ -861,10 +1080,11 @@ export function consolePage(input: ConsolePageInput): string {
       `</a>` +
       `<div class="masthead__tools">${themeSwitch()}</div>` +
       `</header>` +
-      `<main class="page__main">${inner}</main>` +
+      `<main class="page__main">${
+        input.brand ? `<div class="gate">${heading}${notices}${input.body}</div>` : `${heading}${notices}${input.body}`
+      }</main>` +
       `<footer class="footer"><span>${PRODUCT_NAME}</span></footer>` +
-      `</div>`
-    : `<div class="bar">${nav}${actions}</div><main>${inner}</main>`;
+      `</div>`;
 
   return (
     // `data-scheme` is how the shared theme is told which palette to paint; the mode
@@ -876,9 +1096,7 @@ export function consolePage(input: ConsolePageInput): string {
     `<meta name="robots" content="noindex">` +
     // The tab names the product on the front door and the page inside it everywhere
     // else. The sign-in page is the one screen a person reaches without having chosen
-    // the product, so "Sign in · OnTrak Sentinel" answers a question nobody asked —
-    // that the page is a sign-in page is on it, in words, in the one control it has,
-    // and every other product's front door prints its name in the tab and nothing more.
+    // the product, so "Sign in · OnTrak Sentinel" answers a question nobody asked.
     `<title>${input.brand ? PRODUCT_NAME : `${escapeHtml(input.title)} · ${PRODUCT_NAME}`}</title>` +
     // The stylesheet first, then the switch, then the console's own rules. The switch
     // is a *blocking* script on purpose: it has to run before the first paint so
@@ -889,8 +1107,9 @@ export function consolePage(input: ConsolePageInput): string {
     `<style>${STYLES}</style></head>` +
     // The switch's wiring travels with the page it is on: the console is server-rendered
     // HTML, so there is no bundle to mount a component from, and a switch whose buttons
-    // do nothing is worse than no switch at all.
-    `<body class="liquid">${shell}${TOGGLE_SCRIPT}</body></html>`
+    // do nothing is worse than no switch at all. The palette is wired the same way, and
+    // only on a page that has one.
+    `<body class="liquid">${shell}${TOGGLE_SCRIPT}${input.actor ? PALETTE_SCRIPT : ""}</body></html>`
   );
 }
 
@@ -1001,6 +1220,42 @@ const TOGGLE_SCRIPT =
   `if(palette){palette.addEventListener('click',function(){` +
   `api.setScheme(schemes[(schemes.indexOf(api.scheme())+1)%schemes.length]);});}` +
   `window.addEventListener('unity:theme',paint);paint();` +
+  `})();</script>`;
+
+/**
+ * Wire the palette.
+ *
+ * A filter over the links the rail already draws, so the two can never disagree about
+ * which pages exist. `<dialog>` is the browser's own modal: Escape, the backdrop and the
+ * focus trap are its behaviour rather than this script's, which is the only reason a
+ * keyboard surface this small is worth shipping at all.
+ *
+ * Ctrl/Cmd-K opens it anywhere; `/` opens it too, except while a field has focus — a
+ * search box that steals a slash is a search box that cannot contain one.
+ */
+const PALETTE_SCRIPT =
+  `<script>(function(){` +
+  `var dialog=document.getElementById('sentinel-palette');if(!dialog)return;` +
+  `var input=document.getElementById('sentinel-palette-input');` +
+  `var items=[].slice.call(dialog.querySelectorAll('li'));` +
+  `function filter(q){q=q.trim().toLowerCase();var first=null;` +
+  `for(var i=0;i<items.length;i++){var a=items[i].querySelector('a');` +
+  `var hit=!q||a.getAttribute('data-label').indexOf(q)>=0;items[i].hidden=!hit;` +
+  `a.setAttribute('aria-selected','false');if(hit&&!first)first=a;}` +
+  `if(first)first.setAttribute('aria-selected','true');}` +
+  `function open(){if(!dialog.open){input.value='';filter('');dialog.showModal();}input.focus();input.select();}` +
+  `function follow(){var a=dialog.querySelector('li:not([hidden]) a');if(a)location.href=a.getAttribute('href');}` +
+  `var openers=document.querySelectorAll('[data-palette-open]');` +
+  `for(var i=0;i<openers.length;i++){openers[i].addEventListener('click',open);}` +
+  `input.addEventListener('input',function(){filter(input.value);});` +
+  `input.addEventListener('keydown',function(event){if(event.key==='Enter'){event.preventDefault();follow();}});` +
+  `dialog.addEventListener('click',function(event){if(event.target===dialog)dialog.close();});` +
+  `document.addEventListener('keydown',function(event){` +
+  `var field=document.activeElement&&document.activeElement.tagName;` +
+  `var typing=field==='INPUT'||field==='TEXTAREA'||field==='SELECT';` +
+  `if((event.key==='k'||event.key==='K')&&(event.metaKey||event.ctrlKey)){event.preventDefault();open();}` +
+  `else if(event.key==='/'&&!typing){event.preventDefault();open();}` +
+  `});` +
   `})();</script>`;
 
 /**
@@ -1117,6 +1372,25 @@ export function renderSignIn(view: ConsoleSignInView): string {
 
 const CHAIN_OK = "The organization's evidence chain verifies end to end.";
 
+/** One figure on the overview, with the sentence that makes it actionable. */
+function tile(label: string, value: string, hint: string, tone?: "ok" | "bad" | "attention"): string {
+  return (
+    `<div class="tile${tone ? ` tile--${tone}` : ""}">` +
+    `<p class="tile__label">${escapeHtml(label)}</p>` +
+    `<p class="tile__value">${escapeHtml(value)}</p>` +
+    `<p class="tile__hint">${escapeHtml(hint)}</p>` +
+    `</div>`
+  );
+}
+
+/**
+ * The account overview: this session, this second factor, and the chain underneath both.
+ *
+ * It is deliberately not the operations cockpit — that is `/console/control-center`,
+ * where the queue lives. What this page answers is "is my own access in order", so the
+ * four tiles are the four facts that decide it, and the one that is *wrong* is the one
+ * painted with a colour rather than the one at the top.
+ */
 export function renderOverview(view: ConsoleOverviewView): string {
   const rows = view.events
     .slice(0, 25)
@@ -1128,28 +1402,44 @@ export function renderOverview(view: ConsoleOverviewView): string {
     )
     .join("");
 
+  const tiles =
+    `<div class="tiles">` +
+    tile("Evidence chain", String(view.chainLength), view.chainOk ? "verified end to end" : "does not verify",
+      view.chainOk ? "ok" : "bad") +
+    tile("Second factor", view.enrolled ? String(view.factorCount) : "None",
+      view.enrolled ? "factor(s) on record" : "not enrolled", view.enrolled ? "ok" : "bad") +
+    tile("Session", "Live", `expires ${view.session.expiresAt}`) +
+    tile("Role", view.actor.role ?? "MEMBER", view.actor.organizationName) +
+    `</div>`;
+
+  const owed = view.enrolled
+    ? `<div class="card"><p><strong>Nothing is owed by you right now.</strong> ` +
+      `Your second factor is enrolled and the chain verifies. ` +
+      `<a href="${CONSOLE_PATHS.controlCenter}">Open the control center</a> to read the queue.</p></div>`
+    : `<div class="card"><p><strong>Not enrolled.</strong> The default policy refuses a session to an identity ` +
+      `without a second factor, so this one is living on borrowed time. ` +
+      `<a href="${CONSOLE_PATHS.mfa}">Enroll one now</a> — no administrator is needed.</p></div>`;
+
   const body =
-    `<h2>Second factor</h2>` +
-    `<div class="card">` +
-    (view.enrolled
-      ? `<p><strong>Enrolled.</strong> ${escapeHtml(view.factorCount)} factor${view.factorCount === 1 ? "" : "s"} on record. ` +
-        `<a href="${CONSOLE_PATHS.mfa}">Manage them</a>.</p>`
-      : `<p><strong>Not enrolled.</strong> The default policy refuses a session to an identity without a second factor, ` +
-        `so <a href="${CONSOLE_PATHS.mfa}">enroll one now</a> — no administrator is needed.</p>`) +
-    `</div>` +
-    `<h2>Session</h2>` +
-    `<div class="card"><p class="muted">Issued ${escapeHtml(view.session.issuedAt)} · last seen ${escapeHtml(view.session.lastSeenAt)} · ` +
-    `expires ${escapeHtml(view.session.expiresAt)}</p>` +
-    `<p class="muted"><code>${escapeHtml(view.session.id)}</code></p></div>` +
+    `<h2>Where this session stands</h2>` +
+    tiles +
+    owed +
     `<h2>Evidence</h2>` +
-    `<p class="${view.chainOk ? "flash" : "error"}">${
-      view.chainOk ? escapeHtml(CHAIN_OK) : escapeHtml(view.chainDetail)
-    } <span class="muted">(${escapeHtml(view.chainLength)} events)</span></p>` +
+    `<p class="${view.chainOk ? "flash" : "error"}"${view.chainOk ? "" : ` role="alert"`}>` +
+    `${view.chainOk ? escapeHtml(CHAIN_OK) : escapeHtml(view.chainDetail)} ` +
+    `<span class="muted">(${escapeHtml(view.chainLength)} events)</span></p>` +
+    `<div class="card card--flush"><div class="panel-head"><h3>Recent activity</h3>` +
+    `<span class="pill">${escapeHtml(view.chainLength)} total</span></div>` +
     (rows
       ? `<table><thead><tr><th>#</th><th>When</th><th>Action</th><th>Actor</th><th>Target</th></tr></thead><tbody>${rows}</tbody></table>`
-      : `<p class="muted">Nothing has been recorded yet.</p>`);
+      : `<p class="empty">Nothing has been recorded yet. The first sign-in writes the first event.</p>`) +
+    `</div>` +
+    `<h2>This session</h2>` +
+    `<div class="card"><p class="muted">Issued ${escapeHtml(view.session.issuedAt)} · last seen ` +
+    `${escapeHtml(view.session.lastSeenAt)} · expires ${escapeHtml(view.session.expiresAt)}</p>` +
+    `<p class="muted"><code>${escapeHtml(view.session.id)}</code></p></div>`;
 
-  return consolePage({ title: "Console", actor: view.actor, body });
+  return consolePage({ title: "Overview", current: CONSOLE_PATHS.home, actor: view.actor, body });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1217,7 +1507,7 @@ export function renderPolicies(view: ConsolePoliciesView, flash?: string | null,
     cards +
     `<p class="muted">Every change is recorded on the organization's evidence chain as <code>policy.update</code>.</p>`;
 
-  return consolePage({ title: "Policies", actor: view.actor, body, flash, error });
+  return consolePage({ title: "Policies", current: CONSOLE_PATHS.policies, actor: view.actor, body, flash, error });
 }
 
 /** The scope list the page iterates, so the order is one thing rather than three. */
@@ -1334,7 +1624,7 @@ export function renderDirectory(
     `<p class="muted">A sync only ever switches somebody off when the directory says they are inactive by name; ` +
     `a person who disappears from the answer is left alone, because a partial answer is how a sync offboards a company.</p>`;
 
-  return consolePage({ title: "Directories", actor: view.actor, body, flash, error });
+  return consolePage({ title: "Directories", current: CONSOLE_PATHS.directory, actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1508,7 +1798,7 @@ export function renderReviews(view: ConsoleReviewsView, flash?: string | null, e
     scheduleForm +
     `<h2>Schedules</h2><div class="card">${scheduleRows}</div>`;
 
-  return consolePage({ title: "Access reviews", actor: view.actor, body, flash, error });
+  return consolePage({ title: "Access reviews", current: CONSOLE_PATHS.reviews, actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1598,7 +1888,7 @@ export function renderIntel(view: ConsoleIntelView, flash?: string | null, error
     `not a claim that anything happened. What it does is change how an existing alert is judged, and the alert keeps the ` +
     `indicator, the feed and the confidence it was judged on — so an escalation can be reviewed after the feed is gone.</p>`;
 
-  return consolePage({ title: "Threat intel", actor: view.actor, body, flash, error });
+  return consolePage({ title: "Threat intel", current: CONSOLE_PATHS.intel, actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1705,6 +1995,55 @@ export interface ConsoleAlertsView {
   canSuppress: boolean;
   /** The windows this organization has, in force or not. Empty for a non-administrator. */
   suppressions: ConsoleSuppressionView[];
+}
+
+/** One CSV cell: quoted only when it has to be, doubled quotes when it is. */
+function csvCell(value: unknown): string {
+  const text = String(value ?? "");
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/**
+ * The queue as the operator is reading it, as a file.
+ *
+ * A `data:` URI rather than a route: the page already holds exactly the rows a download
+ * would, the filter is in the URL, and a new endpoint would be a second query that could
+ * disagree with the screen it was downloaded from. It is what gets attached to a shift
+ * handover or pasted into a ticket, so the columns are the ones a reader needs to act on
+ * rather than the ones that were easiest to serialize.
+ */
+function alertsCsv(alerts: readonly ConsoleAlertView[]): string {
+  const head = [
+    "severity",
+    "rule",
+    "state",
+    "identity",
+    "source",
+    "asset",
+    "owner",
+    "last_seen",
+    "waiting_minutes",
+    "occurrences",
+    "from_feed",
+  ];
+  const rows = alerts.map((alert) =>
+    [
+      alert.severity,
+      alert.ruleName,
+      alert.state,
+      alert.identityLabel ?? "",
+      alert.sourceAddress ?? "",
+      alert.asset ?? "",
+      alert.assigneeLabel ?? "",
+      alert.lastSeenAt,
+      alert.waitingMinutes ?? "",
+      alert.occurrences,
+      alert.escalated ? "yes" : "no",
+    ]
+      .map(csvCell)
+      .join(","),
+  );
+  return `${head.join(",")}\n${rows.join("\n")}\n`;
 }
 
 /** A severity, as a badge whose colour comes from the theme rather than from here. */
@@ -1863,18 +2202,25 @@ export function renderAlerts(view: ConsoleAlertsView, flash?: string | null, err
       `window catches is recorded on the evidence chain rather than raised — so a silence is answerable ` +
       `afterwards instead of reading as a rule that stopped firing.</p></div>`;
 
+  // The same rows the table shows, offered as a file. It is a link, not a button: a
+  // download changes nothing on the server, so it does not need a POST or a route.
+  const exportHref = `data:text/csv;charset=utf-8,${encodeURIComponent(alertsCsv(view.alerts))}`;
+
   const body =
     form +
     `<h2>Where this organization stands</h2>` +
     summaryCard +
     investigation +
-    `<h2>Waiting (${view.alerts.length})</h2><div class="card">${rows}</div>` +
+    `<div class="page-head"><h2>Waiting (${view.alerts.length})</h2>` +
+    `<div class="page-head__actions"><a class="pill" download="sentinel-alerts.csv" ` +
+    `href="${escapeHtml(exportHref)}">Export this view as CSV</a></div></div>` +
+    `<div class="card card--flush">${rows}</div>` +
     `<p class="muted">An alert is raised by a sensor's telemetry against a rule in the rulebook, and it is ` +
     `correlated to an identity when the address it came from held a session. A repeat refreshes the alert it ` +
     `belongs to rather than raising a second one, so a burst that is still arriving is one row.</p>` +
     suppressions;
 
-  return consolePage({ title: "Alerts", actor: view.actor, body, flash, error });
+  return consolePage({ title: "Alerts", current: CONSOLE_PATHS.alerts, actor: view.actor, body, flash, error });
 }
 
 /** One alert, opened: what else it is part of, why it is this loud, and what happened. */
@@ -2140,7 +2486,7 @@ export function renderCompliance(view: ConsoleComplianceView, flash?: string | n
     `<p class="muted">Generated ${escapeHtml(view.generatedAt)}. Every figure above is read from the same rows the ` +
     `product enforces: no control is reported as satisfied because a setting exists somewhere else.</p>`;
 
-  return consolePage({ title: "Compliance", actor: view.actor, body, flash, error });
+  return consolePage({ title: "Compliance", current: CONSOLE_PATHS.compliance, actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2366,7 +2712,7 @@ export function renderEnforcement(
         : `${inForce.length} action(s) in force, ${pending.length} waiting.`
     }</p>`;
 
-  return consolePage({ title: "Enforcement", actor: view.actor, body, flash, error });
+  return consolePage({ title: "Enforcement", current: CONSOLE_PATHS.enforcement, actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2570,7 +2916,7 @@ export function renderCoverage(view: ConsoleCoverageView, flash?: string | null,
     `<p class="muted">Generated ${escapeHtml(view.generatedAt)} from the ${escapeHtml(report.rules.length)} rule(s) ` +
     `in this build. Adding a rule adds it here; nothing on this page is maintained by hand.</p>`;
 
-  return consolePage({ title: "Coverage", actor: view.actor, body, flash, error });
+  return consolePage({ title: "Coverage", current: CONSOLE_PATHS.coverage, actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2741,10 +3087,32 @@ export function renderControlCenter(
       `<span class="muted">(${escapeHtml(view.chain.length)} events)</span></p>`
     : `<p class="muted">Your role may not read the evidence trail, so this screen asserts nothing about it.</p>`;
 
+  // The cockpit's four-or-five numbers, above the prose that explains them. A tile is
+  // only painted when it is wrong: a green wall of zeroes stops being read after a week,
+  // so the tone is reserved for the figure somebody has to act on.
+  const cockpit =
+    `<div class="tiles">` +
+    tile("Open alerts", detection ? String(detection.summary.open) : "—",
+      detection ? `${detection.summary.new} new · ${detection.summary.escalated} from a feed` : "no detection pipeline",
+      detection && detection.summary.openHighOrCritical > 0 ? "attention" : undefined) +
+    tile("HIGH or above", detection ? String(detection.summary.openHighOrCritical) : "—",
+      "open and waiting",
+      detection ? (detection.summary.openHighOrCritical > 0 ? "bad" : "ok") : undefined) +
+    tile("Blind spots", detection ? String(detection.gaps.length) : "—",
+      "declared kinds no rule reads",
+      detection ? (detection.gaps.length > 0 ? "attention" : "ok") : undefined) +
+    tile("Prevention in force", prevention ? String(prevention.active) : "—",
+      prevention ? `${prevention.pending} waiting on a second approver` : "not available") +
+    tile("Evidence chain", view.chain ? String(view.chain.length) : "—",
+      view.chain ? (view.chain.ok ? "verified end to end" : "does not verify") : "not readable here",
+      view.chain ? (view.chain.ok ? "ok" : "bad") : undefined) +
+    `</div>`;
+
   const body =
     `<p class="muted">One screen for the two halves of Sentinel Guard: what detection <strong>raised</strong> and what ` +
     `prevention <strong>did about it</strong>, beside the coverage that says what is watched and the evidence chain ` +
     `that says it is all on the record. Read-only — every act stays on the page that owns it.</p>` +
+    cockpit +
     `<h2>Detection — IDS</h2>` +
     detectionCards +
     `<h3>Watchlist</h3>` +
@@ -2765,7 +3133,7 @@ export function renderControlCenter(
     `and writes nothing: every act stays on <a href="${CONSOLE_PATHS.alerts}">Alerts</a> and ` +
     `<a href="${CONSOLE_PATHS.enforcement}">Enforcement</a>, where the rules that refuse are the ones that run.</p>`;
 
-  return consolePage({ title: "Control center", actor: view.actor, body, flash, error });
+  return consolePage({ title: "Control center", current: CONSOLE_PATHS.controlCenter, actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2842,7 +3210,7 @@ export function renderProvisioning(
     `<p class="muted">Groups are recorded, not enforced: roles, groups and attribute-based policy are the rest of S1. ` +
     `What a sync gives you today is the fact of who is in what, on the evidence chain.</p></div>`;
 
-  return consolePage({ title: "Provisioning", actor: view.actor, body, flash, error });
+  return consolePage({ title: "Provisioning", current: CONSOLE_PATHS.provisioning, actor: view.actor, body, flash, error });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2914,7 +3282,7 @@ export function renderMfa(view: ConsoleMfaView, flash?: string | null, error?: s
     `<form method="post" action="${CONSOLE_PATHS.removeAll}"><button type="submit">Remove all factors</button></form></div>` +
     `<script>${WEBAUTHN_SCRIPT}</script>`;
 
-  return consolePage({ title: "Second factor", actor: view.actor, body, flash, error });
+  return consolePage({ title: "Second factor", current: CONSOLE_PATHS.mfa, actor: view.actor, body, flash, error });
 }
 
 /**

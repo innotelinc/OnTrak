@@ -21,6 +21,20 @@ const MARKS = {
     label: "OnTrak Unity",
     strokes: ["M13.5 24.5 h6 l2.8 -7.2 4.4 14.4 2.9 -7.2 h5"],
   },
+  /**
+   * A course being taught: an open book.
+   *
+   * Class is the teaching product's classroom rather than its practice range, so
+   * its stroke is the material being read rather than a task being completed.
+   */
+  class: {
+    tone: "class",
+    label: "OnTrak Class",
+    strokes: [
+      "M16 19 h7.5 a2 2 0 0 1 2 2 v11 h-7.5 a2 2 0 0 0 -2 2 z",
+      "M32 19 h-7.5 a2 2 0 0 0 -2 2 v11 h7.5 a2 2 0 0 1 2 2 z",
+    ],
+  },
   /** A scenario is answered by getting the job done: the tick. */
   training: {
     tone: "its",
