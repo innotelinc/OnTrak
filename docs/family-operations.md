@@ -245,6 +245,30 @@ The `.env` files are **not** in the repository and each one is load-bearing:
 `ontrak-portal/.env` (the session signing secret). Back them up before a redeploy —
 a deployment that regenerates the API token silently breaks anything already using it.
 
+### The AI classroom
+
+The training app offers a class its AthenIQ classroom only when both keys are set in
+`/usr/src/ontrak/.env`:
+
+```env
+ONTRAK_CLASSROOM_ENABLED="true"
+ONTRAK_CLASSROOM_URL="https://classroom.innotel.us"
+```
+
+`ONTRAK_CLASSROOM_URL` is AthenIQ's own `CLASSROOM_HOST`, origin only — the app appends
+`/home`. Enabled with no address, or with one that is not an absolute http(s) URL, is
+reported on the control room's integrations panel and no class is offered a door. The
+container reads both at start, so a change needs a recreate:
+
+```bash
+cd /usr/src/ontrak
+docker compose -f docker-compose.all.yml up -d --force-recreate training-app
+docker exec ontrak-family-training-app-1 printenv ONTRAK_CLASSROOM_ENABLED ONTRAK_CLASSROOM_URL
+```
+
+The full seam, including the two fields OnTrak deliberately does not write, is in
+[ai-classrooms.md](ai-classrooms.md).
+
 ### The training app's machine credentials, and rotating them
 
 Three credentials in `/usr/src/ontrak/.env` are held by systems rather than people,
