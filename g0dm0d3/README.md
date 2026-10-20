@@ -33,6 +33,15 @@ browser ──▶ oauth2-proxy ──▶ g0dm0d3 ──▶ Genie     /api/chat  
   completion cost. The browser never holds a key, and the same three calls Genie
   makes (`identity`, `quota-check`, `usage-report`) are the whole contract — see
   `src/gateway.js`.
+* **The model lists are the gateway's catalog.** The page asks this origin for
+  `/api/gateway/v1/models` and fills its pickers, its race tiers and its judge
+  chain from the ids that come back — there is no vendored provider list to drift
+  from what the gateway serves. A model the gateway retires disappears from the
+  page; one it adds is offered without a deploy. A local OpenAI-compatible server
+  is the only other provider, and only when a person enables it.
+* **Sign-in is Genie's.** The API-keys panel has no key to paste: its button
+  renews the SSO session in place (`/oauth2/sign_in?rd=…`), and the account it
+  returns as is the one the gateway bills.
 * **The run id is the idempotency key.** A double-submit, a retried `fetch` or a
   reloaded tab charges once, because the plane deduplicates on the reference.
 * **A run that never started is refunded.** Genie refusing the turn, or not
@@ -84,9 +93,10 @@ address, `403` with `{subscribeUrl}` without a plan, `429` with the plane's own
 unreachable.
 
 The studio is told where its models are at serve time: with `OMNIROUTE_URL` set,
-`/index.html` carries a `window.G0DM0D3_GATEWAY` line naming `/api/gateway/v1`.
-With it unset the document is served unchanged and the page asks for a personal
-OpenRouter key, which is what a deployment with no gateway should do.
+`/index.html` carries a `window.G0DM0D3_GATEWAY` line naming `/api/gateway/v1`,
+and the page fills its model lists from `/api/gateway/v1/models` on load. With it
+unset the document is served unchanged and only a local model can be used — there
+is no key prompt and no third-party origin.
 
 ## Configuration
 

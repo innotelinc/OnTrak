@@ -1116,9 +1116,9 @@ services:
       # Only the address lives here: the key a completion spends is the signed-in
       # person's own, issued by the control plane below from their OIDC subject, and
       # the studio never sees it (the browser calls `/api/gateway/v1/…` on this
-      # origin). Empty keeps the old behaviour — the page asks each visitor for a
-      # personal OpenRouter key — which is what a deployment without a gateway
-      # should do.
+      # origin). The page's model lists are read from `/api/gateway/v1/models`, so
+      # there is no vendored provider catalog to drift. Empty leaves only a local
+      # model usable — which is what a deployment without a gateway should do.
       OMNIROUTE_URL: ${OMNIROUTE_URL:-}
       OMNIROUTE_MODEL: ${G0DM0D3_GATEWAY_MODEL:-auto/chat}
       # The name the family's dashboard gives this product, and the plan Magnate sells
