@@ -782,9 +782,18 @@ jobs:
           # job waited for the whole stack, that refusal was a crash loop nothing
           # looked at: the API restarted every few seconds behind a dashboard that
           # answered, and the job stayed green.
+          #
+          # The two oauth2-proxy front doors default to the deployment's LAN
+          # address (`192.168.1.21`) on purpose: publishing their port on every
+          # interface would let anyone claim to be anybody by setting a header.
+          # A runner has no such address, and docker refuses to publish a port it
+          # cannot bind, so the job pins them to loopback instead of weakening
+          # the default.
           AUTH_SECRET=ci-only-not-a-production-secret-value \
           TIX_AUTH_SECRET=ci-only-not-a-production-secret-value \
           ONTRAK_API_TOKEN=ci-only-not-a-production-secret-value \
+          G0DM0D3_SSO_BIND=127.0.0.1 \
+          ENGINEER_PORTAL_SSO_BIND=127.0.0.1 \
             docker compose -f docker-compose.all.yml up -d --build
 
           # Every service the family stack serves, at the address this job reaches it
