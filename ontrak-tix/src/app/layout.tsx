@@ -33,7 +33,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
         <script src="/unity-theme.js" />
       </head>
-      <body className="min-h-screen bg-canvas text-ink antialiased">{children}</body>
+      <body className="liquid min-h-screen bg-canvas text-ink antialiased">{children}</body>
     </html>
   );
 }

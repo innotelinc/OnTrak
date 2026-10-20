@@ -48,7 +48,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         />
         <script src="/unity-theme.js" />
       </head>
-      <body>
+      <body className="liquid">
         <div className="page">
           <header className="masthead">
             <a className="masthead__brand" href="/">

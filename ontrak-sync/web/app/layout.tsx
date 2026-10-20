@@ -37,7 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
         <script src="/unity-theme.js" />
       </head>
-      <body>
+      <body className="liquid">
         {/* The provider is inside `<body>` and outside the shell on purpose: the
             shell needs the identity to decide whether to draw itself at all, and
             the login page has to be able to sign somebody in without it. */}
