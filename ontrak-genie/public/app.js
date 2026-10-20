@@ -16,7 +16,7 @@ const state = {
   filePath: ".",
   toolCards: new Map(), // tool_call id -> card handles
   approvals: new Map(), // approval id -> card handle
-  limits: { minSteps: 1, maxSteps: 200, defaultSteps: 30 },
+  limits: { minSteps: 1, maxSteps: 999, defaultSteps: 999 },
   /** Fallback chain the server would use for a new chat; null until health answers. */
   fallbackDefault: null,
   /**

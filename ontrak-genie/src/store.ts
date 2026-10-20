@@ -57,7 +57,7 @@ export interface Session extends SessionSummary {
 
 /** Hard bounds for a per-session step budget, so the UI cannot set something silly. */
 export const MIN_STEPS = 1;
-export const MAX_STEPS = 200;
+export const MAX_STEPS = 999;
 
 /** A chain longer than this is not a fallback plan, it is a retry storm. */
 export const MAX_FALLBACKS = 12;

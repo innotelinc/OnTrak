@@ -315,7 +315,7 @@ export const config = {
    */
   mcpToolTimeoutMs: nonNegativeInt("MCP_TOOL_TIMEOUT_MS", 300_000),
 
-  maxSteps: int("AGENT_MAX_STEPS", 30),
+  maxSteps: int("AGENT_MAX_STEPS", 999),
   commandTimeoutMs: int("AGENT_COMMAND_TIMEOUT_MS", 120_000),
   requestTimeoutMs: int("AGENT_REQUEST_TIMEOUT_MS", 300_000),
   stream: bool("AGENT_STREAM", true),

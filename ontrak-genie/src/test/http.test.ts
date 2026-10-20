@@ -817,7 +817,7 @@ test("health", async (t) => {
     assert.equal(body.workspace, workspace);
     assert.equal(body.sandbox.backend, "host");
     assert.equal(body.approval.mode, "risky");
-    assert.deepEqual(body.limits, { minSteps: 1, maxSteps: 200, defaultSteps: 30 });
+    assert.deepEqual(body.limits, { minSteps: 1, maxSteps: 999, defaultSteps: 999 });
     assert.equal(body.authRequired, true);
     assert.equal(body.offline.url, `http://127.0.0.1:${offlinePort}/v1`);
     assert.deepEqual(body.offline.models, ["local/fake"]);
@@ -870,7 +870,7 @@ test("sessions", async (t) => {
     const id: string = created.body.session.id;
 
     await api(`/api/sessions/${id}`, { method: "PATCH", body: JSON.stringify({ maxSteps: 9999 }) });
-    assert.equal((await api(`/api/sessions/${id}`)).body.session.maxSteps, 200);
+    assert.equal((await api(`/api/sessions/${id}`)).body.session.maxSteps, 999);
 
     await api(`/api/sessions/${id}`, { method: "PATCH", body: JSON.stringify({ maxSteps: -5 }) });
     assert.equal((await api(`/api/sessions/${id}`)).body.session.maxSteps, 1);

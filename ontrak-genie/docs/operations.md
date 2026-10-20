@@ -1702,7 +1702,7 @@ All optional — see `.env.example`.
 | `AGENT_MODEL`                               | `auto/coding`            | Default model; overridable per request. Pin an explicit id — see *Picking a model* |
 | `AGENT_WORKSPACE`                           | `./workspace`            | The only directory the agent can touch   |
 | `AGENT_DATA_DIR`                            | `./.agent`               | Sessions and the last sweep report (`sweep.json`) |
-| `AGENT_MAX_STEPS`                           | `30`                     | Assistant turns per message (overridable per chat/per request) |
+| `AGENT_MAX_STEPS`                           | `999`                    | Assistant turns per message (overridable per chat/per request) |
 | `AGENT_FALLBACK_MODELS`                     | *(empty)*                | Ordered models to try when one throttles or returns nothing |
 | `AGENT_FREE_MODELS`                         | *(the shipped pool)*     | Models a free-plan account is served from, ordered by reliability. See *Free accounts are served a model* |
 | `AGENT_FREE_PLANS`                          | `free,trial,community`   | Plan names that count as free (case-insensitive); anything else keeps the model picker |
