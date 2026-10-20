@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-scheme="operations">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,8 +9,19 @@
   and `/api/run`) and streams the answer as it arrives. The credit line is the
   point of the page — it is shown before anything is spent, and again after.
 -->
+<script src="/unity-theme.js"></script>
+<link rel="stylesheet" href="/unity-theme.css">
 <style>
-  :root { color-scheme: dark; --bg: #0d0f14; --panel: #151924; --line: #242b3a; --ink: #e6e9f0; --dim: #8b93a7; --accent: #7c5cff; --warn: #ffb454; --bad: #ff6b6b; }
+  :root {
+    /* Unity supplies --line, --ink and --bad outright; these are the page's own
+       names for the tokens it reads under a different word. */
+    color-scheme: light dark;
+    --bg: var(--canvas);
+    --panel: var(--surface);
+    --dim: var(--ink-soft);
+    --accent: var(--brand);
+    --warn: var(--attention);
+  }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
   header { display: flex; align-items: baseline; gap: 12px; padding: 18px 22px; border-bottom: 1px solid var(--line); }

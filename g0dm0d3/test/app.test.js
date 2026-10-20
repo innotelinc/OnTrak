@@ -210,6 +210,24 @@ test("health answers without a session, because the portal's light is unauthenti
   assert.equal((await res.json()).ok, true);
 });
 
+test("the theme is served from this door, unauthenticated, as css and js", async () => {
+  // The pages are read into memory and served as one document, so the two files
+  // that make them wear Unity have to come from the same app. No identity: a
+  // stylesheet carries nothing, and gating it would only make the signed-in page
+  // paint the wrong colours while the cookie is checked.
+  const css = await fetch(`${base}/unity-theme.css`);
+  assert.equal(css.status, 200);
+  assert.match(css.headers.get("content-type"), /text\/css/);
+  const sheet = await css.text();
+  assert.match(sheet, /--canvas:/);
+  assert.match(sheet, /data-scheme="operations"/);
+
+  const js = await fetch(`${base}/unity-theme.js`);
+  assert.equal(js.status, 200);
+  assert.match(js.headers.get("content-type"), /javascript/);
+  assert.match(await js.text(), /data-mode/);
+});
+
 test("no proxy identity means no session and no run", async () => {
   const session = await fetch(`${base}/api/session`);
   assert.equal(session.status, 401);

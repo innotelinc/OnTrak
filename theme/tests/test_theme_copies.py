@@ -74,6 +74,13 @@ APPS = (
     ("web/landing", ("unity-theme.css", "unity-theme.js")),
     ("ontrak-sync/web/landing", ("unity-theme.css", "unity-theme.js")),
     ("ontrak-genie/web/landing", ("unity-theme.css", "unity-theme.js")),
+    # G0DM0D3 reads its pages into memory and serves them itself, so it carries
+    # both files in `public/` and answers `/unity-theme.*` from the same door
+    # (see the route in src/app.js). Its studio and engineer pages are exempt on
+    # purpose: the studio is a vendored upstream single-file app with its own art
+    # direction, and the engineer page is a terminal with a glass palette of its
+    # own; neither is a page this repository designs.
+    ("g0dm0d3/public", ("unity-theme.css", "unity-theme.js")),
 )
 
 

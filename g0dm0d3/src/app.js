@@ -57,6 +57,15 @@ export const HEALTH_PATH = "/health";
  * can be half-written by a deploy while somebody is loading it, and none of
  * these is large enough for holding it to matter.
  */
+/**
+ * The family theme, served from this app rather than from a CDN or a shared
+ * origin: the pages are single files read into memory, so the two assets that
+ * make them wear Unity have to come from the same door. Read once, like the
+ * pages, for the same reason — a request never sees a half-written file.
+ */
+const UNITY_CSS = fs.readFileSync(new URL("../public/unity-theme.css", import.meta.url), "utf8");
+const UNITY_JS = fs.readFileSync(new URL("../public/unity-theme.js", import.meta.url), "utf8");
+
 const PAGE = fs.readFileSync(new URL("../public/portal.html", import.meta.url), "utf8");
 const STUDIO = fs.readFileSync(new URL("../public/studio.html", import.meta.url), "utf8");
 const ENGINEER = fs.readFileSync(new URL("../public/engineer.html", import.meta.url), "utf8");
@@ -787,6 +796,19 @@ export function createServer(config = readConfig()) {
           const page = url.pathname === "/metered" ? PAGE : entryPage(config);
           res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
           return res.end(page);
+        }
+        /*
+         * The theme is served unauthenticated on purpose: it is a stylesheet and
+         * a switch, it carries no data, and a gate in front of it would only make
+         * the signed-in page flash the wrong colours while the cookie is checked.
+         */
+        if (method === "GET" && (url.pathname === "/unity-theme.css" || url.pathname === "/unity-theme.js")) {
+          const css = url.pathname.endsWith(".css");
+          res.writeHead(200, {
+            "content-type": css ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8",
+            "cache-control": "public, max-age=300",
+          });
+          return res.end(css ? UNITY_CSS : UNITY_JS);
         }
         if (url.pathname === "/api/session" && method === "GET") {
           const email = identityOf(req, config);
