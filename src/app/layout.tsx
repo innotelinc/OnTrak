@@ -90,7 +90,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         />
         <script src="/unity-theme.js" />
       </head>
-      <body className="min-h-dvh bg-canvas text-ink antialiased">
+      <body className="liquid min-h-dvh bg-canvas text-ink antialiased">
         {children}
         <ServiceWorkerRegistrar />
       </body>
