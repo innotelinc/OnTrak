@@ -890,7 +890,7 @@ export function consolePage(input: ConsolePageInput): string {
     // The switch's wiring travels with the page it is on: the console is server-rendered
     // HTML, so there is no bundle to mount a component from, and a switch whose buttons
     // do nothing is worse than no switch at all.
-    `<body>${shell}${TOGGLE_SCRIPT}</body></html>`
+    `<body class="liquid">${shell}${TOGGLE_SCRIPT}</body></html>`
   );
 }
 
