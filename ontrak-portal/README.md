@@ -58,8 +58,8 @@ account table:
 
 | Role | Products | How it is usually granted |
 | --- | --- | --- |
-| `STUDENT` | training, the lab | `ontrak-students` |
-| `INSTRUCTOR` | training, the lab | `range-instructors`, `ontrak-instructors` |
+| `STUDENT` | training, Class, the lab | `ontrak-students` |
+| `INSTRUCTOR` | training, Class, the lab | `range-instructors`, `ontrak-instructors` |
 | `TECHNICIAN` | the desk | `ontrak-desk` |
 | `ANALYST` | Sentinel | `ontrak-analysts` |
 | `SYSADMIN` | the desk, Sentinel, Sync, Genie, Engineer, Godmode | `ontrak-sysadmins` |

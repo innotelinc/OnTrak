@@ -204,14 +204,21 @@ export const PRODUCTS: readonly Product[] = [
     tagline:
       "The classroom where a course is taught: lessons, checks and a record of what each learner finished, in the browser.",
     audience: "students and instructors",
-    host: "class",
+    // The classroom is AthenIQ's OpenMAIC host, not a subdomain of this stack:
+    // `classroom.innotel.us` is the one name it is served at, and the training app
+    // names the same host in `ONTRAK_CLASSROOM_URL`. A name derived from the
+    // portal's own base domain (`class.<domain>`) is a link nobody serves.
+    host: "classroom",
+    domain: "innotel.us",
     roles: ["STUDENT", "INSTRUCTOR", "ADMIN"],
     // Its own tone rather than the training range's: both are teaching products,
     // and two tiles in one colour is exactly the pair this token exists to stop.
     tone: "class",
-    // No `health`: the deployment that serves this has not published an
-    // unauthenticated probe yet, and an absent one is drawn as "not checked"
-    // rather than as a green light nobody tested.
+    // The classroom host answers OpenMAIC's own probe, `/api/health`, and its edge
+    // lets that one path through without a credential — every other path is behind
+    // the classroom sign-in. Probing `/` instead would be answered by the sign-in
+    // redirect, which is a green light even when the lesson server is gone.
+    health: "/api/health",
   },
   {
     key: "lab",

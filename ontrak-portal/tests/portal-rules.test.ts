@@ -76,10 +76,11 @@ describe("the catalogue", () => {
   });
 
   it("sends each role to the product it belongs in", () => {
-    // The lab is the training range's real-VM sibling, so it follows the same
-    // audience as the range rather than the operations roles.
-    assert.deepEqual(productsFor("STUDENT").map((p) => p.key), ["its", "lab"]);
-    assert.deepEqual(productsFor("INSTRUCTOR").map((p) => p.key), ["its", "lab"]);
+    // The classroom and the lab are the training range's siblings — the lesson and
+    // the real machine — so they follow the same audience as the range rather than
+    // the operations roles.
+    assert.deepEqual(productsFor("STUDENT").map((p) => p.key), ["its", "class", "lab"]);
+    assert.deepEqual(productsFor("INSTRUCTOR").map((p) => p.key), ["its", "class", "lab"]);
     assert.deepEqual(productsFor("TECHNICIAN").map((p) => p.key), ["tix"]);
     assert.deepEqual(productsFor("ANALYST").map((p) => p.key), ["sentinel"]);
     assert.deepEqual(productsFor("SYSADMIN").map((p) => p.key), [
@@ -93,6 +94,7 @@ describe("the catalogue", () => {
       "genie",
       "engineer",
       "godmode",
+      "class",
       "lab",
     ]);
   });
@@ -137,6 +139,21 @@ describe("the catalogue", () => {
     assert.equal(urlFor(sync, "lab.test", false), "http://sync.lab.test");
   });
 
+  it("links the classroom at its own name, not under the portal's base domain", () => {
+    // The classroom is AthenIQ's host, not a subdomain of this stack. Deriving its
+    // address from the portal's base domain produced `class.ontrak.innotel.us`, a
+    // name nothing serves; `classroom.innotel.us` is where the lesson server is and
+    // where the training app's `ONTRAK_CLASSROOM_URL` already points.
+    assert.equal(urlFor(product("class")!, "ontrak.innotel.us"), "https://classroom.innotel.us");
+    assert.equal(urlFor(product("class")!, "example.test"), "https://classroom.innotel.us");
+    assert.equal(product("class")?.health, "/api/health");
+
+    const tile = tilesFor("STUDENT", { baseDomain: "ontrak.innotel.us" }).find((entry) => entry.key === "class");
+    assert.ok(tile);
+    assert.equal(tile.url, "https://classroom.innotel.us");
+    assert.equal(tile.health, "/api/health");
+  });
+
   it("links the Genie add-ons under Genie's own name, whatever the base domain is", () => {
     // Engineer and Godmode are part of Genie rather than products with an address of
     // their own, so they answer under `genie.innotel.us`. A portal served from any
@@ -170,7 +187,7 @@ describe("the catalogue", () => {
     // The catalogue is the whole family, and the lab stays in it: what it is for, who
     // belongs in it and the path it answers do not change with a deployment. Only the
     // *dashboard* narrows — see `runsHere` and `tilesFor`.
-    assert.deepEqual(productsFor("STUDENT").map((entry) => entry.key), ["its", "lab"]);
+    assert.deepEqual(productsFor("STUDENT").map((entry) => entry.key), ["its", "class", "lab"]);
     assert.equal(canOpen("STUDENT", "lab"), true);
     assert.equal(product("lab")?.health, "/healthz");
   });
@@ -179,10 +196,10 @@ describe("the catalogue", () => {
     // The lab is a peer deployment, not a service the family stack runs, so a portal that
     // has not been told where it is draws no tile for it at all — no link, and no status
     // light that could only read "not answering" for a product nobody is running.
-    assert.deepEqual(tilesFor("STUDENT").map((tile) => tile.key), ["its"]);
+    assert.deepEqual(tilesFor("STUDENT").map((tile) => tile.key), ["its", "class"]);
     assert.deepEqual(
       tilesFor("STUDENT", { addresses: { lab: "https://lab.example.test" } }).map((tile) => tile.key),
-      ["its", "lab"],
+      ["its", "class", "lab"],
     );
   });
 
@@ -202,7 +219,7 @@ describe("the catalogue", () => {
     // Somebody who came for the lab, in a deployment with no lab, still lands on the
     // range: a landing product that is not there is a tile nobody is sent to.
     const tiles = tilesFor("STUDENT", { preferred: ["lab"] });
-    assert.deepEqual(tiles.map((tile) => tile.key), ["its"]);
+    assert.deepEqual(tiles.map((tile) => tile.key), ["its", "class"]);
     assert.equal(tiles.find((tile) => tile.primary)?.key, "its");
 
     // …and where the lab is running, the same preference is honoured.
@@ -220,7 +237,7 @@ describe("the catalogue", () => {
     // one optional entry.
     assert.deepEqual(
       tilesFor("ADMIN").map((tile) => tile.key),
-      ["its", "tix", "sentinel", "sync", "genie", "engineer", "godmode"],
+      ["its", "tix", "sentinel", "sync", "genie", "engineer", "godmode", "class"],
     );
     assert.equal(runsHere(product("its")!), true);
     assert.equal(runsHere(product("lab")!), false);
@@ -442,6 +459,7 @@ describe("the README's role table", () => {
     genie: "Genie",
     engineer: "Engineer",
     godmode: "Godmode",
+    class: "Class",
     lab: "the lab",
   };
 

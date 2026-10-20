@@ -48,6 +48,11 @@ const EXPECTED_HEALTH: Record<string, string> = {
   // the same SSO, so it answers the same unauthenticated `/health`.
   godmode: "/health",
   lab: "/healthz",
+  // The classroom is AthenIQ's OpenMAIC host on its own machine, and the route it
+  // serves is its own: `/api/health`. Its edge passes exactly that path through
+  // without a credential, so the portal asks the lesson server rather than the
+  // sign-in redirect in front of it.
+  class: "/api/health",
 };
 
 test("the declared list covers exactly the catalogue", () => {
