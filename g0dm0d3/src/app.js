@@ -141,6 +141,26 @@ export function readConfig(env = process.env) {
     gatewayUrl: gatewayUrl(env),
     /** The model a completion asks for when the page does not name one. */
     gatewayModel: String(env.OMNIROUTE_MODEL ?? env.G0DM0D3_GATEWAY_MODEL ?? "auto/chat").trim() || "auto/chat",
+    /**
+     * The model an *agent* run asks Genie for, and the chain behind it.
+     *
+     * Empty (the default) means "whatever this deployment's Genie is configured
+     * with", which is the same chain the console at `WORK_URL` runs — the right
+     * default, since one Genie serves every front door and a second opinion here
+     * would only differ from the first by accident.
+     *
+     * It is set when a front door is meant to be answered by a *different* model
+     * than the console: a door whose work is repeatedly stopped by a provider's
+     * content filter points this at a model whose provider does not apply that
+     * filter, and Genie walks the chain from there. Genie ignores a model sent by
+     * an account on the automatic free pool (a free turn is placed by the console,
+     * not by the caller), so this only shapes a subscriber's turn.
+     */
+    agentModel: String(env.G0DM0D3_AGENT_MODEL ?? "").trim(),
+    agentFallbackModels: String(env.G0DM0D3_AGENT_FALLBACK_MODELS ?? "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== ""),
   };
 }
 
@@ -686,7 +706,14 @@ async function handleRun(req, res, config) {
         // workspace, under their own quota, paying their own gateway key.
         "x-genie-actor": email,
       },
-      body: JSON.stringify({ message, ...(sessionId === "" ? {} : { sessionId }) }),
+      body: JSON.stringify({
+        message,
+        ...(sessionId === "" ? {} : { sessionId }),
+        // Only when this door was given a chain of its own; otherwise Genie's own
+        // configuration answers, exactly as it did before this existed.
+        ...(config.agentModel === "" ? {} : { model: config.agentModel }),
+        ...(config.agentFallbackModels.length === 0 ? {} : { fallbackModels: config.agentFallbackModels }),
+      }),
     });
   } catch (error) {
     const back = await refund({

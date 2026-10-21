@@ -307,6 +307,63 @@ tier will answer for changes constantly, and only the second one matters here. T
 flag is computed on the way out rather than stored, so the file on disk keeps its
 own shape.
 
+#### A provider that refuses the work
+
+A coding turn can be stopped by the *vendor's* filter rather than by the model:
+a port scanner for the operator's own subnet, a fuzzer for their own service, a
+keylogger for a security course. Gemini reports that as a finished choice with no
+content — `finish_reason: SAFETY` (or `PROHIBITED_CONTENT`, which no threshold
+relaxes) — which is indistinguishable from a successful empty answer unless
+somebody reads the reason. Read as an answer it became silence in the console, and
+on a front door that charges per run (`g0dm0d3`) a spent credit for nothing.
+
+The agent now names those reasons (`blockedFinishReason` in `src/omniroute.ts`) and
+treats one as a *retryable failure*: before anything has been streamed, the chain
+walks on to the next model and the notice says so;
+
+```
+gemini/gemini-3.1-flash-lite the provider's own filter stopped the turn
+(finish_reason: safety); retrying with …
+```
+
+If every entry is blocked, the turn ends with an error that says which filter
+stopped which model, that nothing was changed, and that asking again the same way
+will be refused the same way. It does **not** re-word the prompt and try again:
+a refusal that arrives as prose is an answer, and looping on it would be spending
+the account's credits to argue with a filter. The fix for a blocked door is a
+different model, not a different phrasing.
+
+Two knobs, both off by default:
+
+Both are read from the **service's own env file** (`ontrak-genie/.env` for the
+console, `g0dm0d3/.env` and `engineer-portal/.env` for the two doors) rather than
+from `docker-compose.all.yml`: an `environment:` entry interpolated from an unset
+root variable lands as an empty string and shadows the file, which is how a
+setting appears to be ignored.
+
+| Setting | Where | What it does |
+| --- | --- | --- |
+| `AGENT_SAFETY_SETTINGS_JSON` | `genie-app` | Sent as `safety_settings` to a `gemini/*` model only. Gemini's per-category thresholds (`HARM_CATEGORY_DANGEROUS_CONTENT`, `HARM_CATEGORY_HARASSMENT`, … → `BLOCK_NONE`) are the documented ones; the prohibited-content categories have no threshold at all. The gateway has to forward the field for it to do anything — verify with one real turn before rolling it out. |
+| `G0DM0D3_AGENT_MODEL` / `G0DM0D3_AGENT_FALLBACK_MODELS` | a front door (`g0dm0d3`, `engineer`) | The chain that door's agent runs ask for, instead of sharing the console's. Set it to a model whose provider does not filter and put Gemini behind it. Genie ignores a model sent by an account on the automatic free pool, so this shapes a subscriber's turn only. |
+
+**As of this writing the second knob has nowhere to point.** The sweep above is
+blunt about it: 29 of 374 advertised ids can drive the agent, 28 of those are
+`auto/*` combos that resolve to `gemini/gemini-3.1-flash-lite`, and every provider
+that is not Gemini or `auto` answers nothing at all (`0 / 340`). A door cannot be
+unfiltered by configuration while the only working model behind the gateway is a
+filtered one. Connect a provider that serves an open-weights coding model —
+`npm run provider:add` — confirm it with `npm run model:health`, and only then pin
+the door to it:
+
+```bash
+npm run provider:add -- --name Groq --base-url https://api.groq.com/openai/v1 \
+  --api-key gsk_... --prefix groq
+npm run model:health -- --prefix groq --all
+# then, in the door's env:
+G0DM0D3_AGENT_MODEL=groq/llama-3.3-70b-versatile
+G0DM0D3_AGENT_FALLBACK_MODELS=auto/coding,gemini/gemini-3.1-flash-lite
+```
+
 Easier still: every usable row carries a **use** button that points this chat at
 that model, and the picker marks each model the last report got a tool call out of
 with `✓`. Finding one of 580 ids by hand was the part of a sweep that was still

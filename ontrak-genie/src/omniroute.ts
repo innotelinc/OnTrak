@@ -357,12 +357,19 @@ export interface ChatOptions {
   baseUrl?: string;
   /** Key to send to that gateway instead of OMNIROUTE_API_KEY. */
   apiKey?: string;
+  /**
+   * The provider's content thresholds, sent as `safety_settings` to a `gemini/*`
+   * model and to nothing else. See `config.safetySettings` for why the scope is
+   * that narrow.
+   */
+  safetySettings?: unknown[];
   signal?: AbortSignal;
 }
 
 function buildBody(options: ChatOptions, stream: boolean): string {
+  const model = options.model ?? config.model;
   const body: Record<string, unknown> = {
-    model: options.model ?? config.model,
+    model,
     messages: options.messages,
     stream,
   };
@@ -370,7 +377,37 @@ function buildBody(options: ChatOptions, stream: boolean): string {
     body.tools = options.tools;
     body.tool_choice = "auto";
   }
+  // Only where the field means something: the OpenAI-compatible surface drops
+  // unknown keys on most adapters and 400s on a few, and no other provider here
+  // has a per-category threshold to relax.
+  if (options.safetySettings !== undefined && options.safetySettings.length > 0 && /^gemini\//i.test(model)) {
+    body.safety_settings = options.safetySettings;
+  }
   return JSON.stringify(body);
+}
+
+/**
+ * The finish reasons that mean "a filter stopped this", not "the model is done".
+ *
+ * Gemini reports a blocked turn as a *finished* choice: `finish_reason: SAFETY`
+ * with no content, or `PROHIBITED_CONTENT` for the categories no threshold
+ * relaxes. Read as an ordinary answer it becomes a blank reply, which the caller
+ * shows as silence and — once a byte has been emitted — does not refund. Naming
+ * them lets the turn be retried on another provider and, failing that, reported
+ * as what it is.
+ */
+const BLOCKED_FINISH_REASONS = new Set([
+  "safety",
+  "prohibited_content",
+  "blocklist",
+  "spii",
+  "recitation",
+]);
+
+/** The provider's own filter stopped this turn, or `null` when it did not. */
+export function blockedFinishReason(result: { finishReason: string | null }): string | null {
+  const reason = (result.finishReason ?? "").trim().toLowerCase();
+  return BLOCKED_FINISH_REASONS.has(reason) ? reason : null;
 }
 
 /** Non-streaming completion. Used when AGENT_STREAM=false. */

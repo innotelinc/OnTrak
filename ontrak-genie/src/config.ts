@@ -143,6 +143,23 @@ function listOrDefault(name: string, fallback: readonly string[]): string[] {
 }
 
 /**
+ * A JSON array from the environment, for a setting whose shape is the provider's
+ * rather than ours (Gemini's `safety_settings` entries are). A malformed value is
+ * ignored rather than fatal: a console that will not boot because an optional
+ * filter setting has a stray comma is worse than one that filters as before.
+ */
+function jsonList(name: string): unknown[] {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * The free coding models Genie picks from when the account has no paid plan.
  *
  * Ordered by **reliability, not strength**, which is the lesson
@@ -236,6 +253,33 @@ export const config = {
    * nothing. Only safe before any text has reached the client.
    */
   fallbackModels: list("AGENT_FALLBACK_MODELS"),
+
+  /**
+   * The provider's content thresholds, forwarded verbatim as the request body's
+   * `safety_settings` — but only to a `gemini/*` model, because Gemini is the one
+   * provider here that has the field, and a body key nobody reads is a 400
+   * waiting to happen.
+   *
+   * Empty (the default) leaves the vendor's defaults alone. A deployment whose
+   * *coding* work keeps being stopped by the vendor's filter — a port scanner for
+   * the operator's own LAN, a fuzzer for their own service — sets the categories
+   * it wants relaxed:
+   *
+   * ```
+   * AGENT_SAFETY_SETTINGS_JSON='[
+   *   {"category":"HARM_CATEGORY_DANGEROUS_CONTENT","threshold":"BLOCK_NONE"},
+   *   {"category":"HARM_CATEGORY_HARASSMENT","threshold":"BLOCK_NONE"}
+   * ]'
+   * ```
+   *
+   * What this cannot do is make a provider answer what its policy forbids: the
+   * prohibited-content categories are not threshold-controlled at all, and no
+   * body field changes a refusal that arrives as prose. Neither is it a promise
+   * the gateway forwards the field — `docs/operations.md` records which provider
+   * adapters do. A turn a provider's filter *blocks* is reported as such (see
+   * `blockedFinishReason`), so this setting is never the only way to notice.
+   */
+  safetySettings: jsonList("AGENT_SAFETY_SETTINGS_JSON"),
 
   /**
    * The curated free pool an account without a paid plan is served from, and

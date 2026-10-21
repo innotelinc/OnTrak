@@ -966,6 +966,11 @@ services:
       G0DM0D3_PRODUCT: engineer
       PRODUCT_NAME: OnTrak Engineer
       PRODUCT_TAGLINE: reverse engineer a shipped application, with the evidence
+      # The chain this door's agent runs ask for comes from `engineer-portal/.env`
+      # (its env_file), not from here: an `environment:` entry interpolated from an
+      # unset root variable shadows that file with an empty string, which is the
+      # one thing worse than leaving it alone. See `docs/operations.md` § *A
+      # provider that refuses the work*.
       # The family page, not OnTrak's own: Engineer is sold as Genie credits, and
       # `subscribe.genie.innotel.us` is the page that lists the Engineer plan
       # ($5 a credit) beside the subdomain. Pointed at `subscribe.ontrak...` the
@@ -1121,6 +1126,10 @@ services:
       # model usable — which is what a deployment without a gateway should do.
       OMNIROUTE_URL: ${OMNIROUTE_URL:-}
       OMNIROUTE_MODEL: ${G0DM0D3_GATEWAY_MODEL:-auto/chat}
+      # The agent's chain for this door (`G0DM0D3_AGENT_MODEL` /
+      # `G0DM0D3_AGENT_FALLBACK_MODELS`) lives in `g0dm0d3/.env`, its env_file — not
+      # here, where an unset root variable would shadow that file with an empty
+      # string. Unset there means this door runs the console's own chain.
       # The name the family's dashboard gives this product, and the plan Magnate sells
       # under it, so the tile and the page it opens cannot disagree — nor can the page
       # and the ledger row. `g0dm0d3` stays the ledger key it has always been.

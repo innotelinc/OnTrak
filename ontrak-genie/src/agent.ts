@@ -9,6 +9,7 @@ import { skillMenu } from "./skills.js";
 import { draftPreview, draftStreamed, textDraftPreview, type DraftSequence } from "./draft.js";
 import {
   GatewayError,
+  blockedFinishReason,
   completeChat,
   isAbortError,
   isRetryableFailure,
@@ -503,6 +504,10 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
     let repeats = 0;
     // Whether anything in this step failed for a reason that could clear later.
     let throttled = false;
+    // Whether the last attempt was stopped by a provider's own filter. A block is
+    // not a cooldown: waiting and walking the chain again would ask the same
+    // filtered model the same question, so the step ends with a sentence instead.
+    let blocked: string | null = null;
 
     let result: ChatResult | null = null;
     // Set on every attempt; only read once one of them has succeeded.
@@ -539,6 +544,7 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
             model: candidate,
             baseUrl: target.baseUrl,
             apiKey: target.apiKey,
+            safetySettings: config.safetySettings,
             signal: options.signal,
           });
           let held = "";
@@ -620,6 +626,7 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
             model: candidate,
             baseUrl: target.baseUrl,
             apiKey: target.apiKey,
+            safetySettings: config.safetySettings,
             signal: options.signal,
           });
         }
@@ -634,6 +641,28 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
             // Bookkeeping must never replace the failure that caused it.
           }
         }
+      }
+
+      /*
+       * A provider's filter is a refusal, not an answer.
+       *
+       * Gemini reports one as a *finished* choice — `finish_reason: SAFETY`, no
+       * content — which everything below would read as a successful, empty turn:
+       * the user is shown silence and the run counts as done. Treat it as a
+       * retryable failure so the chain can move to a provider that does not
+       * filter, and so a chain that is blocked end to end ends in a sentence
+       * somebody can act on. Only before anything was streamed: once text has
+       * reached the client, the provider's refusal is part of the answer.
+       */
+      blocked = failure === null && result !== null && emitted === 0 ? blockedFinishReason(result) : null;
+      if (blocked !== null) {
+        result = null;
+        failure = new GatewayError(
+          `the provider's own filter stopped the turn (finish_reason: ${blocked})`,
+          403,
+          blocked,
+          true,
+        );
       }
 
       const empty =
@@ -668,7 +697,7 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
       // answer by pressing send again. Never after a tool has run: replaying real
       // work would be worse than failing.
       const idle = emitted === 0 && !toolsRan && !isAbortError(failure);
-      if (next === undefined && throttled && idle && repeats < config.retryAttempts) {
+      if (next === undefined && throttled && blocked === null && idle && repeats < config.retryAttempts) {
         // Back off per attempt, so a long outage is not hammered every 20 seconds.
         const waitMs = Math.min(config.retryDelayMs * 2 ** repeats, MAX_RETRY_DELAY_MS);
         repeats += 1;
@@ -728,8 +757,13 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
       failure === null && result !== null && result.content.trim() === "" && result.toolCalls.length === 0;
     if (failure !== null || emptyResult) {
       if (failure !== null) failures.push(`${usedModel} ${firstLine(failure.message)}`);
-      const lead =
-        failure !== null
+      // When every attempt was stopped by a filter, "failed to answer" is the
+      // wrong sentence: the models answered, the provider would not pass it on.
+      const everyAttemptBlocked =
+        failure !== null && failures.length > 0 && failures.every((entry) => /own filter stopped the turn/.test(entry));
+      const lead = everyAttemptBlocked
+        ? "The provider's own content filter stopped this turn on every model it was tried on."
+        : failure !== null
           ? autoFree
             ? "Every model in the free pool failed to answer."
             : "Every model in the chain failed to answer."
@@ -744,12 +778,16 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
        * telling them to use it is worse than saying nothing. What is left is the true
        * part: a free pool throttles, and the answer is to ask again shortly.
        */
-      const advice = autoFree
-        ? "This normally means the free pool is rate-limited right now - free tiers throttle often. " +
-          "Try again in a moment."
-        : "This normally means none of the configured models is usable right now - " +
-          "free tiers rate-limit often. Connect another provider at " +
-          `${gatewayConsoleUrl()}, pick a different model above, and ask me to continue.`;
+      const advice = everyAttemptBlocked
+        ? "Nothing was changed. This is the model vendor's filter, not a throttled pool, so asking again " +
+          "the same way will be refused the same way: a turn like this needs a model whose provider does " +
+          "not apply that filter, put in front of this one in the chain."
+        : autoFree
+          ? "This normally means the free pool is rate-limited right now - free tiers throttle often. " +
+            "Try again in a moment."
+          : "This normally means none of the configured models is usable right now - " +
+            "free tiers rate-limit often. Connect another provider at " +
+            `${gatewayConsoleUrl()}, pick a different model above, and ask me to continue.`;
       const message = `${lead}${tried} ${advice}`;
       session.messages.push({ role: "assistant", content: `[gateway error] ${message}` });
       await saveSession(session);
