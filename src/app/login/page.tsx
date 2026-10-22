@@ -35,7 +35,7 @@ export const metadata: Metadata = { title: "Sign in" };
  * is this container's address: behind a proxy that would be `0.0.0.0:3000`, which is
  * a worse thing to print than the family's name.
  */
-const FAMILY_DOMAIN = (process.env.ONTRAK_PORTAL_BASE_DOMAIN ?? "ontrak.innotel.us")
+const FAMILY_DOMAIN = (process.env.ONTRAK_PORTAL_BASE_DOMAIN ?? "ontrak.technology")
   .trim()
   .replace(/^["']|["']$/g, "")
   .replace(/\.+$/, "");

@@ -90,7 +90,7 @@ export interface CapabilitySummary {
 }
 
 /** The Network's real name, so an unconfigured deployment still produces a link that resolves. */
-const DEFAULT_BASE_DOMAIN = "ontrak.innotel.us";
+const DEFAULT_BASE_DOMAIN = "ontrak.technology";
 
 /** The subdomain label for each product — the portal's own `host` field. */
 const HOSTS: Record<CapabilityId, string> = {
@@ -161,7 +161,7 @@ function withoutTrailingSlashes(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
-/** `ontrak.innotel.us.` is the same name as `ontrak.innotel.us`. */
+/** `ontrak.technology.` is the same name as `ontrak.technology`. */
 function withoutTrailingDots(value: string): string {
   return value.replace(/\.+$/, "");
 }

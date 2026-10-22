@@ -638,7 +638,7 @@ The agent is deliberately constrained, because it runs with your privileges:
 
   **Sign-in on more than one name.** The provider matches the redirect URI byte
   for byte, and the URI is the address the *browser* reaches — so a deployment
-  reachable at two names (the family's `genie.ontrak.innotel.us` and the
+  reachable at two names (the family's `genie.ontrak.technology` and the
   platform's `genie.innotel.us`) registers both and lists them in
   `ONTRAK_OIDC_REDIRECT_URL`, comma-separated. The entry whose host matches the
   browser's `Host` header is the one a sign-in starts with, and that choice is

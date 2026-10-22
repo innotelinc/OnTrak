@@ -31,7 +31,7 @@ passback   the app ──  Moodle's /mod/lti/token.php ─▶  Moodle   (the app
 The first direction needs **Moodle's** public key here — that is
 `ONTRAK_LTI_JWKS_URI`. The second needs **this tool's** public key in Moodle —
 either the **Keyset URL** this deployment publishes at
-`https://its.ontrak.innotel.us/api/lti/jwks.json`, or the PEM you paste in step 2.
+`https://its.ontrak.technology/api/lti/jwks.json`, or the PEM you paste in step 2.
 The URL is the one to prefer (see step 1). A registration that does only the first
 direction is a launch that works and a grade that never leaves. `make lti-key`
 produces the pair once and both halves are registered together, under one key id.
@@ -41,7 +41,7 @@ produces the pair once and both halves are registered together, under one key id
 * **Moodle 3.10+**, with site-administrator access. Check *Site administration →
   Plugins → Activity modules → External tool* exists.
 * The deployment's public address, `ONTRAK_TRAINING_BASE_URL` — the family's
-  training host is `https://its.ontrak.innotel.us` (see
+  training host is `https://its.ontrak.technology` (see
   [docs/family-operations.md](family-operations.md)).
 * A shell on the deployment, to run `make lti-key` and edit `.env`.
 * A course you can add an activity to, with a learner account to test with.
@@ -66,7 +66,7 @@ It writes nothing to disk and prints everything you need. Two parts matter here:
 choose one from a printout at all: the deployment serves its own public key set at
 
 ```
-https://its.ontrak.innotel.us/api/lti/jwks.json
+https://its.ontrak.technology/api/lti/jwks.json
 ```
 
 so the cleanest registration is **Public key type: Keyset URL** with that URL in
@@ -95,13 +95,13 @@ then **configure a tool manually**. Fill in:
 | Moodle field | What to put there |
 | --- | --- |
 | **Tool name** | `OnTrak IT Support Training` (any label your learners will recognise) |
-| **Tool URL** | `https://its.ontrak.innotel.us/api/lti/launch` |
+| **Tool URL** | `https://its.ontrak.technology/api/lti/launch` |
 | **LTI version** | **LTI 1.3** |
 | **Public key type** | **Keyset URL** — or **RSA key**, if you would rather paste the key |
-| **Public keyset** | `https://its.ontrak.innotel.us/api/lti/jwks.json` (the Keyset URL choice) |
+| **Public keyset** | `https://its.ontrak.technology/api/lti/jwks.json` (the Keyset URL choice) |
 | **Public key** | the `-----BEGIN PUBLIC KEY----- …` block from step 1 (the RSA key choice) |
-| **Initiate login URL** | `https://its.ontrak.innotel.us/api/lti/login` |
-| **Redirection URI(s)** | `https://its.ontrak.innotel.us/api/lti/launch` |
+| **Initiate login URL** | `https://its.ontrak.technology/api/lti/login` |
+| **Redirection URI(s)** | `https://its.ontrak.technology/api/lti/launch` |
 | **Default launch container** | **New window** |
 | **Tool configuration usage** | *Show as preconfigured tool when adding an external tool* |
 
@@ -175,7 +175,7 @@ person who would otherwise find out is a learner who clicked a link.
 Two probes, from anywhere that can reach the deployment:
 
 ```bash
-BASE=https://its.ontrak.innotel.us
+BASE=https://its.ontrak.technology
 
 # A login naming a platform this deployment did not register is refused:
 curl -s -o /dev/null -w '%{http_code}\n' \

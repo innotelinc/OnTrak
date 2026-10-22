@@ -7,7 +7,7 @@
  * a test — but not enough for the file it reads.
  *
  * `.env` is where a deployment records its own public name, and `ONTRAK_TIX_BASE_URL`
- * is one of the variables it holds: `https://tix.ontrak.innotel.us`, the desk's real
+ * is one of the variables it holds: `https://tix.ontrak.technology`, the desk's real
  * address. So on a machine with a filled-in `.env` — which is every machine that runs
  * the desk — the variable is *already set*, the live tests stop skipping, and
  * `npm test` provisions throwaway tenants on the production desk and purges artifacts

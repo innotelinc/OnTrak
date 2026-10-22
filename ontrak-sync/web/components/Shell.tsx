@@ -28,7 +28,7 @@
  * about to hand out a link was nowhere on the screen.
  *
  * **Signed out, the frame is drawn too, and that is the point of `GateFrame`.** A
- * person arrives at `sync.ontrak.innotel.us` — the root, because that is the address
+ * person arrives at `sync.ontrak.technology` — the root, because that is the address
  * every link and tile in the family publishes — and this used to answer with a bare
  * sign-in card: no mark, no name, no family address, nothing that said which product
  * they had reached. The portal's own front door has its masthead, so the family's
@@ -79,10 +79,10 @@ const LINKS: NavLink[] = [
 
 /** Where the front door and the sibling products live. */
 const FAMILY: { href: string; label: string; note: string }[] = [
-  { href: "https://ontrak.innotel.us", label: "OnTrak Unity", note: "all products" },
-  { href: "https://its.ontrak.innotel.us", label: "OnTrak ITS", note: "training" },
-  { href: "https://tix.ontrak.innotel.us", label: "OnTrak Tix", note: "the desk" },
-  { href: "https://sentinel.ontrak.innotel.us", label: "OnTrak Sentinel", note: "identity & IDS" },
+  { href: "https://ontrak.technology", label: "OnTrak Unity", note: "all products" },
+  { href: "https://its.ontrak.technology", label: "OnTrak ITS", note: "training" },
+  { href: "https://tix.ontrak.technology", label: "OnTrak Tix", note: "the desk" },
+  { href: "https://sentinel.ontrak.technology", label: "OnTrak Sentinel", note: "identity & IDS" },
 ];
 
 export function Shell({ domain, children }: { domain: string; children: ReactNode }) {

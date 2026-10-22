@@ -78,7 +78,7 @@ services:
         # origin, the Next route handler forwards it over the compose network, and
         # the session cookie belongs to one hostname. That is what makes single
         # sign-on work — the registered redirect URI
-        # (`https://sync.ontrak.innotel.us/api/auth/sso/callback`) has to be on the
+        # (`https://sync.ontrak.technology/api/auth/sso/callback`) has to be on the
         # origin the *browser* is on, and a cookie set by a cross-origin API call
         # is discarded by the browser.
         #
@@ -102,7 +102,7 @@ services:
       # same variable the portal reads, so the two front doors cannot print different
       # domains. The code has the same default; setting it here is what makes a
       # deployment that renames the family rename it on this product too.
-      ONTRAK_PORTAL_BASE_DOMAIN: ${ONTRAK_PORTAL_BASE_DOMAIN:-ontrak.innotel.us}
+      ONTRAK_PORTAL_BASE_DOMAIN: ${ONTRAK_PORTAL_BASE_DOMAIN:-ontrak.technology}
     ports:
       - "${ONTRAK_WEB_BIND:-192.168.1.21}:8421:8421"
     healthcheck:

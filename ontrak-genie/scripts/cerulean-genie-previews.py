@@ -242,8 +242,8 @@ def certificate_for(certificates: list[dict], domain: str) -> int:
                 if not name.startswith("*."):
                     continue
                 parent = name[2:]
-                # `*.ontrak.innotel.us` covers `its.ontrak.innotel.us` and not
-                # `ontrak.innotel.us`, so the suffix has to leave a label of its own.
+                # `*.ontrak.technology` covers `its.ontrak.technology` and not
+                # `ontrak.technology`, so the suffix has to leave a label of its own.
                 if host.endswith("." + parent):
                     score = max(score, labels)
             if score == 0:

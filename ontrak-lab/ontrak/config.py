@@ -270,10 +270,10 @@ class PortalConfig:
     title: str = "OnTrak"
     # The family's own address, printed under the product's name on the sign-in gate.
     # It is deliberately not this range's hostname: the range answers on
-    # `lab.ontrak.innotel.us`, and what a person needs under the wordmark is the family
+    # `lab.ontrak.technology`, and what a person needs under the wordmark is the family
     # they are signing in to — the same string the portal and every other product's
     # front door prints, from the same default.
-    base_domain: str = "ontrak.innotel.us"
+    base_domain: str = "ontrak.technology"
     brand_note: str = "IT support training range — powered by Innotel OnTrak"
     allow_self_reset: bool = True
     hints_require_attempt: bool = True

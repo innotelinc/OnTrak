@@ -264,7 +264,7 @@ def test_the_login_page_is_the_family_gate_and_has_no_password_form(sso_env):
     assert '<a class="sso-button" href="/oidc/login">Sign in</a>' in page.text
     # The family's frame, the family's address under the wordmark, and the family theme.
     assert 'class="masthead"' in page.text
-    assert "ontrak.innotel.us" in page.text
+    assert "ontrak.technology" in page.text
     assert '/static/unity-theme.css' in page.text
     assert '/static/unity-theme.js' in page.text
     assert '/static/app.css' not in page.text

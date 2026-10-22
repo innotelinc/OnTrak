@@ -15,23 +15,23 @@ an architecture instead of a deployment is a guide nobody can follow at 3am.
 
 | Product | Address | Port | What it is |
 | --- | --- | --- | --- |
-| **Portal** | `ontrak.innotel.us` | 3300 | One sign-in, then the products a role belongs in |
-| **Training** | `its.ontrak.innotel.us` | 3000 | Browser-based, automatically-graded IT support practice |
-| **Tix** | `tix.ontrak.innotel.us` | 3001 | Tickets, SLAs, clients, incident evidence |
-| **Sentinel** | `sentinel.ontrak.innotel.us` | 8787 | Identity provider and intrusion detection console |
-| **Sync** | `sync.ontrak.innotel.us` | 8420 (API) / 8421 (dashboard) | Network package and container updates, and the family's local account table |
-| **Genie** | `genie.ontrak.innotel.us` | 3400 | The browser console for a coding agent: it reads, edits and runs code in a workspace it cannot leave, and shows each call as it happens |
+| **Portal** | `ontrak.technology` | 3300 | One sign-in, then the products a role belongs in |
+| **Training** | `its.ontrak.technology` | 3000 | Browser-based, automatically-graded IT support practice |
+| **Tix** | `tix.ontrak.technology` | 3001 | Tickets, SLAs, clients, incident evidence |
+| **Sentinel** | `sentinel.ontrak.technology` | 8787 | Identity provider and intrusion detection console |
+| **Sync** | `sync.ontrak.technology` | 8420 (API) / 8421 (dashboard) | Network package and container updates, and the family's local account table |
+| **Genie** | `genie.ontrak.technology` | 3400 | The browser console for a coding agent: it reads, edits and runs code in a workspace it cannot leave, and shows each call as it happens |
 
 All six run on the **`ontrak` incus container**, `192.168.1.21`, on host **i1**
 (`192.168.1.51`). Each is independently deployable and each has its own stack;
 `docker-compose.all.yml` in the repository root runs them together.
 
-**`lab.ontrak.innotel.us` is the seventh name, and the only one with no row in the
+**`lab.ontrak.technology` is the seventh name, and the only one with no row in the
 table above** — it is not a service in this stack. OnTrak Lab (ontrak-lab/) is its own
 deployment on its own host, and it publishes exactly one port: its own nginx, which
 serves its portal at `/` and its HTML5 console at `/guacamole/`. The family edge
 forwards that one name to that one port and passes every path through unchanged, so
-this deployment's lab name is `lab.ontrak.innotel.us` → `http://192.168.1.21:8080/`,
+this deployment's lab name is `lab.ontrak.technology` → `http://192.168.1.21:8080/`,
 with the websocket upgrade the console tunnel needs. §7 has the whole of it. (The port
 is deliberately absent from the table, because the table's ports are the ones
 `docker-compose.all.yml` publishes and this stack publishes none of them for the lab.)
@@ -118,13 +118,13 @@ When a new product is added, copy that shape rather than the literal comparison.
 ### The redirect URIs registered on the `ontrak` client
 
 ```
-https://lab.ontrak.innotel.us/oidc/callback          the lab (first, on purpose — see below)
-https://ontrak.innotel.us/api/sso/callback            the portal
-https://ontrak.innotel.us/api/auth/sso/callback       Sync (same origin as the portal's host)
-https://its.ontrak.innotel.us/api/sso/callback        training
-https://tix.ontrak.innotel.us/api/sso/callback        Tix
-https://sync.ontrak.innotel.us/api/auth/sso/callback  Sync behind the edge
-https://genie.ontrak.innotel.us/api/auth/callback     Genie, which signs in itself
+https://lab.ontrak.technology/oidc/callback          the lab (first, on purpose — see below)
+https://ontrak.technology/api/sso/callback            the portal
+https://ontrak.technology/api/auth/sso/callback       Sync (same origin as the portal's host)
+https://its.ontrak.technology/api/sso/callback        training
+https://tix.ontrak.technology/api/sso/callback        Tix
+https://sync.ontrak.technology/api/auth/sso/callback  Sync behind the edge
+https://genie.ontrak.technology/api/auth/callback     Genie, which signs in itself
 https://genie.innotel.us/api/auth/callback            the same Genie at the platform's name
 ```
 
@@ -135,17 +135,17 @@ missing was Genie's, which is a sign-in that fails at the provider with the
 `redirect_uri mismatch` in §6 as the only clue.
 
 Genie is the one product here with **two** public names, so it has two callbacks on the
-list above: the family's `genie.ontrak.innotel.us` and the platform's own
+list above: the family's `genie.ontrak.technology` and the platform's own
 `genie.innotel.us`, which the Network's edge publishes for the same console. Genie picks
 its callback from the host the browser started on, which is exactly why a name missing
 from this list fails *only* at the provider — the console builds the URL the browser
 asked for, the provider refuses it, and the console never sees the refusal. Adding a
 name to either side without the other is how `genie.innotel.us` came to answer with a
-provider error page while `genie.ontrak.innotel.us` signed in cleanly.
+provider error page while `genie.ontrak.technology` signed in cleanly.
 
 The lab's is **first** on purpose. OnTrak Lab picks its callback by the origin the
 browser started on and falls back to the first entry for anything it does not find, so
-with the portal's callback ahead of it a student signing in at `lab.ontrak.innotel.us`
+with the portal's callback ahead of it a student signing in at `lab.ontrak.technology`
 would be sent to the portal's `/api/sso/callback` and the handshake would die after the
 password. It is the same `ontrak` client as every product; only the path differs
 (`/oidc/callback`, the lab's own route).
@@ -164,7 +164,7 @@ python3 /path/to/ontrak/scripts/cerulean-ontrak.py              # do it
 It ensures, for each name (the lab's included — it is the same script that publishes
 all seven): a Technitium A record at the address the zone apex already uses, an NPM
 proxy host forwarding to the product's port, and the certificate that covers the name
-— including the Network's `*.ontrak.innotel.us` wildcard, which is the one that
+— including the Network's `*.ontrak.technology` wildcard, which is the one that
 matters for the six subdomains.
 
 ### `already in use`, and why it is not obvious
@@ -302,7 +302,7 @@ is `503`, so the two failures name different problems. The value lives in that
 
 **Rotating the LTI passback key** is a change to one side or two, depending on how
 the LMS registered the key. This deployment publishes its own public key set at
-`https://its.ontrak.innotel.us/api/lti/jwks.json` (`GET /api/lti/jwks.json`), so an
+`https://its.ontrak.technology/api/lti/jwks.json` (`GET /api/lti/jwks.json`), so an
 LMS registered with a **Keyset URL** is already reading the key from here: rotate
 with `make lti-key` **reusing the same `ONTRAK_LTI_KEY_ID`**, update the two `.env`
 lines, and nothing in the LMS changes. An LMS registered with a **pasted key** is
@@ -386,14 +386,14 @@ done
 ```
 
 `curl` **201** on the training range, **200** on the portal, `200 {"status":"ok"}` on
-`https://sync.ontrak.innotel.us/api/health`, and `200 {"status":"ok","scenarios":14}` on
-`https://lab.ontrak.innotel.us/healthz` are healthy answers. A **403/401** is
+`https://sync.ontrak.technology/api/health`, and `200 {"status":"ok","scenarios":14}` on
+`https://lab.ontrak.technology/healthz` are healthy answers. A **403/401** is
 also a healthy answer for a product behind its own sign-in. A **502** means NPM is
 up and the product is not — check `docker compose ps` on the container.
 
 Then, in a browser:
 
-1. `https://ontrak.innotel.us` → the sign-in page, with a **Sign in with Cerulean**
+1. `https://ontrak.technology` → the sign-in page, with a **Sign in with Cerulean**
    button.
 2. Sign in → the dashboard shows only the tiles for that role.
 3. Open each tile → it opens without a second sign-in, because the product
@@ -418,13 +418,13 @@ account table is not affected by Cerulean being down.
 
 | Product | How |
 | --- | --- |
-| Portal `ontrak.innotel.us` | **Sign in with Cerulean**, or the local username/password form |
-| Training `its.ontrak.innotel.us` | `admin@ontrak.local`, `instructor@ontrak.local`, `student@ontrak.local` — password `change-me-ontrak` (set `SEED_PASSWORD` before seeding to choose it). Student join code `NET101`. |
-| Tix `tix.ontrak.innotel.us` | `admin@acme.test`, `dispatcher@acme.test`, `agent@acme.test`, `requester@acme.test` — password `ChangeMe123`. The SSO button uses the workspace in `ONTRAK_TIX_DEFAULT_TENANT` (`acme` here); anything else is refused, which is the point of the slug. |
-| Sentinel `sentinel.ontrak.innotel.us` | Its console is at `/console` and holds its own accounts and MFA — the root path is deliberately a 404, because the provider has no landing page to show. |
-| Sync `sync.ontrak.innotel.us` | `ONTRAK_ADMIN_USER` and the password printed once on an empty database (`docker logs ontrak-sync-api | grep 'generated password'`), or Cerulean. |
-| Genie `genie.ontrak.innotel.us` | **Sign in with Cerulean**, through the same `ontrak` client as the portal; with no issuer configured the console falls back to its own `WEB_TOKEN`. |
-| Lab `lab.ontrak.innotel.us` | **Sign in with Cerulean**, the same `ontrak` client with the lab's own callback (`https://lab.ontrak.innotel.us/oidc/callback`), registered first so the lab cannot fall back to the portal's. The range keeps no password; its HTML5 console is Guacamole inside the lab's own gateway, at `/guacamole/`. |
+| Portal `ontrak.technology` | **Sign in with Cerulean**, or the local username/password form |
+| Training `its.ontrak.technology` | `admin@ontrak.local`, `instructor@ontrak.local`, `student@ontrak.local` — password `change-me-ontrak` (set `SEED_PASSWORD` before seeding to choose it). Student join code `NET101`. |
+| Tix `tix.ontrak.technology` | `admin@acme.test`, `dispatcher@acme.test`, `agent@acme.test`, `requester@acme.test` — password `ChangeMe123`. The SSO button uses the workspace in `ONTRAK_TIX_DEFAULT_TENANT` (`acme` here); anything else is refused, which is the point of the slug. |
+| Sentinel `sentinel.ontrak.technology` | Its console is at `/console` and holds its own accounts and MFA — the root path is deliberately a 404, because the provider has no landing page to show. |
+| Sync `sync.ontrak.technology` | `ONTRAK_ADMIN_USER` and the password printed once on an empty database (`docker logs ontrak-sync-api | grep 'generated password'`), or Cerulean. |
+| Genie `genie.ontrak.technology` | **Sign in with Cerulean**, through the same `ontrak` client as the portal; with no issuer configured the console falls back to its own `WEB_TOKEN`. |
+| Lab `lab.ontrak.technology` | **Sign in with Cerulean**, the same `ontrak` client with the lab's own callback (`https://lab.ontrak.technology/oidc/callback`), registered first so the lab cannot fall back to the portal's. The range keeps no password; its HTML5 console is Guacamole inside the lab's own gateway, at `/guacamole/`. |
 
 A person's *role* decides which tiles the portal draws: `ontrak-students` and
 `ontrak-instructors` reach training, `ontrak-desk` reaches Tix, `ontrak-analysts`
@@ -451,14 +451,14 @@ somebody's afternoon:
   *this* stack (`guacd` + `guacamole` in `docker-compose.all.yml`, publishing 8080, at the
   `/guacamole/` path the name already forwards). A lab that runs its own control plane
   publishes one port instead: its own nginx, serving its portal at `/` and its console at
-  `/guacamole/`. This deployment runs the console here, at `https://lab.ontrak.innotel.us`, and the
+  `/guacamole/`. This deployment runs the console here, at `https://lab.ontrak.technology`, and the
   two facts that wire it are `ONTRAK_LAB_ENABLED` and `ONTRAK_LAB_URL` in the root
   `.env`, with `ONTRAK_LAB_INTERNAL_URL` naming the same gateway by its published address
   for the portal's status light (server-side, inside the compose network). The name is
   published by `scripts/cerulean-ontrak.py` — A record, NPM proxy host, the `*.ontrak`
   wildcard, and the websocket upgrade the console tunnel needs
   ([audit §9/Q4](consolidation-audit.md)) — and the lab's callback,
-  `https://lab.ontrak.innotel.us/oidc/callback`, is registered **first** on the `ontrak`
+  `https://lab.ontrak.technology/oidc/callback`, is registered **first** on the `ontrak`
   client, because the lab falls back to the first entry for an origin it does not
   recognise. The lab's own three names (`ontrak.`, `student.`, `admin.`) retire: this
   zone spends `ontrak.` on the portal, so the lab's provisioner must not be pointed here

@@ -75,7 +75,7 @@ export function oidcEnabled(): boolean {
  * `0.0.0.0` to the provider, which is why the fallback is loopback only.
  *
  * A deployment reachable at more than one name (the family's
- * `genie.ontrak.innotel.us` and the platform's `genie.innotel.us`) may list them
+ * `genie.ontrak.technology` and the platform's `genie.innotel.us`) may list them
  * comma-separated. The provider matches the URI, so a name that is not listed
  * cannot sign in; the entry whose host matches the browser's `Host` header is
  * chosen, and the first entry is the default for any other caller.

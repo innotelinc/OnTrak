@@ -259,7 +259,7 @@ export const CONSOLE_SCHEME = "soc";
  * container's own address: behind a proxy that is `0.0.0.0:8787`, which is a worse
  * thing to print than the family's name.
  */
-const FAMILY_DOMAIN = (process.env.ONTRAK_PORTAL_BASE_DOMAIN ?? "ontrak.innotel.us")
+const FAMILY_DOMAIN = (process.env.ONTRAK_PORTAL_BASE_DOMAIN ?? "ontrak.technology")
   .trim()
   .replace(/^["']|["']$/g, "")
   .replace(/\.+$/, "");
@@ -1340,7 +1340,7 @@ export interface ConsoleSignInView {
  * The console's sign-in page.
  *
  * The family's front door, and nothing else on it: the mark, the name and the one
- * control — the same gate `ontrak.innotel.us/login` draws. The console delegates
+ * control — the same gate `ontrak.technology/login` draws. The console delegates
  * identity to the provider, so the control is the provider's door; there is no email
  * field, no password and no authenticator code, because the console does not hold a
  * login of its own any more. There is no sentence about the handshake either: the

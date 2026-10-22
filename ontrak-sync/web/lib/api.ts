@@ -6,7 +6,7 @@
  * The dashboard is reached two ways and this module has to serve both without a
  * build-time switch:
  *
- *  * **Same-origin, behind the Cerulean edge** (`https://sync.ontrak.innotel.us`).
+ *  * **Same-origin, behind the Cerulean edge** (`https://sync.ontrak.technology`).
  *    `NEXT_PUBLIC_ONTRAK_API` is unset, so requests go to `/api/...` on this
  *    origin and `app/api/[...path]/route.ts` forwards them to the API container.
  *    The session is an `HttpOnly` cookie the browser attaches itself, so there is

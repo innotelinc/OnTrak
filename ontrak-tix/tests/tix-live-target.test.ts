@@ -16,7 +16,7 @@ import { test } from "node:test";
 import { ALLOW_REMOTE_LIVE, liveRefusal } from "./support/live-target";
 
 const VARIABLE = "ONTRAK_TIX_BASE_URL";
-const REMOTE = "https://tix.ontrak.innotel.us";
+const REMOTE = "https://tix.ontrak.technology";
 
 /** Run `body` with the opt-in switch set to `value`, and leave nothing behind. */
 function withOptIn(value: string | undefined, body: () => void): void {
@@ -56,7 +56,7 @@ test("live-target: a deployment's own address is refused, and the refusal says w
   withOptIn(undefined, () => {
     const refusal = liveRefusal(VARIABLE, REMOTE);
     assert.ok(refusal, "the desk's public name is refused");
-    assert.match(refusal, /tix\.ontrak\.innotel\.us/, "it names the host it refused");
+    assert.match(refusal, /tix\.ontrak\.technology/, "it names the host it refused");
     assert.match(refusal, new RegExp(VARIABLE), "it names the variable to change");
     assert.match(refusal, new RegExp(ALLOW_REMOTE_LIVE), "and the switch that overrides it");
 
@@ -85,7 +85,7 @@ test("live-target: the switch is what lets a remote address through", () => {
 
 test("live-target: something that is not a URL is refused rather than trusted", () => {
   withOptIn(undefined, () => {
-    const refusal = liveRefusal(VARIABLE, "tix.ontrak.innotel.us");
+    const refusal = liveRefusal(VARIABLE, "tix.ontrak.technology");
     assert.ok(refusal, "a value with no scheme cannot be read, so it is refused");
     assert.match(refusal, new RegExp(VARIABLE));
   });

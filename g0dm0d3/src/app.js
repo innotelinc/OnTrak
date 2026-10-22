@@ -129,7 +129,7 @@ export function readConfig(env = process.env) {
     /** Where somebody without a subscription is sent. */
     subscribeUrl: String(env.SUBSCRIBE_URL ?? "https://subscribe.genie.innotel.us").trim(),
     /** Where a subscriber goes to actually do the work. */
-    workUrl: String(env.WORK_URL ?? "https://genie.ontrak.innotel.us").trim(),
+    workUrl: String(env.WORK_URL ?? "https://genie.ontrak.technology").trim(),
     /**
      * The family's OmniRoute, as an OpenAI-compatible base (`…/v1`).
      *

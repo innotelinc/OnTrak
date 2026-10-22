@@ -59,7 +59,7 @@ import urllib.parse
 import urllib.request
 
 AUTH_FLOW = "default-authentication-flow"
-DEFAULT_PUBLIC_URL = "https://genie.ontrak.innotel.us"
+DEFAULT_PUBLIC_URL = "https://genie.ontrak.technology"
 DEFAULT_ISSUER = "https://auth.cerulean.innotel.us/application/o/ontrak"
 DEFAULT_CLIENT_ID = "ontrak"
 

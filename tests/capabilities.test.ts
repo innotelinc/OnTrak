@@ -49,12 +49,12 @@ test("capabilities: with nothing configured, each is reached by the family's own
     assert.ok(entry.url, `${id} still resolves by the family's naming`);
   }
 
-  assert.equal(found.get("training")!.url, "https://its.ontrak.innotel.us");
-  assert.equal(found.get("tix")!.url, "https://tix.ontrak.innotel.us");
-  assert.equal(found.get("sync")!.url, "https://sync.ontrak.innotel.us");
-  assert.equal(found.get("genie")!.url, "https://genie.ontrak.innotel.us");
+  assert.equal(found.get("training")!.url, "https://its.ontrak.technology");
+  assert.equal(found.get("tix")!.url, "https://tix.ontrak.technology");
+  assert.equal(found.get("sync")!.url, "https://sync.ontrak.technology");
+  assert.equal(found.get("genie")!.url, "https://genie.ontrak.technology");
   // Sentinel is reached at its control center, not at the bare host.
-  assert.equal(found.get("sentinel")!.url, `https://sentinel.ontrak.innotel.us${SENTINEL_CONTROL_CENTER_PATH}`);
+  assert.equal(found.get("sentinel")!.url, `https://sentinel.ontrak.technology${SENTINEL_CONTROL_CENTER_PATH}`);
 });
 
 test("capabilities: a base domain and scheme follow the deployment", () => {

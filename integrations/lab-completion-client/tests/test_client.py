@@ -36,7 +36,7 @@ from ontrak_lab_client import (  # noqa: E402  (path set up above)
     LabCompletionUnavailable,
 )
 
-BASE = "https://its.ontrak.innotel.us"
+BASE = "https://its.ontrak.technology"
 TOKEN = "lab-live-test-token-0123456789"
 
 

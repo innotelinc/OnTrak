@@ -32,7 +32,7 @@
 # Ports are the ones the family already reserves: 3000/5432 training,
 # 3001/5433 Tix, 8787/5434 Sentinel, 3400 Genie (which has no database), and 8080
 # for the lab's console gateway — the one service here that is not a product but the
-# training range's own, and the one name (`lab.ontrak.innotel.us`) the family's edge
+# training range's own, and the one name (`lab.ontrak.technology`) the family's edge
 # already forwards for it.
 #
 # ## Which interface a port is published on
@@ -298,7 +298,7 @@ services:
       - guacd
     ports:
       # 8080 is the port the family already reserves for the lab: the edge forwards
-      # `lab.ontrak.innotel.us` here and carries the websocket upgrade the console
+      # `lab.ontrak.technology` here and carries the websocket upgrade the console
       # tunnel needs (`scripts/cerulean-ontrak.py`), so the console gets a TLS name
       # rather than a bare port students would have to be told about. The path is
       # passed through unchanged, which is why `ONTRAK_GUAC__BASE_URL` keeps its
@@ -682,7 +682,7 @@ services:
       # The family's own name, printed under this product's name in the masthead —
       # the same variable the portal reads, so the two front doors cannot print
       # different domains.
-      ONTRAK_PORTAL_BASE_DOMAIN: ${ONTRAK_PORTAL_BASE_DOMAIN:-ontrak.innotel.us}
+      ONTRAK_PORTAL_BASE_DOMAIN: ${ONTRAK_PORTAL_BASE_DOMAIN:-ontrak.technology}
     ports:
       - "${ONTRAK_SYNC_BIND_HOST:-0.0.0.0}:${ONTRAK_SYNC_WEB_PORT:-8421}:8421"
     healthcheck:
@@ -865,7 +865,7 @@ services:
         required: false
     environment:
       TZ: ${TZ:-America/New_York}
-      ONTRAK_PORTAL_BASE_DOMAIN: ${ONTRAK_PORTAL_BASE_DOMAIN:-ontrak.innotel.us}
+      ONTRAK_PORTAL_BASE_DOMAIN: ${ONTRAK_PORTAL_BASE_DOMAIN:-ontrak.technology}
       ONTRAK_PORTAL_PUBLIC_URL: ${ONTRAK_PORTAL_PUBLIC_URL:-http://127.0.0.1:3300}
       # REQUIRED. There is no default: a session cookie signed with a placeholder
       # is a session cookie anybody can mint.

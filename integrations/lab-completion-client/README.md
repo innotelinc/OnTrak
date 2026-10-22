@@ -65,7 +65,7 @@ ONTRAK_LAB_CLIENT_LIVE=1 DATABASE_URL=postgresql://\u2026 \
 | Variable | Used for | Notes |
 | --- | --- | --- |
 | `ONTRAK_API_TOKEN` | the bearer token | Read only when the client is constructed without a `token` argument. The **same value** must be set on the family deployment: the family answers `503` when it has no token of its own and `401` when the two disagree. |
-| `ONTRAK_LAB_COMPLETION_BASE_URL` | where the family is served | Read only when the client is constructed without a `base_url` argument. A trailing slash is dropped. Example: `https://its.ontrak.innotel.us`. |
+| `ONTRAK_LAB_COMPLETION_BASE_URL` | where the family is served | Read only when the client is constructed without a `base_url` argument. A trailing slash is dropped. Example: `https://its.ontrak.technology`. |
 
 The token is a credential. It is never written to a log line, never included in a
 `repr`, and never included in an exception message.
@@ -96,7 +96,7 @@ completion = LabCompletion(
 After: one call, and the session is on the family's ledger.
 
 ```python
-client = LabCompletionClient("https://its.ontrak.innotel.us", "the shared token")
+client = LabCompletionClient("https://its.ontrak.technology", "the shared token")
 result = client.report(completion)
 
 if result.created:

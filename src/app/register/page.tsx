@@ -9,7 +9,7 @@ import { ItsGateMark, ItsMastheadMark } from "@/components/Logo";
 export const metadata: Metadata = { title: "Enroll" };
 
 /** The family's own address — see the note in `app/login/page.tsx`. */
-const FAMILY_DOMAIN = (process.env.ONTRAK_PORTAL_BASE_DOMAIN ?? "ontrak.innotel.us")
+const FAMILY_DOMAIN = (process.env.ONTRAK_PORTAL_BASE_DOMAIN ?? "ontrak.technology")
   .trim()
   .replace(/^["']|["']$/g, "")
   .replace(/\.+$/, "");

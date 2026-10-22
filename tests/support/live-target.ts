@@ -8,7 +8,7 @@
  * but not enough for the file the variable also lives in.
  *
  * `.env` is where a deployment records its own addresses, and this repository's root
- * `.env` holds the desk's real one: `ONTRAK_TIX_BASE_URL="https://tix.ontrak.innotel.us"`.
+ * `.env` holds the desk's real one: `ONTRAK_TIX_BASE_URL="https://tix.ontrak.technology"`.
  * So a shell that has sourced it — which is how a person runs a command against this
  * deployment — turns a sweep into a production write, and the sweep looks like it passed.
  * The unit-level live files had exactly this bug and it is fixed there

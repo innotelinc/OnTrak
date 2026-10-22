@@ -56,7 +56,7 @@ const HOST = process.env.ONTRAK_SYNC_HOST ?? "i1";
 const ADOPT = process.env.ONTRAK_SYNC_ADOPT ?? "off";
 const ADOPTING = ADOPT !== "off";
 /** The family's own name, which the masthead prints under the product's. */
-const DOMAIN = process.env.ONTRAK_PORTAL_BASE_DOMAIN ?? "ontrak.innotel.us";
+const DOMAIN = process.env.ONTRAK_PORTAL_BASE_DOMAIN ?? "ontrak.technology";
 
 /** The credentials/CSRF the API insists on for a cookie-authenticated write. */
 const CSRF = { "X-Ontrak-CSRF": "1" };

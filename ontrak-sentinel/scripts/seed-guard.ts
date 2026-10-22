@@ -5,7 +5,7 @@
  * (`POST /guard/v1/events`), so a fresh Control center fills with one alert per shipped rule and
  * an operator can see what detection looks like before wiring a real sensor.
  *
- *   SENTINEL_BASE_URL=https://sentinel.ontrak.innotel.us \
+ *   SENTINEL_BASE_URL=https://sentinel.ontrak.technology \
  *   SENTINEL_GUARD_TOKEN=… \
  *   SENTINEL_GUARD_ORGANIZATION=demo \
  *   npx tsx scripts/seed-guard.ts

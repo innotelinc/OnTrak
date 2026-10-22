@@ -44,7 +44,7 @@ COMPLETION_ROUTE = "/api/v1/lab/completions"
 API_TOKEN_ENV = "ONTRAK_API_TOKEN"
 
 #: Where the family lives, for a caller that passes no base address, e.g.
-#: ``https://its.ontrak.innotel.us``.
+#: ``https://its.ontrak.technology``.
 BASE_URL_ENV = "ONTRAK_LAB_COMPLETION_BASE_URL"
 
 #: Bounds this client enforces locally, so a mistake is caught before it travels.

@@ -66,7 +66,7 @@ export function chainConfigFromEnv(env: Record<string, string | undefined> = pro
     onyxSecretKey: clean(env.ONTRAK_ONYX_S3_SECRET_KEY),
     onyxBucket: clean(env.ONTRAK_ONYX_S3_BUCKET) ?? "ontrak-certificates",
     issuer: clean(env.ONTRAK_CERT_ISSUER) ?? "AthenIQ",
-    verifyUrl: clean(env.ONTRAK_TRAINING_VERIFY_URL) ?? "https://its.ontrak.innotel.us/verify",
+    verifyUrl: clean(env.ONTRAK_TRAINING_VERIFY_URL) ?? "https://its.ontrak.technology/verify",
   };
 }
 

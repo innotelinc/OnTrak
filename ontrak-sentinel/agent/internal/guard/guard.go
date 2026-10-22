@@ -40,7 +40,7 @@ type Report struct {
 
 // Client posts batches to one deployment.
 type Client struct {
-	// BaseURL is the deployment root, e.g. `https://sentinel.ontrak.innotel.us`.
+	// BaseURL is the deployment root, e.g. `https://sentinel.ontrak.technology`.
 	BaseURL string
 	// Token is the deployment's Guard ingest token.
 	Token string

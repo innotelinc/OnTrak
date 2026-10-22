@@ -45,7 +45,7 @@ const ISSUER = "https://auth.cerulean.innotel.us/application/o/sentinel/";
 const AUTH = "https://auth.cerulean.innotel.us/application/o/authorize/";
 const TOKEN = "https://auth.cerulean.innotel.us/application/o/token/";
 const JWKS = "https://auth.cerulean.innotel.us/application/o/sentinel/jwks/";
-const REDIRECT = "https://sentinel.ontrak.innotel.us/console/sign-in/upstream/callback";
+const REDIRECT = "https://sentinel.ontrak.technology/console/sign-in/upstream/callback";
 const SECRET = "test-state-secret";
 
 function config(overrides: Record<string, unknown> = {}) {
@@ -330,7 +330,7 @@ test("a login the provider did not mark multi-factor is refused when MFA is requ
 
 /** A request as the console router sees one, carrying the cookies a browser would send. */
 function consoleRequest(method: string, path: string, cookies: Record<string, string> = {}): HttpRequest {
-  return { method, url: `https://sentinel.ontrak.innotel.us${path}`, headers: {}, cookies };
+  return { method, url: `https://sentinel.ontrak.technology${path}`, headers: {}, cookies };
 }
 
 /**
@@ -370,7 +370,7 @@ test("the console's SSO door ends in a session the console itself accepts", asyn
   const doors = new ConsoleService(spine, mfa, null, null, null, null, "demo", null, null, null, provider);
 
   // The gate is the family's front door: the mark, the name, and the one control — the same
-  // page `ontrak.innotel.us/login` draws. The button says "Sign in", and nothing on the page
+  // page `ontrak.technology/login` draws. The button says "Sign in", and nothing on the page
   // names the provider: whose SSO it is is a fact about the deployment, not something a
   // person signing in has to read first.
   const page = await routeConsole(consoleRequest("GET", CONSOLE_PATHS.signIn), doors);
@@ -464,7 +464,7 @@ test("a sign-in is started on the address the provider returns to, not the one t
   assert.equal(bounced.status, 303);
   assert.equal(
     bounced.headers.location,
-    `https://sentinel.ontrak.innotel.us${CONSOLE_PATHS.upstreamStart}?via=192.168.1.21%3A8787`,
+    `https://sentinel.ontrak.technology${CONSOLE_PATHS.upstreamStart}?via=192.168.1.21%3A8787`,
   );
   assert.equal(bounced.headers["set-cookie"], undefined, "and nothing is sealed for a host the provider never sees");
 

@@ -115,7 +115,7 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
         </Link>
         <DeskNav groups={groups} />
         <div className="mt-auto px-3 pt-6 text-[11px] text-ink-faint">
-          <a href="https://ontrak.innotel.us" className="hover:text-brand">
+          <a href="https://ontrak.technology" className="hover:text-brand">
             OnTrak Unity ↗
           </a>
         </div>

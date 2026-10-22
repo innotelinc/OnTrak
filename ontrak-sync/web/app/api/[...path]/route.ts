@@ -1,7 +1,7 @@
 /**
  * The same-origin bridge to the API.
  *
- * Behind the Cerulean edge the dashboard is reached at `sync.ontrak.innotel.us`
+ * Behind the Cerulean edge the dashboard is reached at `sync.ontrak.technology`
  * and the API is on a container address nobody outside the LAN can resolve.
  * Rather than publish the API on its own hostname — which would mean a second
  * certificate, a second origin, and a session cookie split across two names — the
@@ -13,7 +13,7 @@
  *    The browser attaches it to `/api/*`, this handler passes it through, the API
  *    authenticates it, and no JavaScript anywhere has ever seen the value.
  *  * **The SSO callback has to land here.** `redirect_uri` is registered in
- *    Cerulean as `https://sync.ontrak.innotel.us/api/auth/sso/callback`; the
+ *    Cerulean as `https://sync.ontrak.technology/api/auth/sso/callback`; the
  *    provider redirects the *browser* there, so it has to be this origin.
  *  * **Redirects are not followed.** The API answers a successful sign-in with a
  *    303 to the dashboard, and `fetch` following it would turn that into a 200

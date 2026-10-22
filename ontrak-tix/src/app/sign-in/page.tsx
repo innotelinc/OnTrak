@@ -39,7 +39,7 @@ export const metadata: Metadata = { title: "OnTrak Tix" };
  * that would be `127.0.0.1:3001`, which is a worse thing to print than the family's
  * name.
  */
-const FAMILY_DOMAIN = (process.env.ONTRAK_PORTAL_BASE_DOMAIN ?? "ontrak.innotel.us")
+const FAMILY_DOMAIN = (process.env.ONTRAK_PORTAL_BASE_DOMAIN ?? "ontrak.technology")
   .trim()
   .replace(/^["']|["']$/g, "")
   .replace(/\.+$/, "");

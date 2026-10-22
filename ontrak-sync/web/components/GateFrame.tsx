@@ -12,7 +12,7 @@ import { ThemeToggle } from "./ThemeToggle";
  *  * the standalone `/login` route, which exists so a link, a bookmark or the SSO
  *    callback can name a destination;
  *  * the shell, for a signed-out visitor on any *other* route. That is the address
- *    every tile in the family publishes (`sync.ontrak.innotel.us`, the root), and
+ *    every tile in the family publishes (`sync.ontrak.technology`, the root), and
  *    without the frame it answered with a bare card and no sign of which product it
  *    was — the portal draws its masthead there, so the family's console looked like
  *    an afterthought beside it.

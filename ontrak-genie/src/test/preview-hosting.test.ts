@@ -206,7 +206,7 @@ test("which Host is a preview", async (t) => {
   await t.test("not the console itself, not a deeper name, not another domain", () => {
     assert.equal(previewLabelFromHost(PREVIEW_DOMAIN), null);
     assert.equal(previewLabelFromHost(`a.b.${PREVIEW_DOMAIN}`), null);
-    assert.equal(previewLabelFromHost("genie.ontrak.innotel.us"), null);
+    assert.equal(previewLabelFromHost("genie.ontrak.technology"), null);
     assert.equal(previewLabelFromHost(undefined), null);
   });
 });

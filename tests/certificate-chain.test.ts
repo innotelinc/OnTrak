@@ -43,7 +43,7 @@ const SHEET: CertificateSheet = {
   completedAt: "2026-10-05T09:20:00.000Z",
   code: "ONTRAK-1A2B-3C4D-5E6F",
   issuer: "AthenIQ",
-  verifyUrl: "https://its.ontrak.innotel.us/verify",
+  verifyUrl: "https://its.ontrak.technology/verify",
   skills: ["networking", "systemd"],
 };
 
@@ -161,7 +161,7 @@ test("sheet: it says who issued it, who it is for, and how to check it", () => {
     "90%",
     "October 5, 2026",
     "ONTRAK-1A2B-3C4D-5E6F",
-    "https://its.ontrak.innotel.us/verify",
+    "https://its.ontrak.technology/verify",
     "signed through Signara",
     "stored on ONYX",
   ]) {

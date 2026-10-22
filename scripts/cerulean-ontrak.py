@@ -3,13 +3,13 @@
 
 Creates what the seven public names need and nothing else:
 
-    ontrak.innotel.us              → the portal          (:3300)
-    its.ontrak.innotel.us          → training range      (:3000)
-    tix.ontrak.innotel.us          → the service desk    (:3001)
-    sentinel.ontrak.innotel.us     → the identity/IDS   (:8787)
-    sync.ontrak.innotel.us         → Network updates     (:8421)
-    genie.ontrak.innotel.us        → the agent console   (:3400)
-    lab.ontrak.innotel.us          → OnTrak Lab          (:8080)
+    ontrak.technology              → the portal          (:3300)
+    its.ontrak.technology          → training range      (:3000)
+    tix.ontrak.technology          → the service desk    (:3001)
+    sentinel.ontrak.technology     → the identity/IDS   (:8787)
+    sync.ontrak.technology         → Network updates     (:8421)
+    genie.ontrak.technology        → the agent console   (:3400)
+    lab.ontrak.technology          → OnTrak Lab          (:8080)
 
 OnTrak Lab is the one name here that is not a service in `docker-compose.all.yml`:
 it is the hands-on range's own control plane (ontrak-lab/) on its own host, and it
@@ -94,10 +94,11 @@ HOSTS = [
     },
     {
         "name": "genie",
+        "zone": "innotel.us",
         "port": 3400,
         # The platform's own name for the same console. `genie.innotel.us` is the
         # *Network's* name — it is what the platform hands out, and the hosting feature
-        # (`*.genie.innotel.us`) is published under it — while `genie.ontrak.innotel.us`
+        # (`*.genie.innotel.us`) is published under it — while `genie.ontrak.technology`
         # below is the family's. Both front this one console, and Genie chooses its
         # callback by the browser's host, so **both** names have to be registered with
         # the provider or a sign-in at one of them dies at the provider with
@@ -140,16 +141,16 @@ REDIRECT_URIS = [
     # The lab's is **first** on purpose. OnTrak Lab picks its callback by the origin
     # the browser started on, and falls back to the first entry for anything it does
     # not find — so with the family name ahead of it a student signing in at
-    # lab.ontrak.innotel.us would be sent to the portal's callback and the handshake
+    # lab.ontrak.technology would be sent to the portal's callback and the handshake
     # would die after the password. It is the same `ontrak` client as every product;
     # only the path differs (`/oidc/callback`, the lab's own route).
-    "https://lab.ontrak.innotel.us/oidc/callback",         # OnTrak Lab (ontrak-lab/)
-    "https://ontrak.innotel.us/api/sso/callback",          # the portal
-    "https://ontrak.innotel.us/api/auth/sso/callback",     # OnTrak Sync, same origin
-    "https://its.ontrak.innotel.us/api/sso/callback",      # the training range
-    "https://tix.ontrak.innotel.us/api/sso/callback",      # the desk
-    "https://sync.ontrak.innotel.us/api/auth/sso/callback",  # OnTrak Sync behind the edge
-    "https://genie.ontrak.innotel.us/api/auth/callback",   # Genie, which signs in itself
+    "https://lab.ontrak.technology/oidc/callback",         # OnTrak Lab (ontrak-lab/)
+    "https://ontrak.technology/api/sso/callback",          # the portal
+    "https://ontrak.technology/api/auth/sso/callback",     # OnTrak Sync, same origin
+    "https://its.ontrak.technology/api/sso/callback",      # the training range
+    "https://tix.ontrak.technology/api/sso/callback",      # the desk
+    "https://sync.ontrak.technology/api/auth/sso/callback",  # OnTrak Sync behind the edge
+    "https://genie.ontrak.technology/api/auth/callback",   # Genie, which signs in itself
     "https://genie.innotel.us/api/auth/callback",          # Genie at the platform's name
 ]
 
@@ -312,11 +313,11 @@ def certificate_for(certificates: list[dict], domain: str) -> int:
     THREE SPELLINGS HAVE TO BE RECOGNISED, and the third is the one that matters:
 
       1. an exact name — a single-name certificate lists the host itself;
-      2. an explicit wildcard — `*.ontrak.innotel.us` in the SAN list;
+      2. an explicit wildcard — `*.ontrak.technology` in the SAN list;
       3. a wildcard whose SAN list NPM has rewritten. NPM's certificate import
          replaces a custom certificate's `domain_names` with just its CN, so the
-         Network's `*.ontrak.innotel.us` certificate is stored as
-         `['ontrak.innotel.us']` — indistinguishable, by SAN list alone, from a
+         Network's `*.ontrak.technology` certificate is stored as
+         `['ontrak.technology']` — indistinguishable, by SAN list alone, from a
          certificate that covers nothing but the apex. Cerulean's own
          `cert-rebuild.py` compensates for exactly this and matches on the stable
          `nice_name`; so does this, and the `wildcard` in that name is the only
@@ -342,8 +343,8 @@ def certificate_for(certificates: list[dict], domain: str) -> int:
                 if not name.startswith("*."):
                     continue
                 parent = name[2:]
-                # `*.ontrak.innotel.us` covers `its.ontrak.innotel.us` and not
-                # `ontrak.innotel.us`, so the suffix has to leave at least one
+                # `*.ontrak.technology` covers `its.ontrak.technology` and not
+                # `ontrak.technology`, so the suffix has to leave at least one
                 # label of its own. Scoring by the wildcard's specificity is what
                 # makes the host's own wildcard beat the Network's.
                 if host.endswith("." + parent):
@@ -358,9 +359,24 @@ def certificate_for(certificates: list[dict], domain: str) -> int:
     return best_id
 
 
+def entry_zone(entry: dict, zone: str) -> str:
+    """The zone the entry's name lives in.
+
+    Every family name is in the deployment's own zone (`CERULEAN_ONTRAK_ZONE`). The
+    one exception is the platform's `genie.innotel.us`, which belongs to the Network's
+    zone and is listed here only so the redirect list stays honest — it names its own.
+    """
+    return str(entry.get("zone") or zone)
+
+
+def entry_domain(entry: dict, zone: str) -> str:
+    """The public name of one host map entry, e.g. `its.ontrak.technology`."""
+    return f"{entry['name']}.{entry_zone(entry, zone)}"
+
+
 def payload_for(entry: dict, zone: str, forward_host: str, certificate_id: int,
                 request_certs: bool, email: str, existing: dict | None) -> dict:
-    domain = f"{entry['name']}.{zone}"
+    domain = entry_domain(entry, zone)
     # An existing attachment always wins over a fresh request: re-requesting a
     # certificate on every run would burn the ACME rate limit for a name that is
     # already covered, and the Network's Cerulean imports its own certificates onto
@@ -420,7 +436,7 @@ def main() -> int:
 
     load_env_file(args.env_file)
 
-    zone = args.zone or env("CERULEAN_ONTRAK_ZONE", "innotel.us")
+    zone = args.zone or env("CERULEAN_ONTRAK_ZONE", "technology")
     forward_host = args.forward_host or env("ONTRAK_HOST_ADDRESS", "192.168.1.21")
     dns_url = env("TECHNITIUM_URL", "http://172.17.0.1:5380")
     dns_token = env("TECHNITIUM_TOKEN")
@@ -445,13 +461,13 @@ def main() -> int:
         f"{'requested when missing' if args.request_certs else 'attached when present'}")
 
     if dns is not None and address:
-        say(f"DNS A records in {zone} → {address}")
+        say(f"DNS A records for the family's names → {address}")
         for entry in HOSTS:
-            domain = f"{entry['name']}.{zone}"
+            domain = entry_domain(entry, zone)
             if args.dry_run:
                 print(f"    would ensure  {domain} → {address}")
                 continue
-            outcome = dns.add_a(domain, zone, address)
+            outcome = dns.add_a(domain, entry_zone(entry, zone), address)
             mark = {"created": "+", "updated": "~", "unchanged": "="}[outcome]
             print(f"  {mark} {outcome:9} {domain}")
     elif address is None:
@@ -464,7 +480,7 @@ def main() -> int:
         f"{len(certificates)} certificates)")
 
     for entry in HOSTS:
-        domain = f"{entry['name']}.{zone}"
+        domain = entry_domain(entry, zone)
         found = next((host for host in existing_hosts
                       if domain in [str(name).lower() for name in (host.get("domain_names") or [])]),
                      None)

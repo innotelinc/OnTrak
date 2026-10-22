@@ -21,7 +21,7 @@ trip before it defends the machine it is on.
 cd ontrak-sentinel/agent
 go build ./cmd/sentinel-agent            # or: go build -o sentinel-agent ./cmd/sentinel-agent
 
-SENTINEL_BASE_URL=https://sentinel.ontrak.innotel.us \
+SENTINEL_BASE_URL=https://sentinel.ontrak.technology \
 SENTINEL_GUARD_TOKEN=… \
 SENTINEL_GUARD_ORGANIZATION=demo \
 SENTINEL_AGENT_ENFORCE=1 \

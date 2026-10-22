@@ -43,7 +43,7 @@
 
 /** The switch. Unset or false means the lab is not offered. */
 export const LAB_ENABLED_ENV = "ONTRAK_LAB_ENABLED";
-/** The lab's base address, e.g. `https://lab.ontrak.innotel.us`. */
+/** The lab's base address, e.g. `https://lab.ontrak.technology`. */
 export const LAB_URL_ENV = "ONTRAK_LAB_URL";
 /** The tag a scenario carries when it is run on a real machine rather than simulated. */
 export const LAB_SCENARIO_TAG = "lab";

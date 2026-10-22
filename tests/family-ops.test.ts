@@ -156,16 +156,21 @@ function scriptRedirectUris(): string[] {
 /**
  * Every name the script publishes, as `<name>.<zone>`.
  *
- * The host map's `name` and the zone the script defaults to, both read from the file: a
- * hand-kept list here would be the same kind of stale claim one level down.
+ * The host map's `name`, the zone the script defaults to, and any entry's own `zone`
+ * — all read from the file: a hand-kept list here would be the same kind of stale
+ * claim one level down. An entry names its own zone only when it lives outside the
+ * family's, which is the platform's `genie.innotel.us`.
  */
 function publishedNames(): Set<string> {
   const script = read(PROVISION);
-  const rows = [...script.matchAll(/"name":\s*"([^"]+)"/g)].map((match) => match[1]);
   const zone = /env\("CERULEAN_ONTRAK_ZONE",\s*"([^"]+)"\)/.exec(script)?.[1] ?? "";
-  assert.ok(rows.length >= 6, `the script's host map yielded ${rows.length} names`);
   assert.ok(zone, `${PROVISION} no longer states the zone its names live in`);
-  return new Set(rows.map((name) => `${name}.${zone}`));
+  const rows = [...script.matchAll(/\{\s*"name":\s*"([^"]+)",([\s\S]*?)\n\s*\},/g)].map((match) => {
+    const own = /"zone":\s*"([^"]+)"/.exec(match[2] ?? "")?.[1];
+    return `${match[1]}.${own ?? zone}`;
+  });
+  assert.ok(rows.length >= 6, `the script's host map yielded ${rows.length} names`);
+  return new Set(rows);
 }
 
 /**

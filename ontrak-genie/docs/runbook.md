@@ -116,7 +116,7 @@ is gone" and "the console moved" look identical from a browser.
 
 ## 3. Sign-in
 
-Both names — `genie.ontrak.innotel.us` and `genie.innotel.us` — are registered in
+Both names — `genie.ontrak.technology` and `genie.innotel.us` — are registered in
 Cerulean and on NPM Edge, and each completes its own code flow: the redirect
 resolution reads the browser's `Host` and picks the matching registered URI, so
 one name never bounces its session onto the other. That means **a new name needs

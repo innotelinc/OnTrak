@@ -157,7 +157,7 @@ const config = {
   name: "G0DM0D3",
   tagline: "the agent, one credit a run",
   subscribeUrl: "https://subscribe.genie.innotel.us",
-  workUrl: "https://genie.ontrak.innotel.us",
+  workUrl: "https://genie.ontrak.technology",
   creditsPerRun: 1,
   genieUrl: genieOrigin,
   genieToken: "genie-service-token",

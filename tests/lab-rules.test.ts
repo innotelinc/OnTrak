@@ -42,7 +42,7 @@ test("lab: off unless an operator turns it on", () => {
 
   // Setting only the address does not enable it: enabling is a decision, not a side
   // effect of knowing where the lab is.
-  const addressOnly = labConfigFromEnv({ ONTRAK_LAB_URL: "https://lab.ontrak.innotel.us" });
+  const addressOnly = labConfigFromEnv({ ONTRAK_LAB_URL: "https://lab.ontrak.technology" });
   assert.equal(addressOnly.enabled, false);
   assert.equal(labSessionUrl(addressOnly), null);
 });
@@ -50,12 +50,12 @@ test("lab: off unless an operator turns it on", () => {
 test("lab: an enabled, located lab yields its dashboard", () => {
   const config = labConfigFromEnv({
     ONTRAK_LAB_ENABLED: "true",
-    ONTRAK_LAB_URL: "https://lab.ontrak.innotel.us",
+    ONTRAK_LAB_URL: "https://lab.ontrak.technology",
   });
   assert.equal(config.enabled, true);
-  assert.equal(config.url, "https://lab.ontrak.innotel.us");
+  assert.equal(config.url, "https://lab.ontrak.technology");
   assert.deepEqual(config.issues, []);
-  assert.equal(labSessionUrl(config), `https://lab.ontrak.innotel.us${LAB_DASHBOARD_PATH}`);
+  assert.equal(labSessionUrl(config), `https://lab.ontrak.technology${LAB_DASHBOARD_PATH}`);
 });
 
 test("lab: a quoted value and a trailing slash are normalised to one origin", () => {
