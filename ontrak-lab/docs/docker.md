@@ -180,38 +180,43 @@ but share an origin (`deploy/gateway/nginx.conf` routes them), because the estat
 edge forwards a host rather than a path — and because a port per service is one
 more host port to collide with whatever else the machine is running.
 
-On the deployment the range answers on three names, provisioned through Cerulean
-(DNS, the wildcard certificate and the edge host — `make provision`), which is
-the only supported way: a record added by hand and a certificate fetched by hand
-are two things that drift apart, and the drift is a browser warning in front of a
-class.
+In the family the range is served by OnTrak ITS at
+`https://its.ontrak.technology/lab`, which signs the person in and opens the
+session; the console answers on its own name,
+`https://lab.ontrak.technology/guacamole/`, published by the family's edge
+(`scripts/cerulean-ontrak.py` in the family repository). So this deployment
+answers on **one** name, and only on `/guacamole/`: the stack's gateway decides
+what `/` and `/guacamole/` mean, every path is passed through unchanged, and that
+is why `ONTRAK_GUAC__BASE_URL` keeps its trailing `/guacamole/`.
+
+A range deployed on its own domain can publish three names instead, through
+Cerulean (DNS, the wildcard certificate and the edge host — `make provision`),
+which is the only supported way to add them: a record added by hand and a
+certificate fetched by hand are two things that drift apart, and the drift is a
+browser warning in front of a class.
 
 | Address | What serves it |
 | --- | --- |
-| `https://ontrak.innotel.us/` | the range itself — the portal, and the console at `/guacamole/` |
-| `https://student.ontrak.innotel.us/` | the same portal; what a student is given |
-| `https://admin.ontrak.innotel.us/` | the same portal; what an instructor is given |
+| `https://<range>/` | the range itself — the portal, and the console at `/guacamole/` |
+| `https://student.<range>/` | the same portal; what a student is given |
+| `https://admin.<range>/` | the same portal; what an instructor is given |
 
 One portal, three names, role-gated at sign-in: the student and staff names are
 how an institution hands out one URL each, and how the edge can be told to treat
 them differently later (the student name on the internet, the staff name behind
 the VPN) without touching the app.
 
-What the edge has to do with the stack bound to loopback (the default) is three
-hosts and no paths: every name goes to the same address, and the stack's gateway
-decides what `/` and `/guacamole/` mean. The path is passed through unchanged,
-which is why `ONTRAK_GUAC__BASE_URL` keeps its trailing `/guacamole/`.
-
 | Public | Upstream |
 | --- | --- |
-| `https://ontrak.innotel.us/` | `http://<lab host>:8080/` |
-| `https://ontrak.innotel.us/guacamole/` | `http://<lab host>:8080/guacamole/` (routed inside the stack, not at the edge) |
-| `https://student.ontrak.innotel.us/` | `http://<lab host>:8080/` |
-| `https://admin.ontrak.innotel.us/` | `http://<lab host>:8080/` |
+| `https://<range>/` | `http://<lab host>:8080/` |
+| `https://<range>/guacamole/` | `http://<lab host>:8080/guacamole/` (routed inside the stack, not at the edge) |
+| `https://student.<range>/` | `http://<lab host>:8080/` |
+| `https://admin.<range>/` | `http://<lab host>:8080/` |
 
-TLS is one wildcard (`*.ontrak.innotel.us`) plus a certificate for the apex — a
-wildcard never covers the name it hangs off — both issued by Cerulean over
-DNS-01, so nothing has to be reachable from the internet for them to exist.
+For three names, TLS is one wildcard (`*.<range>`) plus a certificate for the
+apex — a wildcard never covers the name it hangs off — both issued by Cerulean
+over DNS-01, so nothing has to be reachable from the internet for them to exist.
+For the family's single console name, the family wildcard covers it.
 
 `ONTRAK_BIND_ADDR` defaults to `127.0.0.1`. That is the portfolio posture — a
 TLS proxy (NPM Edge / Cerulean-issued certificate) in front, never the portal

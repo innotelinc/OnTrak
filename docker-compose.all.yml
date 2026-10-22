@@ -183,7 +183,11 @@ services:
       ONTRAK_LAB_ENABLED: ${ONTRAK_LAB_ENABLED:-}
       ONTRAK_LAB_URL: ${ONTRAK_LAB_URL:-}
       ONTRAK_LAB_IN_APP: ${ONTRAK_LAB_IN_APP:-}
-      # Single sign-on, off until a client id is supplied (see the header).
+      # Single sign-on, off until a client id is supplied (see the header). The
+      # redirect URI is not one of these: this app builds it from the origin the
+      # browser asked (see `ssoRedirectUri(originOf(request))`), which is why the
+      # `ONTRAK_OIDC_REDIRECT_URL` that Genie needs arrives here through the env
+      # file above and is simply never read.
       ONTRAK_OIDC_ISSUER: ${ONTRAK_OIDC_ISSUER:-}
       ONTRAK_OIDC_CLIENT_ID: ${ONTRAK_OIDC_CLIENT_ID:-}
       ONTRAK_OIDC_CLIENT_SECRET: ${ONTRAK_OIDC_CLIENT_SECRET:-}

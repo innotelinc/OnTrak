@@ -75,8 +75,8 @@ Canonical definition of the ecosystem:
   fallback so a class can run without a network dependency.
 - **Secrets** — Cerulean Vault (KV v2) is the production posture; references take the
   `vault://<mount>/<path>#<key>` form. `.env` carries resolved values only for local use.
-- **Trust** — the range's three names are issued through Cerulean (DNS, the
-  `*.ontrak.innotel.us` wildcard plus the apex certificate, and the edge hosts), by
+- **Trust** — a range published on its own names is issued through Cerulean (DNS, the
+  `*.<range>` wildcard plus the apex certificate, and the edge hosts), by
   `scripts/cerulean-provision.py` over Cerulean's **service bridge** — the only unattended
   door, since the local admin password is break-glass and a session exists only for a
   browser OIDC flow. It needs a `ceru_` service key scoped `domains, dns, certs, npm`
@@ -84,10 +84,13 @@ Canonical definition of the ecosystem:
   repoint an edge host that is already serving a name. The Guacamole JSON-auth key is a
   repository-independent secret that must match across `ONTRAK_GUAC__SECRET_KEY` and the
   gateway's `JSON_SECRET_KEY`.
-- **Trust — the names** — `ontrak.innotel.us` is the range, `student.ontrak.innotel.us`
-  what a student is given, `admin.ontrak.innotel.us` what an instructor is given; all
-  three answer on the same portal, which is role-gated at sign-in. Every origin needs its
-  own OIDC callback registered (`AUTHENTIK_*_REDIRECT_URI` takes the list).
+- **Trust — the names** — in the family the range is served by OnTrak ITS
+  (`its.ontrak.technology/lab`) and the console is published on its own name,
+  `lab.ontrak.technology`, by the family's edge, so there is one origin to register.
+  A range deployed on its own domain answers on three — the apex, `student.` and
+  `admin.` — all on the same portal, role-gated at sign-in. Every origin it answers
+  on needs its own OIDC callback registered (`AUTHENTIK_*_REDIRECT_URI` takes the
+  list).
 - **Storage** — built images and snapshots live on the lab host's Incus pool for speed;
   the durable copy and backups belong to ONYX.
 - **Revenue** — no billing integration today. If ranges are sold per seat, entitlements come

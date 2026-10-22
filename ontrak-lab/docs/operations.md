@@ -702,13 +702,19 @@ that leads nowhere.
 
 **The callback is per origin.** The sign-in returns to the origin it started on,
 and Authentik only accepts a callback it was registered with — so every origin
-the portal answers on is listed in `ONTRAK_PORTAL__OIDC_REDIRECT_URI`. The range
-answers on three names (`scripts/cerulean-provision.py` creates them):
+the portal answers on is listed in `ONTRAK_PORTAL__OIDC_REDIRECT_URI`.
+
+In the family the range is served by OnTrak ITS, so the origin that starts the
+flow is ITS's and the registered callback is its own
+(`https://its.ontrak.technology/api/sso/callback`); the console on
+`lab.ontrak.technology` carries no sign-in of its own — the family edge passes it
+through to this stack's gateway. A range published on its own names
+(`scripts/cerulean-provision.py` creates them) lists its own instead:
 
 ```
-https://ontrak.innotel.us/oidc/callback
-https://student.ontrak.innotel.us/oidc/callback
-https://admin.ontrak.innotel.us/oidc/callback
+https://<range>/oidc/callback
+https://student.<range>/oidc/callback
+https://admin.<range>/oidc/callback
 ```
 
 A name whose callback is missing cannot sign in at all — the IdP refuses the

@@ -21,10 +21,11 @@
 > ticket. It runs on Ubuntu + Incus, consumes Cerulean for identity and trust, and keeps
 > only results — never progress.
 > **Landing page:** [https://innotelinc.github.io/OnTrak/](https://innotelinc.github.io/OnTrak/)
-> **Range:** [https://ontrak.innotel.us/](https://ontrak.innotel.us/) — the deployed portal,
-> with the browser console on the same TLS host at `/guacamole/`. Students are given
-> [student.ontrak.innotel.us](https://student.ontrak.innotel.us/) and instructors
-> [admin.ontrak.innotel.us](https://admin.ontrak.innotel.us/): one portal, three names,
+> **Range:** [https://its.ontrak.technology/lab](https://its.ontrak.technology/lab) —
+> inside the family the range is served by OnTrak ITS, and the console answers on its
+> own TLS host at [https://lab.ontrak.technology/guacamole/](https://lab.ontrak.technology/guacamole/).
+> A range deployed on its own domain publishes three names instead — the portal at the
+> apex, and `student.` and `admin.` for the URLs an institution hands out one per role —
 > provisioned through Cerulean by `make provision` ([docs/docker.md](docs/docker.md)).
 > A lab on your own box is `http://localhost:8080`, with the console at
 > `http://localhost:8080/guacamole/` — one address, because the edge forwards a host
