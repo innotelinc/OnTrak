@@ -117,7 +117,7 @@ export interface PortalConfig {
 
 export function portalConfig(): PortalConfig {
   const publicUrl = env("ONTRAK_PORTAL_PUBLIC_URL").replace(/\/+$/, "");
-  const baseDomain = env("ONTRAK_PORTAL_BASE_DOMAIN", "ontrak.innotel.us").replace(/\.+$/, "");
+  const baseDomain = env("ONTRAK_PORTAL_BASE_DOMAIN", "ontrak.technology").replace(/\.+$/, "");
   return {
     issuer: env("ONTRAK_OIDC_ISSUER").replace(/\/+$/, ""),
     clientId: env("ONTRAK_OIDC_CLIENT_ID"),

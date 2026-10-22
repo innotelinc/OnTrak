@@ -137,6 +137,9 @@ describe("the catalogue", () => {
     assert.ok(sync);
     assert.equal(urlFor(sync, "ontrak.innotel.us"), "https://sync.ontrak.innotel.us");
     assert.equal(urlFor(sync, "lab.test", false), "http://sync.lab.test");
+    // A deployment that configures nothing is still linked at the family's name,
+    // which is the one that resolves today.
+    assert.equal(urlFor(sync), "https://sync.ontrak.technology");
   });
 
   it("links the classroom at its own name, not under the portal's base domain", () => {

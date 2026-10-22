@@ -13,7 +13,7 @@
 #     is where `docker-compose.all.yml` wires it too.
 #   * **Nothing is baked in at build time.** Every address — the base domain, the
 #     public URL, the provider, the sibling products — is read at runtime, so the
-#     same image is what runs at `ontrak.innotel.us` and on a lab domain.
+#     same image is what runs at `ontrak.technology` and on a lab domain.
 name: ontrak-portal
 
 services:
@@ -28,8 +28,8 @@ services:
     env_file:
       - .env
     environment:
-      ONTRAK_PORTAL_BASE_DOMAIN: ${ONTRAK_PORTAL_BASE_DOMAIN:-ontrak.innotel.us}
-      ONTRAK_PORTAL_PUBLIC_URL: ${ONTRAK_PORTAL_PUBLIC_URL:-https://ontrak.innotel.us}
+      ONTRAK_PORTAL_BASE_DOMAIN: ${ONTRAK_PORTAL_BASE_DOMAIN:-ontrak.technology}
+      ONTRAK_PORTAL_PUBLIC_URL: ${ONTRAK_PORTAL_PUBLIC_URL:-https://ontrak.technology}
       # The family's local account table. Defaulted to the address OnTrak Sync
       # PUBLISHES, not to a compose network name: this stack has to work on its own
       # — that is what "independently deployable" means — and a name that only

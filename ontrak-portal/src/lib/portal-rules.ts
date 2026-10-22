@@ -50,7 +50,7 @@ export interface Product {
   tagline: string;
   /** The role the tile is aimed at, for the ordering sentence. */
   audience: string;
-  /** The subdomain label. `<label>.ontrak.innotel.us`, or the apex for the portal. */
+  /** The subdomain label. `<label>.<base domain>`, or the apex for the portal. */
   host: string;
   /**
    * The base domain this product lives under, when it is not the deployment's.
@@ -287,7 +287,7 @@ export function product(key: string): Product | null {
  * deployment that has not been told otherwise still produces a link that resolves
  * rather than a relative path that silently 404s on the portal's own origin.
  */
-export function urlFor(entry: Product, baseDomain = "ontrak.innotel.us", secure = true): string {
+export function urlFor(entry: Product, baseDomain = "ontrak.technology", secure = true): string {
   // A product that names its own domain wins over the deployment's: the Genie
   // add-ons are under `genie.innotel.us` wherever the portal itself is served.
   return `${secure ? "https" : "http"}://${entry.host}.${entry.domain ?? baseDomain}`;
@@ -329,7 +329,7 @@ export function addressFor(
   options: { baseDomain?: string; secure?: boolean; addresses?: ProductAddresses } = {},
 ): string {
   return options.addresses?.[entry.key]
-    ?? urlFor(entry, options.baseDomain ?? "ontrak.innotel.us", options.secure ?? true);
+    ?? urlFor(entry, options.baseDomain ?? "ontrak.technology", options.secure ?? true);
 }
 
 /** The products a role belongs in, in catalogue order. */

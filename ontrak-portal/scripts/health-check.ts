@@ -7,7 +7,7 @@
  * fails a check instead of a tile.
  *
  *   npm run health:check
- *   ONTRAK_BASE_DOMAIN=ontrak.innotel.us npm run health:check
+ *   ONTRAK_BASE_DOMAIN=ontrak.technology npm run health:check
  *   npm run health:check -- --json
  *
  * It asks it *the way the dashboard does*: from the same code (`probeFleet`), so the
@@ -39,7 +39,7 @@ import { probeFleet } from "../src/lib/sync-client";
 
 async function main(): Promise<void> {
   const asJson = process.argv.includes("--json");
-  const base = process.env.ONTRAK_BASE_DOMAIN ?? "ontrak.innotel.us";
+  const base = process.env.ONTRAK_BASE_DOMAIN ?? "ontrak.technology";
   const secure = process.env.ONTRAK_PORTAL_SECURE !== "false";
 
   const addresses: ProductAddresses = {};

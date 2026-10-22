@@ -17,7 +17,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Nothing is baked in from the environment on purpose: every address this portal
 # uses (the base domain, its own public URL, the provider, the sibling products) is
 # read at RUNTIME. A portal whose tiles are decided at build time is a portal you
-# cannot move between `ontrak.innotel.us` and a lab domain without rebuilding —
+# cannot move between `ontrak.technology` and a lab domain without rebuilding —
 # and unlike the dashboard's API address, none of these have to be inlined into the
 # client bundle, because every page here renders on the server.
 RUN npm run build

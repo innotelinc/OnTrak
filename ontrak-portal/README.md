@@ -23,15 +23,15 @@ out by being refused something at 9am. With it, there is one address:
 
 | | |
 | --- | --- |
-| **Students and instructors** | [its.ontrak.innotel.us](https://its.ontrak.innotel.us) — the training range |
-| **Students and instructors** | [lab.ontrak.innotel.us](https://lab.ontrak.innotel.us) — the hands-on lab: real Linux VMs and scenario instances |
-| **Technicians** | [tix.ontrak.innotel.us](https://tix.ontrak.innotel.us) — the service desk |
-| **Analysts** | [sentinel.ontrak.innotel.us](https://sentinel.ontrak.innotel.us) — identity and intrusion detection |
-| **Sysadmins** | [sync.ontrak.innotel.us](https://sync.ontrak.innotel.us) — Network package and container updates |
-| **Sysadmins and builders** | [genie.ontrak.innotel.us](https://genie.ontrak.innotel.us) — the browser coding console |
+| **Students and instructors** | [its.ontrak.technology](https://its.ontrak.technology) — the training range |
+| **Students and instructors** | [its.ontrak.technology/lab](https://its.ontrak.technology/lab) — the hands-on lab: real Linux VMs and scenario instances |
+| **Technicians** | [tix.ontrak.technology](https://tix.ontrak.technology) — the service desk |
+| **Analysts** | [sentinel.ontrak.technology](https://sentinel.ontrak.technology) — identity and intrusion detection |
+| **Sysadmins** | [sync.ontrak.technology](https://sync.ontrak.technology) — Network package and container updates |
+| **Sysadmins and builders** | [genie.ontrak.technology](https://genie.ontrak.technology) — the browser coding console |
 | **Sysadmins and builders** | [re.genie.innotel.us](https://re.genie.innotel.us) — Engineer: the reverse-engineering add-on, inside Genie |
 | **Sysadmins and builders** | [uc.genie.innotel.us](https://uc.genie.innotel.us) — Uncensored Godmode: the agent with the guardrails off, by subscription |
-| **Everyone** | [ontrak.innotel.us](https://ontrak.innotel.us) — this portal |
+| **Everyone** | [ontrak.technology](https://ontrak.technology) — this portal |
 
 ## The one rule
 

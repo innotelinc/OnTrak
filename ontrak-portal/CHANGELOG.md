@@ -1,5 +1,17 @@
 # Changelog — OnTrak Unity — the portal
 
+## 0.4.0 — 2026-10-22
+
+The family's addresses moved to `ontrak.technology`. The base domain every tile is
+built from now defaults to it — in the catalogue, the config reader, the compose
+defaults, the environment template and `health:check` — so a deployment that sets
+nothing links at the name that resolves instead of the old `ontrak.innotel.us`.
+
+Three addresses do not move with it and still name their own domain: Genie's two
+add-ons stay under `genie.innotel.us` (`re.genie.innotel.us`, `uc.genie.innotel.us`)
+and the classroom stays at `classroom.innotel.us`, because those are where the
+products are served. The lab is drawn at the address the deployment gives it.
+
 ## 0.3.0 — 2026-10-19
 
 Uncensored Godmode joins the dashboard, at `uc.genie.innotel.us` and for the same
