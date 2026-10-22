@@ -110,10 +110,10 @@ publish-image: ## Build and push the portal image to GHCR (make publish-image PU
 # a backend move is the same command. Needs CERULEAN_API_TOKEN (a ceru_ service
 # key with the scopes domains, dns, certs, npm).
 
-provision-plan: ## Show what Cerulean would change for ontrak's names (writes nothing)
+provision-plan: ## Show what Cerulean would change for the range's names (writes nothing)
 	$(PY) scripts/cerulean-provision.py
 
-provision: ## Provision DNS, certificates and edge hosts for OnTrak through Cerulean
+provision: ## Provision DNS, certificates and edge hosts for the range through Cerulean
 	$(PY) scripts/cerulean-provision.py --apply
 
 up: secrets ## One command: first-run setup (secrets, then Incus on the host), start the stack

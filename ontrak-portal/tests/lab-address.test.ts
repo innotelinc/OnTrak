@@ -50,16 +50,22 @@ describe("the lab address a deployment states", () => {
     }
   });
 
-  it("returns the origin, so the link cannot double a segment", () => {
-    // A trailing slash and a path are both things a person types into `.env`; neither may
-    // reach the tile, where `<url>/dashboard`-shaped suffixes are appended.
+  it("keeps the path, and drops a trailing slash", () => {
+    // Where the lab lives can be a path on a host that serves other things: the family
+    // serves it inside the training range at `its.ontrak.technology/lab`, so the origin
+    // alone would link to the range's front door. A trailing slash is still dropped,
+    // because a link that carries one is answered with a redirect.
     assert.equal(
       labAddress({ ONTRAK_LAB_ENABLED: "1", ONTRAK_LAB_URL: '"https://lab.example.test/"' }),
       "https://lab.example.test",
     );
     assert.equal(
       labAddress({ ONTRAK_LAB_ENABLED: "1", ONTRAK_LAB_URL: "http://10.0.0.5:8080/dashboard" }),
-      "http://10.0.0.5:8080",
+      "http://10.0.0.5:8080/dashboard",
+    );
+    assert.equal(
+      labAddress({ ONTRAK_LAB_ENABLED: "1", ONTRAK_LAB_URL: "https://its.ontrak.technology/lab/" }),
+      "https://its.ontrak.technology/lab",
     );
   });
 

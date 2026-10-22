@@ -62,8 +62,11 @@ const TRUTHY = ["1", "true", "yes", "on"];
  * portal then draws **no lab tile at all**, rather than a link that leads nowhere and a
  * status light that could only ever read "not answering" for a product nobody is running.
  *
- * The origin rather than the raw value, so a base URL carrying a path or a trailing slash
- * cannot double a segment; and `null` for anything a browser could not open, because a
+ * The path is part of the answer: the family serves the lab inside the training range at
+ * `https://its.ontrak.technology/lab`, so cutting the address to its origin would point
+ * the tile at the range's front door instead. What is dropped is a trailing slash — a
+ * link ending in one is a link the edge answers with a redirect — and the query and
+ * fragment, which no tile needs. `null` for anything a browser could not open, because a
  * link the portal cannot build is worse than no link.
  */
 export function labAddress(source: Record<string, string | undefined> = process.env): string | null {
@@ -73,7 +76,8 @@ export function labAddress(source: Record<string, string | undefined> = process.
   try {
     const parsed = new URL(raw);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-    return parsed.origin;
+    const path = parsed.pathname.replace(/\/+$/, "");
+    return path === "" ? parsed.origin : `${parsed.origin}${path}`;
   } catch {
     return null;
   }

@@ -122,6 +122,15 @@ export interface StatusResult {
  * *link* still uses the public name — probing an internal address must never
  * change what a browser is told to open.
  */
+/** The scheme and host of an address, or the address itself when it is not a URL. */
+function probeOrigin(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url.replace(/\/+$/, "");
+  }
+}
+
 export async function probeProduct(entry: {
   key: string;
   url: string;
@@ -131,7 +140,12 @@ export async function probeProduct(entry: {
   if (!entry.health) {
     return { key: entry.key, reachability: "unknown", detail: "no health endpoint to ask" };
   }
-  const base = (internalUrl || entry.url).replace(/\/+$/, "");
+  // An override is a base the health path is appended to, path and all (a deployment
+  // may front several products under one address). The product's own link is different:
+  // it may carry a path the health route lives above — the lab is served at
+  // `<training range>/lab`, whose `/healthz` is the range's — so a link is probed at
+  // its origin and the tile still points where the deployment said.
+  const base = internalUrl ? internalUrl.replace(/\/+$/, "") : probeOrigin(entry.url);
   const target = `${base}${entry.health}`;
   try {
     const response = await fetch(target, {

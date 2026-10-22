@@ -9,12 +9,15 @@ a class.
 
 Three names, one range, one certificate family:
 
-    ontrak.innotel.us           the range itself — the portal, and the
-                                `/guacamole/` path the console is served from
-    student.ontrak.innotel.us   what a student opens
-    admin.ontrak.innotel.us     what an instructor opens
+    <range>           the range itself — the portal, and the
+                      `/guacamole/` path the console is served from
+    student.<range>   what a student opens
+    admin.<range>     what an instructor opens
 
-A wildcard (`*.ontrak.innotel.us`) covers the two subdomains; the apex needs its
+`<range>` is `ONTRAK_RANGE_DOMAIN`, with no shipped default: the estate's own lab no
+longer lives on a domain of its own — it is served inside the training range — so a
+default here would publish three names nothing answers on. A wildcard
+(`*.<range>`) covers the two subdomains; the apex needs its
 own certificate, because a wildcard never covers the name it hangs off. Both are
 issued through Cerulean over DNS-01, so nothing has to be reachable from the
 internet for the certificate to exist.
@@ -37,7 +40,9 @@ Configuration (environment; every one has a default that matches the estate):
 
     CERULEAN_API_URL        https://cerulean.innotel.us
     CERULEAN_API_TOKEN      the ceru_ service key (required to do anything)
-    ONTRAK_DNS_ZONE         innotel.us      — the zone the names live in
+    ONTRAK_RANGE_DOMAIN     the range's base domain (required; no default)
+    ONTRAK_DNS_ZONE         innotel.us      — the zone the names live in; must hold
+                                              ONTRAK_RANGE_DOMAIN
     ONTRAK_EDGE_IP          73.68.203.71    — what the names resolve to (the edge)
     ONTRAK_FORWARD_HOST     192.168.1.62    — where the edge forwards: the range's
                                               gateway. Set this when the range
@@ -66,10 +71,43 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-BASE_NAME = "ontrak.innotel.us"
-STUDENT_NAME = "student.ontrak.innotel.us"
-ADMIN_NAME = "admin.ontrak.innotel.us"
-WILDCARD = "*.ontrak.innotel.us"
+# The range's own domain, named by the deployment rather than shipped here. Cerulean's
+# service key carries a tenant, and the names below are where this range answers; a
+# constant would be a claim about somebody else's deployment.
+RANGE_DOMAIN_ENV = "ONTRAK_RANGE_DOMAIN"
+
+
+def range_domain(value: str, zone: str) -> str:
+    """The range's base domain, refusing a value the zone cannot serve.
+
+    Checked here rather than at the first API call, because a base name outside
+    `ONTRAK_DNS_ZONE` does not fail loudly: `zone_relative` would hand Technitium the
+    whole name, the create would be refused, and the plan would die halfway through
+    with the zone and the name both correct in their own terms.
+    """
+    base = value.strip().rstrip(".")
+    if not base:
+        raise CannotRun(
+            "ONTRAK_RANGE_DOMAIN is not set. Name the range's base domain, e.g. "
+            "ONTRAK_RANGE_DOMAIN=lab.example.test — the three names are derived from it."
+        )
+    if "://" in base or "/" in base or " " in base:
+        raise CannotRun(
+            f"ONTRAK_RANGE_DOMAIN does not look like a domain: {base!r} (it takes a "
+            "name, not a URL or a path)"
+        )
+    zone_name = zone.strip().rstrip(".").lower()
+    if base.lower() != zone_name and not base.lower().endswith("." + zone_name):
+        raise CannotRun(
+            f"ONTRAK_RANGE_DOMAIN ({base}) is not inside ONTRAK_DNS_ZONE ({zone}). "
+            "Set ONTRAK_DNS_ZONE to the zone that holds it."
+        )
+    return base
+
+
+def range_names(base: str) -> tuple[str, str, str, str]:
+    """The three public names of a range on `base`, and the wildcard covering two."""
+    return base, f"student.{base}", f"admin.{base}", f"*.{base}"
 
 # Where the edge forwards when ONTRAK_FORWARD_HOST is unset: the range host's own
 # address, which is the estate's current one. The range host has moved before, and
@@ -538,6 +576,11 @@ def plan(args) -> int:
     if not token.startswith("ceru_"):
         raise CannotRun("CERULEAN_API_TOKEN does not look like a service key (they start with ceru_)")
 
+    # Named by the deployment, after the key is known good: an operator without a key
+    # needs that answer first, not a lecture about a domain they were about to set.
+    base_name = range_domain(setting(RANGE_DOMAIN_ENV), zone)
+    student_name, admin_name, wildcard = range_names(base_name)[1:]
+
     api = Api(base, token)
     print(f"cerulean  {base}")
     print(f"zone      {zone}   names -> {edge_ip}   edge -> {forward_host}")
@@ -550,24 +593,24 @@ def plan(args) -> int:
 
     emit(ensure_zone(api, zone, args.apply))
 
-    for fqdn in (BASE_NAME, STUDENT_NAME, ADMIN_NAME):
+    for fqdn in (base_name, student_name, admin_name):
         emit(ensure_record(api, fqdn, "A", edge_ip, args.apply))
 
     # Two certificates: the wildcard covers both subdomains, the apex needs its
     # own — a wildcard never covers the name it hangs off.
-    wildcard_id, wildcard_report = ensure_certificate(api, WILDCARD, args.apply, args.wait, args.renew_days)
+    wildcard_id, wildcard_report = ensure_certificate(api, wildcard, args.apply, args.wait, args.renew_days)
     emit(wildcard_report)
     if args.apply and wildcard_id:
         emit(f"exported the wildcard to NPM (certificate #{export_to_npm(api, wildcard_id)})")
-    apex_id, apex_report = ensure_certificate(api, BASE_NAME, args.apply, args.wait, args.renew_days)
+    apex_id, apex_report = ensure_certificate(api, base_name, args.apply, args.wait, args.renew_days)
     emit(apex_report)
     if args.apply and apex_id:
         emit(f"exported the apex certificate to NPM (certificate #{export_to_npm(api, apex_id)})")
 
     for fqdn, cert_id, port in (
-        (BASE_NAME, apex_id, portal_port),
-        (STUDENT_NAME, wildcard_id, portal_port),
-        (ADMIN_NAME, wildcard_id, portal_port),
+        (base_name, apex_id, portal_port),
+        (student_name, wildcard_id, portal_port),
+        (admin_name, wildcard_id, portal_port),
     ):
         emit(ensure_proxy_host(api, fqdn, forward_host, port, cert_id, args.apply, args.repoint))
 
@@ -578,8 +621,8 @@ def plan(args) -> int:
             f"{CONSOLE_PATH}/ on that same port, so the edge needs no location rule —\n"
             "Cerulean's NPM bridge forwards a host rather than a path, and this is the\n"
             "arrangement that does not ask it to.\n"
-            f"    {BASE_NAME}/  and  {BASE_NAME}{CONSOLE_PATH}/  ->  http://{forward_host}:{portal_port}\n"
-            f"Set ONTRAK_GUAC__BASE_URL=https://{BASE_NAME}{CONSOLE_PATH}/ on the range."
+            f"    {base_name}/  and  {base_name}{CONSOLE_PATH}/  ->  http://{forward_host}:{portal_port}\n"
+            f"Set ONTRAK_GUAC__BASE_URL=https://{base_name}{CONSOLE_PATH}/ on the range."
         )
     else:
         print("\nnothing was written — re-run with --apply")

@@ -1,5 +1,18 @@
 # Changelog — OnTrak Unity — the portal
 
+## 0.4.1 — 2026-10-22
+
+The lab tile now links to the lab, not to the front door of the range that serves
+it. `ONTRAK_LAB_URL` keeps its path — the family serves the lab at
+`https://its.ontrak.technology/lab` — where it used to be cut to its origin, so the
+tile opened the training range's home page and a person had to find the lab from
+there. A trailing slash is still dropped.
+
+The liveness light follows: an override (`ONTRAK_<KEY>_INTERNAL_URL`) is still a
+base that the health path is appended to, path and all, but a product's own
+address is probed at its origin — the range's `/healthz` answers for the lab, and
+`<url>/lab/healthz` is nothing.
+
 ## 0.4.0 — 2026-10-22
 
 The family's addresses moved to `ontrak.technology`. The base domain every tile is

@@ -300,6 +300,7 @@ class ADryRunWritesNothing(unittest.TestCase):
         self._saved = dict(provision.os.environ)
         self._real_api = provision.Api
         provision.os.environ["CERULEAN_API_TOKEN"] = "ceru" + "_" + "a" * 8 + "_" + "b" * 8
+        provision.os.environ["ONTRAK_RANGE_DOMAIN"] = "ontrak.innotel.us"
         self.fake = self.FakeApi()
         provision.Api = lambda *a, **k: self.fake
 
@@ -319,6 +320,50 @@ class ADryRunWritesNothing(unittest.TestCase):
         for name in ("ontrak.innotel.us", "student.ontrak.innotel.us", "admin.ontrak.innotel.us"):
             self.assertIn(name, printed)
         self.assertEqual(self.fake.writes, [], "a dry run must not write")
+
+
+class TheRangeDomainComesFromTheDeployment(unittest.TestCase):
+    """No shipped default, and no silent mismatch with the zone.
+
+    The three names are derived from one value, so the cost of a wrong one is three
+    records and two certificates written under a name nobody asked for. The estate's
+    own lab is no longer a three-name range at all — it is served inside the training
+    range — which is exactly why this file must not carry a default: a shipped domain
+    is a claim about somebody else's deployment.
+    """
+
+    def test_the_three_names_come_from_the_domain(self):
+        self.assertEqual(
+            provision.range_names("lab.example.test"),
+            (
+                "lab.example.test",
+                "student.lab.example.test",
+                "admin.lab.example.test",
+                "*.lab.example.test",
+            ),
+        )
+
+    def test_a_missing_domain_is_a_configuration_error(self):
+        for value in ("", "   ", "."):
+            with self.assertRaises(provision.CannotRun):
+                provision.range_domain(value, "example.test")
+
+    def test_a_url_is_refused_because_it_is_not_a_name(self):
+        for value in ("https://lab.example.test", "lab.example.test/lab", "lab example.test"):
+            with self.assertRaises(provision.CannotRun):
+                provision.range_domain(value, "example.test")
+
+    def test_a_domain_outside_the_zone_is_refused(self):
+        # The failure this prevents is quiet: zone_relative would pass the whole name
+        # to Technitium and the plan would die at the create, not here.
+        with self.assertRaises(provision.CannotRun):
+            provision.range_domain("lab.example.test", "innotel.us")
+
+    def test_a_domain_inside_the_zone_is_accepted(self):
+        self.assertEqual(
+            provision.range_domain("lab.example.test.", "example.test"), "lab.example.test"
+        )
+        self.assertEqual(provision.range_domain("example.test", "example.test"), "example.test")
 
 
 if __name__ == "__main__":  # pragma: no cover
