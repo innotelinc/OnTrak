@@ -238,7 +238,7 @@ test("collects keys from both products' environments and drops blanks", () => {
   const explicit = candidateKeys(["--value", "--value"], { ONTRAK_TIX_ASSURANCE_SECRET: "tix-secret-long-enough" });
   assert.deepEqual(explicit, [
     { key: "--value", source: "--key" },
-    { key: "tix-secret-long-enough", source: "Tix secret" },
+    { key: "tix-secret-long-enough", source: "ONTRAK_TIX_ASSURANCE_SECRET" },
   ]);
 });
 
@@ -272,7 +272,7 @@ test("the command reports a verified packet, a forged one and an unreadable one"
     const verified = run(good, "--key", KEY);
     assert.equal(verified.status, 0, verified.stderr);
     assert.match(verified.stdout, /^VERIFIED/);
-    assert.match(verified.stdout, /packet: Sentinel compliance posture/);
+    assert.match(verified.stdout, /packet kind: Sentinel compliance posture/);
 
     const failed = run(forgedPath, "--key", KEY);
     assert.equal(failed.status, 1, failed.stderr);

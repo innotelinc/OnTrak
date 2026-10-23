@@ -7,16 +7,20 @@
  * verification can be written once", and Sentinel's packet is "deliberately one
  * format rather than two", because "a verifier that has to know which product
  * produced a document is a verifier that gets rewritten for the third product".
- * Until now each product shipped its own half of that promise: Tix had
+ * Until now each product shipped half of that promise: Tix had
  * `ontrak-tix/scripts/verify-packet.ts`, and Sentinel had no offline tool at all —
  * its compliance packets could only be checked from inside a running console.
  *
- * This is the family's verifier, and it is the same contract Tix's tool already
+ * So this tool is the family's, and it is the contract Tix's tool already
  * documented: a third party holding a file and a key, nothing else. No database,
- * no session, no `db.ts`, no network. It recognises the packet by what is inside
- * it — Sentinel's `packet` kind, Tix's `audit` kind, or Tix's `incident` — and
- * hands it to that product's own verification rules, so each product keeps one
- * implementation of "is this signature ours" and there are still only two.
+ * no session, no `db.ts`, no network — and deliberately no import from either
+ * product. The first version imported each product's own rules and verified the
+ * document by kind; that reads better and breaks the training image, which builds
+ * the app without the sibling checkouts beside it, so `next build` could not
+ * resolve the imports. The envelope is the stable thing here: canonical JSON,
+ * SHA-256 for the two digests, HMAC-SHA256 over the content digest. This file
+ * implements exactly that, and the two products' own suites keep asserting their
+ * builders agree with it.
  *
  *   npm run verify:packet -- COMPLIANCE.json
  *   npm run verify:packet -- packet.json --key "$ONTRAK_TIX_ASSURANCE_SECRET"
@@ -36,26 +40,29 @@
  * usable in a pipeline.
  */
 
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import {
-  COMPLIANCE_PACKET_KIND,
-  packetVerificationReport as postureReport,
-  verifyCompliancePacket,
-  type CompliancePacket,
-} from "../ontrak-sentinel/src/lib/assurance-packet";
-import { hmacSigner as postureSigner } from "../ontrak-sentinel/src/lib/assurance-sign";
-import { sha256Hex } from "../ontrak-sentinel/src/lib/hash";
-import {
-  candidateSecrets as tixCandidateSecrets,
-  verifyPacketObject as verifyAsTixPacket,
-} from "../ontrak-tix/src/lib/assurance-verify";
+/** The shared assurance-packet format version. Both products ship "1.0". */
+export const PACKET_VERSION = "1.0";
 
-/** Tix's audit-chain export, which states its kind rather than its subject. */
+/** The one algorithm the family's packets are signed with. */
+export const ALGORITHM = "HMAC-SHA256";
+
+/** Sentinel's compliance-posture packets name their kind in `packet`. */
+export const SENTINEL_POSTURE_KIND = "sentinel-compliance-posture";
+
+/** Tix's audit-chain exports name their kind in `kind`. */
 export const TIX_AUDIT_CHAIN_KIND = "ontrak-tix-audit-chain";
 
 /** The keys Sentinel signs with, in the order its signer prefers them. */
 export const SENTINEL_KEY_ENVS = ["SENTINEL_ASSURANCE_SECRET", "SENTINEL_SIGNING_KEY"] as const;
+
+/**
+ * Tix's keys, in `candidateSecrets`' order: the assurance secret, then the session
+ * secrets its signer falls back to so a fresh checkout can export at all.
+ */
+export const TIX_KEY_ENVS = ["ONTRAK_TIX_ASSURANCE_SECRET", "TIX_AUTH_SECRET", "AUTH_SECRET"] as const;
 
 const USAGE = `Verify a signed OnTrak assurance packet offline — Tix incident packets,
 Tix audit-chain exports and Sentinel compliance-posture packets.
@@ -72,6 +79,40 @@ Usage:
 Exit codes: 0 verified, 1 failed, 2 usage or read error.`;
 
 /* -------------------------------------------------------------------------- */
+/*  The format                                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The canonical bytes both products digest: object keys sorted, arrays in order,
+ * `undefined` members dropped. This is the format's definition, not a convenience
+ * — a digest over different bytes is a different document.
+ */
+export function stableStringify(value: unknown): string {
+  if (value === undefined) return "null";
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  const entries = Object.keys(record)
+    .filter((key) => record[key] !== undefined)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`);
+  return `{${entries.join(",")}}`;
+}
+
+export const sha256 = (input: string): string => createHash("sha256").update(input).digest("hex");
+
+export const hmac = (input: string, key: string): string =>
+  createHmac("sha256", key).update(input).digest("hex");
+
+/** Constant-time compare, so a signature check does not leak how far it matched. */
+function sameDigest(a: string, b: string): boolean {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  const left = Buffer.from(a, "utf8");
+  const right = Buffer.from(b, "utf8");
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+/* -------------------------------------------------------------------------- */
 /*  What the document is                                                      */
 /* -------------------------------------------------------------------------- */
 
@@ -82,64 +123,178 @@ export type PacketKind = "sentinel-posture" | "tix-incident" | "tix-audit-chain"
  *
  * A packet that names neither kind is still worth checking: verification is about
  * the envelope, and saying "I cannot name this subject" is not the same answer as
- * "this signature is not ours". So `unknown` goes down the shared envelope path.
+ * "this signature is not ours". So `unknown` is verified too.
  */
 export function packetKind(value: unknown): PacketKind {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return "unknown";
   const packet = value as Record<string, unknown>;
-  if (packet.packet === COMPLIANCE_PACKET_KIND) return "sentinel-posture";
+  if (packet.packet === SENTINEL_POSTURE_KIND) return "sentinel-posture";
   if (packet.kind === TIX_AUDIT_CHAIN_KIND) return "tix-audit-chain";
   if (typeof packet.incident === "object" && packet.incident !== null) return "tix-incident";
   return "unknown";
 }
 
-/** A verification reduced to what this tool prints, whichever product produced it. */
+function describeKind(kind: PacketKind): string {
+  switch (kind) {
+    case "sentinel-posture":
+      return "Sentinel compliance posture";
+    case "tix-incident":
+      return "Tix incident assurance packet";
+    case "tix-audit-chain":
+      return "Tix audit-chain export";
+    case "unknown":
+      return "unrecognised subject (checked as the shared envelope)";
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Verification                                                              */
+/* -------------------------------------------------------------------------- */
+
+/** A verification reduced to what this tool prints. */
 export interface Outcome {
   ok: boolean;
   reason: string | null;
-  report: { headline: string; lines: string[]; missing: string[] } | null;
+  report: { headline: string; lines: string[] } | null;
 }
 
 /**
- * Sentinel's verification, made total like Tix's.
- *
- * Sentinel verifies inside its console, where a packet has already been built by
- * its own code, so `verifyCompliancePacket` may throw on a shape it does not know.
- * A verifier handed a suspicious file cannot assume the file is a packet, and the
- * whole point of checking one is that it might not be.
+ * Verify a packet without the database: recompute both digests from the packet's
+ * own contents and check the signature over the content digest. An edit after
+ * signing fails the signature check; a hand-rewritten packet fails the digest
+ * checks; and a packet whose *record* was altered fails the record check even if
+ * somebody recomputed the rest. Never throws: a verifier is handed files that
+ * might not be packets at all.
  */
-export function verifyPosturePacket(value: unknown, key: string): Outcome {
+export function verifyDocument(value: unknown, key: string): Outcome {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return { ok: false, reason: "That is not an assurance packet (expected a JSON object).", report: null };
   }
 
-  const packet = value as CompliancePacket;
-  let result;
-  try {
-    result = verifyCompliancePacket(packet, sha256Hex, postureSigner(key));
-  } catch {
-    return { ok: false, reason: "That document is not shaped like an assurance packet.", report: null };
+  const packet = value as Record<string, unknown>;
+  const { generatedAt, contentHash, recordHash, signature, algorithm, ...content } = packet;
+  void generatedAt;
+
+  const lines = reportLines(packet);
+
+  if (typeof contentHash !== "string" || typeof recordHash !== "string" || typeof signature !== "string") {
+    return {
+      ok: false,
+      reason: "That document is not shaped like an assurance packet.",
+      report: { headline: "FAILED — That document is not shaped like an assurance packet.", lines },
+    };
   }
 
-  const report = postureReport(packet, result);
-  return {
-    ok: result.ok,
-    reason: result.ok ? null : result.reason,
-    report: { headline: report.headline, lines: report.lines, missing: [] },
-  };
+  if (sha256(stableStringify(content)) !== contentHash) {
+    return fail("The packet contents do not match its content hash.", lines);
+  }
+
+  const { audit, ...record } = content;
+  void audit;
+  if (sha256(stableStringify(record)) !== recordHash) {
+    // The record's label differs by product; the assertion is the same one.
+    return fail(
+      packetKind(packet) === "sentinel-posture"
+        ? "The posture record does not match its record hash."
+        : "The incident record does not match its record hash.",
+      lines,
+    );
+  }
+
+  if (algorithm !== ALGORITHM) {
+    return fail(`Unknown signature algorithm "${String(algorithm)}".`, lines);
+  }
+  if (!sameDigest(hmac(contentHash, key), signature)) {
+    return fail("The signature does not match this deployment's key.", lines);
+  }
+
+  return { ok: true, reason: null, report: { headline: `VERIFIED — ${subject(packet)}`, lines } };
 }
 
-/** Verify a parsed document with the rules of the product that wrote it. */
-export function verifyDocument(value: unknown, key: string): Outcome {
-  if (packetKind(value) === "sentinel-posture") return verifyPosturePacket(value, key);
-  const outcome = verifyAsTixPacket(value, key);
-  return {
-    ok: outcome.ok,
-    reason: outcome.reason,
-    report: outcome.report
-      ? { headline: outcome.report.headline, lines: outcome.report.lines, missing: outcome.report.missing }
-      : null,
-  };
+function fail(reason: string, lines: string[]): Outcome {
+  return { ok: false, reason, report: { headline: `FAILED — ${reason}`, lines } };
+}
+
+/** One line saying what the intact document is about. */
+function subject(packet: Record<string, unknown>): string {
+  switch (packetKind(packet)) {
+    case "sentinel-posture": {
+      const controls = Array.isArray(packet.controls) ? packet.controls : [];
+      const failed = controls.filter((control) => (control as { state?: unknown })?.state === "FAIL").length;
+      const warned = controls.filter((control) => (control as { state?: unknown })?.state === "WARN").length;
+      const state = failed > 0 ? `${failed} control(s) read FAIL` : warned > 0 ? `${warned} control(s) read WARN` : "every control reads OK";
+      return `the compliance packet is intact, and ${state}.`;
+    }
+    case "tix-incident":
+      return "the incident packet is intact.";
+    case "tix-audit-chain":
+      return "the audit-chain export is intact.";
+    case "unknown":
+      return "the document is intact (its subject could not be named).";
+  }
+}
+
+/** What a reviewer reads next, whichever product wrote the document. */
+function reportLines(packet: Record<string, unknown>): string[] {
+  const lines: string[] = [];
+  const kind = packetKind(packet);
+  lines.push(`packet kind: ${describeKind(kind)}`);
+  lines.push(`packet version: ${asText(packet.version)}`);
+
+  const incident = packet.incident as { ref?: unknown; title?: unknown; severity?: unknown; phase?: unknown } | undefined;
+  if (incident) {
+    lines.push(`incident: ${asText(incident.ref)}${typeof incident.title === "string" ? ` — ${incident.title}` : ""}`);
+    lines.push(`severity / phase: ${asText(incident.severity)} / ${asText(incident.phase)}`);
+  }
+  if (kind === "sentinel-posture") {
+    lines.push(`organization: ${asText(packet.organization)}`);
+    const controls = Array.isArray(packet.controls) ? packet.controls : [];
+    lines.push(`controls: ${controls.length}`);
+  }
+
+  lines.push(`record hash: ${asText(packet.recordHash)}`);
+  lines.push(`content hash: ${asText(packet.contentHash)}`);
+  lines.push(`signature: ${asText(packet.signature)} (${asText(packet.algorithm)})`);
+
+  const audit = packet.audit as { length?: unknown; verified?: unknown; exportSeq?: unknown } | undefined;
+  const cut =
+    audit?.exportSeq === undefined
+      ? `audit anchor: ${asText(audit?.length)} event(s), verified at export: ${asText(audit?.verified)}`
+      : `audit anchor: seq ${asText(audit?.exportSeq)} after a chain of ${asText(audit?.length)} (verified at export: ${asText(audit?.verified)})`;
+  lines.push(cut);
+
+  const policies = Array.isArray(packet.policies) ? packet.policies : [];
+  lines.push(
+    `policies in force: ${
+      policies.length === 0
+        ? "(none recorded)"
+        : policies.map((policy) => `${(policy as { key?: unknown })?.key}@${(policy as { version?: unknown })?.version}`).join(", ")
+    }`,
+  );
+  lines.push(`exported at: ${asText(packet.generatedAt)}`);
+
+  // Counts, not a judgement: whether the record is *complete* is Tix's rule, and
+  // its own verifier answers it for Tix packets.
+  const counts: string[] = [];
+  for (const [label, field] of [
+    ["evidence", "evidence"],
+    ["custody", "custody"],
+    ["timeline", "timeline"],
+    ["chains", "entries"],
+  ] as const) {
+    const list = packet[field];
+    if (Array.isArray(list)) counts.push(`${list.length} ${label}`);
+  }
+  if (counts.length > 0) lines.push(`record holds: ${counts.join(", ")}`);
+
+  return lines;
+}
+
+function asText(value: unknown): string {
+  if (value === null || value === undefined) return "(absent)";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "(unreadable)";
 }
 
 /* -------------------------------------------------------------------------- */
@@ -154,17 +309,20 @@ export interface CandidateKey {
 
 /**
  * The keys to try, in order: the ones named on the command line, then every key
- * the two products sign with. Blank and short values are dropped the way both
- * products' own secret readers drop them — an unset variable passed through by a
- * compose file arrives as `""`, and trying it would report "wrong key" about a key
- * nobody supplied.
+ * the two products sign with. Blank values are dropped the way both products'
+ * secret readers drop them — an unset variable passed through by a compose file
+ * arrives as `""`, and trying it would report "wrong key" about a key nobody
+ * supplied.
  */
 export function candidateKeys(
   explicit: readonly string[],
   env: Record<string, string | undefined> = process.env,
 ): CandidateKey[] {
   const candidates: CandidateKey[] = explicit.map((key) => ({ key, source: "--key" }));
-  for (const key of tixCandidateSecrets(env)) candidates.push({ key, source: "Tix secret" });
+  for (const name of TIX_KEY_ENVS) {
+    const value = env[name];
+    if (typeof value === "string" && value.trim() !== "") candidates.push({ key: value, source: name });
+  }
   for (const name of SENTINEL_KEY_ENVS) {
     const value = env[name];
     if (typeof value === "string" && value.trim() !== "") candidates.push({ key: value, source: name });
@@ -199,8 +357,11 @@ export function verifyWithKeys(
     failures.push({ outcome, key });
   }
 
-  const preferred = failures.find((failure) => !SIGNATURE_MISMATCH.test(failure.outcome.reason ?? "")) ?? failures[0];
-  return preferred ? { outcome: preferred.outcome, key: null } : { outcome: { ok: false, reason: "No key to verify with.", report: null }, key: null };
+  const preferred =
+    failures.find((failure) => !SIGNATURE_MISMATCH.test(failure.outcome.reason ?? "")) ?? failures[0];
+  return preferred
+    ? { outcome: preferred.outcome, key: null }
+    : { outcome: { ok: false, reason: "No key to verify with.", report: null }, key: null };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -214,7 +375,7 @@ interface Args {
   help: boolean;
 }
 
-/** Parse the arguments by hand: a 200-line CLI should not pull in a parser. */
+/** Parse the arguments by hand: a 400-line CLI should not pull in a parser. */
 export function parseArgs(argv: readonly string[]): Args {
   const args: Args = { path: null, keys: [], quiet: false, help: false };
   for (let index = 0; index < argv.length; index++) {
@@ -241,34 +402,16 @@ export function report(
   key: CandidateKey | null,
   quiet: boolean,
 ): number {
-  const kind = packetKind(value);
   const headline = outcome.report?.headline ?? `FAILED — ${outcome.reason ?? "the packet could not be read"}`;
   process.stdout.write(`${headline}\n`);
 
   if (!quiet) {
-    process.stdout.write(`  packet: ${describeKind(kind)}\n`);
     if (key) process.stdout.write(`  key: ${key.source}\n`);
     for (const line of outcome.report?.lines ?? []) process.stdout.write(`  ${line}\n`);
-    if (outcome.report && outcome.report.missing.length > 0) {
-      process.stdout.write("  still missing from the record:\n");
-      for (const item of outcome.report.missing) process.stdout.write(`    - ${item}\n`);
-    }
+    if (!outcome.report) process.stdout.write(`  subject: ${describeKind(packetKind(value))}\n`);
   }
 
   return outcome.ok ? 0 : 1;
-}
-
-function describeKind(kind: PacketKind): string {
-  switch (kind) {
-    case "sentinel-posture":
-      return "Sentinel compliance posture";
-    case "tix-incident":
-      return "Tix incident assurance packet";
-    case "tix-audit-chain":
-      return "Tix audit-chain export";
-    case "unknown":
-      return "unrecognised subject (checked as the shared envelope)";
-  }
 }
 
 function main(argv: readonly string[]): number {
