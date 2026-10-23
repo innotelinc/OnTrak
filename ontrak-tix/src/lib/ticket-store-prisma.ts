@@ -290,6 +290,11 @@ export interface TicketPrismaClient {
     update(args: { where: { id: string }; data: unknown }): Promise<unknown>;
     delete(args: { where: { id: string } }): Promise<unknown>;
   };
+  ticketSequence: {
+    findUnique(args: unknown): Promise<{ tenantId: string } | null>;
+    update(args: unknown): Promise<{ value: number }>;
+    createMany(args: { data: unknown[]; skipDuplicates?: boolean }): Promise<unknown>;
+  };
   message: {
     createMany(args: { data: unknown[]; skipDuplicates?: boolean }): Promise<unknown>;
   };
@@ -307,24 +312,39 @@ export class PrismaTicketStore implements TicketStore {
   constructor(private readonly db: TicketPrismaClient) {}
 
   /**
-   * The next reference number for a tenant, derived from the highest reference
-   * already issued rather than from the row count.
+   * The next reference number for a tenant, held in one row.
    *
-   * A count was the high-water mark only while tickets were never deleted. Now that
-   * `deleteTicket` exists, a count would drop when a row is removed and hand the
-   * deleted number to the next ticket — colliding with `@@unique([tenantId, ref])`
-   * (or, worse, reissuing a reference in a desk that never noticed). Reading the
-   * refs keeps the mark after a delete; the numbers it would reuse are only ever the
-   * ones still present, and a reference that is gone is free again.
+   * Reading every ticket's `ref` made a create O(tenant) — 18.7 s p95 at a
+   * million tickets. The mark is bootstrapped once from the highest existing ref
+   * (so a desk upgrading in place does not reissue numbers), then incremented
+   * atomically. It never moves backwards: a deleted ticket's reference is not
+   * reissued, which is safer than the old "gone refs are free" rule.
    */
   async nextTicketSeq(tenantId: string): Promise<number> {
+    await this.ensureTicketSequence(tenantId);
+    const row = await this.db.ticketSequence.update({
+      where: { tenantId },
+      data: { value: { increment: 1 } },
+      select: { value: true },
+    });
+    return row.value;
+  }
+
+  /**
+   * Create the tenant's mark if it is missing, seeded from the highest ref that
+   * already exists. `createMany` with `skipDuplicates` makes two concurrent first
+   * creates converge on one row instead of racing an upsert.
+   */
+  private async ensureTicketSequence(tenantId: string): Promise<void> {
+    const existing = await this.db.ticketSequence.findUnique({ where: { tenantId }, select: { tenantId: true } });
+    if (existing) return;
     const rows = await this.db.ticket.findMany({ where: { tenantId }, select: { ref: true } });
     let highest = 0;
     for (const row of rows) {
-      const seq = refSequence((row as { ref?: string | null }).ref);
+      const seq = refSequence(row.ref);
       if (seq > highest) highest = seq;
     }
-    return highest + 1;
+    await this.db.ticketSequence.createMany({ data: [{ tenantId, value: highest }], skipDuplicates: true });
   }
 
   async listTickets(tenantId: string): Promise<TicketRecord[]> {
@@ -333,6 +353,27 @@ export class PrismaTicketStore implements TicketStore {
       include: { messages: { orderBy: { createdAt: "asc" } } },
     });
     return rows.map(toTicketRecord);
+  }
+
+  /**
+   * One database-level page of the worklist, ordered by id. The public API used
+   * to load every ticket (with its thread) and slice the array in memory; at a
+   * million tickets that read never returned. `take: limit + 1` is what says
+   * whether a next page exists without a second count query.
+   */
+  async listTicketPage(
+    tenantId: string,
+    options: { limit: number; after?: string | null }
+  ): Promise<{ tickets: TicketRecord[]; nextCursor: string | null }> {
+    const rows = await this.db.ticket.findMany({
+      where: { tenantId, ...(options.after ? { id: { gt: options.after } } : {}) },
+      orderBy: { id: "asc" },
+      take: options.limit + 1,
+      include: { messages: { orderBy: { createdAt: "asc" } } },
+    });
+    const hasMore = rows.length > options.limit;
+    const page = hasMore ? rows.slice(0, options.limit) : rows;
+    return { tickets: page.map(toTicketRecord), nextCursor: hasMore ? page[page.length - 1].id : null };
   }
 
   async findTicket(tenantId: string, ticketId: string): Promise<TicketRecord | null> {

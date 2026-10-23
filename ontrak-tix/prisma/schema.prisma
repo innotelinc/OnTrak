@@ -365,6 +365,22 @@ model Ticket {
   @@index([tenantId, assigneeId])
   @@index([tenantId, queueId])
   @@index([tenantId, slaPolicyId])
+  // The inbox and the public API page in id order within one tenant; without
+  // this, each page reads the tenant's whole index to sort it.
+  @@index([tenantId, id])
+}
+
+/// The reference high-water mark for one tenant.
+///
+/// `nextTicketSeq` used to read every ticket's `ref` on every create, which made a
+/// create O(tenant) and was the 18.7 s p95 in the load test. The mark is now one
+/// row: bootstrapped from the highest existing ref the first time it is needed,
+/// then incremented atomically. It never moves backwards, so a deleted ticket's
+/// number is not reissued.
+model TicketSequence {
+  tenantId  String   @id
+  value     Int      @default(0)
+  updatedAt DateTime @updatedAt
 }
 
 enum TicketType {

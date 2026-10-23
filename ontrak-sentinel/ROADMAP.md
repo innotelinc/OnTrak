@@ -1036,8 +1036,9 @@ missing rather than as a task name:
    feed. **Extended (2026-10-08):** the **flow listener** (`guard-netflow.ts`) puts
    NetFlow v5/v9 and IPFIX on the same door, so the device that exports flows rather
    than logs is read too, and the **OTLP receiver** reads an OpenTelemetry agent's logs
-   and spans on the same HTTP surface. What is still true: a pcap reader is the listener
-   after these, so 1.0 has a listener rather than a taxonomy.
+   and spans on the same HTTP surface, and a classic **pcap reader** (`guard-pcap.ts`)
+   normalizes a saved capture through the same path. 1.0 therefore has a listener for
+   the wire and for the file an analyst starts from, rather than a taxonomy.
 2. **A rule change is not a version.** Detection rules are code, and the corpus
    they are judged against is not tracked, so "why did this fire last Tuesday"
    has no answer. Versioning the rule set — and recording which version an alert

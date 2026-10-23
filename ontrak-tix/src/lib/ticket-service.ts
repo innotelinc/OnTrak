@@ -485,6 +485,11 @@ export interface TicketStore {
   nextTicketSeq(tenantId: string): Promise<number>;
   /** Every ticket in a tenant — the agent inbox needs the whole worklist. */
   listTickets(tenantId: string): Promise<TicketRecord[]>;
+  /** One database-level page, ordered by id; used by the public API. */
+  listTicketPage(
+    tenantId: string,
+    options: { limit: number; after?: string | null }
+  ): Promise<{ tickets: TicketRecord[]; nextCursor: string | null }>;
   findTicket(tenantId: string, ticketId: string): Promise<TicketRecord | null>;
   insertTicket(ticket: TicketRecord): Promise<void>;
   updateTicket(ticket: TicketRecord): Promise<void>;
@@ -800,6 +805,17 @@ export class MemoryTicketStore implements TicketStore {
     return [...this.tickets.entries()]
       .filter(([key]) => key.startsWith(`${tenantId}:`))
       .map(([, ticket]) => structuredClone(ticket));
+  }
+
+  async listTicketPage(
+    tenantId: string,
+    options: { limit: number; after?: string | null }
+  ): Promise<{ tickets: TicketRecord[]; nextCursor: string | null }> {
+    const all = (await this.listTickets(tenantId))
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .filter((ticket) => (options.after ? ticket.id > options.after : true));
+    const page = all.slice(0, options.limit);
+    return { tickets: page, nextCursor: all.length > options.limit ? page[page.length - 1].id : null };
   }
 
   async findTicket(tenantId: string, ticketId: string): Promise<TicketRecord | null> {

@@ -525,9 +525,13 @@ IPFIX** (`guard-netflow.ts`) share one UDP collector socket, dispatch by version
 templates per exporter, and refuse to decode a record whose layout they have not seen
 rather than guessing one — see [docs/guard-netflow.md](docs/guard-netflow.md).
 
-Not here yet, and named rather than implied: OTel and a pcap reader are declared
-sources with no reader, and there is no rule *editing* — the rulebook is code with a
-version, and publishing a rule is a deploy. The queue is worked at `/console/alerts`
+A **pcap** is read from a file rather than a socket (`guard-pcap.ts`): classic pcap in
+either byte order and either timestamp precision, Ethernet/VLAN, Linux SLL and raw IP,
+with the packet's own timestamp and the same normalizer the live listeners use. A
+truncated record is refused and counted instead of being padded into a shorter frame.
+
+Not here yet, and named rather than implied: there is no rule *editing* — the rulebook
+is code with a version, and publishing a rule is a deploy. The queue is worked at `/console/alerts`
 and the whole picture — detection, prevention, coverage and the chain — is read at
 `/console/control-center` (see [Working the queue](#working-the-queue)).
 

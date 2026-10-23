@@ -28,7 +28,7 @@ import type { NextRequest } from "next/server";
 
 import { apiTokenServicesFor, chatNotifyServicesFor, ticketServicesFor, webhookServicesFor } from "../../../../lib/db";
 import { apiError, apiJson, gate, successHeaders } from "../../../../lib/public-api-http";
-import { API_VERSION, apiPage, pageResult } from "../../../../lib/public-api-rules";
+import { API_VERSION, apiPage } from "../../../../lib/public-api-rules";
 import type { TicketPriority, TicketType } from "../../../../lib/ticket-rules";
 import { send } from "../_respond";
 
@@ -79,24 +79,23 @@ export async function GET(request: NextRequest): Promise<Response> {
   if (!result.ok) return send(result.response);
 
   const page = apiPage(request.nextUrl.searchParams);
-  const all = await ticketServicesFor().store.listTickets(result.caller.tenantId);
-  // Deterministic by id, so a client walking with a cursor sees every ticket once.
-  const sorted = [...all].sort((a, b) => a.id.localeCompare(b.id));
-
-  let start = 0;
-  if (page.cursor) {
-    const index = sorted.findIndex((ticket) => ticket.id === page.cursor);
-    if (index < 0) {
-      return send(apiError(400, "invalid_cursor", "That cursor does not name a ticket in this workspace."));
-    }
-    start = index + 1;
+  const store = ticketServicesFor().store;
+  // The cursor names a row, so it is checked before paging: `id > cursor` would
+  // otherwise start at the beginning for a guessed id and loop a client forever.
+  if (page.cursor && !(await store.findTicket(result.caller.tenantId, page.cursor))) {
+    return send(apiError(400, "invalid_cursor", "That cursor does not name a ticket in this workspace."));
   }
 
-  const { data, nextCursor } = pageResult(sorted.slice(start, start + page.limit + 1), page);
+  // Paged in the database, not in memory: at a million tickets the old read
+  // loaded the tenant's whole thread and never returned.
+  const { tickets, nextCursor } = await store.listTicketPage(result.caller.tenantId, {
+    limit: page.limit,
+    after: page.cursor,
+  });
   return send(
     apiJson(
       200,
-      { api_version: API_VERSION, data: data.map(ticketSummary), next_cursor: nextCursor },
+      { api_version: API_VERSION, data: tickets.map(ticketSummary), next_cursor: nextCursor },
       successHeaders(result.caller),
     ),
   );

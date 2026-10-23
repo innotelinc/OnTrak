@@ -34,7 +34,7 @@ import type { IdentityRecord } from "./identity-rules";
 export const TELEMETRY_KINDS = ["NETWORK", "HOST", "HTTP", "AUTH"] as const;
 export type TelemetryKind = (typeof TELEMETRY_KINDS)[number];
 
-export const TELEMETRY_SOURCES = ["SYSLOG", "NETFLOW", "IPFIX", "EBPF", "OTEL", "PROXY", "EDR", "FIREWALL"] as const;
+export const TELEMETRY_SOURCES = ["SYSLOG", "NETFLOW", "IPFIX", "EBPF", "OTEL", "PROXY", "EDR", "FIREWALL", "PCAP"] as const;
 export type TelemetrySource = (typeof TELEMETRY_SOURCES)[number];
 
 export const TRAFFIC_DIRECTIONS = ["INBOUND", "OUTBOUND", "LATERAL"] as const;
@@ -148,7 +148,7 @@ function normalizeEpoch(value: number): number {
  * is why an authentication source has to say so rather than be assumed from its name.
  */
 export function defaultKindForSource(source: TelemetrySource): TelemetryKind {
-  if (source === "NETFLOW" || source === "IPFIX" || source === "FIREWALL") return "NETWORK";
+  if (source === "NETFLOW" || source === "IPFIX" || source === "FIREWALL" || source === "PCAP") return "NETWORK";
   if (source === "EBPF" || source === "EDR") return "HOST";
   if (source === "PROXY") return "HTTP";
   return "NETWORK";

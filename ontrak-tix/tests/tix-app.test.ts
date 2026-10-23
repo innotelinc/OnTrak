@@ -57,6 +57,25 @@ class FakePrisma implements TicketPrismaClient {
   private readonly messages = new Map<string, MessageRow>();
   private readonly audit = new Map<string, AuditEventRow>();
 
+  private readonly sequences = new Map<string, number>();
+
+  ticketSequence = {
+    findUnique: async (args: any): Promise<{ tenantId: string } | null> =>
+      this.sequences.has(args.where.tenantId) ? { tenantId: args.where.tenantId } : null,
+    update: async (args: any): Promise<{ value: number }> => {
+      const current = this.sequences.get(args.where.tenantId) ?? 0;
+      const next = current + (args.data.value?.increment ?? 0);
+      this.sequences.set(args.where.tenantId, next);
+      return { value: next };
+    },
+    createMany: async (args: any): Promise<unknown> => {
+      for (const row of args.data as { tenantId: string; value: number }[]) {
+        if (!this.sequences.has(row.tenantId)) this.sequences.set(row.tenantId, row.value);
+      }
+      return { count: args.data.length };
+    },
+  };
+
   ticket = {
     count: async (args: any): Promise<number> =>
       [...this.tickets.values()].filter((row) => row.tenantId === args.where.tenantId).length,
