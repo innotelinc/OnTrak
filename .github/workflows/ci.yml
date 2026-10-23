@@ -217,7 +217,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install
@@ -304,7 +304,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: ontrak-tix/package-lock.json
 
@@ -383,7 +383,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: ontrak-sentinel/package-lock.json
 
@@ -432,7 +432,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: ontrak-sentinel/package-lock.json
 
@@ -535,7 +535,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: ontrak-sync/web/package-lock.json
 
@@ -588,7 +588,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           # Two lockfiles: the Playwright suite and its config live at the root, and the
           # dashboard it drives is its own package with its own dependency tree.
@@ -655,7 +655,7 @@ jobs:
         with:
           # 22 because that is what Genie's image is built on; a suite green on a
           # different major would still be one that never ran in the container.
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: ontrak-genie/package-lock.json
 
@@ -732,7 +732,7 @@ jobs:
         with:
           # 22 because that is what the portal's image is built on; a suite green on
           # a different major would still be one that never ran in the container.
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: ontrak-portal/package-lock.json
 
