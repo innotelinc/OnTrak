@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { jwtVerify } from "jose";
 
+import { labHostPath } from "@/lib/lab-rules";
+
 /**
  * Edge middleware guarding the role-scoped areas.
  *
@@ -43,6 +45,19 @@ async function readSession(token: string | undefined): Promise<{ userId: string;
 
 export async function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
+
+  // A deployment that serves the lab on its own name (see `labHostFromEnv`) answers the
+  // lab's routes at that host's root. A rewrite, not a redirect: the browser stays on
+  // `lab.example.test`, and the sign-in round trip it may trigger comes back to the same
+  // address. The lab's own pages decide who may see them, so the role fence below is
+  // skipped for them — `/lab/admin` already refuses anyone who is not staff.
+  const labPath = labHostPath(request.headers.get("host"), pathname);
+  if (labPath) {
+    const url = request.nextUrl.clone();
+    url.pathname = labPath;
+    return NextResponse.rewrite(url);
+  }
+
   const guard = GUARDS.find((entry) => pathname === entry.prefix || pathname.startsWith(`${entry.prefix}/`));
   const session = await readSession(request.cookies.get(SESSION_COOKIE)?.value);
 
@@ -69,6 +84,11 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
+    // The lab's own host is served from its root; these are the paths that have to reach
+    // the middleware for that rewrite to happen. `/admin/:path*` is already below.
+    "/",
+    "/lessons/:path*",
+    "/sessions/:path*",
     "/admin/:path*",
     "/instructor/:path*",
     "/student/:path*",

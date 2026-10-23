@@ -359,6 +359,33 @@ export const config = {
    */
   mcpToolTimeoutMs: nonNegativeInt("MCP_TOOL_TIMEOUT_MS", 300_000),
 
+  /**
+   * claude-mem's worker API, for memory that outlives a chat.
+   *
+   * Empty (the default) disables it: no context is fetched, no tool call is
+   * recorded, and the `recall_memory` tool is not offered. The address is the
+   * worker's own HTTP origin — not its OpenAI-compatible surface — and may be a
+   * LAN name such as `http://mem.ontrak.technology:37777` when every Genie
+   * interface shares one brain.
+   */
+  claudeMemUrl: str("CLAUDE_MEM_URL", "").replace(/\/+$/, ""),
+  /**
+   * The bearer the worker wants, when it was started with `CLAUDE_MEM_TV_TOKEN`.
+   * Empty is the normal case on a worker that is reachable only on the LAN.
+   */
+  claudeMemToken: str("CLAUDE_MEM_TOKEN", ""),
+  /**
+   * The directory whose basename claude-mem records as the project.
+   *
+   * Empty means the agent workspace. A deployment that wants every account and
+   * every interface in one project sets this to one stable path, so a memory
+   * written from the console is one the CLI and the other front doors can read
+   * back, rather than one filed under a per-account subdirectory.
+   */
+  claudeMemProjectCwd: str("CLAUDE_MEM_PROJECT_CWD", ""),
+  /** How long a memory call may take before the turn carries on without it. */
+  claudeMemTimeoutMs: int("CLAUDE_MEM_TIMEOUT_MS", 4000),
+
   maxSteps: int("AGENT_MAX_STEPS", 999),
   commandTimeoutMs: int("AGENT_COMMAND_TIMEOUT_MS", 120_000),
   requestTimeoutMs: int("AGENT_REQUEST_TIMEOUT_MS", 300_000),

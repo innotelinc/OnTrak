@@ -200,6 +200,64 @@ export function labDoorFromEnv(env: Record<string, string | undefined> = process
   return labDoor(labConfigFromEnv(env), env);
 }
 
+/** A `Host` header reduced to a bare hostname: no port, no trailing dot, lower case. */
+function bareHost(value: string | null | undefined): string {
+  const first = (value ?? "").split(",")[0].trim().toLowerCase();
+  return first.replace(/:\d+$/, "").replace(/\.$/, "");
+}
+
+/**
+ * The hostname the in-app lab answers on, when the deployment has named one.
+ *
+ * The lab used to be reachable only as a path on the main site (`/lab`). An operator
+ * running it on a name of its own says so in `ONTRAK_LAB_URL` — the same variable a
+ * peer lab's address was already written in — and a request to that host is served the
+ * lab's routes from its root, so `lab.example.test` opens the dashboard rather than
+ * `its.example.test/lab`. Deliberately no new variable: "where is the lab" is already
+ * this address, and a second spelling would be a second thing to keep in step.
+ *
+ * `null` when this app is not the lab (`ONTRAK_LAB_IN_APP` off) or the address is
+ * missing or unusable. A host this app cannot name is a host it must not claim.
+ */
+export function labHostFromEnv(env: Record<string, string | undefined> = process.env): string | null {
+  if (!TRUTHY.includes(read(env, LAB_IN_APP_ENV).toLowerCase())) return null;
+  const raw = read(env, LAB_URL_ENV);
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return bareHost(parsed.hostname);
+  } catch {
+    return null;
+  }
+}
+
+/** The lab's own route segments — the children of `src/app/(app)/lab`. */
+const LAB_ROOT_SEGMENTS = ["lessons", "sessions", "admin"];
+
+/**
+ * What a request to the lab's own host means, or `null` when the request is not for it.
+ *
+ * The answer is a path to *rewrite* to, not a redirect: the browser stays on
+ * `lab.example.test` and the app serves the same components it serves at `/lab`. Only
+ * the lab's own segments are mapped, because everything else on that host — sign-in,
+ * `/_next` assets, API routes, the Guacamole tunnel — already means the same thing it
+ * means anywhere, and remapping it would be inventing routes nobody asked for.
+ *
+ * Pure, so the mapping is asserted against a table rather than a live server.
+ */
+export function labHostPath(
+  requestHost: string | null | undefined,
+  pathname: string,
+  env: Record<string, string | undefined> = process.env,
+): string | null {
+  const labHost = labHostFromEnv(env);
+  if (!labHost || bareHost(requestHost) !== labHost) return null;
+  if (pathname === "/") return LAB_IN_APP_PATH;
+  const segment = pathname.split("/")[1] ?? "";
+  return LAB_ROOT_SEGMENTS.includes(segment) ? `${LAB_IN_APP_PATH}${pathname}` : null;
+}
+
 /**
  * Why a simulated attempt at this scenario must be refused, or `null` when it may start.
  *

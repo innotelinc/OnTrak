@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { changeSetSummary } from "./change-set.js";
+import { claudeMemEnabled, searchMemory } from "./claude-mem.js";
 import { mcpToolSnapshot } from "./mcp-tools.js";
 import { config } from "./config.js";
 import { MEMORY_FILE, appendMemory, readMemory, remember } from "./memory.js";
@@ -761,6 +762,44 @@ const useSkillTool: ToolDefinition = {
   },
 };
 
+// --- recall (memory shared across every interface) --------------------------
+
+/**
+ * Search what earlier sessions in this deployment learned.
+ *
+ * The history is larger than a prompt can hold, so the prompt gets the recent
+ * context and this tool is how the model goes looking for the rest — a title, a
+ * date, the file it touched and an observation id, not full bodies. That is what
+ * makes a memory from the console usable in the CLI, and one from G0DM0D3 usable
+ * here, without paying for all of it on every turn.
+ */
+const recallMemoryTool: ToolDefinition = {
+  name: "recall_memory",
+  description:
+    "Search the persistent memory shared by this deployment's interfaces (console, CLI, G0DM0D3, Engineer) for work done in earlier sessions. Returns an index of observation ids, dates, titles and files. Use it when the request refers to prior work, a past decision or a bug fix you do not see in this chat.",
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "What to look for, in the words a person would use." },
+      limit: { type: "number", description: "How many results to return. Defaults to 10, at most 25." },
+    },
+    required: ["query"],
+  },
+  async run(args) {
+    const query = argString(args, "query");
+    const requested = argNumber(args, "limit") ?? 10;
+    const limit = Math.max(1, Math.min(25, requested));
+    const found = await searchMemory(query, limit);
+    if (found === null) {
+      return {
+        ok: true,
+        content: "The memory service answered nothing for that query. It may hold no matching work, or may be unreachable right now.",
+      };
+    }
+    return { ok: true, content: clamp(found) };
+  },
+};
+
 // --- registry ---------------------------------------------------------------
 
 export const tools: ToolDefinition[] = [
@@ -777,6 +816,7 @@ export const tools: ToolDefinition[] = [
   packageInstallTool,
   macroRunTool,
   rememberTool,
+  recallMemoryTool,
   listSkillsTool,
   useSkillTool,
 ];
@@ -790,7 +830,11 @@ export const tools: ToolDefinition[] = [
  * failure degrade to "the console's own tools still work".
  */
 export function allTools(): ToolDefinition[] {
-  return [...tools, ...mcpToolSnapshot()];
+  // A tool whose service is not configured is not offered: asking the model to
+  // choose between two memories, one of which is always empty, is worse than
+  // not mentioning the second at all.
+  const own = claudeMemEnabled() ? tools : tools.filter((tool) => tool.name !== "recall_memory");
+  return [...own, ...mcpToolSnapshot()];
 }
 
 /** Tool schemas in the OpenAI `tools` envelope. */

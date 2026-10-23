@@ -24,6 +24,7 @@ import { deriveTitle, saveSession, type Session } from "./store.js";
 import { lanAddress } from "./network.js";
 import { allTools, previewTool, runTool, toolSchemas, type ToolOutcome } from "./tools.js";
 import { primeMcpTools } from "./mcp-tools.js";
+import { memoryContext, recordObservation, summarizeTurn } from "./claude-mem.js";
 
 /**
  * What the agent should say about where the app is reachable.
@@ -255,10 +256,18 @@ export function workspaceContext(): string {
   return parts.join("\n\n");
 }
 
-/** The system prompt is prepended at request time, never stored in the transcript. */
-function modelMessages(session: Session): ChatMessage[] {
+/**
+ * The system prompt is prepended at request time, never stored in the transcript.
+ *
+ * `memory` is the history claude-mem returned for this turn. It is a separate
+ * block rather than part of `workspaceContext()` because that function is about
+ * the directory, while this is about every session the deployment has had — and
+ * because a worker that is down simply contributes nothing.
+ */
+function modelMessages(session: Session, memory = ""): ChatMessage[] {
+  const tail = memory === "" ? workspaceContext() : `${workspaceContext()}\n\n${memory}`;
   return [
-    { role: "system", content: `${SYSTEM_PROMPT}\n\n${workspaceContext()}` },
+    { role: "system", content: `${SYSTEM_PROMPT}\n\n${tail}` },
     // Diffs are a UI artefact; strip them so no provider sees an unknown field.
     ...session.messages.map(({ diff: _diff, ...message }) => message),
   ];
@@ -470,8 +479,9 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
   // The MCP servers are asked what they offer before the tool list is built: a
   // turn that could not see a delegated tool would answer as though the analysis
   // were impossible. A server that does not answer costs the turn its tools and
-  // nothing else.
-  await primeMcpTools();
+  // nothing else. Memory is fetched alongside it, because both are network calls
+  // the turn needs before its first request.
+  const [, history] = await Promise.all([primeMcpTools(), memoryContext()]);
   const schemas = toolSchemas();
   const toolNames = new Set(allTools().map((tool) => tool.name));
   let steps = 0;
@@ -539,7 +549,7 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
       try {
         if (config.stream) {
           const stream = streamChat({
-            messages: modelMessages(session),
+            messages: modelMessages(session, history),
             tools: schemas,
             model: candidate,
             baseUrl: target.baseUrl,
@@ -621,7 +631,7 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
           }
         } else {
           result = await completeChat({
-            messages: modelMessages(session),
+            messages: modelMessages(session, history),
             tools: schemas,
             model: candidate,
             baseUrl: target.baseUrl,
@@ -837,6 +847,9 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
 
     if (toolCalls.length === 0) {
       await saveSession(session);
+      // The turn's thread, for the next session to start from. Not awaited: a
+      // summary is the worker's job and the reply is ready now.
+      void summarizeTurn(session, options.userMessage, result.content);
       yield { type: "done", steps };
       return;
     }
@@ -923,6 +936,15 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
         content,
         ...(outcome.diff ? { diff: outcome.diff } : {}),
       };
+
+      // What happened, not just what was said: the observation is made from the
+      // call and its result, so a later session can find the file, the command
+      // and the outcome without replaying the transcript.
+      void recordObservation(session, {
+        name: call.function.name,
+        input: args,
+        response: { ok: outcome.ok, content },
+      });
     }
 
     if (repeatedFailures >= STUCK_AFTER) {

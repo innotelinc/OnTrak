@@ -31,6 +31,8 @@ import {
   labConfigFromEnv,
   labDoor,
   labDoorFromEnv,
+  labHostFromEnv,
+  labHostPath,
   labSessionUrl,
 } from "../src/lib/lab-rules";
 
@@ -275,6 +277,80 @@ test("lab: the door is read from one place, so no page half-reads the three fact
   // reads the variables itself is a caller the guard below can also see.
   const env = { ONTRAK_LAB_ENABLED: "1", ONTRAK_LAB_URL: "https://lab.test" };
   assert.deepEqual(labDoor(labConfigFromEnv(env), env), labDoorFromEnv(env));
+});
+
+/*
+ * ── the lab's own name ─────────────────────────────────────────────────────
+ *
+ * The lab was reachable only as `/lab` on the main site, which made the training app's
+ * address the lab's address. A deployment running the lab on a name of its own states
+ * that name in `ONTRAK_LAB_URL`, and the host serves the same routes from its root —
+ * no second variable, because that address already says where the lab is. These are
+ * the two questions the middleware asks of it: *is this the lab's host*, and *what does
+ * this path mean there*.
+ */
+
+const LAB_ON_ITS_OWN_HOST = {
+  ONTRAK_LAB_ENABLED: "true",
+  ONTRAK_LAB_IN_APP: "true",
+  ONTRAK_LAB_URL: "https://lab.ontrak.technology",
+};
+
+test("lab: the host is named only by a deployment that serves the lab here", () => {
+  assert.equal(labHostFromEnv(LAB_ON_ITS_OWN_HOST), "lab.ontrak.technology");
+  // Not this app's lab, so not this app's host — a peer address still only links.
+  assert.equal(labHostFromEnv({ ONTRAK_LAB_ENABLED: "1", ONTRAK_LAB_URL: "https://lab.test" }), null);
+  // In-app but nowhere stated: there is no host to claim, and none is invented.
+  assert.equal(labHostFromEnv({ ONTRAK_LAB_IN_APP: "1" }), null);
+  // A refusal is a refusal here too, rather than a host guessed from part of a URL.
+  assert.equal(labHostFromEnv({ ONTRAK_LAB_IN_APP: "1", ONTRAK_LAB_URL: "ftp://lab.test" }), null);
+  assert.equal(labHostFromEnv({ ONTRAK_LAB_IN_APP: "1", ONTRAK_LAB_URL: "lab.test" }), null);
+  // Quoted, trailing-slash and upper-case spellings name the same host.
+  assert.equal(
+    labHostFromEnv({ ONTRAK_LAB_IN_APP: "yes", ONTRAK_LAB_URL: '"https://LAB.example.test/"' }),
+    "lab.example.test",
+  );
+});
+
+test("lab: its own host answers the dashboard at the root", () => {
+  assert.equal(labHostPath("lab.ontrak.technology", "/", LAB_ON_ITS_OWN_HOST), LAB_IN_APP_PATH);
+  // A port and a trailing dot are the same host as far as a `Host` header goes.
+  assert.equal(labHostPath("LAB.ontrak.technology:443", "/", LAB_ON_ITS_OWN_HOST), "/lab");
+  assert.equal(labHostPath("lab.ontrak.technology.", "/", LAB_ON_ITS_OWN_HOST), "/lab");
+});
+
+test("lab: the lab's own segments are served from the root, and nothing else is", () => {
+  for (const [from, to] of [
+    ["/lessons", "/lab/lessons"],
+    ["/lessons/linux-basics", "/lab/lessons/linux-basics"],
+    ["/sessions/12", "/lab/sessions/12"],
+    ["/sessions/12/console", "/lab/sessions/12/console"],
+    ["/admin", "/lab/admin"],
+    ["/admin/platforms", "/lab/admin/platforms"],
+  ] as const) {
+    assert.equal(labHostPath("lab.ontrak.technology", from, LAB_ON_ITS_OWN_HOST), to);
+  }
+
+  // Everything else on that host already means what it means on any host: sign-in,
+  // assets, API routes and the Guacamole tunnel must not be turned into lab pages.
+  for (const path of ["/login", "/register", "/lab", "/lab/lessons", "/api/lab", "/_next/static/chunk.js", "/guacamole/", "/healthz"]) {
+    assert.equal(
+      labHostPath("lab.ontrak.technology", path, LAB_ON_ITS_OWN_HOST),
+      null,
+      `${path} must be left alone`,
+    );
+  }
+
+  // `lessonsomething` is not `lessons`.
+  assert.equal(labHostPath("lab.ontrak.technology", "/lessonsomething", LAB_ON_ITS_OWN_HOST), null);
+});
+
+test("lab: every other host is untouched", () => {
+  for (const host of ["its.ontrak.technology", "ontrak.technology", "lab.ontrak.technology.evil.test", null, ""]) {
+    assert.equal(labHostPath(host, "/", LAB_ON_ITS_OWN_HOST), null, `${host} must not be served a lab`);
+  }
+  // And with no lab host configured, even the lab's own address is just a host.
+  assert.equal(labHostPath("lab.ontrak.technology", "/", {}), null);
 });
 
 test("lab: a simulated scenario is untouched, and a lab one has exactly one door", () => {
