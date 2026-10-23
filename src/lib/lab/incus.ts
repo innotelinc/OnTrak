@@ -241,6 +241,11 @@ export function processRunner(): Runner {
           reject(new RunnerSpawnError(program, `${program} could not be given pipes`));
           return;
         }
+        // A binary that is not there never opens its stdin. Writing the payload
+        // then fails with EPIPE, and an unhandled 'error' on a socket is an
+        // uncaught exception that takes the whole test run down — a missing CLI
+        // must read as "absent", which is the `error` handler's job below.
+        stdin.on("error", () => {});
         let stdout = "";
         let stderr = "";
         let timedOut = false;
