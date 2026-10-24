@@ -140,6 +140,16 @@ ENV GHIDRA_INSTALL_DIR=/opt/ghidra
 # repository; the entrypoint is what puts them in front of the accounts.
 COPY default-skills /opt/genie-default-skills/
 
+# This image's node is musl, and the PTY prebuild REA installs above is linked
+# against glibc: a gcompat shim lets it load, and then `forkpty` faults the MCP
+# server on the first captured command. The hotfix installs the pipe-aware
+# backend from morluto/rea#7046 and rewires the two spawn sites in the packaged
+# 6.7.0 tree; it is last so the layers above stay cached. See
+# rea-capture-hotfix/README.md for what it touches and why it fails closed.
+COPY rea-capture-hotfix /tmp/rea-capture-hotfix
+RUN node /tmp/rea-capture-hotfix/install.mjs /usr/local/lib/node_modules/rea-agents \
+ && rm -rf /tmp/rea-capture-hotfix
+
 EXPOSE 3400
 # The entrypoint resolves any `vault://` values (a no-op with none), then execs
 # the server — so a reference that cannot be resolved stops the container.
