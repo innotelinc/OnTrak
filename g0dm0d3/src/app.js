@@ -40,6 +40,7 @@ import {
   reportUsage,
   usageFrom,
 } from "./gateway.js";
+import { handleAgentChat, isAgentRequest } from "./agent-bridge.js";
 
 export const HEALTH_PATH = "/health";
 
@@ -83,6 +84,198 @@ const ENGINEER = fs.readFileSync(new URL("../public/engineer.html", import.meta.
  * whole document and the configuration changes once per deploy.
  */
 const studioDocuments = new Map();
+
+/**
+ * The two facts the studio's chat calls cannot say for themselves, and a
+ * renderer for what comes back.
+ *
+ * The page replaces the person's text with a jailbreak template before it calls
+ * the gateway, and it keeps its conversations in `state.currentId` without ever
+ * telling the server. Genie needs both: the real question (it is the agent's
+ * prompt) and a conversation id (it is what a Genie session follows, turn to
+ * turn). Both ride along as headers on the page's own gateway calls — nothing
+ * else about the page changes, and if this script cannot run the server falls
+ * back to the transcript, which is merely less precise.
+ *
+ * The same script turns the tool blockquotes the server writes into cards, the
+ * way the console draws a tool call: name, argument, status. The text stays the
+ * source of truth — the blockquote already reads correctly on its own — so a
+ * page that never runs this script is still honest, just plainer.
+ */
+const STUDIO_AGENT_BRIDGE = `<script>
+(function () {
+  if (window.__g0dm0d3AgentBridge) return;
+  window.__g0dm0d3AgentBridge = true;
+
+  var lastQuery = "";
+  function remember() {
+    var input = document.getElementById("messageInput");
+    // A header has a size limit, and a long prompt is still fully present in the
+    // request body; only the ordinary-length query is worth carrying separately.
+    var value = input ? input.value.trim() : "";
+    lastQuery = value.length <= 3000 ? value : "";
+  }
+  document.addEventListener("click", function (event) {
+    var target = event.target;
+    if (target && target.closest && target.closest("#sendBtn")) remember();
+  }, true);
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Enter" && !event.shiftKey && event.target && event.target.id === "messageInput") remember();
+  }, true);
+
+  function base64(text) {
+    try {
+      return btoa(unescape(encodeURIComponent(text)));
+    } catch (_) {
+      return "";
+    }
+  }
+
+  var nativeFetch = window.fetch;
+  window.fetch = function (input, init) {
+    try {
+      var url = typeof input === "string" ? input : (input && input.url) || "";
+      if (init && init.method === "POST" && url.indexOf("${GATEWAY_PATH}/chat/completions") !== -1) {
+        var headers = new Headers(init.headers || {});
+        var query = base64(lastQuery);
+        if (query) headers.set("X-Genie-Query", query);
+        var conversation = "";
+        try {
+          conversation = (typeof state !== "undefined" && state && state.currentId) ? String(state.currentId) : "";
+        } catch (_) {}
+        if (conversation) headers.set("X-Genie-Conversation", conversation);
+        init = Object.assign({}, init, { headers: headers });
+      }
+    } catch (_) {}
+    return nativeFetch.call(this, input, init);
+  };
+
+  // ── Tool cards ──────────────────────────────────────────────────────
+  // A tool call reaches the page as a markdown blockquote:
+  //
+  //   > ⚙ **run_command** · ls
+  //   > ✓ done
+  //
+  // which becomes these cards. Every field is set with textContent: the name
+  // and the argument come from a model's tool call, and a card is not a place
+  // to start trusting strings with HTML in them.
+  function installToolCardStyles() {
+    if (document.getElementById("genie-tool-card-style")) return;
+    var style = document.createElement("style");
+    style.id = "genie-tool-card-style";
+    style.textContent = [
+      ".genie-tool-card{margin:10px 0;border:1px solid rgba(255,255,255,.10);border-radius:10px;background:rgba(255,255,255,.035);overflow:hidden}",
+      ".genie-tool-head{display:flex;align-items:center;gap:8px;padding:8px 11px;font-size:12.5px;line-height:1.4}",
+      ".genie-tool-icon{font-size:13px;opacity:.9}",
+      ".genie-tool-name{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:600;color:#d7deea}",
+      ".genie-tool-args{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#93a1b5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:52%}",
+      ".genie-tool-status{margin-left:auto;flex:none;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:999px}",
+      ".genie-tool-status.ok{color:#82e0aa;background:rgba(130,224,170,.12)}",
+      ".genie-tool-status.failed{color:#ff8f8f;background:rgba(255,143,143,.12)}",
+      ".genie-tool-status.running{color:#9bb7ff;background:rgba(155,183,255,.12)}",
+      ".genie-tool-detail{padding:0 11px 9px;font-size:11.5px;color:#ff9d9d;word-break:break-word}",
+      ".genie-tool-card.info{border-color:rgba(155,183,255,.18);background:rgba(155,183,255,.06)}",
+      ".genie-tool-card.info .genie-tool-head{color:#aebfdd}",
+    ].join("");
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function cardText(tag, className, value) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    node.textContent = value;
+    return node;
+  }
+
+  function buildToolCard(raw) {
+    var match = raw.match(/⚙\\s*([A-Za-z0-9_.:$/-]+)(?:\\s*·\\s*([^\\n]+))?/);
+    if (!match) return null;
+    var name = match[1];
+    var args = (match[2] || "").replace(/\u0060/g, "").trim();
+    var failed = raw.indexOf("✗") !== -1;
+    var running = raw.indexOf("✓") === -1 && !failed;
+    var detail = (raw.match(/✗\\s*failed:\\s*([^\\n]+)/) || [])[1] || "";
+    var card = document.createElement("div");
+    card.className = "genie-tool-card";
+    var head = document.createElement("div");
+    head.className = "genie-tool-head";
+    head.appendChild(cardText("span", "genie-tool-icon", "⚙"));
+    head.appendChild(cardText("span", "genie-tool-name", name));
+    if (args) head.appendChild(cardText("code", "genie-tool-args", args));
+    head.appendChild(
+      cardText(
+        "span",
+        "genie-tool-status " + (failed ? "failed" : running ? "running" : "ok"),
+        failed ? "failed" : running ? "running" : "done",
+      ),
+    );
+    card.appendChild(head);
+    if (failed && detail) card.appendChild(cardText("div", "genie-tool-detail", detail));
+    return card;
+  }
+
+  function buildNoticeCard(raw) {
+    var match = raw.match(/ℹ\\s*([^\\n]+)/);
+    if (!match) return null;
+    var card = document.createElement("div");
+    card.className = "genie-tool-card info";
+    var head = document.createElement("div");
+    head.className = "genie-tool-head";
+    head.appendChild(cardText("span", "genie-tool-icon", "ℹ"));
+    head.appendChild(cardText("span", "genie-tool-args", match[1]));
+    card.appendChild(head);
+    return card;
+  }
+
+  function enhanceToolCards() {
+    var area = document.getElementById("messagesArea");
+    if (!area) return;
+    var quotes = area.querySelectorAll("blockquote");
+    for (var i = 0; i < quotes.length; i++) {
+      var quote = quotes[i];
+      if (!quote.parentNode) continue;
+      var raw = (quote.textContent || "").trim();
+      if (raw.indexOf("⚙") === -1 && raw.indexOf("ℹ") === -1) continue;
+      var card = raw.indexOf("⚙") !== -1 ? buildToolCard(raw) : buildNoticeCard(raw);
+      // Skip a blockquote that is still arriving: the next mutation reprocesses it.
+      if (card) quote.parentNode.replaceChild(card, quote);
+    }
+  }
+
+  var cardsPending = false;
+  function scheduleToolCards() {
+    if (cardsPending) return;
+    cardsPending = true;
+    var run = function () {
+      cardsPending = false;
+      enhanceToolCards();
+    };
+    if (window.requestAnimationFrame) window.requestAnimationFrame(run);
+    else setTimeout(run, 50);
+  }
+
+  function watchToolCards() {
+    installToolCardStyles();
+    scheduleToolCards();
+    var area = document.getElementById("messagesArea");
+    if (!area) {
+      setTimeout(watchToolCards, 300);
+      return;
+    }
+    if (window.MutationObserver) {
+      new MutationObserver(scheduleToolCards).observe(area, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    }
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", watchToolCards);
+  else watchToolCards();
+})();
+</script>`;
+
 function studioDocument(config) {
   if (config.gatewayUrl === "") return STUDIO;
   const key = `${config.gatewayUrl}\u0000${config.gatewayModel}`;
@@ -91,7 +284,10 @@ function studioDocument(config) {
 
   // `<` is escaped so a model id can never close the script element it lives in.
   const settings = JSON.stringify({ baseUrl: GATEWAY_PATH, model: config.gatewayModel }).replace(/</g, "\\u003c");
-  const document = STUDIO.replace("</head>", `  <script>window.G0DM0D3_GATEWAY=${settings};</script>\n</head>`);
+  const document = STUDIO.replace(
+    "</head>",
+    `  <script>window.G0DM0D3_GATEWAY=${settings};</script>\n${STUDIO_AGENT_BRIDGE}\n</head>`
+  );
   studioDocuments.set(key, document);
   return document;
 }
@@ -400,6 +596,16 @@ async function handleGateway(req, res, config, email, subpath) {
     if (!quota.allowed) {
       const reasons = quota.reasons.length > 0 ? quota.reasons.join(", ") : "quota exhausted";
       return sendJson(res, 429, { error: `this account cannot run another completion — ${reasons}`, code: "quota_exceeded", reasons: quota.reasons });
+    }
+    /*
+     * A chat turn is the agent's, not the gateway's. The studio's own races —
+     * five completions for one prompt — all say `X-Title: GODMOD3.AI…`, and the
+     * judge, classifier and prefill calls say so with a suffix this does not
+     * match (see `agent-bridge.js`). The turn is run once, through Genie's tool
+     * loop, and every racer is answered from that one run.
+     */
+    if (isAgentRequest(req)) {
+      return handleAgentChat({ req, res, config, email, body, log });
     }
     // Ask the gateway to report usage on the last streamed frame. Without it a
     // streamed completion is one request and zero tokens in the ledger, which

@@ -12,7 +12,12 @@ COPY package.json ./
 COPY src ./src
 COPY public ./public
 
-# Nothing here writes to disk, so the process runs as the image's own user.
+# The one thing this process keeps across a restart is the map from a studio
+# conversation to the Genie session that continues it (`agent-bridge.js`). The
+# volume is mounted here, and it has to be the runtime user's to write.
+RUN mkdir -p /app/data && chown node:node /app/data
+
+# Nothing else here writes to disk, so the process runs as the image's own user.
 USER node
 
 EXPOSE 8080

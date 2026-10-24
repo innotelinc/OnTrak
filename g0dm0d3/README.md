@@ -8,8 +8,8 @@ It exists so somebody can use the agent without the console: a small page at
 and streams Genie's answer back.
 
 ```
-browser ──▶ oauth2-proxy ──▶ g0dm0d3 ──▶ Genie     /api/chat          (SSE relayed)
-                                 ├──────▶ OmniRoute /v1/chat/completions (studio, per-user key)
+browser ──▶ oauth2-proxy ──▶ g0dm0d3 ──▶ Genie     /api/chat          (runs and the studio chat)
+                                 ├──────▶ OmniRoute /v1/chat/completions (the page's judges, per-user key)
                                  └──────▶ Distro    /api/internal/...   (credits, identity, quota, usage)
 ```
 
@@ -33,6 +33,14 @@ browser ──▶ oauth2-proxy ──▶ g0dm0d3 ──▶ Genie     /api/chat  
   completion cost. The browser never holds a key, and the same three calls Genie
   makes (`identity`, `quota-check`, `usage-report`) are the whole contract — see
   `src/gateway.js`.
+* **The studio's chat is the agent, not one completion.** A completion is one
+  turn and has no tools, so a question that needs the shell, a file, a skill or
+  MCP could not be answered on `uc.genie.innotel.us` at all. Its chat calls now
+  run through Genie's own agent loop, with the same tool set, skills, memory and
+  workspace the console uses — nothing to enable, per person, per page. The
+  page's judges, classifiers and prefills still go to the gateway: they are
+  short single-shot calls, and an agent behind them would be wrong. See
+  `src/agent-bridge.js`.
 * **The model lists are the gateway's catalog.** The page asks this origin for
   `/api/gateway/v1/models` and fills its pickers, its race tiers and its judge
   chain from the ids that come back — there is no vendored provider list to drift
@@ -58,7 +66,7 @@ browser ──▶ oauth2-proxy ──▶ g0dm0d3 ──▶ Genie     /api/chat  
 | `GET /index.html` | proxy + plan | the product's own page (403 without a subscription, 503 when billing cannot answer) |
 | `GET /metered` | proxy | the credit-facing console, which is where a non-subscriber is offered the plans |
 | `GET /api/session` | proxy | identity, balance, credits per run, price per credit |
-| `POST /api/gateway/v1/chat/completions` | proxy + plan | the studio's completions, through OmniRoute on the caller's own key |
+| `POST /api/gateway/v1/chat/completions` | proxy + plan | a studio chat turn runs Genie's agent (all tools and skills); the page's judge/classifier calls go to OmniRoute on the caller's own key |
 | `GET /api/gateway/v1/models` | proxy | the gateway's catalog, for the same key |
 | `POST /api/run` | proxy + plan | `{message, runId, sessionId?}` → SSE, after one charge |
 | `POST /api/approve` | proxy | `{id, decision}` → Genie's approval route, with the service bearer |
@@ -68,6 +76,25 @@ browser ──▶ oauth2-proxy ──▶ g0dm0d3 ──▶ Genie     /api/chat  
 | `GET /preview/…` | proxy | the running app, byte for byte, on this origin |
 | `GET /api/ship` | proxy | where a ship can go, and the project this workspace already is |
 | `POST /api/ship` | proxy | `{name, target, message?}` → Genie adopts the workspace as a project, commits and pushes it |
+
+A studio chat turn is recognised by its `X-Title` (`GODMOD3.AI…`); the judge,
+classifier, prefill, vision, accuracy and liquid-refiner titles are excluded and
+stay on the gateway. The page's race fires five completions for one prompt, so
+the bridge keys a turn on the account, conversation id and history length and
+answers every racer from **one** Genie run — a `run_command` must not happen five
+times. Tool activity reaches the answer as blockquote lines (`⚙ **run_command** · ls`,
+`✓ done`) and the same injected script rewrites each into a card — tool name,
+argument, and a `running`/`done`/`failed` badge, drawn the way the console draws
+a tool call. The text is the source of truth: it reads correctly on its own, so a
+page that cannot run the script is plainer, not wrong. The conversation id and
+the person's own words ride along as headers from that script; without it the
+transcript is the fallback.
+The studio-conversation → Genie-session map lives in the `g0dm0d3-agent`
+volume (`/app/data/agent-sessions.json`; `G0DM0D3_AGENT_SESSIONS` overrides it),
+so neither a restart nor a container recreate starts the conversation over. The chain the agent walks
+is `G0DM0D3_AGENT_MODEL` + `G0DM0D3_AGENT_FALLBACK_MODELS` — `auto/chat` first, so
+a turn answers while the free pool is cooling down, with the uncensored
+open-weights models behind it.
 
 The preview is proxied rather than iframed from Genie: the app's own fetch, cookies
 and asset URLs then behave exactly as they will when it is deployed, and the pane

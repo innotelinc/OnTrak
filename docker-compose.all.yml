@@ -936,8 +936,10 @@ services:
   #
   # It holds no model key and no ledger: a run is charged in the control plane and
   # performed by Genie, and this container is the short path between the two. That
-  # is also why it has no volume — nothing here is worth keeping, and a restart
-  # must not lose a balance (the plane holds it).
+  # is also why it keeps almost nothing — a restart must not lose a balance (the
+  # plane holds it). The one exception is the studio's conversation → Genie-session
+  # map: without it every open studio chat starts a new agent session when the
+  # container is recreated, which reads as the agent forgetting the thread.
   #
   # Not published. The only way in is the SSO proxy in front of it (see
   # `g0dm0d3-sso`), which is what makes the identity header trustworthy; publishing
@@ -1148,6 +1150,10 @@ services:
       # than no link, especially from the page whose whole job is to hand somebody
       # the agent.
       WORK_URL: https://genie.innotel.us
+      # Where the conversation → Genie-session map lives. The app's own default is
+      # /tmp, which is not the volume, so it is named here rather than left to a
+      # gitignored `.env`: this is deployment state, and a recreate must keep it.
+      G0DM0D3_AGENT_SESSIONS: /app/data/agent-sessions.json
     depends_on:
       - genie-app
     expose:
@@ -1157,8 +1163,14 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    volumes:
+      # The studio's conversation → Genie-session map. It is the only state this
+      # container keeps; without it a recreate makes every open chat start a new
+      # agent session, which reads as the agent forgetting the thread.
+      - g0dm0d3-agent:/app/data
 
 volumes:
+  g0dm0d3-agent:
   ontrak-family-guac-recordings:
   ontrak-family-training-db:
   ontrak-family-training-storage:

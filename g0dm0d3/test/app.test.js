@@ -164,10 +164,18 @@ const config = {
   trustProxyHeaders: true,
   gatewayUrl: gatewayOrigin,
   gatewayModel: "auto/chat",
+  // Same shape `readConfig` hands the server: a hand-built config without these
+  // makes the run route read `.length` of undefined before it ever reaches Genie.
+  agentModel: "",
+  agentFallbackModels: [],
 };
 process.env.CONTROL_PLANE_INTERNAL_URL = planeOrigin;
 process.env.CONTROL_INTERNAL_TOKEN = "plane-token";
+// The agent's conversation map is a file in production; keep the suite's out of
+// whatever a developer's own studio has written.
+process.env.G0DM0D3_AGENT_SESSIONS = "/tmp/g0dm0d3-test-agent-sessions.json";
 
+const { resetAgentState } = await import("../src/agent-bridge.js");
 const app = createServer(config);
 await new Promise((r) => app.listen(0, "127.0.0.1", r));
 const base = `http://127.0.0.1:${app.address().port}`;
@@ -196,6 +204,7 @@ test.beforeEach(() => {
   };
   // A cached gateway key would make one case's identity answer leak into the next.
   resetGatewayCache();
+  resetAgentState();
   balance = 2;
   service = false;
   genieReply = { status: 200, chunks: ['data: {"text":"hel"}\n\n', 'data: {"text":"lo"}\n\n'], headers: { "content-type": "text/event-stream" } };
@@ -613,6 +622,7 @@ test("the studio is served with the family gateway written into it", async () =>
   assert.match(page, /window\.G0DM0D3_GATEWAY=/, "the page has to be told where the models are");
   assert.match(page, /"baseUrl":"\/api\/gateway\/v1"/, "same origin: no CSP exception and no key in the browser");
   assert.match(page, /"model":"auto\/chat"/);
+  assert.match(page, /__g0dm0d3AgentBridge/, "the chat turn has to carry the person's words and conversation id");
 });
 
 test("a completion spends the caller's own gateway key, and records the usage", async () => {
@@ -786,4 +796,155 @@ test("a deployment with no gateway keeps the studio as it was", async () => {
   } finally {
     await new Promise((r) => plain.close(r));
   }
+});
+
+/*
+ * The agent bridge.
+ *
+ * A studio chat turn used to be one completion: no shell, no files, no skills.
+ * It is now a Genie run, so what these tests pin is the seam — the person's own
+ * words reach Genie, one raced prompt is one run, the next turn continues the
+ * conversation, the page's judges still go to the gateway, and the tool
+ * activity the console would draw as cards arrives as text in the answer.
+ */
+
+const studioHeaders = (extra = {}) => ({
+  "content-type": "application/json",
+  "x-auth-request-email": "atheniq@innotel.us",
+  "x-title": "GODMOD3.AI-godmode-classic",
+  ...extra,
+});
+
+const base64 = (text) => Buffer.from(text, "utf8").toString("base64");
+
+const agentReply = (chunks) => ({
+  status: 200,
+  headers: { "content-type": "text/event-stream" },
+  chunks,
+});
+
+const toolTurn = [
+  'data: {"type":"session","id":"sess-1"}\n\n',
+  'data: {"type":"text","text":"The workspace has "}\n\n',
+  'data: {"type":"tool_call","id":"c1","name":"run_command","args":{"command":"ls"}}\n\n',
+  'data: {"type":"tool_result","id":"c1","name":"run_command","ok":true,"content":"a.txt b.txt"}\n\n',
+  'data: {"type":"text","text":"two files."}\n\n',
+  'data: {"type":"done","steps":2}\n\n',
+  "data: [DONE]\n\n",
+];
+
+test("a studio chat turn is run by Genie's agent, with the person's own words", async () => {
+  genieReply = agentReply(toolTurn);
+
+  const res = await fetch(`${base}/api/gateway/v1/chat/completions`, {
+    method: "POST",
+    headers: studioHeaders({
+      "x-genie-query": base64("what is in the workspace?"),
+      "x-genie-conversation": "conv-1",
+    }),
+    body: JSON.stringify({
+      model: "nousresearch/hermes-4-405b",
+      messages: [
+        { role: "system", content: "jailbreak template" },
+        { role: "user", content: "TEMPLATE: what is in the workspace?" },
+      ],
+    }),
+  });
+
+  assert.equal(res.status, 200);
+  const content = (await res.json()).choices[0].message.content;
+  assert.match(content, /The workspace has /);
+  assert.match(content, /two files\./);
+  assert.match(content, /run_command/, "the tool the console would draw is named in the answer");
+  assert.match(content, /✓ done/);
+
+  assert.equal(genieCalls.length, 1);
+  assert.equal(genieCalls[0].path, "/api/chat");
+  assert.equal(genieCalls[0].body.message, "what is in the workspace?", "the template is the page's, not the question");
+  assert.equal(genieCalls[0].actor, "atheniq@innotel.us");
+  assert.equal(genieCalls[0].auth, "Bearer genie-service-token");
+
+  assert.equal(gatewayCalls.length, 0, "the turn is the agent's, not a bare completion");
+  assert.equal(reports.length, 0, "Genie records the turn against the same key; billing it here would be twice");
+});
+
+test("one prompt raced five ways is one agent run, and the next turn continues its session", async () => {
+  genieReply = agentReply([
+    'data: {"type":"session","id":"sess-9"}\n\n',
+    'data: {"type":"text","text":"ok"}\n\n',
+    'data: {"type":"done","steps":1}\n\n',
+    "data: [DONE]\n\n",
+  ]);
+
+  const turn = (n, messages) =>
+    fetch(`${base}/api/gateway/v1/chat/completions`, {
+      method: "POST",
+      headers: studioHeaders({
+        "x-genie-query": base64("race me"),
+        "x-genie-conversation": "conv-9",
+      }),
+      body: JSON.stringify({ model: `m-${n}`, messages }),
+    });
+
+  const firstMessages = (n) => [
+    { role: "system", content: `template ${n}` },
+    { role: "user", content: `TEMPLATE ${n}: race me` },
+  ];
+
+  const raced = await Promise.all([1, 2, 3, 4, 5].map((n) => turn(n, firstMessages(n))));
+  const answers = await Promise.all(raced.map((res) => res.json()));
+  assert.ok(answers.every((answer) => answer.choices[0].message.content.includes("ok")));
+  assert.equal(genieCalls.length, 1, "five completions, one run: the agent's tools must not run five times");
+
+  const second = await turn(1, [
+    { role: "system", content: "template 1" },
+    { role: "user", content: "TEMPLATE 1: race me" },
+    { role: "assistant", content: "ok" },
+    { role: "user", content: "TEMPLATE 1: and now?" },
+  ]);
+  assert.equal(second.status, 200);
+  assert.equal(genieCalls.length, 2);
+  assert.equal(genieCalls[1].body.sessionId, "sess-9", "turn two continues the conversation, rather than starting over");
+});
+
+test("the page's judge calls still go to the gateway, not the agent", async () => {
+  const res = await fetch(`${base}/api/gateway/v1/chat/completions`, {
+    method: "POST",
+    headers: studioHeaders({ "x-title": "GODMOD3.AI-tastemaker" }),
+    body: JSON.stringify({ model: "auto/chat", messages: [{ role: "user", content: "which answer wins?" }] }),
+  });
+  assert.equal(res.status, 200);
+  assert.equal(genieCalls.length, 0);
+  assert.equal(gatewayCalls.length, 1);
+});
+
+test("a streamed studio chat arrives as OpenAI deltas, with the tool activity inline", async () => {
+  genieReply = agentReply(toolTurn);
+
+  const res = await fetch(`${base}/api/gateway/v1/chat/completions`, {
+    method: "POST",
+    headers: studioHeaders({
+      "x-title": "GODMOD3.AI-godmode-fast",
+      "x-genie-query": base64("what is in the workspace?"),
+      "x-genie-conversation": "conv-2",
+    }),
+    body: JSON.stringify({ model: "auto/chat", stream: true, messages: [{ role: "user", content: "TEMPLATE: what is in the workspace?" }] }),
+  });
+
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type"), /text\/event-stream/);
+  const frames = (await res.text())
+    .split("\n\n")
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => line.slice(6))
+    .filter((data) => data !== "[DONE]")
+    .map((data) => JSON.parse(data));
+  const content = frames.map((frame) => frame.choices?.[0]?.delta?.content ?? "").join("");
+
+  assert.match(content, /The workspace has /);
+  assert.match(content, /two files\./);
+  assert.match(content, /run_command/);
+  assert.match(content, /✓ done/);
+  assert.equal(frames.at(-1).choices[0].finish_reason, "stop");
+  assert.equal(genieCalls.length, 1);
 });
