@@ -93,6 +93,9 @@ export default async function EditScenarioPage({
             <ButtonLink href={`/instructor/attempts?scenarioId=${scenario.id}`} variant="secondary" size="sm">
               {t("scenarios.detail.attempts")}
             </ButtonLink>
+            <ButtonLink href={`/api/v1/scenarios/${scenario.id}/export`} variant="secondary" size="sm">
+              {t("scenarios.detail.export")}
+            </ButtonLink>
           </>
         }
       />

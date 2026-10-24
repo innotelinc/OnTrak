@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.0 — 2026-10-24
+
+The family re-baseline. Everything shipped through v1.0 — the console, tenancy,
+the model chain, approvals, snapshots, propose-then-commit, repository-aware
+workspaces, the terminal client, remote workspaces, BYO projects, sharing and the
+account ceiling — is now **2.0.0**, together with the metered **OnTrak Engineer**
+add-on (`src/engineer.ts`, one credit per project). Next: CLI parity (2.1),
+per-account change sets (2.2), fleet operations (2.3), team-scale CodeOps (3.0)
+and continuous code operations (4.0). No code changed in this release. See
+[docs/roadmap.md](docs/roadmap.md) and
+[docs/engineer-roadmap.md](docs/engineer-roadmap.md).
+
 ## 0.3.0 — 2026-10-19
 
 ### Added

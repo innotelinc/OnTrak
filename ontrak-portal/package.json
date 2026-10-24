@@ -1,6 +1,6 @@
 {
   "name": "ontrak-portal",
-  "version": "0.4.1",
+  "version": "2.0.0",
   "private": true,
   "description": "OnTrak Portal — the centralized dashboard for the OnTrak family: one sign-in, then the products a role belongs in. An Innotel Labs product.",
   "license": "MIT",

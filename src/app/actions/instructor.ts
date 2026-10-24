@@ -9,6 +9,8 @@ import { validateDefinition } from "@/lib/validate";
 import { joinCode } from "@/lib/cohort-rules";
 import { parseAssignmentForm } from "@/lib/assignment-rules";
 import { canDeleteScenario, parseScenarioMeta, slugify } from "@/lib/scenario-rules";
+import { MAX_BUNDLE_BYTES, parseScenarioBundle } from "@/lib/scenario-bundle";
+import type { Difficulty } from "@prisma/client";
 import {
   describeDiff,
   diffSnapshots,
@@ -232,6 +234,80 @@ export async function duplicateScenario(formData: FormData): Promise<void> {
 
   revalidatePath("/instructor/scenarios");
   backTo(`/instructor/scenarios/${copy.id}`, "Copied. The duplicate starts as a draft.");
+}
+
+export async function importScenarioBundle(formData: FormData): Promise<void> {
+  const author = await requireStaff();
+  const upload = formData.get("bundle");
+  if (!upload || typeof upload === "string") {
+    backTo("/instructor/scenarios", "Choose a .json scenario bundle to import.", false);
+  }
+  if (upload.size > MAX_BUNDLE_BYTES) {
+    backTo("/instructor/scenarios", `That bundle is larger than ${MAX_BUNDLE_BYTES} bytes.`, false);
+  }
+
+  let text: string;
+  try {
+    text = await upload.text();
+  } catch {
+    backTo("/instructor/scenarios", "That file could not be read.", false);
+  }
+
+  const parsed = parseScenarioBundle(text);
+  if (!parsed.ok) backTo("/instructor/scenarios", `That bundle was refused: ${parsed.error}`, false);
+
+  // The bundle module checks the envelope; the validator is the same dry run an
+  // authored scenario gets, so a pasted file cannot skip the "passes before work"
+  // warnings or an unknown check kind.
+  const result = validateDefinition(parsed.bundle.scenario.definition);
+  if (!result.ok || !result.definition) {
+    const first = result.issues.find((issue) => issue.level === "error");
+    backTo(
+      "/instructor/scenarios",
+      first ? `The bundle's definition is invalid — ${first.message}` : "The bundle's definition is invalid.",
+      false,
+    );
+  }
+
+  const meta = parsed.bundle.scenario;
+  const definition: ScenarioDefinition = result.definition;
+  let slug = slugify(meta.title) || "scenario";
+  const clash = await prisma.scenario.findUnique({ where: { slug } });
+  if (clash) slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
+
+  const created = await prisma.scenario.create({
+    data: {
+      title: meta.title,
+      slug,
+      summary: meta.summary,
+      description: meta.description,
+      platform: definition.platform,
+      engine: definition.engine,
+      difficulty: meta.difficulty as Difficulty,
+      timeLimitSec: meta.timeLimitSec,
+      passScore: meta.passScore,
+      // An imported scenario is somebody else's work. It starts as a draft so a
+      // person publishes it after reading the checks, not because a file said so.
+      published: false,
+      tags: meta.tags,
+      definition: definition as unknown as object,
+      authorId: author.id,
+    },
+  });
+
+  await recordAudit({
+    actorId: author.id,
+    action: "scenario.import",
+    targetType: "scenario",
+    targetId: created.id,
+    detail: { title: meta.title, platform: definition.platform, checks: definition.checks.length, bundle: parsed.bundle.version },
+  });
+
+  revalidatePath("/instructor/scenarios");
+  backTo(
+    `/instructor/scenarios/${created.id}`,
+    `Imported "${meta.title}" — ${definition.checks.length} checks. It starts as a draft.`,
+  );
 }
 
 export async function deleteScenario(formData: FormData): Promise<void> {

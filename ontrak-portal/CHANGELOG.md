@@ -1,5 +1,13 @@
 # Changelog — OnTrak Unity — the portal
 
+## 2.0.0 — 2026-10-24
+
+The family re-baseline. The SSO-only front door, role-scoped tiles, product health
+lights and the fleet roll-up are now **2.0.0**, aligned with the nine products the
+portal fronts. Next: self-service requests (2.1), per-organisation branding (2.2)
+and the operating surface (3.0). No code changed in this release; the lab tile fix
+below is included in 2.0.0.
+
 ## 0.4.1 — 2026-10-22
 
 The lab tile now links to the lab, not to the front door of the range that serves

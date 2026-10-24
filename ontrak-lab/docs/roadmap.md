@@ -3,6 +3,25 @@
 This is a working document: what is verified, what is built but unproven, and what is
 planned. Anything in the last two sections is a statement of intent, not a feature.
 
+> **Re-baselined at 2.0 (2026-10-24).** Everything verified below, plus the walked
+> unproven paths, is the shipped **2.0.0**. The "Next" list is now versioned **2.1–2.6**,
+> and the majors are **3.0** and **4.0**. The portfolio view is
+> [../../docs/portfolio-roadmap-v2.md](../../docs/portfolio-roadmap-v2.md).
+
+## Version ladder
+
+| Version | Goal | State |
+| --- | --- | --- |
+| **2.0.0** | The verified control plane, Linux + Windows templates, the golden image, the console, the ticket rubric, the container stack and the one-command install | `[x]` shipped |
+| 2.1 | Microsoft products beyond Office | `[ ]` |
+| 2.2 | Cloud identity tenant sandbox | `[ ]` |
+| 2.3 | Recording & review | `[ ]` |
+| 2.4 | Role-based portals and cohorts | `[ ]` |
+| 2.5 | Metrics export | `[ ]` |
+| 2.6 | Signed scenario packs | `[ ]` |
+| 3.0 | Multi-host range orchestration | `[ ]` |
+| 4.0 | Federated ranges | `[ ]` |
+
 ## Verified in this repository
 
 - Python control plane: catalog, scenarios, sessions, scoring, selection, scheduler,
@@ -87,24 +106,44 @@ are still exactly as unproven as they were:
 The first-class fix is the same for the rest: `make check`, build one template, walk one
 scenario end to end, then size the pool.
 
-## Next
+## 2.x — Next
 
-1. **Microsoft products beyond Office.** Exchange Server, SQL Server, SharePoint and
-   Microsoft 365 Apps in more fidelity. The catalog shape already supports it — a product
-   entry names the OS it is layered onto — but each needs a build recipe worth trusting.
-2. **Cloud identity beyond the simulation.** The identity family runs against a simulated
-   directory service. Entra ID / Microsoft 365 sign-in failures, MFA resets and
-   conditional-access tickets are a large share of real service-desk volume; they need a
-   tenant sandbox rather than a simulation before they can be graded honestly.
-3. **Recording and review.** `guac.recording` is wired but unused. Turning it on for
-   security scenarios, with an instructor-only playback view, is the obvious assessment
-   upgrade (and needs a storage-retention decision, which belongs to ONYX).
-4. **Role-based portals.** One instructor role today; cohorts (teacher, TA, marker) and
-   per-cohort scenario sets are a small addition to the account model.
-5. **Metrics.** Session latency, pool depth over time and pass rates per objective, exported
-   for the operator. Deliberately last: it is easy to add and hard to remove.
-6. **Scenario packs.** Versioned, signed bundles so a course can pin its scenario set and
-   ship it to another range without copying the whole repository.
+### 2.1 — Microsoft products beyond Office `[ ]`
+1. **Exchange Server, SQL Server, SharePoint and Microsoft 365 Apps** in more fidelity.
+   The catalog shape already supports it — a product entry names the OS it is
+   layered onto — but each needs a build recipe worth trusting. **Exit:** each has a
+   build recipe and one graded scenario.
+
+### 2.2 — Cloud identity beyond the simulation `[ ]`
+2. **A tenant sandbox for Entra ID / Microsoft 365.** The identity family runs
+   against a simulated directory service. Sign-in failures, MFA resets and
+   conditional-access tickets are a large share of real service-desk volume; they
+   need a tenant sandbox rather than a simulation before they can be graded
+   honestly. **Exit:** one such ticket is graded from real tenant evidence.
+
+### 2.3 — Recording and review `[ ]`
+3. **`guac.recording` on for security scenarios**, with an instructor-only playback
+   view (and a storage-retention decision with ONYX). **Exit:** an instructor
+   replays one session without seeing another learner's.
+
+### 2.4 — Role-based portals `[ ]`
+4. **Cohorts (teacher, TA, marker)** and per-cohort scenario sets. **Exit:** a
+   marker can grade their cohort and touch nothing else.
+
+### 2.5 — Metrics `[ ]`
+5. **Session latency, pool depth and pass rate per objective**, exported for the
+   operator. Deliberately last: it is easy to add and hard to remove.
+
+### 2.6 — Scenario packs `[ ]`
+6. **Versioned, signed bundles** so a course can pin its scenario set and ship it to
+   another range without copying the whole repository.
+
+### 3.0 — Multi-host range `[ ]`
+- Orchestrate several lab hosts as one range with capacity-aware placement.
+
+### 4.0 — Federated ranges `[ ]`
+- Share a range between institutions with per-range isolation and a common result
+  format.
 
 ## Out of scope
 

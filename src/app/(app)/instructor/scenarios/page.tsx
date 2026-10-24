@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { prisma } from "@/lib/db";
 import { requireSession } from "@/lib/auth";
 import { evaluateScenario, loadAvailabilityContext, platformLabel } from "@/lib/availability";
-import { deleteScenario, duplicateScenario, setScenarioPublished } from "@/app/actions/instructor";
+import { deleteScenario, duplicateScenario, importScenarioBundle, setScenarioPublished } from "@/app/actions/instructor";
 import { toDefinition } from "@/lib/scenarios";
 import { totalPoints } from "@/lib/sim/grade";
 import { Flash, PageHeader } from "@/components/PageHeader";
@@ -43,6 +43,25 @@ export default async function ScenariosPage({
         actions={<ButtonLink href="/instructor/scenarios/new">{t("scenarios.new")}</ButtonLink>}
       />
       <Flash flash={flash} error={error} />
+
+      <Card className="mt-5">
+        <form action={importScenarioBundle} className="flex flex-wrap items-end gap-3">
+          <label className="min-w-0 flex-1 text-sm font-medium text-ink">
+            {t("scenarios.import")}
+            <input
+              type="file"
+              name="bundle"
+              accept="application/json,.json"
+              required
+              className="mt-1.5 block w-full text-sm text-ink-soft file:mr-3 file:rounded-lg file:border-0 file:bg-panel file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
+            />
+          </label>
+          <Button type="submit" variant="secondary" size="sm">
+            {t("scenarios.import.submit")}
+          </Button>
+        </form>
+        <p className="mt-2 text-xs text-ink-faint">{t("scenarios.import.hint")}</p>
+      </Card>
 
       {scenarios.length === 0 ? (
         <div className="mt-6">

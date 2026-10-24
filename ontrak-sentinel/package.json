@@ -1,6 +1,6 @@
 {
   "name": "ontrak-sentinel",
-  "version": "0.2.0",
+  "version": "2.0.0",
   "private": true,
   "description": "OnTrak Sentinel \u2014 identity provider and intrusion detection/prevention for the Innotel Labs family. An Innotel Labs product, built after OnTrak Tix.",
   "license": "MIT",

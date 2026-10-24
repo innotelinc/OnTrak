@@ -4,19 +4,85 @@
 > [Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack)
 > — an [Innotel Labs](INNOTEL-LABS.md) product.
 >
-> Status legend: `[x]` shipped · `[~]` in progress · `[ ]` planned · `[-]` out of scope for v1
+> Status legend: `[x]` shipped · `[~]` in progress · `[ ]` planned · `[-]` out of scope
 >
 > This is the single source of truth for **what** the training platform does and
-> **what comes next**. v1 is feature-complete; this roadmap finishes v1 and lays
-> out the path beyond it.
+> **what comes next**. 2.0 is the shipped product; this roadmap now versions the
+> next work as 2.1, 2.2, 2.3, 3.0 and 4.0.
 >
-> **OnTrak family release 2026.09** ([portfolio](../INNOTEL-LABS.md)): this
-> product's slice of it is **v1.2 — real drivers**, shipped; the others are
-> **OnTrak Tix M6**, and **OnTrak Sentinel**, whose detection milestone (S3)
-> shipped and whose prevention milestone (S4) is the last one before 1.0 — its
-> safety rails (safe-lists, blast radius, rate limit, authority, and the
-> computed rollback) have landed and the enforcement action itself is what
-> remains.
+> **Re-baselined at 2.0 (2026-10-24).** The family now shares one version line:
+> everything shipped here is **2.0.0**, the next minor milestones are **2.1**,
+> **2.2**, **2.3**, and the next major directions are **3.0** and **4.0**. The
+> portfolio TODO across all nine products is
+> [docs/portfolio-roadmap-v2.md](docs/portfolio-roadmap-v2.md).
+>
+> Where the shipped sections below still say `v1.0`–`v1.6` or "v2.0", that is
+> history: the mapping is in the version ladder immediately below.
+
+---
+
+## 0. Version ladder (2.0 re-baseline)
+
+| Old milestone | New version | State |
+| --- | --- | --- |
+| v1.0 — Complete | 2.0.0 | `[x]` shipped |
+| v1.1 — Content, insight & polish | 2.0.0 | `[x]` shipped |
+| v1.2 — Real drivers | 2.0.0 | `[x]` shipped |
+| v1.3 — Identity & integrations | 2.0.0 | `[x]` shipped |
+| v1.6 — The learning loop | 2.0.0 | `[x]` shipped |
+| v1.4 — Authoring at scale | **2.1** | `[ ]` open |
+| v1.5 — Assessment, credentials & evidence | **2.2** | `[~]` certificates/packet shipped; rubric depth open |
+| (content/localization remainder) | **2.3** | `[ ]` open |
+| v2.0 — Enterprise training platform | **3.0** | `[ ]` planned |
+| (new) | **4.0** | `[ ]` planned |
+
+**2.0.0 is the shipped product.** Its exit is the one in §2: a class signs in,
+ runs graded scenarios on three simulated platforms and real bash, the lab's real
+guests grade on a host, instructors author/assign/re-grade, results flow to an
+LMS and a webhook consumer, and a learner holds a verifiable certificate.
+
+### 2.1 — Authoring at scale `[ ]`
+**Goal:** a catalog a team can maintain.
+
+- `[x]` Scenario versioning: draft → publish, with one-click rollback and a
+  readable change history per scenario (`ScenarioRevision`, `versions-rules.ts`,
+  the history on `/instructor/scenarios/[id]`).
+- `[x]` Import/export bundles so a scenario set moves between deployments:
+  `src/lib/scenario-bundle.ts` (pure), `GET /api/v1/scenarios/<id>/export`, and the
+  import form on `/instructor/scenarios`. A bundle carries the grading contract and
+  no local row state (no slug, author or publish flag), is refused when it cannot
+  grade anybody, and always imports as a draft. Covered by
+  `tests/scenario-bundle.test.ts`.
+- `[ ]` Collaborative authoring: comments, review and an approval step before
+  publish (two authors, one reviewer).
+- **Exit:** two authors co-edit a scenario through review to publish, with full
+  history and one-click rollback, proven by a test.
+
+### 2.2 — Assessment depth `[~]`
+**Goal:** more than pass/fail. Certificates, the skills matrix and the cohort
+packet already ship in 2.0; what remains is the rubric itself.
+
+- `[ ]` Partial credit per check and rubric bands (0 / half / full) computed by
+  the server-side grader and explained on the report.
+- `[ ]` Competency tagging per check, feeding the existing skills matrix.
+- `[ ]` Optional timing-integrity controls (focus loss recorded, not punished by
+  default).
+- **Exit:** a scenario grades partial credit identically on re-grade, and every
+  certificate competency traces to the checks that earned it.
+
+### 2.3 — Content & locale completeness `[ ]`
+**Goal:** the localization mechanism gets content.
+
+- `[ ]` Spanish overlays for the ten bundled scenarios.
+- `[ ]` Per-locale catalog `title`/`summary` columns.
+- **Exit:** a cohort runs a bundled scenario end to end in Spanish.
+
+### 4.0 — The open credential network `[ ]`
+**Goal:** evidence that travels.
+
+- `[ ]` A scenario marketplace with signed, versioned packs.
+- `[ ]` Portable credentials verifiable outside this deployment.
+- `[ ]` Cross-organisation competency mapping.
 
 ---
 
@@ -34,7 +100,7 @@ flowchart LR
   C --> D[Result + evidence]
 ```
 
-## 2. v1 status (shipped)
+## 2. 2.0 status (shipped)
 
 | Capability | Status |
 | --- | --- |
@@ -87,11 +153,11 @@ enterprise readiness.
 
 ## 4. Milestones
 
-### v1.0 — Complete (shipped) `[x]`
+### 2.0 — Complete (shipped) `[x]`
 The feature set in §2. Exit already met: a class can sign in, run graded
 scenarios on three platforms, and instructors can author, assign and re-grade.
 
-### v1.1 — Content, insight & polish `[x]`
+### 2.0 — Content, insight & polish (shipped) `[x]`
 **Goal:** more practice, better feedback, a smoother surface.
 
 - `[x]` An analytics dashboard for instructors: per-check pass rates,
@@ -208,7 +274,7 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   (`/instructor/cohorts/<id>/packet`, `[x]` under v1.5): everything v1.1 asked of
   verifiable completion records has shipped, so v1.1 is closed.
 
-### v1.2 — Real drivers `[x]`
+### 2.0 — Real drivers (shipped) `[x]`
 **Goal:** higher-fidelity practice behind the existing seam.
 
 - `[x]` **A sandbox-backed `ShellDriver` for genuine bash.** `src/lib/sim/drivers/container.ts`
@@ -291,7 +357,7 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
   seed → `chmod` → harvest → grade, with the mode change read back and no container left
   behind.
 
-### v1.3 — Identity & integrations `[x]`
+### 2.0 — Identity & integrations (shipped) `[x]`
 **Goal:** fit into an organisation.
 
 - SSO via the **OnTrak Sentinel** IdP (OIDC/SAML), with SCIM roster sync; keep a
@@ -454,7 +520,7 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
     from Entra, Okta or Sentinel. Scheduled sync stays the directory's job, not
     this app's: this surface accepts a push, it does not poll.
 
-### v1.4 — Authoring at scale `[ ]`
+### 2.1 — Authoring at scale `[ ]`
 **Goal:** a catalog a team can maintain.
 
 - Scenario versioning with draft/preview/rollback and change history.
@@ -463,7 +529,7 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
 - **Exit:** two authors co-edit a scenario through review to publish, with full
   history and one-click rollback.
 
-### v1.5 — Assessment, credentials & training evidence `[ ]`
+### 2.2 — Assessment, credentials & training evidence `[~]`
 **Goal:** turn results into credible, portable proof of competence.
 
 - `[ ]` Rubrics beyond pass/fail; partial-credit and competency tagging per check.
@@ -492,7 +558,7 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
 - **Exit:** a learner earns a verifiable certificate; an auditor can pull a
   signed proof-of-training packet for a cohort.
 
-### v1.6 — The learning loop `[x]`
+### 2.0 — The learning loop (shipped) `[x]`
 **Goal:** make practice flow in both directions, so the desk and the classroom
 feed each other instead of being two products that happen to share a login.
 
@@ -540,7 +606,7 @@ flowchart LR
   same way as a hand-written ticket, so there is one place to look when a draft
   does not appear.
 
-### v2.0 — Enterprise training platform `[ ]`
+### 3.0 — Enterprise training platform `[ ]`
 **Goal:** multi-organisation, evidence-grade, assistive.
 
 - Multi-tenant organisations with isolated catalogs, branding and reporting.
@@ -588,18 +654,16 @@ flowchart LR
 
 ## 8. Immediate next steps
 
-1. Prototype the container-backed bash driver behind the existing `ShellDriver`
-   seam with a resource cap and fallback (v1.2).
-2. Persist completion records against the attempt and export a proof-of-training
-   packet per cohort, so the certificate work already shipped becomes auditable
-   (v1.5).
-3. ~~Close out v1.1: the scenario-authored task/check text, which lives in the
-   definition rather than the UI.~~ **Done** — see the localization bullet above:
-   a definition carries per-locale overlays and `src/lib/scenario-i18n.ts`
-   applies them on the two student-facing surfaces. What remains is *content*
-   rather than product work: the ten bundled scenarios have no Spanish overlay
-   yet, and their catalog titles and summaries are columns rather than
-   definition text.
-4. ~~Decide the LMS/LTI scope — build versus integrate — before starting v1.3.~~
-   **Done** — see the v1.3 bullet above: LTI 1.3 launch and grade passback, written
-   here rather than bought, with deep linking refused on purpose.
+1. **2.1 — authoring at scale.** Scenario versioning (draft → preview → publish,
+   rollback, change history) is the first open item; it is the one that limits a
+   team's catalog throughput.
+2. **2.2 — rubric depth.** Partial credit and per-check competency tags, computed
+   server-side and carried into the existing skills matrix.
+3. **2.3 — content.** Spanish overlays for the bundled scenarios and per-locale
+   catalog columns.
+4. **3.0 — enterprise line.** Multi-tenant organisations, warehouse export and
+   the opt-in assistive tutor after the 2.x line is closed.
+
+Items previously listed here are shipped and now part of 2.0: the container
+backend (v1.2), the proof-of-training packet (v1.5), the scenario-authored
+localization overlay (v1.1), and the LMS/LTI scope decision (v1.3).

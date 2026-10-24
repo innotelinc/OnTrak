@@ -165,6 +165,61 @@ to stand on its own.
   and decisions; people and process interpret them.
 - No silent edits, backdating, or deletion of history — ever.
 
+## 7b. Version ladder (2.0 re-baseline)
+
+> **Re-baselined 2026-10-24.** The shipped desk is **2.0.0**; the remaining M7
+> scale work becomes **2.1**, and the backlog is versioned forward rather than
+> left unassigned. The portfolio view is
+> [../docs/portfolio-roadmap-v2.md](../docs/portfolio-roadmap-v2.md).
+
+| Old milestone | New version | State |
+| --- | --- | --- |
+| M0 — Foundations & intake | 2.0.0 | `[x]` shipped |
+| M1 — Service desk basics | 2.0.0 | `[x]` shipped |
+| M2 — Identity & security telemetry | 2.0.0 | `[x]` shipped |
+| M3 — Incident response & evidence | 2.0.0 | `[x]` shipped |
+| M4 — MSP & multi-client | 2.0.0 | `[x]` shipped |
+| M5 — Automation & knowledge | 2.0.0 | `[x]` shipped |
+| M6 — Platform & integrations | 2.0.0 | `[x]` shipped |
+| M7 — Intelligence & scale | **2.1** | `[~]` assist/analytics/DR/SOC 2 shipped (2.0); scale fixes open |
+| Backlog — reporting/admin/assurance | **2.2–2.4, 3.0, 4.0** | `[ ]` planned |
+
+**2.0.0 is the shipped desk:** intake, ticketing, SLA, queues, clients, billing,
+knowledge, incidents, hash-chained audit, signed assurance packets, SOC 2
+controls, backup/DR, analytics and the opt-in assistant.
+
+### 2.1 — Scale `[~]`
+**Goal:** a million-ticket tenant can open its inbox and create a ticket.
+
+- `[ ]` Page (or filter) the inbox worklist at the database instead of loading
+  every ticket with its thread.
+- `[ ]` Hold the reference mark in a row instead of deriving it from every
+  reference already issued.
+- `[ ]` Re-run `npm run load-test` and record the new p95s against §10.
+- **Exit:** the 10,000-staff / 1,000,000-ticket rehearsal meets the stated p95 for
+  the worklist read and for create.
+
+### 2.2 — Availability `[ ]`
+**Goal:** a write survives a node loss.
+- `[ ]` Multi-region/HA for ticket writes; p95 read < 300 ms, write < 500 ms at
+  load. Exit: a failover rehearsal loses no ticket and no audit-chain link.
+
+### 2.3 — Reporting at scale `[ ]`
+- `[ ]` Scheduled CSV/PDF exports and a warehouse connector. Exit: a nightly
+  export lands without a person running it.
+
+### 2.4 — Config as code `[ ]`
+- `[ ]` Export/import queues, SLA calendars, custom fields and macros; environment
+  promotion. Exit: a staging configuration promotes byte-identically.
+
+### 3.0 — Evidence-grade assurance `[ ]`
+- `[ ]` Evidence-request portal for auditors/insurers, tamper alarms on the audit
+  chain, third-party timestamping, retention/legal-hold automation.
+
+### 4.0 — The policy-bound desk `[ ]`
+- `[ ]` AI triage and suggested resolution under human approval — never
+  auto-close, never auto-send.
+
 ## 8. Milestones
 
 ### M0 — Foundations & intake `[x]`
@@ -1296,7 +1351,7 @@ up to an adjuster or auditor.
   (**done**); audit evidence exports on demand (**done** — a signed tenant-wide
   export at `/api/audit/packet`); the API is versioned and documented (**done**).
 
-### M7 — Intelligence & scale `[~]`
+### 2.1 — Intelligence & scale `[~]` (was M7)
 **Goal:** enterprise hardening and assistance.
 
 - AI assist (opt-in): classification/routing suggestions, thread summarisation,
@@ -1459,17 +1514,14 @@ audit chain, third-party timestamping.
 - **Training-product coupling** — share patterns and a component package, but keep the
   two deployable independently.
 
-## 13. Immediate next steps (first two sprints)
+## 13. Immediate next steps
 
-1. Repo bootstrap mirroring OnTrak IT Support Training conventions (`typecheck`, `test`, `build`,
-   `*-rules.ts` pure-logic modules, server-action guards).
-2. Auth + RBAC + tenant-isolation test harness (the gate everything else relies on).
-3. **Audit-integrity foundation:** hash-chained, append-only audit log emitting
-   from day one — the assurance spine the incident work hangs off.
-4. Prisma schema for M0 entities (`Tenant`, `User`, `Client`, `Contact`, `Queue`,
-   `Ticket`, `Message`, `AuditEvent`) + seed.
-5. Ticket CRUD + conversation thread + audit trail.
-6. IdP and security-telemetry connector spikes — each an adapter behind one
-   interface, mirroring the training platform's driver seam.
-7. Email-ingestion spike (inbound parse + threading) behind a feature flag.
-8. Minimal agent inbox UI and requester portal.
+1. **2.1 — page the worklist** at the database (keyset-paged, like the public
+   results API), then re-run the load rehearsal.
+2. **2.1 — the reference mark** in a row, so create no longer reads every ref.
+3. **2.2 — failover rehearsal** for ticket writes, with the audit chain checked
+   across the switch.
+4. **2.3 — the nightly export**, then the warehouse connector.
+
+Everything listed here as a "first two sprints" bootstrap item is shipped and
+now part of 2.0.

@@ -1,5 +1,14 @@
 # Changelog — OnTrak Sentinel
 
+## 2.0.0 — 2026-10-24
+
+The family re-baseline. S0–S4 — the IdP, SCIM/MFA/access reviews, Guard detection
+from syslog/NetFlow/OTLP/pcap, policy-gated prevention with approvals and rollback,
+alert delivery and mute, and the signed compliance packet — are now **2.0.0**.
+Open next: vendor adapters (2.1), packet extras (2.2), IdP availability (2.3),
+unified risk & response (3.0) and fleet-scale defense (4.0). No code changed in
+this release. See [ROADMAP.md](ROADMAP.md).
+
 ## 0.2.0 — 2026-10-19
 
 A family release-train bump: this product's code is unchanged in this release, and

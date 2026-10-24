@@ -70,13 +70,13 @@ reconstructed from memory.
 
 ## Project Status
 
-**M0–M5 complete; M6 in progress.** Core ticketing, SLAs, incidents, evidence,
-clients, billing, automation, and API foundations are implemented. See
-[ROADMAP.md](./ROADMAP.md) for full milestone details.
+**2.0.0 shipped.** Core ticketing, SLAs, incidents, evidence, clients, billing,
+automation, API foundations, backup/DR and SOC 2 controls are implemented; 2.1
+is the scale work. See [ROADMAP.md](./ROADMAP.md) for the version ladder.
 
 ## Status
 
-**M0–M5 complete; M6 in progress.** The foundations have landed:
+**2.0.0 shipped; 2.1 (scale) in progress.** The foundations have landed:
 
 - `src/lib/access-rules.ts` — roles, the permission matrix, and the
   tenant-isolation checks every server action runs before touching a row.

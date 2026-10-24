@@ -46,6 +46,59 @@ full developer reference.
 > installs its own dependencies, and it or any other project can be saved to a new
 > GitHub or Atlas repository and carried on from there.
 
+> **Re-baselined at 2.0 (2026-10-24).** Everything above — v0.1 through v1.0 — is
+> the shipped **2.0.0**. The next minor milestones are 2.1 (CLI parity), 2.2
+> (per-account change sets), 2.3 (fleet operations); the next majors are 3.0
+> (team-scale CodeOps) and 4.0 (continuous code operations). The portfolio TODO is
+> [../../docs/portfolio-roadmap-v2.md](../../docs/portfolio-roadmap-v2.md). The
+> `v0.x` headings below are history, not open versions.
+
+## 0. Version ladder (2.0 re-baseline)
+
+| Old milestone | New version | State |
+| --- | --- | --- |
+| v0.1 — The console | 2.0.0 | `[x]` shipped |
+| v0.2 — Stack citizenship | 2.0.0 | `[x]` shipped |
+| v0.3 — Resilience and reach | 2.0.0 | `[x]` shipped |
+| v0.4 — Beyond a single operator | 2.0.0 | `[x]` shipped |
+| v0.5 — The terminal client | 2.0.0 | `[x]` shipped (three open ends → 2.1) |
+| v0.6 — Remote workspaces | 2.0.0 | `[x]` shipped |
+| v0.7 — Bring your own project | 2.0.0 | `[x]` shipped |
+| Skills and memory | 2.0.0 | `[x]` shipped |
+| v1.0 — The CodeOps surface | 2.0.0 | `[x]` shipped |
+
+**2.0.0 is the shipped CodeOps console:** the agent loop, the workspace jail,
+approvals, snapshots, propose-then-commit, repository-aware workspaces, the
+terminal client, remote workspaces, BYO projects, sharing, tenancy and the
+account ceiling.
+
+### 2.1 — CLI parity `[ ]`
+**Goal:** the terminal is not second-class.
+
+- `[ ]` Propose-then-commit from the CLI (the server has the change set; the
+  client cannot review and apply one yet).
+- `[ ]` Commands over the sharing API (`/api/shares` is reachable but unwrapped).
+- `[ ]` Web research as an agent tool (`search`/`fetch`), behind the same gate.
+- **Exit:** a CLI user can review a change set, share a chat and research the web
+  without opening the console.
+
+### 2.2 — Per-account change sets `[ ]`
+
+- `[ ]` One pending change set per account instead of one per process. Exit: two
+  operators review their own proposals concurrently.
+
+### 2.3 — Fleet operations `[ ]`
+- `[ ]` Many workspaces from one console without the operator becoming the
+  bottleneck.
+
+### 3.0 — Team-scale CodeOps `[ ]`
+- `[ ]` Shared review queue, per-team policy, and the L2 rung (a signed policy
+  naming what may run unattended inside the sandbox).
+
+### 4.0 — Continuous code operations `[ ]`
+- `[ ]` Scheduled/event-driven runs under a signed policy; L3 stays refused for
+  host changes outside the sandbox.
+
 ## 1. Vision
 
 Your wish is my command. The usual coding-agent interface shows a spinner, then
@@ -504,7 +557,7 @@ revertable and committed with the code (`src/memory.ts`).
 subcommands' own flags, so `--key-file`, `--port` and `--dir` worked only inside
 the REPL and a shell answered "unknown option" for the syntax the help documented.
 
-### v1.0 — The CodeOps surface `[x]`
+### 2.0 — The CodeOps surface `[x]` (was v1.0)
 
 **Goal:** the counterpart, in a browser, of a terminal agent session — with the
 gate the terminal does not have.

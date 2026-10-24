@@ -2,4 +2,4 @@
 Server, Office and Linux machines, ticketed and graded, on Ubuntu + Incus.
 """
 
-__version__ = "0.1.0"
+__version__ = "2.0.0"

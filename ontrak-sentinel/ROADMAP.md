@@ -3,14 +3,15 @@
 > Identity Provider (IdP) + Intrusion Detection & Prevention (IDS/IPS). An
 > [Innotel Labs](../INNOTEL-LABS.md) product, built **after** OnTrak Tix.
 >
-> Status legend: `[x]` shipped · `[~]` in progress · `[ ]` planned · `[-]` out of scope for v1
+> Status legend: `[x]` shipped · `[~]` in progress · `[ ]` planned · `[-]` out of scope
 >
-> **OnTrak family release 2026.09** ([portfolio](../INNOTEL-LABS.md)): this
-> product's slice of it is **S3 — Guard detection**, started (the normalizer, the
-> detection rules, the alert pipeline and the syslog **and** NetFlow/IPFIX listeners);
-> the others are **OnTrak IT Support Training v1.2** and **OnTrak Tix M6**.
+> **Re-baselined at 2.0 (2026-10-24).** S0–S4 are the shipped product and are now
+> **2.0.0**; the next minor milestones are **2.1** (vendor adapters), **2.2**
+> (packet extras), **2.3** (IdP availability), and the next majors are **3.0**
+> (unified risk & response, was S5) and **4.0** (fleet-scale defense, was S6).
+> The portfolio TODO is [../docs/portfolio-roadmap-v2.md](../docs/portfolio-roadmap-v2.md).
 >
-> **What 1.0 is.** Sentinel 1.0 is **S0–S4**, and nothing further is needed to
+> **What 2.0 is.** Sentinel 2.0 is **S0–S4**, and nothing further is needed to
 > call it finished: a standards-compliant IdP the family can rely on (OIDC, SAML
 > 2.0, SCIM, MFA, sessions, access reviews) plus Guard's v1 — what it can *see*
 > and what it can *do about it* — with every one of those actions landing in the
@@ -102,12 +103,54 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
   including *why* a block fired and *who* authorised it.
 - **No silent actions, no backdating, no deletion of history.**
 
+## 5b. Version ladder (2.0 re-baseline)
+
+| Old milestone | New version | State |
+| --- | --- | --- |
+| S0 — Foundations | 2.0.0 | `[x]` shipped |
+| S1 — Sentinel Identity v1 | 2.0.0 | `[x]` shipped |
+| S2 — Provisioning & lifecycle | 2.0.0 | `[x]` shipped |
+| S3 — Guard v1 (detection) | 2.0.0 | `[x]` shipped |
+| S4 — Guard v1 (prevention) | 2.0.0 | `[x]` shipped |
+| S4 vendor adapters | **2.1** | `[ ]` open |
+| S4 packet extras (retention, control history, CSV/PDF) | **2.2** | `[ ]` open |
+| S6 IdP/data-plane HA | **2.3** | `[ ]` open |
+| S5 — Unified risk & response | **3.0** | `[ ]` planned |
+| S6 — Enterprise hardening (remainder) | **4.0** | `[ ]` planned |
+
+**2.0.0 is the shipped security backbone:** OIDC/SAML SSO, SCIM, MFA, sessions
+and access reviews; Guard detection from syslog, NetFlow/IPFIX, OTLP and pcap;
+policy-gated prevention with approvals, safe-lists, TTL rollback, alert delivery
+and mute; one hash-chained evidence log and a signed compliance packet.
+
+### 2.1 — Vendor adapters `[ ]`
+**Goal:** enforcement reaches a real device without an operator writing JSON.
+- `[ ]` Ship telemetry and enforcement adapters behind the existing
+  `EnforcementTarget` seam. Exit: one vendor adapter runs detection → block end to
+  end in CI.
+
+### 2.2 — Packet extras `[ ]`
+- `[ ]` Retention windows, control history and CSV/PDF packet variants. Exit: an
+  auditor gets all three from the console.
+
+### 2.3 — IdP availability `[ ]`
+- `[ ]` HA for the IdP/data plane. Exit: a node loss does not interrupt sign-in
+  for the family.
+
+### 3.0 — Unified risk & response `[ ]`
+- `[ ]` Identity-aware correlation, step-up auth and session revocation from a
+  detection, playbook-driven response into Tix with full evidence.
+
+### 4.0 — Fleet-scale defense `[ ]`
+- `[ ]` Multi-tenant IdP, fleet rollout, cross-estate detection, STIX/TAXII
+  transport and vendor feed subscriptions.
+
 ## 6. Milestones
 
-**The 1.0 line runs from S0 to S4.** S0–S2 are the identity product; S3 and S4
+**The 2.0 line runs from S0 to S4.** S0–S2 are the identity product; S3 and S4
 are Guard's v1, split at the point where it stops observing and starts acting.
-S5 and S6 are post-1.0 and are marked as such below, which is a statement about
-scope rather than about order — neither is a prerequisite for shipping 1.0.
+S5 and S6 are post-2.0 and are marked as such below, which is a statement about
+scope rather than about order — neither is a prerequisite for shipping 2.0.
 
 ### S0 — Foundations `[x]`
 **Goal:** the identity spine and the evidence log.
@@ -542,7 +585,7 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
   path, a schedule opens the recurring ones, and the console page drives all of it.
   **S2 is complete.**
 
-### S3 — Sentinel Guard v1 (detection) `[~]`
+### S3 — Sentinel Guard v1 (detection) `[x]` (now part of 2.0)
 **Goal:** see what is happening.
 
 - `[x]` Telemetry ingest (syslog, NetFlow/IPFIX, host agent, OTel) into the
@@ -714,7 +757,7 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
   also a protocol listener: the SYSLOG, NETFLOW/IPFIX and OTLP readers above take the
   telemetry directly rather than through something else's feed.
 
-### S4 — Sentinel Guard v1 (prevention) `[x]` — **the last 1.0 milestone**
+### S4 — Sentinel Guard v1 (prevention) `[x]` — **the last 2.0 milestone**
 **Goal:** act — safely and accountably.
 
 - `[x]` **Compliance reporting and posture summary** — the reviewer's half of the
@@ -922,7 +965,7 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
 - **Exit:** a threat is blocked within a defined latency; the block is approved,
   logged, reversible, and cannot be applied to a protected target.
 
-### S5 — Unified risk & response `[ ]` — *after 1.0*
+### 3.0 — Unified risk & response `[ ]` (was S5)
 **Goal:** identity and network see the same picture.
 
 - Identity-aware detection (a login from a new geolocation plus anomalous flows
@@ -933,7 +976,7 @@ scope rather than about order — neither is a prerequisite for shipping 1.0.
 - **Exit:** an incident correlates identity + network signal, exports to Tix, and
   a step-up/revoke action is applied and audited.
 
-### S6 — Enterprise hardening `[ ]` — *after 1.0*
+### 4.0 — Enterprise hardening `[ ]` (was S6)
 **Goal:** run it at scale, prove it.
 
 - Multi-tenant isolation, HA/failover, backup/DR, scale-out data plane.
@@ -1016,7 +1059,9 @@ logins with no notion of behaviour. Together they produce signals neither can:
    store and its migration, the scheduler that opens the recurring ones, and the
    `/console/reviews` page that opens, answers, closes and schedules them. That
    closes the bullet.
-4. Build the telemetry normalizer and one detection rule end to end (S3 spike).
+4. **2.1 — the first vendor adapter.** The detection → block path already works
+   behind the `EnforcementTarget` seam; ship one real adapter (firewall, agent or
+   proxy) so a deployment does not have to write JSON by hand, and prove it in CI.
 5. ~~Define the shared assurance-packet format with OnTrak Tix before either ships
    exports, so both are compatible from the start.~~ **Done on Sentinel's side**
    (`assurance-packet.ts`, S4 below): the envelope *is* Tix's — same `version`, same
@@ -1025,7 +1070,7 @@ logins with no notion of behaviour. Together they produce signals neither can:
    disagree in CI rather than in an auditor's hands. What that leaves is the other half
    of the shared work: one verification tool both packets can be handed to.
 
-### What stands between today and 1.0
+### What stood between today and 2.0
 
 In the order they have to happen, and each one stated as the thing that is
 missing rather than as a task name:

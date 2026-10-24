@@ -1,6 +1,6 @@
 [project]
 name = "ontrak"
-version = "0.2.0"
+version = "2.0.0"
 description = "IT Support Training Platform powered by Innotel OnTrak: broken Windows, Server, Office and Linux machines, ticketed and graded, on Ubuntu + Incus"
 requires-python = ">=3.10"
 dependencies = [
