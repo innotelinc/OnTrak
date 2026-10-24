@@ -124,8 +124,36 @@ export interface ShareRecord {
   id: string;
   sessionId: string;
   recipientEmail: string;
+  /** Present on the recipient's list: who shared it with them. */
+  ownerEmail?: string;
   createdAt: string;
   [key: string]: unknown;
+}
+
+/** One proposed file in a pending change set. */
+export interface StagedEntry {
+  path: string;
+  kind: "create" | "overwrite" | "edit";
+  added: number;
+  removed: number;
+}
+
+export interface PendingChangeSet {
+  id: string;
+  createdAt: string;
+  entries: StagedEntry[];
+}
+
+/** `GET /api/changes` — the pending set, and the server's own one-line summary. */
+export interface ChangesPayload {
+  changeSet: PendingChangeSet | null;
+  summary: string;
+}
+
+export interface ApplyResult {
+  applied: number;
+  paths: string[];
+  id: string;
 }
 
 /** What `GET /api/projects` answers with: the list, and which one is open. */
@@ -397,6 +425,37 @@ export class GenieClient {
 
   async shares(): Promise<{ sharedWithMe: ShareRecord[]; sharedByMe: ShareRecord[] }> {
     return this.json("/api/shares");
+  }
+
+  /** Withdraw a share. Either side may end one; the server decides which way. */
+  async unshare(id: string): Promise<boolean> {
+    const { removed } = await this.json<{ removed: boolean }>(
+      `/api/shares/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    );
+    return removed;
+  }
+
+  /**
+   * What propose mode is holding, in the caller's own workspace.
+   *
+   * The same document the console's review panel reads, so a change set approved
+   * in one place is the change set the other sees — there is one pending set per
+   * process, not one per client.
+   */
+  async changes(): Promise<ChangesPayload> {
+    return this.json<ChangesPayload>("/api/changes");
+  }
+
+  async applyChanges(): Promise<ApplyResult> {
+    return this.json<ApplyResult>("/api/changes/apply", { method: "POST" });
+  }
+
+  async discardChanges(): Promise<boolean> {
+    const { discarded } = await this.json<{ discarded: boolean }>("/api/changes/discard", {
+      method: "POST",
+    });
+    return discarded;
   }
 
   /** Every saved project, and which directory is currently the working one. */

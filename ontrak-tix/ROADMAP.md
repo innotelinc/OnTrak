@@ -191,13 +191,20 @@ controls, backup/DR, analytics and the opt-in assistant.
 ### 2.1 — Scale `[~]`
 **Goal:** a million-ticket tenant can open its inbox and create a ticket.
 
-- `[x]` Page the inbox worklist at the database instead of loading every ticket
-  with its thread (`listTicketPage`, keyset-paged; the public tickets API uses it).
+- `[~]` Page the worklist at the database. The public tickets API is keyset-paged
+  (`listTicketPage`), but `/inbox`, `/dashboard`, `/reports` and the portal still
+  call `listTickets` and filter in memory, so the million-ticket inbox is **not**
+  fixed yet. The remaining work is to move the inbox's filter/sort/scope/counts
+  into a paged query and have the view build over a page.
 - `[x]` Hold the reference mark in a row instead of deriving it from every
-  reference already issued (`TicketSequence`, incremented atomically and
-  backfilled from the highest existing ref).
+  reference already issued (`TicketSequence`, bootstrapped once per process,
+  incremented atomically). Measured: create p95 **408 ms** at 500 agents /
+  50,000 tickets, against 2,238 ms before the fix and 18.7 s at 1M in the
+  2026-10-09 run.
 - `[ ]` Re-run `npm run load-test` at 1M tickets and record the new p95s against
-  §10. The two code changes are shipped; the measurement is what closes 2.1.
+  §10 once the inbox is paged. The 50k rehearsal (2026-10-24) is recorded in
+  [docs/load-test.md](docs/load-test.md): detail, create and reply meet their
+  targets; the whole-worklist read still misses by two orders of magnitude.
 - **Exit:** the 10,000-staff / 1,000,000-ticket rehearsal meets the stated p95 for
   the worklist read and for create.
 

@@ -308,6 +308,15 @@ async function seed(options: Options, tenantId: string, key: string): Promise<Re
     `,
   );
 
+  // The reference high-water mark. A real desk gets one from the migration that
+  // backfills it (or from an empty first scan); this tenant is written by bulk
+  // SQL, so without this row the rehearsal would measure the one-time bootstrap
+  // scan inside its create stage and call it steady state. The mark is what the
+  // app would already have.
+  await time("sequence", () =>
+    prisma.ticketSequence.createMany({ data: [{ tenantId, value: options.tickets }], skipDuplicates: true }),
+  );
+
   if (options.messagesEvery > 0) {
     await time("messages", () =>
       prisma.$executeRaw`

@@ -126,11 +126,14 @@ controls, backup/DR, load rehearsal recorded.
 
 **2.1 — Scale fixes** — *Goal: a million-ticket tenant can work.*
 
-- `[x]` Page the inbox worklist at the database (`listTicketPage`).
-- `[x]` Hold the reference mark in a row (`TicketSequence`).
-- `[ ]` Re-run `npm run load-test` and record the new p95s against §10 targets.
+- `[~]` Page the worklist at the database: the public API is paged
+  (`listTicketPage`), the inbox still filters the whole tenant in memory.
+- `[x]` Hold the reference mark in a row (`TicketSequence`) — measured create p95
+  **408 ms** at 50k tickets, inside the 500 ms target.
+- `[ ]` Re-run the 1M rehearsal once the inbox is paged; the 50k run is recorded
+  in Tix's `docs/load-test.md`.
 - `[ ]` Exit: the 1M-ticket rehearsal meets the stated p95 for the worklist read
-  and for create. The code is shipped; the measurement is what closes 2.1.
+  and for create.
 
 **2.2 — Availability** — *Goal: a write survives a node loss.*
 
@@ -208,9 +211,10 @@ chain, previews/approvals, terminal client, remote workspaces, BYO project,
 skills/memory, propose-then-commit, repository-aware workspaces (clone, branch,
 PR), account ceiling, threat model + runbook.
 
-**2.1 — CLI parity** — `[ ]` Propose-then-commit, sharing commands and web
-research from the terminal. Exit: a CLI user reviews a change set, shares a chat
-and researches the web without opening the console.
+**2.1 — CLI parity** — `[~]` Propose-then-commit (`genie changes/apply/discard`)
+and sharing (`genie shares/share/unshare`) now run from the terminal; web research
+(`search`/`fetch`) is still server-side. Exit: a CLI user reviews a change set,
+shares a chat and researches the web without opening the console.
 
 **2.2 — Per-account change sets** — `[ ]` One pending set per account instead of
 one per process. Exit: two operators review their own proposals concurrently.

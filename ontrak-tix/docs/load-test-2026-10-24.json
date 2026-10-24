@@ -1,0 +1,94 @@
+{
+  "label": "local",
+  "startedAt": "2026-10-24T20:04:27.802Z",
+  "finishedAt": "2026-10-24T20:05:45.048Z",
+  "host": {
+    "platform": "linux x64",
+    "node": "v22.23.3",
+    "cpus": 2,
+    "memoryGb": 7.2,
+    "heapLimitMb": 2096
+  },
+  "dataset": {
+    "agents": 500,
+    "tickets": 50000,
+    "messages": 30000,
+    "seedMs": 12841.7,
+    "seedStageMs": {
+      "agents": 84,
+      "tickets": 7398.7,
+      "sequence": 122.5,
+      "messages": 5236.5,
+      "seededTickets": 50000,
+      "seededMessages": 30000,
+      "seededStaff": 500
+    }
+  },
+  "options": {
+    "concurrency": 8,
+    "seconds": 5,
+    "inboxReads": 3
+  },
+  "targets": {
+    "readMs": 300,
+    "writeMs": 500
+  },
+  "stages": [
+    {
+      "name": "read: ticket detail",
+      "attempts": 1864,
+      "ok": 1864,
+      "failed": 0,
+      "errors": [],
+      "elapsedMs": 5022.8,
+      "throughput": 371.11,
+      "p50": 18.1,
+      "p95": 44.6,
+      "p99": 78.2,
+      "max": 185
+    },
+    {
+      "name": "read: inbox worklist",
+      "attempts": 3,
+      "ok": 3,
+      "failed": 0,
+      "errors": [],
+      "elapsedMs": 48679.7,
+      "throughput": 0.06,
+      "p50": 17028.1,
+      "p95": 20795.6,
+      "p99": 20795.6,
+      "max": 20795.6
+    },
+    {
+      "name": "write: create ticket",
+      "attempts": 203,
+      "ok": 203,
+      "failed": 0,
+      "errors": [],
+      "elapsedMs": 5177.3,
+      "throughput": 39.21,
+      "p50": 162.3,
+      "p95": 408.2,
+      "p99": 935.3,
+      "max": 985.2
+    },
+    {
+      "name": "write: reply",
+      "attempts": 427,
+      "ok": 427,
+      "failed": 0,
+      "errors": [],
+      "elapsedMs": 5074.4,
+      "throughput": 84.15,
+      "p50": 81.7,
+      "p95": 188.8,
+      "p99": 244.3,
+      "max": 256.5
+    }
+  ],
+  "met": false,
+  "misses": [
+    "read: inbox worklist: 20795.6 ms > 300 ms"
+  ]
+}

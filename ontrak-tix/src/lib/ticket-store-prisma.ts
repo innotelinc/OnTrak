@@ -331,11 +331,37 @@ export class PrismaTicketStore implements TicketStore {
   }
 
   /**
+   * One bootstrap per tenant per process.
+   *
+   * The seed reads every existing ref to find the high-water mark, which at a
+   * million tickets is a full scan. That is a one-time upgrade cost, but without
+   * this map every concurrent first create paid it — eight workers scanning the
+   * same tenant before any of them wrote the mark. The scan stays because a
+   * deployment upgrading in place must not reissue a reference; what changes is
+   * that it happens once rather than once per worker.
+   */
+  private readonly bootstraps = new Map<string, Promise<void>>();
+
+  /**
    * Create the tenant's mark if it is missing, seeded from the highest ref that
-   * already exists. `createMany` with `skipDuplicates` makes two concurrent first
-   * creates converge on one row instead of racing an upsert.
+   * already exists. `createMany` with `skipDuplicates` makes two processes
+   * converge on one row instead of racing an upsert.
    */
   private async ensureTicketSequence(tenantId: string): Promise<void> {
+    const existing = this.bootstraps.get(tenantId);
+    if (existing) return existing;
+    const task = this.bootstrapTicketSequence(tenantId);
+    this.bootstraps.set(tenantId, task);
+    try {
+      await task;
+    } catch (error) {
+      // A failed bootstrap is not a fact about the tenant; let the next create try.
+      this.bootstraps.delete(tenantId);
+      throw error;
+    }
+  }
+
+  private async bootstrapTicketSequence(tenantId: string): Promise<void> {
     const existing = await this.db.ticketSequence.findUnique({ where: { tenantId }, select: { tenantId: true } });
     if (existing) return;
     const rows = await this.db.ticket.findMany({ where: { tenantId }, select: { ref: true } });

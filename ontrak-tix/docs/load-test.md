@@ -111,6 +111,36 @@ create accepted, one audit event per write, the chain verifying end to end, and 
 reference issued twice. The write stage above (597 replies/s, zero failures) is
 the same property under load.
 
+## The follow-up run — 2026-10-24 (the reference mark)
+
+The two fixes above were made, and this run measures the one that changes a
+write: the reference mark is now a row (`TicketSequence`), bootstrapped once per
+process from the highest existing ref and incremented atomically. The run is at
+**500 agents / 50,000 tickets**, not the 1M target — the point was to check the
+create path's shape after the fix without spending an hour seeding:
+
+```
+read: ticket detail   p95  44.6 ms   met   (target 300 ms)
+write: create ticket  p95 408.2 ms   met   (target 500 ms)
+write: reply          p95 188.8 ms   met   (target 500 ms)
+read: inbox worklist  p95 20,795.6 ms  MISSED  (target 300 ms)
+```
+
+The create path is fixed: **408 ms p95** where the 2026-10-09 run had 18.7 s at a
+million tickets, and the 50,000-ticket run before the fix had 2,238 ms because
+every queued create waited behind the one-time bootstrap scan. The mark is now
+seeded by the rehearsal itself (a real desk gets it from the first empty scan, or
+from the row the migration creates), so the stage measures steady state.
+
+The inbox read is **not** fixed. `listTickets` still loads every ticket with its
+thread, and 50,000 rows already take twenty seconds. The public tickets API uses
+`listTicketPage`; the inbox page, dashboard, reports and portal still call
+`listTickets`. Paging the inbox — moving its filter, scope and counts into the
+query rather than filtering an array — is the remaining 2.1 work, and until it
+lands the million-ticket inbox is still the failure this document records.
+
+The raw result is [load-test-2026-10-24.json](./load-test-2026-10-24.json).
+
 ## What this does not prove
 
 - **One node.** No HA, no failover, no read replica — §10's availability claim

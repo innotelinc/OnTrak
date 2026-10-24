@@ -75,12 +75,13 @@ account ceiling.
 ### 2.1 — CLI parity `[ ]`
 **Goal:** the terminal is not second-class.
 
-- `[ ]` Propose-then-commit from the CLI (the server has the change set; the
-  client cannot review and apply one yet).
-- `[ ]` Commands over the sharing API (`/api/shares` is reachable but unwrapped).
+- `[x]` Propose-then-commit from the CLI: `genie changes` reads the pending set,
+  `genie apply` commits it, `genie discard` drops it without writing a byte.
+- `[x]` Commands over the sharing API: `genie shares`, `genie share <chat>
+  <email>` (a row number from `genie sessions` works) and `genie unshare <id>`.
 - `[ ]` Web research as an agent tool (`search`/`fetch`), behind the same gate.
-- **Exit:** a CLI user can review a change set, share a chat and research the web
-  without opening the console.
+  The server tool set is the remaining half of 2.1; the terminal already has the
+  review and sharing controls.
 
 ### 2.2 — Per-account change sets `[ ]`
 
@@ -417,8 +418,10 @@ is not it; a queued change set a reviewer approves before it lands is still open
 sandbox's business, not the agent's tool set.
 
 **Open, plainly:** the CLI covers the console's core and the housekeeping around
-it. What it does not yet have is a propose-then-commit review, a web tool set, and
-commands over the sharing API (`/api/shares` is reachable but unwrapped).
+it. What it does not yet have is the web tool set: `search` and `fetch` are still
+the sandbox's business rather than the agent's. The propose-then-commit review and
+the sharing commands landed in 2.1 (`genie changes`, `apply`, `discard`, `shares`,
+`share`, `unshare`).
 
 ### v0.6 — Remote workspaces `[x]`
 

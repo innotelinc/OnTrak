@@ -22,7 +22,13 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 
-import { GenieClient, GenieError, type ChatRequest, type PendingApproval } from "./client.js";
+import {
+  GenieClient,
+  GenieError,
+  type ChatRequest,
+  type PendingApproval,
+  type ShareRecord,
+} from "./client.js";
 import { helpLines, matchCommands, parseCommand } from "./commands.js";
 import {
   configPath,
@@ -217,6 +223,12 @@ usage:
   genie logout                 forget the stored credential
   genie whoami                 show the server, identity and plan in force
   genie sessions [--json]      list chats
+  genie shares [--json]        list chats shared with me and by me
+  genie share <chat> <email>   share a chat (a number from "genie sessions" works)
+  genie unshare <share-id>     withdraw a share
+  genie changes [--json]       what propose mode is holding
+  genie apply                  commit the whole change set
+  genie discard                drop it without writing a byte
   genie models [filter]        list models the gateway advertises
   genie help                   this text
 
@@ -292,6 +304,18 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       return await commandWhoami(client, args);
     case "sessions":
       return await commandSessions(client, args);
+    case "shares":
+      return await commandShares(client, args);
+    case "share":
+      return await commandShare(client, args);
+    case "unshare":
+      return await commandUnshare(client, args);
+    case "changes":
+      return await commandChanges(client, args);
+    case "apply":
+      return await commandApply(client, args);
+    case "discard":
+      return await commandDiscard(client, args);
     case "skills":
       return await commandSkills(theme, args);
     case "models":
@@ -414,6 +438,108 @@ async function commandSessions(client: GenieClient, args: CliArgs): Promise<numb
  * command line: exit 2, like every other usage mistake, with the installer's own
  * refusals at exit 1.
  */
+function formatShare(share: ShareRecord, direction: "in" | "out"): string {
+  const who = direction === "in" ? share.ownerEmail ?? "somebody" : share.recipientEmail;
+  const arrow = direction === "in" ? "from" : "to";
+  return `  ${share.id.slice(0, 8)}  chat ${share.sessionId.slice(0, 8)}  ${arrow} ${who}  ${share.createdAt.slice(0, 10)}`;
+}
+
+/** `genie shares` — the two lists the server already answers with. */
+async function commandShares(client: GenieClient, args: CliArgs): Promise<number> {
+  const { sharedWithMe, sharedByMe } = await client.shares();
+  if (args.json) {
+    process.stdout.write(`${JSON.stringify({ sharedWithMe, sharedByMe }, null, 2)}\n`);
+    return 0;
+  }
+  if (sharedWithMe.length === 0 && sharedByMe.length === 0) {
+    process.stdout.write("no shares\n");
+    return 0;
+  }
+  if (sharedWithMe.length > 0) {
+    process.stdout.write("shared with me\n");
+    for (const share of sharedWithMe) process.stdout.write(`${formatShare(share, "in")}\n`);
+  }
+  if (sharedByMe.length > 0) {
+    process.stdout.write("shared by me\n");
+    for (const share of sharedByMe) process.stdout.write(`${formatShare(share, "out")}\n`);
+  }
+  return 0;
+}
+
+/**
+ * `genie share <chat> <email>` — hand one transcript to one address.
+ *
+ * The chat may be a full id or the one-based number `genie sessions` prints, for
+ * the same reason `/resume 2` does: nobody copies a cuid by hand.
+ */
+async function commandShare(client: GenieClient, args: CliArgs): Promise<number> {
+  const [chat, email] = args.rest;
+  if (!chat || !email) {
+    process.stderr.write("usage: genie share <chat|number> <email>\n");
+    return 2;
+  }
+  let sessionId = chat;
+  if (/^\d+$/.test(chat)) {
+    const sessions = await client.sessions();
+    const chosen = indexSessions(sessions).get(Number.parseInt(chat, 10));
+    if (!chosen) {
+      process.stderr.write(`there is no chat ${chat}\n`);
+      return 2;
+    }
+    sessionId = chosen.id;
+  }
+  const share = await client.shareSession(sessionId, email);
+  if (args.json) process.stdout.write(`${JSON.stringify(share, null, 2)}\n`);
+  else process.stdout.write(`shared chat ${share.sessionId.slice(0, 8)} with ${share.recipientEmail} (${share.id})\n`);
+  return 0;
+}
+
+async function commandUnshare(client: GenieClient, args: CliArgs): Promise<number> {
+  const id = args.rest[0];
+  if (!id) {
+    process.stderr.write("usage: genie unshare <share-id>\n");
+    return 2;
+  }
+  const removed = await client.unshare(id);
+  process.stdout.write(removed ? `share ${id} withdrawn\n` : `share ${id} was already gone\n`);
+  return 0;
+}
+
+/** `genie changes` — the pending set the console's review panel shows. */
+async function commandChanges(client: GenieClient, args: CliArgs): Promise<number> {
+  const payload = await client.changes();
+  if (args.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return 0;
+  }
+  if (!payload.changeSet || payload.changeSet.entries.length === 0) {
+    process.stdout.write("no pending changes\n");
+    return 0;
+  }
+  process.stdout.write(`${payload.summary}\n`);
+  for (const entry of payload.changeSet.entries) {
+    process.stdout.write(`  ${entry.kind.padEnd(9)} ${entry.path}  +${entry.added} -${entry.removed}\n`);
+  }
+  return 0;
+}
+
+async function commandApply(client: GenieClient, args: CliArgs): Promise<number> {
+  const result = await client.applyChanges();
+  if (args.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  else {
+    process.stdout.write(`applied ${result.applied} file(s)\n`);
+    for (const path of result.paths) process.stdout.write(`  ${path}\n`);
+  }
+  return 0;
+}
+
+async function commandDiscard(client: GenieClient, args: CliArgs): Promise<number> {
+  const discarded = await client.discardChanges();
+  if (args.json) process.stdout.write(`${JSON.stringify({ discarded }, null, 2)}\n`);
+  else process.stdout.write(discarded ? "change set discarded; nothing was written\n" : "there was no change set\n");
+  return 0;
+}
+
 async function commandSkills(theme: Theme, args: CliArgs): Promise<number> {
   const dirs = skillDirs(process.cwd());
   try {
