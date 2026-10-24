@@ -40,7 +40,7 @@ browser ──▶ oauth2-proxy ──▶ g0dm0d3 ──▶ Genie     /api/chat  
   workspace the console uses — nothing to enable, per person, per page. The
   page's judges, classifiers and prefills still go to the gateway: they are
   short single-shot calls, and an agent behind them would be wrong. See
-  `src/agent-bridge.js`.
+  `src/studio-agent/`, entered through the seam `src/agent-bridge.js`.
 * **The model lists are the gateway's catalog.** The page asks this origin for
   `/api/gateway/v1/models` and fills its pickers, its race tiers and its judge
   chain from the ids that come back — there is no vendored provider list to drift
