@@ -188,6 +188,18 @@ all-down: ## Stop the family stack (keeps every volume)
 all-logs: ## Tail the family stack's logs
 	docker compose -f docker-compose.all.yml logs -f
 
+# A healthcheck cannot see this one. REA's MCP server used to die on its first
+# capture — a SIGSEGV in the glibc PTY prebuild on this musl image — while the
+# container stayed healthy, so every capture call failed quietly. This runs one
+# real turn through Genie's agent, which has to choose and call the tool itself.
+.PHONY: capture-smoke
+capture-smoke: ## Run one capture through Genie's agent after a deploy (GENIE_SMOKE_ACTOR=…)
+	@test -n "$(GENIE_SMOKE_ACTOR)" || { echo "capture-smoke: set GENIE_SMOKE_ACTOR to an account on this deployment"; exit 2; }
+	docker compose -f docker-compose.all.yml exec -T \
+	  -e GENIE_SMOKE_ACTOR="$(GENIE_SMOKE_ACTOR)" \
+	  -e GENIE_SMOKE_MODEL="$(GENIE_SMOKE_MODEL)" \
+	  g0dm0d3 node --input-type=module - < scripts/genie-capture-smoke.mjs
+
 .PHONY: all-demo
 all-demo: ## Load the demo data for both apps in the family stack
 	docker compose -f docker-compose.all.yml --profile demo run --rm training-seed
