@@ -10,6 +10,7 @@ import { joinCode } from "@/lib/cohort-rules";
 import { parseAssignmentForm } from "@/lib/assignment-rules";
 import { canDeleteScenario, parseScenarioMeta, slugify } from "@/lib/scenario-rules";
 import { MAX_BUNDLE_BYTES, parseScenarioBundle } from "@/lib/scenario-bundle";
+import { publishBlocker, reviewBlocker, reviewRequired, statusAfterEdit, submitBlocker } from "@/lib/review-rules";
 import type { Difficulty } from "@prisma/client";
 import {
   describeDiff,
@@ -112,13 +113,15 @@ export async function saveScenario(formData: FormData): Promise<void> {
    * saves racing each other cannot write the same revision number twice.
    */
   const previous = id
-    ? await prisma.scenario.findUnique({ where: { id }, select: { title: true, summary: true, description: true, platform: true, engine: true, difficulty: true, timeLimitSec: true, passScore: true, tags: true, definition: true, _count: { select: { revisions: true } } } })
+    ? await prisma.scenario.findUnique({ where: { id }, select: { title: true, summary: true, description: true, platform: true, engine: true, difficulty: true, timeLimitSec: true, passScore: true, tags: true, definition: true, reviewStatus: true, _count: { select: { revisions: true } } } })
     : null;
   let revisionNote = "";
+  let gradingShapeChanged = false;
   if (previous) {
     const before = snapshotOf(previous as unknown as Parameters<typeof snapshotOf>[0]);
     const after = snapshotOf({ ...data } as unknown as Parameters<typeof snapshotOf>[0]);
-    if (shouldRevise(before, after)) {
+    gradingShapeChanged = shouldRevise(before, after);
+    if (gradingShapeChanged) {
       const nextRevision = (previous._count?.revisions ?? 0) + 1;
       const diff = diffSnapshots(before, after);
       revisionNote = ` Version ${nextRevision}: ${describeDiff(diff)}.`;
@@ -139,9 +142,20 @@ export async function saveScenario(formData: FormData): Promise<void> {
     }
   }
 
+  // An approval covers the checks that were read. If this save changed the
+  // grading shape, the scenario goes back to DRAFT so a second reader sees the
+  // new checks; a title or briefing edit leaves the approval alone.
   const saved = id
-    ? await prisma.scenario.update({ where: { id }, data }).catch(() => null)
-    : await prisma.scenario.create({ data: { ...data, authorId: author.id } });
+    ? await prisma.scenario
+        .update({
+          where: { id },
+          data: {
+            ...data,
+            ...(previous ? { reviewStatus: statusAfterEdit(previous.reviewStatus, gradingShapeChanged) } : {}),
+          },
+        })
+        .catch(() => null)
+    : await prisma.scenario.create({ data: { ...data, authorId: author.id, reviewStatus: "DRAFT" } });
   if (!saved) backTo(`/instructor/scenarios/${id}`, "That scenario no longer exists.", false);
 
   // Re-sync the software dependencies to match the form exactly.
@@ -179,22 +193,133 @@ export async function setScenarioPublished(formData: FormData): Promise<void> {
   const id = String(formData.get("id") ?? "");
   const published = formData.get("published") === "true";
 
-  const scenario = await prisma.scenario
-    .update({ where: { id }, data: { published } })
-    .catch(() => null);
+  const scenario = await prisma.scenario.findUnique({
+    where: { id },
+    select: { title: true, reviewStatus: true },
+  });
   if (!scenario) backTo("/instructor/scenarios", "That scenario no longer exists.", false);
+
+  if (published) {
+    const blocker = publishBlocker(scenario.reviewStatus, reviewRequired());
+    if (blocker) backTo(`/instructor/scenarios/${id}`, blocker, false);
+  }
+
+  await prisma.scenario.update({ where: { id }, data: { published } });
 
   await recordAudit({
     actorId: author.id,
     action: published ? "scenario.publish" : "scenario.unpublish",
     targetType: "scenario",
     targetId: id,
-    detail: { title: scenario.title },
+    detail: { title: scenario.title, reviewStatus: scenario.reviewStatus },
   });
 
   revalidatePath("/instructor/scenarios");
   revalidatePath("/student");
-  backTo("/instructor/scenarios", `"${scenario.title}" is now ${published ? "published" : "a draft"}.`);
+  backTo(`/instructor/scenarios/${id}`, `"${scenario.title}" is now ${published ? "published" : "a draft"}.`);
+}
+
+export async function submitScenarioForReview(formData: FormData): Promise<void> {
+  const author = await requireStaff();
+  const id = String(formData.get("id") ?? "");
+  const scenario = await prisma.scenario.findUnique({ where: { id }, select: { title: true, reviewStatus: true } });
+  if (!scenario) backTo("/instructor/scenarios", "That scenario no longer exists.", false);
+
+  const blocker = submitBlocker(scenario.reviewStatus);
+  if (blocker) backTo(`/instructor/scenarios/${id}`, blocker, false);
+
+  await prisma.scenario.update({
+    where: { id },
+    data: { reviewStatus: "IN_REVIEW", reviewedById: null, reviewedAt: null, reviewNote: null },
+  });
+  await recordAudit({
+    actorId: author.id,
+    action: "scenario.review.submit",
+    targetType: "scenario",
+    targetId: id,
+    detail: { title: scenario.title },
+  });
+
+  revalidatePath(`/instructor/scenarios/${id}`);
+  revalidatePath("/instructor/scenarios");
+  backTo(`/instructor/scenarios/${id}`, `"${scenario.title}" is waiting for a second reader.`);
+}
+
+export async function decideScenarioReview(formData: FormData): Promise<void> {
+  const reviewer = await requireStaff();
+  const id = String(formData.get("id") ?? "");
+  const decision = String(formData.get("decision") ?? "");
+  const note = String(formData.get("note") ?? "").trim().slice(0, 2000);
+  if (decision !== "approve" && decision !== "changes") {
+    backTo(`/instructor/scenarios/${id}`, "That is not a review decision.", false);
+  }
+
+  const scenario = await prisma.scenario.findUnique({
+    where: { id },
+    select: { title: true, authorId: true, reviewStatus: true },
+  });
+  if (!scenario) backTo("/instructor/scenarios", "That scenario no longer exists.", false);
+
+  const blocker = reviewBlocker(scenario.reviewStatus, scenario.authorId, reviewer.id);
+  if (blocker) backTo(`/instructor/scenarios/${id}`, blocker, false);
+
+  await prisma.scenario.update({
+    where: { id },
+    data: {
+      reviewStatus: decision === "approve" ? "APPROVED" : "DRAFT",
+      reviewNote: note || null,
+      reviewedById: reviewer.id,
+      reviewedAt: new Date(),
+    },
+  });
+  await recordAudit({
+    actorId: reviewer.id,
+    action: decision === "approve" ? "scenario.review.approve" : "scenario.review.changes",
+    targetType: "scenario",
+    targetId: id,
+    detail: { title: scenario.title, note },
+  });
+
+  revalidatePath(`/instructor/scenarios/${id}`);
+  revalidatePath("/instructor/scenarios");
+  backTo(
+    `/instructor/scenarios/${id}`,
+    decision === "approve" ? `Approved "${scenario.title}". It can be published.` : `Sent "${scenario.title}" back for changes.`,
+  );
+}
+
+export async function addScenarioComment(formData: FormData): Promise<void> {
+  const author = await requireStaff();
+  const id = String(formData.get("id") ?? "");
+  const body = String(formData.get("body") ?? "").trim().slice(0, 2000);
+  if (!body) backTo(`/instructor/scenarios/${id}`, "Write a comment first.", false);
+
+  const scenario = await prisma.scenario.findUnique({ where: { id }, select: { title: true } });
+  if (!scenario) backTo("/instructor/scenarios", "That scenario no longer exists.", false);
+
+  await prisma.scenarioComment.create({
+    data: { scenarioId: id, authorId: author.id, authorEmail: author.email, body },
+  });
+
+  revalidatePath(`/instructor/scenarios/${id}`);
+  backTo(`/instructor/scenarios/${id}`, "Comment added.");
+}
+
+export async function resolveScenarioComment(formData: FormData): Promise<void> {
+  const author = await requireStaff();
+  const id = String(formData.get("id") ?? "");
+  const commentId = String(formData.get("commentId") ?? "");
+  const comment = await prisma.scenarioComment.findFirst({ where: { id: commentId, scenarioId: id } });
+  if (!comment) backTo(`/instructor/scenarios/${id}`, "That comment no longer exists.", false);
+  if (comment.resolvedAt) backTo(`/instructor/scenarios/${id}`, "That comment is already resolved.", false);
+
+  await prisma.scenarioComment.update({
+    where: { id: commentId },
+    data: { resolvedAt: new Date(), resolvedById: author.id },
+  });
+
+  revalidatePath(`/instructor/scenarios/${id}`);
+  backTo(`/instructor/scenarios/${id}`, "Comment resolved.");
 }
 
 export async function duplicateScenario(formData: FormData): Promise<void> {

@@ -53,8 +53,12 @@ LMS and a webhook consumer, and a learner holds a verifiable certificate.
   no local row state (no slug, author or publish flag), is refused when it cannot
   grade anybody, and always imports as a draft. Covered by
   `tests/scenario-bundle.test.ts`.
-- `[ ]` Collaborative authoring: comments, review and an approval step before
-  publish (two authors, one reviewer).
+- `[x]` Collaborative authoring: threaded comments with resolve, submit → approve
+  or request-changes, and a publish gate (`ONTRAK_SCENARIO_REVIEW_REQUIRED`). The
+  author cannot approve their own scenario, and a grading-shape edit drops an
+  approval back to draft. Covered by `tests/scenario-review.test.ts`; the actions
+  themselves are exercised by the production build, and a database-backed
+  end-to-end test is the remaining proof for the 2.1 exit.
 - **Exit:** two authors co-edit a scenario through review to publish, with full
   history and one-click rollback, proven by a test.
 

@@ -523,6 +523,15 @@ model Scenario {
   timeLimitSec   Int        @default(1800)
   passScore      Int        @default(70)
   published      Boolean    @default(false)
+  /// Where the scenario is in authoring review. 2.1: a scenario is submitted,
+  /// approved by somebody other than its author, and only then may be published
+  /// (when `ONTRAK_SCENARIO_REVIEW_REQUIRED` is on). Editing a grading shape after
+  /// approval returns it to DRAFT — the approval was for the checks that were read.
+  reviewStatus   ScenarioReviewStatus @default(DRAFT)
+  /// The reviewer's one-line account when they approve or send it back.
+  reviewNote     String?
+  reviewedById   String?
+  reviewedAt     DateTime?
   tags           String[]   @default([])
   /// The full ScenarioDefinition JSON (see src/lib/sim/types.ts).
   definition     Json
@@ -539,6 +548,7 @@ model Scenario {
   organization Organization?      @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   software     ScenarioSoftware[]
   revisions    ScenarioRevision[]
+  comments     ScenarioComment[]
   attempts     Attempt[]
   assignments  Assignment[]
 
@@ -579,6 +589,35 @@ model ScenarioRevision {
 
   @@unique([scenarioId, revision])
   @@index([scenarioId, createdAt])
+}
+
+/// One person's note on a scenario under review.
+///
+/// Comments are advisory and never graded; they exist so a reviewer can say why
+/// they sent a scenario back without rewriting the description. Resolving one is
+/// a timestamp rather than a delete, because a review that hides what it
+/// discussed is not a record of the review.
+model ScenarioComment {
+  id           String    @id @default(cuid())
+  scenarioId   String
+  authorId     String?
+  /// Kept as an address too: the account may be renamed or deleted, and the note
+  /// should still name who wrote it.
+  authorEmail  String?
+  body         String
+  createdAt    DateTime  @default(now())
+  resolvedAt   DateTime?
+  resolvedById String?
+
+  scenario Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+
+  @@index([scenarioId, createdAt])
+}
+
+enum ScenarioReviewStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
 }
 
 /// A practice scenario drafted from solved support work.

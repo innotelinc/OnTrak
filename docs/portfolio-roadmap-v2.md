@@ -79,10 +79,10 @@ Legend: `[x]` done in 2.0.0 · `[ ]` open · `[~]` in progress.
   readable change history per scenario.
 - `[x]` Import/export bundles so a scenario set moves between deployments
   (`scenario-bundle.ts`, `/api/v1/scenarios/<id>/export`, the import form).
-- `[ ]` Collaborative authoring: comments, review and an approval step before
-  publish (two authors, one reviewer).
+- `[x]` Collaborative authoring: threaded comments, submit → approve/request
+  changes, the publish gate, and approval invalidation on a grading edit.
 - `[ ]` Exit: two authors co-edit a scenario through review to publish, with full
-  history and one-click rollback, proven by a test.
+  history and one-click rollback, proven end to end against a database.
 
 **2.2 — Assessment depth** — *Goal: more than pass/fail.*
 
@@ -126,12 +126,11 @@ controls, backup/DR, load rehearsal recorded.
 
 **2.1 — Scale fixes** — *Goal: a million-ticket tenant can work.*
 
-- `[ ]` Page the inbox worklist at the database instead of reading every ticket.
-- `[ ]` Hold the reference mark in a row instead of deriving it from every
-  reference already issued.
+- `[x]` Page the inbox worklist at the database (`listTicketPage`).
+- `[x]` Hold the reference mark in a row (`TicketSequence`).
 - `[ ]` Re-run `npm run load-test` and record the new p95s against §10 targets.
 - `[ ]` Exit: the 1M-ticket rehearsal meets the stated p95 for the worklist read
-  and for create.
+  and for create. The code is shipped; the measurement is what closes 2.1.
 
 **2.2 — Availability** — *Goal: a write survives a node loss.*
 

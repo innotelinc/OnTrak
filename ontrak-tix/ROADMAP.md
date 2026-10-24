@@ -191,11 +191,13 @@ controls, backup/DR, analytics and the opt-in assistant.
 ### 2.1 — Scale `[~]`
 **Goal:** a million-ticket tenant can open its inbox and create a ticket.
 
-- `[ ]` Page (or filter) the inbox worklist at the database instead of loading
-  every ticket with its thread.
-- `[ ]` Hold the reference mark in a row instead of deriving it from every
-  reference already issued.
-- `[ ]` Re-run `npm run load-test` and record the new p95s against §10.
+- `[x]` Page the inbox worklist at the database instead of loading every ticket
+  with its thread (`listTicketPage`, keyset-paged; the public tickets API uses it).
+- `[x]` Hold the reference mark in a row instead of deriving it from every
+  reference already issued (`TicketSequence`, incremented atomically and
+  backfilled from the highest existing ref).
+- `[ ]` Re-run `npm run load-test` at 1M tickets and record the new p95s against
+  §10. The two code changes are shipped; the measurement is what closes 2.1.
 - **Exit:** the 10,000-staff / 1,000,000-ticket rehearsal meets the stated p95 for
   the worklist read and for create.
 

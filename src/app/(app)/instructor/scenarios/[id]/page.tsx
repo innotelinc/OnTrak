@@ -6,7 +6,17 @@ import { requireSession } from "@/lib/auth";
 import { evaluatePackage, evaluateScenario, loadAvailabilityContext } from "@/lib/availability";
 import { toDefinition } from "@/lib/scenarios";
 import { serializeDefinition } from "@/lib/templates";
-import { createAssignment, deleteAssignment, detachSoftware, restoreScenarioRevision } from "@/app/actions/instructor";
+import {
+  addScenarioComment,
+  createAssignment,
+  decideScenarioReview,
+  deleteAssignment,
+  detachSoftware,
+  resolveScenarioComment,
+  restoreScenarioRevision,
+  submitScenarioForReview,
+} from "@/app/actions/instructor";
+import { reviewStatusLabel } from "@/lib/review-rules";
 import { ScenarioEditor } from "@/components/instructor/ScenarioEditor";
 import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, Button, ButtonLink, Card, Field, Input, Select, Textarea } from "@/components/ui";
@@ -42,6 +52,7 @@ export default async function EditScenarioPage({
       },
       author: { select: { name: true } },
       revisions: { orderBy: { revision: "desc" }, take: 30 },
+      comments: { orderBy: { createdAt: "asc" }, take: 100 },
       _count: { select: { attempts: true } },
     },
   });
@@ -80,6 +91,9 @@ export default async function EditScenarioPage({
               {availability.available ? t("instructor.badge.runnable") : t("scenarios.badge.blocked")}
             </Badge>
             <Badge tone="neutral">{scenario._count.attempts} attempt(s)</Badge>
+            <Badge tone={scenario.reviewStatus === "APPROVED" ? "teal" : scenario.reviewStatus === "IN_REVIEW" ? "amber" : "neutral"}>
+              {reviewStatusLabel(scenario.reviewStatus)}
+            </Badge>
             <span className="text-xs text-ink-faint">
               {t("scenarios.detail.updated", { when: formatRelative(scenario.updatedAt) })}
             </span>
@@ -141,6 +155,93 @@ export default async function EditScenarioPage({
         />
         </LocaleProvider>
       </div>
+
+      {/* ------------------------------------------------------------- review */}
+      <section className="mt-10">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="font-display text-lg font-semibold text-ink">{t("scenarios.review.title")}</h2>
+            <p className="mt-1 text-sm text-ink-soft">{t("scenarios.review.hint")}</p>
+          </div>
+          <Badge tone={scenario.reviewStatus === "APPROVED" ? "teal" : scenario.reviewStatus === "IN_REVIEW" ? "amber" : "neutral"}>
+            {reviewStatusLabel(scenario.reviewStatus)}
+          </Badge>
+        </div>
+
+        <Card className="mt-4">
+          {scenario.reviewStatus === "IN_REVIEW" ? (
+            <form action={decideScenarioReview} className="space-y-3">
+              <input type="hidden" name="id" value={scenario.id} />
+              <Field label={t("scenarios.review.note")} hint={t("scenarios.review.noteHint")}>
+                <Textarea name="note" rows={3} maxLength={2000} placeholder={t("scenarios.review.notePlaceholder")} />
+              </Field>
+              <div className="flex flex-wrap gap-2">
+                <Button type="submit" name="decision" value="approve">
+                  {t("scenarios.review.approve")}
+                </Button>
+                <Button type="submit" name="decision" value="changes" variant="secondary">
+                  {t("scenarios.review.changes")}
+                </Button>
+              </div>
+              <p className="text-xs text-ink-faint">{t("scenarios.review.self")}</p>
+            </form>
+          ) : scenario.reviewStatus === "DRAFT" ? (
+            <form action={submitScenarioForReview} className="space-y-3">
+              <input type="hidden" name="id" value={scenario.id} />
+              <p className="text-sm text-ink-soft">{t("scenarios.review.draftHint")}</p>
+              <Button type="submit">{t("scenarios.review.submit")}</Button>
+            </form>
+          ) : (
+            <p className="text-sm text-ink-soft">{t("scenarios.review.approvedHint")}</p>
+          )}
+          {scenario.reviewNote ? (
+            <p className="mt-3 rounded-lg bg-panel/60 px-3 py-2 text-sm text-ink-soft">“{scenario.reviewNote}”</p>
+          ) : null}
+        </Card>
+
+        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <Card className="p-0">
+            {scenario.comments.length === 0 ? (
+              <p className="px-5 py-6 text-sm text-ink-soft">{t("scenarios.review.noComments")}</p>
+            ) : (
+              <ul className="divide-y divide-line">
+                {scenario.comments.map((comment) => (
+                  <li key={comment.id} className="px-5 py-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs text-ink-faint">
+                        {comment.authorEmail ?? comment.authorId ?? "—"} · {formatDateTime(comment.createdAt)}
+                      </span>
+                      {comment.resolvedAt ? (
+                        <Badge tone="teal">{t("scenarios.review.resolved")}</Badge>
+                      ) : (
+                        <form action={resolveScenarioComment}>
+                          <input type="hidden" name="id" value={scenario.id} />
+                          <input type="hidden" name="commentId" value={comment.id} />
+                          <Button variant="ghost" size="sm" type="submit">
+                            {t("scenarios.review.resolve")}
+                          </Button>
+                        </form>
+                      )}
+                    </div>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-ink">{comment.body}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+          <Card>
+            <form action={addScenarioComment} className="space-y-3">
+              <input type="hidden" name="id" value={scenario.id} />
+              <Field label={t("scenarios.review.comment")}>
+                <Textarea name="body" rows={4} maxLength={2000} required />
+              </Field>
+              <Button type="submit" variant="secondary" size="sm">
+                {t("scenarios.review.addComment")}
+              </Button>
+            </form>
+          </Card>
+        </div>
+      </section>
 
       {/* ---------------------------------------------------- revision history */}
       <section className="mt-10">
