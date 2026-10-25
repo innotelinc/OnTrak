@@ -26,6 +26,7 @@ import { CLAIM_STATUS, claimOnView } from "./claim-rules";
 import {
   TICKET_PRIORITIES,
   TICKET_TYPES,
+  isOpen,
   ticketRef,
   transition,
   validateTicketInput,
@@ -41,6 +42,7 @@ import type { RuleApplication, RuleIntake } from "./rule-intake";
 import type { MacroIntake } from "./macro-intake";
 import type { SlaPause } from "./sla-rules";
 import type { CustomValues } from "./form-rules";
+import { matchesFilter, sortForInbox, type InboxFilter } from "./inbox-rules";
 
 /**
  * What the ticket path needs of the M6 forms: the values this queue's form accepts.
@@ -478,18 +480,88 @@ export function planReclassification(
 /* -------------------------------------------------------------------------- */
 
 /**
+ * One bounded inbox read: the filter, the visibility scope, and the slice.
+ *
+ * `clientIds` is the client scope already resolved (M4) — `null` means the whole
+ * desk, an array means those clients plus the work that names none. Passing the
+ * scope rather than the actor keeps this a storage question.
+ *
+ * `sla` is deliberately absent: an SLA flag is computed from a policy and a
+ * clock, not stored, so the caller resolves that view from `listSlaTickets` and
+ * asks for the chosen ids through `findTickets`.
+ */
+export interface InboxQuery {
+  filter: InboxFilter;
+  clientIds: readonly string[] | null;
+  offset: number;
+  limit: number;
+}
+
+/** The inbox header's numbers, as aggregates rather than a materialized worklist. */
+export interface InboxCountSnapshot {
+  byStatus: Record<TicketStatus, number>;
+  open: number;
+  unassigned: number;
+  urgent: number;
+}
+
+export interface InboxTicketPage {
+  tickets: TicketRecord[];
+  /** How many rows the filter matches in total, for paging. */
+  total: number;
+}
+
+/**
+ * The columns an SLA clock needs, and nothing else.
+ *
+ * The inbox counters need every open ticket that carries a policy; loading those
+ * tickets with their threads is what made the worklist read unbounded. This is a
+ * projection of the fields `slaStatusFor` actually reads.
+ */
+export interface SlaTicketRow {
+  id: string;
+  ref: string;
+  subject: string;
+  status: TicketStatus;
+  priority: TicketPriority;
+  assigneeId: string | null;
+  clientId: string | null;
+  queueId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  firstResponseAt: string | null;
+  resolvedAt: string | null;
+  pauses: SlaPause[];
+}
+
+/**
  * The persistence port the app implements against Prisma. Keeping it this small
  * is the point: the store never decides anything, it only reads and writes.
  */
 export interface TicketStore {
   nextTicketSeq(tenantId: string): Promise<number>;
-  /** Every ticket in a tenant — the agent inbox needs the whole worklist. */
+  /** Every ticket in a tenant — the whole worklist. Kept for the callers that genuinely need it. */
   listTickets(tenantId: string): Promise<TicketRecord[]>;
   /** One database-level page, ordered by id; used by the public API. */
   listTicketPage(
     tenantId: string,
     options: { limit: number; after?: string | null }
   ): Promise<{ tickets: TicketRecord[]; nextCursor: string | null }>;
+  /**
+   * One page of the inbox, filtered and ordered by the database. The ordering is
+   * the screen's own: open work first, then priority, then oldest-touched — so
+   * resolved tickets cannot bury live ones and nothing starves.
+   */
+  listInboxPage(tenantId: string, query: InboxQuery): Promise<InboxTicketPage>;
+  /** The desk's counts, computed as aggregates over the same scope. */
+  countInbox(tenantId: string, options: { clientIds: readonly string[] | null }): Promise<InboxCountSnapshot>;
+  /** Open work that carries an SLA policy, for the SLA counters and tabs. */
+  listSlaTickets(
+    tenantId: string,
+    options: { clientIds: readonly string[] | null }
+  ): Promise<SlaTicketRow[]>;
+  /** The named tickets, with threads; the caller decides the order. */
+  findTickets(tenantId: string, ticketIds: readonly string[]): Promise<TicketRecord[]>;
   findTicket(tenantId: string, ticketId: string): Promise<TicketRecord | null>;
   insertTicket(ticket: TicketRecord): Promise<void>;
   updateTicket(ticket: TicketRecord): Promise<void>;
@@ -816,6 +888,59 @@ export class MemoryTicketStore implements TicketStore {
       .filter((ticket) => (options.after ? ticket.id > options.after : true));
     const page = all.slice(0, options.limit);
     return { tickets: page, nextCursor: all.length > options.limit ? page[page.length - 1].id : null };
+  }
+
+  private async inboxRows(
+    tenantId: string,
+    filter: InboxFilter,
+    clientIds: readonly string[] | null
+  ): Promise<TicketRecord[]> {
+    return (await this.listTickets(tenantId)).filter(
+      (ticket) => clientIds === null || !ticket.clientId || clientIds.includes(ticket.clientId)
+    ).filter((ticket) => matchesFilter(ticket, filter));
+  }
+
+  async listInboxPage(tenantId: string, query: InboxQuery): Promise<InboxTicketPage> {
+    const matching = sortForInbox(await this.inboxRows(tenantId, query.filter, query.clientIds));
+    return { tickets: matching.slice(query.offset, query.offset + query.limit), total: matching.length };
+  }
+
+  async countInbox(
+    tenantId: string,
+    options: { clientIds: readonly string[] | null }
+  ): Promise<InboxCountSnapshot> {
+    const byStatus: Record<TicketStatus, number> = { NEW: 0, OPEN: 0, PENDING: 0, RESOLVED: 0, CLOSED: 0 };
+    let open = 0;
+    let unassigned = 0;
+    let urgent = 0;
+    for (const ticket of await this.inboxRows(tenantId, {}, options.clientIds)) {
+      byStatus[ticket.status] += 1;
+      if (isOpen(ticket.status)) {
+        open += 1;
+        if (ticket.assigneeId === null) unassigned += 1;
+        if (ticket.priority === "URGENT") urgent += 1;
+      }
+    }
+    return { byStatus, open, unassigned, urgent };
+  }
+
+  async listSlaTickets(
+    tenantId: string,
+    options: { clientIds: readonly string[] | null }
+  ): Promise<SlaTicketRow[]> {
+    // The memory store does not carry `slaPolicyId`; SLA views are a database
+    // concern. Answering `[]` keeps the in-memory path honest instead of
+    // pretending every ticket has a clock.
+    void tenantId;
+    void options;
+    return [];
+  }
+
+  async findTickets(tenantId: string, ticketIds: readonly string[]): Promise<TicketRecord[]> {
+    return ticketIds
+      .map((id) => this.tickets.get(`${tenantId}:${id}`))
+      .filter((ticket): ticket is TicketRecord => ticket !== undefined)
+      .map((ticket) => structuredClone(ticket));
   }
 
   async findTicket(tenantId: string, ticketId: string): Promise<TicketRecord | null> {

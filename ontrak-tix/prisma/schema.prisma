@@ -368,6 +368,11 @@ model Ticket {
   // The inbox and the public API page in id order within one tenant; without
   // this, each page reads the tenant's whole index to sort it.
   @@index([tenantId, id])
+  // The inbox page reads one status at a time in its own order (priority, then
+  // oldest-touched). The direction is part of the promise: the index is scanned
+  // forward for exactly this order, so Postgres hands back a sorted prefix and
+  // stops at fifty instead of sorting the first priority group to find them.
+  @@index([tenantId, status, priority(sort: Desc), updatedAt])
 }
 
 /// The reference high-water mark for one tenant.

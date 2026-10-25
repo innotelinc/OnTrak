@@ -17,7 +17,7 @@ import {
   linkServicesFor,
   savedViewServicesFor,
 } from "../../../lib/db";
-import { scopeByClient } from "../../../lib/client-rules";
+import { canSeeClient } from "../../../lib/client-rules";
 import { claimOnView } from "../../../lib/claim-rules";
 import { AutoClaim } from "../../../components/AutoClaim";
 import { InboxPanes } from "../../../components/InboxPanes";
@@ -31,16 +31,29 @@ import {
   saveViewAction,
   setStatusAction,
 } from "../../actions/tickets";
-import { buildInboxView, parseInboxFilter, selectedTicket, type InboxSearchParams } from "../../../lib/inbox-view";
+import { parseInboxFilter, type InboxSearchParams } from "../../../lib/inbox-view";
+import { atRiskOnly, sortForInbox, type InboxCounts } from "../../../lib/inbox-rules";
 import { slaFlagsByTicket, slaStatusFor } from "../../../lib/report-rules";
+import type { TicketRecord } from "../../../lib/ticket-service";
 import { AgentInbox } from "../../../components/AgentInbox";
 import { SavedViews } from "../../../components/SavedViews";
 import { TicketDetail, type TicketActions } from "../../../components/TicketDetail";
 
 export const metadata = { title: "Inbox" };
 
+/**
+ * Rows per page. Enough to fill a wide screen twice over without becoming the
+ * read the page used to do; the pager walks the rest on request.
+ */
+const INBOX_PER_PAGE = 50;
+
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function pageNumber(value: string | undefined): number {
+  const parsed = Number.parseInt(value ?? "1", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
 }
 
 /** The agent inbox: the filtered worklist on the left, the selected ticket on the right. */
@@ -52,11 +65,23 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
 
   const params = await searchParams;
   const clients = clientServicesFor();
-  const [everything, policies, views, scope, staff] = await Promise.all([
-    ticketServicesFor().store.listTickets(actor.tenantId),
+  const store = ticketServicesFor().store;
+  const scope = await clients.scope(actor);
+  // One desk serving many clients means the worklist is scoped before it is
+  // read: an agent sees their clients' work and the work that names no client,
+  // never a third client's. The scope is a `WHERE` now, so the database counts
+  // and pages exactly the rows the reader may see rather than filtering after a
+  // whole-tenant read.
+  const clientIds = scope.kind === "assigned" ? scope.clientIds : null;
+  const filter = parseInboxFilter(params);
+  const now = new Date().toISOString();
+  const requestedPage = pageNumber(first(params.page));
+  const offset = (requestedPage - 1) * INBOX_PER_PAGE;
+
+  const [baseCounts, policies, views, staff] = await Promise.all([
+    store.countInbox(actor.tenantId, { clientIds }),
     slaPolicyStoreFor().listForTenant(actor.tenantId),
     savedViewServicesFor().list(actor),
-    clients.scope(actor),
     // The desk's people, once for the page: they fill the assignment picker in the
     // selection panel and the bulk toolbar alike, so one read answers both.
     prisma.user.findMany({
@@ -66,18 +91,83 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     }),
   ]);
   const assignees = assigneeOptions(staff);
-  // One desk serving many clients means the worklist is scoped before it is
-  // rendered: an agent sees their clients' work and the work that names no
-  // client, never a third client's. Filtering here (rather than in the list
-  // component) keeps every rung below — SLA flags, saved views, counts — computed
-  // over exactly the rows the reader may see. When the scope is the whole desk,
-  // this is the identity filter and nothing changes.
-  const all = scopeByClient(scope, everything);
-  const filter = parseInboxFilter(params);
-  const now = new Date().toISOString();
-  const sla = slaFlagsByTicket(all, policies, now);
-  const view = buildInboxView(all, filter, sla);
-  const selected = selectedTicket(view, first(params.ticket));
+
+  // SLA flags are derived, not stored, so the counters need the open tickets that
+  // actually carry a policy — eleven columns, no threads — rather than the desk.
+  // A desk with no policy skips the read entirely.
+  const slaCandidates = policies.length === 0 ? [] : await store.listSlaTickets(actor.tenantId, { clientIds });
+  const candidateFlags = slaFlagsByTicket(slaCandidates, policies, now);
+  let slaAtRisk = 0;
+  let slaBreached = 0;
+  for (const flags of candidateFlags.values()) {
+    if (atRiskOnly(flags)) slaAtRisk += 1;
+    if (flags.breached) slaBreached += 1;
+  }
+  const counts: InboxCounts = { ...baseCounts, slaAtRisk, slaBreached };
+
+  // The default view pages in the database. An SLA tab is the one filter a
+  // `WHERE` cannot express (the clock is a policy plus time, not a column), so
+  // that view resolves the matching open tickets from the same policy-bearing
+  // set and pages the ids — still without reading a thread.
+  let tickets: TicketRecord[];
+  let total: number;
+  let page = requestedPage;
+  if (filter.sla) {
+    const matching = sortForInbox(
+      slaCandidates.filter((candidate) => {
+        const flags = candidateFlags.get(candidate.id);
+        return filter.sla === "at-risk" ? atRiskOnly(flags) : flags?.breached === true;
+      })
+    );
+    total = matching.length;
+    const ids = matching.slice(offset, offset + INBOX_PER_PAGE).map((candidate) => candidate.id);
+    tickets = await store.findTickets(actor.tenantId, ids);
+  } else {
+    const result = await store.listInboxPage(actor.tenantId, {
+      filter,
+      clientIds,
+      offset,
+      limit: INBOX_PER_PAGE,
+    });
+    tickets = result.tickets;
+    total = result.total;
+  }
+
+  // A page past the end (a stale link, or rows resolved while somebody read) falls
+  // back to the last page rather than showing an empty worklist that says “0”.
+  if (tickets.length === 0 && total > 0 && offset >= total) {
+    page = Math.max(1, Math.ceil(total / INBOX_PER_PAGE));
+    if (filter.sla) {
+      const matching = sortForInbox(
+        slaCandidates.filter((candidate) => {
+          const flags = candidateFlags.get(candidate.id);
+          return filter.sla === "at-risk" ? atRiskOnly(flags) : flags?.breached === true;
+        })
+      );
+      tickets = await store.findTickets(
+        actor.tenantId,
+        matching.slice((page - 1) * INBOX_PER_PAGE, page * INBOX_PER_PAGE).map((candidate) => candidate.id)
+      );
+    } else {
+      const result = await store.listInboxPage(actor.tenantId, {
+        filter,
+        clientIds,
+        offset: (page - 1) * INBOX_PER_PAGE,
+        limit: INBOX_PER_PAGE,
+      });
+      tickets = result.tickets;
+    }
+  }
+
+  const sla = slaFlagsByTicket(tickets, policies, now);
+  const requestedTicketId = first(params.ticket);
+  let selected = tickets.find((ticket) => ticket.id === requestedTicketId) ?? null;
+  // A ticket named in the URL stays open beside the list even when it is not on
+  // this page — a link to a ticket must not depend on which page it fell on.
+  if (!selected && requestedTicketId) {
+    const fetched = await store.findTicket(actor.tenantId, requestedTicketId);
+    if (fetched && canSeeClient(scope, fetched.clientId)) selected = fetched;
+  }
   const links = selected ? await linkServicesFor().linkedTickets(actor.tenantId, selected.id) : [];
 
   const flash = first(params.flash);
@@ -146,7 +236,11 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
       <InboxPanes
         list={
           <AgentInbox
-            all={all}
+            tickets={tickets}
+            counts={counts}
+            total={total}
+            page={page}
+            perPage={INBOX_PER_PAGE}
             filter={filter}
             basePath="/inbox"
             selectedId={selected?.id ?? null}

@@ -78,7 +78,9 @@ export function matchesFilter(ticket: TicketRecord, filter: InboxFilter = {}, sl
  * still appearing above live work is the classic shared-inbox failure), then
  * by descending priority, then oldest update first.
  */
-export function sortForInbox(tickets: readonly TicketRecord[]): TicketRecord[] {
+export function sortForInbox<T extends Pick<TicketRecord, "status" | "priority" | "updatedAt">>(
+  tickets: readonly T[],
+): T[] {
   return [...tickets].sort((a, b) => {
     const openDelta = Number(isOpen(b.status)) - Number(isOpen(a.status));
     if (openDelta !== 0) return openDelta;

@@ -15,9 +15,9 @@
  *
  * What it measures is the app's own paths, not a bench of the rules:
  *
- *  - **inbox read** — `store.listTickets(tenantId)`, which is what the inbox, the
- *    dashboard, `/reports`, the portal and `GET /api/v1/tickets` all call. It is
- *    the worklist the desk sees, whole.
+ *  - **inbox read** — `store.countInbox` plus `store.listInboxPage` — the two reads
+ *    the inbox screen makes. The page is fifty rows, filtered and ordered by the
+ *    database, which is what replaced the whole-tenant `listTickets` read.
  *  - **detail read** — `store.findTicket(tenantId, id)` with its thread.
  *  - **write: create** — `service.createTicket(actor, input)`: the reference, the
  *    row and the hash-chained audit event.
@@ -402,10 +402,22 @@ async function main(): Promise<number> {
         `${seedTimings.seededStaff.toLocaleString()} staff in ${(seedMs / 1000).toFixed(1)}s`,
     );
 
+    // The bulk insert leaves the table without planner statistics or a visibility
+    // map, so the first page read would be a cold heap scan and the counts would
+    // not be index-only. A real desk's autovacuum has long since done this; doing
+    // it here measures the steady state the target is about rather than the cold
+    // table a bulk load leaves behind.
+    await prisma.$executeRawUnsafe('VACUUM (ANALYZE) "Ticket"');
+    await prisma.$executeRawUnsafe('VACUUM (ANALYZE) "Message"');
+
     // Warm the pool and the caches: the first read of a cold connection is the
     // connection's latency, not the query's, and reporting it as the app's would
     // overstate the desk's experience of its own worklist.
     await services.store.findTicket(tenantId, ticketId(key, 1));
+    await Promise.all([
+      services.store.listInboxPage(tenantId, { filter: {}, clientIds: null, offset: 0, limit: 50 }),
+      services.store.countInbox(tenantId, { clientIds: null }),
+    ]);
 
     const reads: StageResult[] = [];
 
@@ -418,11 +430,11 @@ async function main(): Promise<number> {
       }),
     );
 
-    // The worklist read. Timed one call at a time on purpose: at target scale a
-    // single call already returns the whole tenant's worklist, so running these
-    // in parallel would measure memory pressure rather than the query.
+    // The worklist read: the header counts and the first page, as the screen asks
+    // for them. Timed one call at a time because a page read is cheap and the
+    // point is its latency, not throughput.
     const wholelist: StageResult = {
-      name: "read: inbox worklist",
+      name: "read: inbox page",
       attempts: 0,
       ok: 0,
       errors: [],
@@ -433,13 +445,17 @@ async function main(): Promise<number> {
       wholelist.attempts += 1;
       const at = performance.now();
       try {
-        const all = await services.store.listTickets(tenantId);
+        const [page, counts] = await Promise.all([
+          services.store.listInboxPage(tenantId, { filter: {}, clientIds: null, offset: 0, limit: 50 }),
+          services.store.countInbox(tenantId, { clientIds: null }),
+        ]);
         wholelist.elapsedMs += performance.now() - at;
         wholelist.samples.push(performance.now() - at);
-        if (all.length === 0) throw new Error("the worklist came back empty");
+        if (page.tickets.length === 0) throw new Error("the worklist came back empty");
+        if (page.total === 0 || counts.open === 0) throw new Error("the counts came back empty");
         wholelist.ok += 1;
       } catch (error) {
-        wholelist.errors.push(`read: inbox worklist: ${error instanceof Error ? error.message : String(error)}`);
+        wholelist.errors.push(`read: inbox page: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     reads.push(wholelist);
@@ -494,7 +510,7 @@ async function main(): Promise<number> {
     /* ---- Verdict ---------------------------------------------------------- */
 
     const detail = summary.find((row) => row.name === "read: ticket detail");
-    const inbox = summary.find((row) => row.name === "read: inbox worklist");
+    const inbox = summary.find((row) => row.name === "read: inbox page");
     const create = summary.find((row) => row.name === "write: create ticket");
     const reply = summary.find((row) => row.name === "write: reply");
 
@@ -511,7 +527,7 @@ async function main(): Promise<number> {
 
     judge("read: ticket detail", detail?.p95 ?? null, options.targetReadMs);
     // The worklist read is reported against the same target, on the samples it got.
-    judge("read: inbox worklist", inbox?.p95 ?? null, options.targetReadMs);
+    judge("read: inbox page", inbox?.p95 ?? null, options.targetReadMs);
     judge("write: create ticket", create?.p95 ?? null, options.targetWriteMs);
     judge("write: reply", reply?.p95 ?? null, options.targetWriteMs);
 

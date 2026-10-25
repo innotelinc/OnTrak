@@ -132,14 +132,50 @@ every queued create waited behind the one-time bootstrap scan. The mark is now
 seeded by the rehearsal itself (a real desk gets it from the first empty scan, or
 from the row the migration creates), so the stage measures steady state.
 
-The inbox read is **not** fixed. `listTickets` still loads every ticket with its
-thread, and 50,000 rows already take twenty seconds. The public tickets API uses
-`listTicketPage`; the inbox page, dashboard, reports and portal still call
-`listTickets`. Paging the inbox — moving its filter, scope and counts into the
-query rather than filtering an array — is the remaining 2.1 work, and until it
-lands the million-ticket inbox is still the failure this document records.
+The inbox read was **not** fixed in that run. `listTickets` still loaded every
+ticket with its thread, and 50,000 rows already took twenty seconds.
 
 The raw result is [load-test-2026-10-24.json](./load-test-2026-10-24.json).
+
+## The inbox read, paged — 2026-10-24
+
+Paging the inbox is now the code's shape rather than a plan:
+`PrismaTicketStore.listInboxPage` takes the filter as a `WHERE`, the order as an
+`ORDER BY` and the page as a `LIMIT`; `countInbox` is one `groupBy` plus the two
+counts the header needs. "Open first" is not an enum order (`NEW` would sort above
+an urgent `PENDING`), so `all` is read as two partitions — open, then closed — and
+each partition's statuses are read separately and merged, so every read is served
+by `Ticket_tenantId_status_priority_updatedAt_idx` handing back a sorted prefix
+instead of Postgres sorting half the tenant.
+
+The rehearsal was then run at the target again — **10,000 agents, 1,000,000
+tickets, 600,000 messages**, host: 2 CPUs, 7.2 GB RAM, PostgreSQL 16 in a
+container, seed 930.8 s — and this is what it recorded:
+
+```
+read: ticket detail   p95   28.2 ms   met     (target 300 ms, 5,466 samples)
+write: create ticket  p95  357.0 ms   met     (target 500 ms,   432 samples)
+write: reply          p95  204.8 ms   met     (target 500 ms,   907 samples)
+read: inbox page      p95  464.8 ms   MISSED  (target 300 ms,     5 samples)
+```
+
+**Read that last row as a smoke test, not a p95.** The inbox stage times five
+reads on purpose — at this size one page read is the expensive thing and the point
+is its latency — so its "p95" is its slowest of five: p50 219.8 ms, max 464.8 ms.
+The same two calls measured again on the same tenant with the writes finished gave
+p50 116 ms and p95 235 ms, and the page read alone p50 59 ms. So the target is
+**not settled** in either direction by that run, and this document does not claim
+it is met.
+
+What the numbers do say is where the cost sits: the page itself is a bounded read,
+and the header counts (`groupBy` over the tenant, plus unassigned and urgent) are
+the larger half of the request — one index-only scan per count over a million
+rows. If the next run at 1M wants a verdict rather than an anecdote, it needs more
+than five inbox samples (`--inbox-reads 60`) and, if it still misses, a count that
+is maintained rather than counted.
+
+The raw result is
+[load-test-2026-10-24-inbox.json](./load-test-2026-10-24-inbox.json).
 
 ## What this does not prove
 

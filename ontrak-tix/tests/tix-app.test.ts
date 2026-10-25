@@ -79,6 +79,14 @@ class FakePrisma implements TicketPrismaClient {
   ticket = {
     count: async (args: any): Promise<number> =>
       [...this.tickets.values()].filter((row) => row.tenantId === args.where.tenantId).length,
+    groupBy: async (args: any): Promise<Array<{ status: any; _count: { _all: number } }>> => {
+      const counts = new Map<string, number>();
+      for (const row of this.tickets.values()) {
+        if (row.tenantId !== args.where.tenantId) continue;
+        counts.set(row.status, (counts.get(row.status) ?? 0) + 1);
+      }
+      return [...counts].map(([status, count]) => ({ status, _count: { _all: count } }));
+    },
     findFirst: async (args: any): Promise<TicketRow | null> => {
       const row = this.tickets.get(args.where.id);
       if (!row || row.tenantId !== args.where.tenantId) return null;

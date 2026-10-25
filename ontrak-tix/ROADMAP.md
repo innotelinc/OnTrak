@@ -191,22 +191,32 @@ controls, backup/DR, analytics and the opt-in assistant.
 ### 2.1 — Scale `[~]`
 **Goal:** a million-ticket tenant can open its inbox and create a ticket.
 
-- `[~]` Page the worklist at the database. The public tickets API is keyset-paged
-  (`listTicketPage`), but `/inbox`, `/dashboard`, `/reports` and the portal still
-  call `listTickets` and filter in memory, so the million-ticket inbox is **not**
-  fixed yet. The remaining work is to move the inbox's filter/sort/scope/counts
-  into a paged query and have the view build over a page.
+- `[x]` Page the worklist at the database. `/inbox` now reads one page through
+  `PrismaTicketStore.listInboxPage`: the filter is a `WHERE`, the order an
+  `ORDER BY`, the page a `LIMIT`, and the "open first" order is read as two
+  partitions because it is not an enum order, with a status-partitioned merge so
+  every read is served by `[tenantId, status, priority desc, updatedAt]` handing
+  back a sorted prefix. The header's numbers are one `groupBy`. Recorded at the
+  target in [docs/load-test.md](docs/load-test.md): at 1,000,000 tickets the first
+  page plus the counts measured p50 219.8 ms / p95 464.8 ms over **five** reads —
+  a smoke test, not a p95 — and p50 116 ms / p95 235 ms when re-measured alone, so
+  the 300 ms verdict is **not settled**. The header counts (three scans of the
+  tenant per read) are the larger half of the cost; the remaining work is to
+  settle it with a run that takes enough samples, and to maintain those counts if
+  it still misses.
 - `[x]` Hold the reference mark in a row instead of deriving it from every
   reference already issued (`TicketSequence`, bootstrapped once per process,
   incremented atomically). Measured: create p95 **408 ms** at 500 agents /
   50,000 tickets, against 2,238 ms before the fix and 18.7 s at 1M in the
   2026-10-09 run.
-- `[ ]` Re-run `npm run load-test` at 1M tickets and record the new p95s against
-  §10 once the inbox is paged. The 50k rehearsal (2026-10-24) is recorded in
-  [docs/load-test.md](docs/load-test.md): detail, create and reply meet their
-  targets; the whole-worklist read still misses by two orders of magnitude.
+- `[~]` Re-run `npm run load-test` at 1M tickets and record the new p95s against
+  §10 once the inbox is paged. That run is recorded: detail p95 **28.2 ms**, create
+  p95 **357 ms** and reply p95 **204.8 ms** — all met — with the inbox page's five
+  samples the one row that misses. What is left is the sample size, not the code
+  change: the same run with `--inbox-reads 60` in place of 5 settles it.
 - **Exit:** the 10,000-staff / 1,000,000-ticket rehearsal meets the stated p95 for
-  the worklist read and for create.
+  the worklist read and for create. Create is met; the worklist read is measured
+  but not yet judged.
 
 ### 2.2 — Availability `[ ]`
 **Goal:** a write survives a node loss.
@@ -1399,10 +1409,13 @@ up to an adjuster or auditor.
     a *create* is p95 **18.7 s**, almost all of it `nextTicketSeq` reading every
     reference in the tenant to find the highest; and the inbox's **whole-worklist
     read did not return at all** — `listTickets` loads every ticket with its
-    thread, which at a million rows the engine refuses to hand to JavaScript. So
-    the milestone is not met, and the two changes it asks for are named: page (or
-    filter) the worklist at the database, and hold the reference mark in a row
-    rather than deriving it from a million refs.
+    thread, which at    a million rows the engine refuses to hand to JavaScript. So
+    the milestone is not met by that run, and the two changes it asks for are
+    named: page (or filter) the worklist at the database, and hold the reference
+    mark in a row rather than deriving it from a million refs. **Both have since
+    landed** — see §2.1 — and the re-run at 1M has detail 28.2 ms, create 357 ms
+    and reply 204.8 ms met, with the paged inbox read measured but not yet
+    judged (five samples).
   - `[x]` **Concurrent writes hold up** — the rehearsal's first round found that
     they did not: under eight concurrent writers the audit append lost
     `@@unique([tenantId, seq])` *after* its row was written, and the reference lost

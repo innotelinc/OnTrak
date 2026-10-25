@@ -18,15 +18,28 @@
  */
 
 import { buildInboxView, inboxFilterQuery, parseInboxFilter, type InboxSearchParams } from "../lib/inbox-view";
-import type { InboxFilter, InboxSlaFlags } from "../lib/inbox-rules";
+import type { InboxCounts, InboxFilter, InboxSlaFlags } from "../lib/inbox-rules";
 import { TICKET_STATUSES } from "../lib/ticket-rules";
 import type { TicketRecord } from "../lib/ticket-service";
 import type { AssigneeOption } from "../lib/assignee-rules";
 import { TicketPriorityBadge, TicketStatusBadge, TicketTypeBadge } from "./TicketBadges";
 
 export interface AgentInboxProps {
-  /** Every ticket in the tenant; the component applies the filter. */
-  all: TicketRecord[];
+  /** The page of the worklist the database returned, already ordered. */
+  tickets?: TicketRecord[];
+  /** The desk's counts, computed as aggregates over the same scope. */
+  counts?: InboxCounts;
+  /** How many rows the filter matches in total, for paging. */
+  total?: number;
+  /** The 1-based page number and page size this slice came from. */
+  page?: number;
+  perPage?: number;
+  /**
+   * A whole in-memory worklist, for a caller that has one. When `tickets` is not
+   * supplied the component applies the filter itself — the same pure renderer it
+   * has always been — so a test or a small embedded list needs no database.
+   */
+  all?: TicketRecord[];
   /** The active filter. When omitted it is parsed from `params`. */
   filter?: InboxFilter;
   params?: InboxSearchParams;
@@ -45,9 +58,10 @@ export interface AgentInboxProps {
   assignees?: AssigneeOption[];
 }
 
-function inboxHref(basePath: string, filter: InboxFilter, ticketId?: string): string {
+function inboxHref(basePath: string, filter: InboxFilter, ticketId?: string, page?: number): string {
   const params = new URLSearchParams(inboxFilterQuery(filter));
   if (ticketId) params.set("ticket", ticketId);
+  if (page !== undefined && page > 1) params.set("page", String(page));
   const qs = params.toString();
   return qs ? `${basePath}?${qs}` : basePath;
 }
@@ -194,19 +208,16 @@ function TicketRow({
   );
 }
 
-export function AgentInbox({
-  all,
-  filter,
-  params,
-  basePath = "/inbox",
-  selectedId = null,
-  sla,
-  bulk,
-  assignees,
-}: AgentInboxProps) {
+export function AgentInbox(props: AgentInboxProps) {
+  const { filter, params, basePath = "/inbox", selectedId = null, sla, bulk, assignees, all } = props;
   const active = filter ?? parseInboxFilter(params);
-  const view = buildInboxView(all, active, sla);
-  const counts = view.counts;
+  const view = props.tickets === undefined ? buildInboxView(all ?? [], active, sla) : null;
+  const tickets = props.tickets ?? view!.tickets;
+  const counts = props.counts ?? view!.counts;
+  const total = props.total ?? tickets.length;
+  const page = props.page ?? 1;
+  const perPage = props.perPage ?? Math.max(1, tickets.length);
+  const pages = Math.max(1, Math.ceil(total / perPage));
   const activeKey = active.assigneeId === "unassigned" ? "unassigned" : (active.status ?? "open") === "all" ? "all" : "open";
 
   const tabs = [
@@ -218,7 +229,7 @@ export function AgentInbox({
   const selectable = bulk !== undefined;
   const columns = selectable ? 8 : 7;
 
-  const rows = view.tickets.map((ticket) => (
+  const rows = tickets.map((ticket) => (
     <TicketRow
       key={ticket.id}
       ticket={ticket}
@@ -249,7 +260,7 @@ export function AgentInbox({
           </tr>
         </thead>
         <tbody>
-          {view.tickets.length === 0 ? (
+          {tickets.length === 0 ? (
             <tr>
               <td colSpan={columns} className="py-8 text-center text-sm text-ink-faint">
                 Nothing matches this view. Try &ldquo;All&rdquo;, or clear the search.
@@ -352,6 +363,33 @@ export function AgentInbox({
       ) : (
         <div className="card-surface overflow-hidden rounded-xl2">{table}</div>
       )}
+
+      {/* Paging is part of the view, not an afterthought: a worklist the desk
+          cannot walk is a worklist that stops at fifty. The filter travels with
+          the page, so "next" never quietly widens the view. */}
+      {total > perPage ? (
+        <nav className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink-faint" aria-label="Worklist pages">
+          <span>
+            Showing {(page - 1) * perPage + (tickets.length === 0 ? 0 : 1)}–
+            {(page - 1) * perPage + tickets.length} of {total.toLocaleString()}
+          </span>
+          <span className="flex items-center gap-2">
+            {page > 1 ? (
+              <a href={inboxHref(basePath, active, undefined, page - 1)} className="ot-btn px-3 py-1 text-xs" rel="prev">
+                Previous
+              </a>
+            ) : null}
+            <span className="tabular-nums">
+              page {page} of {pages}
+            </span>
+            {page < pages ? (
+              <a href={inboxHref(basePath, active, undefined, page + 1)} className="ot-btn px-3 py-1 text-xs" rel="next">
+                Next
+              </a>
+            ) : null}
+          </span>
+        </nav>
+      ) : null}
     </section>
   );
 }

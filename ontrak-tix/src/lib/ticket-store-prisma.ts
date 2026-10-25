@@ -30,11 +30,95 @@ import {
 } from "./audit-chain";
 import { coercePauses, pausesToJson, type SlaPause } from "./sla-rules";
 import { FIELD_KEY_PATTERN } from "./form-rules";
-import { refSequence, type MessageKind, type TicketPriority, type TicketStatus, type TicketType } from "./ticket-rules";
-import type { TicketMessage, TicketRecord, TicketStore } from "./ticket-service";
+import {
+  TICKET_STATUSES,
+  isOpen,
+  priorityRank,
+  refSequence,
+  type MessageKind,
+  type TicketPriority,
+  type TicketStatus,
+  type TicketType,
+} from "./ticket-rules";
+import type {
+  InboxCountSnapshot,
+  InboxQuery,
+  InboxTicketPage,
+  SlaTicketRow,
+  TicketMessage,
+  TicketRecord,
+  TicketStore,
+} from "./ticket-service";
 
 /** SHA-256 hex digest — the default hash for every Innotel Labs audit chain. */
 export const sha256Hex: HashFn = (input) => createHash("sha256").update(input).digest("hex");
+
+/* -------------------------------------------------------------------------- */
+/*  Inbox query helpers                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** The open statuses, in the order the inbox treats them. */
+function openStatuses(): TicketStatus[] {
+  return TICKET_STATUSES.filter((status) => isOpen(status));
+}
+
+function closedStatuses(): TicketStatus[] {
+  return TICKET_STATUSES.filter((status) => !isOpen(status));
+}
+
+/** The statuses a filter is about; `all` is the caller's two-partition job. */
+function statusesFor(filter: InboxQuery["filter"]): TicketStatus[] {
+  if (filter.status === undefined || filter.status === "open") return openStatuses();
+  if (filter.status === "all") return [...openStatuses(), ...closedStatuses()];
+  return [filter.status];
+}
+
+/**
+ * The client scope as a `WHERE`: the named clients plus the work that names none,
+ * matching `canSeeClient`. `null` means the whole desk and adds nothing.
+ */
+function clientWhere(clientIds: readonly string[]): Record<string, unknown> {
+  return { OR: [{ clientId: null }, { clientId: { in: [...clientIds] } }] };
+}
+
+function inboxWhere(
+  tenantId: string,
+  filter: InboxQuery["filter"],
+  clientIds: readonly string[] | null,
+  statuses: readonly TicketStatus[]
+): Record<string, unknown> {
+  const where: Record<string, unknown> = { tenantId, status: { in: [...statuses] } };
+  const and: Record<string, unknown>[] = [];
+  if (clientIds !== null) and.push(clientWhere(clientIds));
+
+  if (filter.assigneeId === "unassigned") where.assigneeId = null;
+  else if (filter.assigneeId) where.assigneeId = filter.assigneeId;
+  if (filter.queueId) where.queueId = filter.queueId;
+  if (filter.priority) where.priority = filter.priority;
+
+  const search = filter.search?.trim();
+  if (search) {
+    and.push({
+      OR: [
+        { ref: { contains: search, mode: "insensitive" } },
+        { subject: { contains: search, mode: "insensitive" } },
+      ],
+    });
+  }
+  if (and.length > 0) where.AND = and;
+  return where;
+}
+
+/** The inbox order over database rows: open first, urgent first, oldest-touched first. */
+function compareInboxRows(a: TicketRow, b: TicketRow): number {
+  const openDelta = Number(isOpen(b.status)) - Number(isOpen(a.status));
+  if (openDelta !== 0) return openDelta;
+  const priorityDelta = priorityRank(b.priority) - priorityRank(a.priority);
+  if (priorityDelta !== 0) return priorityDelta;
+  const updatedDelta = a.updatedAt.getTime() - b.updatedAt.getTime();
+  if (updatedDelta !== 0) return updatedDelta;
+  return a.id.localeCompare(b.id);
+}
 
 /* -------------------------------------------------------------------------- */
 /*  Row shapes                                                                */
@@ -283,7 +367,8 @@ export function toAuditRecord(row: AuditEventRow): AuditRecord {
  */
 export interface TicketPrismaClient {
   ticket: {
-    count(args: { where: { tenantId: string } }): Promise<number>;
+    count(args: unknown): Promise<number>;
+    groupBy(args: unknown): Promise<Array<{ status: TicketStatus; _count: { _all: number } }>>;
     findFirst(args: unknown): Promise<TicketRow | null>;
     findMany(args: unknown): Promise<TicketRow[]>;
     create(args: { data: unknown }): Promise<unknown>;
@@ -400,6 +485,149 @@ export class PrismaTicketStore implements TicketStore {
     const hasMore = rows.length > options.limit;
     const page = hasMore ? rows.slice(0, options.limit) : rows;
     return { tickets: page.map(toTicketRecord), nextCursor: hasMore ? page[page.length - 1].id : null };
+  }
+
+  /**
+   * One page of the agent inbox, filtered and ordered by Postgres.
+   *
+   * The old read loaded every ticket *with its thread* and filtered in
+   * JavaScript — fine at a hundred rows, and at a million it simply never came
+   * back. Three things bound it now: the filter is a `WHERE`, the order is an
+   * `ORDER BY`, and the row count is `limit`.
+   *
+   * “Open first” is not an enum order to lean on — `NEW` would otherwise sort
+   * above an urgent `PENDING` — so `all` is read as two partitions, open then
+   * closed, and the slice is taken across them in that order. Within a partition
+   * the statuses are read separately and merged in memory: each read then uses
+   * `[tenantId, status, priority, updatedAt]` to hand back a sorted prefix
+   * instead of sorting half the tenant.
+   */
+  async listInboxPage(tenantId: string, query: InboxQuery): Promise<InboxTicketPage> {
+    const groups: TicketStatus[][] = [];
+    if (query.filter.status === "all") groups.push(openStatuses(), closedStatuses());
+    else groups.push(statusesFor(query.filter));
+
+    let offset = Math.max(0, query.offset);
+    let take = Math.max(0, query.limit);
+    let total = 0;
+    const picked: TicketRow[] = [];
+
+    for (const statuses of groups) {
+      const where = inboxWhere(tenantId, query.filter, query.clientIds, statuses);
+      const count = await this.db.ticket.count({ where });
+      total += count;
+      if (take === 0 || offset >= count) {
+        offset = Math.max(0, offset - count);
+        continue;
+      }
+
+      const prefixes = await Promise.all(
+        statuses.map((status) =>
+          this.db.ticket.findMany({
+            where: { ...where, status },
+            // Matches `Ticket_tenantId_status_priority_updatedAt_idx` exactly; no
+            // id tiebreak here, because adding one would force a sort for a tie
+            // the screen cannot see.
+            orderBy: [{ priority: "desc" }, { updatedAt: "asc" }],
+            take: offset + take,
+            include: { messages: { orderBy: { createdAt: "asc" } } },
+          })
+        )
+      );
+      const merged = prefixes.flat().sort(compareInboxRows);
+      const slice = merged.slice(offset, offset + take);
+      picked.push(...slice);
+      take -= slice.length;
+      offset = 0;
+    }
+
+    return { tickets: picked.map(toTicketRecord), total };
+  }
+
+  /** The header's numbers, as aggregates over the scope. */
+  async countInbox(
+    tenantId: string,
+    options: { clientIds: readonly string[] | null }
+  ): Promise<InboxCountSnapshot> {
+    const base: Record<string, unknown> = { tenantId, ...(options.clientIds === null ? {} : clientWhere(options.clientIds)) };
+    const open = openStatuses();
+    const [grouped, unassigned, urgent] = await Promise.all([
+      this.db.ticket.groupBy({ by: ["status"], where: base, _count: { _all: true } }),
+      this.db.ticket.count({ where: { ...base, status: { in: open }, assigneeId: null } }),
+      this.db.ticket.count({ where: { ...base, status: { in: open }, priority: "URGENT" } }),
+    ]);
+
+    const byStatus: Record<TicketStatus, number> = { NEW: 0, OPEN: 0, PENDING: 0, RESOLVED: 0, CLOSED: 0 };
+    for (const row of grouped) {
+      if (row.status in byStatus) byStatus[row.status] = row._count?._all ?? 0;
+    }
+    return {
+      byStatus,
+      open: open.reduce((sum, status) => sum + byStatus[status], 0),
+      unassigned,
+      urgent,
+    };
+  }
+
+  /**
+   * Open work that carries an SLA policy — the rows an SLA count or tab is about.
+   * No thread, no description: the clock reads eleven columns.
+   */
+  async listSlaTickets(
+    tenantId: string,
+    options: { clientIds: readonly string[] | null }
+  ): Promise<SlaTicketRow[]> {
+    const rows = await this.db.ticket.findMany({
+      where: {
+        tenantId,
+        status: { in: openStatuses() },
+        slaPolicyId: { not: null },
+        ...(options.clientIds === null ? {} : clientWhere(options.clientIds)),
+      },
+      select: {
+        id: true,
+        ref: true,
+        subject: true,
+        status: true,
+        priority: true,
+        assigneeId: true,
+        clientId: true,
+        queueId: true,
+        createdAt: true,
+        updatedAt: true,
+        firstResponseAt: true,
+        resolvedAt: true,
+        slaPauses: true,
+      },
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      ref: row.ref,
+      subject: row.subject,
+      status: row.status,
+      priority: row.priority,
+      assigneeId: row.assigneeId,
+      clientId: row.clientId ?? null,
+      queueId: row.queueId,
+      createdAt: toIso(row.createdAt),
+      updatedAt: toIso(row.updatedAt),
+      firstResponseAt: toIsoOrNull(row.firstResponseAt),
+      resolvedAt: toIsoOrNull(row.resolvedAt),
+      pauses: coercePauses(row.slaPauses),
+    }));
+  }
+
+  async findTickets(tenantId: string, ticketIds: readonly string[]): Promise<TicketRecord[]> {
+    if (ticketIds.length === 0) return [];
+    const rows = await this.db.ticket.findMany({
+      where: { tenantId, id: { in: [...ticketIds] } },
+      include: { messages: { orderBy: { createdAt: "asc" } } },
+    });
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    return ticketIds
+      .map((id) => byId.get(id))
+      .filter((row): row is TicketRow => row !== undefined)
+      .map(toTicketRecord);
   }
 
   async findTicket(tenantId: string, ticketId: string): Promise<TicketRecord | null> {
