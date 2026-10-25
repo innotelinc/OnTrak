@@ -72,16 +72,19 @@ approvals, snapshots, propose-then-commit, repository-aware workspaces, the
 terminal client, remote workspaces, BYO projects, sharing, tenancy and the
 account ceiling.
 
-### 2.1 — CLI parity `[ ]`
+### 2.1 — CLI parity `[x]`
 **Goal:** the terminal is not second-class.
 
 - `[x]` Propose-then-commit from the CLI: `genie changes` reads the pending set,
   `genie apply` commits it, `genie discard` drops it without writing a byte.
 - `[x]` Commands over the sharing API: `genie shares`, `genie share <chat>
   <email>` (a row number from `genie sessions` works) and `genie unshare <id>`.
-- `[ ]` Web research as an agent tool (`search`/`fetch`), behind the same gate.
-  The server tool set is the remaining half of 2.1; the terminal already has the
-  review and sharing controls.
+- `[x]` Web research as an agent tool (`web_search`/`web_fetch`), behind the same
+  gate. Fetch is SSRF-aware (every resolved address is checked, redirects are
+  checked per hop, the body is capped) and search speaks Exa when `EXA_API_KEY`
+  is set. Both always ask in `risky` and `all`, because egress is the argument a
+  hostile page can steer. The terminal drives them through the same approval
+  queue it already uses for commands (`genie pending`, `approve`, `deny`).
 
 ### 2.2 — Per-account change sets `[ ]`
 
@@ -414,14 +417,15 @@ did not do.
 - `[ ]` **Propose-then-commit.** The live diff exists and the review-after-the-fact
 is not it; a queued change set a reviewer approves before it lands is still open
 (v0.4's item, and the place a terminal client pays off most).
-- `[ ]` **Web research tools.** `search`/`fetch` over the network are still the
-sandbox's business, not the agent's tool set.
+- `[x]` **Web research tools.** `web_fetch` reads a public page as text behind
+an address policy and a 2 MB cap; `web_search` returns titles, URLs and snippets
+from Exa. Both are approval-gated, and both are available to the terminal because
+they are server-side tools — no second implementation.
 
 **Open, plainly:** the CLI covers the console's core and the housekeeping around
-it. What it does not yet have is the web tool set: `search` and `fetch` are still
-the sandbox's business rather than the agent's. The propose-then-commit review and
-the sharing commands landed in 2.1 (`genie changes`, `apply`, `discard`, `shares`,
-`share`, `unshare`).
+it, including the web tool set now. What remains in this milestone's neighbourhood
+is per-account change sets (2.2), not another surface: `web_search` still needs a
+provider key, and a deployment without one gets `web_fetch` only.
 
 ### v0.6 — Remote workspaces `[x]`
 

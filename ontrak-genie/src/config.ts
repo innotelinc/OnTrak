@@ -394,6 +394,15 @@ export const config = {
   webToken: str("WEB_TOKEN", ""),
 
   /**
+   * The search provider behind `web_search` (2.1). Empty hides the tool: a tool
+   * that can only ever answer "not configured" is worse than one that is not
+   * offered. `EXA_API_URL` exists so a test or a proxy can point at a different
+   * endpoint without a code change.
+   */
+  webSearchKey: str("EXA_API_KEY", ""),
+  webSearchUrl: str("EXA_API_URL", "https://api.exa.ai/search"),
+
+  /**
    * The git host repository-aware workspaces clone from, and the token used to
    * do it (v0.4).
    *

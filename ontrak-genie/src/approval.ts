@@ -82,6 +82,15 @@ export function approvalLogPath(): string {
  * "risky" asks for every command, and for writes big enough to matter.
  * "all"   asks for anything that changes or executes.
  */
+/**
+ * Tools that make this process dial somewhere the workspace does not own.
+ *
+ * Network egress is not a file change, so the diff-size rule below would never
+ * ask about it — and a URL is exactly the argument a hostile page can talk a
+ * model into. These ask in `risky` as well as `all`.
+ */
+const NETWORK_TOOLS = new Set(["web_search", "web_fetch"]);
+
 export function needsApproval(
   mode: ApprovalMode,
   name: string,
@@ -93,8 +102,10 @@ export function needsApproval(
   if (preview === null && name !== "run_command") return false;
   if (mode === "all") return true;
 
-  // "risky": every command, plus overwrites big enough to be worth a look.
+  // "risky": every command, every outbound request, plus overwrites big enough
+  // to be worth a look.
   if (name === "run_command") return true;
+  if (NETWORK_TOOLS.has(name)) return true;
   const diff = preview?.diff;
   if (!diff) return false;
   return diff.added + diff.removed > maxLines;

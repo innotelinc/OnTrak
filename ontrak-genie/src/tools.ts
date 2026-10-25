@@ -13,6 +13,7 @@ import { buildFileDiff, type FileDiff } from "./diff.js";
 import { stageChange } from "./proposals.js";
 import { workspaceRoot } from "./scope.js";
 import { backendLabel, effectiveTimeoutMs, runShellCommand } from "./shell.js";
+import { WEB_MAX_BYTES, fetchPage, searchEnabled, searchWeb } from "./web.js";
 import { saveSnapshot } from "./snapshots.js";
 import {
   isIgnoredDir,
@@ -800,6 +801,60 @@ const recallMemoryTool: ToolDefinition = {
   },
 };
 
+// --- web research -----------------------------------------------------------
+
+const webSearchTool: ToolDefinition = {
+  name: "web_search",
+  description:
+    "Search the web for current information, docs, error messages or a library you do not know. Returns titles, URLs and snippets. Follow up with web_fetch on a result you need in full. The request leaves this host, so the approval gate asks first.",
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "What to look for, in the words a person would use." },
+      limit: { type: "number", description: "How many results to return. Defaults to 8, at most 10." },
+    },
+    required: ["query"],
+  },
+  async inspect(args) {
+    return { summary: `Search the web for “${argString(args, "query")}”` };
+  },
+  async run(args) {
+    const query = argString(args, "query");
+    const limit = Math.max(1, Math.min(10, argNumber(args, "limit") ?? 8));
+    const results = await searchWeb(query, limit);
+    if (results.length === 0) return { ok: true, content: `No results for “${query}”.` };
+    const text = results
+      .map((result, index) => `${index + 1}. ${result.title}\n   ${result.url}\n   ${result.snippet}`)
+      .join("\n\n");
+    return { ok: true, content: clamp(text) };
+  },
+};
+
+const webFetchTool: ToolDefinition = {
+  name: "web_fetch",
+  description:
+    "Read one public web page as text. Scripts, styles and markup are stripped and the body is capped, so a long page or a binary is reported rather than dumped. Only http(s) on public addresses is reachable — loopback, private and link-local addresses are refused. The request leaves this host, so the approval gate asks first.",
+  parameters: {
+    type: "object",
+    properties: {
+      url: { type: "string", description: "The http(s) URL to read." },
+    },
+    required: ["url"],
+  },
+  async inspect(args) {
+    return { summary: `Fetch ${argString(args, "url")}` };
+  },
+  async run(args) {
+    const url = argString(args, "url");
+    const page = await fetchPage(url);
+    const note = page.truncated ? `\n\n... [page truncated at ${Math.round(WEB_MAX_BYTES / 1024)} KB]` : "";
+    return {
+      ok: true,
+      content: clamp(`URL: ${page.url}\nContent-Type: ${page.contentType || "unknown"}\n\n${page.text}${note}`),
+    };
+  },
+};
+
 // --- registry ---------------------------------------------------------------
 
 export const tools: ToolDefinition[] = [
@@ -819,6 +874,8 @@ export const tools: ToolDefinition[] = [
   recallMemoryTool,
   listSkillsTool,
   useSkillTool,
+  webFetchTool,
+  webSearchTool,
 ];
 
 /**
@@ -832,8 +889,13 @@ export const tools: ToolDefinition[] = [
 export function allTools(): ToolDefinition[] {
   // A tool whose service is not configured is not offered: asking the model to
   // choose between two memories, one of which is always empty, is worse than
-  // not mentioning the second at all.
-  const own = claudeMemEnabled() ? tools : tools.filter((tool) => tool.name !== "recall_memory");
+  // not mentioning the second at all. Search is the same argument — without a
+  // provider it can only fail — while `web_fetch` needs no key.
+  const own = tools.filter(
+    (tool) =>
+      (tool.name !== "recall_memory" || claudeMemEnabled()) &&
+      (tool.name !== "web_search" || searchEnabled()),
+  );
   return [...own, ...mcpToolSnapshot()];
 }
 

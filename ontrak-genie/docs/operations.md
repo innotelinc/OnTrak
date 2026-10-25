@@ -753,11 +753,14 @@ AGENT_APPROVAL_TIMEOUT_MS=300000
 | Mode | Asks before |
 | ---- | ----------- |
 | `off` *(code default)* | nothing — right for scripts driving the API directly |
-| `risky` | every `run_command`, plus writes that change more than `AGENT_APPROVAL_MAX_LINES` lines |
+| `risky` | every `run_command`, every outbound web request (`web_search`, `web_fetch`), plus writes that change more than `AGENT_APPROVAL_MAX_LINES` lines |
 | `all` | every tool that changes or executes anything |
 
 Reading tools (`read_file`, `list_dir`, `search_code`) never interrupt, in any
-mode. The prompt is computed by `previewTool` **without touching the workspace**,
+mode. The two web tools are the exception to "reads are free": a URL is exactly
+the argument a hostile page can talk a model into, so `risky` asks before either
+one dials. `off` still means off — a script driving the API directly is the
+operator's choice, not a prompt nobody will answer. The prompt is computed by `previewTool` **without touching the workspace**,
 and `run` recomputes the same plan when it executes, so what you approve and what
 runs cannot drift apart. The browser shows a card with the summary and, for a
 write, the full diff; **Approve** runs it, **Deny** hands the model a refusal it is
@@ -1780,6 +1783,8 @@ All optional — see `.env.example`.
 | `AGENT_REQUEST_TIMEOUT_MS`                  | `300000`                 | Per-model-request timeout                |
 | `AGENT_STREAM`                              | `true`                   | Set `false` if a provider mishandles SSE |
 | `AGENT_TOOL_RESULT_LIMIT`                   | `60000`                  | Cap on a single tool result              |
+| `EXA_API_KEY`                               | *(empty)*                | Enables `web_search`; without it the tool is not offered. `web_fetch` needs no key — see *Agent tools* |
+| `EXA_API_URL`                               | `https://api.exa.ai/search` | The search endpoint, for a proxy or a test |
 | `PREVIEW_ENABLED`                           | `false`                  | Serve temporary preview addresses *in this process* — see *Previews*. Leave `false` on the console when `GENIE_HOSTING_URL` is set |
 | `GENIE_HOSTING_URL`                         | *(empty)*                | Origin of the preview hosting server. Set, this process becomes its client and starts no preview processes itself |
 | `GENIE_HOSTING_TOKEN`                       | *(empty)*                | Bearer presented to that server, matching its `WEB_TOKEN` |
@@ -1825,6 +1830,20 @@ All optional — see `.env.example`.
 | `edit_file`   | Exact-substring replace; refuses missing or ambiguous matches    |
 | `search_code` | Regex content search; uses `ripgrep` with a Node fallback        |
 | `run_command` | Shell command in the workspace, with the guard above             |
+| `web_fetch`   | Read one public page as text; http(s) only, private addresses refused, body capped at 2 MB |
+| `web_search`  | Search via Exa when `EXA_API_KEY` is set; not offered otherwise    |
+
+**Web research.** `web_fetch` resolves the host and checks **every** address it
+answers with against loopback, RFC 1918, link-local, carrier-grade NAT,
+multicast and the documentation ranges, then follows redirects by hand so each
+hop is checked again. A URL with embedded credentials, an internal name
+(`.local`, `.internal`, `.lan`, `.home.arpa`) or a non-HTTP scheme is refused
+before a request is made. The response is read with a 2 MB cap and only textual
+content types are decoded; a PDF or a zip is reported, not turned into noise.
+The limit is worth stating: Node's `fetch` resolves the name again, so this
+cannot defeat DNS rebinding on its own — which is why both tools sit behind the
+approval gate. `web_search` speaks Exa's JSON API; with no key the tool is not in
+the list rather than always failing.
 
 ## API
 
