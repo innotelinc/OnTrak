@@ -166,10 +166,15 @@ lan: ## Detect this host's LAN address and write the builder network into an env
 # provisioning already pointed at the provider over the network and the portal's
 # password sign-in already pointed at OnTrak Sync. See the header of
 # docker-compose.all.yml for what single sign-on additionally needs.
+#
+# Starting the stack and checking it are one command, not two: the deploy ends
+# with the capture smoke below, because a container that started is not a capture
+# that works and the difference is invisible in `docker compose ps`. There is no
+# flag to skip it — `scripts/deploy.sh` explains why.
 
 .PHONY: all-up
-all-up: workspace lan ## Build and start all six products together (:3400, :3300, :3000, :3001, :8787, :8420/8421)
-	docker compose -f docker-compose.all.yml up -d --build
+all-up: workspace lan ## Deploy all six products together, ending on a real capture (:3400, :3300, :3000, :3001, :8787, :8420/8421)
+	@scripts/deploy.sh
 
 # The same stack with each database published on loopback *and* on this
 # deployment's LAN address — the two callers a database has. It is a second file
@@ -177,8 +182,8 @@ all-up: workspace lan ## Build and start all six products together (:3400, :3300
 # overlap: the family stack defaults to the wildcard, and a wildcard beside a
 # named address is exactly that. See docker-compose.lan-db.yml.
 .PHONY: all-up-lan
-all-up-lan: workspace lan ## Start the family stack with each database on loopback and this deployment's LAN address
-	docker compose -f docker-compose.all.yml -f docker-compose.lan-db.yml up -d --build
+all-up-lan: workspace lan ## Deploy the family stack with each database on loopback and this deployment's LAN address
+	@scripts/deploy.sh --lan
 
 .PHONY: all-down
 all-down: ## Stop the family stack (keeps every volume)
@@ -193,12 +198,9 @@ all-logs: ## Tail the family stack's logs
 # container stayed healthy, so every capture call failed quietly. This runs one
 # real turn through Genie's agent, which has to choose and call the tool itself.
 .PHONY: capture-smoke
-capture-smoke: ## Run one capture through Genie's agent after a deploy (GENIE_SMOKE_ACTOR=…)
-	@test -n "$(GENIE_SMOKE_ACTOR)" || { echo "capture-smoke: set GENIE_SMOKE_ACTOR to an account on this deployment"; exit 2; }
-	docker compose -f docker-compose.all.yml exec -T \
-	  -e GENIE_SMOKE_ACTOR="$(GENIE_SMOKE_ACTOR)" \
-	  -e GENIE_SMOKE_MODEL="$(GENIE_SMOKE_MODEL)" \
-	  g0dm0d3 node --input-type=module - < scripts/genie-capture-smoke.mjs
+capture-smoke: ## Run one capture through Genie's agent (GENIE_SMOKE_ACTOR=…)
+	@GENIE_SMOKE_ACTOR="$(GENIE_SMOKE_ACTOR)" GENIE_SMOKE_MODEL="$(GENIE_SMOKE_MODEL)" \
+	  scripts/deploy.sh --smoke-only
 
 .PHONY: all-demo
 all-demo: ## Load the demo data for both apps in the family stack

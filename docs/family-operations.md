@@ -193,8 +193,20 @@ one checkout:
 ```bash
 cd /usr/src/ontrak && git pull
 cd ontrak-tix       && docker compose up -d --build     # one product
-cd ..               && docker compose -f docker-compose.all.yml up -d --build   # or all six
+cd ..               && GENIE_SMOKE_ACTOR=you@example.com make all-up   # or all six
 ```
+
+The family stack deploys through `scripts/deploy.sh`, which starts it and then runs
+one real capture through Genie's agent (`make capture-smoke`). The evidence is the
+point: containers that started say nothing about a capture that works, and the
+capture crash this stack had — REA's MCP server dying on its first
+`capture_process_scenario` — left the container reporting healthy throughout. A
+deploy therefore ends on the smoke, and there is no flag to skip it. The account
+named in `GENIE_SMOKE_ACTOR` has to be one this deployment can resolve, because
+Genie attributes the turn — and the gateway key that pays for it — to that account.
+If the stack is not listening yet the deploy retries the check for up to three
+minutes (`DEPLOY_SMOKE_WAIT_SECONDS`); a capture that runs and fails ends the
+deploy immediately with the tool's own error.
 
 Each product is still its own stack with its own project name, so a rebuild of one
 recreates that product's containers and keeps every volume — the family file is for
