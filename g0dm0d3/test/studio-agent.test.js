@@ -8,6 +8,7 @@ import test, { describe } from "node:test";
 import { applyEvent, eventOf } from "../src/studio-agent/genie-events.js";
 import { isAgentRequest, conversationOf, queryOf } from "../src/studio-agent/request.js";
 import { abortRuns, createRun, detach, finish, runFor } from "../src/studio-agent/runs.js";
+import { handleAgentChat, resetAgentState } from "../src/studio-agent/index.js";
 import { forgetSessions, rememberSession, sessionFor } from "../src/studio-agent/sessions.js";
 import { describeArgs, oneLine } from "../src/studio-agent/text.js";
 import { acquireRun } from "../src/studio-agent/turn.js";
@@ -22,7 +23,8 @@ import { acquireRun } from "../src/studio-agent/turn.js";
  *   * which of the page's calls is the person's turn, and which words they said;
  *   * what survives a restart, and what a corrupt file must not do;
  *   * when a run stops being paid for, and when a late frame is ignored;
- *   * how a stream of Genie events becomes markdown on the answer.
+ *   * how a stream of Genie events becomes markdown on the answer;
+ *   * what the page is actually sent — the OpenAI shapes, streamed and not.
  */
 
 const moduleUrl = (name) => new URL(`../src/studio-agent/${name}`, import.meta.url).href;
@@ -362,6 +364,36 @@ describe("runs", () => {
   });
 });
 
+/** A Genie that answers with `body`, split at the byte offsets given. */
+const respond = (body, { status = 200, splits = [] } = {}) => {
+  const bytes = new TextEncoder().encode(body);
+  const cuts = [0, ...splits, bytes.length];
+  const stream = new ReadableStream({
+    start(controller) {
+      for (let index = 1; index < cuts.length; index += 1) {
+        controller.enqueue(bytes.slice(cuts[index - 1], cuts[index]));
+      }
+      controller.close();
+    },
+  });
+  return new Response(stream, { status, headers: { "content-type": "text/event-stream" } });
+};
+
+/** Run `body` with `fetch` answering through `impl`, then put `fetch` back. */
+const withFetch = async (impl, body) => {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), options });
+    return impl(url, options);
+  };
+  try {
+    await body(calls);
+  } finally {
+    globalThis.fetch = original;
+  }
+};
+
 describe("turn", () => {
   const config = (overrides = {}) => ({
     genieUrl: "http://genie.test",
@@ -370,36 +402,6 @@ describe("turn", () => {
     agentFallbackModels: [],
     ...overrides,
   });
-
-  /** A Genie that answers with `body`, split at the byte offsets given. */
-  const respond = (body, { status = 200, splits = [] } = {}) => {
-    const encoder = new TextEncoder();
-    const bytes = encoder.encode(body);
-    const cuts = [0, ...splits, bytes.length];
-    const stream = new ReadableStream({
-      start(controller) {
-        for (let index = 1; index < cuts.length; index += 1) {
-          controller.enqueue(bytes.slice(cuts[index - 1], cuts[index]));
-        }
-        controller.close();
-      },
-    });
-    return new Response(stream, { status, headers: { "content-type": "text/event-stream" } });
-  };
-
-  const withFetch = async (impl, body) => {
-    const original = globalThis.fetch;
-    const calls = [];
-    globalThis.fetch = async (url, options) => {
-      calls.push({ url: String(url), options });
-      return impl(url, options);
-    };
-    try {
-      await body(calls);
-    } finally {
-      globalThis.fetch = original;
-    }
-  };
 
   test("a deployment with no GENIE_URL says so instead of calling out", async () => {
     await withFetch(
@@ -536,5 +538,151 @@ describe("turn", () => {
         assert.equal(calls.length, 2);
       },
     );
+  });
+});
+
+describe("handleAgentChat", () => {
+  const config = () => ({
+    genieUrl: "http://genie.test",
+    genieToken: "token",
+    agentModel: "",
+    agentFallbackModels: [],
+  });
+
+  /** A `res` that records what the handler wrote, in order. */
+  const recorder = () => {
+    const captured = { status: 0, headers: {}, body: "", ended: false };
+    const res = {
+      writableEnded: false,
+      writeHead(status, headers) {
+        captured.status = status;
+        Object.assign(captured.headers, headers ?? {});
+        return res;
+      },
+      write(chunk) {
+        captured.body += String(chunk);
+        return true;
+      },
+      end(chunk) {
+        if (chunk !== undefined) captured.body += String(chunk);
+        captured.ended = true;
+        res.writableEnded = true;
+        return res;
+      },
+      on() {
+        return res;
+      },
+    };
+    return { res, captured };
+  };
+
+  /** The payloads of an SSE body, with `[DONE]` kept as the marker it is. */
+  const framesOf = (body) =>
+    body
+      .split("\n\n")
+      .filter((frame) => frame.startsWith("data: "))
+      .map((frame) => frame.slice(6))
+      .map((data) => (data === "[DONE]" ? data : JSON.parse(data)));
+
+  test("a non-streaming call answers with one OpenAI completion", async () => {
+    const { res, captured } = recorder();
+    await withFetch(
+      () => respond('data: {"type":"text","text":"two files"}\n\ndata: [DONE]\n\n'),
+      async () => {
+        await handleAgentChat({
+          req: { headers: {} },
+          res,
+          config: config(),
+          email: "a@b",
+          body: {
+            messages: [{ role: "user", content: "what is in /tmp" }],
+            model: "auto/best-coding",
+          },
+          log: () => {},
+        });
+      },
+    );
+    const payload = JSON.parse(captured.body);
+    assert.equal(captured.status, 200);
+    assert.equal(captured.headers["content-type"], "application/json; charset=utf-8");
+    assert.equal(payload.object, "chat.completion");
+    assert.equal(payload.model, "auto/best-coding");
+    assert.equal(payload.choices[0].message.role, "assistant");
+    assert.equal(payload.choices[0].message.content, "two files");
+    assert.equal(payload.choices[0].finish_reason, "stop");
+    assert.deepEqual(payload.usage, { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+  });
+
+  test("a streaming call sends the deltas, a stop, and the terminator", async () => {
+    const { res, captured } = recorder();
+    await withFetch(
+      () => respond('data: {"type":"text","text":"two files"}\n\ndata: [DONE]\n\n'),
+      async () => {
+        await handleAgentChat({
+          req: { headers: {} },
+          res,
+          config: config(),
+          email: "a@b",
+          body: { messages: [{ role: "user", content: "what is in /tmp" }], stream: true },
+          log: () => {},
+        });
+      },
+    );
+    assert.equal(captured.status, 200);
+    assert.match(captured.headers["content-type"], /text\/event-stream/);
+    // A proxy that buffers this would deliver the answer in one lump at the end.
+    assert.equal(captured.headers["x-accel-buffering"], "no");
+    const frames = framesOf(captured.body);
+    assert.equal(frames[0].choices[0].delta.role, "assistant");
+    const content = frames
+      .filter((frame) => frame !== "[DONE]")
+      .map((frame) => frame.choices[0].delta.content ?? "")
+      .join("");
+    assert.equal(content, "two files");
+    const stop = frames.filter((frame) => frame !== "[DONE]").at(-1);
+    assert.equal(stop.choices[0].finish_reason, "stop");
+    assert.equal(frames.at(-1), "[DONE]");
+    assert.equal(captured.ended, true);
+  });
+
+  test("a turn that produced nothing is a 502, not an empty answer", async () => {
+    const { res, captured } = recorder();
+    await withFetch(
+      () => respond("data: [DONE]\n\n"),
+      async () => {
+        await handleAgentChat({
+          req: { headers: {} },
+          res,
+          config: config(),
+          email: "a@b",
+          body: { messages: [{ role: "user", content: "a question nobody answers" }] },
+          log: () => {},
+        });
+      },
+    );
+    assert.equal(captured.status, 502);
+    assert.equal(JSON.parse(captured.body).error.type, "agent_error");
+  });
+
+  test("a body with no user message never reaches Genie", async () => {
+    const { res, captured } = recorder();
+    await withFetch(
+      () => {
+        throw new Error("fetch must not be called");
+      },
+      async (calls) => {
+        await handleAgentChat({
+          req: { headers: {} },
+          res,
+          config: config(),
+          email: "a@b",
+          body: { messages: [{ role: "assistant", content: "an answer with no question" }] },
+          log: () => {},
+        });
+        assert.equal(calls.length, 0);
+      },
+    );
+    assert.equal(captured.status, 400);
+    assert.equal(JSON.parse(captured.body).error, "messages must contain a user message");
   });
 });
