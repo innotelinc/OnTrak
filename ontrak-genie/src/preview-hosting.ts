@@ -32,6 +32,7 @@ import path from "node:path";
 import type { Duplex } from "node:stream";
 
 import { config } from "./config.js";
+import { previewShell } from "./preview-shell.js";
 import { checkEntitlement, EntitlementError } from "./entitlements.js";
 
 /** A registered preview: an address, the port behind it, and how it is served. */
@@ -584,13 +585,23 @@ export async function createPreview(options: CreatePreviewOptions = {}): Promise
  * the spawn, and the spawn itself is synchronous, so `pid` is set by the time this
  * resolves.
  */
+/**
+ * The shell a preview command runs under.
+ *
+ * It was hard-coded to `bash -lc`, which is right for the Linux container and
+ * wrong on a Windows host: there may be no `bash` on PATH at all, the spawn then
+ * emits `error` and never listens, and every preview address times out. The
+ * command is already a single string, so `cmd.exe /d /s /c` runs the same text.
+ */
 async function startPreviewProcess(preview: Preview): Promise<void> {
   const logDir = path.join(config.dataDir, "previews");
   const logPath = path.join(logDir, `${preview.name}.log`);
   await fs.mkdir(logDir, { recursive: true });
   const handle = await fs.open(logPath, "a");
   try {
-    const child = spawn("bash", ["-lc", preview.command], {
+    const shell = previewShell(preview.command);
+    const child = spawn(shell.file, shell.args, {
+      shell: shell.shell,
       cwd: preview.cwd === "" ? config.workspace : preview.cwd,
       env: {
         ...process.env,

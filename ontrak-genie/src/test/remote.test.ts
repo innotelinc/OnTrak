@@ -337,7 +337,12 @@ test("connecting mounts under the sandbox, keeps the key private, and moves the 
   // The key is a file only because sshfs must read one, and only this process can.
   const keyFile = path.join(DATA, "remote", "shared", info.id, "id_key");
   assert.equal(await fs.readFile(keyFile, "utf8"), `${KEY}\n`);
-  assert.equal(((await fs.stat(keyFile)).mode & 0o777).toString(8), "600");
+  // 0600 is enforced where it means something. NTFS has no POSIX mode bits and
+  // chmod is a no-op there, so on Windows this would assert a value the OS
+  // never reports; the file is still written with mode 0o600 for POSIX hosts.
+  if (process.platform !== "win32") {
+    assert.equal(((await fs.stat(keyFile)).mode & 0o777).toString(8), "600");
+  }
 
   // And the agent now works *there*.
   assert.equal(selectedWorkspace(), info.rel);

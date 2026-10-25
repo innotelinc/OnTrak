@@ -163,7 +163,11 @@ test("run_command guard", async (t) => {
     const result = await runTool("run_command", JSON.stringify({ command: "pwd && echo hi" }));
     assert.equal(result.ok, true);
     assert.match(result.content, /hi/);
-    assert.match(result.content, new RegExp(sandbox.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    // A POSIX shell on Windows reports %TEMP% as /tmp, so the absolute path is
+    // not something a portable assertion can name. The directory's own name is:
+    // it is what proves the command ran in the workspace either way.
+    const leaf = path.basename(sandbox);
+    assert.ok(result.content.includes(leaf), `expected ${leaf} in the reported directory, got:\n${result.content}`);
   });
 
   await t.test("reports a failing command without throwing", async () => {

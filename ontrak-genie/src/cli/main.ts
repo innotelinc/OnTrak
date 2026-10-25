@@ -21,6 +21,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import { pathToFileURL } from "node:url";
 
 import {
   GenieClient,
@@ -1407,7 +1408,12 @@ function question(rl: readline.Interface, prompt: string): Promise<string> {
 }
 
 // Run when invoked as a program, not when imported by a test.
-if (process.argv[1] !== undefined && import.meta.url === `file://${path.resolve(process.argv[1])}`) {
+//
+// `file://` + a Windows path is `file://C:\...`, which never equals the
+// `file:///C:/...` that import.meta.url actually holds, so the hand-built
+// string silently skipped main() on Windows: the CLI exited 0 having done
+// nothing. pathToFileURL produces the canonical form on every platform.
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main()
     .then((code) => {
       process.exitCode = code;
