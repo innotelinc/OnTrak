@@ -11,22 +11,15 @@
 
 </div>
 
-> **OnTrak** is an **[Innotel Labs](INNOTEL-LABS.md) product** and the **TrainingOps** platform of the
-> [Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack):
-> one repository for the IT support operation. This app — **OnTrak IT Support
-> Training** — is an open source, browser-based training platform where students
-> fix deliberately broken machines and are graded from the resulting state,
-> while [**OnTrak Tix**](ontrak-tix/README.md) runs the real desk beside it, with
-> clients, SLAs, billing and insurance-grade incident evidence;
-> [**OnTrak Sentinel**](ontrak-sentinel/README.md) is the directory and the
-> intrusion console; [**OnTrak Sync**](ontrak-sync/README.md) keeps the
-> Network's packages and containers current and owns the family's local accounts;
-> [**OnTrak Genie**](ontrak-genie/README.md) provides AI-assisted coding workflows;
-> and [**OnTrak Portal**](ontrak-portal/README.md) is the front door: one sign-in,
-> then the products a role belongs in. **[OnTrak Lab](ontrak-lab/README.md)** provides
-> hands-on practice on real machines. Every product works on its own — it always
-> has — and they consume Cerulean for identity and trust and share one audit
-> chain; no virtual machines and no terminal servers are required for any of them.
+> **OnTrak** is the **TrainingOps** platform of the [Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack)
+> and an [Innotel Labs](INNOTEL-LABS.md) product: a browser-based IT support training range that
+> grades every submission from the machine state the student actually left behind, together with
+> the products that run the desk beside it — [Tix](ontrak-tix/README.md) (service desk),
+> [Sentinel](ontrak-sentinel/README.md) (directory and intrusion console), [Sync](ontrak-sync/README.md)
+> (package and container updates), [Genie](ontrak-genie/README.md) (AI coding), [Portal](ontrak-portal/README.md)
+> (one front door) and [Lab](ontrak-lab/README.md) (real disposable machines). It consumes Cerulean
+> for identity and trust, keeps training and support evidence on one audit chain, and every product
+> boots on its own with no hypervisor and no terminal server.
 
 **🌐 [Official GitHub Pages Landing →](https://innotelinc.github.io/OnTrak/)**
 
@@ -48,8 +41,8 @@ from the family stack `docker-compose.all.yml` starts.
 | Component | Status | Description |
 | --- | --- | --- |
 | **OnTrak IT Support Training** | 🟢 Active | Core training platform with graded simulations (Linux, Windows, Office) |
-| **OnTrak Tix** | 🟡 In Development | MSP-grade service desk with tickets, SLAs, billing, incident evidence |
-| **OnTrak Sentinel** | 🟡 In Development | IdP + IDS/IPS with OIDC/SAML, SCIM, and detection capabilities |
+| **OnTrak Tix** | 🟢 Active | MSP-grade service desk with tickets, SLAs, billing and incident evidence (2.0) |
+| **OnTrak Sentinel** | 🟢 Active | Directory and intrusion console: IdP + IDS/IPS with OIDC/SAML, SCIM and detection (2.0) |
 | **OnTrak Sync** | 🟢 Active | Network update monitoring and local account management |
 | **OnTrak Portal** | 🟢 Active | Unified front door for role-based product routing |
 | **OnTrak Genie** | 🟢 Active | AI coding agent with approval gates and workspace isolation |
