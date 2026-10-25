@@ -24,6 +24,7 @@ import { deriveTitle, saveSession, type Session } from "./store.js";
 import { lanAddress } from "./network.js";
 import { allTools, previewTool, runTool, toolSchemas, type ToolOutcome } from "./tools.js";
 import { primeMcpTools } from "./mcp-tools.js";
+import { primeGhidra } from "./ghidra.js";
 import { memoryContext, recordObservation, summarizeTurn } from "./claude-mem.js";
 
 /**
@@ -481,7 +482,7 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
   // were impossible. A server that does not answer costs the turn its tools and
   // nothing else. Memory is fetched alongside it, because both are network calls
   // the turn needs before its first request.
-  const [, history] = await Promise.all([primeMcpTools(), memoryContext()]);
+  const [history] = await Promise.all([memoryContext(), primeMcpTools(), primeGhidra()]);
   const schemas = toolSchemas();
   const toolNames = new Set(allTools().map((tool) => tool.name));
   let steps = 0;

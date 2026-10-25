@@ -1,9 +1,17 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import { changeSetSummary } from "./change-set.js";
 import { claudeMemEnabled, searchMemory } from "./claude-mem.js";
+import {
+  formatSummary,
+  ghidraInstall,
+  javaAvailable,
+  primeGhidra,
+  runGhidraAnalysis,
+} from "./ghidra.js";
 import { mcpToolSnapshot } from "./mcp-tools.js";
 import { config } from "./config.js";
 import { MEMORY_FILE, appendMemory, readMemory, remember } from "./memory.js";
@@ -800,6 +808,85 @@ const recallMemoryTool: ToolDefinition = {
   },
 };
 
+/**
+ * Ghidra is a JVM application, so it is driven out-of-process rather than
+ * embedded: the tool shells out to `analyzeHeadless`, which imports the binary,
+ * runs the bundled post-script and writes a summary this tool reads back.
+ *
+ * The binary is only ever read. Analysis happens in a temp project that is
+ * deleted afterwards; the summary is kept in the workspace so the operator can
+ * see exactly what the model saw.
+ */
+const ghidraAnalyzeTool: ToolDefinition = {
+  name: "ghidra_analyze",
+  description:
+    "Disassemble and analyse a binary (ELF, PE, Mach-O, firmware) with Ghidra headless analysis. " +
+    "Returns architecture, entry points, imports, exported symbols, a function sample and indicator strings. " +
+    "Read-only: the binary is never modified.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "Workspace-relative path to the binary to analyse" },
+      timeoutSeconds: {
+        type: "number",
+        description: "Per-file analysis budget in seconds (30-3600, default 600)",
+      },
+    },
+    required: ["path"],
+  },
+  async run(args) {
+    const rel = argString(args, "path");
+    const target = resolveInWorkspace(rel);
+
+    const stat = await fs.stat(target).catch(() => null);
+    if (!stat || !stat.isFile()) throw new ToolError(`not a file: ${rel}`);
+    if (stat.size === 0) throw new ToolError(`${rel} is empty`);
+    if (stat.size > 512 * 1024 * 1024) {
+      throw new ToolError(`${rel} is ${stat.size} bytes; the analysis limit is 512 MB`);
+    }
+
+    if (!ghidraInstall()) await primeGhidra();
+    const install = ghidraInstall();
+    if (!install) {
+      throw new ToolError(
+        "Ghidra is not installed on this host. Install Ghidra and point GHIDRA_HOME at the folder " +
+          "that contains support/analyzeHeadless (or support/analyzeHeadless.bat on Windows)."
+      );
+    }
+    if (!(await javaAvailable())) {
+      throw new ToolError(
+        "Ghidra needs a JVM. Install a JDK (17 or newer) and set JAVA_HOME, or put java on PATH."
+      );
+    }
+
+    const requested = Number(args.timeoutSeconds);
+    const timeoutSeconds = Number.isFinite(requested) ? Math.min(3600, Math.max(30, requested)) : 600;
+    const workDir = path.join(os.tmpdir(), `ontrak-genie-ghidra-${process.pid}-${Date.now()}`);
+
+    try {
+      const { summary } = await runGhidraAnalysis({
+        binaryPath: target,
+        install,
+        workDir,
+        timeoutSeconds,
+      });
+
+      const outDir = path.join(workspaceRoot(), ".genie", "ghidra");
+      await fs.mkdir(outDir, { recursive: true });
+      const safeName = path.basename(rel).replace(/[^\w.-]+/g, "-") || "binary";
+      const outPath = path.join(outDir, `${safeName}-${Date.now()}.json`);
+      await fs.writeFile(outPath, JSON.stringify(summary, null, 2), "utf8");
+
+      return {
+        ok: true,
+        content: `${formatSummary(summary, rel)}\n\nfull summary: ${toRel(outPath)}`,
+      };
+    } finally {
+      await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+    }
+  },
+};
+
 // --- registry ---------------------------------------------------------------
 
 export const tools: ToolDefinition[] = [
@@ -819,6 +906,7 @@ export const tools: ToolDefinition[] = [
   recallMemoryTool,
   listSkillsTool,
   useSkillTool,
+  ghidraAnalyzeTool,
 ];
 
 /**
@@ -833,7 +921,9 @@ export function allTools(): ToolDefinition[] {
   // A tool whose service is not configured is not offered: asking the model to
   // choose between two memories, one of which is always empty, is worse than
   // not mentioning the second at all.
-  const own = claudeMemEnabled() ? tools : tools.filter((tool) => tool.name !== "recall_memory");
+  const own = (claudeMemEnabled() ? tools : tools.filter((tool) => tool.name !== "recall_memory")).filter(
+    (tool) => tool.name !== "ghidra_analyze" || ghidraInstall() !== null
+  );
   return [...own, ...mcpToolSnapshot()];
 }
 
