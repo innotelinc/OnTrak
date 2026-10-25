@@ -5,6 +5,7 @@ import net from "node:net";
 import path from "node:path";
 
 import { config } from "./config.js";
+import { previewShell } from "./preview-shell.js";
 import { addressFor, lanAddress } from "./network.js";
 import { resolveInWorkspace } from "./workspace.js";
 import { workspaceRoot } from "./scope.js";
@@ -582,7 +583,9 @@ export async function startPreview(options: {
   );
   const wasQuiet = new Set(before.filter(([, answers]) => !answers).map(([candidate]) => candidate));
 
-  const child = spawn("bash", ["-lc", commandLine], {
+  const shell = previewShell(commandLine);
+  const child = spawn(shell.file, shell.args, {
+    shell: shell.shell,
     cwd: absCwd,
     env: {
       ...process.env,
