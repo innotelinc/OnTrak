@@ -53,7 +53,7 @@ import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
-from . import db, rollout, scanners
+from . import db, rollback, rollout, scanners, waves
 from .config import Host, Settings
 from .policy import Policy
 from .registry import docker_login as _docker_login, registry_of as _registry_of
@@ -457,6 +457,22 @@ def _docker_recreate(conn, host: Host, container: str, ref: str, settings: Setti
 
 
 # ── orchestration ────────────────────────────────────────────────────────────
+def _mark_applied(conn, row, run_id: int, detail: str) -> None:
+    """Record the verdict *and* the version pair this run replaced.
+
+    The two writes belong together: `findings` says what the package is now, and
+    `applied_packages` says what this run moved it from, which is the only thing a
+    rollback can act on. Writing the status without the pair is what would make a
+    later "undo" a guess.
+    """
+    db.set_status(conn, [row["id"]], "applied", detail)
+    db.record_applied(
+        conn, run_id=run_id, finding_id=row["id"], target_id=row["target_id"],
+        manager=row["manager"], package=row["package"],
+        from_version=row["current"], to_version=row["candidate"],
+    )
+
+
 def apply_findings(conn, settings: Settings, policy: Policy, *, finding_ids: list[int],
                    trigger: str = "manual") -> dict:
     """Apply the named findings (already approved, or approved by `auto` policy).
@@ -472,8 +488,8 @@ def apply_findings(conn, settings: Settings, policy: Policy, *, finding_ids: lis
     marks = ",".join("?" for _ in finding_ids)
     rows = conn.execute(
         f"""
-        SELECT f.id, f.manager, f.package, f.candidate, t.id AS target_id, t.host, t.kind,
-               t.name, t.ref
+        SELECT f.id, f.manager, f.package, f.current, f.candidate,
+               t.id AS target_id, t.host, t.kind, t.name, t.ref
           FROM findings f JOIN targets t ON t.id = f.target_id
          WHERE f.id IN ({marks}) AND f.status IN ('approved','pending')
          ORDER BY t.host, t.name, f.manager
@@ -481,128 +497,165 @@ def apply_findings(conn, settings: Settings, policy: Policy, *, finding_ids: lis
         finding_ids,
     ).fetchall()
 
-    run_id = db.start_run(conn, "apply", trigger)
-    db.log(conn, f"apply started ({trigger}) for {len(rows)} finding(s)", run_id=run_id)
-    _set_progress(run_id=run_id, phase="running", total=len(rows),
-                  ids=[row["id"] for row in rows], current=[], host="", target="",
-                  started_at=datetime.now(timezone.utc).isoformat())
-
     by_host = {h.name: h for h in settings.hosts}
     grouped: dict[tuple[str, str], dict[str, list]] = {}
     for row in rows:
         key = (row["host"], row["name"])
         grouped.setdefault(key, {}).setdefault(row["manager"], []).append(row)
 
+    # The plan is the order this run will touch machines in, computed before the run
+    # is opened so the log line and the progress total describe what will happen
+    # rather than counting findings a cap or a canary will never reach.
+    plan = waves.plan(grouped.keys(), policy)
+    attempted = set(plan.attempted)
+    planned = [row for row in rows if (row["host"], row["name"]) in attempted]
+
+    run_id = db.start_run(conn, "apply", trigger)
+    db.log(conn, f"apply started ({trigger}) for {len(rows)} finding(s)", run_id=run_id)
+    order = ", ".join(wave.label for wave in plan.waves) or "nothing"
+    db.log(conn, f"apply order: {order} (halt on failure: "
+                 f"{'yes' if policy.apply_halt_on_failure else 'no'})", run_id=run_id)
+    _set_progress(run_id=run_id, phase="running", total=len(planned),
+                  ids=[row["id"] for row in planned], current=[], host="", target="",
+                  started_at=datetime.now(timezone.utc).isoformat())
+
     totals = {"applied": 0, "failed": 0}
     messages: list[str] = []
+    if plan.note:
+        messages.append(plan.note)
     manual: list[str] = []
     # (container, registry) pairs already logged in during THIS run, so a stack with
     # several images from one registry logs in once rather than per image.
     logged_in: set[tuple[str, str]] = set()
 
-    for (host_name, target_name), managers in grouped.items():
-        host = by_host.get(host_name)
-        if host is None:
-            for bucket in managers.values():
-                for row in bucket:
-                    db.set_status(conn, [row["id"]], "failed", f"host {host_name} is not configured")
-                    totals["failed"] += 1
-            continue
-        container = None if target_name == host_name else target_name
-        # The whole target is announced before anything runs, because apt installs a
-        # target as one transaction: a per-package percentage inside it would be an
-        # animation rather than a measurement.
-        _set_progress(host=host_name, target=target_name,
-                      current=[{"id": row["id"], "package": row["package"], "manager": manager}
-                               for manager, bucket in managers.items() for row in bucket])
-        outcome = Outcome(ok=True)
-
-        if "apt" in managers:
-            rows_apt = managers["apt"]
-            packages = [r["package"] for r in rows_apt]
-            result = apply_apt(host, container, packages, settings)
-            # A command that never ran says nothing about any package, so it fails the
-            # group at once. A TIMEOUT is deliberately not in that branch: `apt-get
-            # update` on a slow mirror and an upgrade that is still unpacking look
-            # identical to `subprocess`, and the transcript ran far enough that only
-            # apt can report what happened — which is what `apt_still_pending` asks it
-            # below, on both paths. Blanket-failing on a timeout is how one slow host
-            # became 306 findings recorded as failed, on hosts whose upgrade had
-            # already landed.
-            if not result.ok and not result.stdout.strip() and not result.timed_out:
-                for row in rows_apt:
-                    db.set_status(conn, [row["id"]], "failed", result.message)
-                outcome.failed += len(rows_apt)
-                outcome.note(f"apt on {target_name}: {result.message}")
-            else:
-                still = apt_still_pending(host, container, packages, settings)
-                for row in rows_apt:
-                    if row["package"] in still:
-                        detail = result.message if not result.ok else "apt held it back after upgrade"
-                        db.set_status(conn, [row["id"]], "failed", detail)
-                        outcome.failed += 1
-                    else:
-                        detail = ("apt no longer lists it, though the transcript "
-                                  f"timed out after {settings.apt_timeout}s"
-                                  if result.timed_out else result.message[:300])
-                        db.set_status(conn, [row["id"]], "applied", detail)
-                        outcome.applied += 1
-                if still or result.timed_out:
-                    tail = (f" (the transcript timed out after {settings.apt_timeout}s; "
-                            "the verdict was re-read from apt)" if result.timed_out else "")
-                    outcome.note(f"apt on {target_name}: {len(packages) - len(still)} applied, "
-                                 f"{len(still)} held back{tail}")
-
-        if "snap" in managers:
-            rows_snap = managers["snap"]
-            result = apply_snap(host, container, [r["package"] for r in rows_snap], settings)
-            for row in rows_snap:
-                if result.ok:
-                    db.set_status(conn, [row["id"]], "applied", result.message[:300])
-                    outcome.applied += 1
-                else:
-                    db.set_status(conn, [row["id"]], "failed", result.message)
-                    outcome.failed += 1
-            if not result.ok:
-                outcome.note(f"snap on {target_name}: {result.message}")
-
-        if "docker" in managers:
-            # One image at a time, each with its own outcome. Docker findings are
-            # per-image rather than per-target-group, because a single unrecreateable
-            # container must not mark the other images on the same host as failed.
-            if container is None:
-                for row in managers["docker"]:
-                    db.set_status(conn, [row["id"]], "failed", "docker findings belong to a container")
-                    totals["failed"] += 1
+    halted: str | None = None
+    for wave in plan.waves:
+        failed_before = totals["failed"]
+        for host_name, target_name in wave.targets:
+            managers = grouped.get((host_name, target_name))
+            if not managers:
                 continue
-            for row in managers["docker"]:
-                image_outcome = Outcome(ok=True)
-                _docker_recreate(conn, host, container, row["package"], settings,
-                                 image_outcome, logged_in)
-                if image_outcome.applied:
-                    detail = (f"image now {row['candidate']}" if row["candidate"]
-                              else "image already current")
-                    db.set_status(conn, [row["id"]], "applied", detail)
-                    totals["applied"] += 1
-                else:
-                    # The reason a recreate produced nothing is usually the *refusal*,
-                    # and a refusal is recorded as needing a person rather than as a
-                    # note. Reading only `messages` here is how eleven findings came to
-                    # read "no container recreated" on the dashboard while the run log
-                    # held a paragraph naming the missing services.
-                    detail = (image_outcome.needs_manual[-1] if image_outcome.needs_manual
-                              else image_outcome.messages[-1] if image_outcome.messages
-                              else "no container recreated")
-                    db.set_status(conn, [row["id"]], "failed", detail)
-                    totals["failed"] += 1
-                messages.extend(image_outcome.messages)
-                manual.extend(image_outcome.needs_manual)
-            continue
+            host = by_host.get(host_name)
+            if host is None:
+                for bucket in managers.values():
+                    for row in bucket:
+                        db.set_status(conn, [row["id"]], "failed",
+                                      f"host {host_name} is not configured")
+                        totals["failed"] += 1
+                continue
+            container = None if target_name == host_name else target_name
+            # The whole target is announced before anything runs, because apt installs a
+            # target as one transaction: a per-package percentage inside it would be an
+            # animation rather than a measurement.
+            _set_progress(host=host_name, target=target_name,
+                          current=[{"id": row["id"], "package": row["package"], "manager": manager}
+                                   for manager, bucket in managers.items() for row in bucket])
+            outcome = Outcome(ok=True)
 
-        totals["applied"] += outcome.applied
-        totals["failed"] += outcome.failed
-        messages.extend(outcome.messages)
-        manual.extend(outcome.needs_manual)
+            if "apt" in managers:
+                rows_apt = managers["apt"]
+                packages = [r["package"] for r in rows_apt]
+                result = apply_apt(host, container, packages, settings)
+                # A command that never ran says nothing about any package, so it fails
+                # the group at once. A TIMEOUT is deliberately not in that branch:
+                # `apt-get update` on a slow mirror and an upgrade that is still
+                # unpacking look identical to `subprocess`, and the transcript ran far
+                # enough that only apt can report what happened — which is what
+                # `apt_still_pending` asks it below, on both paths. Blanket-failing on a
+                # timeout is how one slow host became 306 findings recorded as failed,
+                # on hosts whose upgrade had already landed.
+                if not result.ok and not result.stdout.strip() and not result.timed_out:
+                    for row in rows_apt:
+                        db.set_status(conn, [row["id"]], "failed", result.message)
+                    outcome.failed += len(rows_apt)
+                    outcome.note(f"apt on {target_name}: {result.message}")
+                else:
+                    still = apt_still_pending(host, container, packages, settings)
+                    for row in rows_apt:
+                        if row["package"] in still:
+                            detail = (result.message if not result.ok
+                                      else "apt held it back after upgrade")
+                            db.set_status(conn, [row["id"]], "failed", detail)
+                            outcome.failed += 1
+                        else:
+                            detail = ("apt no longer lists it, though the transcript "
+                                      f"timed out after {settings.apt_timeout}s"
+                                      if result.timed_out else result.message[:300])
+                            _mark_applied(conn, row, run_id, detail)
+                            outcome.applied += 1
+                    if still or result.timed_out:
+                        tail = (f" (the transcript timed out after {settings.apt_timeout}s; "
+                                "the verdict was re-read from apt)" if result.timed_out else "")
+                        outcome.note(f"apt on {target_name}: "
+                                     f"{len(packages) - len(still)} applied, "
+                                     f"{len(still)} held back{tail}")
+
+            if "snap" in managers:
+                rows_snap = managers["snap"]
+                result = apply_snap(host, container, [r["package"] for r in rows_snap], settings)
+                for row in rows_snap:
+                    if result.ok:
+                        _mark_applied(conn, row, run_id, result.message[:300])
+                        outcome.applied += 1
+                    else:
+                        db.set_status(conn, [row["id"]], "failed", result.message)
+                        outcome.failed += 1
+                if not result.ok:
+                    outcome.note(f"snap on {target_name}: {result.message}")
+
+            if "docker" in managers:
+                # One image at a time, each with its own outcome. Docker findings are
+                # per-image rather than per-target-group, because a single unrecreateable
+                # container must not mark the other images on the same host as failed.
+                if container is None:
+                    for row in managers["docker"]:
+                        db.set_status(conn, [row["id"]], "failed",
+                                      "docker findings belong to a container")
+                        totals["failed"] += 1
+                    continue
+                for row in managers["docker"]:
+                    image_outcome = Outcome(ok=True)
+                    _docker_recreate(conn, host, container, row["package"], settings,
+                                     image_outcome, logged_in)
+                    if image_outcome.applied:
+                        detail = (f"image now {row['candidate']}" if row["candidate"]
+                                  else "image already current")
+                        _mark_applied(conn, row, run_id, detail)
+                        totals["applied"] += 1
+                    else:
+                        # The reason a recreate produced nothing is usually the
+                        # *refusal*, and a refusal is recorded as needing a person
+                        # rather than as a note. Reading only `messages` here is how
+                        # eleven findings came to read "no container recreated" on the
+                        # dashboard while the run log held a paragraph naming the
+                        # missing services.
+                        detail = (image_outcome.needs_manual[-1] if image_outcome.needs_manual
+                                  else image_outcome.messages[-1] if image_outcome.messages
+                                  else "no container recreated")
+                        db.set_status(conn, [row["id"]], "failed", detail)
+                        totals["failed"] += 1
+                    messages.extend(image_outcome.messages)
+                    manual.extend(image_outcome.needs_manual)
+                # Docker tallies into `totals` itself, per image, so the shared
+                # accumulation below would count every recreate twice.
+                continue
+
+            totals["applied"] += outcome.applied
+            totals["failed"] += outcome.failed
+            messages.extend(outcome.messages)
+            manual.extend(outcome.needs_manual)
+
+        # A wave that failed stops the run here, before the next wave is announced
+        # or anything on it is touched. The later findings keep the status they had
+        # — an approval is a decision about a version, and a decision not yet acted
+        # on is still valid, so a retry is the same decision rather than a new one.
+        if totals["failed"] > failed_before and policy.apply_halt_on_failure:
+            later = plan.after(wave)
+            halted = (f"apply halted after the {wave.label}: "
+                      f"{totals['failed'] - failed_before} failure(s) in it, "
+                      f"{len(later)} later target(s) left untouched")
+            messages.append(halted)
+            break
 
     _set_progress(phase="finished", current=[], host="", target="")
 
@@ -614,12 +667,163 @@ def apply_findings(conn, settings: Settings, policy: Policy, *, finding_ids: lis
     summary = f"{totals['applied']} applied, {totals['failed']} failed"
     if manual:
         summary += f", {len(manual)} need manual action"
+    if halted:
+        summary += ", stopped early"
     db.finish_run(conn, run_id, status="ok" if not totals["failed"] else "partial",
                   applied=totals["applied"], failed=totals["failed"], summary=summary)
     db.log(conn, f"apply finished: {summary}", run_id=run_id)
     conn.commit()
     return {"run_id": run_id, "applied": totals["applied"], "failed": totals["failed"],
             "manual": manual, "messages": messages, "summary": summary}
+
+
+# ── undoing one apply (2.2) ──────────────────────────────────────────────────
+def _installed_version(host: Host, container: str | None, package: str,
+                       settings: Settings) -> str | None:
+    """What dpkg says is installed now, or None when it cannot say.
+
+    Asked *after* the rollback for the same reason the forward path asks apt what is
+    still upgradable: a transaction's exit code is a claim about the command, and
+    the finding is a claim about the machine. A package dpkg will not name is a
+    rollback that did not happen, not a success with an empty detail.
+    """
+    result = _remote(host, container,
+                     ["sh", "-c", "LC_ALL=C dpkg-query -W -f='${Version}' "
+                      + shlex.quote(package)], settings)
+    version = result.stdout.strip()
+    return version if result.ok and version else None
+
+
+def _snap_revision(host: Host, container: str | None, package: str,
+                   settings: Settings) -> str | None:
+    """The revision column of `snap list <package>`, or None when it cannot say."""
+    result = _remote(host, container,
+                     ["sh", "-c", "LC_ALL=C snap list " + shlex.quote(package)], settings)
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    if not result.ok or len(lines) < 2:
+        return None
+    fields = lines[1].split()
+    return fields[2] if len(fields) >= 3 else None
+
+
+def rollback_run(conn, settings: Settings, policy: Policy, *, run_id: int,
+                 actor: str | None = None) -> dict:
+    """Put back the packages one apply run moved, or refuse with every reason.
+
+    The plan comes from `rollback.py` and is all-or-nothing: a row without a
+    recorded previous version refuses the whole run before a command is issued,
+    because reverting half a run leaves the estate split between two versions with
+    nothing saying so. Runtime failures are different — apt can hold one package
+    while another succeeds — and those are reported per package, with the finding
+    left `applied` because the new version is still on the machine.
+
+    A run is rolled back once. The guard is `runs.rollback_of`, written before the
+    first command, so a second request is refused by looking the first one up rather
+    than by trusting that the rows look untouched.
+    """
+    def refuse(*reasons: str) -> dict:
+        for reason in reasons:
+            db.log(conn, reason, level="warning", actor=actor)
+        return {"ok": False, "run_id": None, "rolled_back": 0, "failed": 0,
+                "refusals": list(reasons), "messages": list(reasons),
+                "summary": "refused"}
+
+    run = conn.execute("SELECT id, kind, status FROM runs WHERE id=?", (run_id,)).fetchone()
+    if run is None:
+        return refuse(f"run #{run_id} does not exist")
+    if run["kind"] != "apply":
+        return refuse(f"run #{run_id} is a {run['kind']} run; only an apply run can be rolled back")
+    if run["status"] == "running":
+        return refuse(f"run #{run_id} has not finished, so a rollback of it would race the "
+                      "apply that is still running")
+    previous = db.rollback_of_run(conn, run_id)
+    if previous is not None:
+        return refuse(f"run #{run_id} was already rolled back by run #{previous}; re-apply "
+                      "the packages and roll that run back if you need to undo them again")
+
+    rows = db.applied_in_run(conn, run_id)
+    if not rows:
+        return refuse(f"run #{run_id} moved no packages, so there is nothing to roll back")
+    plan = rollback.plan(rows)
+    if not plan.ok:
+        return refuse(*plan.refusals)
+
+    by_host = {host.name: host for host in settings.hosts}
+    missing = sorted({step.host for step in plan.steps if step.host not in by_host})
+    if missing:
+        return refuse(*(f"host {name} is not configured on this deployment, so run "
+                        f"#{run_id} cannot be rolled back as a whole" for name in missing))
+
+    rb_id = db.start_run(conn, "rollback", f"rollback:{actor or 'operator'}")
+    conn.execute("UPDATE runs SET rollback_of=? WHERE id=?", (run_id, rb_id))
+    db.log(conn, f"rollback of run #{run_id} started: {len(plan.steps)} step(s), "
+                 f"{plan.packages} package(s)", run_id=rb_id, actor=actor)
+
+    finding_of = {row["id"]: row["finding_id"] for row in rows}
+    totals = {"rolled_back": 0, "failed": 0}
+    messages: list[str] = []
+
+    for step in plan.steps:
+        host = by_host[step.host]
+
+        if step.manager == "apt":
+            result = _remote(host, step.container, list(step.argv), settings,
+                             timeout=settings.apt_timeout)
+            installed = {package: _installed_version(host, step.container, package, settings)
+                         for package in step.packages}
+            for applied_id, package in zip(step.applied_ids, step.packages):
+                expected = step.versions[package]
+                if installed[package] == expected:
+                    detail = f"rolled back to {expected} (rollback run #{rb_id})"
+                    if not result.ok:
+                        # The version is already what was asked for: something else
+                        # put it back, and the state the rollback wanted now holds.
+                        detail = (f"already at {expected} when run #{rb_id} checked "
+                                  f"({result.message[:160]})")
+                    db.set_status(conn, [finding_of[applied_id]], "pending", detail)
+                    db.mark_rolled_back(conn, [applied_id], run_id=rb_id)
+                    totals["rolled_back"] += 1
+                else:
+                    detail = (f"rollback to {expected} failed: {result.message[:240]}"
+                              if result.message else
+                              f"rollback to {expected} failed: dpkg reports "
+                              f"{installed[package] or 'nothing installed'}")
+                    db.set_status(conn, [finding_of[applied_id]], "applied", detail)
+                    totals["failed"] += 1
+                    messages.append(f"{step.target}: {package} — {detail}")
+            continue
+
+        # snap: revert is one snap at a time. The revision is read before and after,
+        # because "snap revert exited 0" and "the snap is on its previous revision"
+        # are different claims.
+        package = step.packages[0]
+        applied_id = step.applied_ids[0]
+        before = _snap_revision(host, step.container, package, settings)
+        result = _remote(host, step.container, list(step.argv), settings)
+        after = _snap_revision(host, step.container, package, settings) if result.ok else None
+        if after and before and after != before:
+            db.set_status(conn, [finding_of[applied_id]], "pending",
+                          f"snap reverted from revision {before} to {after} "
+                          f"(rollback run #{rb_id})")
+            db.mark_rolled_back(conn, [applied_id], run_id=rb_id)
+            totals["rolled_back"] += 1
+        else:
+            detail = (f"snap revert failed: {result.message[:240]}" if not result.ok else
+                      f"snap revert left {package} on revision {after or before or 'unknown'}")
+            db.set_status(conn, [finding_of[applied_id]], "applied", detail)
+            totals["failed"] += 1
+            messages.append(f"{step.target}: {package} — {detail}")
+
+    summary = (f"{totals['rolled_back']} package(s) rolled back, "
+               f"{totals['failed']} failed")
+    status = "ok" if not totals["failed"] else ("partial" if totals["rolled_back"] else "error")
+    db.finish_run(conn, rb_id, status=status, findings=len(rows),
+                  applied=totals["rolled_back"], failed=totals["failed"], summary=summary)
+    db.log(conn, f"rollback finished: {summary}", run_id=rb_id)
+    conn.commit()
+    return {"ok": totals["failed"] == 0, "run_id": rb_id,
+            "rolled_back": totals["rolled_back"], "failed": totals["failed"],
+            "refusals": [], "messages": messages, "summary": summary}
 
 
 # ── the unattended roll (rollout.py) ─────────────────────────────────────────
@@ -1239,8 +1443,9 @@ def _parse_stamp(value: str | None):
 
 
 def approve_and_apply(conn, settings: Settings, policy: Policy, *, finding_ids: list[int],
-                      actor: str, apply: bool = True,
-                      trigger: str = "approve") -> tuple[int, dict | None]:
+                      actor: str, apply: bool = True, trigger: str = "approve",
+                      reason: str | None = None,
+                      expires_at: str | None = None) -> tuple[int, dict | None]:
     """Record the approval and, when asked, install it — the one-click path.
 
     Approving changes no machine; this is the half that does. A person clicking one
@@ -1250,11 +1455,17 @@ def approve_and_apply(conn, settings: Settings, policy: Policy, *, finding_ids: 
     sits recorded and unapplied, because the list an operator approved from is
     filtered to pending and the approved rows leave it on the next reload.
 
+    The decision is recorded with the name of the person who made it (2.1), and
+    with whatever expiry and reason the caller supplied — those are what
+    `approvals.py` reads later, and a click that did not say who clicked is exactly
+    the approval the apply path refuses.
+
     Returns (how many findings were approved, the apply outcome) — the outcome is
     None when `apply` is false or there was nothing to approve. Kept here rather
     than in the HTTP layer so it is exercised by the same tests as the apply.
     """
-    changed = db.set_status(conn, finding_ids, "approved")
+    changed = db.set_status(conn, finding_ids, "approved", actor=actor,
+                            expires_at=expires_at, reason=reason)
     db.log(conn, f"{changed} finding(s) approved", actor=actor)
     conn.commit()
     if not (apply and changed):

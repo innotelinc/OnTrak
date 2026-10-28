@@ -10,21 +10,22 @@ import { joinCode } from "@/lib/cohort-rules";
 import { parseAssignmentForm } from "@/lib/assignment-rules";
 import { canDeleteScenario, parseScenarioMeta, slugify } from "@/lib/scenario-rules";
 import { MAX_BUNDLE_BYTES, parseScenarioBundle } from "@/lib/scenario-bundle";
-import { publishBlocker, reviewBlocker, reviewRequired, statusAfterEdit, submitBlocker } from "@/lib/review-rules";
-import type { Difficulty } from "@prisma/client";
 import {
-  describeDiff,
-  diffSnapshots,
-  rollbackSnapshot,
-  shouldRevise,
-  snapshotOf,
-} from "@/lib/versions-rules";
+  applyScenarioPublish,
+  applyScenarioReviewDecision,
+  applyScenarioRollback,
+  applyScenarioSave,
+  applyScenarioSubmit,
+  type ScenarioWorkflowDb,
+} from "@/lib/scenario-workflow";
+import type { Difficulty } from "@prisma/client";
 import { gradeAttempt } from "@/lib/sim/grade";
 import { ATTEMPT_STATUS_LABELS, coerceSubmittedState, toDefinition } from "@/lib/scenarios";
 import { attemptScopeFor } from "@/lib/attempt-scope";
 import { canRegrade, regradedStatus } from "@/lib/grading-rules";
 import { certificateAction, readStoredCertificate } from "@/lib/certificate-rules";
 import { attemptPassed, certificatePatchFor } from "@/lib/certificates";
+import { certificateSkillsFor } from "@/lib/rubric-rules";
 import { announceGraded, checksFor, storedCertificateOf } from "@/lib/graded-events";
 import { gradingModeForTags } from "@/lib/grading-mode";
 import type { ScenarioDefinition } from "@/lib/sim/types";
@@ -79,113 +80,21 @@ export async function saveScenario(formData: FormData): Promise<void> {
     );
   }
 
-  const definition: ScenarioDefinition = result.definition;
-  const meta = parseScenarioMeta(formData, definition);
+  // Validated here as well as in the workflow, because the catalog form's copy
+  // falls back to the definition's objective and brief.
+  const meta = parseScenarioMeta(formData, result.definition);
 
-  // Keep the slug unique without surprising the author.
-  let slug = meta.slugBase || slugify(meta.title) || "scenario";
-  const clash = await prisma.scenario.findFirst({ where: { slug, NOT: id ? { id } : undefined } });
-  if (clash) slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
-
-  const data = {
-    title: meta.title,
-    slug,
-    summary: meta.summary,
-    description: meta.description,
-    platform: definition.platform,
-    engine: definition.engine,
-    difficulty: meta.difficulty,
-    timeLimitSec: meta.timeLimitSec,
-    passScore: meta.passScore,
-    published: meta.published,
-    tags: meta.tags,
-    definition: definition as unknown as object,
-  };
-
-  /*
-   * Editing a graded artifact is a change somebody has to be able to read back.
-   * Before the row is overwritten, the shape it is about to lose is written to
-   * `ScenarioRevision` — but only when the edit can move a score (see
-   * `shouldRevise`): renaming a scenario or rewriting its briefing is a write, not
-   * a revision, and a history full of copy-edits buries the edit that mattered.
-   *
-   * The revision is counted under the scenario, and the pair is unique, so two
-   * saves racing each other cannot write the same revision number twice.
-   */
-  const previous = id
-    ? await prisma.scenario.findUnique({ where: { id }, select: { title: true, summary: true, description: true, platform: true, engine: true, difficulty: true, timeLimitSec: true, passScore: true, tags: true, definition: true, reviewStatus: true, _count: { select: { revisions: true } } } })
-    : null;
-  let revisionNote = "";
-  let gradingShapeChanged = false;
-  if (previous) {
-    const before = snapshotOf(previous as unknown as Parameters<typeof snapshotOf>[0]);
-    const after = snapshotOf({ ...data } as unknown as Parameters<typeof snapshotOf>[0]);
-    gradingShapeChanged = shouldRevise(before, after);
-    if (gradingShapeChanged) {
-      const nextRevision = (previous._count?.revisions ?? 0) + 1;
-      const diff = diffSnapshots(before, after);
-      revisionNote = ` Version ${nextRevision}: ${describeDiff(diff)}.`;
-      await prisma.scenarioRevision
-        .create({
-          data: {
-            scenarioId: id!,
-            revision: nextRevision,
-            snapshot: before as unknown as object,
-            summary: describeDiff(diff),
-            authorId: author.id,
-            authorEmail: author.email,
-          },
-        })
-        // A scenario that vanished underneath the save is reported below, where the
-        // update finds nothing; failing here would report the wrong cause.
-        .catch(() => null);
-    }
-  }
-
-  // An approval covers the checks that were read. If this save changed the
-  // grading shape, the scenario goes back to DRAFT so a second reader sees the
-  // new checks; a title or briefing edit leaves the approval alone.
-  const saved = id
-    ? await prisma.scenario
-        .update({
-          where: { id },
-          data: {
-            ...data,
-            ...(previous ? { reviewStatus: statusAfterEdit(previous.reviewStatus, gradingShapeChanged) } : {}),
-          },
-        })
-        .catch(() => null)
-    : await prisma.scenario.create({ data: { ...data, authorId: author.id, reviewStatus: "DRAFT" } });
-  if (!saved) backTo(`/instructor/scenarios/${id}`, "That scenario no longer exists.", false);
-
-  // Re-sync the software dependencies to match the form exactly.
-  await prisma.scenarioSoftware.deleteMany({ where: { scenarioId: saved.id, softwarePackageId: { notIn: meta.softwareIds } } });
-  for (const softwarePackageId of meta.softwareIds) {
-    await prisma.scenarioSoftware
-      .upsert({
-        where: { scenarioId_softwarePackageId: { scenarioId: saved.id, softwarePackageId } },
-        create: { scenarioId: saved.id, softwarePackageId, required: true },
-        update: { required: true },
-      })
-      .catch(() => undefined);
-  }
-
-  await recordAudit({
-    actorId: author.id,
-    action: id ? "scenario.update" : "scenario.create",
-    targetType: "scenario",
-    targetId: saved.id,
-    detail: { title: meta.title, platform: definition.platform, checks: definition.checks.length, published: meta.published },
-  });
+  const outcome = await applyScenarioSave(
+    prisma as unknown as ScenarioWorkflowDb,
+    recordAudit,
+    { id: author.id, email: author.email },
+    { id, definition: parsedJson, meta },
+  );
+  if (!outcome.ok) backTo(`/instructor/scenarios/${id}`, outcome.error, false);
 
   revalidatePath("/instructor/scenarios");
   revalidatePath("/student");
-  backTo(
-    `/instructor/scenarios/${saved.id}`,
-    `Saved "${meta.title}" — ${result.totalPoints} points across ${definition.checks.length} checks${
-      result.issues.some((issue) => issue.level === "warning") ? " (with warnings)" : ""
-    }.${revisionNote}`,
-  );
+  backTo(`/instructor/scenarios/${outcome.scenarioId}`, outcome.message);
 }
 
 export async function setScenarioPublished(formData: FormData): Promise<void> {
@@ -193,99 +102,59 @@ export async function setScenarioPublished(formData: FormData): Promise<void> {
   const id = String(formData.get("id") ?? "");
   const published = formData.get("published") === "true";
 
-  const scenario = await prisma.scenario.findUnique({
-    where: { id },
-    select: { title: true, reviewStatus: true },
-  });
-  if (!scenario) backTo("/instructor/scenarios", "That scenario no longer exists.", false);
-
-  if (published) {
-    const blocker = publishBlocker(scenario.reviewStatus, reviewRequired());
-    if (blocker) backTo(`/instructor/scenarios/${id}`, blocker, false);
+  const outcome = await applyScenarioPublish(
+    prisma as unknown as ScenarioWorkflowDb,
+    recordAudit,
+    { id: author.id, email: author.email },
+    { id, published },
+  );
+  if (!outcome.ok) {
+    backTo(outcome.missing ? "/instructor/scenarios" : `/instructor/scenarios/${id}`, outcome.error, false);
   }
-
-  await prisma.scenario.update({ where: { id }, data: { published } });
-
-  await recordAudit({
-    actorId: author.id,
-    action: published ? "scenario.publish" : "scenario.unpublish",
-    targetType: "scenario",
-    targetId: id,
-    detail: { title: scenario.title, reviewStatus: scenario.reviewStatus },
-  });
 
   revalidatePath("/instructor/scenarios");
   revalidatePath("/student");
-  backTo(`/instructor/scenarios/${id}`, `"${scenario.title}" is now ${published ? "published" : "a draft"}.`);
+  backTo(`/instructor/scenarios/${id}`, outcome.message);
 }
 
 export async function submitScenarioForReview(formData: FormData): Promise<void> {
   const author = await requireStaff();
   const id = String(formData.get("id") ?? "");
-  const scenario = await prisma.scenario.findUnique({ where: { id }, select: { title: true, reviewStatus: true } });
-  if (!scenario) backTo("/instructor/scenarios", "That scenario no longer exists.", false);
 
-  const blocker = submitBlocker(scenario.reviewStatus);
-  if (blocker) backTo(`/instructor/scenarios/${id}`, blocker, false);
-
-  await prisma.scenario.update({
-    where: { id },
-    data: { reviewStatus: "IN_REVIEW", reviewedById: null, reviewedAt: null, reviewNote: null },
-  });
-  await recordAudit({
-    actorId: author.id,
-    action: "scenario.review.submit",
-    targetType: "scenario",
-    targetId: id,
-    detail: { title: scenario.title },
-  });
+  const outcome = await applyScenarioSubmit(
+    prisma as unknown as ScenarioWorkflowDb,
+    recordAudit,
+    { id: author.id, email: author.email },
+    id,
+  );
+  if (!outcome.ok) {
+    backTo(outcome.missing ? "/instructor/scenarios" : `/instructor/scenarios/${id}`, outcome.error, false);
+  }
 
   revalidatePath(`/instructor/scenarios/${id}`);
   revalidatePath("/instructor/scenarios");
-  backTo(`/instructor/scenarios/${id}`, `"${scenario.title}" is waiting for a second reader.`);
+  backTo(`/instructor/scenarios/${id}`, outcome.message);
 }
 
 export async function decideScenarioReview(formData: FormData): Promise<void> {
   const reviewer = await requireStaff();
   const id = String(formData.get("id") ?? "");
   const decision = String(formData.get("decision") ?? "");
-  const note = String(formData.get("note") ?? "").trim().slice(0, 2000);
-  if (decision !== "approve" && decision !== "changes") {
-    backTo(`/instructor/scenarios/${id}`, "That is not a review decision.", false);
+  const note = String(formData.get("note") ?? "");
+
+  const outcome = await applyScenarioReviewDecision(
+    prisma as unknown as ScenarioWorkflowDb,
+    recordAudit,
+    { id: reviewer.id, email: reviewer.email },
+    { id, decision, note },
+  );
+  if (!outcome.ok) {
+    backTo(outcome.missing ? "/instructor/scenarios" : `/instructor/scenarios/${id}`, outcome.error, false);
   }
-
-  const scenario = await prisma.scenario.findUnique({
-    where: { id },
-    select: { title: true, authorId: true, reviewStatus: true },
-  });
-  if (!scenario) backTo("/instructor/scenarios", "That scenario no longer exists.", false);
-
-  const blocker = reviewBlocker(scenario.reviewStatus, scenario.authorId, reviewer.id);
-  if (blocker) backTo(`/instructor/scenarios/${id}`, blocker, false);
-
-  await prisma.scenario.update({
-    where: { id },
-    data: {
-      reviewStatus: decision === "approve" ? "APPROVED" : "DRAFT",
-      reviewNote: note || null,
-      reviewedById: reviewer.id,
-      reviewedAt: new Date(),
-    },
-  });
-  await recordAudit({
-    actorId: reviewer.id,
-    action: decision === "approve" ? "scenario.review.approve" : "scenario.review.changes",
-    targetType: "scenario",
-    targetId: id,
-    detail: { title: scenario.title, note },
-  });
 
   revalidatePath(`/instructor/scenarios/${id}`);
   revalidatePath("/instructor/scenarios");
-  backTo(
-    `/instructor/scenarios/${id}`,
-    decision === "approve" ? `Approved "${scenario.title}". It can be published.` : `Sent "${scenario.title}" back for changes.`,
-  );
+  backTo(`/instructor/scenarios/${id}`, outcome.message);
 }
 
 export async function addScenarioComment(formData: FormData): Promise<void> {
@@ -420,18 +289,22 @@ export async function importScenarioBundle(formData: FormData): Promise<void> {
     },
   });
 
+  // Graded checks, not rubric bands: a band is part of its parent rather than a
+  // question of its own, the same count the save path reports (2.2).
+  const gradedChecks = definition.checks.filter((check) => check.halfOf === undefined).length;
+
   await recordAudit({
     actorId: author.id,
     action: "scenario.import",
     targetType: "scenario",
     targetId: created.id,
-    detail: { title: meta.title, platform: definition.platform, checks: definition.checks.length, bundle: parsed.bundle.version },
+    detail: { title: meta.title, platform: definition.platform, checks: gradedChecks, bundle: parsed.bundle.version },
   });
 
   revalidatePath("/instructor/scenarios");
   backTo(
     `/instructor/scenarios/${created.id}`,
-    `Imported "${meta.title}" — ${definition.checks.length} checks. It starts as a draft.`,
+    `Imported "${meta.title}" — ${gradedChecks} checks. It starts as a draft.`,
   );
 }
 
@@ -727,7 +600,9 @@ export async function regradeAttempt(formData: FormData): Promise<void> {
     maxScore: report.maxScore,
     passScore: attempt.scenario.passScore,
     completedAt: gradedAt,
-    skills: attempt.scenario.tags,
+    // The same 2.2 rule as the first grading: competencies are the checks that
+    // earned them, with the scenario's tags only when no check names one.
+    skills: certificateSkillsFor(report.results, attempt.scenario.tags),
     // So a re-grade that issues a fresh record still says which grader produced it.
     mode,
   };
@@ -826,74 +701,24 @@ export async function restoreScenarioRevision(formData: FormData): Promise<void>
   const scenarioId = String(formData.get("scenarioId") ?? "");
   const revisionId = String(formData.get("revisionId") ?? "");
 
-  const revision = await prisma.scenarioRevision.findFirst({ where: { id: revisionId, scenarioId } });
-  if (!revision) backTo(`/instructor/scenarios/${scenarioId}`, "That revision no longer exists.", false);
-
-  let restored;
-  try {
-    restored = rollbackSnapshot(revision);
-  } catch (error) {
-    backTo(`/instructor/scenarios/${scenarioId}`, (error as Error).message, false);
+  const outcome = await applyScenarioRollback(
+    prisma as unknown as ScenarioWorkflowDb,
+    recordAudit,
+    { id: author.id, email: author.email },
+    { scenarioId, revisionId },
+  );
+  if (!outcome.ok) {
+    backTo(
+      outcome.missing ? "/instructor/scenarios" : `/instructor/scenarios/${scenarioId}`,
+      outcome.error,
+      false,
+    );
   }
-
-  const current = await prisma.scenario.findUnique({
-    where: { id: scenarioId },
-    select: { title: true, summary: true, description: true, platform: true, engine: true, difficulty: true, timeLimitSec: true, passScore: true, tags: true, definition: true, _count: { select: { revisions: true } } },
-  });
-  if (!current) backTo("/instructor/scenarios", "That scenario no longer exists.", false);
-
-  // Record what the rollback replaces, exactly as a save does: the shape being
-  // restored had to come *from* somewhere, and the one it replaces is history too.
-  const before = snapshotOf(current as unknown as Parameters<typeof snapshotOf>[0]);
-  const nextRevision = (current._count?.revisions ?? 0) + 1;
-  await prisma.scenarioRevision
-    .create({
-      data: {
-        scenarioId,
-        revision: nextRevision,
-        snapshot: before as unknown as object,
-        summary: `rolled back to revision ${revision.revision}`,
-        authorId: author.id,
-        authorEmail: author.email,
-      },
-    })
-    .catch(() => null);
-
-  await prisma.scenario.update({
-    where: { id: scenarioId },
-    data: {
-      title: restored.title,
-      summary: restored.summary,
-      description: restored.description,
-      platform: restored.platform as never,
-      engine: restored.engine,
-      difficulty: restored.difficulty as never,
-      timeLimitSec: restored.timeLimitSec,
-      passScore: restored.passScore,
-      tags: restored.tags,
-      definition: restored.definition as unknown as object,
-    },
-  });
-
-  await recordAudit({
-    actorId: author.id,
-    action: "scenario.rollback",
-    targetType: "scenario",
-    targetId: scenarioId,
-    detail: {
-      revision: revision.revision,
-      revisionId: revision.id,
-      replaced: describeDiff(diffSnapshots(before, restored)),
-    },
-  });
 
   revalidatePath(`/instructor/scenarios/${scenarioId}`);
   revalidatePath("/instructor/scenarios");
   revalidatePath("/student");
-  backTo(
-    `/instructor/scenarios/${scenarioId}`,
-    `Restored revision ${revision.revision} (${revision.summary || "no summary"}). That rollback is now the newest revision, so nothing is lost.`,
-  );
+  backTo(`/instructor/scenarios/${scenarioId}`, outcome.message);
 }
 
 /** Detach a software dependency from a scenario. */

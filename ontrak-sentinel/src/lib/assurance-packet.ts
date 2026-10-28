@@ -29,8 +29,14 @@
  *    included — can be edited without the deployment's key.
  */
 
-import { stableStringify, type HashFn } from "./audit-chain";
-import type { ComplianceControlView, ComplianceRoleView, ConsoleComplianceView } from "./console-rules";
+import { stableStringify, type AuditEvent, type HashFn } from "./audit-chain";
+import type {
+  ComplianceControlHistory,
+  ComplianceControlView,
+  ComplianceRetention,
+  ComplianceRoleView,
+  ConsoleComplianceView,
+} from "./console-rules";
 
 /**
  * The shared assurance-packet format version. Kept equal to OnTrak Tix's
@@ -112,6 +118,20 @@ export interface CompliancePacketRecord {
   chain: ConsoleComplianceView["chain"];
   policies: ConsoleComplianceView["policies"];
   policyVersions: PolicyVersion[];
+  /**
+   * The declared evidence-retention window, and what the chain actually holds.
+   *
+   * Inside the signed record on purpose: "how long is evidence kept?" is one of the
+   * questions an auditor asks, and an answer that lives only on a web page is an
+   * answer nobody can check a year later.
+   */
+  retention: ComplianceRetention;
+  /**
+   * The control changes the evidence chain records, or `null` when the exporter may
+   * not read the trail. `null` rather than an empty list: an empty list asserts that
+   * nothing changed, which is a claim this exporter cannot make.
+   */
+  controlHistory: ComplianceControlHistory | null;
 }
 
 export interface CompliancePacketContent extends CompliancePacketRecord {
@@ -139,7 +159,227 @@ export function packetRecord(input: CompliancePacketInput): CompliancePacketReco
     chain: input.view.chain,
     policies: input.view.policies,
     policyVersions: [...(input.policies ?? SENTINEL_POLICIES)],
+    retention: input.view.retention,
+    controlHistory: input.view.controlHistory,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Retention and control history                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The retention window a deployment keeps evidence for, when it does not say.
+ *
+ * A year is the number most audit frameworks ask for and the shortest window that
+ * still covers "the incident happened last spring". It is a *declaration*, not a
+ * deletion rule: this product never drops chain entries, because a packet whose
+ * chain is missing rows cannot be verified.
+ */
+export const DEFAULT_RETENTION_MONTHS = 12;
+
+/** The env var a deployment sets to declare a different window. */
+export const RETENTION_MONTHS_ENV = "SENTINEL_EVIDENCE_RETENTION_MONTHS";
+
+/** Ten years is the longest window this build will believe; beyond it is a typo. */
+export const MAX_RETENTION_MONTHS = 120;
+
+/**
+ * Read the declared window leniently.
+ *
+ * An unreadable value does not fail an export — the packet is still a true reading of
+ * the posture, and refusing to produce one because a number is malformed would let a
+ * typo block an audit response. It falls back to the default and the packet says so,
+ * in the signed record, so the fallback is auditable rather than silent.
+ */
+export function retentionMonths(raw: string | number | null | undefined): { months: number; source: string } {
+  if (raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "")) {
+    return { months: DEFAULT_RETENTION_MONTHS, source: "default" };
+  }
+  const text = typeof raw === "number" ? String(raw) : raw.trim();
+  const value = Number(text);
+  if (!Number.isInteger(value) || value < 1 || value > MAX_RETENTION_MONTHS) {
+    return {
+      months: DEFAULT_RETENTION_MONTHS,
+      source: `default (ignored unreadable ${RETENTION_MONTHS_ENV}=${JSON.stringify(text)})`,
+    };
+  }
+  return { months: value, source: RETENTION_MONTHS_ENV };
+}
+
+/**
+ * The instant a window of `months` began, counted in calendar months from `asOf`.
+ *
+ * Month-end is clamped rather than rolled over: a window that starts on the 31st and
+ * ends in a 30-day month reaches the 30th, and one ending in February reaches its last
+ * day. JavaScript's `setUTCMonth` would slide into the next month instead, which would
+ * make a "twelve month" window longer than twelve months once a year.
+ */
+export function retentionStart(asOf: string, months: number): string {
+  const start = new Date(Date.parse(asOf));
+  if (!Number.isFinite(start.getTime())) return new Date(0).toISOString();
+  const day = start.getUTCDate();
+  start.setUTCDate(1);
+  start.setUTCMonth(start.getUTCMonth() - months);
+  const daysInMonth = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0)).getUTCDate();
+  start.setUTCDate(Math.min(day, daysInMonth));
+  return start.toISOString();
+}
+
+/**
+ * The declared window against what the chain actually holds.
+ *
+ * The counts are the point: a reader can see that the window is twelve months while
+ * the chain reaches back four years, and that the entries before the window are
+ * carried rather than trimmed. A product that quietly truncated its own evidence to
+ * match a policy number would be destroying the thing the packet exists to prove.
+ */
+export function retentionWindow(
+  events: readonly AuditEvent[],
+  choice: { months: number; source: string; asOf: string },
+): ComplianceRetention {
+  const windowStart = retentionStart(choice.asOf, choice.months);
+  const startMs = Date.parse(windowStart);
+  const beforeWindow = events.filter((event) => {
+    const at = Date.parse(event?.at ?? "");
+    return Number.isFinite(at) && at < startMs;
+  }).length;
+  const oldestAt = events.length > 0 ? events[0]!.at : null;
+  const detail =
+    `Declared retention window: ${choice.months} month(s) from ${windowStart} ` +
+    `(${choice.source}). The chain holds ${events.length} event(s)` +
+    (oldestAt ? ` back to ${oldestAt}` : "") +
+    `; ${beforeWindow} predate the window and are carried in full rather than truncated.`;
+
+  return {
+    months: choice.months,
+    windowStart,
+    asOf: choice.asOf,
+    source: choice.source,
+    chainLength: events.length,
+    beforeWindow,
+    oldestAt,
+    detail,
+  };
+}
+
+/** How far back the packet's control history reaches when nothing else is asked. */
+export const CONTROL_HISTORY_MONTHS = 24;
+
+/** The most changes one packet carries, newest kept. */
+export const MAX_CONTROL_CHANGES = 200;
+
+/**
+ * The control changes in an evidence chain.
+ *
+ * "Control history" is the audit trail read as *decisions about controls* rather than
+ * as a list of everything: the two actions that carry a control's new shape are
+ * `policy.update` (one identity-policy scope) and `enforcement.policy` (the Guard
+ * rails). Each change's `from` is the previous event's `to` for the same control, so a
+ * reader can follow a control across several edits without opening the chain.
+ *
+ * `unavailable` is for the exporter whose role may not read the trail: the result is
+ * then the refusal sentence with `total: null`, never an empty list that would assert
+ * nothing ever changed.
+ */
+export function controlHistoryFrom(
+  events: readonly AuditEvent[],
+  options: { asOf: string; months?: number; maxChanges?: number; unavailable?: string },
+): ComplianceControlHistory | null {
+  const months = options.months ?? CONTROL_HISTORY_MONTHS;
+  const since = retentionStart(options.asOf, months);
+  if (options.unavailable) {
+    return { changes: [], total: null, since, truncated: false, detail: options.unavailable };
+  }
+
+  const all: Array<{ controlId: string; at: string; from: string | null; to: string; actor: string; ref: string }> = [];
+  for (const event of events) {
+    const change = controlChangeOf(event);
+    if (change) {
+      all.push({
+        controlId: change.controlId,
+        at: event.at,
+        from: null,
+        to: change.to,
+        actor: event.actor,
+        ref: `#${event.seq} ${event.recordHash.slice(0, 12)}`,
+      });
+    }
+  }
+
+  const sinceMs = Date.parse(since);
+  const inWindow = all.filter((change) => Date.parse(change.at) >= sinceMs);
+  const max = options.maxChanges ?? MAX_CONTROL_CHANGES;
+  const kept = inWindow.slice(-max);
+
+  // `from` is derived oldest-first, before the window is applied, so the first change a
+  // packet carries still says what it replaced even when the edit before it is older.
+  const previous = new Map<string, string>();
+  for (const change of all) {
+    change.from = previous.get(change.controlId) ?? null;
+    previous.set(change.controlId, change.to);
+  }
+
+  const changes = kept.map((change) => ({
+    controlId: change.controlId,
+    at: change.at,
+    from: change.from,
+    to: change.to,
+    actor: change.actor,
+    ref: change.ref,
+  }));
+  const truncated = changes.length < all.length;
+  // Say *why* rows are missing: a count bound and a time bound leave different things
+  // out, and a reader reconciling the packet with the chain needs to know which.
+  const bounds: string[] = [];
+  if (inWindow.length > max) bounds.push(`bounded to the newest ${max}`);
+  if (inWindow.length < all.length) bounds.push(`changes older than ${since} left out`);
+  const detail =
+    all.length === 0
+      ? `No control change is recorded in the chain (looking back ${months} month(s) to ${since}).`
+      : `${all.length} control change(s) on record; the packet carries ` +
+        `${changes.length} since ${since}` +
+        (bounds.length > 0 ? `, ${bounds.join("; ")}.` : ".");
+
+  return { changes, total: all.length, since, truncated, detail };
+}
+
+/** One chain event as a control change, or `null` when it is not one. */
+function controlChangeOf(event: AuditEvent): { controlId: string; to: string } | null {
+  const detail = (event?.detail ?? {}) as Record<string, unknown>;
+  if (event?.action === "policy.update") {
+    const scope = typeof detail.scope === "string" && detail.scope ? detail.scope : "unknown";
+    return {
+      controlId: `identity-policy:${scope}`,
+      to:
+        `second factor ${detail.requireMfa === true ? "required" : "not required"}; ` +
+        `session ${minutesOf(detail.maxSessionSeconds)}; idle ${minutesOf(detail.idleTimeoutSeconds)}`,
+    };
+  }
+  if (event?.action === "enforcement.policy") {
+    const policy = (detail.policy ?? {}) as Record<string, unknown>;
+    const targets = Array.isArray(policy.protectedTargets) ? policy.protectedTargets.length : 0;
+    return {
+      controlId: "enforcement-rails",
+      to:
+        `${targets} protected target(s); max ${numberOf(policy.maxTargets)} target(s) per action, ` +
+        `${numberOf(policy.maxActionsPerHour)} per hour; ttl ${numberOf(policy.defaultTtlSeconds)}s; ` +
+        `permanent ${policy.allowPermanent === true ? "allowed" : "refused"}; ` +
+        `second approver ${policy.requireSecondApprover === true ? "required" : "not required"}`,
+    };
+  }
+  return null;
+}
+
+function numberOf(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "(unreadable)";
+}
+
+function minutesOf(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "(unreadable)";
+  if (value % 3600 === 0) return `${value / 3600}h`;
+  if (value % 60 === 0) return `${value / 60}m`;
+  return `${value}s`;
 }
 
 /** The whole packet's content: the record plus the audit anchor. */
@@ -260,6 +500,8 @@ export function packetVerificationReport(packet: CompliancePacket, result: Verif
     `content hash: ${asText(packet?.contentHash)}`,
     `signature: ${asText(packet?.signature)} (${asText(packet?.algorithm)})`,
     `audit anchor: ${asText(packet?.audit?.length)} event(s), verified at export: ${asText(packet?.audit?.verified)}`,
+    `retention: ${retentionText(packet)}`,
+    `control history: ${historyText(packet)}`,
     `policies in force: ${policiesText(packet)}`,
     `generated at: ${asText(packet?.generatedAt)} by ${asText(packet?.generatedBy)}`,
   ];
@@ -292,6 +534,19 @@ function asText(value: unknown): string {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return "(unreadable)";
+}
+
+function retentionText(packet: CompliancePacket): string {
+  const retention = packet?.retention;
+  if (!retention) return "(not stated)";
+  return `${asText(retention.months)} month(s) from ${asText(retention.windowStart)}; ${asText(retention.beforeWindow)} event(s) before it`;
+}
+
+function historyText(packet: CompliancePacket): string {
+  const history = packet?.controlHistory;
+  if (!history) return "(not asserted)";
+  if (history.total === null) return "(not readable)";
+  return `${asText(history.total)} change(s), ${asText(history.changes?.length ?? 0)} carried`;
 }
 
 function policiesText(packet: CompliancePacket): string {

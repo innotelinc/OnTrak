@@ -18,9 +18,18 @@ import { evaluateScenario, loadAvailabilityContext } from "@/lib/availability";
 import { disposeSession, runSandboxCommand } from "@/lib/sim/sandbox";
 import { recordAudit } from "@/lib/audit";
 import { certificatePatchFor, readStoredCertificate } from "@/lib/certificates";
+import { certificateSkillsFor } from "@/lib/rubric-rules";
 import { announceGraded, checksFor, storedCertificateOf } from "@/lib/graded-events";
 import { gradingModeForTags } from "@/lib/grading-mode";
 import { simulatedStartRefusal } from "@/lib/lab-rules";
+import {
+  mergeTimingRecord,
+  readTimingClaims,
+  readTimingRecord,
+  timingIntegrityEnabled,
+  type TimingClaim,
+  type TimingIntegrityRecord,
+} from "@/lib/timing-integrity-rules";
 import { clearLtiLaunch, readLtiLaunch } from "@/lib/lti-session";
 import type { Prisma } from "@prisma/client";
 import type { SandboxCommandResponse } from "@/lib/sim/drivers/proxy";
@@ -166,6 +175,56 @@ export async function autosaveAttempt(input: {
 }
 
 /**
+ * Record a batch of time-away intervals reported by the browser (2.2).
+ *
+ * The control is opt-in per scenario, so a scenario that did not ask for it is
+ * refused with a sentence rather than quietly collecting a record its author
+ * never agreed to keep. The batch is merged with what is already stored, which is
+ * what makes a retried request safe: the same interval merged twice is the same
+ * period away, not double the time.
+ *
+ * Nothing here can change a score. The record is written beside the attempt and
+ * the grader never reads it, so a learner who loses a tab is not punished, and an
+ * instructor cannot fail somebody on a browser's word alone.
+ */
+export async function recordTimingIntegrity(input: {
+  attemptId: string;
+  claims: TimingClaim[];
+}): Promise<{ ok: boolean; record?: TimingIntegrityRecord; error?: string }> {
+  const user = await requireSession();
+  const attempt = await prisma.attempt.findUnique({
+    where: { id: input.attemptId },
+    include: { scenario: { select: { definition: true } } },
+  });
+
+  if (!attempt || (attempt.userId !== user.id && user.role === "STUDENT")) {
+    return { ok: false, error: "That attempt is not yours." };
+  }
+
+  const definition = toDefinition(attempt.scenario);
+  if (!timingIntegrityEnabled(definition)) {
+    return { ok: false, error: "Timing integrity is not enabled for this scenario." };
+  }
+  if (attempt.status !== "IN_PROGRESS") {
+    return { ok: false, error: "This attempt has already been submitted." };
+  }
+
+  const record = mergeTimingRecord(
+    readTimingRecord(attempt.integrity),
+    readTimingClaims(input.claims),
+    { start: attempt.startedAt, end: attempt.submittedAt },
+    new Date(),
+  );
+
+  await prisma.attempt.update({
+    where: { id: attempt.id },
+    data: { integrity: record as unknown as Prisma.InputJsonValue },
+  });
+
+  return { ok: true, record };
+}
+
+/**
  * Run one console line in a sandboxed attempt's own sandbox (v1.2).
  *
  * The authorisation is the same check every other action makes — the attempt must be the
@@ -252,7 +311,10 @@ export async function submitAttempt(formData: FormData): Promise<void> {
         maxScore: report.maxScore,
         passScore: attempt.scenario.passScore,
         completedAt: gradedAt,
-        skills: attempt.scenario.tags,
+        // 2.2: the competency on the record is read from the checks that earned it,
+        // and the scenario's tags are the fallback for a catalog written before a
+        // check could carry one (`rubric-rules.ts`).
+        skills: certificateSkillsFor(report.results, attempt.scenario.tags),
         // The mode rides on the certificate too, so a lab pass cannot be read as
         // a simulated one from a pasted record (audit §9/Q7).
         mode,

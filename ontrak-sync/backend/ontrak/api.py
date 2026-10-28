@@ -41,9 +41,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import __version__, db, identity, oidc, reconcile, rollout
+from . import __version__, approvals, db, identity, oidc, reconcile, rollout
 from .applier import (apply_findings, apply_rollouts, approve_and_apply, read_progress,
-                      undo_roll)
+                      rollback_run, undo_roll)
 from .config import Settings
 from .policy import Cron, CronError, Policy, describe, next_runs
 from .scan import host_admin_summary, scan_network
@@ -90,6 +90,11 @@ class ApproveRequest(BaseModel):
     # install to a second click is how an approval sits recorded and unapplied.
     # Default False so the bare API still only records the decision.
     apply: bool = False
+    # Why this is being installed, and — when the deployment wants approvals to
+    # lapse — until when. Both are optional: the expiry defaults from the policy's
+    # `approval_ttl_hours`, and a reason is recorded whether or not one is required.
+    reason: str = ""
+    expires_at: str | None = None
 
 
 class ScanRequest(BaseModel):
@@ -99,6 +104,17 @@ class ScanRequest(BaseModel):
 class ApplyRequest(BaseModel):
     ids: list[int] = Field(default_factory=list)
     all_approved: bool = True
+
+
+class RollbackRequest(BaseModel):
+    """Which apply run to undo.
+
+    A run, not a list of findings: the rollback of a package is only meaningful
+    relative to the version *that run* replaced, and the run is what somebody
+    decided to do. See `rollback.py` for why a finding cannot answer it.
+    """
+
+    run_id: int
 
 
 class PolicyRequest(BaseModel):
@@ -116,6 +132,12 @@ class PolicyRequest(BaseModel):
     # Empty strings clear it; `None` (an omitted field) leaves it alone.
     freeze_from: str | None = None
     freeze_to: str | None = None
+    # The maintenance calendar (2.1): the windows an apply is allowed in. An empty
+    # list clears the calendar; `None` leaves it alone.
+    maintenance_windows: list[dict] | None = None
+    # How long a new approval stays live, in hours; 0 means never.
+    approval_ttl_hours: int | None = None
+    require_approval_reason: bool | None = None
     # A separate flag so "clear the window" is expressible. Without it, an omitted
     # field means "leave alone" and there is no way to remove a window once set.
     clear_window: bool = False
@@ -811,8 +833,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 detail="approving and applying installs packages, which needs sync:apply")
         if not ids:
             return {"approved": 0}
+        policy = load_policy(conn, settings)
+        # An expiry is fixed now, from the policy as it stands, rather than read out
+        # of the policy when somebody later asks whether the approval is live: a
+        # deadline that moves when the form changes is not a deadline.
+        expires_at = body.expires_at or approvals.approval_expiry(
+            ttl_hours=policy.approval_ttl_hours)
         if not body.apply:
-            changed = db.set_status(conn, ids, "approved")
+            changed = db.set_status(conn, ids, "approved", actor=actor.name,
+                                    expires_at=expires_at, reason=body.reason)
             db.log(conn, f"{changed} finding(s) approved", actor=actor.name)
             identity.audit(conn, "findings.approve", f"approved {changed} finding(s)",
                            actor=actor.name)
@@ -822,6 +851,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # approval-triggered apply cannot run alongside a scan or another apply. The
         # intent is audited before the write, so a refused or failed apply still
         # leaves who asked for it on record.
+        #
+        # The calendar is checked but the approval is not: this click *is* the
+        # decision, recorded in the same call. A window still outranks it, because
+        # "these are the hours we patch in" is a promise to somebody else, and a
+        # second button must not be a way through it.
+        outside = approvals.apply_refusal(policy=policy, rows=[])
+        if outside:
+            identity.audit(conn, "apply.refused", f"{actor.name}: {outside}",
+                           level="warning", actor=actor.name)
+            conn.commit()
+            raise HTTPException(status_code=409, detail=outside)
         identity.audit(conn, "findings.approve", f"approved {len(ids)} finding(s) to apply",
                        actor=actor.name)
         conn.commit()
@@ -829,8 +869,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail="a scan or apply is already running")
         try:
             changed, outcome = approve_and_apply(
-                conn, settings, load_policy(conn, settings), finding_ids=ids,
-                actor=actor.name, apply=True, trigger=f"approve:{actor.name}")
+                conn, settings, policy, finding_ids=ids, actor=actor.name, apply=True,
+                trigger=f"approve:{actor.name}", reason=body.reason, expires_at=expires_at)
         finally:
             RUN_LOCK.release()
         return {"approved": changed, **(outcome or {})}
@@ -941,12 +981,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ids = [row["id"] for row in db.list_findings(conn, status="approved")]
             if not ids:
                 return {"applied": 0, "failed": 0, "manual": [], "summary": "nothing approved"}
+            # Two questions before anything is installed (2.1): may this deployment
+            # apply at this instant (the maintenance calendar), and is each decision
+            # still live (a named approver, inside its expiry, with a reason where one
+            # is required)? `approvals.py` holds both rules; this route only asks.
+            marks = ",".join("?" for _ in ids)
+            rows = conn.execute(
+                f"SELECT id, package, status, approved_by, approved_at,"
+                f" approval_expires_at, approval_reason"
+                f" FROM findings WHERE id IN ({marks})",
+                ids,
+            ).fetchall()
+            refused = approvals.apply_refusal(policy=policy, rows=rows)
+            if refused:
+                identity.audit(conn, "apply.refused",
+                               f"{actor.name} refused {len(ids)} finding(s): {refused}",
+                               level="warning", actor=actor.name)
+                conn.commit()
+                raise HTTPException(status_code=409, detail=refused)
             identity.audit(conn, "apply.manual",
                            f"{actor.name} applying {len(ids)} approved finding(s)",
                            level="warning", actor=actor.name)
             conn.commit()
             return apply_findings(conn, settings, policy, finding_ids=ids,
                                   trigger=f"manual:{actor.name}")
+        finally:
+            RUN_LOCK.release()
+
+    @app.post("/api/rollback")
+    def rollback(body: RollbackRequest, actor: Actor = requires("sync:apply")):
+        """Put back the packages one apply run moved (2.2).
+
+        Same capability as applying, because it is the same kind of write: a
+        downgrade is an unauthorised change with a friendly name if the person
+        asking did not have to be allowed to patch. The refusal reasons are the
+        plan's and the run's, returned together, and nothing has been installed
+        when they are.
+        """
+        if not RUN_LOCK.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="a scan or apply is already running")
+        try:
+            run = conn.execute("SELECT id, kind, status FROM runs WHERE id=?",
+                               (body.run_id,)).fetchone()
+            if run is None:
+                raise HTTPException(status_code=404, detail=f"run #{body.run_id} does not exist")
+            policy = load_policy(conn, settings)
+            result = rollback_run(conn, settings, policy, run_id=body.run_id,
+                                  actor=actor.name)
+            if not result["ok"] and result["refusals"]:
+                reason = "; ".join(result["refusals"])
+                identity.audit(conn, "rollback.refused",
+                               f"{actor.name} refused to roll back run #{body.run_id}: {reason}",
+                               level="warning", actor=actor.name)
+                conn.commit()
+                raise HTTPException(status_code=409, detail=reason)
+            identity.audit(
+                conn, "rollback.manual",
+                f"{actor.name} rolled back run #{body.run_id}: {result['summary']}",
+                level="warning", actor=actor.name,
+            )
+            conn.commit()
+            return result
         finally:
             RUN_LOCK.release()
 
@@ -1137,7 +1232,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         data = current.as_dict()
         for key in ("mode", "schedule", "enabled", "timezone", "scopes", "security_only",
                     "window_start_hour", "window_end_hour", "max_concurrent", "host_ids",
-                    "freeze_from", "freeze_to"):
+                    "freeze_from", "freeze_to", "maintenance_windows",
+                    "approval_ttl_hours", "require_approval_reason"):
             value = getattr(body, key)
             if value is not None:
                 data[key] = value
@@ -1151,7 +1247,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail={"problems": problems})
         identity.audit(conn, "settings.policy",
                        f"{actor.name} set mode={candidate.mode} schedule={candidate.schedule!r} "
-                       f"enabled={candidate.enabled}", level="warning", actor=actor.name)
+                       f"enabled={candidate.enabled} "
+                       f"windows={len(candidate.maintenance_windows)} "
+                       f"approval_ttl={candidate.approval_ttl_hours}h",
+                       level="warning", actor=actor.name)
         return _policy_payload(candidate)
 
     @app.post("/api/settings/preview", dependencies=[requires("sync:configure")])

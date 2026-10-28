@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { OfficePanel } from "@/components/console/OfficePanel";
 import { DesktopPane } from "@/components/console/DesktopPane";
-import { abandonAttempt, autosaveAttempt, sandboxCommand, submitAttempt } from "@/app/actions/student";
+import { abandonAttempt, autosaveAttempt, recordTimingIntegrity, sandboxCommand, submitAttempt } from "@/app/actions/student";
+import { timingIntegrityEnabled, type TimingClaim } from "@/lib/timing-integrity-rules";
 import { createScenarioDriver, fidelityBadge } from "@/lib/sim/drivers";
 import type { Fidelity, SandboxAvailability } from "@/lib/sim/fidelity";
 import { isDesktopScenario } from "@/lib/sim/desktop";
@@ -260,6 +261,75 @@ export function AttemptRunner({ attempt, scenario, definition, initialState, fid
 
   const finished = attempt.status !== "IN_PROGRESS";
 
+  /* ------------------------------------------------------ timing integrity */
+
+  // Opt-in per scenario (2.2). A scenario that did not ask for it pays nothing:
+  // no listener, no request, no record.
+  const timingEnabled = timingIntegrityEnabled(definition);
+  /** When the page went hidden, until it comes back. */
+  const hiddenAtRef = useRef<string | null>(null);
+  /** Closed intervals that have not reached the server yet. */
+  const pendingTimingRef = useRef<TimingClaim[]>([]);
+
+  /** Close an open hidden period at this moment and queue it. */
+  const closeAway = useCallback(() => {
+    if (!hiddenAtRef.current) return;
+    pendingTimingRef.current.push({ hiddenAt: hiddenAtRef.current, shownAt: new Date().toISOString() });
+    hiddenAtRef.current = null;
+    // The rules cap the record server-side; this only keeps a long session's queue
+    // from growing without bound in the browser.
+    if (pendingTimingRef.current.length > 200) {
+      pendingTimingRef.current = pendingTimingRef.current.slice(-200);
+    }
+  }, []);
+
+  /**
+   * Send what is queued, without ever blocking the attempt.
+   *
+   * A batch the server refuses outright (the attempt was submitted between ticks)
+   * is dropped: retrying it would fail forever. A request that fails in transit is
+   * kept for the next autosave tick, because a lost tab switch is not worth
+   * interrupting the learner over.
+   */
+  const flushTiming = useCallback(async () => {
+    if (!timingEnabled || pendingTimingRef.current.length === 0) return;
+    const batch = pendingTimingRef.current.slice(-200);
+    pendingTimingRef.current = [];
+    try {
+      const result = await recordTimingIntegrity({ attemptId: attempt.id, claims: batch });
+      if (!result.ok && result.error === "This attempt has already been submitted.") return;
+    } catch {
+      pendingTimingRef.current = [...batch, ...pendingTimingRef.current].slice(-200);
+    }
+  }, [attempt.id, timingEnabled]);
+
+  useEffect(() => {
+    if (!timingEnabled || attempt.status !== "IN_PROGRESS") return;
+    const onVisibility = () => {
+      if (document.hidden) {
+        if (!hiddenAtRef.current) hiddenAtRef.current = new Date().toISOString();
+        return;
+      }
+      closeAway();
+      void flushTiming();
+    };
+    // A page that is being unloaded may never report `visible` again, so the open
+    // period is closed here. It is a claim about when this browser last spoke, not
+    // a claim that the learner stopped working.
+    const onHide = () => {
+      closeAway();
+      void flushTiming();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", onHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onHide);
+      closeAway();
+      void flushTiming();
+    };
+  }, [timingEnabled, attempt.status, closeAway, flushTiming]);
+
   /* ------------------------------------------------------------- autosave */
 
   const persist = useCallback(async () => {
@@ -271,7 +341,10 @@ export function AttemptRunner({ attempt, scenario, definition, initialState, fid
     } catch {
       setSaveState("error");
     }
-  }, [attempt.id, attempt.status]);
+    // The timing batch rides the autosave tick: one extra small write, and a
+    // failure here is invisible to the learner because the attempt itself saved.
+    void flushTiming();
+  }, [attempt.id, attempt.status, flushTiming]);
 
   useEffect(() => {
     if (attempt.status !== "IN_PROGRESS") return;
@@ -297,6 +370,9 @@ export function AttemptRunner({ attempt, scenario, definition, initialState, fid
     } catch {
       /* grading still runs against the last autosave */
     }
+    // The timing door closes at submission, so the last batch goes now rather
+    // than on a tick that will never come.
+    await flushTiming();
     await submitAttempt(payload);
   }
 
@@ -640,6 +716,13 @@ export function AttemptRunner({ attempt, scenario, definition, initialState, fid
             </div>
             <h1 className="mt-3 font-display text-xl font-semibold text-ink sm:text-2xl">{scenario.title}</h1>
             <p className="mt-1 max-w-2xl text-sm text-ink-soft">{scenario.objective}</p>
+            {/* Told before it happens, not after: a record the learner only meets on
+                their report is one they had no chance to consent to. */}
+            {timingEnabled && !finished ? (
+              <p role="note" className="mt-2 text-xs text-ink-faint">
+                {t("integrity.enabled")}
+              </p>
+            ) : null}
             {assignment?.instructions ? (
               <p className="mt-2 rounded-xl2 border border-brand/20 bg-brand-soft/50 px-3 py-2 text-sm text-ink-soft">
                 <span className="font-semibold text-brand">{t("console.instructorNote")} </span>

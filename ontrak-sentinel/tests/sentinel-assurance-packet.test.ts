@@ -73,6 +73,23 @@ function view(overrides: Partial<ConsoleComplianceView> = {}): ConsoleCompliance
     alerts: null,
     chain: { ok: true, length: 12, detail: "The organization's evidence chain verifies end to end." },
     policies: { stored: 1, baselineStored: true, scopes: 3 },
+    retention: {
+      months: 12,
+      windowStart: "2025-09-30T06:00:00.000Z",
+      asOf: T0,
+      source: "default",
+      chainLength: 12,
+      beforeWindow: 0,
+      oldestAt: T0,
+      detail: "Declared retention window: 12 month(s) from 2025-09-30T06:00:00.000Z (default).",
+    },
+    controlHistory: {
+      changes: [],
+      total: 0,
+      since: "2024-09-30T06:00:00.000Z",
+      truncated: false,
+      detail: "No control change is recorded in the chain (looking back 24 month(s)).",
+    },
     ...overrides,
   };
 }
@@ -269,6 +286,13 @@ test("the packet has its own path, and the page offers it", () => {
   const page = renderCompliance(view());
   assert.match(page, /href="\/console\/compliance\/packet"/);
   assert.match(page, /download/);
+  // Three variants from the page, because 2.2's exit is that an auditor can *get*
+  // them from the console rather than only from a shell with a session cookie.
+  assert.match(page, /href="\/console\/compliance\/packet\?format=csv"/);
+  assert.match(page, /href="\/console\/compliance\/packet\?format=pdf"/);
+  // And the two things 2.2 added to the signed record are on the page too.
+  assert.match(page, /Retention window/);
+  assert.match(page, /Control history/);
 });
 
 /* -------------------------------------------------------------------------- */

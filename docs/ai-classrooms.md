@@ -18,6 +18,7 @@ This page is the seam between the two. Nothing here is required: with
 | The classroom specification: one entry per module, with prompt, objectives and activities | OnTrak (generated) | `GET /admin/tenants/<id>/classroom-spec?courseId=…[&cohortId=…]` |
 | The generated lesson: the scenes, the agents, the media | AthenIQ / OpenMAIC | `classroom.<domain>` |
 | The classroom's **address**, and which class is in it | OnTrak | `Course.classroomUrl`, `Cohort.classroomUrl` |
+| The **outcome** of a finished lesson, as a training record | OnTrak (reported by the classroom) | `ClassroomCompletion`, and the completion record stored on it |
 
 A classroom belongs to a **course** — it is generated from that course's modules — and a
 **class** may override it, because a sitting can be built from the sponsoring employer's own
@@ -100,9 +101,12 @@ distinguishable.
 - **Generation is not driven from here.** OnTrak has no OpenMAIC API client: the host's own
   routes and its model settings belong to the deployment that runs it, and a GET this app
   invented would either 404 or start something the host never agreed to. The handoff is a file.
-- **The classroom's checks are not OnTrak's grading.** A scenario attempt, a lab session and a
-  certificate are unchanged by any of this; the classroom is where a learner practises between
-  them, and its quizzes stay inside OpenMAIC.
+- **The classroom's checks are not OnTrak's grading.** Its quizzes stay inside OpenMAIC and this
+  app never re-marks one. What OnTrak does hold is the *record*: a finished lesson may be
+  reported to `POST /api/v1/classroom/completions` ([classroom-completion.md](classroom-completion.md)),
+  which files a `ClassroomCompletion` row and, when the reported score clears its pass mark, a
+  verifiable completion record. A scenario attempt and a lab session are unchanged by any of
+  this; the classroom is where a learner practises between them.
 - **One classroom per course or class.** A per-module address is not modelled, because
   OpenMAIC already scopes a generated lesson by scene and a second level of nesting would only
   invite two addresses to disagree about which one a learner should open.

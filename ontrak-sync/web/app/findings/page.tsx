@@ -39,6 +39,10 @@ export default function FindingsPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [applied, setApplied] = useState<ApplyResult | null>(null);
+  // Recorded with the approval (2.1). Optional, and required only where the policy
+  // says so — but the field is here either way, because a reason nobody can type is
+  // a reason nobody records.
+  const [reason, setReason] = useState("");
 
   const findings = useAsync(
     () => api.findings({ status, manager, host, security_only: securityOnly, limit: 5000 }),
@@ -92,6 +96,14 @@ export default function FindingsPage() {
           </p>
         </div>
         <div className="actions">
+          <input
+            aria-label="Reason for this approval"
+            disabled={busy !== null}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="reason (optional)"
+            style={{ width: 200 }}
+            value={reason}
+          />
           <button
             disabled={busy !== null || ids.length === 0}
             onClick={() =>
@@ -99,8 +111,11 @@ export default function FindingsPage() {
                 // Approve and install in the same call — the button says "install
                 // it", and the list is filtered to pending, so the approved rows
                 // vanish and a separate Apply step would be out of reach.
-                const result = await api.approve({ ids, apply: true });
+                const result = await api.approve({
+                  ids, apply: true, reason: reason.trim() || undefined,
+                });
                 setSelected(new Set());
+                setReason("");
                 const applied = asApplyResult(result);
                 if (applied) setApplied(applied);
               })

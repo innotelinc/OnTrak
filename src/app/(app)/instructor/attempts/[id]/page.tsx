@@ -13,6 +13,7 @@ import { regradeAttempt } from "@/app/actions/instructor";
 import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, Button, ButtonLink, Card, ProgressBar } from "@/components/ui";
 import { cn, formatDateTime, formatDuration } from "@/lib/cn";
+import { formatTimingDuration, readTimingRecord } from "@/lib/timing-integrity-rules";
 import { getTranslator } from "@/lib/i18n-server";
 
 export const metadata: Metadata = { title: "Attempt review" };
@@ -67,6 +68,9 @@ export default async function AttemptReviewPage({
     live.results.length !== storedChecks.size ||
     live.results.some((result) => storedChecks.get(result.checkId) !== result.passed);
 
+  // The opt-in timing record (2.2), when this scenario asked for one. Null means
+  // the control was not on — not that no time was spent away.
+  const timing = readTimingRecord(attempt.integrity);
   const history = state.machine.history;
   const hintsUsed = (definition.hints ?? []).filter((hint) => attempt.hintsUsed.includes(hint.id));
 
@@ -138,6 +142,25 @@ export default async function AttemptReviewPage({
             </div>
           </Card>
 
+          {timing ? (
+            <Card>
+              <div className="flex flex-wrap items-baseline justify-between gap-3">
+                <h2 className="font-display text-base font-semibold text-ink">{t("integrity.title")}</h2>
+                <span className="text-xs text-ink-faint">{formatDateTime(timing.reportedAt)}</span>
+              </div>
+              <p className="mt-2 text-sm text-ink-soft">
+                {timing.intervals === 0
+                  ? t("integrity.none")
+                  : t("integrity.summary", {
+                      duration: formatTimingDuration(timing.awaySeconds),
+                      count: timing.intervals,
+                    })}
+              </p>
+              <p className="mt-2 text-xs text-ink-faint">{t("integrity.notScored")}</p>
+              <p className="mt-1 text-xs text-ink-faint">{t("integrity.source")}</p>
+            </Card>
+          ) : null}
+
           {stale ? (
             <Card className="border-amber/35">
               <p className="text-sm text-ink-soft">
@@ -173,6 +196,14 @@ export default async function AttemptReviewPage({
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-semibold text-ink">{result.label}</p>
+                        {/* Between 0 and full is a rubric band, and the reviewer
+                            should see it named: a half band earns points without
+                            being a pass (2.2). */}
+                        {result.points > 0 && result.points < result.maxPoints ? (
+                          <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-amber">
+                            {t("report.halfCredit")}
+                          </p>
+                        ) : null}
                         <p className="mt-0.5 text-sm text-ink-soft">{result.detail}</p>
                       </div>
                       <span className={cn("font-mono text-xs font-semibold", result.passed ? "text-teal" : "text-pink")}>

@@ -19,7 +19,14 @@
  * belongs to, and it says so in a switch rather than in a comment.
  */
 
-import { buildCompliancePacket, type CompliancePacket } from "./assurance-packet";
+import {
+  buildCompliancePacket,
+  controlHistoryFrom,
+  retentionMonths,
+  retentionWindow,
+  RETENTION_MONTHS_ENV,
+  type CompliancePacket,
+} from "./assurance-packet";
 import { assuranceSigner } from "./assurance-sign";
 import { sha256Hex } from "./hash";
 import type { IdentityActor, IdentityService, ServiceResult } from "./identity-service";
@@ -1066,12 +1073,18 @@ export class ConsoleService implements ConsoleEndpoints {
       },
     ];
 
+    // One clock reading for the whole reading: the retention window, the history's
+    // bounds and the page's `generatedAt` are the same instant, or the page and the
+    // packet can disagree about where "the last twelve months" starts.
+    const generatedAt = new Date().toISOString();
+    const retentionChoice = retentionMonths(process.env[RETENTION_MONTHS_ENV]);
+
     return {
       ok: true,
       value: {
         actor: consoleActor(await this.organizationName(context.value), session.value.identity),
         session: sessionView(session.value.session),
-        generatedAt: new Date().toISOString(),
+        generatedAt,
         controls,
         roles,
         identities: {
@@ -1106,6 +1119,17 @@ export class ConsoleService implements ConsoleEndpoints {
           baselineStored: baseline !== null,
           scopes: roles.length,
         },
+        retention: retentionWindow(trail.ok ? trail.value.events : [], {
+          ...retentionChoice,
+          asOf: generatedAt,
+        }),
+        controlHistory: trail.ok
+          ? controlHistoryFrom(trail.value.events, { asOf: generatedAt })
+          : controlHistoryFrom([], {
+              asOf: generatedAt,
+              unavailable:
+                "Your role may not read the evidence trail, so this packet asserts no control history.",
+            }),
       },
     };
   }

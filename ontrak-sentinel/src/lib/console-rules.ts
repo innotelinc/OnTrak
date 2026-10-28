@@ -2360,6 +2360,54 @@ export interface ComplianceControlView {
   detail: string;
 }
 
+/**
+ * The declared evidence-retention window, and what the chain actually holds.
+ *
+ * A declaration, not a deletion rule: `beforeWindow` counts the events older than the
+ * window that are still in the chain, so a reader can see that nothing was trimmed to
+ * make the number match.
+ */
+export interface ComplianceRetention {
+  months: number;
+  windowStart: string;
+  asOf: string;
+  /** Where the number came from — the env var, the default, or the default it fell back to. */
+  source: string;
+  chainLength: number;
+  /** Events older than `windowStart`, carried in full. */
+  beforeWindow: number;
+  oldestAt: string | null;
+  detail: string;
+}
+
+/** One recorded decision about a control, as the packet carries it. */
+export interface ComplianceControlChange {
+  /** The control the change belongs to, e.g. `identity-policy:ALL` or `enforcement-rails`. */
+  controlId: string;
+  at: string;
+  /** What the control said before this change, or `null` when this is the first on record. */
+  from: string | null;
+  to: string;
+  actor: string;
+  /** Where in the chain it is: sequence number and the start of the record hash. */
+  ref: string;
+}
+
+/**
+ * Control changes read out of the evidence chain.
+ *
+ * `total` is `null` when the exporter may not read the trail: an empty list would
+ * assert that nothing ever changed, which is exactly the claim a role that cannot see
+ * the chain must not make.
+ */
+export interface ComplianceControlHistory {
+  changes: ComplianceControlChange[];
+  total: number | null;
+  since: string;
+  truncated: boolean;
+  detail: string;
+}
+
 /** One policy scope, with the population it governs. */
 export interface ComplianceRoleView {
   scope: string;
@@ -2414,6 +2462,10 @@ export interface ConsoleComplianceView {
   chain: { ok: boolean; length: number; detail: string } | null;
   /** The policy table's state, and the number of rows an administrator has written. */
   policies: { stored: number; baselineStored: boolean; scopes: number };
+  /** The declared retention window against the chain's real span (2.2). */
+  retention: ComplianceRetention;
+  /** The control changes the chain records, or `null` when the actor may not read it. */
+  controlHistory: ComplianceControlHistory | null;
 }
 
 /**
@@ -2464,6 +2516,35 @@ export function renderCompliance(view: ConsoleComplianceView, flash?: string | n
       `<span class="muted">(${escapeHtml(view.chain.length)} events)</span></p>`
     : `<p class="muted">Your role may not read the evidence trail, so this report cannot assert anything about it.</p>`;
 
+  // Retention is a declaration, and the page shows it beside what the chain actually
+  // holds: an operator reading "12 months" should also see "and 3 older events kept".
+  const retention =
+    `<div class="card"><p>Declared window: <strong>${escapeHtml(view.retention.months)} month(s)</strong> ` +
+    `from ${escapeHtml(view.retention.windowStart)}.</p>` +
+    `<p class="muted">The chain holds ${escapeHtml(view.retention.chainLength)} event(s)` +
+    `${view.retention.oldestAt ? ` back to ${escapeHtml(view.retention.oldestAt)}` : ""}; ` +
+    `${escapeHtml(view.retention.beforeWindow)} predate the window and are kept rather than truncated. ` +
+    `Window source: ${escapeHtml(view.retention.source)}.</p></div>`;
+
+  const history = view.controlHistory;
+  const controlHistory = history
+    ? history.total === null
+      ? `<p class="muted">${escapeHtml(history.detail)}</p>`
+      : history.changes.length === 0
+        ? `<p class="muted">${escapeHtml(history.detail)}</p>`
+        : `<div class="card"><table><thead><tr><th>Control</th><th>When</th><th>Change</th><th>Actor</th></tr></thead><tbody>` +
+          history.changes
+            .map(
+              (change) =>
+                `<tr><td>${escapeHtml(change.controlId)}</td>` +
+                `<td class="muted">${escapeHtml(change.at)}</td>` +
+                `<td class="muted">${escapeHtml(change.from ?? "(first on record)")} → ${escapeHtml(change.to)}</td>` +
+                `<td class="muted">${escapeHtml(change.actor)} <span class="muted">${escapeHtml(change.ref)}</span></td></tr>`,
+            )
+            .join("") +
+          `</tbody></table><p class="muted">${escapeHtml(history.detail)}</p></div>`
+    : `<p class="muted">Your role may not read the evidence trail, so this report asserts no control history.</p>`;
+
   const body =
     `<h2>Controls in force</h2>` +
     `<div class="card"><table><thead><tr><th>Control</th><th></th><th>Evidence</th></tr></thead><tbody>${controls}</tbody></table></div>` +
@@ -2477,12 +2558,20 @@ export function renderCompliance(view: ConsoleComplianceView, flash?: string | n
     alertSummary +
     `<h2>Evidence integrity</h2>` +
     chain +
+    `<h3>Retention window</h3>` +
+    retention +
+    `<h3>Control history</h3>` +
+    controlHistory +
     `<h2>Take it with you</h2>` +
-    `<div class="card"><p><a href="${CONSOLE_PATHS.compliancePacket}" download>Download this posture as a signed packet</a></p>` +
-    `<p class="muted">The file carries the controls, the coverage and the evidence anchor above, with a ` +
-    `fingerprint of the posture and a signature over the whole document. It verifies with the deployment's ` +
-    `key and nothing else — no account here, no session, no database — which is what makes it usable as ` +
-    `evidence rather than as a screenshot. Its format is the one OnTrak Tix's incident packets use.</p></div>` +
+    `<div class="card"><p><a href="${CONSOLE_PATHS.compliancePacket}" download>Download this posture as a signed packet (JSON)</a> · ` +
+    `<a href="${CONSOLE_PATHS.compliancePacket}?format=csv" download>CSV</a> · ` +
+    `<a href="${CONSOLE_PATHS.compliancePacket}?format=pdf" download>PDF</a></p>` +
+    `<p class="muted">The three are the same signed record: the controls, the coverage, the evidence anchor, ` +
+    `the retention window and the control history above, with a fingerprint of the posture and a signature ` +
+    `over the whole document. The CSV is the same rows for a spreadsheet, and the PDF the same rows as one ` +
+    `printed page; neither re-signs anything, so all three check against the JSON. They verify with the ` +
+    `deployment's key and nothing else — no account here, no session, no database — which is what makes them ` +
+    `usable as evidence rather than as a screenshot. The format is the one OnTrak Tix's incident packets use.</p></div>` +
     `<p class="muted">Generated ${escapeHtml(view.generatedAt)}. Every figure above is read from the same rows the ` +
     `product enforces: no control is reported as satisfied because a setting exists somewhere else.</p>`;
 

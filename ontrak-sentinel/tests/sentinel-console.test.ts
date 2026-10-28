@@ -639,3 +639,73 @@ test("console: a service identity gets its own page, minus an evidence section i
   assert.match(page.body, /access to the audit trail/);
   assert.doesNotMatch(page.body, /organization\.create/);
 });
+
+/* -------------------------------------------------------------------------- */
+/*  The packet's three shapes (2.2)                                            */
+/* -------------------------------------------------------------------------- */
+
+test("console: the compliance packet downloads as JSON, CSV and PDF", async () => {
+  const h = harness();
+  const { sessionId } = await h.organization("packets");
+
+  // The signer reads the deployment's key from the environment, exactly as a real
+  // deployment would; the test supplies one and puts the environment back afterwards.
+  const previous = process.env.SENTINEL_ASSURANCE_SECRET;
+  process.env.SENTINEL_ASSURANCE_SECRET = "packet-console-test-key-long-enough";
+  try {
+    const asJson = await routeConsole(request("GET", CONSOLE_PATHS.compliancePacket, { sessionId }), h.service);
+    assert.equal(asJson.status, 200);
+    assert.match(String(asJson.headers["content-disposition"]), /\.json"$/);
+    const signed = JSON.parse(String(asJson.body)) as { signature: string };
+    assert.match(signed.signature, /^[0-9a-f]{64}$/);
+
+    const asCsv = await routeConsole(
+      request("GET", `${CONSOLE_PATHS.compliancePacket}?format=csv`, { sessionId }),
+      h.service,
+    );
+    assert.equal(asCsv.status, 200);
+    assert.match(String(asCsv.headers["content-type"]), /text\/csv/);
+    assert.match(String(asCsv.headers["content-disposition"]), /\.csv"$/);
+    assert.match(String(asCsv.body), /^section,key,value,detail\n/);
+    // The rendering carries a signature of its own, in the same envelope fields: two
+    // exports taken a moment apart legitimately differ (the record states when it was
+    // generated), so cross-request equality is not the property to assert. That the
+    // CSV carries the *same* packet's signature is pinned in
+    // `sentinel-packet-extras.test.ts`, where both files come from one packet.
+    assert.match(String(asCsv.body), /^packet,signature,[0-9a-f]{64},$/m);
+    assert.match(String(asCsv.body), /^packet,contentHash,[0-9a-f]{64},$/m);
+
+    const asPdf = await routeConsole(
+      request("GET", `${CONSOLE_PATHS.compliancePacket}?format=pdf`, { sessionId }),
+      h.service,
+    );
+    assert.equal(asPdf.status, 200);
+    assert.match(String(asPdf.headers["content-type"]), /application\/pdf/);
+    assert.match(String(asPdf.headers["content-disposition"]), /\.pdf"$/);
+    assert.ok(String(asPdf.body).startsWith("%PDF-1.4"));
+    assert.ok(String(asPdf.body).endsWith("%%EOF\n"));
+
+    const unknown = await routeConsole(
+      request("GET", `${CONSOLE_PATHS.compliancePacket}?format=xml`, { sessionId }),
+      h.service,
+    );
+    assert.equal(unknown.status, 400);
+    assert.match(String(unknown.body), /json, csv or pdf/);
+  } finally {
+    if (previous === undefined) delete process.env.SENTINEL_ASSURANCE_SECRET;
+    else process.env.SENTINEL_ASSURANCE_SECRET = previous;
+  }
+});
+
+test("console: the packet's variants need a session just as the JSON does", async () => {
+  const h = harness();
+  await h.organization("packets-guarded");
+  for (const format of ["csv", "pdf"]) {
+    const response = await routeConsole(
+      request("GET", `${CONSOLE_PATHS.compliancePacket}?format=${format}`),
+      h.service,
+    );
+    assert.equal(response.status, 303, `${format} must not be readable without a session`);
+    assert.equal(response.headers.location, CONSOLE_PATHS.signIn);
+  }
+});

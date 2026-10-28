@@ -44,6 +44,16 @@ class FakeRemote:
         self.timeouts: list[int] = []
         self.still_pending: dict[str | None, set[str]] = {}
         self.snap_rc = 0
+        # What dpkg reports is installed, and the revisions snap reports: a
+        # rollback is judged on these, not on an exit code, so a fake that cannot
+        # answer them exercises the refusal path rather than the happy one.
+        self.installed_versions: dict[str, str] = {}
+        self.rollback_installs = True   # False = the downgrade changed nothing
+        self.rollback_rc = 0
+        self.rollback_out = ""
+        self.snap_revisions: dict[str, str] = {}
+        self.snap_revert_to: dict[str, str] = {}
+        self.revert_rc = 0
         self.pull_rc = 0
         self.login_rc = 0
         # Every `docker login`, in call order: the argv, the container, and the stdin
@@ -103,6 +113,42 @@ class FakeRemote:
             self.calls.append(("snap-refresh", container, command))
             return Result(command, self.snap_rc, "" if self.snap_rc == 0 else "", 
                           "" if self.snap_rc == 0 else "error: snap is busy")
+        if "install --allow-downgrades" in quoted:
+            self.calls.append(("apt-rollback", container, command))
+            self.timeouts.append(timeout)
+            if self.rollback_installs and self.rollback_rc == 0:
+                # A real apt moves exactly the pinned packages; the fake does the
+                # same so the verification step has something true to read.
+                for token in command.split("--allow-downgrades", 1)[1].split():
+                    name, _, version = token.partition("=")
+                    if name and version:
+                        self.installed_versions[name.strip("'")] = version.strip("'")
+            return Result(command, self.rollback_rc, self.rollback_out,
+                          "" if self.rollback_rc == 0
+                          else "E: Version for a package was not found")
+        if "dpkg-query -W" in quoted:
+            package = command.rsplit(" ", 1)[-1].strip().strip("'")
+            self.calls.append(("dpkg-query", container, package))
+            version = self.installed_versions.get(package)
+            return Result(command, 0 if version else 1, version or "", "")
+        if "snap list " in quoted:
+            package = command.split("snap list ", 1)[1].strip().strip("'")
+            self.calls.append(("snap-list", container, package))
+            revision = self.snap_revisions.get(package)
+            if not revision:
+                return Result(command, 1, "", "error: no matching snaps installed")
+            return Result(command, 0,
+                          "Name  Version  Rev  Tracking       Publisher  Notes\n"
+                          f"{package}  1.0  {revision}  latest/stable  acme  -\n", "")
+        if "snap revert " in quoted:
+            package = command.split("snap revert ", 1)[1].strip().strip("'")
+            self.calls.append(("snap-revert", container, package))
+            if self.revert_rc == 0:
+                target = self.snap_revert_to.get(package)
+                if target:
+                    self.snap_revisions[package] = target
+            return Result(command, self.revert_rc, "",
+                          "" if self.revert_rc == 0 else "error: cannot revert")
         return Result(command, 0, "", "")
 
     def ssh(self, host, remote_argv, timeout, stdin_text=None):
@@ -802,6 +848,87 @@ class RunBookkeeping(ApplierCase):
         result = self.apply()
         self.assertEqual(1, result["failed"])
         self.assertIn("container", self.status_of(manager="docker", package="redis:7.4")["detail"])
+
+
+class SafeApply(ApplierCase):
+    """A bad update costs one machine, not the fleet (2.2's exit).
+
+    The plan itself is tested in `test_waves.py`; what is exercised here is that the
+    loop obeys it — that a failure in the canary wave stops the run before the next
+    host is even announced, and that the untouched findings keep the status an
+    operator can retry from.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.settings = Settings(hosts=(self.host, Host("i2", "192.168.1.52", "both")))
+
+    def finding_on(self, host: str, target: str, package: str) -> int:
+        target_id = db.ensure_target(self.conn, host=host,
+                                     kind="host" if target == host else "container",
+                                     name=target)
+        db.record_finding(self.conn, target_id=target_id, manager="apt", package=package,
+                          current="1.0", candidate="1.1")
+        row = self.conn.execute(
+            "SELECT id FROM findings WHERE manager='apt' AND package=?", (package,)
+        ).fetchone()
+        db.set_status(self.conn, [row["id"]], "approved")
+        return row["id"]
+
+    def test_a_failed_canary_leaves_the_next_host_untouched(self):
+        canary = self.finding_on("i1", "a-canary", "nginx")
+        later = self.finding_on("i2", "i2", "curl")
+        self.fake.install_rc = 100
+
+        result = self.apply([canary, later])
+
+        installs = [call for call in self.fake.calls if call[0] == "apt-install"]
+        self.assertEqual(1, len(installs))
+        self.assertEqual("a-canary", installs[0][1])
+        self.assertEqual("failed", self.status_of(package="nginx")["status"])
+        # Untouched, not failed: the approval is a decision about a version, and it
+        # has not been acted on yet, so a retry is the same decision.
+        self.assertEqual("approved", self.status_of(package="curl")["status"])
+        self.assertIn("halted after the canary", " ".join(result["messages"]))
+        self.assertTrue(result["summary"].endswith("stopped early"))
+
+    def test_a_clean_canary_rolls_on_to_the_rest(self):
+        canary = self.finding_on("i1", "a-canary", "nginx")
+        later = self.finding_on("i2", "i2", "curl")
+
+        result = self.apply([canary, later])
+
+        installs = [call for call in self.fake.calls if call[0] == "apt-install"]
+        self.assertEqual(2, len(installs))
+        self.assertEqual(2, result["applied"])
+        self.assertEqual("applied", self.status_of(package="curl")["status"])
+        self.assertFalse(any("halted" in m for m in result["messages"]))
+
+    def test_the_blast_radius_cap_leaves_the_rest_approved(self):
+        first = self.finding_on("i1", "a-canary", "nginx")
+        second = self.finding_on("i2", "i2", "curl")
+        self.policy.apply_max_targets = 1
+
+        result = self.apply([first, second])
+
+        self.assertEqual(1, result["applied"])
+        self.assertEqual("applied", self.status_of(package="nginx")["status"])
+        self.assertEqual("approved", self.status_of(package="curl")["status"])
+        self.assertTrue(any("apply_max_targets=1" in m for m in result["messages"]))
+
+    def test_a_deployment_may_choose_to_see_every_failure_in_one_run(self):
+        canary = self.finding_on("i1", "a-canary", "nginx")
+        later = self.finding_on("i2", "i2", "curl")
+        self.fake.install_rc = 100
+        self.policy.apply_halt_on_failure = False
+
+        result = self.apply([canary, later])
+
+        installs = [call for call in self.fake.calls if call[0] == "apt-install"]
+        self.assertEqual(2, len(installs))
+        self.assertEqual(2, result["failed"])
+        self.assertEqual("failed", self.status_of(package="curl")["status"])
+        self.assertFalse(result["summary"].endswith("stopped early"))
 
 
 if __name__ == "__main__":

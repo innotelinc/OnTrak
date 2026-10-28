@@ -807,6 +807,16 @@ export const en = {
   "report.breakdown": "How each check went",
   "report.breakdownHint":
     "Grading is deterministic: the same final machine state always produces the same score.",
+  "report.halfCredit": "Half credit",
+  "integrity.enabled":
+    "This attempt records the time the page is hidden. That record is not part of your score.",
+  "integrity.title": "Timing record",
+  "integrity.none": "No time away was recorded.",
+  "integrity.summary": "{duration} away in {count} interval(s)",
+  "integrity.notScored":
+    "Recorded, not scored: this is not a grade input, and a re-grade does not change it.",
+  "integrity.source":
+    "Reported by the browser while the attempt ran. The record is evidence that an interval was reported, not proof of anything about the learner.",
   "report.objectives": "What the ticket asked for",
   "report.next": "Next",
   "report.next.body":

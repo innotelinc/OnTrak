@@ -106,6 +106,73 @@ class FindingLifecycle(unittest.TestCase):
                           detail="Ubuntu:24.04/noble-security")
         self.assertEqual("Ubuntu:24.04/noble-security", self.row()["detail"])
 
+    def test_an_approval_records_who_decided_and_when(self):
+        # 2.1: `approved` is a decision with an author and a horizon, not a word.
+        db.record_finding(self.conn, target_id=self.target, manager="apt", package="nginx")
+        db.set_status(self.conn, [self.row()["id"]], "approved", actor="alice",
+                      expires_at="2026-10-01T00:00:00Z", reason="CVE-2026-1234")
+        found = self.row()
+        self.assertEqual("alice", found["approved_by"])
+        self.assertIsNotNone(found["approved_at"])
+        self.assertEqual("2026-10-01T00:00:00Z", found["approval_expires_at"])
+        self.assertEqual("CVE-2026-1234", found["approval_reason"])
+
+    def test_an_approval_with_no_actor_records_no_invented_approver(self):
+        # Backwards compatible with every existing caller, and honest: a decision
+        # nobody is named on reads as "no named approver" to `approvals.py` rather
+        # than as somebody's.
+        db.record_finding(self.conn, target_id=self.target, manager="apt", package="nginx")
+        db.set_status(self.conn, [self.row()["id"]], "approved")
+        self.assertEqual("approved", self.row()["status"])
+        self.assertIsNone(self.row()["approved_by"])
+
+    def test_a_skip_and_a_reopening_clear_the_approval(self):
+        # Neither is an apply any more, so an approval left attached would be a
+        # permission attached to nothing.
+        for status in ("skipped", "pending"):
+            with self.subTest(status=status):
+                db.record_finding(self.conn, target_id=self.target, manager="apt", package="nginx")
+                db.set_status(self.conn, [self.row()["id"]], "approved", actor="alice")
+                db.set_status(self.conn, [self.row()["id"]], status)
+                self.assertIsNone(self.row()["approved_by"])
+                self.assertIsNone(self.row()["approved_at"])
+
+    def test_a_failed_apply_keeps_the_approval_a_retry_needs(self):
+        db.record_finding(self.conn, target_id=self.target, manager="apt", package="nginx")
+        db.set_status(self.conn, [self.row()["id"]], "approved", actor="alice")
+        db.set_status(self.conn, [self.row()["id"]], "failed", "unmet dependencies")
+        self.assertEqual("alice", self.row()["approved_by"])
+
+    def test_a_rescan_of_the_same_candidate_keeps_the_approval(self):
+        db.record_finding(self.conn, target_id=self.target, manager="apt", package="nginx",
+                          current="1.0", candidate="1.1")
+        db.set_status(self.conn, [self.row()["id"]], "approved", actor="alice")
+        db.record_finding(self.conn, target_id=self.target, manager="apt", package="nginx",
+                          current="1.0", candidate="1.1")
+        self.assertEqual("alice", self.row()["approved_by"])
+
+    def test_a_moved_candidate_clears_the_approval_it_was_not_about(self):
+        # The decision was about 1.1. Once 1.2 is on offer, carrying the approval
+        # across would let a decision made about one version install another.
+        db.record_finding(self.conn, target_id=self.target, manager="apt", package="nginx",
+                          current="1.0", candidate="1.1")
+        db.set_status(self.conn, [self.row()["id"]], "approved", actor="alice")
+        db.set_status(self.conn, [self.row()["id"]], "applied")
+        db.record_finding(self.conn, target_id=self.target, manager="apt", package="nginx",
+                          current="1.1", candidate="1.2")
+        found = self.row()
+        self.assertEqual("pending", found["status"])
+        self.assertIsNone(found["approved_by"])
+        self.assertIsNone(found["approval_expires_at"])
+
+    def test_the_worklist_carries_the_approval_record(self):
+        db.record_finding(self.conn, target_id=self.target, manager="apt", package="nginx")
+        db.set_status(self.conn, [self.row()["id"]], "approved", actor="alice",
+                      reason="scheduled patch")
+        listed = db.list_findings(self.conn, status="approved")[0]
+        self.assertEqual("alice", listed["approved_by"])
+        self.assertEqual("scheduled patch", listed["approval_reason"])
+
     def test_the_same_package_under_two_managers_is_two_findings(self):
         # `docker` and `apt` both have a `n8n`; they are not the same thing and
         # must not collapse into one row.

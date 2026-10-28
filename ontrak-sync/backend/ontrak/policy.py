@@ -155,7 +155,112 @@ class Cron:
         return None
 
 
-# ── policy ───────────────────────────────────────────────────────────────────
+# ── the maintenance calendar ─────────────────────────────────────────────────
+# Weekday names, Monday-first, because Python's `datetime.weekday()` numbers the
+# week that way and this module already had one off-by-a-day bug from reading
+# cron's Sunday-first numbers as Monday-first (see `describe`).
+_WEEKDAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _window_covers(window, moment: datetime) -> bool:
+    """Is `moment` inside one named window?
+
+    A window is recurring (a weekday set) or a one-off inside a date range; both
+    are the same shape with the dates left empty. Every question this asks can be
+    answered "no" from a malformed entry, which is deliberate: `validate()` is
+    where a malformed calendar is reported, and a runtime check that failed open
+    would turn a typo into an apply at any hour.
+    """
+    if not isinstance(window, dict):
+        return False
+    weekdays = window.get("weekdays")
+    if not isinstance(weekdays, (list, tuple)) or not weekdays:
+        return False
+    if moment.weekday() not in [day for day in weekdays
+                               if isinstance(day, int) and 0 <= day <= 6]:
+        return False
+    start_date, end_date = str(window.get("start") or ""), str(window.get("end") or "")
+    if start_date or end_date:
+        try:
+            first, last = date.fromisoformat(start_date), date.fromisoformat(end_date)
+        except (ValueError, TypeError):
+            return False
+        if not first <= moment.date() <= last:
+            return False
+    start_hour, end_hour = window.get("start_hour"), window.get("end_hour")
+    if not isinstance(start_hour, int) or not isinstance(end_hour, int):
+        return False
+    if start_hour == end_hour:
+        return False
+    hour = moment.hour
+    if start_hour < end_hour:
+        return start_hour <= hour < end_hour
+    return hour >= start_hour or hour < end_hour
+
+
+def _describe_window(window) -> str:
+    """One window as the sentence a refusal uses, e.g. `"Quarterly audit" (Sat, Sun 22:00-04:00)`."""
+    if not isinstance(window, dict):
+        return "an unreadable window"
+    name = str(window.get("name") or "").strip() or "unnamed window"
+    weekdays = [day for day in window.get("weekdays") or []
+                if isinstance(day, int) and 0 <= day <= 6]
+    days = ", ".join(_WEEKDAY_NAMES[day] for day in sorted(set(weekdays))) or "no days"
+    start_hour, end_hour = window.get("start_hour"), window.get("end_hour")
+    hours = (f"{int(start_hour):02d}:00-{int(end_hour):02d}:00"
+             if isinstance(start_hour, int) and isinstance(end_hour, int) else "no hours")
+    dates = ""
+    start, end = str(window.get("start") or ""), str(window.get("end") or "")
+    if start and end:
+        dates = f", {start} to {end}"
+    return f'"{name}" ({days} {hours}{dates})'
+
+
+def _window_problems(index: int, window) -> list[str]:
+    """Every complaint about one calendar entry, all at once.
+
+    The settings form is a single submit, and a calendar is the field most likely
+    to be pasted in by hand, so a half-typed entry has to come back as a list of
+    what is wrong rather than as the first thing that happened to be parsed.
+    """
+    if not isinstance(window, dict):
+        return [f"maintenance window {index + 1} must be an object"]
+    name = str(window.get("name") or "").strip()
+    label = f"maintenance window {name!r}" if name else f"maintenance window {index + 1}"
+    problems: list[str] = []
+    if not name:
+        problems.append(f"maintenance window {index + 1} needs a name")
+    weekdays = window.get("weekdays")
+    if not isinstance(weekdays, (list, tuple)) or not weekdays:
+        problems.append(f"{label} needs at least one weekday")
+    else:
+        bad = [day for day in weekdays
+               if not isinstance(day, int) or isinstance(day, bool) or not 0 <= day <= 6]
+        if bad:
+            problems.append(f"{label} has weekday(s) outside 0-6: {bad!r} (Monday is 0)")
+    start_date = str(window.get("start") or "")
+    end_date = str(window.get("end") or "")
+    if bool(start_date) != bool(end_date):
+        problems.append(f"{label} needs both a start and an end date, or neither")
+    parsed: dict[str, date] = {}
+    for key, value in (("start", start_date), ("end", end_date)):
+        if not value:
+            continue
+        try:
+            parsed[key] = date.fromisoformat(value)
+        except (ValueError, TypeError):
+            problems.append(f"{label} {key} must be an ISO date (YYYY-MM-DD), not {value!r}")
+    if len(parsed) == 2 and parsed["start"] > parsed["end"]:
+        problems.append(f"{label} ends before it starts")
+    start_hour, end_hour = window.get("start_hour"), window.get("end_hour")
+    for key, hour in (("start_hour", start_hour), ("end_hour", end_hour)):
+        if not isinstance(hour, int) or isinstance(hour, bool) or not 0 <= hour <= 23:
+            problems.append(f"{label} {key} must be 0-23")
+    if isinstance(start_hour, int) and isinstance(end_hour, int) and start_hour == end_hour:
+        problems.append(f"{label} has the same start and end hour — write 0 and 23 for a whole day")
+    return problems
+
+
 @dataclass
 class Policy:
     """How this deployment is allowed to behave. Persisted as one JSON row."""
@@ -172,6 +277,22 @@ class Policy:
     window_start_hour: int | None = None
     window_end_hour: int | None = None
     max_concurrent: int = 3
+    # Blast radius, the part that decides how much of the fleet one bad candidate can
+    # reach. The canary is applied alone first; only when it comes back clean does the
+    # run move on, and each later wave is at most `apply_wave_size` targets. The
+    # defaults are the cautious ones — one canary, five per wave — because an update
+    # tool that touches the whole fleet in the first run is one upgrade away from an
+    # outage nobody can pause. `apply_max_targets` (0 = no bound) is the separate
+    # ceiling on a whole run: a scan that found four hundred findings is not four
+    # hundred authorisations.
+    apply_canary_targets: int = 1
+    apply_wave_size: int = 5
+    apply_max_targets: int = 0
+    # Whether a wave that produced any failure stops the run. On by default: the
+    # reason to canary at all is that a failure should cost one machine, not one
+    # fleet. Off is for a deployment that would rather see every outcome in one run
+    # and sort it out afterwards — an explicit choice, not a default.
+    apply_halt_on_failure: bool = True
     host_ids: list[int] = field(default_factory=list)   # empty = every host
     # A change freeze — an inclusive ISO date range during which nothing is applied,
     # whatever the mode. The hourly window says "these are the hours we patch"; the
@@ -180,15 +301,41 @@ class Policy:
     # an hour. Empty on both ends means no freeze, which is the shipped default.
     freeze_from: str = ""                # ISO YYYY-MM-DD, inclusive
     freeze_to: str = ""                  # ISO YYYY-MM-DD, inclusive
+    # A maintenance calendar — the windows an apply is *allowed* during, which is
+    # the other direction from the freeze. The freeze says "these weeks we do not
+    # patch"; a calendar says "these are the windows we do". Each entry is
+    # `{name, start, end, weekdays, start_hour, end_hour}`: dates are optional
+    # (empty on both means a weekly window), weekdays are Monday=0 to Sunday=6, and
+    # a window that wraps midnight is the normal case rather than an error. An
+    # empty list is the shipped default and means no calendar at all.
+    maintenance_windows: list[dict] = field(default_factory=list)
+    # How long an approval stays live, in hours. 0 is the shipped default and means
+    # "never expires": an approval is a named decision, and a deployment that wants
+    # one to lapse has to say so. A positive value is stamped onto each approval as
+    # it is recorded, so a later change to this number does not move deadlines that
+    # were already promised.
+    approval_ttl_hours: int = 0
+    # When on, an approval must carry a reason before it can be applied. Off by
+    # default: a reason is worth having, and a deployment that requires one is a
+    # policy somebody chose rather than a form field everybody is forced through.
+    require_approval_reason: bool = False
 
     def as_dict(self) -> dict:
         return {
             "mode": self.mode, "schedule": self.schedule, "enabled": self.enabled,
             "timezone": self.timezone, "scopes": list(self.scopes),
             "security_only": self.security_only, "window_start_hour": self.window_start_hour,
-            "window_end_hour": self.window_end_hour, "max_concurrent": self.max_concurrent,
+            "window_end_hour": self.window_end_hour,            "max_concurrent": self.max_concurrent,
+            "apply_canary_targets": self.apply_canary_targets,
+            "apply_wave_size": self.apply_wave_size,
+            "apply_max_targets": self.apply_max_targets,
+            "apply_halt_on_failure": self.apply_halt_on_failure,
             "host_ids": list(self.host_ids),
             "freeze_from": self.freeze_from, "freeze_to": self.freeze_to,
+            "maintenance_windows": [dict(window) for window in (self.maintenance_windows or [])
+                                   if isinstance(window, dict)],
+            "approval_ttl_hours": self.approval_ttl_hours,
+            "require_approval_reason": self.require_approval_reason,
         }
 
     @classmethod
@@ -216,6 +363,29 @@ class Policy:
         if self.max_concurrent < 1:
             problems.append("max_concurrent must be at least 1")
 
+        # The blast radius is read straight into an apply order, so a nonsense value
+        # here is not a cosmetic form error: a zero wave size or a canary larger than
+        # its wave would make the run touch more than the operator asked for, and the
+        # first symptom would be an outage rather than a validation message.
+        for label, value in (("apply_canary_targets", self.apply_canary_targets),
+                             ("apply_wave_size", self.apply_wave_size),
+                             ("apply_max_targets", self.apply_max_targets)):
+            if not isinstance(value, int) or isinstance(value, bool):
+                problems.append(f"{label} must be a whole number")
+        if isinstance(self.apply_wave_size, int) and not isinstance(self.apply_wave_size, bool) \
+                and self.apply_wave_size < 1:
+            problems.append("apply_wave_size must be at least 1")
+        if isinstance(self.apply_canary_targets, int) and not isinstance(self.apply_canary_targets, bool) \
+                and self.apply_canary_targets < 0:
+            problems.append("apply_canary_targets must be 0 (no canary) or more")
+        if isinstance(self.apply_max_targets, int) and not isinstance(self.apply_max_targets, bool) \
+                and self.apply_max_targets < 0:
+            problems.append("apply_max_targets must be 0 (unlimited) or more")
+        if (isinstance(self.apply_canary_targets, int) and not isinstance(self.apply_canary_targets, bool)
+                and isinstance(self.apply_wave_size, int) and not isinstance(self.apply_wave_size, bool)
+                and self.apply_canary_targets > self.apply_wave_size):
+            problems.append("apply_canary_targets must not exceed apply_wave_size")
+
         # A freeze is a promise the operator makes to somebody else (an auditor, a
         # change board), so a half-written one is refused rather than quietly read
         # as "no freeze": one date without the other is almost always a form that
@@ -232,6 +402,18 @@ class Policy:
                 problems.append(f"{label} must be an ISO date (YYYY-MM-DD), not {value!r}")
         if len(parsed) == 2 and parsed["freeze_from"] > parsed["freeze_to"]:
             problems.append("the change freeze ends before it starts")
+
+        # A calendar is the same kind of promise as a freeze — somebody else plans
+        # around it — so every entry is validated here rather than at the moment an
+        # apply is refused with a window the form should never have accepted.
+        if not isinstance(self.maintenance_windows, list):
+            problems.append("maintenance_windows must be a list of windows")
+        else:
+            for index, window in enumerate(self.maintenance_windows):
+                problems.extend(_window_problems(index, window))
+        if not isinstance(self.approval_ttl_hours, int) or isinstance(self.approval_ttl_hours, bool) \
+                or self.approval_ttl_hours < 0:
+            problems.append("approval_ttl_hours must be 0 (never expires) or a positive number of hours")
         return problems
 
     def in_window(self, moment: datetime) -> bool:
@@ -266,6 +448,40 @@ class Policy:
             return None
         return (start, end) if start <= end else None
 
+    def in_change_window(self, moment: datetime | None = None) -> bool:
+        """Is `moment` inside the maintenance calendar?
+
+        No calendar means any time, so a deployment that never configures one keeps
+        exactly the behaviour it had. A configured calendar is an allow-list: a
+        moment outside every window is outside the calendar, and that is what
+        `window_refusal` turns into the sentence a refused operator reads. An
+        unreadable entry covers nothing rather than everything — the fail-closed
+        direction, because a typo in a window must not authorise a 3am apply.
+        """
+        if not self.maintenance_windows:
+            return True
+        current = moment or datetime.now(timezone.utc)
+        return any(_window_covers(window, current) for window in self.maintenance_windows)
+
+    def window_refusal(self, moment: datetime | None = None) -> str | None:
+        """Why `moment` is outside the calendar, or None when it is inside.
+
+        This is the sentence an operator reads when a click is refused, so it names
+        every window the deployment has rather than only saying no: one of them is
+        the thing to change, and which one is not for this function to guess.
+        """
+        if not self.maintenance_windows:
+            return None
+        current = moment or datetime.now(timezone.utc)
+        if self.in_change_window(current):
+            return None
+        stamp = current.strftime("%Y-%m-%d %H:%M UTC")
+        if len(self.maintenance_windows) == 1:
+            return (f"outside the maintenance calendar: {stamp} is not inside "
+                    f"{_describe_window(self.maintenance_windows[0])}")
+        windows = "; ".join(_describe_window(window) for window in self.maintenance_windows)
+        return f"outside the maintenance calendar: {stamp} is not inside any of {windows}"
+
     def in_freeze(self, moment: datetime) -> bool:
         """Is `moment`'s date inside the change freeze? Inclusive on both ends.
 
@@ -298,6 +514,12 @@ class Policy:
             # A freeze outranks the mode: `auto` still applies *nothing* while the
             # moratorium is on, which is the only reading of "freeze" that means
             # anything.
+            return "skip"
+        if not self.in_change_window(moment):
+            # A calendar outranks the mode for the same reason: `auto` may only do
+            # what the operator said it may do, and "these are the hours we patch
+            # in" is such a statement. The manual path is refused with the same
+            # sentence by `approvals.apply_refusal`.
             return "skip"
         return "apply" if self.mode == "auto" else "approve"
 

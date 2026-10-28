@@ -90,6 +90,15 @@ const DEFINITION_ENVELOPE = z.object({
   // TODO: Consider defining a specific DocRecord type when the schema stabilizes
   checks: z.array(z.record(z.string(), z.unknown())).min(1, "A scenario needs at least one graded check."),
   hints: z.array(HINT).optional(),
+  // The opt-in timing-integrity control (2.2). Strict on purpose: an unknown or
+  // misspelled key here would otherwise be stripped and the scenario would record
+  // nothing while its author believed the control was on.
+  integrity: z
+    .object({
+      recordFocusLoss: z.boolean(),
+    })
+    .strict()
+    .optional(),
   allowHints: z.boolean().optional(),
   authorNotes: z.string().optional(),
   // Declared here even though the shape is checked by hand below: a key the envelope does not
@@ -360,6 +369,83 @@ export function validateDefinition(raw: unknown, env: Record<string, string | un
     }
   });
 
+  // ---- Rubric bands and competencies (2.2) ------------------------------
+  //
+  // A half band is authored as an ordinary check attached to its parent, which is
+  // what keeps the authoring vocabulary small — but it also means the two fields
+  // can name things that do not exist. Every refusal below is the shape that would
+  // make a band meaningless rather than merely unusual, and each one says why: a
+  // band on a check worth one point awards nothing, a band on a band has no whole
+  // to be half of, and a second band for one parent is two rubrics for one check.
+  const checkById = new Map<string, Record<string, unknown>>();
+  for (const check of rawChecks) {
+    if (typeof check.id === "string" && check.id !== "") checkById.set(check.id, check);
+  }
+
+  const bandedParents = new Map<string, string>();
+  for (const check of rawChecks) {
+    const field = typeof check.id === "string" && check.id !== "" ? check.id : `checks[${rawChecks.indexOf(check)}]`;
+
+    if (check.competency !== undefined) {
+      if (typeof check.competency !== "string" || check.competency.trim() === "") {
+        issues.push({
+          level: "error",
+          field,
+          message: "`competency` must be the name of the skill this check demonstrates.",
+        });
+      }
+    }
+
+    const halfOf = check.halfOf;
+    if (halfOf === undefined) continue;
+    if (typeof halfOf !== "string" || halfOf.trim() === "") {
+      issues.push({ level: "error", field, message: "`halfOf` must name the id of the check this is the half band of." });
+      continue;
+    }
+    const parent = checkById.get(halfOf);
+    if (parent === undefined) {
+      issues.push({
+        level: "error",
+        field,
+        message: `\`halfOf\` names "${halfOf}", which is not a check in this scenario.`,
+      });
+      continue;
+    }
+    if (parent.halfOf !== undefined) {
+      issues.push({
+        level: "error",
+        field,
+        message: `"${halfOf}" is itself a half band, so it has no full band to be half of.`,
+      });
+      continue;
+    }
+    const parentPoints = typeof parent.points === "number" ? parent.points : 1;
+    if (!Number.isInteger(parentPoints) || parentPoints < 2 || parentPoints % 2 !== 0) {
+      issues.push({
+        level: "error",
+        field,
+        message: `"${halfOf}" is worth ${parentPoints} point(s). A half band needs an even total of at least 2, so half is exactly half.`,
+      });
+    }
+    if (check.points !== undefined) {
+      issues.push({
+        level: "warning",
+        field,
+        message: "`points` on a half band is ignored — its parent's points decide both bands.",
+      });
+    }
+    const existing = bandedParents.get(halfOf);
+    if (existing !== undefined) {
+      issues.push({
+        level: "error",
+        field,
+        message: `"${halfOf}" already has a half band ("${existing}"); one check cannot have two rubrics.`,
+      });
+      continue;
+    }
+    bandedParents.set(halfOf, typeof check.id === "string" ? check.id : field);
+  }
+
   const hintIds = new Set<string>();
   for (const hint of definition.hints ?? []) {
     if (hintIds.has(hint.id)) {
@@ -368,7 +454,10 @@ export function validateDefinition(raw: unknown, env: Record<string, string | un
     hintIds.add(hint.id);
   }
 
-  const totalPoints = definition.checks.reduce((sum, check) => sum + (typeof check.points === "number" ? check.points : 1), 0);
+  const totalPoints = definition.checks.reduce(
+    (sum, check) => (check.halfOf === undefined ? sum + (typeof check.points === "number" ? check.points : 1) : sum),
+    0,
+  );
 
   // ---- Dry run ----------------------------------------------------------
   if (booted && !issues.some((issue) => issue.level === "error")) {
@@ -387,6 +476,18 @@ export function validateDefinition(raw: unknown, env: Record<string, string | un
           level: "warning",
           field: result.checkId,
           message: `This check already passes before the student does anything: ${result.detail}`,
+        });
+      }
+      // A half band that already passes is the same bug wearing a smaller number:
+      // every submission would collect half the parent's points for nothing. The
+      // band is not a line of its own in `results`, which is exactly why it needs
+      // this second look.
+      for (const condition of report.bands ?? []) {
+        if (!condition.passed) continue;
+        issues.push({
+          level: "warning",
+          field: condition.checkId,
+          message: `This half-credit condition already passes before the student does anything: ${condition.detail}`,
         });
       }
       if (report.maxScore === 0) {

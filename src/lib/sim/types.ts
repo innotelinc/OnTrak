@@ -297,6 +297,28 @@ export interface ScenarioCheckBase {
   label: string;
   /** Points awarded when the check passes. Defaults to 1. */
   points?: number;
+  /**
+   * The one skill this check demonstrates (2.2).
+   *
+   * A certificate's competencies used to be the scenario's `tags`, which said what
+   * a scenario was about rather than what the learner proved. A tagged check turns
+   * that around: the competency on the record is read from the checks that earned
+   * it (`rubric-rules.ts`), so an auditor can name the evidence behind a claim.
+   */
+  competency?: string;
+  /**
+   * The id of the check this one is the **half-credit band** of (2.2).
+   *
+   * A rubric band is authored in the vocabulary the author already knows: this is
+   * an ordinary check — the weaker thing that still deserves something — and it is
+   * evaluated only when its parent fails. The parent then earns the full band or
+   * the half band, never both; this check is not a line of its own in the report,
+   * and its `points` are ignored, because a band is part of its parent's rubric
+   * rather than a second question. `validate.ts` refuses the shapes that would make
+   * a half band meaningless (an unknown parent, a parent worth fewer than 2
+   * points, a band on a band).
+   */
+  halfOf?: string;
   /** Shown in the report when the check fails. */
   successDetail?: string;
   failureDetail?: string;
@@ -491,6 +513,19 @@ export interface ScenarioDefinition {
    * `src/lib/scenario-i18n.ts`.
    */
   i18n?: Record<ScenarioTextLocale, ScenarioTextOverrides>;
+  /**
+   * Optional timing-integrity control (2.2).
+   *
+   * `recordFocusLoss: true` asks the attempt runner to report intervals during
+   * which the page was hidden, which are stored on the attempt as a
+   * browser-reported record. Off unless a scenario says so, and never an input to
+   * the score: see `src/lib/timing-integrity-rules.ts` for what the record may and
+   * may not be read to mean.
+   */
+  integrity?: {
+    /** Record tab/focus loss. Anything but `true` is off. */
+    recordFocusLoss?: boolean;
+  };
   /** Allow hint spending at all. */
   allowHints?: boolean;
   /** Instructor-facing authoring notes; never sent to the student. */
@@ -505,10 +540,43 @@ export interface CheckEvaluation {
   checkId: string;
   label: string;
   kind: CheckKind;
+  /** Full credit. A half band is **not** a pass — see `band`. */
   passed: boolean;
   points: number;
   maxPoints: number;
   detail: string;
+  /**
+   * Which rubric band the check reached (2.2): 0 / half / full.
+   *
+   * `passed` answers "is the work complete" and `band` answers "how much did it
+   * earn"; a half-band check earns points while staying a missed check, which is
+   * the honest reading and keeps `missedChecks` meaning what it says.
+   */
+  band?: "none" | "half" | "full";
+  /** The skill this check demonstrates, when its author tagged one. */
+  competency?: string;
+}
+
+/** One half-credit condition, evaluated but never a line of its own (2.2). */
+export interface BandCondition {
+  checkId: string;
+  /** The check whose rubric this band belongs to. */
+  parentId: string;
+  passed: boolean;
+  detail: string;
+}
+
+/**
+ * What one competency has behind it (2.2).
+ *
+ * `earned` is true when at least one check carrying the skill reached **full**
+ * credit: a half band shows work in progress, not a competence demonstrated.
+ */
+export interface CompetencyTally {
+  skill: string;
+  earned: boolean;
+  checkIds: string[];
+  earnedCheckIds: string[];
 }
 
 export interface GradeReport {
@@ -518,6 +586,10 @@ export interface GradeReport {
   percent: number;
   passed: boolean;
   penalty: number;
+  /** The half bands whose parents failed, so the dry run can warn on a free one. */
+  bands?: BandCondition[];
+  /** The competencies this attempt demonstrated, traced to its checks (2.2). */
+  competencies?: CompetencyTally[];
 }
 
 /* -------------------------------------------------------------------------- */

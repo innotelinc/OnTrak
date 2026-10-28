@@ -26,8 +26,9 @@
  */
 
 import type {
-  ApplyProgress, ApplyResult, ApproveResult, AppUser, Event, Identity, Finding, Host, Meta,
-  Policy, Run,
+  ApplyProgress, ApplyResult, ApproveResult, AppUser, Event, Identity, Finding, Host, Meta,  Policy,
+  RollbackResult,
+  Run,
   RollPassResult, Rollouts, RollUndoResult, ScanResult, SignInResult, Summary, Target,
   UserSession,
 } from "./types";
@@ -236,6 +237,10 @@ export const api = {
   // send it, so "Approve" is the whole action rather than half of one.
   approve: (body: {
     ids?: number[]; all_pending?: boolean; security_only?: boolean; apply?: boolean;
+    /** Why it is being installed; recorded with the decision (2.1). */
+    reason?: string;
+    /** When the approval lapses, ISO-8601. Defaults from `approval_ttl_hours`. */
+    expires_at?: string;
   }) => post<ApproveResult>("/api/findings/approve", body),
   skip: (body: { ids?: number[]; all_pending?: boolean; security_only?: boolean }) =>
     post<{ skipped: number }>("/api/findings/skip", body),
@@ -243,6 +248,13 @@ export const api = {
   scan: (hosts: string[] = []) => post<ScanResult>("/api/scan", { hosts }),
   apply: (body: { ids?: number[]; all_approved?: boolean } = { all_approved: true }) =>
     post<ApplyResult>("/api/apply", body),
+  /**
+   * Undo one apply run (2.2): put back the version each package had before it.
+   *
+   * Addressed by run rather than by finding because the version to restore is a
+   * fact about that run — see `backend/ontrak/rollback.py`.
+   */
+  rollback: (runId: number) => post<RollbackResult>("/api/rollback", { run_id: runId }),
 
   // ── the remit ─────────────────────────────────────────────────────────────
   // The only unattended write in this service. Reading it is `sync:view`; claiming and

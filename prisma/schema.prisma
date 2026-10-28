@@ -318,6 +318,7 @@ model User {
 
   organization      Organization?     @relation("OrganizationMembers", fields: [organizationId], references: [id], onDelete: SetNull)
   attempts          Attempt[]
+  classroomCompletions ClassroomCompletion[]
   memberships       CohortMember[]
   cohortsTaught     Cohort[]          @relation("CohortInstructor")
   scenariosAuthored Scenario[]        @relation("ScenarioAuthor")
@@ -725,6 +726,13 @@ model Attempt {
   /// Feedback the student has unlocked by spending hints.
   hintsUsed String[] @default([])
 
+  /// The opt-in timing record (2.2): what the browser reported about time away
+  /// from the attempt, reduced and clamped by `timing-integrity-rules.ts`.
+  /// Null for every scenario that did not opt in, which is every scenario written
+  /// before the control existed. Never read by the grader: the record is evidence
+  /// a reviewer can read, not a score input.
+  integrity Json?
+
   /// The completion record issued when this attempt first cleared the pass mark.
   /// Stored rather than derived so the code a learner was handed keeps verifying
   /// after a re-grade — see `src/lib/certificates.ts`.
@@ -764,6 +772,63 @@ model Attempt {
   @@index([userId, status])
   @@index([scenarioId])
   @@index([assignmentId])
+}
+
+/// A classroom completion reported by the learning platform (Class 2.1).
+///
+/// The classroom is where a learner practises between scenarios; its quizzes stay
+/// inside OpenMAIC and this app never grades them. What arrives here is the
+/// classroom's own outcome — a lesson finished, a score, the checks the classroom
+/// ran — and the family files it as a **training record** in its own ledger, with a
+/// completion record when it clears the pass mark. That is the point of the table:
+/// the classroom's progress is not the record of record, this deployment's is.
+///
+/// A row is not an `Attempt`: an attempt is filed against a scenario this app
+/// graded, and inventing a scenario row per generated lesson would put machine-made
+/// exercises in the catalog and in every analytics query. The completion therefore
+/// carries the course and lesson it came from as references, exactly as the lab's
+/// door accepts another product's ids (`labSessionId`), and the certificate it
+/// issues is stored here rather than recomputed — so the code a learner was handed
+/// still verifies when the classroom is rebuilt or its title changes.
+model ClassroomCompletion {
+  id           String @id @default(cuid())
+  /// The classroom's own idempotency key. Unique, so a retry is recognised as the
+  /// completion it already wrote instead of a second record.
+  completionId String @unique
+
+  userId String
+
+  /// The course the lesson belongs to, as the classroom names it (a course key or
+  /// slug) and its title. Kept as text rather than a foreign key because the
+  /// classroom's catalog is another product's, and a deleted course must not
+  /// delete the evidence that somebody finished its lesson.
+  courseRef   String
+  courseTitle String
+  /// The lesson or chapter within that course.
+  lessonRef   String
+  lessonTitle String
+
+  score    Int
+  maxScore Int
+  /// Whole percent, as reported or the shipped default (70).
+  passScore Int @default(70)
+
+  startedAt    DateTime?
+  completedAt  DateTime
+  timeSpentSec Int       @default(0)
+
+  /// The completion record issued when this completion cleared the pass mark.
+  /// Stored rather than derived, for the same reason an attempt stores its own.
+  certificate          Json?
+  certificateIssuedAt  DateTime?
+  certificateRevokedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, completedAt])
+  @@index([courseRef, completedAt])
 }
 
 model CheckResult {

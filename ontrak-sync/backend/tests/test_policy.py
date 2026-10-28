@@ -228,6 +228,21 @@ class PolicyValidation(unittest.TestCase):
         self.assertTrue(any("window_start_hour" in p
                             for p in policy.Policy(window_start_hour=25).validate()))
 
+    def test_a_zero_wave_size_is_refused(self):
+        # A wave of nothing is not "no limit" — it would plan no waves at all and
+        # report a clean run that touched nothing.
+        self.assertTrue(any("apply_wave_size" in p
+                            for p in policy.Policy(apply_wave_size=0).validate()))
+
+    def test_a_canary_larger_than_its_wave_is_refused(self):
+        problems = policy.Policy(apply_canary_targets=3, apply_wave_size=2).validate()
+        self.assertTrue(any("apply_canary_targets" in p for p in problems))
+
+    def test_a_negative_blast_radius_is_refused(self):
+        problems = policy.Policy(apply_max_targets=-1, apply_canary_targets=-1).validate()
+        self.assertTrue(any("apply_max_targets" in p for p in problems))
+        self.assertTrue(any("apply_canary_targets" in p for p in problems))
+
     def test_the_round_trip_through_json_keeps_every_setting(self):
         original = policy.Policy(mode="auto", schedule="15 5 * * 2", security_only=True,
                                  window_start_hour=22, window_end_hour=5, max_concurrent=7,
@@ -353,6 +368,182 @@ class ChangeFreeze(unittest.TestCase):
         p = policy.Policy(mode="detect", freeze_from="2026-12-20", freeze_to="2027-01-03")
         for now in (dt(2026, 12, 25, 12, 0), dt(2026, 12, 1, 12, 0)):
             self.assertNotEqual("apply", p.action_for(security_count=1, total_count=1, now=now))
+
+
+class MaintenanceCalendar(unittest.TestCase):
+    """The named windows an apply is *allowed* in, on top of the freeze.
+
+    The freeze is a moratorium; a calendar is the other direction — the windows the
+    desk has said it patches in (a weekend night, a month-end, a change board's
+    slot). Two properties carry it: a configured calendar is an allow-list (outside
+    every window is outside the calendar), and an entry this code cannot read covers
+    *nothing* rather than everything, because a typo must not authorise a 3am apply.
+    """
+
+    def calendar(self, **overrides):
+        window = {"name": "Patch night", "weekdays": [5, 6],
+                  "start_hour": 22, "end_hour": 4}
+        window.update(overrides)
+        return policy.Policy(maintenance_windows=[window])
+
+    def test_no_calendar_means_any_time(self):
+        p = policy.Policy()
+        self.assertTrue(p.in_change_window(dt(2026, 9, 28, 13, 0)))
+        self.assertIsNone(p.window_refusal(dt(2026, 9, 28, 13, 0)))
+
+    def test_a_weekly_window_covers_its_days_and_wraps_midnight(self):
+        # 2026-09-26 is a Saturday, 2026-09-28 a Monday.
+        p = self.calendar()
+        self.assertTrue(p.in_change_window(dt(2026, 9, 26, 23, 0)))
+        self.assertTrue(p.in_change_window(dt(2026, 9, 27, 3, 59)))
+        self.assertFalse(p.in_change_window(dt(2026, 9, 26, 12, 0)))
+        self.assertFalse(p.in_change_window(dt(2026, 9, 28, 23, 0)))
+
+    def test_a_daytime_window_does_not_wrap(self):
+        p = self.calendar(start_hour=10, end_hour=12)
+        self.assertTrue(p.in_change_window(dt(2026, 9, 26, 10, 0)))
+        self.assertTrue(p.in_change_window(dt(2026, 9, 26, 11, 59)))
+        self.assertFalse(p.in_change_window(dt(2026, 9, 26, 12, 0)))
+
+    def test_a_one_off_window_is_bounded_by_its_dates(self):
+        p = self.calendar(weekdays=[0, 1, 2, 3, 4, 5, 6], start_hour=0, end_hour=23,
+                          start="2026-12-20", end="2026-12-24")
+        self.assertTrue(p.in_change_window(dt(2026, 12, 22, 10, 0)))
+        self.assertFalse(p.in_change_window(dt(2026, 12, 25, 10, 0)))
+        self.assertFalse(p.in_change_window(dt(2026, 12, 19, 10, 0)))
+
+    def test_the_refusal_names_the_window_the_operator_has_to_change(self):
+        reason = self.calendar().window_refusal(dt(2026, 9, 28, 12, 0))
+        self.assertIn("outside the maintenance calendar", reason)
+        self.assertIn("Patch night", reason)
+        self.assertIn("Sat, Sun 22:00-04:00", reason)
+
+    def test_several_windows_are_all_named(self):
+        p = policy.Policy(maintenance_windows=[
+            {"name": "Weekend", "weekdays": [5, 6], "start_hour": 22, "end_hour": 4},
+            {"name": "Month end", "weekdays": [0], "start_hour": 1, "end_hour": 5},
+        ])
+        reason = p.window_refusal(dt(2026, 9, 29, 12, 0))  # a Tuesday
+        self.assertIn("Weekend", reason)
+        self.assertIn("Month end", reason)
+
+    def test_any_one_matching_window_is_enough(self):
+        p = policy.Policy(maintenance_windows=[
+            {"name": "Weekend", "weekdays": [5, 6], "start_hour": 22, "end_hour": 4},
+            {"name": "Monday noon", "weekdays": [0], "start_hour": 11, "end_hour": 13},
+        ])
+        self.assertTrue(p.in_change_window(dt(2026, 9, 28, 12, 0)))
+
+    def test_an_unreadable_entry_covers_nothing_rather_than_everything(self):
+        # The fail-closed direction: a window whose hours or weekdays cannot be read
+        # is a typo, and a typo must not authorise an apply at any hour.
+        for window in (
+            {"name": "broken", "weekdays": [], "start_hour": 0, "end_hour": 1},
+            {"name": "broken", "weekdays": [0], "start_hour": "soon", "end_hour": 1},
+            {"name": "broken", "weekdays": [0], "start_hour": 0, "end_hour": 1,
+             "start": "20/12/2026", "end": "2026-12-24"},
+            "not a window",
+        ):
+            with self.subTest(window=window):
+                self.assertFalse(policy.Policy(maintenance_windows=[window])
+                                 .in_change_window(dt(2026, 9, 28, 0, 30)))
+
+    def test_a_calendar_outranks_auto(self):
+        p = self.calendar()
+        self.assertEqual("skip", p.action_for(security_count=9, total_count=9,
+                                              now=dt(2026, 9, 28, 12, 0)))
+        p_auto = self.calendar()
+        p_auto.mode = "auto"
+        self.assertEqual("skip", p_auto.action_for(security_count=9, total_count=9,
+                                                   now=dt(2026, 9, 28, 12, 0)))
+
+    def test_auto_applies_inside_the_calendar(self):
+        p = policy.Policy(mode="auto", maintenance_windows=[{
+            "name": "Patch night", "weekdays": [5, 6], "start_hour": 22, "end_hour": 4,
+        }])
+        self.assertEqual("apply", p.action_for(security_count=1, total_count=1,
+                                               now=dt(2026, 9, 26, 23, 0)))
+
+    def test_a_freeze_still_outranks_a_window_that_covers_the_moment(self):
+        p = policy.Policy(mode="auto", freeze_from="2026-12-20", freeze_to="2027-01-03",
+                          maintenance_windows=[{
+                              "name": "Always", "weekdays": [0, 1, 2, 3, 4, 5, 6],
+                              "start_hour": 0, "end_hour": 23,
+                          }])
+        self.assertTrue(p.in_change_window(dt(2026, 12, 25, 12, 0)))
+        self.assertEqual("skip", p.action_for(security_count=1, total_count=1,
+                                              now=dt(2026, 12, 25, 12, 0)))
+
+    def test_detect_mode_still_never_applies_inside_a_window(self):
+        p = self.calendar()
+        self.assertEqual("approve", p.action_for(security_count=1, total_count=1,
+                                                 now=dt(2026, 9, 26, 23, 0)))
+
+    def test_a_window_needs_a_name(self):
+        msgs = policy.Policy(maintenance_windows=[{
+            "weekdays": [1], "start_hour": 1, "end_hour": 2,
+        }]).validate()
+        self.assertTrue(any("needs a name" in m for m in msgs))
+
+    def test_a_window_needs_at_least_one_weekday(self):
+        msgs = policy.Policy(maintenance_windows=[{
+            "name": "Empty", "weekdays": [], "start_hour": 1, "end_hour": 2,
+        }]).validate()
+        self.assertTrue(any("at least one weekday" in m for m in msgs))
+
+    def test_a_weekday_outside_monday_to_sunday_is_refused(self):
+        msgs = policy.Policy(maintenance_windows=[{
+            "name": "Bad", "weekdays": [0, 7], "start_hour": 1, "end_hour": 2,
+        }]).validate()
+        self.assertTrue(any("outside 0-6" in m for m in msgs))
+
+    def test_bad_hours_and_a_zero_length_window_are_refused(self):
+        for hour in (-1, 24, "late"):
+            with self.subTest(hour=hour):
+                msgs = policy.Policy(maintenance_windows=[{
+                    "name": "Bad", "weekdays": [1], "start_hour": hour, "end_hour": 2,
+                }]).validate()
+                self.assertTrue(any("must be 0-23" in m for m in msgs))
+        equal = policy.Policy(maintenance_windows=[{
+            "name": "Same", "weekdays": [1], "start_hour": 4, "end_hour": 4,
+        }]).validate()
+        self.assertTrue(any("same start and end hour" in m for m in equal))
+
+    def test_a_half_written_or_backwards_date_range_is_refused(self):
+        half = policy.Policy(maintenance_windows=[{
+            "name": "One end", "weekdays": [1], "start_hour": 1, "end_hour": 2,
+            "start": "2026-12-20", "end": "",
+        }]).validate()
+        self.assertTrue(any("both a start and an end" in m for m in half))
+        backwards = policy.Policy(maintenance_windows=[{
+            "name": "Backwards", "weekdays": [1], "start_hour": 1, "end_hour": 2,
+            "start": "2026-12-24", "end": "2026-12-20",
+        }]).validate()
+        self.assertTrue(any("ends before it starts" in m for m in backwards))
+        malformed = policy.Policy(maintenance_windows=[{
+            "name": "Typo", "weekdays": [1], "start_hour": 1, "end_hour": 2,
+            "start": "20/12/2026", "end": "2026-12-24",
+        }]).validate()
+        self.assertTrue(any("ISO date" in m for m in malformed))
+
+    def test_a_sane_calendar_validates(self):
+        self.assertEqual([], self.calendar().validate())
+
+    def test_the_calendar_round_trips_through_a_dict(self):
+        p = self.calendar()
+        again = policy.Policy.from_dict(p.as_dict())
+        self.assertEqual(p.as_dict(), again.as_dict())
+        self.assertEqual("Patch night", again.maintenance_windows[0]["name"])
+
+    def test_a_negative_approval_ttl_is_refused(self):
+        msgs = policy.Policy(approval_ttl_hours=-1).validate()
+        self.assertTrue(any("approval_ttl_hours" in m for m in msgs))
+
+    def test_the_approval_settings_round_trip(self):
+        p = policy.Policy(approval_ttl_hours=24, require_approval_reason=True)
+        again = policy.Policy.from_dict(p.as_dict())
+        self.assertEqual(24, again.approval_ttl_hours)
+        self.assertTrue(again.require_approval_reason)
 
 
 if __name__ == "__main__":

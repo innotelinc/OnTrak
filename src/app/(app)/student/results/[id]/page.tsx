@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { cn, formatDateTime, formatDuration } from "@/lib/cn";
 import { currentLocale, getTranslator } from "@/lib/i18n-server";
 import { localizeCheckLabel, localizeDefinition } from "@/lib/scenario-i18n";
+import { formatTimingDuration, readTimingRecord } from "@/lib/timing-integrity-rules";
 
 export const metadata: Metadata = { title: "Attempt report" };
 
@@ -50,6 +51,10 @@ export default async function ResultPage({ params }: { params: Promise<{ id: str
     passScore: attempt.scenario.passScore,
   });
   const earned = attempt.checkResults.filter((result) => result.passed);
+  // A learner can read every integrity signal recorded about them, in the same
+  // words their instructor sees: a record a person cannot inspect is a record
+  // about them, not for them.
+  const timing = readTimingRecord(attempt.integrity);
 
   // A pass earns a certificate: a tamper-evident completion record, stored on
   // the attempt when it was graded, so the printed code can be checked later
@@ -153,6 +158,25 @@ export default async function ResultPage({ params }: { params: Promise<{ id: str
         </div>
       </Card>
 
+      {timing ? (
+        <Card className="mt-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h2 className="font-display text-base font-semibold text-ink">{t("integrity.title")}</h2>
+            <span className="text-xs text-ink-faint">{formatDateTime(timing.reportedAt)}</span>
+          </div>
+          <p className="mt-2 text-sm text-ink-soft">
+            {timing.intervals === 0
+              ? t("integrity.none")
+              : t("integrity.summary", {
+                  duration: formatTimingDuration(timing.awaySeconds),
+                  count: timing.intervals,
+                })}
+          </p>
+          <p className="mt-2 text-xs text-ink-faint">{t("integrity.notScored")}</p>
+          <p className="mt-1 text-xs text-ink-faint">{t("integrity.source")}</p>
+        </Card>
+      ) : null}
+
       {/* Per-check breakdown */}
       <section className="mt-8">
         <h2 className="font-display text-lg font-semibold text-ink">{t("report.breakdown")}</h2>
@@ -177,6 +201,13 @@ export default async function ResultPage({ params }: { params: Promise<{ id: str
                     <p className="text-sm font-semibold text-ink">
                       {localizeCheckLabel(definition, locale, result.checkId, result.label)}
                     </p>
+                    {/* 2.2: a band between nothing and full is named rather than
+                        left as a smaller number the reader has to interpret. */}
+                    {result.points > 0 && result.points < result.maxPoints ? (
+                      <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-amber">
+                        {t("report.halfCredit")}
+                      </p>
+                    ) : null}
                     <p className="mt-0.5 text-sm text-ink-soft">{result.detail}</p>
                   </div>
                   <span className={cn("font-mono text-xs font-semibold", result.passed ? "text-teal" : "text-pink")}>

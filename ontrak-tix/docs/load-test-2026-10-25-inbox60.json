@@ -1,0 +1,22 @@
+{
+  "label": "1M inbox, 60 samples, direct calls",
+  "measuredAt": "2026-10-25T22:11:58.867Z",
+  "tenantId": "cmvocfzzu00005f5b4ha6v2fd",
+  "tickets": 1000000,
+  "samples": 60,
+  "page": {
+    "p50": 42.9,
+    "p95": 50.3,
+    "max": 84
+  },
+  "counts": {
+    "p50": 53,
+    "p95": 79.5,
+    "max": 90.8
+  },
+  "combined": {
+    "p50": 96.3,
+    "p95": 132.7,
+    "max": 144.4
+  }
+}

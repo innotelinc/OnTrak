@@ -112,8 +112,8 @@ Identical model to OnTrak Tix (one shared record format across Innotel Labs):
 | S2 — Provisioning & lifecycle | 2.0.0 | `[x]` shipped |
 | S3 — Guard v1 (detection) | 2.0.0 | `[x]` shipped |
 | S4 — Guard v1 (prevention) | 2.0.0 | `[x]` shipped |
-| S4 vendor adapters | **2.1** | `[ ]` open |
-| S4 packet extras (retention, control history, CSV/PDF) | **2.2** | `[ ]` open |
+| S4 vendor adapters | **2.1** | `[x]` shipped (Cloudflare enforcement) |
+| S4 packet extras (retention, control history, CSV/PDF) | **2.2** | `[x]` shipped |
 | S6 IdP/data-plane HA | **2.3** | `[ ]` open |
 | S5 — Unified risk & response | **3.0** | `[ ]` planned |
 | S6 — Enterprise hardening (remainder) | **4.0** | `[ ]` planned |
@@ -123,15 +123,77 @@ and access reviews; Guard detection from syslog, NetFlow/IPFIX, OTLP and pcap;
 policy-gated prevention with approvals, safe-lists, TTL rollback, alert delivery
 and mute; one hash-chained evidence log and a signed compliance packet.
 
-### 2.1 — Vendor adapters `[ ]`
+### 2.1 — Vendor adapters `[x]`
 **Goal:** enforcement reaches a real device without an operator writing JSON.
-- `[ ]` Ship telemetry and enforcement adapters behind the existing
-  `EnforcementTarget` seam. Exit: one vendor adapter runs detection → block end to
-  end in CI.
+- `[x]` **Cloudflare IP Access Rules behind the same `EnforcementTarget` seam.**
+  `enforcement-vendor-cloudflare.ts` implements `EnforcementPlane` for a vendor a
+  deployment may already run: an `ACTIVE` `BLOCK` becomes one access rule per
+  `ADDRESS` target (an `ip`, or an `ip_range` for a CIDR) with the note
+  `sentinel:<action id>`, so Cloudflare's own log joins back to the alert, the
+  approver and the evidence chain. Lifting deletes the rule it wrote, and after a
+  restart it finds the rule by that note — a TTL survives the process that applied
+  it, and a rule already gone answers `ok` so a sweep is idempotent. The adapter
+  refuses an action that names an `IDENTITY` or a `DEVICE` **before dialling**,
+  because an access rule cannot express one and half an action is not the one that
+  was approved. `SENTINEL_ENFORCEMENT_VENDOR=cloudflare` selects it, with
+  `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (and optional
+  `CLOUDFLARE_API_BASE` for a proxy or a test); a named vendor that is incomplete
+  builds a plane that refuses with the reason rather than looking like a deployment
+  with none. The generic JSON plane, the recording plane and the no-plane default
+  are unchanged.
+- `[x]` **Telemetry was already the adapter half.** Syslog (UDP/TCP/TLS), NetFlow
+  v5/v9 and IPFIX, OTLP JSON and pcap enter through one ingest door, each behind
+  its own seam — this milestone's open half was enforcement, and it is now shipped.
+- `[x]` **The exit is a test, not a description:**
+  `tests/sentinel-enforcement-cloudflare.test.ts` drives the shipped port-scan
+  sample through `GuardService.ingest` → the alert it raises → an approved
+  `BLOCK` → a real Cloudflare API call against a loopback stub of the vendor, then
+  lifts it and asserts the vendor saw the delete and the chain saw
+  `enforcement.plane.apply` / `enforcement.plane.lift` naming
+  `cloudflare:<account id>`. A vendor refusal is proved to be an outcome that
+  leaves the action `ACTIVE`, not a throw that would undo the approval.
+- **Open, plainly:** the **measured time-to-prevent** is still the deployment's to
+  take (it is dominated by the vendor's own apply time); Cloudflare is the only
+  vendor this build ships, and a second one is another implementation of the same
+  four methods rather than a new seam.
 
-### 2.2 — Packet extras `[ ]`
-- `[ ]` Retention windows, control history and CSV/PDF packet variants. Exit: an
-  auditor gets all three from the console.
+### 2.2 — Packet extras `[x]`
+
+**Goal:** the packet answers the three questions an auditor actually asks about it —
+how long evidence is kept, what changed and when, and whether they can have it in the
+shape their tool reads.
+
+- `[x]` **Retention is declared inside the signed record.** `SENTINEL_EVIDENCE_RETENTION_MONTHS`
+  (default 12, bounded 1–120) sets the window; an unreadable value falls back to the
+  default *and says so in the packet* rather than refusing an audit response over a
+  typo. The record carries the window start, the chain's real length and span, and
+  **how many events predate the window** — because this product never trims the chain
+  to match a number, and a packet whose evidence was silently shortened could not be
+  verified at all. `retentionMonths`/`retentionWindow` are pure.
+- `[x]` **Control history**, read out of the evidence chain rather than a second table:
+  `policy.update` (one identity-policy scope) and `enforcement.policy` (the Guard
+  rails) become `{controlId, at, from, to, actor, ref}`, oldest first, each change's
+  `from` being the previous `to` for the same control. Bounded to 24 months and the
+  newest 200 changes, with the true total stated when bounded. When the exporter's role
+  may not read the trail the packet carries `total: null` and the refusal sentence —
+  an empty list would assert that nothing ever changed.
+- `[x]` **CSV and PDF variants of the same signed record**, from `packet-export.ts`.
+  The CSV is a fixed four-column table in a fixed section order, RFC-4180 quoting, and
+  it carries the record hash, content hash and signature, so a recipient can check the
+  spreadsheet against the JSON. The PDF is written by hand — one page of Helvetica, one
+  content stream, a real cross-reference table — with no new dependency; it is a text
+  rendering of the record, not a design, and an over-long record says how many lines
+  were not printed and points at the JSON and CSV.
+- `[x]` **All three reachable from the console**: `GET /console/compliance/packet`
+  stays JSON, `?format=csv` and `?format=pdf` answer with the right type and filename,
+  an unknown format is a `400` naming the three, and every variant is refused without a
+  session exactly as JSON is. The compliance page shows the three links, the retention
+  window and the control history the packet signs.
+- `[x]` **Exit: an auditor gets all three from the console**, and they are one record.
+  Pinned by `tests/sentinel-packet-extras.test.ts` (retention/history change after
+  signing fails `verifyCompliancePacket`; quoting; xref offsets resolve to their
+  objects; the page's links) and by the two console route tests that download each
+  format with a session and are bounced without one.
 
 ### 2.3 — IdP availability `[ ]`
 - `[ ]` HA for the IdP/data plane. Exit: a node loss does not interrupt sign-in
@@ -794,10 +856,12 @@ scope rather than about order — neither is a prerequisite for shipping 2.0.
     literals so a drift breaks a test rather than the agreement, an edited control, a
     moved anchor, a re-signed forgery refused by anyone without the key, and the
     page's own affordance).
-  - What is **not** here: retention windows, control *history* over time, a CSV or
-    PDF rendering for readers who will not take JSON, and any S4 enforcement action at
-    all — the first three because the packet is the artefact the family agreed on, and
-    the last because it is the rest of S4.
+  - `[x]` **The packet's extras (2.2)** — the retention window and control history are
+    now inside the signed record, and `?format=csv` / `?format=pdf` serve the same
+    document as a spreadsheet and a printed page. See §2.2 above and
+    [docs/assurance-packet.md](docs/assurance-packet.md); the earlier "what is not here"
+    list (retention, history, CSV/PDF) is exactly what 2.2 closed.
+  - What is **not** here: any S4 enforcement action at all — that is the rest of S4.
 - `[x]` **Policy-gated enforcement actions** (block, quarantine, rate-limit) with
   approvals, safe-lists for critical infrastructure, and one-click rollback.
   - `[x]` **The decision** (`src/lib/enforcement-rules.ts`): what may be enforced

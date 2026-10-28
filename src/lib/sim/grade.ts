@@ -10,8 +10,10 @@
 import { computeCell, computeCellNumber } from "./formula";
 import { baseName, display, homeFor, normalize, parseMode } from "./paths";
 import { clearedPassMark, scorePercent } from "../score-rules";
+import { competencyTally, halfCreditFor } from "../rubric-rules";
 import { get, listDir } from "./vfs";
 import type {
+  BandCondition,
   CheckEvaluation,
   DocumentDoc,
   EngineState,
@@ -549,19 +551,52 @@ function findMailDoc(state: EngineState): MailDoc | undefined {
 /* -------------------------------------------------------------------------- */
 
 export function gradeAttempt(def: ScenarioDefinition, state: EngineState, passScore = 70): GradeReport {
-  const results: CheckEvaluation[] = def.checks.map((check) => {
-    const outcome = evaluateCheck(check, def, state);
+  const bands = rubricBands(def.checks);
+  // A band is evaluated as part of its parent, never as a line of its own. An id
+  // that names no usable parent is graded as an ordinary check instead of vanished:
+  // `validate.ts` reports it as an error, and a grader that silently dropped a
+  // check would disagree with the author about what the scenario asks.
+  const bandParents = new Map<string, string>();
+  for (const [parentId, band] of bands) bandParents.set(band.id, parentId);
+
+  const results: CheckEvaluation[] = [];
+  const conditions: BandCondition[] = [];
+
+  for (const check of def.checks) {
+    const parentId = bandParents.get(check.id);
+    if (parentId !== undefined) {
+      const outcome = evaluateCheck(check, def, state);
+      conditions.push({ checkId: check.id, parentId, passed: outcome.passed, detail: outcome.detail });
+      continue;
+    }
+
     const maxPoints = check.points ?? 1;
-    return {
+    const outcome = evaluateCheck(check, def, state);
+    const band = bands.get(check.id);
+    // The half condition is only worth evaluating when the parent missed: a check
+    // that passed is full credit, and running the weaker condition afterwards would
+    // suggest a precision the band does not have.
+    const half = outcome.passed || band === undefined ? null : evaluateCheck(band, def, state);
+    const earned: "none" | "half" | "full" = outcome.passed ? "full" : half?.passed ? "half" : "none";
+    const points = earned === "full" ? maxPoints : earned === "half" ? halfCreditFor(maxPoints) : 0;
+
+    results.push({
       checkId: check.id,
       label: check.label,
       kind: check.kind,
+      // `passed` stays the full-credit answer: a half band earns points without
+      // claiming the work is done.
       passed: outcome.passed,
-      points: outcome.passed ? maxPoints : 0,
+      band: earned,
+      points,
       maxPoints,
-      detail: outcome.detail,
-    };
-  });
+      detail:
+        earned === "half" && half !== null
+          ? `${half.detail} Half credit for “${check.label}”.`
+          : outcome.detail,
+      ...(check.competency === undefined ? {} : { competency: check.competency }),
+    });
+  }
 
   const penalty = (def.hints ?? [])
     .filter((hint) => state.meta.hintsUsed.includes(hint.id))
@@ -582,7 +617,29 @@ export function gradeAttempt(def: ScenarioDefinition, state: EngineState, passSc
     percent,
     passed: clearedPassMark({ score, maxScore, passScore }),
     penalty,
+    bands: conditions,
+    competencies: competencyTally(results),
   };
+}
+
+/**
+ * The half-credit conditions a scenario declares, by the check they belong to.
+ *
+ * Only a band whose parent exists, is not itself a band, and is not the band is
+ * usable. A second band for one parent is not folded in: the first is the rubric
+ * the author wrote, and `validate.ts` refuses the duplicate rather than this
+ * function quietly picking one.
+ */
+function rubricBands(checks: readonly ScenarioCheck[]): Map<string, ScenarioCheck> {
+  const parents = new Set(checks.filter((check) => check.halfOf === undefined).map((check) => check.id));
+  const bands = new Map<string, ScenarioCheck>();
+  for (const check of checks) {
+    const parentId = check.halfOf;
+    if (parentId === undefined || parentId === check.id || !parents.has(parentId)) continue;
+    if (bands.has(parentId)) continue;
+    bands.set(parentId, check);
+  }
+  return bands;
 }
 
 /** Convenience for the review UI: list the checks that a submission missed. */
@@ -592,7 +649,9 @@ export function missedChecks(report: GradeReport): CheckEvaluation[] {
 
 /** Total available points, used when authoring a new scenario. */
 export function totalPoints(def: ScenarioDefinition): number {
-  return def.checks.reduce((sum, check) => sum + (check.points ?? 1), 0);
+  // A half band is part of its parent's rubric and never a second question, so it
+  // contributes no points of its own.
+  return def.checks.reduce((sum, check) => (check.halfOf === undefined ? sum + (check.points ?? 1) : sum), 0);
 }
 
 /** Short human-readable summary of a directory, used by admin tooling. */

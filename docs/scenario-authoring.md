@@ -128,8 +128,9 @@ with their sheets, cells, styles, paragraphs and messages.
 
 ## Checks
 
-Every check is `{ id, label, kind, points?, ...kindSpecific }`. `id` must be
-unique, `label` is shown in the report, and `points` defaults to `1`.
+Every check is `{ id, label, kind, points?, competency?, halfOf?, ...kindSpecific }`.
+`id` must be unique, `label` is shown in the report, and `points` defaults to `1`.
+`competency` and `halfOf` are the rubric fields described under *Rubric bands* below.
 
 | Kind | Required fields | Notes |
 | ---- | --------------- | ----- |
@@ -198,6 +199,51 @@ Prefer **derived-state** checks (`file_exists`, `service_state`, `registry_value
 `firewall_rule`, …) for correctness — they describe the outcome. Use
 `command_matched` / `command_sequence` sparingly, to reward good investigative
 *process* (reading the log before changing anything), not as the pass/fail gate.
+
+### Rubric bands — 0, half or full
+
+A check can award partial credit without a second authoring language: write the
+weaker condition as an ordinary check and point it at its parent with `halfOf`.
+
+```jsonc
+"checks": [
+  {
+    "id": "ssh-hardened",
+    "label": "SSH accepts configured sign-in only",
+    "kind": "file_contains",
+    "path": "/etc/ssh/sshd_config",
+    "pattern": "^PermitRootLogin\\s+no",
+    "points": 4,
+    "competency": "Linux hardening"
+  },
+  {
+    // Worth half the parent when the parent misses: password auth is off, but
+    // root sign-in is still open. It is never a line of its own in the report.
+    "id": "ssh-password-off",
+    "label": "Password sign-in disabled",
+    "kind": "file_contains",
+    "path": "/etc/ssh/sshd_config",
+    "pattern": "^PasswordAuthentication\\s+no",
+    "halfOf": "ssh-hardened"
+  }
+]
+```
+
+The parent then earns **0**, **half** or **full**. Half is
+`Math.floor(points / 2)`, which is why the validator requires a parent worth an
+even number of at least 2; `points` on the band itself is ignored. A band is not
+a pass — the report says "half credit" and the check still counts as missed. A
+band on a band, two bands for one parent and a band naming a check that does not
+exist are all errors; a band that already passes on a fresh machine is a warning,
+because that is free points on every submission.
+
+### Competencies
+
+`competency` names the one skill a check demonstrates. A certificate's skills are
+the competencies its **full-credit** checks earned; a half band is work in
+progress, not a competence. A scenario where no check is tagged keeps using the
+scenario's own `tags`, so a catalog written before this existed issues the same
+records it always did.
 
 ---
 
@@ -284,6 +330,65 @@ than opening it and finding a broken environment.
 
 See the *Availability rule* section of the main [README](../README.md) for the
 full matrix.
+
+## Review, history and rollback
+
+A scenario is a graded artifact, so the person who wrote the checks is the worst
+placed to notice that a check asks the wrong thing. With
+`ONTRAK_SCENARIO_REVIEW_REQUIRED` on, an author **submits** a scenario, somebody
+else **approves** it (the author cannot approve their own work), and only then
+may it be published. A request-changes decision returns it to draft, and an edit
+that changes the grading shape drops an approval too — a review covers the checks
+that were read, not whatever they become later. A title or briefing edit does not
+cost a revision, because it cannot move a score.
+
+Every grading-shape save writes the shape it replaced to the scenario's history,
+and the edit page lists it. **Rollback is a new save carrying the old shape**, not
+a deletion of the revisions after it: restoring revision 1 makes that shape live
+again, records what it replaced as the newest revision, and leaves the revisions
+in between readable. The slug and the software links are left alone — both are
+catalog facts rather than scoring ones.
+
+The writes behind all of this live in `src/lib/scenario-workflow.ts`, which takes
+the database as a structural seam, so the instructor actions and a script run the
+same decisions. `tests/scenario-workflow.test.ts` drives two authors through the
+whole thing over an in-memory store, and
+`npx tsx --tsconfig tests/tsconfig.json scripts/verify-scenario-review.ts`
+(with `DATABASE_URL` set) runs it against a real database and cleans up after
+itself.
+
+## Timing integrity (opt-in)
+
+A scenario may ask for a **timing record**: the intervals during which the
+learner's page was hidden while the attempt ran. It is off unless the definition
+says so, and it is added as one block:
+
+```jsonc
+{
+  // … the rest of the definition
+  "integrity": { "recordFocusLoss": true }
+}
+```
+
+The block is strict: an unknown or misspelled key is a validator error rather
+than a silently ignored one, because a scenario whose author believed the control
+was on but which records nothing is worse than either state.
+
+What the record is: the attempt runner reports `visibilitychange` intervals, the
+server clamps each to the attempt's own window, merges overlaps, drops claims it
+cannot read (a switch under a second, a claim longer than four hours, an interval
+that ends before it starts), and caps the total at six hours. The attempt stores
+the merged periods and their total; both the learner's report and the
+instructor's review page show the same sentence — "43 s away in 2 intervals;
+recorded, not scored".
+
+What the record is **not**: a score input, a cheating detector, or proof of
+anything about the learner. The grader never reads it, a re-grade does not change
+it, and a lost tab cannot fail anybody. It exists so a higher-stakes assessment
+can put a fact beside a result that a reviewer can read — and so it must never be
+described to a class as proctoring. The intervals are browser-reported; the
+record says so in its own words, because software the learner controls is not a
+witness.
 
 ---
 

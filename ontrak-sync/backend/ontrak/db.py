@@ -100,6 +100,14 @@ CREATE TABLE IF NOT EXISTS findings (
     last_seen   TEXT,
     applied_at  TEXT,
     detail      TEXT,
+    -- The approval, as a decision rather than a status word (2.1): who decided,
+    -- when, when that decision lapses, and why. `status='approved'` says a decision
+    -- exists; these four say whose it is and whether it is still live, which is
+    -- what `approvals.py` answers and what `/api/apply` refuses without.
+    approved_by          TEXT,
+    approved_at          TEXT,
+    approval_expires_at  TEXT,
+    approval_reason      TEXT,
     UNIQUE (target_id, manager, package)
 );
 
@@ -110,6 +118,36 @@ CREATE TABLE IF NOT EXISTS findings (
 -- when a newer version appears.
 CREATE INDEX IF NOT EXISTS findings_by_target ON findings (target_id);
 CREATE INDEX IF NOT EXISTS findings_by_status ON findings (status);
+
+-- What an apply actually moved, one row per package per run (2.2).
+--
+-- `findings` cannot answer "what did run 12 change?": it holds one row per
+-- package, overwritten by the next scan, and `current`/`candidate` describe the
+-- version that *is* and the one that could be, not the one that was. A rollback
+-- built from those would guess, and a guess is how a downgrade reinstalls the
+-- wrong version. So the pair (run, finding) is written at the moment the apply
+-- records its verdict, and it is never updated afterwards except to say which
+-- rollback run undid it.
+CREATE TABLE IF NOT EXISTS applied_packages (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id          INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    finding_id      INTEGER NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+    target_id       INTEGER NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
+    manager         TEXT NOT NULL,
+    package         TEXT NOT NULL,
+    -- The version that was on the machine before this run, and after it. Nullable
+    -- because a manager can legitimately not know (a snap without a version), and
+    -- a row that does not know is refused by the rollback planner rather than
+    -- guessed at.
+    from_version    TEXT,
+    to_version      TEXT,
+    applied_at      TEXT NOT NULL,
+    rolled_back_at  TEXT,
+    rollback_run_id INTEGER,
+    UNIQUE (run_id, finding_id)
+);
+
+CREATE INDEX IF NOT EXISTS applied_packages_by_run ON applied_packages (run_id);
 
 CREATE TABLE IF NOT EXISTS schedules (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -383,6 +421,19 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # what tells a daily probe apart from a weekly one at the same age.
     ("hosts", "reboot_since", "TEXT"),
     ("hosts", "reboot_scans", "INTEGER NOT NULL DEFAULT 0"),
+    # The approval record (2.1). Additive and nullable on purpose: a finding that
+    # was approved before these existed has `status='approved'` and no approver, and
+    # that reads as "no named approver" rather than as a live decision — see
+    # `approvals.approval_refusal`. Refusing it is the honest reading; inventing an
+    # approver from the event log would be a worse one.
+    ("findings", "approved_by", "TEXT"),
+    ("findings", "approved_at", "TEXT"),
+    ("findings", "approval_expires_at", "TEXT"),
+    ("findings", "approval_reason", "TEXT"),
+    # Which apply run a rollback run undoes (2.2). A rollback is addressed by run
+    # rather than by finding, so the link lives on the run: `runs.rollback_of` is
+    # what makes "this run was already rolled back" a lookup instead of a claim.
+    ("runs", "rollback_of", "INTEGER"),
 )
 
 
@@ -635,6 +686,12 @@ def record_finding(conn, *, target_id, manager, package, current=None, candidate
     moved clears `applied` back to `pending`: the thing that was applied is not
     the thing that is now on offer.
 
+    A MOVED CANDIDATE ALSO CLEARS THE APPROVAL. The approval was for the version
+    that was approved; the version on offer now is a different one, and carrying the
+    old decision across would let a decision made about 1.1 install 1.2. Every other
+    path keeps it, including a re-scan of the same candidate — the decision is about
+    a package and a version, not about a scan.
+
     `detail` IS TREATED THE SAME WAY ON A FAILED ROW, for the same reason. On every
     other row this write is the scan's detection note — the archive a package came
     from, "newer image in registry" — and it is meant to be refreshed each run. On a
@@ -669,6 +726,30 @@ def record_finding(conn, *, target_id, manager, package, current=None, candidate
                      AND IFNULL(excluded.candidate,'') != IFNULL(findings.candidate,'')
                 THEN NULL
                 ELSE findings.applied_at
+            END,
+            approved_by=CASE
+                WHEN findings.status='applied'
+                     AND IFNULL(excluded.candidate,'') != IFNULL(findings.candidate,'')
+                THEN NULL
+                ELSE findings.approved_by
+            END,
+            approved_at=CASE
+                WHEN findings.status='applied'
+                     AND IFNULL(excluded.candidate,'') != IFNULL(findings.candidate,'')
+                THEN NULL
+                ELSE findings.approved_at
+            END,
+            approval_expires_at=CASE
+                WHEN findings.status='applied'
+                     AND IFNULL(excluded.candidate,'') != IFNULL(findings.candidate,'')
+                THEN NULL
+                ELSE findings.approval_expires_at
+            END,
+            approval_reason=CASE
+                WHEN findings.status='applied'
+                     AND IFNULL(excluded.candidate,'') != IFNULL(findings.candidate,'')
+                THEN NULL
+                ELSE findings.approval_reason
             END
         """,
         (target_id, manager, package, current, candidate, int(bool(security)),
@@ -740,17 +821,111 @@ def stale_failures(conn, *, older_than_seconds: int, now: float | None = None) -
     return [dict(r) for r in rows]
 
 
-def set_status(conn, finding_ids: list[int], status: str, detail: str | None = None) -> int:
+def set_status(conn, finding_ids: list[int], status: str, detail: str | None = None, *,
+               actor: str | None = None, expires_at: str | None = None,
+               reason: str | None = None) -> int:
+    """Move findings to a status, recording the approval when that is what this is.
+
+    The approval kwargs are optional so every existing caller keeps its meaning: a
+    scan marking a row `failed`, or a test setting one `applied`, does not need to
+    invent a decision. `status='approved'` is the one transition that *is* a
+    decision, so it is the one that writes the record — the actor who made it, the
+    instant, and the expiry and reason the caller supplied.
+
+    `pending` and `skipped` **clear** the record. Neither is an apply any more (a
+    skip is "not this time"; a pending row is one waiting to be decided), and an
+    approval left attached to either would be a permission attached to nothing.
+    `applied` and `failed` keep it: the first is history, and the second is a
+    failed attempt whose approval may legitimately be retried.
+    """
     if not finding_ids:
         return 0
     marks = ",".join("?" for _ in finding_ids)
     applied = utcnow() if status == "applied" else None
+    if status == "approved":
+        cur = conn.execute(
+            f"UPDATE findings SET status=?, applied_at=COALESCE(?, applied_at),"
+            f" detail=COALESCE(?, detail), approved_by=?, approved_at=?,"
+            f" approval_expires_at=?, approval_reason=?"
+            f" WHERE id IN ({marks})",
+            [status, applied, detail, actor, utcnow(), expires_at, reason, *finding_ids],
+        )
+        return cur.rowcount
+    if status in ("pending", "skipped"):
+        cur = conn.execute(
+            f"UPDATE findings SET status=?, applied_at=COALESCE(?, applied_at),"
+            f" detail=COALESCE(?, detail), approved_by=NULL, approved_at=NULL,"
+            f" approval_expires_at=NULL, approval_reason=NULL"
+            f" WHERE id IN ({marks})",
+            [status, applied, detail, *finding_ids],
+        )
+        return cur.rowcount
     cur = conn.execute(
         f"UPDATE findings SET status=?, applied_at=COALESCE(?, applied_at), detail=COALESCE(?, detail)"
         f" WHERE id IN ({marks})",
         [status, applied, detail, *finding_ids],
     )
     return cur.rowcount
+
+
+# ── what an apply moved (2.2) ────────────────────────────────────────────────
+def record_applied(conn, *, run_id: int, finding_id: int, target_id: int, manager: str,
+                   package: str, from_version: str | None, to_version: str | None) -> None:
+    """Write the (run, package) pair that a rollback will read.
+
+    `INSERT OR IGNORE` because approving an already-applied finding reruns it: the
+    same run can be told twice about one package (a retry inside one run), and the
+    first write is the one that says what was there before the run started.
+    """
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO applied_packages
+            (run_id, finding_id, target_id, manager, package, from_version, to_version, applied_at)
+        VALUES (?,?,?,?,?,?,?,?)
+        """,
+        (run_id, finding_id, target_id, manager, package, from_version, to_version, utcnow()),
+    )
+
+
+def applied_in_run(conn, run_id: int) -> list[dict]:
+    """The packages one apply run moved, with where they live.
+
+    A row is returned even when its version is unknown: the planner's job is to say
+    so by name rather than to hide the gap.
+    """
+    rows = conn.execute(
+        """
+        SELECT a.id, a.run_id, a.finding_id, a.target_id, a.manager, a.package,
+               a.from_version, a.to_version, a.rolled_back_at, a.rollback_run_id,
+               t.host, t.kind, t.name AS target
+          FROM applied_packages a JOIN targets t ON t.id = a.target_id
+         WHERE a.run_id = ?
+         ORDER BY t.host, t.name, a.manager, a.package
+        """,
+        (run_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def mark_rolled_back(conn, applied_ids: list[int], *, run_id: int) -> int:
+    """Stamp the rows a rollback put back, so a second rollback sees them."""
+    if not applied_ids:
+        return 0
+    marks = ",".join("?" for _ in applied_ids)
+    cur = conn.execute(
+        f"UPDATE applied_packages SET rolled_back_at=?, rollback_run_id=?"
+        f" WHERE id IN ({marks})",
+        [utcnow(), run_id, *applied_ids],
+    )
+    return cur.rowcount
+
+
+def rollback_of_run(conn, run_id: int) -> int | None:
+    """The rollback run that already undid `run_id`, or None."""
+    row = conn.execute(
+        "SELECT id FROM runs WHERE rollback_of=? ORDER BY id LIMIT 1", (run_id,)
+    ).fetchone()
+    return int(row["id"]) if row else None
 
 
 # ── runs, events, schedules ──────────────────────────────────────────────────
@@ -976,6 +1151,7 @@ def list_findings(conn, *, status: str | None = None, manager: str | None = None
         f"""
         SELECT f.id, f.manager, f.package, f.current, f.candidate, f.security,
                f.status, f.first_seen, f.last_seen, f.applied_at, f.detail,
+               f.approved_by, f.approved_at, f.approval_expires_at, f.approval_reason,
                t.id AS target_id, t.host, t.kind, t.name AS target, t.error AS target_error
           FROM findings f JOIN targets t ON t.id = f.target_id
           {clause}

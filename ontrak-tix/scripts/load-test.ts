@@ -407,8 +407,16 @@ async function main(): Promise<number> {
     // not be index-only. A real desk's autovacuum has long since done this; doing
     // it here measures the steady state the target is about rather than the cold
     // table a bulk load leaves behind.
-    await prisma.$executeRawUnsafe('VACUUM (ANALYZE) "Ticket"');
-    await prisma.$executeRawUnsafe('VACUUM (ANALYZE) "Message"');
+    //
+    // `PARALLEL 0` on purpose: Postgres's parallel maintenance workers ask for a
+    // shared-memory segment per worker, and the stock Postgres container gives
+    // /dev/shm 64 MB — at a million rows the ANALYZE failed with `could not resize
+    // shared memory segment ... No space left on device` (53100) and the rehearsal
+    // never reached its first read. The statistics are the same either way; only
+    // the wall clock of the ANALYZE differs, and that is not a number this run
+    // reports.
+    await prisma.$executeRawUnsafe('VACUUM (ANALYZE, PARALLEL 0) "Ticket"');
+    await prisma.$executeRawUnsafe('VACUUM (ANALYZE, PARALLEL 0) "Message"');
 
     // Warm the pool and the caches: the first read of a cold connection is the
     // connection's latency, not the query's, and reporting it as the app's would

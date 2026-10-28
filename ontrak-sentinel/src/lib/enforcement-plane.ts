@@ -2,6 +2,7 @@ import type {
   EnforcementActionRecord,
   RollbackPlan,
 } from "./enforcement-service.js";
+import { vendorPlaneFromEnv } from "./enforcement-vendor-cloudflare.js";
 
 /**
  * The enforcement plane (S4): the seam that turns an `ACTIVE` record into a
@@ -186,8 +187,18 @@ export class HttpEnforcementPlane implements EnforcementPlane {
  * process decides which one. An unset URL is **no plane** rather than a default that
  * pretends — a deployment that has not configured one must not be told its blocks
  * are being applied somewhere.
+ *
+ * **A named vendor outranks the generic URL.** `SENTINEL_ENFORCEMENT_VENDOR=cloudflare`
+ * builds the Cloudflare adapter (2.1), and a vendor that is named but incomplete builds a
+ * plane that refuses with the reason rather than falling back to "no plane" — an operator
+ * who configured something must never be shown the same startup line as one who configured
+ * nothing. With neither named, the JSON `POST` URL is the plane; with neither at all, there
+ * is none, which is the shipped default.
  */
 export function planeFromEnv(env: NodeJS.ProcessEnv = process.env): EnforcementPlane | null {
+  const vendor = vendorPlaneFromEnv(env);
+  if (vendor !== null) return vendor;
+
   const url = String(env.SENTINEL_ENFORCEMENT_PLANE_URL ?? "").trim();
   if (url === "") return null;
   const token = String(env.SENTINEL_ENFORCEMENT_PLANE_TOKEN ?? "").trim();

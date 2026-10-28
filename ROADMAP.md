@@ -30,8 +30,8 @@
 | v1.2 — Real drivers | 2.0.0 | `[x]` shipped |
 | v1.3 — Identity & integrations | 2.0.0 | `[x]` shipped |
 | v1.6 — The learning loop | 2.0.0 | `[x]` shipped |
-| v1.4 — Authoring at scale | **2.1** | `[ ]` open |
-| v1.5 — Assessment, credentials & evidence | **2.2** | `[~]` certificates/packet shipped; rubric depth open |
+| v1.4 — Authoring at scale | **2.1** | `[x]` shipped |
+| v1.5 — Assessment, credentials & evidence | **2.2** | `[x]` certificates/packet, rubric bands, competencies and the opt-in timing record shipped |
 | (content/localization remainder) | **2.3** | `[ ]` open |
 | v2.0 — Enterprise training platform | **3.0** | `[ ]` planned |
 | (new) | **4.0** | `[ ]` planned |
@@ -41,7 +41,7 @@
 guests grade on a host, instructors author/assign/re-grade, results flow to an
 LMS and a webhook consumer, and a learner holds a verifiable certificate.
 
-### 2.1 — Authoring at scale `[ ]`
+### 2.1 — Authoring at scale `[x]`
 **Goal:** a catalog a team can maintain.
 
 - `[x]` Scenario versioning: draft → publish, with one-click rollback and a
@@ -56,23 +56,66 @@ LMS and a webhook consumer, and a learner holds a verifiable certificate.
 - `[x]` Collaborative authoring: threaded comments with resolve, submit → approve
   or request-changes, and a publish gate (`ONTRAK_SCENARIO_REVIEW_REQUIRED`). The
   author cannot approve their own scenario, and a grading-shape edit drops an
-  approval back to draft. Covered by `tests/scenario-review.test.ts`; the actions
-  themselves are exercised by the production build, and a database-backed
-  end-to-end test is the remaining proof for the 2.1 exit.
-- **Exit:** two authors co-edit a scenario through review to publish, with full
-  history and one-click rollback, proven by a test.
+  approval back to draft. The decisions are in `review-rules.ts`; the writes moved
+  out of the server actions into `scenario-workflow.ts`, which the actions wrap and
+  which takes the database as a structural seam — so the workflow runs without a
+  request. Covered by `tests/scenario-review.test.ts` and, end to end over an
+  in-memory store, by `tests/scenario-workflow.test.ts` (save, submit, a
+  self-review refused, approve, the publish gate, an edit that spends the
+  approval, and a rollback), including two saves racing for the same revision
+  number.
+- **Exit:** `[x]` two authors co-edit a scenario through review to publish, with
+  full history and one-click rollback, proven by a test. The same five functions
+  are driven against a real PostgreSQL database by
+  `scripts/verify-scenario-review.ts`: two temporary instructors, revisions 1–3,
+  a rollback that keeps the replaced shape, the audit trail naming every move,
+  and a `finally` that deletes the scenario, its revisions, their audit rows and
+  the two accounts.
 
-### 2.2 — Assessment depth `[~]`
+### 2.2 — Assessment depth `[x]`
 **Goal:** more than pass/fail. Certificates, the skills matrix and the cohort
-packet already ship in 2.0; what remains is the rubric itself.
+packet ship in 2.0; the rubric, per-check competencies and the opt-in timing
+record ship here.
 
-- `[ ]` Partial credit per check and rubric bands (0 / half / full) computed by
-  the server-side grader and explained on the report.
-- `[ ]` Competency tagging per check, feeding the existing skills matrix.
-- `[ ]` Optional timing-integrity controls (focus loss recorded, not punished by
-  default).
-- **Exit:** a scenario grades partial credit identically on re-grade, and every
-  certificate competency traces to the checks that earned it.
+- `[x]` Partial credit per check and rubric bands (0 / half / full) computed by
+  the server-side grader and explained on the report. A band is authored as an
+  ordinary check carrying `halfOf: <parent id>` — the weaker condition, in the
+  vocabulary the author already uses — and the grader awards
+  `Math.floor(parent points / 2)` when the parent misses and the band passes. A
+  band is never a line of its own, is not a pass (`missedChecks` still names it),
+  and the report says "half credit" beside the points with the band's own
+  evidence in the detail. The validator refuses the shapes that would award
+  nothing (an unknown parent, fewer than 2 points, odd points, a band on a band,
+  two bands for one parent) and warns on a band that already passes on a fresh
+  machine. See `sim/grade.ts`, `rubric-rules.ts` and `tests/rubric.test.ts`.
+- `[x]` Competency tagging per check, feeding the existing skills matrix. A check
+  may carry `competency`; the certificate's skills are then the ones its
+  **full-credit** checks earned, and the scenario's `tags` remain the fallback for
+  a catalog written before a check could name one. A half band demonstrates work
+  in progress, not a competence, so it does not earn the skill — which is also
+  why a scenario whose only tagged check lands in the half band issues no skill
+  rather than falling back to its tags.
+- `[x]` Optional timing-integrity controls (focus loss recorded, not punished by
+  default). A scenario opts in with `integrity: { recordFocusLoss: true }` — a
+  strict block, so a misspelled key is a validator error rather than a control
+  that silently records nothing. The attempt runner reports `visibilitychange`
+  intervals; `timing-integrity-rules.ts` clamps each to the attempt's own window,
+  drops claims it cannot read (ends before it starts, under a second, longer than
+  four hours), merges overlapping and touching periods so five switches are one
+  absence, and caps the total at six hours while flagging the cap. The record is
+  stored on `Attempt.integrity` (`source: "browser-reported"`, the merged spans
+  and their totals) and merged on retry, so a replayed batch cannot double the
+  time. Both the learner's report and the instructor's review show the same
+  sentence — "43 s away in 2 intervals; recorded, not scored" — with the source
+  and the statement that a re-grade does not change it. The grader never reads the
+  column, so a lost tab cannot move a score.
+- **Exit:** met. A scenario grades partial credit identically on re-grade
+  (`tests/rubric.test.ts` grades the same snapshot twice and compares the whole
+  report), every certificate competency traces to the checks that earned it, and
+  the timing record's honesty is pinned by `tests/timing-integrity.test.ts`: window
+  clamping, overlap merging, nonsense dropped, the cap and its flag, idempotent
+  retries, the read-back that refuses to trust a hand-edited total, and the
+  validator's opt-in decision.
 
 ### 2.3 — Content & locale completeness `[ ]`
 **Goal:** the localization mechanism gets content.
@@ -536,7 +579,18 @@ scenarios on three platforms, and instructors can author, assign and re-grade.
 ### 2.2 — Assessment, credentials & training evidence `[~]`
 **Goal:** turn results into credible, portable proof of competence.
 
-- `[ ]` Rubrics beyond pass/fail; partial-credit and competency tagging per check.
+- `[x]` Rubrics beyond pass/fail; partial-credit and competency tagging per check.
+  A check's rubric band is another ordinary check attached with `halfOf`, so the
+  authoring language did not grow a second shape: the parent earns 0, half or full,
+  the band is evaluated only when the parent misses, and `Math.floor(points / 2)`
+  keeps the arithmetic whole (`sim/grade.ts`, `rubric-rules.ts`). The validator is
+  where a band that could award nothing is refused, and the dry run warns when a
+  band already passes on a fresh machine — the same bug as a check that passes by
+  itself, which is easy to miss because a band is not a line in the report. A
+  check may also name the one `competency` it demonstrates, and the certificate's
+  skills are then read from the full-credit checks that earned them, with the
+  scenario's `tags` as the fallback for a catalog authored before this existed.
+  Covered by `tests/rubric.test.ts`.
 - `[x]` Certificates and a skills matrix (who is competent in what), with
   verifiable completion records. A pass issues a certificate and the record is
   **stored immutably** on the attempt (`certificate`/`certificateIssuedAt`/
@@ -661,8 +715,8 @@ flowchart LR
 1. **2.1 — authoring at scale.** Scenario versioning (draft → preview → publish,
    rollback, change history) is the first open item; it is the one that limits a
    team's catalog throughput.
-2. **2.2 — rubric depth.** Partial credit and per-check competency tags, computed
-   server-side and carried into the existing skills matrix.
+2. **2.2 is closed** (`sim/grade.ts`, `rubric-rules.ts`, `timing-integrity-rules.ts`).
+   The next open ITS items are 2.3's content/localisation work and the 3.0 line.
 3. **2.3 — content.** Spanish overlays for the bundled scenarios and per-locale
    catalog columns.
 4. **3.0 — enterprise line.** Multi-tenant organisations, warehouse export and

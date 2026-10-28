@@ -30,9 +30,8 @@ process.env.AGENT_WRITE_MODE = "propose";
 const { addEntry, changeSetSummary, sortEntriesForApply, totalChanges, hasEntries } = await import(
   "../change-set.js"
 );
-const { applyChangeSet, currentChangeSet, discardChangeSet, resetChangeSets, stageChange } = await import(
-  "../proposals.js"
-);
+const { applyChangeSet, changeSetOwner, currentChangeSet, discardChangeSet, resetChangeSets, stageChange } =
+  await import("../proposals.js");
 const { runTool } = await import("../tools.js");
 type StagedEntry = import("../change-set.js").StagedEntry;
 
@@ -141,4 +140,57 @@ test("staging by hand and applying is the same path the tools take", async () =>
   assert.equal(currentChangeSet()?.entries.length, 1);
   await applyChangeSet("tester");
   assert.equal(await fs.readFile(path.join(WORKSPACE, "manual.txt"), "utf8"), "by hand\n");
+});
+
+test("two accounts review their own proposals concurrently", async () => {
+  resetChangeSets();
+  // No control plane in this test, so the process default is the single-operator
+  // slot — which is a key like any other, and must not be either account's.
+  assert.equal(changeSetOwner(), "local");
+
+  stageChange(entry({ path: "alice.txt", content: "alice\n", added: 1 }), "u-alice");
+  stageChange(entry({ path: "bob.txt", content: "bob\n", added: 1 }), "u-bob");
+
+  assert.deepEqual(
+    currentChangeSet("u-alice")?.entries.map((e) => e.path),
+    ["alice.txt"],
+    "alice sees her own proposal",
+  );
+  assert.deepEqual(
+    currentChangeSet("u-bob")?.entries.map((e) => e.path),
+    ["bob.txt"],
+    "and bob sees his, not alice's",
+  );
+  assert.equal(currentChangeSet(), null, "the process slot is not either account's");
+
+  const applied = await applyChangeSet("alice@example.test", "u-alice");
+  assert.deepEqual(applied.paths, ["alice.txt"]);
+  assert.equal(await fs.readFile(path.join(WORKSPACE, "alice.txt"), "utf8"), "alice\n");
+  assert.equal(currentChangeSet("u-alice"), null, "alice's set is closed");
+  assert.deepEqual(
+    currentChangeSet("u-bob")?.entries.map((e) => e.path),
+    ["bob.txt"],
+    "bob's proposal is untouched by alice's apply",
+  );
+
+  // Bob's set is still his to drop, and dropping it writes nothing.
+  assert.equal(discardChangeSet("bob@example.test", "u-bob"), true);
+  assert.equal(currentChangeSet("u-bob"), null);
+  await assert.rejects(fs.readFile(path.join(WORKSPACE, "bob.txt")), /ENOENT/);
+});
+
+test("the ledger names the account a set belonged to", async () => {
+  resetChangeSets();
+  stageChange(entry({ path: "ledger.txt", content: "x\n", added: 1 }), "u-ledger");
+  await applyChangeSet("someone@example.test", "u-ledger");
+
+  const log = await fs.readFile(path.join(WORKSPACE, ".agent", "changes.jsonl"), "utf8");
+  const rows = log
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const row = rows.find((candidate) => candidate.action === "applied" && candidate.owner === "u-ledger");
+  assert.ok(row, "an applied row names the account as well as the actor");
+  assert.deepEqual(row.paths, ["ledger.txt"]);
+  assert.equal(row.actor, "someone@example.test");
 });

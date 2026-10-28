@@ -63,6 +63,7 @@ import {
   type ConsoleSyncReportView,
 } from "./console-rules";
 import type { CompliancePacket } from "./assurance-packet";
+import { packetCsv, packetPdf } from "./packet-export";
 import { UPSTREAM_STATE_COOKIE, readCallback } from "./upstream-rules";
 import type { WebAuthnRegistrationResponse } from "./webauthn-rules";
 import type { WebAuthnRegistrationOptions } from "./webauthn-service";
@@ -233,7 +234,9 @@ export interface ConsoleEndpoints {
    * The posture as a signed assurance packet, in the family's shared format (S4).
    *
    * Read-only like the page it is built from, and built *from* it: the packet carries
-   * the same rows, so the document and the screen cannot disagree about a control.
+   * the same rows, so the document and the screen cannot disagree about a control. The
+   * route renders it as JSON (the record), CSV or PDF (2.2); the service returns the
+   * one record all three are made from.
    */
   compliancePacket(sessionId: string): Promise<ServiceResult<CompliancePacket>>;
   /**
@@ -906,19 +909,68 @@ async function handleCoveragePage(url: URL, sessionId: string, endpoints: Consol
 }
 
 /**
- * The signed compliance packet (S4), as a file.
+ * The signed compliance packet (S4/2.2), as a file.
  *
  * Served as a download rather than rendered, because the artefact's whole purpose is to
  * leave this system: it is what gets attached to an audit response or an insurance
  * renewal, and it is verifiable by whoever receives it without an account here.
+ *
+ * `?format=csv` and `?format=pdf` are the same signed record rendered for a spreadsheet
+ * and for a printed page (2.2). JSON stays the default and the only format that is a
+ * document in its own right: the other two are views of it, so they carry its hashes and
+ * signature rather than re-signing anything. An unknown format is refused *after* the
+ * session check, so an unauthenticated probe learns nothing about the routing.
  */
-async function handleCompliancePacket(sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
+async function handleCompliancePacket(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
   const result = await endpoints.compliancePacket(sessionId);
-  return respond(result, (packet) =>
-    json(200, packet, {
-      "content-disposition": `attachment; filename="sentinel-compliance-${packet.generatedAt.replace(/[:.]/g, "-")}.json"`,
-    }),
-  );
+  if (!result.ok) return failure(result.error);
+
+  const packet = result.value;
+  const format = (url.searchParams.get("format") ?? "json").toLowerCase();
+  const stamp = packet.generatedAt.replace(/[:.]/g, "-");
+
+  if (format === "csv") {
+    return {
+      status: 200,
+      headers: {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": `attachment; filename="sentinel-compliance-${stamp}.csv"`,
+        "cache-control": "no-store",
+      },
+      body: packetCsv(packet),
+    };
+  }
+  if (format === "pdf") {
+    return {
+      status: 200,
+      headers: {
+        "content-type": "application/pdf",
+        "content-disposition": `attachment; filename="sentinel-compliance-${stamp}.pdf"`,
+        "cache-control": "no-store",
+      },
+      // The PDF writer produces ASCII only, so this Latin-1 decoding is lossless and
+      // the bytes the browser receives are the bytes the writer computed.
+      body: latin1(packetPdf(packet)),
+    };
+  }
+  if (format !== "json") {
+    return json(400, {
+      error: "invalid_request",
+      error_description: `Format "${format}" is not one of json, csv or pdf.`,
+    });
+  }
+  return json(200, packet, {
+    "content-disposition": `attachment; filename="sentinel-compliance-${stamp}.json"`,
+  });
+}
+
+/** A byte buffer as the string a `node:http` response body expects. */
+function latin1(bytes: Uint8Array): string {
+  let out = "";
+  for (let index = 0; index < bytes.length; index += 0x2000) {
+    out += String.fromCharCode(...bytes.subarray(index, index + 0x2000));
+  }
+  return out;
 }
 
 async function handlePoliciesPage(url: URL, sessionId: string, endpoints: ConsoleEndpoints): Promise<HttpResponse> {
@@ -1272,7 +1324,7 @@ export async function routeConsole(request: HttpRequest, endpoints: ConsoleEndpo
     case CONSOLE_PATHS.compliance:
       return get(() => handleCompliancePage(url, sessionId, endpoints));
     case CONSOLE_PATHS.compliancePacket:
-      return get(() => handleCompliancePacket(sessionId, endpoints));
+      return get(() => handleCompliancePacket(url, sessionId, endpoints));
     case CONSOLE_PATHS.mfa:
       return get(() => handleMfaPage(url, sessionId, endpoints));
     case CONSOLE_PATHS.totpBegin:

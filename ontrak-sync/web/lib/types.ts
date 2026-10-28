@@ -266,8 +266,29 @@ export interface Policy {
   /** A change freeze, inclusive ISO dates (`YYYY-MM-DD`), or empty for none. */
   freeze_from: string;
   freeze_to: string;
+  /**
+   * The maintenance calendar (2.1): the windows an apply is allowed in. Empty means
+   * no calendar at all, which is the shipped default. Dates are optional, weekdays
+   * are Monday=0, and a window may wrap midnight.
+   */
+  maintenance_windows: MaintenanceWindow[];
+  /** How long a new approval stays live, in hours; 0 means it never expires. */
+  approval_ttl_hours: number;
+  /** When on, an apply refuses an approval that carries no reason. */
+  require_approval_reason: boolean;
   description: string;
   next_runs: string[];
+}
+
+export interface MaintenanceWindow {
+  name: string;
+  /** Inclusive ISO dates (`YYYY-MM-DD`); empty on both means a weekly window. */
+  start: string;
+  end: string;
+  /** Monday=0 … Sunday=6, the way Python's `datetime.weekday()` numbers the week. */
+  weekdays: number[];
+  start_hour: number;
+  end_hour: number;
 }
 
 /**
@@ -477,6 +498,24 @@ export interface ApplyResult {
   applied: number;
   failed: number;
   manual: string[];
+  messages: string[];
+  summary: string;
+}
+
+/**
+ * The result of undoing one apply run (2.2).
+ *
+ * `ok: false` with `refusals` means nothing was attempted — the run moved nothing,
+ * its previous versions were not recorded, or it has already been rolled back. A
+ * refusal is not an error the page should swallow: the reasons are what tell an
+ * operator why the button did not do what it said.
+ */
+export interface RollbackResult {
+  ok: boolean;
+  run_id: number | null;
+  rolled_back: number;
+  failed: number;
+  refusals: string[];
   messages: string[];
   summary: string;
 }

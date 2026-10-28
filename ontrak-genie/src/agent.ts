@@ -13,6 +13,7 @@ import {
   completeChat,
   isAbortError,
   isRetryableFailure,
+  isUnknownModelFailure,
   salvageToolCalls,
   streamChat,
   type ChatMessage,
@@ -512,6 +513,10 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
     // cooldown from "press send again" into something the turn survives.
     const targets: ModelTarget[] = [...chain];
     let repeats = 0;
+    // Models the gateway said it does not serve this turn. They are walked past
+    // rather than ended on, and left out when the chain is retried after a wait:
+    // a wrong id is not a cooldown, and it is still wrong a minute later.
+    const dropped = new Set<string>();
     // Whether anything in this step failed for a reason that could clear later.
     let throttled = false;
     // Whether the last attempt was stopped by a provider's own filter. A block is
@@ -681,14 +686,29 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
       // answer (the gateway's way of reporting a cooled-down credential).
       const temporary = failure === null || isRetryableFailure(failure);
       if (temporary) throttled = true;
+      // A model the gateway does not serve. Not a cooldown and not the end of the
+      // turn: the next entry in the chain may answer, and the operator needs the
+      // name, because only they can fix it.
+      const unknown = failure !== null && isUnknownModelFailure(failure);
+      if (unknown) dropped.add(candidate);
       if (failure === null && !empty) break;
 
       // A retry is only honest while the client has seen nothing: anything
       // already streamed would otherwise arrive twice.
       const next = targets[attempt + 1];
-      if (next !== undefined && temporary && emitted === 0 && !isAbortError(failure)) {
+      if (next !== undefined && (temporary || unknown) && emitted === 0 && !isAbortError(failure)) {
         const reason = failure === null ? "returned an empty response" : firstLine(failure.message);
         failures.push(`${candidate} ${reason}`);
+        if (unknown) {
+          // Named in both modes, unlike a throttle: an id the gateway does not
+          // know is a misconfiguration, and silence would leave it in the chain
+          // to fail the same way on every turn.
+          yield {
+            type: "notice",
+            text: `${candidate} is not a model this gateway serves; skipping it and trying ${next.model}.`,
+          };
+          continue;
+        }
         // In automatic mode the chain is ours rather than the person's: which model
         // throttled and which one took over is our problem to solve, and a
         // "cooling down … retrying with …" line per candidate is what made a busy
@@ -729,7 +749,9 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
         }
         failures.length = 0;
         throttled = false;
-        targets.push(...chain);
+        // A model that does not exist is not part of the retry: it failed for a
+        // reason waiting cannot fix.
+        targets.push(...chain.filter((target) => !dropped.has(target.model)));
         continue;
       }
       break;

@@ -103,6 +103,29 @@ export function isAbortError(error: unknown): boolean {
 }
 
 /**
+ * Did the gateway refuse this model rather than fail at it?
+ *
+ * A wrong entry in the chain is not a provider having a bad minute: OmniRoute
+ * advertises what its providers claim, so an id it cannot serve answers the same
+ * way on every turn until somebody fixes the list. It does not answer with one
+ * status either — an unknown id came back `404` for one model, `400` for another
+ * (the provider's own "input exceeds…" complaint about a request it never
+ * understood), and an empty choice for a third. `isRetryableFailure` says no to
+ * all three, correctly: retrying here is pointless. Treating them as permanent
+ * is what ended the turn on the first link while the rest of the chain sat
+ * untried. So they are neither: the chain walks past, and the entry is dropped
+ * for this turn so a later sweep does not walk into it again.
+ *
+ * `401`/`403` are deliberately absent — those are the account, not the model, and
+ * the caller is told about them so a stale session can be fixed. `429` and the
+ * `5xx` family are throttling and belong to the retry path.
+ */
+export function isUnknownModelFailure(error: unknown): boolean {
+  if (!(error instanceof GatewayError)) return false;
+  return error.status === 404 || error.status === 400 || error.status === 422;
+}
+
+/**
  * Is another provider worth trying? Throttling, quota exhaustion and transient
  * upstream failures are; a bad request or a cancelled one is not.
  */

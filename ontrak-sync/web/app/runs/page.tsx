@@ -20,11 +20,37 @@ import { useAsync } from "@/lib/useAsync";
 
 export default function RunsPage() {
   const [level, setLevel] = useState("");
+  const [undoing, setUndoing] = useState<number | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const runs = useAsync<{ runs: Run[] }>(() => api.runs(60), []);
   const events = useAsync<{ events: Event[] }>(() => api.events(400), []);
 
   const rows = runs.data?.runs ?? [];
   const log = (events.data?.events ?? []).filter((entry) => !level || entry.level === level);
+
+  /**
+   * Put back what one apply run replaced.
+   *
+   * A run is the unit because the version to restore is a fact about that run, not
+   * about the package (see `backend/ontrak/rollback.py`). The confirmation names
+   * the count: an undo is a change to every machine the run touched.
+   */
+  async function rollBack(entry: Run) {
+    if (!window.confirm(`Put back the ${entry.applied} package(s) run #${entry.id} replaced?`)) return;
+    setUndoing(entry.id);
+    setNotice(null);
+    try {
+      const result = await api.rollback(entry.id);
+      const reasons = result.refusals.length ? ` — ${result.refusals.join("; ")}` : "";
+      setNotice(`Run #${entry.id}: ${result.summary}${reasons}`);
+      runs.reload();
+      events.reload();
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setUndoing(null);
+    }
+  }
 
   return (
     <>
@@ -52,6 +78,7 @@ export default function RunsPage() {
         <header><h2>Runs</h2><span className="faint">{rows.length}</span></header>
         <div className="body body--flush">
           {runs.error ? <LoadError error={runs.error} /> : null}
+          {notice ? <p className="faint" style={{ padding: "0 16px" }}>{notice}</p> : null}
           {rows.length === 0 ? (
             <Empty>Nothing has run yet.</Empty>
           ) : (
@@ -69,6 +96,7 @@ export default function RunsPage() {
                     <th>Started</th>
                     <th>Took</th>
                     <th>Summary</th>
+                    <th>Undo</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -88,6 +116,19 @@ export default function RunsPage() {
                       <td className="tight"><When value={entry.started_at} /></td>
                       <td className="tight faint">{duration(entry.started_at, entry.finished_at)}</td>
                       <td className="dim">{entry.summary ?? ""}</td>
+                      <td className="tight">
+                        {entry.kind === "apply" && entry.applied > 0 ? (
+                          <button
+                            onClick={() => rollBack(entry)}
+                            disabled={undoing !== null}
+                            title="Put back the versions this run replaced"
+                          >
+                            {undoing === entry.id ? "Rolling back…" : "Roll back"}
+                          </button>
+                        ) : (
+                          <span className="faint">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

@@ -776,6 +776,16 @@ export const es: Messages = {
   "report.breakdown": "Cómo fue cada comprobación",
   "report.breakdownHint":
     "La calificación es determinista: el mismo estado final de la máquina produce siempre la misma puntuación.",
+  "report.halfCredit": "Crédito parcial",
+  "integrity.enabled":
+    "Este intento registra el tiempo que la página está oculta. Ese registro no forma parte de tu nota.",
+  "integrity.title": "Registro de tiempo",
+  "integrity.none": "No se registró tiempo fuera del intento.",
+  "integrity.summary": "{duration} fuera en {count} intervalo(s)",
+  "integrity.notScored":
+    "Registrado, no puntuado: no influye en la nota y una recalificación no lo cambia.",
+  "integrity.source":
+    "Notificado por el navegador durante el intento. El registro es evidencia de que se notificó un intervalo, no prueba nada sobre el estudiante.",
   "report.objectives": "Qué pedía el ticket",
   "report.next": "Siguiente",
   "report.next.body":

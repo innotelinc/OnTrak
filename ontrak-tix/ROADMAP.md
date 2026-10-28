@@ -182,13 +182,13 @@ to stand on its own.
 | M5 — Automation & knowledge | 2.0.0 | `[x]` shipped |
 | M6 — Platform & integrations | 2.0.0 | `[x]` shipped |
 | M7 — Intelligence & scale | **2.1** | `[~]` assist/analytics/DR/SOC 2 shipped (2.0); scale fixes open |
-| Backlog — reporting/admin/assurance | **2.2–2.4, 3.0, 4.0** | `[ ]` planned |
+| Backlog — reporting/admin/assurance | **2.2–2.3, 3.0, 4.0** | `[ ]` planned |
 
 **2.0.0 is the shipped desk:** intake, ticketing, SLA, queues, clients, billing,
 knowledge, incidents, hash-chained audit, signed assurance packets, SOC 2
 controls, backup/DR, analytics and the opt-in assistant.
 
-### 2.1 — Scale `[~]`
+### 2.1 — Scale `[x]`
 **Goal:** a million-ticket tenant can open its inbox and create a ticket.
 
 - `[x]` Page the worklist at the database. `/inbox` now reads one page through
@@ -209,14 +209,22 @@ controls, backup/DR, analytics and the opt-in assistant.
   incremented atomically). Measured: create p95 **408 ms** at 500 agents /
   50,000 tickets, against 2,238 ms before the fix and 18.7 s at 1M in the
   2026-10-09 run.
-- `[~]` Re-run `npm run load-test` at 1M tickets and record the new p95s against
+- `[x]` Re-run `npm run load-test` at 1M tickets and record the new p95s against
   §10 once the inbox is paged. That run is recorded: detail p95 **28.2 ms**, create
   p95 **357 ms** and reply p95 **204.8 ms** — all met — with the inbox page's five
-  samples the one row that misses. What is left is the sample size, not the code
-  change: the same run with `--inbox-reads 60` in place of 5 settles it.
+  samples the one row that needed more. The attempt to settle it found a **harness**
+  defect first: Postgres's parallel maintenance workers asked for a shared-memory
+  segment larger than the container's 64 MB `/dev/shm`, so the ANALYZE failed
+  `53100` after seeding. Fixed with `VACUUM (ANALYZE, PARALLEL 0)`. The number was
+  then taken without re-seeding — `scripts/measure-inbox.ts` times the same two
+  shipped calls 60 times against the 1M tenant: page p95 **50.3 ms**, header counts
+  p95 **79.5 ms**, both **p95 132.7 ms** — met against 300 ms, with the counts the
+  larger half as predicted.
 - **Exit:** the 10,000-staff / 1,000,000-ticket rehearsal meets the stated p95 for
-  the worklist read and for create. Create is met; the worklist read is measured
-  but not yet judged.
+  the worklist read and for create. Create is met (**357 ms**), and so is the
+  worklist read (**132.7 ms** p95 over 60 samples); see
+  [docs/load-test.md](docs/load-test.md) for what the measurement does and does not
+  claim.
 
 ### 2.2 — Availability `[ ]`
 **Goal:** a write survives a node loss.
@@ -227,9 +235,46 @@ controls, backup/DR, analytics and the opt-in assistant.
 - `[ ]` Scheduled CSV/PDF exports and a warehouse connector. Exit: a nightly
   export lands without a person running it.
 
-### 2.4 — Config as code `[ ]`
-- `[ ]` Export/import queues, SLA calendars, custom fields and macros; environment
-  promotion. Exit: a staging configuration promotes byte-identically.
+### 2.4 — Config as code `[x]`
+
+**Goal:** a staging configuration promotes byte-identically.
+
+- `[x]` **One file, natural keys, canonical bytes.** `ontrak.tix.config/v1`
+  carries queues by slug, SLA policies by name (their business calendars
+  inline), custom fields by key and macros by name — never ids, timestamps or
+  secrets, because those are what differ between environments. Sections are
+  sorted, strings trimmed, a calendar's closures normalised through the same
+  rules that accept a hand-typed date, fields in a fixed order, and the JSON is
+  indented with a trailing newline, so the same configuration has exactly one
+  spelling. `src/lib/config-bundle.ts` is the whole rulebook: `readBundle`
+  refuses a file with every problem named at once (unknown format, unknown key,
+  missing section, duplicate natural key, a policy pointing at a queue the file
+  does not carry, a field type or macro action the desk's own validators reject);
+  `diffBundle` classifies each row create / update / unchanged and names the
+  fields that differ; `applyToState` is the database-free application the byte
+  claim is stated against.
+- `[x]` **Promotion is a diff, then an apply.** `scripts/config-code.ts export --tenant
+  <slug> [--out file]` writes the file; `import --file <path> --tenant <slug>
+  [--dry-run] [--allow-tenant-slug]` prints the same diff the apply uses, so the
+  review cannot disagree with the write. Import upserts by natural key and never
+  deletes: what the target has and the file does not name is left alone, because
+  removing a queue with open tickets or a field holding answers is a decision of
+  its own. A file from a different tenant is refused before the first write
+  unless the promotion is stated with `--allow-tenant-slug`; an import that
+  changed something appends `config.import` to the tenant's audit chain, and one
+  that changed nothing appends nothing. Client-scoped SLA policies are not
+  carried — a client is a contract and a set of people, not configuration — and
+  the export says how many it left behind rather than dropping them silently; a
+  bundle policy that collides with one by name is refused, because the import
+  would otherwise turn a client's promise into the whole desk's.
+- **Exit:** the byte-identical property is tested as bytes in
+  `tests/config-code.test.ts`: export → read → export, export → apply to an empty
+  environment → export, and a reversed source order all produce the same string;
+  the dry run writes nothing; an import writes queues before the policies that
+  point at them; a second import is a no-op. The database write is exercised over
+  a fake `ConfigCodeDb` by the same convention as the other services, with the
+  decisions it makes covered purely. The format, the promotion procedure and what
+  is deliberately not carried are in [docs/config-as-code.md](docs/config-as-code.md).
 
 ### 3.0 — Evidence-grade assurance `[ ]`
 - `[ ]` Evidence-request portal for auditors/insurers, tamper alarms on the audit
@@ -1538,12 +1583,14 @@ audit chain, third-party timestamping.
 
 ## 13. Immediate next steps
 
-1. **2.1 — page the worklist** at the database (keyset-paged, like the public
-   results API), then re-run the load rehearsal.
-2. **2.1 — the reference mark** in a row, so create no longer reads every ref.
-3. **2.2 — failover rehearsal** for ticket writes, with the audit chain checked
+2.1 is done — the 1M rehearsal's p95s are in §4 and
+[docs/load-test.md](docs/load-test.md) — and so is 2.4: a staging configuration
+promotes byte-identically through `scripts/config-code.ts`, as described in
+[docs/config-as-code.md](docs/config-as-code.md).
+
+1. **2.2 — failover rehearsal** for ticket writes, with the audit chain checked
    across the switch.
-4. **2.3 — the nightly export**, then the warehouse connector.
+2. **2.3 — the nightly export**, then the warehouse connector.
 
 Everything listed here as a "first two sprints" bootstrap item is shipped and
 now part of 2.0.

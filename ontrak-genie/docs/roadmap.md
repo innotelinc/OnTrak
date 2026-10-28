@@ -47,9 +47,9 @@ full developer reference.
 > GitHub or Atlas repository and carried on from there.
 
 > **Re-baselined at 2.0 (2026-10-24).** Everything above — v0.1 through v1.0 — is
-> the shipped **2.0.0**. The next minor milestones are 2.1 (CLI parity), 2.2
-> (per-account change sets), 2.3 (fleet operations); the next majors are 3.0
-> (team-scale CodeOps) and 4.0 (continuous code operations). The portfolio TODO is
+> the shipped **2.0.0**. 2.1 (CLI parity) and 2.2 (per-account change sets) have
+> since shipped; 2.3 (fleet operations) is the next minor milestone. The next
+> majors are 3.0 (team-scale CodeOps) and 4.0 (continuous code operations). The portfolio TODO is
 > [../../docs/portfolio-roadmap-v2.md](../../docs/portfolio-roadmap-v2.md). The
 > `v0.x` headings below are history, not open versions.
 
@@ -86,10 +86,17 @@ account ceiling.
   hostile page can steer. The terminal drives them through the same approval
   queue it already uses for commands (`genie pending`, `approve`, `deny`).
 
-### 2.2 — Per-account change sets `[ ]`
+### 2.2 — Per-account change sets `[x]`
 
-- `[ ]` One pending change set per account instead of one per process. Exit: two
-  operators review their own proposals concurrently.
+- `[x]` One pending change set per account instead of one per process. The state in
+  `src/proposals.ts` is a map keyed by the account, using the same key `scope.ts`
+  gives the workspace (`currentScope().userId`, or the literal `local` for an
+  un-tenanted deployment), so a set can only be read and applied against the disk
+  it was proposed for. The tools and the three `/api/changes*` routes pass no key
+  and take the request's own, the ledger row now carries the account beside the
+  actor, and one account's apply or discard leaves every other account's set
+  untouched. Covered by `src/test/change-set.test.ts` — two accounts stage, review
+  and commit concurrently, in one process.
 
 ### 2.3 — Fleet operations `[ ]`
 - `[ ]` Many workspaces from one console without the operator becoming the
@@ -372,9 +379,11 @@ becoming the bottleneck.
   proposed twice is one entry — the later one wins, because an agent correcting
   itself should not ask a reviewer to approve both — and the model is told plainly
   that nothing landed, because one that believed otherwise would read a stale file
-  next. Covered by `src/test/change-set.test.ts`. One pending set per process is
-  deliberate: a change set is a document a person reads, and the per-account set is
-  part of the same "beyond a single operator" work as the repository bullet below.
+  next. Covered by `src/test/change-set.test.ts`. One pending set **per account** is
+  deliberate: a change set is a document a person reads, so there is one at a time
+  for the person reading it — but which one is theirs, not the process's. That
+  key (`2.2`) is what lets two operators sign in to one deployment and review their
+  own proposals instead of sharing a slot neither of them chose.
 - `[-]` **ONYX** is explicitly *not* this: Genie owns no storage; a shared artifact
   that outlives a workspace is ONYX's to hold, which is why this is out of scope
   rather than an open bullet.
@@ -414,18 +423,21 @@ no hidden system prompt, and `/last` shows what was sent.
 (a failure outranks a review; a clean change suggests review, tests, commit).
 Deliberately not a second model call: a suggestion can never invent work the turn
 did not do.
-- `[ ]` **Propose-then-commit.** The live diff exists and the review-after-the-fact
-is not it; a queued change set a reviewer approves before it lands is still open
-(v0.4's item, and the place a terminal client pays off most).
+- `[x]` **Propose-then-commit.** The live diff exists and the review-after-the-fact
+is not it; a queued change set a reviewer approves before it lands is what v0.4
+shipped (`AGENT_WRITE_MODE=propose`, `POST /api/changes/apply`), and the terminal
+drives the same set with `genie changes`, `genie apply` and `genie discard` (2.1).
+It is per account now (2.2), so two operators review their own proposals.
 - `[x]` **Web research tools.** `web_fetch` reads a public page as text behind
 an address policy and a 2 MB cap; `web_search` returns titles, URLs and snippets
 from Exa. Both are approval-gated, and both are available to the terminal because
 they are server-side tools — no second implementation.
 
 **Open, plainly:** the CLI covers the console's core and the housekeeping around
-it, including the web tool set now. What remains in this milestone's neighbourhood
-is per-account change sets (2.2), not another surface: `web_search` still needs a
-provider key, and a deployment without one gets `web_fetch` only.
+it, including the web tool set now. Per-account change sets (2.2) have since landed,
+so what remains in this milestone's neighbourhood is 2.3's fleet operations, not
+another surface: `web_search` still needs a provider key, and a deployment without
+one gets `web_fetch` only.
 
 ### v0.6 — Remote workspaces `[x]`
 

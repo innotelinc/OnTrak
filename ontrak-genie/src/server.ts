@@ -1853,7 +1853,9 @@ async function handleApi(
    *
    * A change set is a document a person reads, so these are its index, its
    * committal and its dismissal. `GET` is safe to poll for a badge; both POSTs
-   * are deliberate and both are filed in `changes.jsonl`.
+   * are deliberate and both are filed in `changes.jsonl`. Every route resolves
+   * the caller's own account as the key (`changeSetOwner`), so "the pending set"
+   * means *this request's* pending set and never somebody else's.
    */
   if (pathname === "/api/changes" && method === "GET") {
     return sendJson(res, 200, { changeSet: currentChangeSet(), summary: describePending() });

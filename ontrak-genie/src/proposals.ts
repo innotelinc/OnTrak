@@ -11,6 +11,7 @@ import {
   type StagedEntry,
 } from "./change-set.js";
 import { config } from "./config.js";
+import { currentScope } from "./scope.js";
 import { saveSnapshot } from "./snapshots.js";
 import { pathExists, readTextFile, resolveInWorkspace, writeTextFile } from "./workspace.js";
 
@@ -22,16 +23,20 @@ import { pathExists, readTextFile, resolveInWorkspace, writeTextFile } from "./w
  * `POST /api/changes/apply`. That is the roadmap's "a reviewer approves a change
  * set rather than one write at a time".
  *
- * ONE PENDING SET PER PROCESS, AND WHY THAT IS HONEST
- * ---------------------------------------------------
+ * ONE PENDING SET PER ACCOUNT
+ * ---------------------------
  * The approval gate is per-prompt and short-lived; a change set is a *document* a
- * person reads, and reading it takes minutes. So there is one pending set at a
- * time, not a queue: staging while a set is already waiting adds to it, and a
- * second reviewer's turn is refused at the door (it is already reviewable). This
- * is deliberately the shape of a **single operator or a small team** in one
- * workspace, which is what v0.4's "beyond a single operator" is reaching for; a
- * per-account set is a later step, and pretending otherwise with a half-keyed map
- * would be the lie.
+ * person reads, and reading it takes minutes. So an account has one pending set at
+ * a time, not a queue: staging while a set is already waiting adds to it, because
+ * two documents from one agent would be two things to reconcile by hand.
+ *
+ * That slot used to be the process's, which was honest for a single operator and
+ * wrong the moment a second person signed in: their first proposal was added to a
+ * set they could not see, or refused at the door as "already reviewable" by work
+ * that was somebody else's. The key is the account, exactly as the workspace, the
+ * chats and the file history are keyed (`scope.ts`), so a reviewer reads the set
+ * proposed against the disk they will apply it to. Single-operator mode keeps the
+ * literal `local` — one slot on a laptop, exactly as before tenancy existed.
  *
  * EVERY DECISION IS FILED
  * -----------------------
@@ -49,8 +54,25 @@ export function changeLogPath(): string {
   return path.join(config.dataDir, CHANGE_LOG);
 }
 
-/** The set waiting for a decision, or `null` when there is nothing to review. */
-let pending: ChangeSet | null = null;
+/**
+ * The sets waiting for a decision, keyed by the account that proposed them.
+ *
+ * A map rather than one slot per process (2.2), and still one set per key: the
+ * isolation is between accounts, not a queue inside one.
+ */
+const pendingSets = new Map<string, ChangeSet>();
+
+/**
+ * Whose change sets this call's are.
+ *
+ * The same account key `scope.ts` uses for the workspace, so a set can only be
+ * read and applied against the slice it was proposed for. No control plane means
+ * no account, which is `local`: the single-operator slot that shipped first, and
+ * is still what an un-tenanted deployment runs.
+ */
+export function changeSetOwner(): string {
+  return currentScope().userId ?? "local";
+}
 
 function newId(): string {
   return `cs_${randomBytes(8).toString("hex")}`;
@@ -63,21 +85,25 @@ function newId(): string {
  * first entry opens the set; a later entry for a path replaces the earlier one (so
  * an agent correcting itself does not ask the reviewer to approve both).
  */
-export function stageChange(entry: StagedEntry): ChangeSet {
-  if (pending === null) {
-    pending = { id: newId(), createdAt: new Date().toISOString(), entries: [] };
-  }
-  pending = { ...pending, entries: addEntry(pending.entries, entry) };
-  return pending;
+export function stageChange(entry: StagedEntry, owner: string = changeSetOwner()): ChangeSet {
+  const current = pendingSets.get(owner);
+  const base: ChangeSet = current ?? {
+    id: newId(),
+    createdAt: new Date().toISOString(),
+    entries: [],
+  };
+  const next: ChangeSet = { ...base, entries: addEntry(base.entries, entry) };
+  pendingSets.set(owner, next);
+  return next;
 }
 
-export function currentChangeSet(): ChangeSet | null {
-  return pending;
+export function currentChangeSet(owner: string = changeSetOwner()): ChangeSet | null {
+  return pendingSets.get(owner) ?? null;
 }
 
 /** Reset the in-process state. For tests, and for a deployment that wants a clean slate. */
 export function resetChangeSets(): void {
-  pending = null;
+  pendingSets.clear();
 }
 
 function recordLedger(record: Record<string, unknown>): void {
@@ -110,12 +136,20 @@ export class ChangeSetError extends Error {}
  * The set is cleared only after the last write succeeds. A failure partway through
  * leaves the set intact and names the path it stopped at, so a re-run retries the
  * whole set rather than half of it.
+ *
+ * `owner` decides **which** set is committed; the bytes still resolve through the
+ * request's own scope, because in a deployment the two are the same account — the
+ * key is the set's, the scope is the disk's, and neither can name the other's.
  */
-export async function applyChangeSet(actor: string): Promise<ApplyResult> {
-  if (!hasEntries(pending)) {
+export async function applyChangeSet(
+  actor: string,
+  owner: string = changeSetOwner(),
+): Promise<ApplyResult> {
+  const current = pendingSets.get(owner) ?? null;
+  if (!hasEntries(current)) {
     throw new ChangeSetError("there is no proposed change set to apply");
   }
-  const set = pending as ChangeSet;
+  const set = current as ChangeSet;
   const entries = sortEntriesForApply(set.entries);
   const applied: string[] = [];
 
@@ -134,11 +168,12 @@ export async function applyChangeSet(actor: string): Promise<ApplyResult> {
     applied.push(entry.path);
   }
 
-  pending = null;
+  pendingSets.delete(owner);
   recordLedger({
     id: set.id,
     action: "applied",
     actor,
+    owner,
     paths: applied,
     proposedAt: set.createdAt,
     appliedAt: new Date().toISOString(),
@@ -146,15 +181,23 @@ export async function applyChangeSet(actor: string): Promise<ApplyResult> {
   return { applied: applied.length, paths: applied, id: set.id };
 }
 
-/** Drop the pending set without writing anything. Returns whether there was one. */
-export function discardChangeSet(actor: string): boolean {
-  if (!hasEntries(pending)) return false;
-  const set = pending as ChangeSet;
-  pending = null;
+/**
+ * Drop an account's pending set without writing anything.
+ *
+ * Returns whether there was one. The ledger names the account as well as the
+ * actor: an address can change or be shared, and the row has to say whose
+ * proposal was dropped.
+ */
+export function discardChangeSet(actor: string, owner: string = changeSetOwner()): boolean {
+  const current = pendingSets.get(owner) ?? null;
+  if (!hasEntries(current)) return false;
+  const set = current as ChangeSet;
+  pendingSets.delete(owner);
   recordLedger({
     id: set.id,
     action: "discarded",
     actor,
+    owner,
     paths: set.entries.map((entry) => entry.path),
     proposedAt: set.createdAt,
     discardedAt: new Date().toISOString(),
@@ -163,6 +206,6 @@ export function discardChangeSet(actor: string): boolean {
 }
 
 /** The one-line summary, for a log line or a response body. */
-export function describePending(): string {
-  return changeSetSummary(pending);
+export function describePending(owner: string = changeSetOwner()): string {
+  return changeSetSummary(pendingSets.get(owner) ?? null);
 }
