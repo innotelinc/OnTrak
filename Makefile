@@ -197,6 +197,13 @@ all-logs: ## Tail the family stack's logs
 # capture — a SIGSEGV in the glibc PTY prebuild on this musl image — while the
 # container stayed healthy, so every capture call failed quietly. This runs one
 # real turn through Genie's agent, which has to choose and call the tool itself.
+# The image base and `engines.node` are two statements of one fact. A service built
+# before the last Node move serves fine on the older runtime — started, healthy, and
+# wrong in a way no healthcheck shows — so the deploy asks each container what it runs.
+.PHONY: node-check
+node-check: ## Fail if an app container runs a different Node major than its package.json declares
+	@scripts/check-node-versions.sh
+
 .PHONY: capture-smoke
 capture-smoke: ## Run one capture through Genie's agent (GENIE_SMOKE_ACTOR=…)
 	@GENIE_SMOKE_ACTOR="$(GENIE_SMOKE_ACTOR)" GENIE_SMOKE_MODEL="$(GENIE_SMOKE_MODEL)" \

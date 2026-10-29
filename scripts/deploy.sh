@@ -103,6 +103,15 @@ wait_seconds="${DEPLOY_SMOKE_WAIT_SECONDS:-180}"
 echo "deploy: starting the family stack"
 "${compose[@]}" up -d --build
 
+# An image that was not rebuilt starts and passes its healthcheck on the runtime it was
+# built with, so `up` cannot tell a stack that has moved to a new Node from one where a
+# service is still on the old one. Ask the containers before serving anything.
+echo "deploy: checking every app container runs the Node its package declares"
+if ! scripts/check-node-versions.sh; then
+  echo "deploy: a container is not on the Node its package declares — rebuild it before serving" >&2
+  exit 1
+fi
+
 # An up stack is not a listening one: migrations run first and the console takes a
 # moment beyond that. The smoke cannot tell "not ready" from "broken", so a deploy
 # retries only the former, for a bounded while, instead of turning a slow start

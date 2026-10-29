@@ -2,6 +2,9 @@
   "name": "ontrak-sync-web",
   "version": "2.0.0",
   "private": true,
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "description": "Ontrak Sync dashboard \u2014 Network package and container update monitoring",
   "scripts": {
     "dev": "next dev -p 8421",
