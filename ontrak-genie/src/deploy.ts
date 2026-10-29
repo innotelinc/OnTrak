@@ -95,6 +95,16 @@ export interface DeployResult {
   output: string;
 }
 
+/**
+ * The body type this deployment's `fetch` takes, named through `fetch` itself.
+ *
+ * Naming it `BodyInit` looks equivalent and is not: that name is a global only
+ * where `lib.dom` is loaded, and this project's own `lib` is `ES2023` — a laptop
+ * whose parent `node_modules/@types` pulled the DOM library in compiled the file,
+ * while the image build, which installs nothing but this package, could not.
+ */
+type FetchBody = NonNullable<NonNullable<Parameters<typeof fetch>[1]>["body"]>;
+
 /** Injectable boundaries, so the pipeline is testable without a network. */
 export interface DeployDeps {
   run: (options: { command: string; cwd: string; timeoutMs?: number }) => Promise<ShellResult>;
@@ -110,9 +120,11 @@ const defaultDeps: DeployDeps = {
     const response = await fetch(url, {
       method: init.method,
       headers: init.headers,
-      // `Uint8Array<ArrayBufferLike>` is a valid body at runtime but the DOM's
-      // `BodyInit` type does not name it; the cast is the type system's, not ours.
-      ...(init.body === undefined ? {} : { body: init.body as BodyInit }),
+      // A string or a `Uint8Array` is a body `fetch` accepts at runtime; the cast
+      // is needed because the two type universes disagree about which — the DOM's
+      // `BodyInit` wants an `ArrayBufferView<ArrayBuffer>`, and a `Buffer` is an
+      // `ArrayBufferView<ArrayBufferLike>`.
+      ...(init.body === undefined ? {} : { body: init.body as unknown as FetchBody }),
       signal: AbortSignal.timeout(config.deployTimeoutMs),
     });
     return { status: response.status, text: await response.text() };
