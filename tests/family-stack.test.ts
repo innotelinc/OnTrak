@@ -56,14 +56,21 @@ const PORTAL_RULES = path.join("ontrak-portal", "src", "lib", "portal-rules.ts")
  * `lab` is a peer deployment this stack does not run, and `class` is AthenIQ's
  * classroom at `classroom.innotel.us`: it is a product the catalogue links to, but no
  * service in this compose file answers it, so there is no in-network address to give
- * `ONTRAK_CLASS_INTERNAL_URL` and no container for the job to wait on. The portal
- * probes it at its public name instead. The two others are the sign-in proxies in
- * front of G0DM0D3 and Engineer: they are the front door of a product, not a product
- * — unauthenticated they answer a redirect to the identity provider, so a "health"
- * probe of one proves only that it is redirecting. The products behind them are what
- * the lights watch.
+ * `ONTRAK_CLASS_INTERNAL_URL` and no container for the job to wait on. The portal * probes it at its public name instead. The three others are the sign-in proxies in
+ * front of G0DM0D3, Engineer and ONYX's storage console: they are the front door of a
+ * product, not a product — unauthenticated they answer a redirect to the identity
+ * provider, so a "health" probe of one proves only that it is redirecting. The products
+ * behind them are what the lights watch, and ONYX is not a product this stack serves,
+ * so there is no light for it here at all.
  */
-const NOT_IN_FAMILY_STACK = new Set(["lab", "class", "engineer-portal-sso", "g0dm0d3-sso"]);
+
+const NOT_IN_FAMILY_STACK = new Set([
+  "lab",
+  "class",
+  "engineer-portal-sso",
+  "g0dm0d3-sso",
+  "onyx-sso",
+]);
 
 function read(file: string): string {
   return readFileSync(path.join(process.cwd(), file), "utf8");

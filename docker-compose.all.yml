@@ -1037,6 +1037,44 @@ services:
       - --redis-connection-url=redis://g0dm0d3-sso-sessions:6379/1
       - --silence-ping-logging=true
 
+  # ONYX's sign-in (edge name onyx.innotel.us).
+  #
+  # The storage console is an operator surface, so it is gated the way the other
+  # operator surfaces are: oauth2-proxy against the family's `ontrak` OIDC client,
+  # restricted to the two administrator groups. Without this the edge forwards
+  # straight to the SPA on :2080, and a private browser lands on /#/overview with
+  # no sign-in at all.
+  onyx-sso:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.8.2
+    restart: unless-stopped
+    env_file:
+      - path: onyx-sso/.env
+        required: true
+    environment:
+      TZ: ${TZ:-America/New_York}
+    ports:
+      - "${ONYX_SSO_BIND:-192.168.1.21}:8096:4180"
+    command:
+      - --provider=oidc
+      - --oidc-issuer-url=https://auth.cerulean.innotel.us/application/o/ontrak/
+      - --oidc-groups-claim=groups
+      - --scope=openid email profile groups
+      - --email-domain=*
+      - --insecure-oidc-allow-unverified-email
+      - --allowed-group=ontrak-sysadmins
+      - --allowed-group=ontrak-admins
+      - --skip-provider-button=true
+      - --cookie-secure=true
+      - --cookie-samesite=lax
+      - --whitelist-domain=.innotel.us
+      - --reverse-proxy=true
+      - --set-xauthrequest=true
+      - --pass-user-headers=true
+      - --upstream=http://192.168.1.60:2080
+      - --http-address=0.0.0.0:4180
+      - --redirect-url=https://onyx.innotel.us/oauth2/callback
+      - --silence-ping-logging=true
+
   # G0DM0D3's sign-in.
   #
   # The family's products sign in themselves; this one cannot, because it is not a
