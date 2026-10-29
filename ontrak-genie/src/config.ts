@@ -571,6 +571,38 @@ export const config = {
   toolResultLimit: int("AGENT_TOOL_RESULT_LIMIT", 60_000),
 
   /**
+   * Whether a turn may carry images, and how large they may be.
+   *
+   * On by default: a screenshot is often the whole request, and the deployment
+   * cannot know which of its models are vision-capable — the gateway's answer to
+   * that is the provider's, not this file's. The bounds live in `attachments.ts`;
+   * these are the two an operator would move. `0` disables the feature, and the
+   * route then refuses an attachment by name rather than dropping it, because a
+   * picture that is silently ignored is a turn that answers the wrong question.
+   */
+  imageInput: bool("AGENT_IMAGE_INPUT", true),
+
+  /**
+   * Where a deployed app goes, and with which credential (v2.1).
+   *
+   * The tokens are the deployment's own, so a single-operator checkout can deploy
+   * without pasting one into the console each time; a caller may still supply
+   * their own and it wins. `NETLIFY_SITE_ID` pins an existing site, because
+   * creating one per deploy leaves a trail of empty projects behind — empty means
+   * "create a site named after the project on the first deploy". Empty tokens
+   * leave that target unready rather than half-configured, and `GET /api/deploy`
+   * says which are usable. See `src/deploy.ts`.
+   */
+  netlifyToken: str("NETLIFY_TOKEN", ""),
+  netlifySiteId: str("NETLIFY_SITE_ID", ""),
+  vercelToken: str("VERCEL_TOKEN", ""),
+  /** How long one build or one upload may take. */
+  deployBuildTimeoutMs: int("AGENT_DEPLOY_BUILD_TIMEOUT_MS", 600_000),
+  deployTimeoutMs: int("AGENT_DEPLOY_TIMEOUT_MS", 120_000),
+  /** Ceiling on the built site, before it is handed to a host. */
+  deployMaxBytes: int("AGENT_DEPLOY_MAX_BYTES", 32 * 1024 * 1024),
+
+  /**
    * Preview hosting — a temporary public address for a server running in a
    * workspace. Off by default: a preview is a development server exposed to the
    * network, so it is an operator's decision rather than something the shipped

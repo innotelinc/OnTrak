@@ -10,6 +10,7 @@ import { MEMORY_FILE, appendMemory, readMemory, remember } from "./memory.js";
 import { loadSkillsForScope } from "./skill-roots.js";
 import { composeSkillMessage, describeSkills, findSkill } from "./skills.js";
 import { buildFileDiff, type FileDiff } from "./diff.js";
+import { currentLockOwner, FileLockedError, runAsLockOwner, withFileLock } from "./locks.js";
 import { stageChange } from "./proposals.js";
 import { workspaceRoot } from "./scope.js";
 import { backendLabel, effectiveTimeoutMs, runShellCommand } from "./shell.js";
@@ -227,34 +228,44 @@ const writeFileTool: ToolDefinition = {
     };
   },
   async run(args) {
-    const plan = await planWrite(args);
-    // Propose mode: stage instead of write, so a reviewer commits the set. The
-    // model is told plainly that nothing landed, or it would assume its edit
-    // took effect and read a stale file next.
-    if (config.writeMode === "propose") {
-      const set = stageChange({
-        path: plan.rel,
-        kind: plan.existed ? "overwrite" : "create",
-        content: plan.content,
-        added: plan.diff?.added ?? 0,
-        removed: plan.diff?.removed ?? 0,
-      });
-      return {
-        ok: true,
-        content: `Proposed ${plan.existed ? "overwrite of" : "creation of"} ${plan.rel}; staged for review (${changeSetSummary(set)}). Nothing has been written yet — the change lands when the set is applied.`,
-        ...(plan.diff ? { diff: plan.diff } : {}),
-      };
-    }
-    // Keep the "before" for the viewer's diff, but never fail a write over it.
-    await saveSnapshot(plan.rel, plan.before).catch(() => {});
-    const bytes = await writeTextFile(plan.abs, plan.content);
-    return {
-      ok: true,
-      content: `${plan.existed ? "Updated" : "Created"} ${plan.rel} (${plan.lines} lines, ${formatSize(bytes)})`,
-      ...(plan.diff ? { diff: plan.diff } : {}),
-    };
+    /*
+     * The whole read-plan-write holds the file, not only the write: a second turn
+     * planning against the same file would compute a diff against contents that
+     * are about to change, and the later write would silently discard the first.
+     * See `src/locks.ts`.
+     */
+    return withFileLock(argString(args, "path"), currentLockOwner(), () => writePlan(args));
   },
 };
+
+async function writePlan(args: Record<string, unknown>): Promise<ToolOutcome> {
+  const plan = await planWrite(args);
+  // Propose mode: stage instead of write, so a reviewer commits the set. The
+  // model is told plainly that nothing landed, or it would assume its edit
+  // took effect and read a stale file next.
+  if (config.writeMode === "propose") {
+    const set = stageChange({
+      path: plan.rel,
+      kind: plan.existed ? "overwrite" : "create",
+      content: plan.content,
+      added: plan.diff?.added ?? 0,
+      removed: plan.diff?.removed ?? 0,
+    });
+    return {
+      ok: true,
+      content: `Proposed ${plan.existed ? "overwrite of" : "creation of"} ${plan.rel}; staged for review (${changeSetSummary(set)}). Nothing has been written yet — the change lands when the set is applied.`,
+      ...(plan.diff ? { diff: plan.diff } : {}),
+    };
+  }
+  // Keep the "before" for the viewer's diff, but never fail a write over it.
+  await saveSnapshot(plan.rel, plan.before).catch(() => {});
+  const bytes = await writeTextFile(plan.abs, plan.content);
+  return {
+    ok: true,
+    content: `${plan.existed ? "Updated" : "Created"} ${plan.rel} (${plan.lines} lines, ${formatSize(bytes)})`,
+    ...(plan.diff ? { diff: plan.diff } : {}),
+  };
+}
 
 // --- edit_file --------------------------------------------------------------
 
@@ -310,33 +321,40 @@ const editFileTool: ToolDefinition = {
     };
   },
   async run(args) {
-    const plan = await planEdit(args);
-    // Propose mode: the edit is computed against the file *as it is now*, so a set
-    // of edits to the same file composes in order and the last one wins (see
-    // `addEntry`). Nothing is written until the set is applied.
-    if (config.writeMode === "propose") {
-      const set = stageChange({
-        path: plan.rel,
-        kind: "edit",
-        content: plan.updated,
-        added: plan.diff.added,
-        removed: plan.diff.removed,
-      });
-      return {
-        ok: true,
-        content: `Proposed edit to ${plan.rel} (${plan.count} replacement${plan.count === 1 ? "" : "s"}); staged for review (${changeSetSummary(set)}). Nothing has been written yet.`,
-        diff: plan.diff,
-      };
-    }
-    await saveSnapshot(plan.rel, plan.content).catch(() => {});
-    await writeTextFile(plan.abs, plan.updated);
-    return {
-      ok: true,
-      content: `Edited ${plan.rel} (${plan.count} replacement${plan.count === 1 ? "" : "s"})`,
-      diff: plan.diff,
-    };
+    // Read and write under one lock: an edit's `oldString` is matched against the
+    // file as it is read, so a second turn writing in between would make this one
+    // apply to contents it never saw (see `src/locks.ts`).
+    return withFileLock(argString(args, "path"), currentLockOwner(), () => editPlan(args));
   },
 };
+
+async function editPlan(args: Record<string, unknown>): Promise<ToolOutcome> {
+  const plan = await planEdit(args);
+  // Propose mode: the edit is computed against the file *as it is now*, so a set
+  // of edits to the same file composes in order and the last one wins (see
+  // `addEntry`). Nothing is written until the set is applied.
+  if (config.writeMode === "propose") {
+    const set = stageChange({
+      path: plan.rel,
+      kind: "edit",
+      content: plan.updated,
+      added: plan.diff.added,
+      removed: plan.diff.removed,
+    });
+    return {
+      ok: true,
+      content: `Proposed edit to ${plan.rel} (${plan.count} replacement${plan.count === 1 ? "" : "s"}); staged for review (${changeSetSummary(set)}). Nothing has been written yet.`,
+      diff: plan.diff,
+    };
+  }
+  await saveSnapshot(plan.rel, plan.content).catch(() => {});
+  await writeTextFile(plan.abs, plan.updated);
+  return {
+    ok: true,
+    content: `Edited ${plan.rel} (${plan.count} replacement${plan.count === 1 ? "" : "s"})`,
+    diff: plan.diff,
+  };
+}
 
 // --- search_code ------------------------------------------------------------
 
@@ -671,36 +689,43 @@ const rememberTool: ToolDefinition = {
     };
   },
   async run(args) {
-    const entry = argString(args, "entry");
-    const section = sectionArg(args);
-    const input = { entry, ...(section === undefined ? {} : { section }) };
-
-    if (config.writeMode === "propose") {
-      const before = await readMemory();
-      const content = appendMemory(before, input);
-      const diff = buildFileDiff(MEMORY_FILE, before, content);
-      const set = stageChange({
-        path: MEMORY_FILE,
-        kind: before.trim() === "" ? "create" : "overwrite",
-        content,
-        added: diff.added,
-        removed: diff.removed,
-      });
-      return {
-        ok: true,
-        content: `Proposed adding to ${MEMORY_FILE}; staged for review (${changeSetSummary(set)}). Nothing has been written yet.`,
-        diff,
-      };
-    }
-
-    const outcome = await remember(input);
-    return {
-      ok: true,
-      content: `${outcome.created ? "Created" : "Updated"} ${outcome.rel} under "${outcome.section}" (${formatSize(outcome.bytes)}).`,
-      diff: outcome.diff,
-    };
+    // MEMORY.md is a file like any other, so it is written under the same lock: two
+    // turns remembering something at once would otherwise append from the same
+    // read and lose one of the two facts.
+    return withFileLock(MEMORY_FILE, currentLockOwner(), () => rememberPlan(args));
   },
 };
+
+async function rememberPlan(args: Record<string, unknown>): Promise<ToolOutcome> {
+  const entry = argString(args, "entry");
+  const section = sectionArg(args);
+  const input = { entry, ...(section === undefined ? {} : { section }) };
+
+  if (config.writeMode === "propose") {
+    const before = await readMemory();
+    const content = appendMemory(before, input);
+    const diff = buildFileDiff(MEMORY_FILE, before, content);
+    const set = stageChange({
+      path: MEMORY_FILE,
+      kind: before.trim() === "" ? "create" : "overwrite",
+      content,
+      added: diff.added,
+      removed: diff.removed,
+    });
+    return {
+      ok: true,
+      content: `Proposed adding to ${MEMORY_FILE}; staged for review (${changeSetSummary(set)}). Nothing has been written yet.`,
+      diff,
+    };
+  }
+
+  const outcome = await remember(input);
+  return {
+    ok: true,
+    content: `${outcome.created ? "Created" : "Updated"} ${outcome.rel} under "${outcome.section}" (${formatSize(outcome.bytes)}).`,
+    diff: outcome.diff,
+  };
+}
 
 function sectionArg(args: Record<string, unknown>): string | undefined {
   const value = args.section;
@@ -929,8 +954,16 @@ function parseToolArguments(name: string, rawArguments: string): ParsedArgs {
   }
 }
 
-/** Execute a tool by name, turning every failure into a message for the model. */
-export async function runTool(name: string, rawArguments: string): Promise<ToolOutcome> {
+/**
+ * Execute a tool by name, turning every failure into a message for the model.
+ *
+ * `owner` is the turn this call belongs to, and it is what makes the file locks
+ * (`src/locks.ts`) mean something: two turns hold different owners, so a second
+ * write to a file that is mid-change is refused instead of interleaved. A caller
+ * with no turn — a test, a route — gets the shared `"turn"` owner and therefore
+ * the old behaviour of never colliding with itself.
+ */
+export async function runTool(name: string, rawArguments: string, owner = ""): Promise<ToolOutcome> {
   const available = allTools();
   const tool = available.find((candidate) => candidate.name === name);
   if (!tool) {
@@ -944,9 +977,9 @@ export async function runTool(name: string, rawArguments: string): Promise<ToolO
   if (!parsed.ok) return { ok: false, content: parsed.content };
 
   try {
-    return await tool.run(parsed.args);
+    return await runAsLockOwner(owner, () => tool.run(parsed.args));
   } catch (error) {
-    if (error instanceof ToolError || error instanceof WorkspaceError) {
+    if (error instanceof ToolError || error instanceof WorkspaceError || error instanceof FileLockedError) {
       return { ok: false, content: error.message };
     }
     return { ok: false, content: `Tool ${name} failed: ${(error as Error).message}` };

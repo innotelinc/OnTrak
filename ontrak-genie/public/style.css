@@ -1585,6 +1585,17 @@ body.preview-resizing * { cursor: col-resize !important; }
   }
   .rail.open > .rail-view { width: 100%; min-width: 0; max-width: none; }
   .preview-head { padding: 8px 12px; }
+  /*
+   * The instruction-set picker appears beside the model picker above the point
+   * where the toolbar stops wrapping, and a second fixed-width select is what
+   * pushes the last control off the edge. It gives up width first, and its text
+   * is already a short name, so nothing becomes unreadable.
+   */
+  #prompt-field { flex: 0 1 auto; min-width: 0; }
+  #prompt-field .select { min-width: 0; max-width: 120px; }
+  /* The word "prompt" is the first thing to go: the select's options name
+     themselves, and the control keeps its `aria-label`. */
+  #prompt-field .lbl { display: none; }
 }
 
 @media (max-width: 720px) {
@@ -1668,8 +1679,8 @@ body.preview-resizing * { cursor: col-resize !important; }
   .topbar-left { flex: 1 1 auto; }
   .topbar-right { flex: 1 1 100%; justify-content: flex-start; gap: 8px; }
   .chat-title { max-width: none; flex: 1; }
-  #model-field { flex: 1 1 100%; }
-  #model-field .select { flex: 1; min-width: 0; max-width: none; }
+  #model-field, #prompt-field { flex: 1 1 100%; }
+  #model-field .select, #prompt-field .select { flex: 1; min-width: 0; max-width: none; }
   #appearance-open { display: none; }
   .topbar-right .btn-ghost { padding: 5px 8px; font-size: 12px; }
   /* A badge is a sentence, not a label: it wraps instead of pushing the row
@@ -1769,3 +1780,77 @@ body.preview-resizing * { cursor: col-resize !important; }
 .addon__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .addon__note { margin: 0; color: var(--muted); font-size: 13px; }
 .addon__open, .addon__buy { justify-self: start; text-decoration: none; }
+
+/*
+ * The attach button is a control, not a decoration, so it is the height of the
+ * send button beside it — `mini` would make it a 32px tap target in a row of
+ * 44px ones, which is exactly the kind of control a thumb misses.
+ */
+.attach-button {
+  align-self: stretch;
+  padding: 0 10px;
+  flex: 0 0 auto;
+  line-height: 1;
+}
+
+/* ── attached images ─────────────────────────────────────────────────────────
+ * What will be sent with the next message, as chips above the composer, and the
+ * same pictures again inside a sent turn. A thumbnail is the label: "IMG_2041"
+ * tells nobody which screenshot it is, and the whole reason to attach one is that
+ * it says what words do not. */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px 0;
+}
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 260px;
+  padding: 4px 6px 4px 4px;
+  border: 1px solid var(--line, var(--border, #2a2f37));
+  border-radius: 10px;
+  background: var(--panel, transparent);
+}
+.attach-thumb {
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+.attach-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.attach-remove { padding: 0 6px; line-height: 1; }
+.msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.msg-image {
+  max-width: 220px;
+  max-height: 160px;
+  border: 1px solid var(--line, var(--border, #2a2f37));
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+/* ── deploying the built app ─────────────────────────────────────────────────
+ * A block of its own under the hosting form: hosting puts the *preview* on the
+ * network, deploying puts the *build* on somebody else's. The two are adjacent
+ * because they are the same question asked twice. */
+.deploy-block {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line, var(--border, #2a2f37));
+}
+.deploy-block .mono { font-size: 12px; letter-spacing: 0.04em; }

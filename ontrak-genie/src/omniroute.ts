@@ -1,4 +1,5 @@
 import { config } from "./config.js";
+import type { ContentPart, ImageAttachment } from "./attachments.js";
 import type { FileDiff } from "./diff.js";
 
 /**
@@ -22,7 +23,20 @@ export interface ToolCall {
  */
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  /**
+   * Text, or — for a user turn carrying images — the content parts the gateway
+   * expects. Only `modelMessages` builds the array form; a stored transcript holds
+   * the text and the `images` beside it, which is what keeps every reader of a
+   * transcript (the console, the CLI, the sharing view) from having to understand
+   * two content shapes.
+   */
+  content: string | ContentPart[] | null;
+  /**
+   * Images attached to a user turn: the bytes as they arrived, so reopening a chat
+   * still shows what was attached. Never sent to the gateway as this field —
+   * `modelMessages` turns it into content parts and drops it.
+   */
+  images?: ImageAttachment[];
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;

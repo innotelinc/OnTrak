@@ -5,6 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runAgent } from "./agent.js";
+import { AttachmentError, parseImages } from "./attachments.js";
+import { deploy, deployTargets, DeployError } from "./deploy.js";
+import { releaseLocks } from "./locks.js";
+import { promptCatalog, resolvePromptId } from "./prompts.js";
 import { listPendingApprovals, pendingApprovals, resolveApproval } from "./approval.js";
 import {
   applyChangeSet,
@@ -815,15 +819,41 @@ async function handlePreviewClaim(
 // --- chat (SSE) -------------------------------------------------------------
 
 async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const body = await readJson(req);
+  /*
+   * Images make the body large, so the ceiling is the image budget plus room for
+   * the text rather than the default megabyte. It is applied only when the feature
+   * is on: a deployment that has turned image input off should refuse the request
+   * at the door, not read eight megabytes to say no.
+   */
+  const body = await readJson(req, config.imageInput ? 12_000_000 : 1_000_000);
   const message = typeof body.message === "string" ? body.message : "";
   const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
   const model = typeof body.model === "string" && body.model !== "" ? body.model : undefined;
   const fallbackModels = normalizeModelList(body.fallbackModels);
   const useOffline = normalizeFlag(body.useOffline);
   const maxSteps = normalizeMaxSteps(body.maxSteps);
+  /*
+   * The instruction set this turn runs on. An unknown id is ignored rather than
+   * refused — a stale page asking for a preset this deployment has since removed
+   * should get the chat's own choice, not a 400 that leaves the person unable to
+   * type. The agent resolves the fallback (`prompts.ts`).
+   */
+  const promptPreset = resolvePromptId(body.prompt);
 
-  if (message.trim() === "") throw new HttpError(400, "message is required");
+  let images: ReturnType<typeof parseImages> = [];
+  try {
+    images = parseImages(body.attachments);
+  } catch (error) {
+    if (error instanceof AttachmentError) throw new HttpError(400, error.message);
+    throw error;
+  }
+  if (images.length > 0 && !config.imageInput) {
+    throw new HttpError(400, "image input is disabled on this deployment");
+  }
+
+  // An image on its own is a request — "what is wrong with this?" is implied by
+  // the picture — so only a turn with neither text nor an image is empty.
+  if (message.trim() === "" && images.length === 0) throw new HttpError(400, "message is required");
 
   /*
    * Tenancy, before anything is spent: which account this turn belongs to, and
@@ -899,6 +929,11 @@ async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): 
       autoFree,
       useOffline,
       maxSteps,
+      // What this turn asked for, in the two shapes that are not a model: the
+      // instruction set and the images. Both are validated before a turn begins,
+      // so neither can fail halfway through one.
+      ...(promptPreset === undefined ? {} : { prompt: promptPreset }),
+      ...(images.length === 0 ? {} : { images }),
       // The account's own key when a control plane resolved one; otherwise
       // undefined, and the shared key applies exactly as it did before.
       apiKey: turn.apiKey,
@@ -923,6 +958,15 @@ async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): 
     clearInterval(heartbeat);
     res.write("data: [DONE]\n\n");
     res.end();
+    /*
+     * Whatever this turn held, it is not holding any more.
+     *
+     * `withFileLock` releases in a `finally` of its own, so this is the belt to
+     * that braces: a tool whose promise never settled — a killed sandbox, an
+     * aborted command — would otherwise leave a file locked for the life of the
+     * process, and every later edit to it refused.
+     */
+    releaseLocks(session.id);
     /*
      * The ledger write, after the answer has been sent and never awaited: the turn
      * is already paid for, so a control plane that is slow or down must not hold
@@ -980,6 +1024,10 @@ async function handleApi(
         pending: pendingApprovals(),
       },
       limits: { minSteps: MIN_STEPS, maxSteps: MAX_STEPS, defaultSteps: config.maxSteps },
+      /** The instruction sets a chat may choose, and which one is the default. */
+      prompts: promptCatalog(),
+      /** Whether this deployment accepts images on a turn. */
+      imageInput: config.imageInput,
       /** Chain used when a chat has not saved one of its own. */
       fallbackModels: config.fallbackModels,
       /** Whether the chain's entries could make a tool call, and when last asked. */
@@ -1242,6 +1290,8 @@ async function handleApi(
       if (offline !== undefined) session.useOffline = offline;
       const steps = normalizeMaxSteps(payload.maxSteps);
       if (steps !== undefined) session.maxSteps = steps;
+      const promptPreset = resolvePromptId(payload.prompt);
+      if (promptPreset !== undefined) session.prompt = promptPreset;
       // `null` clears the tag; an absent key leaves it as it is.
       const projectId = normalizeProjectId(payload.projectId);
       if (projectId === null) delete session.projectId;
@@ -1258,6 +1308,7 @@ async function handleApi(
           fallbackModels: session.fallbackModels,
           useOffline: session.useOffline,
           maxSteps: session.maxSteps,
+          ...(session.prompt !== undefined ? { prompt: session.prompt } : {}),
         },
       });
     }
@@ -1451,6 +1502,27 @@ async function handleApi(
         return sendJson(res, 400, { error: error.message, project: error.project });
       }
       if (error instanceof ProjectError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+
+  /*
+   * Deploying is the step after publishing: `ship` and `/api/publish` put the
+   * source somewhere, and this puts the *built* app on a host a stranger can open.
+   * GET says which hosts this deployment can reach without asking for a
+   * credential; POST builds, collects and uploads through `src/deploy.ts`.
+   */
+  if (pathname === "/api/deploy" && method === "GET") {
+    return sendJson(res, 200, { targets: deployTargets() });
+  }
+
+  if (pathname === "/api/deploy" && method === "POST") {
+    const payload = await readJson(req, 64_000);
+    try {
+      return sendJson(res, 201, await deploy(payload));
+    } catch (error) {
+      if (error instanceof DeployError) return sendJson(res, 400, { error: error.message });
+      if (error instanceof WorkspaceError) throw new HttpError(400, error.message);
       throw error;
     }
   }

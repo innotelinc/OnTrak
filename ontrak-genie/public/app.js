@@ -11,6 +11,19 @@ const $ = (selector) => document.querySelector(selector);
 const state = {
   sessionId: null,
   model: "",
+  /**
+   * The instruction sets this deployment offers, as `/api/health` lists them.
+   * `prompt` is the one this chat is on; empty means "whatever the server
+   * resolves", which is the deployment's default.
+   */
+  prompts: [],
+  prompt: "",
+  /**
+   * Images attached to the message being written: `{ name, mimeType, data, url }`,
+   * where `data` is base64 (what the server takes) and `url` is the same bytes as
+   * a data URL (what the chip's thumbnail shows). Cleared when the turn is sent.
+   */
+  attachments: [],
   streaming: false,
   controller: null,
   filePath: ".",
@@ -1261,11 +1274,29 @@ function finishApprovalCard(id, decision) {
 
 /* ----------------------------------------------------------------- messages */
 
-function addUserMessage(text) {
+function addUserMessage(text, images) {
   hideEmptyState();
   const node = document.createElement("div");
   node.className = "msg msg-user";
-  node.textContent = text;
+  if (text) node.textContent = text;
+  // The picture the person asked about, shown in the transcript they will scroll
+  // back through — an attached image that vanished after sending would leave a
+  // reply about something nobody can see.
+  const attached = Array.isArray(images) ? images : [];
+  if (attached.length > 0) {
+    const strip = document.createElement("div");
+    strip.className = "msg-images";
+    for (const image of attached) {
+      const img = document.createElement("img");
+      img.className = "msg-image";
+      img.loading = "lazy";
+      img.alt = image.name || "attached image";
+      img.title = image.name || "attached image";
+      img.src = image.url || (image.data ? `data:${image.mimeType};base64,${image.data}` : "");
+      strip.append(img);
+    }
+    node.append(strip);
+  }
   $("#messages").append(node);
   scrollToBottom(true);
 }
@@ -1436,6 +1467,139 @@ function currentSteps() {
   const parsed = Number.parseInt($("#steps").value, 10);
   if (!Number.isFinite(parsed)) return undefined;
   return Math.min(state.limits.maxSteps, Math.max(state.limits.minSteps, parsed));
+}
+
+/* ------------------------------------------------------- instruction set */
+
+/** The preset this chat is on, or "" to let the server use its default. */
+function currentPrompt() {
+  return $("#prompt-preset").value || state.prompt;
+}
+
+/**
+ * Fill the preset picker from the deployment's catalog.
+ *
+ * The default is selected only when the person has not chosen one, so a health
+ * poll cannot undo a choice made a second earlier. The description becomes the
+ * option's title, which is where "when would I pick this" belongs — it is longer
+ * than a label and shorter than a settings page.
+ */
+function renderPromptCatalog(prompts) {
+  state.prompts = Array.isArray(prompts) ? prompts : [];
+  const select = $("#prompt-preset");
+  const previous = select.value || state.prompt;
+  const fallback = state.prompts.find((entry) => entry.default)?.id ?? "";
+  select.replaceChildren(
+    ...state.prompts.map((entry) => {
+      const option = document.createElement("option");
+      option.value = entry.id;
+      option.textContent = entry.name;
+      option.title = entry.description;
+      return option;
+    }),
+  );
+  const known = state.prompts.some((entry) => entry.id === previous);
+  select.value = known ? previous : fallback;
+  state.prompt = select.value;
+}
+
+/** Put the picker on a chat's saved preset, if the deployment still offers it. */
+function applySessionPrompt(prompt) {
+  if (typeof prompt !== "string" || prompt === "") return;
+  const select = $("#prompt-preset");
+  if (select.querySelector(`option[value="${prompt}"]`) === null) return;
+  select.value = prompt;
+  state.prompt = prompt;
+}
+
+/* ------------------------------------------------------------- attachments */
+
+/** Most images one message may carry, and the per-image ceiling the server uses. */
+const MAX_ATTACHMENTS = 4;
+const ATTACHMENT_BYTES = 1_500_000;
+const ATTACHMENT_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(new Error(`could not read ${file.name || "the image"}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Take files (from the picker or a paste) and hold the ones that are usable.
+ *
+ * The bounds are the server's, checked here so a too-large screenshot is refused
+ * while the person is still looking at it rather than coming back as a 400 after
+ * they wrote three paragraphs.
+ */
+async function attachImages(files) {
+  const incoming = [...(files ?? [])];
+  if (incoming.length === 0) return;
+  for (const file of incoming) {
+    if (state.attachments.length >= MAX_ATTACHMENTS) {
+      addNotice(`At most ${MAX_ATTACHMENTS} images can go with one message.`);
+      break;
+    }
+    if (!ATTACHMENT_TYPES.includes(file.type)) {
+      addNotice(`${file.name || "That file"} is not a PNG, JPEG, WebP or GIF.`);
+      continue;
+    }
+    if (file.size > ATTACHMENT_BYTES) {
+      addNotice(`${file.name || "That image"} is larger than ${Math.round(ATTACHMENT_BYTES / 1000)} KB; resize it first.`);
+      continue;
+    }
+    try {
+      const url = await readAsDataUrl(file);
+      const comma = url.indexOf(",");
+      state.attachments.push({
+        name: file.name || "screenshot",
+        mimeType: file.type,
+        data: comma === -1 ? "" : url.slice(comma + 1),
+        url,
+      });
+    } catch (error) {
+      addErrorMessage(error.message);
+    }
+  }
+  renderAttachments();
+}
+
+/** The chips above the composer: what will be sent, and a way to drop one. */
+function renderAttachments() {
+  const box = $("#attachments");
+  box.classList.toggle("hidden", state.attachments.length === 0);
+  box.replaceChildren(
+    ...state.attachments.map((image, index) => {
+      const chip = document.createElement("span");
+      chip.className = "attach-chip";
+      const thumb = document.createElement("img");
+      thumb.className = "attach-thumb";
+      thumb.src = image.url;
+      thumb.alt = "";
+      const label = document.createElement("span");
+      label.className = "attach-name";
+      label.textContent = image.name;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "btn-ghost mini attach-remove";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", `Remove ${image.name}`);
+      remove.addEventListener("click", () => {
+        state.attachments.splice(index, 1);
+        renderAttachments();
+      });
+      chip.append(thumb, label, remove);
+      return chip;
+    }),
+  );
+}
+
+/** What the server is sent: the bytes and their type, nothing about the DOM. */
+function currentAttachments() {
+  return state.attachments.map(({ name, mimeType, data }) => ({ name, mimeType, data }));
 }
 
 /**
@@ -1954,7 +2118,9 @@ async function sendMessage(text) {
   // A shared chat is a read. Refusing here is a courtesy rather than the control
   // — the server resolves sessions against your own store, so a turn against
   // somebody else's id is refused there too.
-  if (state.streaming || state.shareOf !== null || text.trim() === "") return;
+  if (state.streaming || state.shareOf !== null) return;
+  // An image on its own is a request, so only a turn with neither is empty.
+  if (text.trim() === "" && state.attachments.length === 0) return;
 
   // In automatic mode the server picks the chain, so nothing about a model is
   // sent: sending the hidden picker's value would be asking the server to hold an
@@ -1964,8 +2130,14 @@ async function sendMessage(text) {
   const maxSteps = currentSteps();
   const fallbacks = auto ? undefined : currentFallbacks();
   const useOffline = currentUseOffline();
-  addUserMessage(text);
+  // The instruction set is a choice even for an automatic account: which model
+  // answers and how it is told to work are different questions.
+  const prompt = currentPrompt();
+  const attachments = currentAttachments();
+  addUserMessage(text, state.attachments);
   $("#input").value = "";
+  state.attachments = [];
+  renderAttachments();
   autoGrow();
   setStreaming(true);
 
@@ -2040,6 +2212,8 @@ async function sendMessage(text) {
         ...(fallbacks === undefined ? {} : { fallbackModels: fallbacks }),
         useOffline,
         maxSteps,
+        ...(prompt === "" ? {} : { prompt }),
+        ...(attachments.length === 0 ? {} : { attachments }),
         // The project a *new* chat is born into. The server ignores it for a
         // chat that already exists, so browsing sessions cannot re-tag them.
         ...(state.projectId === null ? {} : { projectId: state.projectId }),
@@ -2380,6 +2554,10 @@ function startNewChat() {
   $("#chat-title").textContent = "New chat";
   seedFallbacks();
   setUseOffline(true);
+  // A new chat starts on the deployment's default instruction set, not on the
+  // one the previous chat happened to be using.
+  state.prompt = state.prompts.find((entry) => entry.default)?.id ?? "";
+  $("#prompt-preset").value = state.prompt;
   setGatewayBadge("primary");
   $("#messages").innerHTML =
     '<div class="empty" id="empty"><h2>What are we building?</h2><p class="muted">This agent reads, edits and runs code inside the workspace. Model access is routed through your OmniRoute gateway.</p></div>';
@@ -2407,24 +2585,35 @@ function applySessionSettings(session) {
   else seedFallbacks();
   setUseOffline(session.useOffline !== false);
   if (typeof session.maxSteps === "number") $("#steps").value = String(session.maxSteps);
+  applySessionPrompt(session.prompt);
 }
 
 async function persistSettings() {
   if (state.sessionId === null) return;
+  const prompt = currentPrompt();
+  const body = {
+    // The instruction set is saved for every account, which is why it is built
+    // before the early return below: an automatic account is served a model, but
+    // it still chooses how that model is told to work.
+    ...(prompt === "" ? {} : { prompt }),
+    model: currentModel(),
+    ...(currentFallbacks() === undefined ? {} : { fallbackModels: currentFallbacks() }),
+    useOffline: currentUseOffline(),
+    maxSteps: currentSteps(),
+  };
   // Nothing to save: the server ignores a model for an automatic account, so a
-  // write here would be a setting that is stored and never read.
-  if (state.modelSelection === "auto") return;
-  const fallbacks = currentFallbacks();
+  // write here would be a setting that is stored and never read. The prompt is not
+  // that kind of setting, so an automatic account still sends this.
+  if (state.modelSelection === "auto") {
+    delete body.model;
+    delete body.fallbackModels;
+    if (prompt === "") return;
+  }
   try {
     await api(`/api/sessions/${encodeURIComponent(state.sessionId)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: currentModel(),
-        ...(fallbacks === undefined ? {} : { fallbackModels: fallbacks }),
-        useOffline: currentUseOffline(),
-        maxSteps: currentSteps(),
-      }),
+      body: JSON.stringify(body),
     });
   } catch {
     /* the setting is also sent with the next message, so this is best effort */
@@ -2526,7 +2715,7 @@ function renderTranscript(session) {
 
   for (const message of session.messages) {
     if (message.role === "user") {
-      addUserMessage(message.content ?? "");
+      addUserMessage(typeof message.content === "string" ? message.content : "", message.images);
     } else if (message.role === "assistant") {
       if (message.content && message.content.trim() !== "") {
         const node = addAssistantMessage();
@@ -3533,6 +3722,15 @@ async function loadHealth() {
       state.modelSelection = health.modelSelection;
     }
     if (Array.isArray(health.autoModels)) state.autoModels = health.autoModels;
+
+    // The instruction sets, and whether this deployment takes images at all. A
+    // button that is refused by the server is worse than one that is not there.
+    if (Array.isArray(health.prompts)) renderPromptCatalog(health.prompts);
+    if (health.imageInput === false) {
+      $("#attach").classList.add("hidden");
+      $("#attach").title = "Image attachments are disabled on this deployment";
+    }
+
     const auto = state.modelSelection === "auto";
     $("#model-field").classList.toggle("hidden", auto);
     $("#chat-settings").classList.toggle("hidden", auto);
@@ -4139,6 +4337,7 @@ function openHosting() {
   enterDialog($("#hosting"));
   syncRail();
   void loadHosting();
+  void loadDeployTargets();
 }
 
 function closeHosting() {
@@ -4154,6 +4353,90 @@ function money(cents) {
   return dollars % 1 === 0
     ? `$${dollars.toLocaleString("en-US")}`
     : `$${dollars.toFixed(2)}`;
+}
+
+/* ----------------------------------------------------------------- deploy */
+
+/** What this deployment can deploy to, from `GET /api/deploy`. */
+let deployTargets = [];
+
+async function loadDeployTargets() {
+  const status = $("#deploy-status");
+  try {
+    const info = await api("/api/deploy");
+    deployTargets = Array.isArray(info.targets) ? info.targets : [];
+  } catch (error) {
+    deployTargets = [];
+    status.textContent = `could not read the deploy targets: ${error.message}`;
+  }
+  renderDeployTargets();
+}
+
+function renderDeployTargets() {
+  const select = $("#deploy-target");
+  const previous = select.value;
+  select.replaceChildren(
+    ...deployTargets.map((target) => {
+      const option = document.createElement("option");
+      option.value = target.id;
+      // A host with no credential is still listed: it says what it needs, which
+      // is the difference between "we cannot" and "nobody told us where".
+      option.textContent = target.ready ? target.label : `${target.label} — needs ${target.needs}`;
+      option.title = target.ready
+        ? `Deploy the built app to ${target.label}`
+        : `${target.label} is not configured on this deployment: ${target.needs}`;
+      return option;
+    }),
+  );
+  if (previous !== "" && deployTargets.some((target) => target.id === previous)) select.value = previous;
+  syncDeployFields();
+}
+
+/** Only GitHub Pages asks for a repository, so only it shows the field. */
+function syncDeployFields() {
+  $("#deploy-repo-field").classList.toggle("hidden", $("#deploy-target").value !== "github-pages");
+}
+
+async function runDeploy() {
+  const target = $("#deploy-target").value;
+  if (target === "") {
+    $("#deploy-status").textContent = "This deployment has no host to deploy to; set NETLIFY_TOKEN or VERCEL_TOKEN.";
+    return;
+  }
+  const repo = $("#deploy-repo").value.trim();
+  if (target === "github-pages" && repo === "") {
+    $("#deploy-status").textContent = "GitHub Pages needs a repository: owner/name.";
+    return;
+  }
+
+  const button = $("#deploy-go");
+  const status = $("#deploy-status");
+  button.disabled = true;
+  status.textContent = "building and deploying…";
+  try {
+    const result = await api("/api/deploy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target, ...(repo === "" ? {} : { repo }) }),
+    });
+    const link = document.createElement("a");
+    link.href = result.url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = result.url;
+    status.replaceChildren(
+      document.createTextNode(
+        `deployed ${result.files} file${result.files === 1 ? "" : "s"} from ${result.output}` +
+          `${result.built ? " after a build" : ""} — `,
+      ),
+      link,
+    );
+    addNotice(`Deployed to ${result.url}`);
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function loadHosting() {
@@ -5777,6 +6060,33 @@ function wire() {
     state.model = event.target.value;
     void persistSettings();
   });
+
+  $("#prompt-preset").addEventListener("change", (event) => {
+    state.prompt = event.target.value;
+    const preset = state.prompts.find((entry) => entry.id === state.prompt);
+    if (preset !== undefined) addNotice(`Instruction set: ${preset.name}. ${preset.description}`);
+    void persistSettings();
+  });
+
+  $("#attach").addEventListener("click", () => $("#attach-input").click());
+  $("#attach-input").addEventListener("change", (event) => {
+    void attachImages(event.target.files);
+    // The same file must be attachable twice in a row, which it is not if the
+    // input keeps its value.
+    event.target.value = "";
+  });
+
+  // A screenshot is almost always pasted rather than chosen from a dialog, so
+  // the paste is where this feature actually gets used.
+  $("#input").addEventListener("paste", (event) => {
+    const files = [...(event.clipboardData?.files ?? [])].filter((file) => file.type.startsWith("image/"));
+    if (files.length === 0) return;
+    event.preventDefault();
+    void attachImages(files);
+  });
+
+  $("#deploy-target").addEventListener("change", () => syncDeployFields());
+  $("#deploy-go").addEventListener("click", () => void runDeploy());
 
   $("#steps").addEventListener("change", () => {
     $("#steps").dataset.touched = "true";

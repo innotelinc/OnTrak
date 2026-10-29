@@ -28,6 +28,13 @@ export interface SessionSummary {
   /** Step budget the user last picked for this chat, if any. */
   maxSteps?: number;
   /**
+   * The instruction set this chat runs on (`src/prompts.ts`), if one was chosen.
+   *
+   * Absent means the deployment's default, so a chat started before presets
+   * existed is not rewritten; the console shows whichever the server resolved.
+   */
+  prompt?: string;
+  /**
    * The workspace project this chat belongs to (`src/projects.ts`), if any.
    *
    * A chat and a project are otherwise independent — the chat is a transcript,
@@ -150,6 +157,7 @@ function summarize(session: Session): SessionSummary {
     ...(session.fallbackModels !== undefined ? { fallbackModels: session.fallbackModels } : {}),
     ...(session.useOffline !== undefined ? { useOffline: session.useOffline } : {}),
     ...(session.maxSteps !== undefined ? { maxSteps: session.maxSteps } : {}),
+    ...(session.prompt !== undefined ? { prompt: session.prompt } : {}),
     ...(session.projectId !== undefined ? { projectId: session.projectId } : {}),
     ...(session.archived !== undefined ? { archived: session.archived } : {}),
     ...(session.archivedAt !== undefined ? { archivedAt: session.archivedAt } : {}),

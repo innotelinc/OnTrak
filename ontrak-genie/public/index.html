@@ -204,6 +204,16 @@
                 <span class="muted lbl">model</span>
                 <select id="model" class="select" aria-label="Model"></select>
               </label>
+              <!--
+                How much the agent is told about how to work. The model picker
+                beside it answers "which model", and this answers "which
+                instructions" — the two are independent, and a small model with
+                the full prompt is the case this selector exists for.
+              -->
+              <label class="field" for="prompt-preset" id="prompt-field">
+                <span class="muted lbl">prompt</span>
+                <select id="prompt-preset" class="select" aria-label="Instruction set"></select>
+              </label>
             </div>
             <div class="toolbar toolbar-actions" role="group" aria-label="Panels and tools">
               <button
@@ -305,12 +315,37 @@
           <span id="turn-progress-label" class="turn-progress-label mono"></span>
         </div>
 
+        <!--
+          What is attached to the next message, as chips above the composer.
+          Above rather than inside it because the composer is a one-line field
+          that grows, and a thumbnail list inside it would make every keystroke
+          re-flow the picture the person is asking about.
+        -->
+        <div id="attachments" class="attachments hidden" aria-live="polite" aria-label="Attached images"></div>
+
         <form id="composer" class="composer" aria-label="Send a message">
+          <button
+            type="button"
+            id="attach"
+            class="btn-ghost attach-button"
+            title="Attach a screenshot — or paste one into the message"
+            aria-label="Attach an image"
+          >
+            <span aria-hidden="true">＋</span>
+          </button>
+          <input
+            id="attach-input"
+            class="hidden"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            multiple
+            aria-label="Choose images to attach"
+          />
           <textarea
             id="input"
             rows="1"
             aria-label="Message"
-            placeholder="Describe a change, ask a question, or paste an error..."
+            placeholder="Describe a change, ask a question, or paste a screenshot..."
           ></textarea>
           <button type="submit" id="send" class="btn-primary">Send</button>
           <button type="button" id="stop" class="btn-danger hidden">Stop</button>
@@ -740,6 +775,36 @@
                 <button id="hosting-buy" class="btn-ghost hidden">get your own name</button>
               </div>
               <div id="hosting-list" class="hosting-list"></div>
+
+              <!--
+                Deploying the built app to a host, as opposed to hosting the
+                preview on this deployment: the preview is a dev server behind
+                this console, and a deploy is a URL a stranger can open. It is
+                a block of its own, below publishing, because it is the step a
+                person takes after the preview works.
+              -->
+              <div id="deploy-block" class="deploy-block">
+                <span class="mono muted">deploy the built app</span>
+                <label class="field" for="deploy-target">
+                  <span class="muted lbl">host</span>
+                  <select id="deploy-target" class="select" aria-label="Where to deploy"></select>
+                </label>
+                <label class="field wide hidden" id="deploy-repo-field" for="deploy-repo">
+                  <span class="muted">GitHub repository (owner/name)</span>
+                  <input
+                    id="deploy-repo"
+                    class="input-text"
+                    type="text"
+                    autocomplete="off"
+                    placeholder="innotelinc/my-app"
+                    aria-label="GitHub repository to publish the site in"
+                  />
+                </label>
+                <div class="hosting-actions">
+                  <button id="deploy-go" class="btn-primary">deploy</button>
+                </div>
+                <p id="deploy-status" class="muted settings-note"></p>
+              </div>
             </div>
             </div>
 

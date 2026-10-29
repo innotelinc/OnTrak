@@ -344,6 +344,8 @@ all distinguished rather than flattened into "failed".
 | `--session <id>` | Continue an existing chat |
 | `--skill <name>` | Apply a skill to the task |
 | `--max-steps <n>` | Step budget |
+| `--prompt <preset>` | Instruction set for this run: `default`, `concise` or `tiny` (`genie ask`) |
+| `--image <file>` | Send a PNG/JPEG/WebP/GIF screenshot with the task; repeatable (`genie ask`) |
 | `--yes` | Approve gated actions without asking |
 | `--out <file>` | Where `genie projects export` writes its bundle. `-` is stdout |
 | `--files` | With `genie projects remove`: delete the project's folder as well |
@@ -352,6 +354,11 @@ all distinguished rather than flattened into "failed".
 
 `--out` and `--files` are also read from the words of a `/projects …` line, since
 a REPL command has no separate argv to take them from.
+
+`--image` files are validated exactly as the console's attachments are — same
+types, same 1.5 MB ceiling, same four-per-message limit — so a file the flag
+accepts is a file the server will take, and one it refuses fails here with the
+sentence the route would have returned.
 
 Resolution order for the address and the credential is **flag → environment →
 config → default** (`http://127.0.0.1:3400`). The environment names are

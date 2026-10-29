@@ -22,6 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 
+import { parseImages } from "../attachments.js";
 import {
   GenieClient,
   GenieError,
@@ -94,6 +95,10 @@ export interface CliArgs {
   skill?: string;
   /** `--out <file>`: where `genie projects export` writes its bundle. `-` is stdout. */
   out?: string;
+  /** `--prompt <preset>`: which instruction set this turn runs on. */
+  prompt?: string;
+  /** `--image <file>`, repeatable: screenshots to send with the task. */
+  images: string[];
   /** `--files`: with `genie projects remove`, delete the project's folder too. */
   files: boolean;
   maxSteps?: number;
@@ -113,6 +118,7 @@ export function parseArgs(argv: string[]): CliArgs {
     yes: false,
     color: true,
     files: false,
+    images: [],
     help: false,
     version: false,
   };
@@ -162,6 +168,14 @@ export function parseArgs(argv: string[]): CliArgs {
         break;
       case "--files":
         args.files = true;
+        break;
+      case "--prompt":
+        args.prompt = takeValue(arg, i);
+        if (!arg.includes("=")) i += 1;
+        break;
+      case "--image":
+        args.images.push(takeValue(arg, i));
+        if (!arg.includes("=")) i += 1;
         break;
       case "--json":
         args.json = true;
@@ -253,9 +267,10 @@ options:
   --cookie <value>             paste a session cookie instead of signing in
   --model <id>                 model for this run
   --session <id>               continue an existing chat
-  --skill <name>               apply a skill to the task
-  --max-steps <n>              step budget for this run
-  --yes                        approve gated actions without asking (non-interactive)
+  --skill <name>               apply a skill to the task  --max-steps <n>              step budget for this run
+  --prompt <preset>            instruction set for this run (default, concise, tiny)
+  --image <file>               send a screenshot with the task; repeatable
+  --yes                       approve gated actions without asking (non-interactive)
   --out <file>                 where "genie projects export" writes its bundle (- is stdout)
   --files                      with "genie projects remove": delete the folder too
   --json                       machine-readable output where it applies
@@ -668,6 +683,8 @@ async function runOnce(client: GenieClient, args: CliArgs, theme: Theme, task: s
       sessionId: args.session,
       model: args.model,
       maxSteps: args.maxSteps,
+      prompt: args.prompt,
+      images: readImageFiles(args.images),
       approve: args.yes,
       interactive: process.stdin.isTTY === true,
     });
@@ -678,6 +695,42 @@ async function runOnce(client: GenieClient, args: CliArgs, theme: Theme, task: s
     return 1;
   } finally {
     rl.close();
+  }
+}
+
+/**
+ * Read `--image` files into the shape the server takes.
+ *
+ * The bytes go through the same `parseImages` the HTTP route uses, so the flags
+ * cannot accept a file the console would refuse: a `.png` that is not one, an
+ * image over the ceiling, or five of them fail here with the sentence the route
+ * would have returned, before a turn is started.
+ */
+function readImageFiles(paths: readonly string[]): { name: string; mimeType: string; data: string }[] {
+  if (paths.length === 0) return [];
+  const mimeByExtension: Record<string, string> = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+  };
+  const raw = paths.map((file) => {
+    const mimeType = mimeByExtension[path.extname(file).toLowerCase()] ?? "";
+    if (mimeType === "") throw new Error(`${file}: only PNG, JPEG, WebP and GIF images can be attached`);
+    let data: string;
+    try {
+      data = fs.readFileSync(file).toString("base64");
+    } catch {
+      throw new Error(`${file}: could not be read`);
+    }
+    return { name: path.basename(file), mimeType, data };
+  });
+
+  try {
+    return parseImages(raw).map((image) => ({ name: image.name, mimeType: image.mimeType, data: image.data }));
+  } catch (error) {
+    throw new Error((error as Error).message);
   }
 }
 
@@ -701,6 +754,10 @@ interface TurnOptions {
   sessionId?: string;
   model?: string;
   maxSteps?: number;
+  /** `--prompt`: the instruction set, resolved by the server if it is unknown. */
+  prompt?: string;
+  /** `--image`: screenshots for this turn, already read and validated. */
+  images?: { name: string; mimeType: string; data: string }[];
   /** Answer every gate with approve without asking (non-interactive `--yes`). */
   approve: boolean;
   /** Whether a gate may be answered at the keyboard at all. */
@@ -742,6 +799,8 @@ async function runTurn(
   if (sessionId !== null) request.sessionId = sessionId;
   if (options.model !== undefined) request.model = options.model;
   if (options.maxSteps !== undefined) request.maxSteps = options.maxSteps;
+  if (options.prompt !== undefined && options.prompt !== "") request.prompt = options.prompt;
+  if (options.images !== undefined && options.images.length > 0) request.attachments = options.images;
 
   const controller = new AbortController();
   const onInterrupt = (): void => controller.abort();

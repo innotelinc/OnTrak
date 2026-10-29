@@ -22,99 +22,37 @@ import {
 import { modelHealth } from "./modelHealth.js";
 import { autoFreeChain } from "./modelSelect.js";
 import { deriveTitle, saveSession, type Session } from "./store.js";
-import { lanAddress } from "./network.js";
+import { defaultPrompt, promptFor, promptText, resolvePromptId, type PromptId } from "./prompts.js";
+import { contentParts, type ImageAttachment } from "./attachments.js";
+import { releaseLocks } from "./locks.js";
 import { allTools, previewTool, runTool, toolSchemas, type ToolOutcome } from "./tools.js";
 import { primeMcpTools } from "./mcp-tools.js";
 import { memoryContext, recordObservation, summarizeTurn } from "./claude-mem.js";
 
 /**
- * What the agent should say about where the app is reachable.
+ * The default instruction set, as text.
  *
- * Empty unless the deployment actually publishes the preview, because a prompt
- * that names an address the deployment does not serve teaches the agent to hand
- * out a URL that refuses. When it does publish, the useful thing is the exact
- * host: `localhost` is what an agent guesses, and it is the one address a
- * gateway or a phone cannot use.
+ * Kept as an export because it is the prompt this product has always shipped and
+ * the agent's tests read it. The presets themselves live in `prompts.ts`, which
+ * owns every version of the text — the full one here, the shorter ones a chat can
+ * choose instead (`RunAgentOptions.prompt`), and the rule that an unknown id falls
+ * back to this one rather than to no prompt at all.
  */
-function previewAddressNote(): string {
-  if (!config.previewPublish || config.previewHost === "127.0.0.1") return "";
-  const host = config.previewHost === "0.0.0.0" ? lanAddress() : config.previewHost;
-  if (host === null || host === "") return "";
-  return (
-    `- This deployment publishes the preview on the network, so a running app is\n` +
-    `  reachable at \`http://${host}:${config.previewPort}\`. Bind that port — read\n` +
-    `  \`PORT\` from the environment rather than hard-coding it, and listen on\n` +
-    `  \`0.0.0.0\` — or the address the console shows will not be the one that\n` +
-    `  answers. When you tell the user where to open the app, or when\n` +
-    `  something needs to call back into it (a webhook, an OAuth redirect URI), use\n` +
-    `  that address — never \`localhost\`, and never a docker bridge address such as\n` +
-    `  \`172.17.0.1\`.\n`
-  );
-}
-
-export const SYSTEM_PROMPT = `You are a coding agent working inside a sandboxed workspace.
-
-You have tools to inspect and modify the workspace: read_file, list_dir, write_file, edit_file, search_code and run_command.
-
-How to work:
-- Inspect before you change. Read the relevant files or search for the symbols first; never guess at what a file contains.
-- Prefer search_code over reading whole directories, and read_file with offset/limit over dumping a large file.
-- Use edit_file for surgical changes, and write_file only for new files or complete rewrites.
-- Match the conventions already present in the code. Look at neighbouring files before inventing a new pattern.
-- After changing code, verify it when the project supports it (typecheck, tests, linter) with run_command.
-- Keep the app runnable. The console shows the user a live preview of this
-  workspace: it runs the project's own start command (\`npm run dev\`, \`npm run
-  start\`, \`python3 -m http.server\`, \`python3 manage.py runserver\`) and reloads
-  it as files change. So when you build something new, give it a way to start — a
-  \`dev\` or \`start\` script in package.json, or an index.html — and do not leave the
-  start path broken. If the app needs a port, read \`PORT\` from the environment
-  rather than hard-coding one, and bind all interfaces (\`0.0.0.0\`) unless you
-  have a reason not to.
-${previewAddressNote()}- Install what you need instead of working around it. The workspace carries a
-  working toolchain (bash, git, curl, wget, jq, make, gcc/g++, python3 + pip,
-  node + npm). If a command fails because a tool is missing, install it —
-  \`apk add <pkg>\` on this image, or \`pip install\` / \`npm install\` for
-  language packages — and carry on. Do not tell the user to install something
-  you could install yourself, and do not rewrite a script to avoid a tool that
-  is one command away.
-- Fix the cause of an error, not the symptom. If a tool call fails, change your
-  approach rather than repeating the identical call - it will fail identically.
-
-Memory, and what this workspace already knows:
-- The project's memory is \`MEMORY.md\` in the workspace, and its contents are at
-  the end of this prompt — you do not have to go and read it. Add to it with the
-  \`remember\` tool when you learn something that stays true: how the project is
-  built, a convention, a trap, a decision and why. It is a file like any other, so
-  it shows up in diffs, can be reviewed and reverted, and is meant to be committed
-  with the code.
-- For a running record rather than durable facts, \`write_journal\` appends to
-  \`AGENT_LEARNINGS.md\` and \`workspace_state\` keeps \`state.json\` — both in the
-  workspace, both persistent across sessions.
-- Skills: the ones available here are listed at the end of this prompt. Load the
-  one that fits with \`use_skill\` before doing that kind of work.
-
-Plugins & extensibility:
-- Discover plugins with plugin_discover() — it looks in \`plugins/\` in the
-  workspace and its subdirectories.
-- Load/integrate discovered plugins with plugin_load(pluginPath).
-- Store reusable macros in \`macros/\` and run them with macro_run(name, args).
-
-Package management:
-- Install packages with package_install(packages, manager) - respects sandbox mode (AGENT_SANDBOX env).
-- Prefer installing missing tools over working around them.
-
-Boundaries:
-- Every path is relative to the workspace root. Paths that escape it are rejected, and you cannot read or write anything outside it.
-- You have no host privileges: no privilege escalation, no service or account management, no filesystem formatting. Do not attempt them; those commands are blocked.
-- Do not try to obtain credentials, tokens or keys from outside the workspace. If a task needs access you do not have, say so plainly rather than working around it.
-
-Style:
-- Keep replies short. Summarize what changed and why instead of narrating every tool call.
-- Do not paste large file contents back at the user; they can see the results themselves.
-- If a request is ambiguous, or would be destructive, ask before acting.`;
+export const SYSTEM_PROMPT = defaultPrompt();
 
 export type AgentEvent =
-  | { type: "session"; id: string; title: string; models: string[] }
+  | {
+      type: "session";
+      id: string;
+      title: string;
+      models: string[];
+      /**
+       * The prompt preset this chat is running on, resolved — not what the request
+       * asked for. The console shows the preset that is actually in force, the same
+       * way it shows the chain the server chose rather than the one it sent.
+       */
+      prompt: PromptId;
+    }
   /**
    * One assistant turn of the loop starting.
    *
@@ -202,6 +140,21 @@ export interface RunAgentOptions {
   /** Overrides the session's saved step budget for this turn only. */
   maxSteps?: number;
   /**
+   * Overrides the session's saved prompt preset for this turn only.
+   *
+   * Saved with the chat when it is given, so reopening the chat resumes the same
+   * instruction set — the same rule the model and the step budget follow. An id
+   * no preset answers to is ignored rather than stored (`resolvePromptId`).
+   */
+  prompt?: string;
+  /**
+   * Images this turn carries, already validated and decoded (`attachments.ts`).
+   * They are stored on the user message beside its text, so a reopened chat still
+   * shows what was attached, and translated into content parts only on the way to
+   * the gateway — see `modelMessages`.
+   */
+  images?: ImageAttachment[];
+  /**
    * The key this turn spends on the primary gateway. Set by the tenancy gate:
    * with a control plane configured it is the caller's own key, and otherwise
    * nothing is passed and the shared `OMNIROUTE_API_KEY` applies as before.
@@ -264,13 +217,26 @@ export function workspaceContext(): string {
  * block rather than part of `workspaceContext()` because that function is about
  * the directory, while this is about every session the deployment has had — and
  * because a worker that is down simply contributes nothing.
+ *
+ * `basePrompt` is the chosen preset's text, passed in rather than read here so a
+ * turn resolves its preset exactly once. Two things are stripped on the way out:
+ * a message's `diff` (a UI artefact) and its `images` (stored bytes) — the latter
+ * becomes OpenAI content parts instead, because that is the only shape a provider
+ * reads an image in, and a `images` field would be an unknown key on the wire.
  */
-function modelMessages(session: Session, memory = ""): ChatMessage[] {
+function modelMessages(session: Session, memory: string, basePrompt: string): ChatMessage[] {
   const tail = memory === "" ? workspaceContext() : `${workspaceContext()}\n\n${memory}`;
   return [
-    { role: "system", content: `${SYSTEM_PROMPT}\n\n${tail}` },
-    // Diffs are a UI artefact; strip them so no provider sees an unknown field.
-    ...session.messages.map(({ diff: _diff, ...message }) => message),
+    { role: "system", content: `${basePrompt}\n\n${tail}` },
+    ...session.messages.map(({ diff: _diff, images, ...message }) => {
+      if (images !== undefined && images.length > 0 && message.role === "user") {
+        return {
+          ...message,
+          content: contentParts(typeof message.content === "string" ? message.content : "", images),
+        };
+      }
+      return message;
+    }),
   ];
 }
 
@@ -431,6 +397,16 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
   // Opting out of the offline gateway is per chat, for work where a local 7B
   // answer would be worse than an honest failure.
   const useOffline = options.useOffline ?? session.useOffline ?? true;
+  /*
+   * The instruction set: what this turn asked for, then what the chat saved, then
+   * the deployment's default. Resolved to a preset — not just an id — before the
+   * first request, so a turn cannot spend a step on one prompt and its retry on
+   * another, and an unknown id from a stale page is the default rather than a
+   * chat with no instructions at all.
+   */
+  const preset = promptFor(resolvePromptId(options.prompt) ?? session.prompt);
+  const basePrompt = promptText(preset.id);
+  if (options.prompt !== undefined && resolvePromptId(options.prompt) !== undefined) session.prompt = preset.id;
   if (!autoFree) {
     if (requestedModel !== undefined) session.model = requestedModel;
     if (options.fallbackModels !== undefined) session.fallbackModels = options.fallbackModels;
@@ -468,13 +444,19 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
   }
 
   if (session.title === "New chat") session.title = deriveTitle(options.userMessage);
-  session.messages.push({ role: "user", content: options.userMessage });
+  const images = options.images ?? [];
+  session.messages.push({
+    role: "user",
+    content: options.userMessage,
+    ...(images.length > 0 ? { images } : {}),
+  });
   await saveSession(session);
   yield {
     type: "session",
     id: session.id,
     title: session.title,
     models: chain.map((target) => target.model),
+    prompt: preset.id,
   };
 
   // The MCP servers are asked what they offer before the tool list is built: a
@@ -554,7 +536,7 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
       try {
         if (config.stream) {
           const stream = streamChat({
-            messages: modelMessages(session, history),
+            messages: modelMessages(session, history, basePrompt),
             tools: schemas,
             model: candidate,
             baseUrl: target.baseUrl,
@@ -636,7 +618,7 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
           }
         } else {
           result = await completeChat({
-            messages: modelMessages(session, history),
+            messages: modelMessages(session, history, basePrompt),
             tools: schemas,
             model: candidate,
             baseUrl: target.baseUrl,
@@ -906,7 +888,7 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
 
         if (decision === "approve") {
           yield { type: "tool_call", id: call.id, name: call.function.name, args };
-          outcome = await runTool(call.function.name, call.function.arguments);
+          outcome = await runTool(call.function.name, call.function.arguments, session.id);
         } else {
           // Hand the refusal back as a normal failed result, so the "do not
           // repeat a failing call" guard covers it too.
@@ -917,7 +899,7 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
         }
       } else {
         yield { type: "tool_call", id: call.id, name: call.function.name, args };
-        outcome = await runTool(call.function.name, call.function.arguments);
+        outcome = await runTool(call.function.name, call.function.arguments, session.id);
       }
 
       toolsRan = true;

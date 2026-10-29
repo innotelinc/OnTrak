@@ -70,6 +70,10 @@ export interface ChatRequest {
   useOffline?: boolean;
   maxSteps?: number;
   projectId?: string;
+  /** The instruction set for this chat (`src/prompts.ts`). */
+  prompt?: string;
+  /** Images to send with the message, base64, already validated by the CLI. */
+  attachments?: { name: string; mimeType: string; data: string }[];
 }
 
 export interface AuthStatus {
