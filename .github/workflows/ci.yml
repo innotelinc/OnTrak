@@ -430,7 +430,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -997,13 +997,13 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # Cached, because an uncached build reinstalls every dependency and re-runs
       # `next build` for both apps on every push. `mode=max` keeps the builder
       # stage's layers as well, and those are where the time actually goes.
       - name: Build the ${{ matrix.app }} image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           target: ${{ matrix.target }}
