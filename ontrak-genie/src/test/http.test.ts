@@ -1291,11 +1291,14 @@ test("chat stream", async (t) => {
 
     const events = await chat({ message: "hi" });
     assert.ok(first(events, "error"), "the turn should fail immediately");
-    assert.equal(
-      events.filter((event) => event.type === "notice").length,
-      0,
-      "nothing should claim to be waiting",
-    );
+    // A model the gateway does not serve is walked past with a notice of its own
+    // (`isUnknownModelFailure`), and that line is not a claim to be waiting: the
+    // turn never pauses, so what this asserts is that no notice promises a retry.
+    const notices = events
+      .filter((event) => event.type === "notice")
+      .map((event) => String(event.text))
+      .join("\n");
+    assert.doesNotMatch(notices, /retrying in|waiting|cooldown/i, "nothing should claim to be waiting");
   });
 
   await t.test("a turn with no message is a bad request", async () => {
