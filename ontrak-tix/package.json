@@ -5,7 +5,7 @@
   "description": "OnTrak Tix \u2014 enterprise ticketing and service management for IT desks and MSPs. An Innotel Labs product.",
   "license": "MIT",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "dev": "next dev",

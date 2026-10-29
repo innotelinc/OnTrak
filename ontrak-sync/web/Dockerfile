@@ -4,12 +4,12 @@
 # reinstall node_modules; the build runs with the API base baked in, because Next
 # inlines `NEXT_PUBLIC_*` at build time and discovering that at runtime produces a
 # dashboard that talks to localhost.
-FROM node:22-alpine AS deps
+FROM node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 
-FROM node:22-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -21,7 +21,7 @@ ENV ONTRAK_STANDALONE=1
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-FROM node:22-alpine AS runtime
+FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=8421
 # HOSTNAME has to be set here. Next's standalone server binds to `$HOSTNAME`, and

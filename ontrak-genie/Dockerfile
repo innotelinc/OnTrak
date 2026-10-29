@@ -1,5 +1,5 @@
 # --- build ---
-FROM node:22-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -13,7 +13,7 @@ RUN npm run build && npm prune --omit=dev
 # Named, like Portal's and Sync's, because `--target` is how CI and publish
 # build the stage that ships — an unnamed final stage cannot be asked for, and
 # the build fails rather than quietly producing the wrong thing.
-FROM node:22-alpine AS runtime
+FROM node:24-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production \

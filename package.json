@@ -5,7 +5,7 @@
   "description": "OnTrak IT Support Training \u2014 an open source, browser-based IT support training platform with gradable Linux, Windows and Office simulations. An Innotel Labs product.",
   "license": "MIT",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "dev": "next dev",

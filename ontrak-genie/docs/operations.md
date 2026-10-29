@@ -702,7 +702,7 @@ into something unwise cannot reach the rest of the host. Verified on this host:
 | `docker`        | Refuse to run anything unless it can be containerised             |
 | `host`          | Run directly in the agent process — fastest, no isolation         |
 
-Build the image once with `npm run sandbox:build` (Debian slim + Node 22, plus
+Build the image once with `npm run sandbox:build` (Debian slim + Node 24, plus
 git, ripgrep, python3, make and a C toolchain; ~450 MB). The UI shows which
 backend is active in the sidebar, and a command that outlives its timeout is
 force-removed by name rather than left running.

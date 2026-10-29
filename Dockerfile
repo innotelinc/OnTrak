@@ -21,7 +21,7 @@
 #   docker build --target runner -t ontrak-training .
 # ═══════════════════════════════════════════════════════════════════════════
 
-FROM node:20-alpine AS base
+FROM node:24-alpine AS base
 
 # Next writes anonymous telemetry unless told not to; a build should be quiet.
 ENV NEXT_TELEMETRY_DISABLED=1

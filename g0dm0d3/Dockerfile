@@ -2,7 +2,7 @@
 #
 # The app is ESM and reads its page at start-up, so `src/` and `public/` ship
 # together; there is nothing to install and nothing to compile.
-FROM node:22-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 ENV NODE_ENV=production \

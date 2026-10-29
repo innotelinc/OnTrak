@@ -6,7 +6,7 @@
   "type": "module",
   "description": "OnTrak Genie \u2014 the family's coding agent: a browser console and a terminal CLI that drive an agent over a sandboxed workspace, stream its tool calls, and gate risky commands behind a decision. An Innotel Labs product.",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=24.0.0"
   },
   "bin": {
     "genie": "dist/cli/main.js"

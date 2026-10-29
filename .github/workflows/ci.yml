@@ -354,7 +354,7 @@ jobs:
     # `setInterval` in the first file keeps the second from ever running.)
     #
     # So the suite bounds each *test* (`--test-timeout` in package.json), which on
-    # Node 20 — what this job runs — bounds the file as well: a file whose process will
+    # Node 24 — what this job runs — bounds the file as well: a file whose process will
     # not exit is reported as `test timed out after 60000ms`, by name, and the rest of
     # the suite still runs. A stall names itself instead of being cancelled. That
     # coverage is version-specific: on Node 26 the same lingering file is *not* bounded

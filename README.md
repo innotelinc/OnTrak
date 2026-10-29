@@ -115,7 +115,7 @@ from the family stack `docker-compose.all.yml` starts.
 
 ## Quick start
 
-**Requirements:** Node.js >= 20.11 and a PostgreSQL database — or just Docker,
+**Requirements:** Node.js >= 24.0.0 and a PostgreSQL database — or just Docker,
 which brings its own. Both paths below give the same app; pick either.
 
 ### Run it in containers

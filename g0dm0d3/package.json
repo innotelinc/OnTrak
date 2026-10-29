@@ -6,7 +6,7 @@
   "type": "module",
   "description": "G0DM0D3 — a metered front door to OnTrak Genie: one credit per run, spent in the Distro control plane and refunded when the run never started. An Innotel Labs product.",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "start": "node src/app.js",

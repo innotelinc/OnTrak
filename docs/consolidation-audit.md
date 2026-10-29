@@ -129,7 +129,7 @@ destroy lifecycle), `scheduler.py` (scheduled prewarm/drain), `scoring.py`,
 
 | | OnTrak | OnTrak-dev |
 | --- | --- | --- |
-| Language / runtime | TypeScript on Node ≥20.11 | Python ≥3.10 |
+| Language / runtime | TypeScript on Node ≥24.0.0 | Python ≥3.10 |
 | Web layer | Next.js route handlers + Server Actions | FastAPI + uvicorn |
 | Hypervisor | None — everything is simulated in-process | **Incus** (QEMU/KVM) on the host, reached over its socket |
 | Guest automation | None | WinRM (default), `incus exec`, SSH, `null` |
@@ -836,7 +836,7 @@ on this list is finished, so the list is both shorter and harder than it was:
   effect of the `Image (portal)` build, which can say the code compiles but not that the
   rules hold. `OnTrak Portal` installs it, typechecks it, runs `copy:check` — the one
   that keeps the family's taglines off the sign-in gate, which no build fails and no
-  type breaks on — and runs the suite, on Node 22, which is what its image is built on.
+  type breaks on — and runs the suite, on Node 24, which is what its image is built on.
   `tests/ci-coverage.test.ts` holds the general claim, derived from the packages rather
   than from a list of products: every `package.json` in this repository that declares a
   `test` script must have a job running from its directory that runs that suite and its

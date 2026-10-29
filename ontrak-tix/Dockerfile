@@ -19,7 +19,7 @@
 #   cd ontrak-tix && docker build --target runner -t ontrak-tix .
 # ═══════════════════════════════════════════════════════════════════════════
 
-FROM node:20-alpine AS base
+FROM node:24-alpine AS base
 
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app

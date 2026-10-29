@@ -3,12 +3,12 @@
 # Two stages, so editing a page does not reinstall node_modules. There is no
 # database and no migration step: the portal stores nothing, which is the whole
 # reason it is safe to restart at any moment.
-FROM node:22-alpine AS deps
+FROM node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 
-FROM node:22-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -22,7 +22,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # client bundle, because every page here renders on the server.
 RUN npm run build
 
-FROM node:22-alpine AS runtime
+FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3300
 # HOSTNAME has to be set here. Next's standalone server binds to `$HOSTNAME`, and

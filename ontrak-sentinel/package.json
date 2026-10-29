@@ -5,7 +5,7 @@
   "description": "OnTrak Sentinel \u2014 identity provider and intrusion detection/prevention for the Innotel Labs family. An Innotel Labs product, built after OnTrak Tix.",
   "license": "MIT",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
