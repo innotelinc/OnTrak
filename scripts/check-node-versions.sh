@@ -79,13 +79,13 @@ while read -r service dir; do
     continue
   fi
 
-  major=${running#v}
-  major=${major%%.*}
+  version=${running#v}
+  major=${version%%.*}
   if [ "$major" != "$want" ]; then
-    printf '%-18s %-10s %s\n' "$service" "v${running}" "MISMATCH — declares >=${want}"
+    printf '%-18s %-10s %s\n' "$service" "v${version}" "MISMATCH — declares >=${want}"
     failed=1
   else
-    printf '%-18s %-10s %s\n' "$service" "v${running}" "ok"
+    printf '%-18s %-10s %s\n' "$service" "v${version}" "ok"
   fi
 done <<< "$services"
 
