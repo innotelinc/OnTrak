@@ -69,14 +69,18 @@ while read -r service dir; do
     continue
   fi
 
-  running=$(docker exec "$id" node -v 2>/dev/null | tr -d 'v[:space:]')
-  if [ -z "$running" ]; then
+  # Checked for shape, not just for emptiness: `docker exec` can answer on stdout with
+  # its own failure ("executable file not found in $PATH") when the container has no
+  # node at all, and reading that as a version turns the report into noise.
+  running=$(docker exec "$id" node -v 2>/dev/null | head -1 | tr -d '[:space:]')
+  if ! printf '%s' "$running" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+'; then
     printf '%-18s %-10s %s\n' "$service" "no node" "v${want}.x expected"
     failed=1
     continue
   fi
 
-  major=${running%%.*}
+  major=${running#v}
+  major=${major%%.*}
   if [ "$major" != "$want" ]; then
     printf '%-18s %-10s %s\n' "$service" "v${running}" "MISMATCH — declares >=${want}"
     failed=1
