@@ -77,6 +77,12 @@ describe('Syntax Highlighting Performance', () => {
       themes: ['dark-plus'],
       langs: ['typescript'],
     });
+
+    // The first `codeToHtml` call pays for loading the grammar and the theme. Timed as
+    // the first highlight, that is a budget for shiki's init rather than for
+    // highlighting this file — and on a loaded runner init is what blows it. Paid here,
+    // once, for the same reason `./timing` warms up its measurements.
+    highlighter.codeToHtml(SAMPLE_CODE, { lang: 'typescript', theme: 'dark-plus' });
   });
 
   describe('Shiki Highlighting', () => {

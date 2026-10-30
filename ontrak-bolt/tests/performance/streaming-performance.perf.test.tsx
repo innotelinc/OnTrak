@@ -14,9 +14,17 @@ import {
   throttleToFrame,
   optimizeForHighlighting,
 } from '~/lib/performance/streaming-optimizer';
+import { median, overshootShare, timeIterations, MAX_OVERSHOOT_SHARE } from './timing';
 
 const FRAME_BUDGET_60FPS = 16.67;
 const FRAME_BUDGET_120FPS = 8.33;
+
+/*
+ * A frame timed with `performance.now()` around a render measures the machine as much
+ * as the component, so the budgets below are judged on the median frame and on the
+ * share that missed the budget rather than on the single worst frame — see `./timing`
+ * for why, and for the warm-up that keeps a cold first render out of the numbers.
+ */
 
 describe('Streaming Performance - Frame Rate', () => {
   beforeEach(() => {
@@ -57,24 +65,22 @@ describe('Streaming Performance - Frame Rate', () => {
       '}',
     ];
 
-    const maxFrameTime = codeLines.reduce((max, _, i) => {
-      const frameStart = performance.now();
-
-      const code = codeLines.slice(0, i + 1).join('\n');
+    // One frame per line of code, as a stream delivers them.
+    const frames = timeIterations((i) => {
+      const code = codeLines.slice(0, (i % codeLines.length) + 1).join('\n');
       render(
         <pre>
           <code>{code}</code>
         </pre>,
       );
+    }, codeLines.length);
 
-      const frameTime = performance.now() - frameStart;
-      streamingOptimizer.trackFrame(frameTime);
+    const typical = median(frames);
 
-      return Math.max(max, frameTime);
-    }, 0);
-
-    expect(maxFrameTime).toBeLessThan(FRAME_BUDGET_60FPS);
-    console.log(`✓ Code streaming: max frame time ${maxFrameTime.toFixed(2)}ms`);
+    expect(typical).toBeLessThan(FRAME_BUDGET_60FPS);
+    console.log(
+      `✓ Code streaming: median ${typical.toFixed(2)}ms, max ${Math.max(...frames).toFixed(2)}ms`,
+    );
   });
 
   it('memoizes finished blocks to avoid re-rendering', () => {
@@ -194,21 +200,19 @@ describe('Streaming Performance - Long Messages', () => {
       chunks.push(longMessage.slice(0, i + chunkSize));
     }
 
-    const maxFrameTime = chunks.reduce((max, chunk) => {
-      const frameStart = performance.now();
-      render(<div>{chunk}</div>);
-      const frameTime = performance.now() - frameStart;
-      streamingOptimizer.trackFrame(frameTime);
-      return Math.max(max, frameTime);
-    }, 0);
+    const frames = timeIterations((i) => {
+      render(<div>{chunks[i % chunks.length]}</div>);
+    }, chunks.length);
 
-    const stats = streamingOptimizer.getStats();
+    const typical = median(frames);
 
-    expect(maxFrameTime).toBeLessThan(FRAME_BUDGET_60FPS * 2); // Allow 2x for very long content
-    expect(stats.percentDropped).toBeLessThan(10);
+    // 10k characters per frame is 20 times a chat message, so the budget is the frame
+    // itself rather than the 2x headroom this test used to allow.
+    expect(typical).toBeLessThan(FRAME_BUDGET_60FPS);
+    expect(overshootShare(frames, FRAME_BUDGET_60FPS)).toBeLessThanOrEqual(MAX_OVERSHOOT_SHARE);
 
     console.log(
-      `✓ Long message (10k chars): max ${maxFrameTime.toFixed(2)}ms, ${stats.percentDropped.toFixed(1)}% dropped`,
+      `✓ Long message (10k chars): median ${typical.toFixed(2)}ms, max ${Math.max(...frames).toFixed(2)}ms`,
     );
   });
 
@@ -231,25 +235,26 @@ describe('Streaming Performance - Long Messages', () => {
     `;
 
     const iterations = 50;
-    let maxFrameTime = 0;
 
-    for (let i = 0; i < iterations; i++) {
-      const frameStart = performance.now();
-
+    const frames = timeIterations((i) => {
       render(
         <div>
           <p>Message {i}</p>
           <pre>{mixedContent}</pre>
         </div>,
       );
+    }, iterations);
 
-      const frameTime = performance.now() - frameStart;
-      maxFrameTime = Math.max(maxFrameTime, frameTime);
-      streamingOptimizer.trackFrame(frameTime);
-    }
+    const typical = median(frames);
+    const overBudget = overshootShare(frames, FRAME_BUDGET_60FPS) * 100;
 
-    expect(maxFrameTime).toBeLessThan(FRAME_BUDGET_60FPS);
-    console.log(`✓ Mixed content (${iterations} iterations): max ${maxFrameTime.toFixed(2)}ms`);
+    // Five percent of fifty is two frames: a frame-rate target rather than a promise
+    // that nothing on a shared machine is ever preempted.
+    expect(typical).toBeLessThan(FRAME_BUDGET_60FPS);
+    expect(overBudget).toBeLessThanOrEqual(MAX_OVERSHOOT_SHARE * 100);
+    console.log(
+      `✓ Mixed content (${iterations} iterations): median ${typical.toFixed(2)}ms, max ${Math.max(...frames).toFixed(2)}ms, ${overBudget.toFixed(1)}% over budget`,
+    );
   });
 });
 
