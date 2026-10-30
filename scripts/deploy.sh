@@ -162,8 +162,15 @@ else
   echo "deploy:   cp bolt-sso/.env.example bolt-sso/.env   (then deploy again)" >&2
 fi
 
-echo "deploy: starting the family stack"
-"${compose[@]}" up -d --build
+# One image at a time, deliberately. Compose builds the six in parallel by default, and
+# four of them are Node builds that each want a large heap: on this deployment (a 5.5 GiB
+# container with two cores) the parallel build was OOM-killed inside Bolt's `vite build`
+# — `exit code: 137`, after 443 seconds — and an earlier attempt lost the builder's own
+# frontend (`frontend grpc server closed unexpectedly`), which is the same shortage
+# showing up somewhere else. Queuing the builds costs wall-clock and buys a deploy that
+# finishes. The ceiling is an environment variable so a larger host can raise it back.
+echo "deploy: starting the family stack (one image at a time)"
+COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-1}" "${compose[@]}" up -d --build
 
 # An image that was not rebuilt starts and passes its healthcheck on the runtime it was
 # built with, so `up` cannot tell a stack that has moved to a new Node from one where a
