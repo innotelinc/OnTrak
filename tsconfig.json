@@ -25,6 +25,12 @@
     "ontrak-tix",
     "ontrak-sentinel",
     "ontrak-portal",
-    "ontrak-sync"
+    "ontrak-sync",
+    "ontrak-bolt",
+    "ontrak-genie",
+    "ontrak-lab",
+    "g0dm0d3",
+    "onyx-sso",
+    "bolt-sso"
   ]
 }

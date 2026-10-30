@@ -30,6 +30,11 @@ ontrak-sentinel
 ontrak-sync
 ontrak-portal
 ontrak-lab
+ontrak-bolt
+ontrak-genie
+g0dm0d3
+onyx-sso
+bolt-sso
 web
 
 # Repository tooling, not application code
