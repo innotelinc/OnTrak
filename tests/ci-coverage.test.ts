@@ -298,12 +298,16 @@ test("ci: every package that declares a suite has a job that runs it", () => {
       problems.push(`${name} (${directory}) declares a test script and no job runs from its directory`);
       continue;
     }
-    const runner = own.find((job) => /\bnpm test\b/.test(job.text));
+    // The manager is the package's own: `ontrak-bolt` is upstream's pnpm tree and has
+    // no npm lockfile, so a job that had to spell `npm test` would install one way and
+    // claim another. What is being checked is that *this* package's suite runs and that
+    // it is typechecked, not which front end typed the command.
+    const runner = own.find((job) => /\b(?:npm|pnpm|yarn) (?:run )?test\b/.test(job.text));
     if (!runner) {
       problems.push(
-        `${name} (${directory}) declares a test script and no job running from that directory runs npm test`,
+        `${name} (${directory}) declares a test script and no job running from that directory runs its tests`,
       );
-    } else if (!/npm run typecheck\b/.test(runner.text)) {
+    } else if (!/\b(?:npm|pnpm|yarn) run typecheck\b/.test(runner.text)) {
       problems.push(`${name} (${directory}): the ${runner.name} job runs its tests but never typechecks it`);
     }
   }

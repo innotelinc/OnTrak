@@ -83,7 +83,7 @@ to family roles by `ONTRAK_OIDC_ROLE_MAPPINGS` in each product's `.env`:
 | `range-instructors`, `ontrak-instructors` | `INSTRUCTOR` | training, Class |
 | `ontrak-desk` | `TECHNICIAN` | Tix |
 | `ontrak-analysts` | `ANALYST` | Sentinel |
-| `ontrak-sysadmins` | `SYSADMIN` | Tix, Sentinel, Sync, Genie, Engineer, Godmode |
+| `ontrak-sysadmins` | `SYSADMIN` | Tix, Sentinel, Sync, Genie, Bolt, Engineer, Godmode |
 | `ontrak-admins` | `ADMIN` | everything, plus accounts |
 
 The last column is the portal's catalogue answering for each role

@@ -539,7 +539,7 @@ jobs:
           cache: npm
           cache-dependency-path: ontrak-sync/web/package-lock.json
 
-      # 22 because that is what the dashboard's image is built on; a typecheck on a
+      # 24 because that is what the dashboard's image is built on; a typecheck on a
       # different major would pass here and fail in the image.
       - name: Install the dashboard's dependencies
         run: npm ci
@@ -653,7 +653,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          # 22 because that is what Genie's image is built on; a suite green on a
+          # 24 because that is what Genie's image is built on; a suite green on a
           # different major would still be one that never ran in the container.
           node-version: 24
           cache: npm
@@ -707,6 +707,48 @@ jobs:
             echo "::endgroup::"
           done
 
+  # OnTrak Bolt is upstream's tree plus this fork's deployment work, and its suite is
+  # where that work is held: the curated model list and the context length each entry
+  # carries (`openai-like.spec.ts`), the manager's default provider, the theme bridge,
+  # and the routes. Nothing ran it — the image build compiles the serving stage, which
+  # says the code builds and not that the rules hold, and a fork whose own additions
+  # are unchecked is a fork whose additions are guesses.
+  #
+  # Installed the way the image installs (`corepack` + the lockfile) rather than with a
+  # setup action of its own: pnpm is the toolchain inside the container, so a green run
+  # here means the same dependency tree the deployment resolves.
+  bolt:
+    name: OnTrak Bolt
+    runs-on: ubuntu-latest
+    # Bounded: without a ceiling a hang holds this runner for GitHub's six-hour
+    # default — minutes of real work, hours of waiting.
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ontrak-bolt
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # The major the image is built on; a suite green on a different one would be
+          # a suite that never runs in the container.
+          node-version: 24
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.9 --activate
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
   # The family's front door, run like the products behind it. It had no job: its
   # typecheck, its unit tests and its copy check only ever ran on the machine of
   # whoever was editing it, and its TypeScript was compiled only as a side effect of
@@ -730,7 +772,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          # 22 because that is what the portal's image is built on; a suite green on
+          # 24 because that is what the portal's image is built on; a suite green on
           # a different major would still be one that never ran in the container.
           node-version: 24
           cache: npm
@@ -761,9 +803,11 @@ jobs:
     name: Family stack
     runs-on: ubuntu-latest
     # Bounded: without a ceiling a hang holds this runner for GitHub's six-hour
-    # default — minutes of real work, hours of waiting. The whole workflow's
-    # slowest job measures about three minutes; this is five times that.
-    timeout-minutes: 15
+    # default — hours of waiting on nothing. Generous for the same reason the job is
+    # slow in the first place: it builds every product's image before booting one, and
+    # that list now includes Bolt, whose install and Vite build are the longest of the
+    # nine. The ceiling is here to end a hang, not to time a healthy run.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
 
@@ -795,6 +839,7 @@ jobs:
           G0DM0D3_SSO_BIND=127.0.0.1 \
           ENGINEER_PORTAL_SSO_BIND=127.0.0.1 \
           ONYX_SSO_BIND=127.0.0.1 \
+          ONTRAK_BOLT_BIND_HOST=127.0.0.1 \
             docker compose -f docker-compose.all.yml up -d --build
 
           # Every service the family stack serves, at the address this job reaches it
@@ -819,6 +864,7 @@ jobs:
           sentinel http://127.0.0.1:8787/health
           portal http://127.0.0.1:3300/health
           genie http://127.0.0.1:3400/health
+          bolt http://127.0.0.1:3500/api/health
           sync-api http://127.0.0.1:8420/api/health
           sync-web http://127.0.0.1:8421/health
           guacamole http://127.0.0.1:8080/guacamole/"
@@ -867,6 +913,12 @@ jobs:
 
       - name: The code console answers
         run: curl -fsS http://127.0.0.1:3400/health | grep -q '"service":"ontrak-genie"'
+
+      # Through the sign-in proxy, on the port it publishes, at the one path it lets
+      # through without a session. Asking the app's own container instead would prove
+      # the builder started and say nothing about the door in front of it.
+      - name: The builder answers behind its sign-in
+        run: curl -fsS http://127.0.0.1:3500/api/health | grep -q '"status":"healthy"'
 
       - name: The provider answers discovery
         run: curl -fsS http://127.0.0.1:8787/.well-known/openid-configuration | grep -q authorization_endpoint
@@ -918,6 +970,7 @@ jobs:
           Sentinel SENTINEL /health
           Sync SYNC /health
           Genie GENIE /health
+          Bolt BOLT /api/health
           Engineer ENGINEER /health
           Godmode GODMODE /health
           PROBES
@@ -994,6 +1047,11 @@ jobs:
           - app: genie
             context: ontrak-genie
             target: runtime
+          # Bolt names neither `runner` nor `runtime`: it is upstream's file, and the
+          # stage that ships is `bolt-ai-production`.
+          - app: bolt
+            context: ontrak-bolt
+            target: bolt-ai-production
     steps:
       - uses: actions/checkout@v7
 

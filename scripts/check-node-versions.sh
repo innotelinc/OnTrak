@@ -27,12 +27,16 @@ compose=(docker compose -f docker-compose.all.yml)
 
 # Service and the directory whose package.json governs it — the build context the
 # service is built from. g0dm0d3 and engineer-portal share one image and are listed
-# twice on purpose: the check is about containers, not about images.
+# twice on purpose: the check is about containers, not about images. `bolt-sso` is not
+# here: it is a stock proxy image with no Node of its own to compare, which is exactly
+# why `tests/node-version-check.test.ts` derives this list from the compose file's
+# Node-based services rather than trusting the table.
 read -r -d '' services <<'EOF'
 training-app .
 tix-app ontrak-tix
 sentinel-app ontrak-sentinel
 genie-app ontrak-genie
+bolt-app ontrak-bolt
 portal-app ontrak-portal
 sync-web ontrak-sync/web
 g0dm0d3 g0dm0d3

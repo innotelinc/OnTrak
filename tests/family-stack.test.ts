@@ -299,6 +299,23 @@ function servesHealthPath(block: string[], health: string): boolean {
   for (const route of [path.join("src", "app", segment, "route.ts"), path.join("app", segment, "route.ts")]) {
     if (existsSync(path.join(root, route))) return true;
   }
+
+  /*
+   * A React Router app states its routes in a config rather than by directory: Bolt's
+   * health route is `app/routes/api.health.ts`, registered in `app/routes.ts` as
+   * `/api/health`. Both halves are required here, because a route module nothing
+   * registers is a file, not an endpoint — which is the same distinction this check
+   * draws for the Next apps between an `app/` directory and a path that answers.
+   */
+  const flatRoute = path.join(root, "app", "routes", `${segment.replace(/\//g, ".")}.ts`);
+  const routeConfig = path.join(root, "app", "routes.ts");
+  if (
+    existsSync(flatRoute) &&
+    existsSync(routeConfig) &&
+    new RegExp(`path:\\s*["']${health}["']`).test(readFileSync(routeConfig, "utf8"))
+  ) {
+    return true;
+  }
   const named = new RegExp(`HEALTH_PATH\\s*=\\s*"${health}"`);
   return filesUnder(path.join(root, "src")).some((file) => named.test(readFileSync(file, "utf8")));
 }

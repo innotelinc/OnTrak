@@ -39,7 +39,11 @@
 # ═══════════════════════════════════════════════════════════════════════════
 
 # ---- build stage ----
-FROM node:22-bookworm-slim AS build
+# Node 24, not upstream's 22: the family declares one major in every package's
+# `engines.node` (`tests/node-version-check.test.ts` refuses two), and the deploy
+# compares each container's `node -v` against the package that built it. A product on
+# its own major is the one container where a runtime-only failure shows up first.
+FROM node:24-bookworm-slim AS build
 WORKDIR /app
 
 # CI-friendly env

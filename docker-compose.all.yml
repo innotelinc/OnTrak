@@ -887,7 +887,7 @@ services:
       # the worker's `vars` — see `ontrak-bolt/docker-entrypoint.sh`. The app is a
       # Worker build served by workerd, which cannot see the container's environment;
       # a variable that is not rendered into `vars` is a variable the app cannot see.
-      OPENAI_LIKE_API_BASE_URL: ${OPENAI_LIKE_API_BASE_URL:-https://gateway.innotel.us/v1}
+      OPENAI_LIKE_API_BASE_URL: ${OPENAI_LIKE_API_BASE_URL:-https://gateway.telno.services/v1}
       # The deployment's own model list: the gateway answers /models with 1,249 ids,
       # which is a directory rather than a picker. Left unset, the app offers all of
       # them — and most of them answer 401, because a `~vendor/model` id needs that
@@ -1004,14 +1004,16 @@ services:
       - --reverse-proxy=true
       - --set-xauthrequest=true
       - --pass-user-headers=true
-      # The portal draws a light for every product by probing it at its public name,
-      # and it has no cookie to present. `/api/health` is the builder's own liveness
-      # answer — it starts no turn and spends no key — so exactly that path is let
-      # through unauthenticated, the way the classroom's edge lets its probe through.
-      # Every other path, the page included, still needs a signed-in builder.
-      - --skip-auth-route=^/api/health$
       - --upstream=http://bolt-app:5173
       - --http-address=0.0.0.0:4180
+      # The one path that answers without a session. The portal draws Bolt's light by
+      # asking `<ONTRAK_BOLT_INTERNAL_URL>/api/health` from inside its own container,
+      # and the deploy asks the same question at `127.0.0.1:3500/api/health` — through
+      # this proxy, because that is the port it publishes. Without the exemption both
+      # would be answered by the sign-in redirect, which is a green light for a page,
+      # not for the builder. Every other path, the page included, still needs a
+      # signed-in builder.
+      - --skip-auth-route=^/api/health$
       - --redirect-url=https://bolt.ontrak.technology/oauth2/callback
       - --session-store-type=redis
       - --redis-connection-url=redis://bolt-sso-sessions:6379/0
@@ -1063,6 +1065,13 @@ services:
       ONTRAK_SENTINEL_INTERNAL_URL: http://sentinel-app:8787
       ONTRAK_SYNC_INTERNAL_URL: http://sync-web:8421
       ONTRAK_GENIE_INTERNAL_URL: http://genie-app:3400
+      # Bolt's light asks the *app*, not the port the edge reaches: `bolt-sso` is the
+      # only thing published, and a probe of it would be a probe of the sign-in proxy.
+      # The health path is the one route the proxy lets through without a session
+      # (`--skip-auth-route` below), so the two halves agree about what a green light
+      # means — and a light that stayed green with the builder gone would be the false
+      # outage the dashboard already had once for Sentinel, in reverse.
+      ONTRAK_BOLT_INTERNAL_URL: http://bolt-app:5173
       # The two Genie add-ons are behind their own oauth2-proxy, so `/health` is not
       # reachable from the public name — an unauthenticated request is redirected to
       # the sign-in page and answered by that, not by the product. Ask the containers.

@@ -212,6 +212,9 @@ const CELL_NAME: Record<string, string> = {
   sentinel: "Sentinel",
   sync: "Sync",
   genie: "Genie",
+  // The builder sits beside Genie on the dashboard and is shown to the same groups, so
+  // the role table names it where it names the console.
+  bolt: "Bolt",
   // The two add-ons live under Genie's name, and their tiles say so — but the role
   // table names them in their own right, because "which group do I put a new
   // sysadmin in" is answered by the product they are being given, not by where its

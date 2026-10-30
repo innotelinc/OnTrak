@@ -7,8 +7,21 @@ vi.mock('~/lib/persistence', () => ({ description: atom(undefined) }));
 vi.mock('~/lib/webcontainer', () => ({ webcontainer: Promise.resolve({ workdir: '/home/project' }) }));
 vi.mock('./files', () => ({
   FilesStore: class {
-    files = map({});
+    files = map<Record<string, { content: string } | undefined>>({});
     reset() {
+      return Promise.resolve();
+    }
+    /**
+     * `_runAction` reads the target before writing it — a missing entry is a new file,
+     * an existing one is an edit — so the double answers from the same map the real
+     * store keeps. Empty until a test seeds it, which is the "new file" case.
+     */
+    getFile(filePath: string) {
+      return this.files.get()[filePath];
+    }
+    /** The write that follows a miss, so a streamed action leaves the entry behind. */
+    createFile(filePath: string, content = '') {
+      this.files.setKey(filePath, { content });
       return Promise.resolve();
     }
   },
