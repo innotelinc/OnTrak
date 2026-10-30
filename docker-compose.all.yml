@@ -1047,15 +1047,21 @@ services:
   onyx-sso:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.8.2
     restart: unless-stopped
-    # Optional like the other two sign-in proxies: the client secret lives in this
-    # file, so a checkout that has none (CI, a laptop) may still bring the stack up.
-    # Without it the proxy refuses to start, which is the honest failure — the same
-    # one G0DM0D3's and Engineer's proxies have.
-    env_file:
-      - path: onyx-sso/.env
-        required: false
+    # No `env_file`, and no value in this file: the three credentials live in
+    # Cerulean Vault (`cerulean/ontrak/onyx-sso`), `onyx-sso/.env` carries only
+    # `vault://` references to them, and the deploy resolves those into the
+    # environment below (scripts/deploy.sh). It has to happen there because this is
+    # a stock image — its entrypoint is the proxy itself, so there is nothing to
+    # resolve a reference inside the container, and its configuration is env-only.
+    #
+    # A compose run that skipped the deploy therefore starts the proxy with empty
+    # credentials, and it exits on its own config check (`missing setting:
+    # client-id`) rather than serving the console to whoever asks.
     environment:
       TZ: ${TZ:-America/New_York}
+      OAUTH2_PROXY_CLIENT_ID: ${OAUTH2_PROXY_CLIENT_ID:-}
+      OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET:-}
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET:-}
     ports:
       - "${ONYX_SSO_BIND:-192.168.1.21}:8096:4180"
     command:

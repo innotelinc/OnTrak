@@ -100,6 +100,35 @@ fi
 
 wait_seconds="${DEPLOY_SMOKE_WAIT_SECONDS:-180}"
 
+# ONYX's sign-in is the one credential in this stack that cannot resolve itself: its
+# proxy is a stock image, so its entrypoint is the proxy and there is nothing inside the
+# container to turn a `vault://` reference into a value. `onyx-sso/.env` therefore holds
+# references, the vault is read here, and the compose file interpolates the result. A
+# stack started without this step gets empty credentials and the proxy exits on its own
+# config check instead of gating nothing.
+echo "deploy: resolving ONYX's sign-in from Cerulean Vault"
+for onyx_env in onyx-sso/.env onyx-sso/.env.example; do
+  [ -f "$onyx_env" ] || continue
+  command -v node >/dev/null 2>&1 || {
+    echo "deploy: onyx-sso/.env needs node to resolve (scripts/vault-env.mjs)" >&2
+    exit 1
+  }
+  set -a
+  # shellcheck disable=SC1090  # the deployment's own file, not a source file
+  . "$onyx_env"
+  set +a
+  resolved=$(VAULT_ADDR="${VAULT_ADDR:-http://192.168.1.71:8200}" \
+    VAULT_PREFIX="${VAULT_PREFIX:-cerulean}" \
+    VAULT_TOKEN_FILE="${VAULT_TOKEN_HOST_FILE:-data/vault/token/ontrak.token}" \
+    node scripts/vault-env.mjs \
+      OAUTH2_PROXY_CLIENT_ID OAUTH2_PROXY_CLIENT_SECRET OAUTH2_PROXY_COOKIE_SECRET) || {
+    echo "deploy: could not resolve ONYX's sign-in from ${onyx_env}" >&2
+    exit 1
+  }
+  eval "$resolved"
+  break
+done
+
 echo "deploy: starting the family stack"
 "${compose[@]}" up -d --build
 
