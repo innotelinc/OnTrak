@@ -197,6 +197,18 @@ export async function refreshModelHealth(signal?: AbortSignal): Promise<ModelHea
       working: entries.filter((entry) => entry.ok).length,
       total: entries.length,
     };
+    // The console shows `working/total` as a chip, and a chip cannot say which model
+    // failed or why — so a deployment that reads "1/7" has no way to tell a wrong id
+    // from a provider having a bad afternoon. One line per check, with the failures
+    // named; the healthy case says so too, because a loop that stopped running and a
+    // loop that found nothing wrong look identical in the UI's own silence.
+    const failed = report.entries.filter((entry) => !entry.ok);
+    console.log(
+      `model health: ${report.working}/${report.total} ready` +
+        (failed.length === 0
+          ? ""
+          : ` — failing: ${failed.map((entry) => `${entry.model} (${entry.error})`).join("; ")}`),
+    );
     return report;
   } finally {
     running = false;
