@@ -34,6 +34,7 @@ help: ## Show this help
 .PHONY: setup
 setup: hooks ## Install guard hooks, create .env, install dependencies
 	@if [ ! -f .env ]; then cp .env.example .env; echo "created .env (edit AUTH_SECRET before deploying)"; fi
+	@if [ ! -f onyx-sso/.env ]; then cp onyx-sso/.env.example onyx-sso/.env; echo "created onyx-sso/.env (references into Cerulean Vault)"; fi
 	npm install
 
 .PHONY: hooks
