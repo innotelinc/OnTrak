@@ -434,7 +434,10 @@ try {
 
   await check("the sandbox status reflects the running config", async () => {
     const text = await session.evaluate("return document.querySelector('#sandbox-label').textContent;");
-    const expected = health.sandbox?.backend === "docker" ? "sandboxed" : "host";
+    // The chip says what is true of the command, not where it lands: "on host" read as
+    // the estate's machine on a deployment whose container *is* the boundary. The two
+    // words are chosen so neither is a substring of the other.
+    const expected = health.sandbox?.backend === "docker" ? "sandboxed commands" : "unsandboxed";
     if (!text.includes(expected)) throw new Error(`label says "${text}", expected "${expected}"`);
     return text;
   });
