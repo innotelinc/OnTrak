@@ -3690,8 +3690,13 @@ async function loadHealth() {
       // Green only when commands really are isolated in a container.
       const level = health.sandbox.backend === "docker" ? "ok" : "warn";
       $("#sandbox-dot").className = `status-dot ${level}`;
+      // "on host" read as the estate's machine, which is the one thing this never
+      // means on a family deployment: there the console *is* the container, and the
+      // commands run inside that same container (`AGENT_SANDBOX=host`). Say what is
+      // true of both deployments — unsandboxed — and leave which host to the detail,
+      // which is the server's sentence about this deployment's own setting.
       $("#sandbox-label").textContent =
-        health.sandbox.backend === "docker" ? "sandboxed commands" : "commands run on host";
+        health.sandbox.backend === "docker" ? "sandboxed commands" : "commands run unsandboxed";
       $("#sandbox-label").title = health.sandbox.detail;
     }
 
