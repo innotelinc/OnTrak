@@ -59,7 +59,17 @@ function deploy(env: Record<string, string>, args: readonly string[] = []): Depl
     [
       "#!/usr/bin/env bash",
       'printf "%s\\n" "$*" >> "$FAKE_DOCKER_LOG"',
-      'case "$*" in *" exec "*) exit "${FAKE_DOCKER_EXEC_STATUS:-0}" ;; esac',
+      "case \"$*\" in",
+      // The Node check asks the stack which containers are up and what each one runs,
+      // so the stub has to answer both before the capture gate is reached. The major it
+      // reports is the one every `engines.node` in this repository declares; moving the
+      // family to a new Node updates it here with the packages.
+      '  *" ps -q "*) echo "fake-container-id"; exit 0 ;;',
+      // This is the Node check's own `docker exec <id> node -v`; the capture goes
+      // through `compose … exec`, which carries no `node -v` and falls to the arm below.
+      '  *"exec "*"node -v"*) echo "v24.0.0"; exit 0 ;;',
+      '  *" exec "*) exit "${FAKE_DOCKER_EXEC_STATUS:-0}" ;;',
+      "esac",
       "exit 0",
       "",
     ].join("\n"),
@@ -89,7 +99,15 @@ function deploy(env: Record<string, string>, args: readonly string[] = []): Depl
   };
 }
 
-const execs = (calls: readonly string[]) => calls.filter((call) => call.includes(" exec "));
+/**
+ * The capture's own `exec`s.
+ *
+ * Filtered on the variable that names the account rather than on `exec`, because the
+ * Node check execs into every app container first — and a count that included those
+ * would say the capture ran eight times.
+ */
+const execs = (calls: readonly string[]) =>
+  calls.filter((call) => call.includes(" exec ") && call.includes("GENIE_SMOKE_ACTOR"));
 const ups = (calls: readonly string[]) => calls.filter((call) => call.includes(" up "));
 
 test("a deploy with no account to attribute the turn to stops before the stack", () => {

@@ -1047,9 +1047,13 @@ services:
   onyx-sso:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.8.2
     restart: unless-stopped
+    # Optional like the other two sign-in proxies: the client secret lives in this
+    # file, so a checkout that has none (CI, a laptop) may still bring the stack up.
+    # Without it the proxy refuses to start, which is the honest failure — the same
+    # one G0DM0D3's and Engineer's proxies have.
     env_file:
       - path: onyx-sso/.env
-        required: true
+        required: false
     environment:
       TZ: ${TZ:-America/New_York}
     ports:
