@@ -69,6 +69,19 @@ const MARKS = {
     strokes: ["M24 15 l2.6 6.4 6.4 2.6 -6.4 2.6 -2.6 6.4 -2.6 -6.4 -6.4 -2.6 6.4 -2.6 z"],
   },
   /**
+   * A prompt turning into something running: the charge.
+   *
+   * Bolt's stroke is the spark rather than the spark's *result* — the tile beside it,
+   * Genie, is the star that answers a request, and this is the same family of work
+   * done from nothing: a shape with a direction, drawn in one unbroken line.
+   */
+  bolt: {
+    tone: "bolt",
+    label: "OnTrak Bolt",
+    strokes: ["M26.2 14.8 L18.4 25.6 h4.9 L21.8 33.2 L29.6 22.4 h-4.9 z"],
+  },
+
+  /**
    * Looking *into* a build: a lens over the shield, with the handle as the tool.
    *
    * Engineer is the family's instrument — the one product whose work begins with a

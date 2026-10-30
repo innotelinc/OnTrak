@@ -40,7 +40,7 @@ export type Role =
 /** The catalogue's own names for its products — the label a URL is built from is
  * the entry's `host`, not this key (see `urlFor`). */
 export type ProductKey =
-  | "its" | "tix" | "sentinel" | "sync" | "genie" | "engineer" | "godmode" | "lab" | "class";
+  | "its" | "tix" | "sentinel" | "sync" | "genie" | "bolt" | "engineer" | "godmode" | "lab" | "class";
 
 export interface Product {
   key: ProductKey;
@@ -76,7 +76,7 @@ export interface Product {
    */
   tone:
     | "training" | "desk" | "security" | "operations"
-    | "agent" | "engineer" | "godmode" | "lab" | "class";
+    | "agent" | "bolt" | "engineer" | "godmode" | "lab" | "class";
   /**
    * A product this repository does not serve, which a deployment may not run at all.
    *
@@ -156,6 +156,27 @@ export const PRODUCTS: readonly Product[] = [
     // Every product answers `/health` without a credential; the console is no
     // exception, and it reports without starting a turn or touching the gateway.
     health: "/health",
+  },
+  {
+    key: "bolt",
+    name: "OnTrak Bolt",
+    tagline:
+      "The app builder: describe what you want, and watch it write and run in the browser without leaving the tab.",
+    // Genie's audience, one step wider: Genie changes a repository a person already
+    // has, Bolt makes the thing in the first place. Both spend this deployment's
+    // gateway key on every turn, so both are the narrowest audience in the family.
+    audience: "sysadmins and builders",
+    host: "bolt",
+    roles: ["SYSADMIN", "ADMIN"],
+    // Its own tone, like every other product: it sits next to Genie on the dashboard
+    // and is the same kind of product, so the shared colour that once said "same
+    // family" would say "same tool". The name on the tile is still the signal.
+    tone: "bolt",
+    // Bolt answers its own liveness endpoint, and the sign-in proxy in front of it
+    // lets exactly that path through without a cookie (see the `--skip-auth-route`
+    // in `docker-compose.all.yml`). Probing `/` instead would be answered by the
+    // sign-in redirect, which is a green light even when the builder is gone.
+    health: "/api/health",
   },
   {
     key: "engineer",

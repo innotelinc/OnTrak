@@ -35,6 +35,7 @@ TOGGLES = (
     ("ontrak-tix/src/theme/unity-theme.css", "ontrak-tix/src/components/ThemeToggle.tsx"),
     ("ontrak-sentinel/src/theme/unity-theme.css", "ontrak-sentinel/src/components/ThemeToggle.tsx"),
     ("ontrak-sync/web/app/theme/unity-theme.css", "ontrak-sync/web/components/ThemeToggle.tsx"),
+    ("ontrak-bolt/app/theme/unity-theme.css", "ontrak-bolt/app/components/ThemeToggle.tsx"),
     ("src/theme/unity-theme.css", "src/components/ThemeToggle.tsx"),   # the training range
 )
 
@@ -56,6 +57,14 @@ APPS = (
     ("ontrak-sentinel/src/theme", ("unity-theme.css",)),
     ("ontrak-sync/web/public", ("unity-theme.js",)),
     ("ontrak-sync/web/app/theme", ("unity-theme.css",)),
+    # Bolt is a vendored React app with its own bundler, so the palette is imported
+    # by its stylesheet (`app/theme/unity-theme.css`) and the switch is the one
+    # static asset it serves itself out of `public/`. The `--bolt-elements-*`
+    # tokens it paints with are mapped onto the Unity tokens by
+    # `app/styles/unity-bridge.scss`, so the vendored app has no colour of its own
+    # to drift with.
+    ("ontrak-bolt/app/theme", ("unity-theme.css",)),
+    ("ontrak-bolt/public", ("unity-theme.js",)),
     # Genie has no bundler: both files are served as static assets out of `public/`
     # (see STATIC_FILES in ontrak-genie/src/server.ts), so both live there.
     ("ontrak-genie/public", ("unity-theme.css", "unity-theme.js")),

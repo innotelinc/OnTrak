@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 148 28" width="148" height="28" role="img" aria-label="OnTrak Bolt">
+  <!--
+    The wordmark, in the family's type and the desk scheme's ink/brand pair.
+    Two files rather than one because the header swaps them with `dark:`, and a
+    text-in-SVG wordmark cannot inherit a CSS token from the page it is drawn on.
+  -->
+  <text x="0" y="20" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" letter-spacing="-0.4" fill="#191430">OnTrak</text>
+  <text x="78" y="20" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" letter-spacing="-0.4" fill="#5f3fe6">Bolt</text>
+</svg>

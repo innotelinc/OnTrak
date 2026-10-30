@@ -1,0 +1,68 @@
+# OnTrak Bolt, talking to the estate's model gateway.
+#
+#   cp .env.example .env       (then fill in the key)
+#   docker compose up -d
+#   open http://127.0.0.1:3500/
+#
+# This is the **product-only** stack. The family stack (`../docker-compose.all.yml`,
+# `make all-up`) also runs Bolt, beside Genie — see the note on ports below.
+#
+# ## Why 3500, and why a published port rather than host networking
+#
+# The ports the family already reserves are 3000 (training), 3001 (Tix), 3300
+# (portal), 3400 (Genie), 3500 (this), 8420/8421 (Sync), 8787 (Sentinel) and 8080
+# (the lab's gateway). 3500 is next to Genie on purpose: the two are the AI
+# products, and someone reading a `docker ps` should see them adjacent.
+#
+# Genie runs with `network_mode: host` because it *serves* the app its agent writes
+# and that app needs a real address on the LAN. Bolt does not: it builds and runs the
+# app inside a WebContainer in the browser, so the only address anything needs is
+# the console's own. That makes a bridge network and one published port the honest
+# model here, and it is also what keeps this stack from colliding with anything else
+# on the host.
+#
+# ## Why the model settings are environment and not baked in
+#
+# The image carries no key (see the Dockerfile). Upstream expects a `.env` per
+# provider; the family has one gateway, so the three `OPENAI_LIKE_*` variables below
+# are the whole model configuration — and `ONNX`/vendor keys, if a deployment ever
+# wants one, are added here rather than in a rebuilt image.
+
+services:
+  app:
+    build: .
+    # Named, so this stack and the family stack build the same image under the same
+    # tag instead of two anonymous ones. `main` is the dev tag; set
+    # `ONTRAK_BOLT_IMAGE_TAG` to pin a build.
+    image: innotel/ontrak-bolt:${ONTRAK_BOLT_IMAGE_TAG:-main}
+    restart: unless-stopped
+    # The whole of .env comes through as-is. A hand-maintained list of variables here
+    # is a list that silently falls out of date — the failure it produces is a
+    # provider that exists in .env and not in the container. Optional, so
+    # `docker compose up` still works with no .env at all.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # The image's own port is fixed at 5173; the published port is the deployment's.
+      PORT: "5173"
+      HOST: 0.0.0.0
+      NODE_ENV: production
+      RUNNING_IN_DOCKER: "true"
+      # The one model endpoint this deployment uses. Empty is a valid state — the
+      # console then offers no provider and says so, rather than failing a turn.
+      OPENAI_LIKE_API_BASE_URL: ${OPENAI_LIKE_API_BASE_URL:-}
+      OPENAI_LIKE_API_KEY: ${OPENAI_LIKE_API_KEY:-}
+      # The routes this deployment offers, rather than every id the gateway lists —
+      # see `docker-compose.all.yml` in the family stack for why the `auto/*` ones
+      # are the default.
+      OPENAI_LIKE_API_MODELS: ${OPENAI_LIKE_API_MODELS:-auto/coding:200000;auto/best-coding:200000;auto/best-chat:200000;auto/cheap:200000;auto/thrifty:200000}
+      # Trusted because the image's preview server overwrites it from the TCP peer on
+      # every request (`vite.config.ts`). Without it the app cannot name a client, and
+      # every rate-limited route refuses the turn.
+      BUG_REPORT_TRUSTED_IP_HEADER: x-real-ip
+      # `vite preview` refuses a Host it was not told about; this is the name the
+      # deployment is published at, comma-separated for more than one.
+      PREVIEW_ALLOWED_HOSTS: ${PREVIEW_ALLOWED_HOSTS:-bolt.ontrak.technology}
+    ports:
+      - "${ONTRAK_BOLT_PORT:-3500}:5173"

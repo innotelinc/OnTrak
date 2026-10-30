@@ -91,6 +91,7 @@
   --tone-godmode: #b91c1c;
   --tone-class: #4f46e5;
   --tone-unity: #0891b2;
+  --tone-bolt: #c2410c;
 
   --shadow-card: 0 1px 2px rgb(25 20 48 / 5%), 0 10px 30px -14px rgb(25 20 48 / 18%);
   --shadow-pop: 0 8px 28px -8px rgb(25 20 48 / 26%);
@@ -192,6 +193,7 @@
     --tone-godmode: #fca5a5;
     --tone-class: #a5b4fc;
     --tone-unity: #67e8f9;
+    --tone-bolt: #fdba74;
 
     --shadow-card: 0 1px 2px rgb(0 0 0 / 30%), 0 12px 32px -14px rgb(0 0 0 / 60%);
     --shadow-pop: 0 10px 34px -8px rgb(0 0 0 / 66%);
@@ -275,6 +277,7 @@
   --tone-godmode: #b91c1c;
   --tone-class: #4f46e5;
   --tone-unity: #0891b2;
+  --tone-bolt: #c2410c;
 
   --shadow-card: 0 1px 2px rgb(16 23 29 / 5%), 0 10px 30px -14px rgb(16 23 29 / 18%);
 }

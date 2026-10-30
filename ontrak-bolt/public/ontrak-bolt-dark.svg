@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 148 28" width="148" height="28" role="img" aria-label="OnTrak Bolt">
+  <!-- The dark counterpart of `ontrak-bolt-light.svg`: the desk scheme's dark ink and brand. -->
+  <text x="0" y="20" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" letter-spacing="-0.4" fill="#f5f3ff">OnTrak</text>
+  <text x="78" y="20" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" letter-spacing="-0.4" fill="#9b83ff">Bolt</text>
+</svg>

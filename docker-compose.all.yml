@@ -30,7 +30,8 @@
 # include three. Here each service is prefixed with its product, and the *values*
 # (images, build stages, commands, healthchecks) are the same as the product files.
 # Ports are the ones the family already reserves: 3000/5432 training,
-# 3001/5433 Tix, 8787/5434 Sentinel, 3400 Genie (which has no database), and 8080
+# 3001/5433 Tix, 8787/5434 Sentinel, 3400 Genie (which has no database), 3500 Bolt
+# (which has none either — its projects live in the browser), and 8080
 # for the lab's console gateway — the one service here that is not a product but the
 # training range's own, and the one name (`lab.ontrak.technology`) the family's edge
 # already forwards for it.
@@ -851,6 +852,170 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  # ── OnTrak Bolt (the app builder beside Genie) ────────────────────────────
+  # The second half of the family's AI offer: Genie is the agent that edits *your*
+  # repository on a server; Bolt is the builder that writes an app in a browser tab
+  # and runs it in a WebContainer, with no sandbox and no workspace on the host.
+  #
+  # No volume, and deliberately: a Bolt project is browser state (IndexedDB and the
+  # WebContainer's own filesystem) plus whatever the person exports. Giving the
+  # container a workspace nobody writes to would be a directory that looks like
+  # storage and isn't.
+  #
+  # No `network_mode: host` either — Genie needs one because it serves the app its
+  # agent writes on a real LAN address; Bolt serves only its own console, so it
+  # takes a bridge address and one published port.
+  #
+  # The model source is the same gateway Genie uses, through the OpenAILike
+  # provider: two products, one endpoint, one key to rotate.
+  bolt-app:
+    build:
+      context: ontrak-bolt
+    image: innotel/ontrak-bolt:${ONTRAK_BOLT_IMAGE_TAG:-main}
+    restart: unless-stopped
+    env_file:
+      - path: ontrak-bolt/.env
+        required: false
+    environment:
+      TZ: ${TZ:-America/New_York}
+      HOST: 0.0.0.0
+      PORT: "5173"
+      NODE_ENV: production
+      RUNNING_IN_DOCKER: "true"
+      # These two are in this block because the image's entrypoint copies them into
+      # the worker's `vars` — see `ontrak-bolt/docker-entrypoint.sh`. The app is a
+      # Worker build served by workerd, which cannot see the container's environment;
+      # a variable that is not rendered into `vars` is a variable the app cannot see.
+      OPENAI_LIKE_API_BASE_URL: ${OPENAI_LIKE_API_BASE_URL:-https://gateway.innotel.us/v1}
+      # The deployment's own model list: the gateway answers /models with 1,249 ids,
+      # which is a directory rather than a picker. Left unset, the app offers all of
+      # them — and most of them answer 401, because a `~vendor/model` id needs that
+      # vendor's credential on the gateway while the `auto/*` routes are resolved by
+      # the gateway itself. The default is therefore the same pool Genie sends its
+      # turns to (see `ontrak-genie/src/config.ts`), which is the one set of ids the
+      # deployment's key is known to serve. `id:context-length`, `;`-separated; the
+      # length is what the model is offered with — the gateway's `/models` reports none,
+      # so an id listed without one would be capped at 8,000 tokens.
+      OPENAI_LIKE_API_MODELS: ${OPENAI_LIKE_API_MODELS:-auto/coding:200000;auto/best-coding:200000;auto/best-chat:200000;auto/cheap:200000;auto/thrifty:200000}
+      # Where the app reads the client's address. The image's preview server stamps
+      # it from the TCP peer on every request (see `vite.config.ts`), so this is a
+      # header the app can trust: without it every rate-limited route — `/api/chat`
+      # first among them — answers 503 and the console can list models but never
+      # use one.
+      BUG_REPORT_TRUSTED_IP_HEADER: x-real-ip
+      # `vite preview` refuses a Host it was not told about (403), so the name this
+      # product is published at is part of its configuration. Extra names, if a
+      # deployment serves any, go in the same variable, comma-separated.
+      PREVIEW_ALLOWED_HOSTS: ${PREVIEW_ALLOWED_HOSTS:-bolt.ontrak.technology}
+      # The key is NOT here. It is a `vault://` reference in `ontrak-bolt/.env` (the
+      # env_file above), resolved at boot by the image's entrypoint — the same rule
+      # Genie's block follows, and for the same reason: a value in this block would
+      # shadow the reference with plaintext from the root `.env`.
+    volumes:
+      # The path-scoped vault token, mounted read-only exactly as the other products
+      # take it. `VAULT_ADDR` / `VAULT_TOKEN_FILE` / `VAULT_PREFIX` come from
+      # `ontrak-bolt/.env`; the bind mount is a fact about the host, so it lives here.
+      - ./data/vault/token/ontrak.token:/vault/token/ontrak.token:ro
+    # No published port, deliberately. Bolt has no sign-in of its own, and this
+    # console spends the deployment's gateway key on every turn, so the only way
+    # in is `bolt-sso` below — the published port is the proxy's, and the app is
+    # reachable only on the compose network. Publishing 3500 here as well would be
+    # a second door with no door: the edge would still be pointed at the proxy,
+    # and anyone on the LAN could skip it by going straight to the port.
+    expose:
+      - "5173"
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - http://127.0.0.1:5173/
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── Bolt's sign-in (edge name bolt.ontrak.technology) ─────────────────────
+  # The builder has no accounts and no session of its own: upstream ships it as a
+  # page anyone who reaches it can use. That is fine on a laptop and wrong on a
+  # public name, where "anyone" would be spending this deployment's gateway key.
+  # So the door is a proxy, the same one G0DM0D3 and ONYX stand behind: oauth2-proxy
+  # against the family's `ontrak` OIDC client, restricted to the two builder groups.
+  #
+  # Bolt is not in the family because it renders a page with lights; it is in it
+  # because it writes and runs an app in the browser. `ontrak-sysadmins` and
+  # `ontrak-admins` are the groups that already name the people allowed to do that.
+  #
+  # The console streams a turn as an ordinary HTTP response (server-sent events),
+  # not a websocket, so this proxy is configured like Genie's: nothing to upgrade,
+  # and nothing here buffers the stream.
+  bolt-sso-sessions:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  bolt-sso:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.8.2
+    restart: unless-stopped
+    # References, not values — `bolt-sso/.env` holds `vault://` locations and
+    # `scripts/deploy.sh` resolves them into the environment below before compose
+    # starts, because this is a stock image: its entrypoint is the proxy, so there
+    # is nothing inside the container that could turn a reference into a value.
+    # A compose run that skipped the deploy starts a proxy with empty credentials, and
+    # it exits on its own config check (`missing setting: client-id`) rather than
+    # gating nothing.
+    # `ONTRAK_BOLT_SSO_*`, not the bare `OAUTH2_PROXY_*` ONYX's door interpolates:
+    # both proxies would otherwise read one shared value, so Bolt's session cookie
+    # would be signed with ONYX's key and ONYX's copy of the deployment would be
+    # overwritten by whichever door the deploy resolved last.
+    environment:
+      TZ: ${TZ:-America/New_York}
+      OAUTH2_PROXY_CLIENT_ID: ${ONTRAK_BOLT_SSO_CLIENT_ID:-}
+      OAUTH2_PROXY_CLIENT_SECRET: ${ONTRAK_BOLT_SSO_CLIENT_SECRET:-}
+      OAUTH2_PROXY_COOKIE_SECRET: ${ONTRAK_BOLT_SSO_COOKIE_SECRET:-}
+    ports:
+      # Published on the LAN address the edge forwards to, and nowhere else: 3500
+      # is the port this product reserved, and it is now the proxy's.
+      - "${ONTRAK_BOLT_BIND_HOST:-192.168.1.21}:${ONTRAK_BOLT_PORT:-3500}:4180"
+    depends_on:
+      - bolt-app
+      - bolt-sso-sessions
+    command:
+      - --provider=oidc
+      - --oidc-issuer-url=https://auth.cerulean.innotel.us/application/o/ontrak/
+      - --oidc-groups-claim=groups
+      - --scope=openid email profile groups
+      - --email-domain=*
+      - --insecure-oidc-allow-unverified-email
+      - --allowed-group=ontrak-sysadmins
+      - --allowed-group=ontrak-admins
+      - --skip-provider-button=true
+      - --cookie-secure=true
+      - --cookie-samesite=lax
+      - --whitelist-domain=.ontrak.technology
+      - --reverse-proxy=true
+      - --set-xauthrequest=true
+      - --pass-user-headers=true
+      # The portal draws a light for every product by probing it at its public name,
+      # and it has no cookie to present. `/api/health` is the builder's own liveness
+      # answer — it starts no turn and spends no key — so exactly that path is let
+      # through unauthenticated, the way the classroom's edge lets its probe through.
+      # Every other path, the page included, still needs a signed-in builder.
+      - --skip-auth-route=^/api/health$
+      - --upstream=http://bolt-app:5173
+      - --http-address=0.0.0.0:4180
+      - --redirect-url=https://bolt.ontrak.technology/oauth2/callback
+      - --session-store-type=redis
+      - --redis-connection-url=redis://bolt-sso-sessions:6379/0
+      - --silence-ping-logging=true
 
   # ── OnTrak Portal (the front door) ────────────────────────────────────────
   # One sign-in, then the products a role belongs in. It holds no data of its own

@@ -16,7 +16,8 @@
 > grades every submission from the machine state the student actually left behind, together with
 > the products that run the desk beside it — [Tix](ontrak-tix/README.md) (service desk),
 > [Sentinel](ontrak-sentinel/README.md) (directory and intrusion console), [Sync](ontrak-sync/README.md)
-> (package and container updates), [Genie](ontrak-genie/README.md) (AI coding), [Portal](ontrak-portal/README.md)
+> (package and container updates), [Genie](ontrak-genie/README.md) (AI coding), [Bolt](ontrak-bolt/README.md)
+> (an app built in the browser), [Portal](ontrak-portal/README.md)
 > (one front door) and [Lab](ontrak-lab/README.md) (real disposable machines). It consumes Cerulean
 > for identity and trust, keeps training and support evidence on one audit chain, and every product
 > boots on its own with no hypervisor and no terminal server.
@@ -30,7 +31,7 @@
 **Names, once.** *OnTrak* alone is this repository and the family of products inside
 it, never one product. The product in `src/` is **OnTrak IT Support Training**
 (capability id `training`, host label `its`), and the products beside it are
-**OnTrak Tix**, **OnTrak Sentinel**, **OnTrak Sync**, **OnTrak Genie** and
+**OnTrak Tix**, **OnTrak Sentinel**, **OnTrak Sync**, **OnTrak Genie**, **OnTrak Bolt** and
 **OnTrak Portal**. What the family's documents called "the lab" until now is
 **OnTrak Lab** (capability id and host label `lab`): the Python platform that runs
 real machines for the hands-on half of a task, served from its own host rather than
@@ -46,6 +47,7 @@ from the family stack `docker-compose.all.yml` starts.
 | **OnTrak Sync** | 🟢 Active | Network update monitoring and local account management |
 | **OnTrak Portal** | 🟢 Active | Unified front door for role-based product routing |
 | **OnTrak Genie** | 🟢 Active | AI coding agent with approval gates and workspace isolation |
+| **OnTrak Bolt** | 🟢 Active | In-browser app builder beside Genie: prompt to running app in one tab (vendored) |
 | **OnTrak Lab** | 🟢 Active | Hands-on practice on real disposable machines |
 
 **Roadmap:** See [ROADMAP.md](ROADMAP.md) and [ontrak-tix/ROADMAP.md](ontrak-tix/ROADMAP.md) for detailed plans.
@@ -146,7 +148,7 @@ pointed at the provider, and the portal's password sign-in pointed at OnTrak
 Sync's account table):
 
 ```bash
-make all-up     # :3300 portal, :3000 training, :3001 desk, :8787 provider, :8420/:8421 Sync, :3400 Genie
+make all-up     # :3300 portal, :3000 training, :3001 desk, :8787 provider, :8420/:8421 Sync, :3400 Genie, :3500 Bolt's sign-in
 make all-demo   # optional: the demo data for both demo-able apps
 make all-down
 ```
@@ -723,9 +725,10 @@ language, audit chain, and identity layer:
 - [**OnTrak Sync**](ontrak-sync/README.md) — Network update monitoring and local account management
 - [**OnTrak Portal**](ontrak-portal/README.md) — Unified front door with role-based routing
 - [**OnTrak Genie**](ontrak-genie/README.md) — AI coding agent with approval gates
+- [**OnTrak Bolt**](ontrak-bolt/README.md) — In-browser app builder: a prompt, a project, a running app in one tab
 - [**OnTrak Lab**](ontrak-lab/README.md) — Hands-on practice on real disposable machines
 
-**How they work together:** Training **trains** technicians, Tix is where they **work**, Sentinel **protects** both, Sync keeps infrastructure **current**, Genie **accelerates** development workflows, Lab provides **hands-on practice**, and Portal is the **single entry point**. All products share a common role vocabulary, audit trail, and integrate seamlessly with the [Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack).
+**How they work together:** Training **trains** technicians, Tix is where they **work**, Sentinel **protects** both, Sync keeps infrastructure **current**, Genie **accelerates** development workflows, Bolt **builds** a new app from a prompt, Lab provides **hands-on practice**, and Portal is the **single entry point**. All products share a common role vocabulary, audit trail, and integrate seamlessly with the [Innotel Platform Stack](https://github.com/innotelinc/innotel-platform-stack).
 
 ## 🏛️ Platform stack
 

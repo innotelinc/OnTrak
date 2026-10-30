@@ -1,0 +1,138 @@
+/*
+ * ═══════════════════════════════════════════════════════════════════════════
+ * UNITY — the bridge from Bolt's tokens to the family palette.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Bolt is an upstream app (see README.md, *Provenance*) and it paints itself with
+ * ~80 `--bolt-elements-*` variables declared in `variables.scss`. None of them is a
+ * raw colour at the point of use: every component asks for a token, so the whole
+ * app can be re-pointed without touching a component. That is the seam this file
+ * uses, and it is the only reason the vendored app is on the family palette.
+ *
+ * WHY A BRIDGE AND NOT AN EDIT
+ * ----------------------------
+ * The alternative is to rewrite `variables.scss`, which is 300 lines of
+ * `theme('colors.*')` — and every rewrite of it is a file that has to be merged
+ * again the next time we take an upstream release. Here, upstream is left exactly
+ * as it is, and forty lines say where its tokens point. Re-vendoring is then a
+ * copy and this file keeps working, or fails loudly on a token upstream no longer
+ * has rather than silently painting half the app in the old purple.
+ *
+ * THE TWO AXES
+ * ------------
+ * Unity owns the appearance of every product: `data-mode` (light · dark · system)
+ * and `data-scheme` (desk · operations · soc) on `<html>`, written by
+ * `public/unity-theme.js`. Bolt has its own `data-theme` (light · dark), which
+ * `app/theme/unity-sync.ts` keeps in step with Unity's mode so its `dark:`
+ * variants agree with the palette. What the bridge does is make the *colours*
+ * follow Unity — these values are `var(--surface)` and friends, so a scheme
+ * switch on any page repaints Bolt too, with no second palette to maintain.
+ *
+ * The three selectors are deliberate. Bolt declares its tokens on
+ * `:root, :root[data-theme='light']` and `:root, :root[data-theme='dark']`, and a
+ * bare `:root` rule here would lose to both on specificity. Listing the same two
+ * selectors means an equal-specificity, later rule wins whichever theme is set.
+ *
+ * Nothing here names a raw colour: a token that changes per scheme is a token
+ * somebody can restyle in one place. The terminal's ANSI sixteen are the one
+ * exception, and they are not brand — they are the colours programs expect, so
+ * they are left to upstream.
+ */
+
+:root,
+:root[data-theme='light'],
+:root[data-theme='dark'] {
+  /* ── surfaces ─────────────────────────────────────────────────────────── */
+  --bolt-elements-bg-depth-1: var(--canvas);
+  --bolt-elements-bg-depth-2: var(--surface);
+  --bolt-elements-bg-depth-3: var(--surface-muted);
+  --bolt-elements-bg-depth-4: var(--surface-sunken);
+  --bolt-elements-borderColor: var(--line);
+  --bolt-elements-borderColorActive: var(--brand);
+  --bolt-elements-dividerColor: var(--line);
+
+  /* ── text ─────────────────────────────────────────────────────────────── */
+  --bolt-elements-textPrimary: var(--ink);
+  --bolt-elements-textSecondary: var(--ink-soft);
+  --bolt-elements-textTertiary: var(--ink-faint);
+  --bolt-elements-code-background: var(--surface-sunken);
+  --bolt-elements-code-text: var(--ink);
+
+  /* ── buttons ──────────────────────────────────────────────────────────── */
+  --bolt-elements-button-primary-background: var(--brand-soft);
+  --bolt-elements-button-primary-backgroundHover: color-mix(in srgb, var(--brand) 22%, transparent);
+  --bolt-elements-button-primary-text: var(--brand);
+  --bolt-elements-button-secondary-background: var(--surface-muted);
+  --bolt-elements-button-secondary-backgroundHover: var(--surface-sunken);
+  --bolt-elements-button-secondary-text: var(--ink);
+  --bolt-elements-button-danger-background: var(--bad-soft);
+  --bolt-elements-button-danger-backgroundHover: color-mix(in srgb, var(--bad) 24%, transparent);
+  --bolt-elements-button-danger-text: var(--bad);
+
+  /* ── menus and list items ─────────────────────────────────────────────── */
+  --bolt-elements-item-contentDefault: var(--ink-faint);
+  --bolt-elements-item-contentActive: var(--ink);
+  --bolt-elements-item-contentAccent: var(--brand);
+  --bolt-elements-item-contentDanger: var(--bad);
+  --bolt-elements-item-backgroundDefault: transparent;
+  --bolt-elements-item-backgroundActive: var(--surface-muted);
+  --bolt-elements-item-backgroundAccent: var(--brand-soft);
+  --bolt-elements-item-backgroundDanger: var(--bad-soft);
+
+  /* ── loading, icons, emphasis ─────────────────────────────────────────── */
+  --bolt-elements-loader-background: var(--surface-muted);
+  --bolt-elements-loader-progress: var(--brand);
+  --bolt-elements-icon-success: var(--ok);
+  --bolt-elements-icon-error: var(--bad);
+  --bolt-elements-icon-primary: var(--ink);
+  --bolt-elements-icon-secondary: var(--ink-soft);
+  --bolt-elements-icon-tertiary: var(--ink-faint);
+
+  /* ── artifacts, messages, code blocks ─────────────────────────────────── */
+  --bolt-elements-artifacts-background: var(--surface);
+  --bolt-elements-artifacts-backgroundHover: var(--surface-muted);
+  --bolt-elements-artifacts-borderColor: var(--line);
+  --bolt-elements-artifacts-inlineCode-background: var(--surface-muted);
+  --bolt-elements-artifacts-inlineCode-text: var(--ink);
+  --bolt-elements-actions-background: var(--surface);
+  --bolt-elements-actions-code-background: var(--surface-sunken);
+  --bolt-elements-messages-background: var(--surface);
+  --bolt-elements-messages-linkColor: var(--brand);
+  --bolt-elements-messages-code-background: var(--surface-sunken);
+  --bolt-elements-messages-inlineCode-background: var(--surface-muted);
+  --bolt-elements-messages-inlineCode-text: var(--ink);
+
+  /* ── prompt box, sidebar, call to action ──────────────────────────────── */
+  --bolt-elements-prompt-background: var(--surface);
+  --bolt-elements-sidebar-dropdownShadow: var(--shadow-pop);
+  --bolt-elements-sidebar-buttonBackgroundDefault: var(--brand-soft);
+  --bolt-elements-sidebar-buttonBackgroundHover: color-mix(in srgb, var(--brand) 22%, transparent);
+  --bolt-elements-sidebar-buttonText: var(--brand);
+  --bolt-elements-cta-background: var(--brand-soft);
+  --bolt-elements-cta-text: var(--brand);
+
+  /* ── the preview address bar ──────────────────────────────────────────── */
+  --bolt-elements-preview-addressBar-background: var(--surface-muted);
+  --bolt-elements-preview-addressBar-backgroundHover: var(--surface-sunken);
+  --bolt-elements-preview-addressBar-backgroundActive: var(--surface);
+  --bolt-elements-preview-addressBar-text: var(--ink-soft);
+  --bolt-elements-preview-addressBar-textActive: var(--ink);
+
+  /* ── the terminal pane (its ANSI sixteen are left to upstream) ────────── */
+  --bolt-elements-terminals-background: var(--surface-sunken);
+  --bolt-elements-terminals-buttonBackground: var(--surface-muted);
+  --bolt-elements-terminal-backgroundColor: var(--surface-sunken);
+  --bolt-elements-terminal-textColor: var(--ink);
+  --bolt-elements-terminal-cursorColor: var(--brand);
+  --bolt-elements-terminal-selection-backgroundColor: color-mix(in srgb, var(--brand) 30%, transparent);
+}
+
+/*
+ * The vendored app loads Inter from a CDN in `root.tsx`. The family's type is the
+ * system stack (`--font-sans`), so the page body is asked for it here rather than
+ * by editing the head: one rule, and the first paint before hydration is already
+ * in the right typeface.
+ */
+body {
+  font-family: var(--font-sans);
+}

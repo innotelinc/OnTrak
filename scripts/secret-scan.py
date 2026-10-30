@@ -175,6 +175,22 @@ TEST_PATH = re.compile(
     r"(^|/)(tests?|__tests__|spec|fixtures?)/|\.(test|spec)\.[A-Za-z]+$", re.IGNORECASE
 )
 
+# Vendored third-party source is scanned for *shapes* only, for the same reason
+# test fixtures are: the name-based rule reads an identifier and a literal, and
+# upstream's provider catalogue is full of lines that look exactly like a leaked
+# key to it — a `getApiKeyLink` constant set to the vendor's own key page, a
+# token-type field set to the word "personal", an event name ending in "api
+# keys updated". None of those is a credential, and the alternative to this
+# relaxation is an allowlist entry per file that every upstream sync silently
+# grows past.
+#
+# A real key in a vendored tree is still caught: `SHAPES` runs on every line of
+# every file regardless of path, so an `sk-…`, a `ghp_…`, an AWS key, a Slack
+# token, a Google key or a PEM block is reported wherever it sits. What is given
+# up here is only the inference "an identifier that says key/token/password is
+# assigned a literal", which is a guess about intent and not a shape.
+VENDORED_PATH = re.compile(r"^ontrak-bolt/")
+
 # A deliberately committed *private-key* fixture cannot be told apart from a
 # leaked one by its shape — the PEM header is byte-identical — so the exemption
 # has to be explicit and per-file rather than inferred from the path. This is
@@ -280,7 +296,7 @@ def is_placeholder(value: str) -> bool:
 
 def scan_text(label: str, text: str) -> list[Finding]:
     findings: list[Finding] = []
-    relaxed = bool(TEST_PATH.search(label))
+    relaxed = bool(TEST_PATH.search(label)) or bool(VENDORED_PATH.search(label))
 
     for number, line in enumerate(text.splitlines(), start=1):
         # Shape rules run on the raw line on purpose: a provider key sitting

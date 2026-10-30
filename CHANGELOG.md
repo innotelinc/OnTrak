@@ -1,5 +1,18 @@
 # Changelog — Ontrak ITS / the training range
 
+## Unreleased — OnTrak Bolt is published
+
+`bolt.ontrak.technology` is the family's eighth name and its seventh product: the app
+builder, running from `docker-compose.all.yml` (`bolt-app`) beside Genie. It is not
+reachable directly. `bolt-app` publishes no port and `bolt-sso` — an oauth2-proxy against
+the same `ontrak` OIDC client as the portal, gated to `ontrak-sysadmins` and
+`ontrak-admins` — holds the port the edge forwards to, because the builder has no
+account model of its own and spends the deployment's gateway key on every turn. Its
+gateway key is `cerulean/ontrak/bolt#OMNIROUTE_API_KEY` in Cerulean Vault, resolved by
+the image's entrypoint; the proxy's three credentials are `cerulean/ontrak/bolt-sso`,
+resolved by `scripts/deploy.sh`. `docs/family-operations.md` carries the row, the name,
+and the callback (`https://bolt.ontrak.technology/oauth2/callback`).
+
 ## 2.0.0 — 2026-10-24
 
 The family re-baseline. Everything shipped to date — the simulators and grading,

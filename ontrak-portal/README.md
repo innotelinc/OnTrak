@@ -29,6 +29,7 @@ out by being refused something at 9am. With it, there is one address:
 | **Analysts** | [sentinel.ontrak.technology](https://sentinel.ontrak.technology) — identity and intrusion detection |
 | **Sysadmins** | [sync.ontrak.technology](https://sync.ontrak.technology) — Network package and container updates |
 | **Sysadmins and builders** | [genie.ontrak.technology](https://genie.ontrak.technology) — the browser coding console |
+| **Sysadmins and builders** | [bolt.ontrak.technology](https://bolt.ontrak.technology) — Bolt: the app builder, a prompt to a running app in one tab |
 | **Sysadmins and builders** | [re.genie.innotel.us](https://re.genie.innotel.us) — Engineer: the reverse-engineering add-on, inside Genie |
 | **Sysadmins and builders** | [uc.genie.innotel.us](https://uc.genie.innotel.us) — Uncensored Godmode: the agent with the guardrails off, by subscription |
 | **Everyone** | [ontrak.technology](https://ontrak.technology) — this portal |
@@ -62,7 +63,7 @@ account table:
 | `INSTRUCTOR` | training, Class, the lab | `range-instructors`, `ontrak-instructors` |
 | `TECHNICIAN` | the desk | `ontrak-desk` |
 | `ANALYST` | Sentinel | `ontrak-analysts` |
-| `SYSADMIN` | the desk, Sentinel, Sync, Genie, Engineer, Godmode | `ontrak-sysadmins` |
+| `SYSADMIN` | the desk, Sentinel, Sync, Genie, Bolt, Engineer, Godmode | `ontrak-sysadmins` |
 | `ADMIN` | everything, plus account management | `ontrak-admins` |
 
 A group that matches nothing falls back to `STUDENT` — the *least* privileged role

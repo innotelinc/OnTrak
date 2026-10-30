@@ -1,8 +1,8 @@
 # Running the OnTrak family
 
-**Six products, one identity layer, seven names.** This is the operations guide:
+**Seven products, one identity layer, eight names.** This is the operations guide:
 what runs where, how a person gets in, and what to do when something does not.
-The seventh name is **OnTrak Lab** — the hands-on range, which the edge serves from
+The eighth name is **OnTrak Lab** — the hands-on range, which the edge serves from
 its own deployment rather than from a service this stack starts (§7).
 
 It is written for the deployment that exists, and it is deliberately specific —
@@ -21,12 +21,13 @@ an architecture instead of a deployment is a guide nobody can follow at 3am.
 | **Sentinel** | `sentinel.ontrak.technology` | 8787 | Identity provider and intrusion detection console |
 | **Sync** | `sync.ontrak.technology` | 8420 (API) / 8421 (dashboard) | Network package and container updates, and the family's local account table |
 | **Genie** | `genie.ontrak.technology` | 3400 | The browser console for a coding agent: it reads, edits and runs code in a workspace it cannot leave, and shows each call as it happens |
+| **Bolt** | `bolt.ontrak.technology` | 3500 | The app builder: writes an application in the browser and runs it in a WebContainer, with no workspace on the host. The port is its sign-in proxy's, not the app's |
 
-All six run on the **`ontrak` incus container**, `192.168.1.21`, on host **i1**
+All seven run on the **`ontrak` incus container**, `192.168.1.21`, on host **i1**
 (`192.168.1.51`). Each is independently deployable and each has its own stack;
 `docker-compose.all.yml` in the repository root runs them together.
 
-**`lab.ontrak.technology` is the seventh name, and the only one with no row in the
+**`lab.ontrak.technology` is the eighth name, and the only one with no row in the
 table above** — it is not a service in this stack. OnTrak Lab (ontrak-lab/) is its own
 deployment on its own host, and it publishes exactly one port: its own nginx, which
 serves its portal at `/` and its HTML5 console at `/guacamole/`. The family edge
@@ -46,7 +47,7 @@ Both stacks read `ONTRAK_GENIE_PORT`, so one setting moves whichever you are sta
    browser ────────▶│  Cerulean edge (192.168.1.71)            │
                     │   NPM :80/:443   +  *.ontrak wildcard     │
                     └────────────────┬─────────────────────────┘
-                                     │  seven proxy hosts
+                                     │  eight proxy hosts
                     ┌────────────────▼─────────────────────────┐
                     │  ontrak container · 192.168.1.21          │
                     │   :3300 portal   :8421 sync dashboard     │
@@ -126,7 +127,13 @@ https://tix.ontrak.technology/api/sso/callback        Tix
 https://sync.ontrak.technology/api/auth/sso/callback  Sync behind the edge
 https://genie.ontrak.technology/api/auth/callback     Genie, which signs in itself
 https://genie.innotel.us/api/auth/callback            the same Genie at the platform's name
+https://bolt.ontrak.technology/oauth2/callback        Bolt, through its sign-in proxy
 ```
+
+Bolt is the one callback on that list that is not the product's own route: the builder has
+no sign-in, so `bolt-sso` (an oauth2-proxy, the same one in front of the engineer portal)
+holds the session and `bolt.ontrak.technology` forwards to it. The app itself publishes no
+port — the proxy is the only door.
 
 `./scripts/cerulean-ontrak.py --print-redirect-uris` prints the same list — this list,
 and not a second copy of it: `tests/family-ops.test.ts` compares the two, because they
@@ -162,10 +169,10 @@ python3 /path/to/ontrak/scripts/cerulean-ontrak.py              # do it
 ```
 
 It ensures, for each name (the lab's included — it is the same script that publishes
-all seven): a Technitium A record at the address the zone apex already uses, an NPM
+all eight): a Technitium A record at the address the zone apex already uses, an NPM
 proxy host forwarding to the product's port, and the certificate that covers the name
 — including the Network's `*.ontrak.technology` wildcard, which is the one that
-matters for the six subdomains.
+matters for the seven subdomains.
 
 ### `already in use`, and why it is not obvious
 
@@ -437,6 +444,7 @@ account table is not affected by Cerulean being down.
 | Sync `sync.ontrak.technology` | `ONTRAK_ADMIN_USER` and the password printed once on an empty database (`docker logs ontrak-sync-api | grep 'generated password'`), or Cerulean. |
 | Genie `genie.ontrak.technology` | **Sign in with Cerulean**, through the same `ontrak` client as the portal; with no issuer configured the console falls back to its own `WEB_TOKEN`. |
 | Lab `lab.ontrak.technology` | **Sign in with Cerulean**, the same `ontrak` client with the lab's own callback (`https://lab.ontrak.technology/oidc/callback`), registered first so the lab cannot fall back to the portal's. The range keeps no password; its HTML5 console is Guacamole inside the lab's own gateway, at `/guacamole/`. |
+| Bolt `bolt.ontrak.technology` | **Sign in with Cerulean**, at the edge proxy rather than in the app, and only for `ontrak-sysadmins` and `ontrak-admins` — the builder spends the deployment's gateway key on every turn, so "has an account" is not the bar. |
 
 A person's *role* decides which tiles the portal draws: `ontrak-students` and
 `ontrak-instructors` reach training, `ontrak-desk` reaches Tix, `ontrak-analysts`
@@ -458,7 +466,7 @@ somebody's afternoon:
   what the product is.
 - **SAML and IdP-initiated sign-on** are not implemented; the flow is
   SP-initiated OIDC only.
-- **OnTrak Lab is the seventh name.** The machines are a peer deployment — its own Python
+- **OnTrak Lab is the eighth name.** The machines are a peer deployment — its own Python
   tree here at `ontrak-lab/`, on its own host — while the console that renders them runs in
   *this* stack (`guacd` + `guacamole` in `docker-compose.all.yml`, publishing 8080, at the
   `/guacamole/` path the name already forwards). A lab that runs its own control plane

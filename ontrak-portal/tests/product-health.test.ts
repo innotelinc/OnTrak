@@ -41,6 +41,10 @@ const EXPECTED_HEALTH: Record<string, string> = {
   sentinel: "/health",
   sync: "/health",
   genie: "/health",
+  // Bolt answers its own liveness endpoint, and the sign-in proxy in front of it
+  // lets that one path through without a cookie — the same arrangement the classroom
+  // host has. `/` would be answered by the sign-in redirect instead.
+  bolt: "/api/health",
   // Engineer is served by the Genie console's edge under its own name and answers
   // the same unauthenticated `/health` the console does, so it is probed the same way.
   engineer: "/health",

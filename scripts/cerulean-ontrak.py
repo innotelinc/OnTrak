@@ -9,6 +9,7 @@ Creates what the seven public names need and nothing else:
     sentinel.ontrak.technology     → the identity/IDS   (:8787)
     sync.ontrak.technology         → Network updates     (:8421)
     genie.ontrak.technology        → the agent console   (:3400)
+    bolt.ontrak.technology         → the app builder     (:3500, its sign-in proxy)
     lab.ontrak.technology          → OnTrak Lab          (:8080)
 
 OnTrak Lab is the one name here that is not a service in `docker-compose.all.yml`:
@@ -124,6 +125,18 @@ HOSTS = [
         "websocket": False,
     },
     {
+        "name": "bolt.ontrak",
+        # 3500 is the builder's reserved port, and on this stack it is the sign-in
+        # proxy's: `bolt-app` publishes nothing, so this is the only way in. Pointing
+        # the edge at the app instead would hand a gateway-funded console to anyone
+        # who typed the name.
+        "port": 3500,
+        "purpose": "OnTrak Bolt — the app builder, behind the family's sign-in",
+        # A turn is streamed as an ordinary HTTP response, and the WebContainer
+        # talks to StackBlitz's origin, not to this one: nothing here upgrades.
+        "websocket": False,
+    },
+    {
         "name": "lab.ontrak",
         "port": 8080,
         "purpose": "OnTrak Lab — real machines for the hands-on half of a task",
@@ -151,6 +164,7 @@ REDIRECT_URIS = [
     "https://tix.ontrak.technology/api/sso/callback",      # the desk
     "https://sync.ontrak.technology/api/auth/sso/callback",  # OnTrak Sync behind the edge
     "https://genie.ontrak.technology/api/auth/callback",   # Genie, which signs in itself
+    "https://bolt.ontrak.technology/oauth2/callback",      # Bolt, behind oauth2-proxy
     "https://genie.innotel.us/api/auth/callback",          # Genie at the platform's name
 ]
 

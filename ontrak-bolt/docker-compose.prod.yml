@@ -1,0 +1,37 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# OnTrak Bolt — the deployment overlay.
+#
+# `docker-compose.yml` describes the development stack. This sits on top of it for
+# an actual deployment, so it is always used as an overlay, never alone:
+#
+#   cp .env.production.example .env.production   # then fill it in
+#
+# then:
+#
+#   docker compose --env-file .env.production \
+#     -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Three things change, and each is the point of the file:
+#
+#   * **The image is pulled, not built.** `image:` names the release to fetch and
+#     `build: !reset null` removes the build context the development file declares,
+#     so a deployment needs no source tree and no pnpm store on the host.
+#   * **The configuration comes from `.env.production`** rather than `.env`, so a
+#     deployment cannot inherit a laptop's `.env` by accident.
+#   * Containers **restart always**, because a deployment is expected to come back
+#     by itself rather than wait for someone to notice.
+#
+# There is no database, no migration and no volume: a Bolt project is a WebContainer
+# in a browser tab, and the deployment holds no state of its own. That is why this
+# overlay is four lines of substance instead of Genie's page of them.
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  app:
+    restart: always
+    image: ghcr.io/innotelinc/ontrak-bolt:${ONTRAK_IMAGE_TAG:-latest}
+    build: !reset null
+    pull_policy: always
+    env_file: !override [.env.production]
+    ports: !override
+      - "${ONTRAK_BOLT_PORT:-3500}:5173"

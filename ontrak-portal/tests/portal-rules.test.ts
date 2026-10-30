@@ -84,7 +84,7 @@ describe("the catalogue", () => {
     assert.deepEqual(productsFor("TECHNICIAN").map((p) => p.key), ["tix"]);
     assert.deepEqual(productsFor("ANALYST").map((p) => p.key), ["sentinel"]);
     assert.deepEqual(productsFor("SYSADMIN").map((p) => p.key), [
-      "tix", "sentinel", "sync", "genie", "engineer", "godmode",
+      "tix", "sentinel", "sync", "genie", "bolt", "engineer", "godmode",
     ]);
     assert.deepEqual(productsFor("ADMIN").map((p) => p.key), [
       "its",
@@ -92,6 +92,7 @@ describe("the catalogue", () => {
       "sentinel",
       "sync",
       "genie",
+      "bolt",
       "engineer",
       "godmode",
       "class",
@@ -240,7 +241,7 @@ describe("the catalogue", () => {
     // one optional entry.
     assert.deepEqual(
       tilesFor("ADMIN").map((tile) => tile.key),
-      ["its", "tix", "sentinel", "sync", "genie", "engineer", "godmode", "class"],
+      ["its", "tix", "sentinel", "sync", "genie", "bolt", "engineer", "godmode", "class"],
     );
     assert.equal(runsHere(product("its")!), true);
     assert.equal(runsHere(product("lab")!), false);
@@ -460,6 +461,7 @@ describe("the README's role table", () => {
     sentinel: "Sentinel",
     sync: "Sync",
     genie: "Genie",
+    bolt: "Bolt",
     engineer: "Engineer",
     godmode: "Godmode",
     class: "Class",

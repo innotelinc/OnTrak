@@ -134,6 +134,34 @@ else
   echo "deploy:   cp onyx-sso/.env.example onyx-sso/.env   (then deploy again)" >&2
 fi
 
+# Bolt's sign-in is the same shape for the same reason: a stock proxy, so the vault
+# is read here and compose interpolates the result. Its keys are named
+# `ONTRAK_BOLT_SSO_*` rather than the bare `OAUTH2_PROXY_*` so that resolving this
+# door cannot overwrite ONYX's.
+if [ -f bolt-sso/.env ]; then
+  echo "deploy: resolving Bolt's sign-in from Cerulean Vault"
+  command -v node >/dev/null 2>&1 || {
+    echo "deploy: bolt-sso/.env needs node to resolve (scripts/vault-env.mjs)" >&2
+    exit 1
+  }
+  set -a
+  # shellcheck disable=SC1090  # the deployment's own file, not a source file
+  . bolt-sso/.env
+  set +a
+  resolved=$(VAULT_ADDR="${VAULT_ADDR:-http://192.168.1.71:8200}" \
+    VAULT_PREFIX="${VAULT_PREFIX:-cerulean}" \
+    VAULT_TOKEN_FILE="${VAULT_TOKEN_HOST_FILE:-data/vault/token/ontrak.token}" \
+    node scripts/vault-env.mjs \
+      ONTRAK_BOLT_SSO_CLIENT_ID ONTRAK_BOLT_SSO_CLIENT_SECRET ONTRAK_BOLT_SSO_COOKIE_SECRET) || {
+    echo "deploy: could not resolve Bolt's sign-in from bolt-sso/.env" >&2
+    exit 1
+  }
+  eval "$resolved"
+else
+  echo "deploy: no bolt-sso/.env — Bolt's sign-in will start without credentials" >&2
+  echo "deploy:   cp bolt-sso/.env.example bolt-sso/.env   (then deploy again)" >&2
+fi
+
 echo "deploy: starting the family stack"
 "${compose[@]}" up -d --build
 
