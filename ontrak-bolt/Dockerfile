@@ -50,11 +50,22 @@ WORKDIR /app
 ENV HUSKY=0
 ENV CI=true
 
-# Use pnpm
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+# Use pnpm.
+#
+# Both fetches below are wrapped in retries because the build hosts this image is
+# deployed from sit behind a NAT whose egress resets the occasional TLS connection:
+# a single unretried `corepack prepare` failed the whole build on the first
+# deployment (`Internal Error: Error when performing the request to
+# https://registry.npmjs.org/...`) while the same request succeeded on the retry.
+RUN corepack enable \
+  && for attempt in 1 2 3; do corepack prepare pnpm@9.15.9 --activate && break; sleep 5; done \
+  && pnpm --version
 
-# Ensure git is available for build and runtime scripts
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+# Ensure git is available for build and runtime scripts.
+# `Acquire::Retries` is the apt equivalent of the retry above: a dropped index or
+# package download is retried instead of failing the image.
+RUN apt-get -o Acquire::Retries=5 update \
+  && apt-get -o Acquire::Retries=5 install -y --no-install-recommends git \
   && rm -rf /var/lib/apt/lists/*
 
 # Accept (optional) build-time public URL for Remix/Vite (Coolify can pass it)
@@ -70,9 +81,12 @@ ENV VITE_PUBLIC_APP_URL=${VITE_PUBLIC_APP_URL}
 # mean anything.
 ENV BUILD_TARGET=node
 
-# Install deps efficiently
+# Install deps efficiently.
+# pnpm's defaults (2 retries) are tuned for a healthy network; this host drops the
+# odd connection, so retry more and lower the parallel request count that the
+# flaky egress has to sustain.
 COPY package.json pnpm-lock.yaml* ./
-RUN pnpm fetch
+RUN pnpm fetch --fetch-retries=6 --fetch-timeout=120000 --network-concurrency=6
 
 # Copy source and build
 COPY . .
@@ -109,7 +123,8 @@ ENV WRANGLER_SEND_METRICS=false \
 # and no key is ever baked into the image.
 
 # Install curl for healthchecks
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
+RUN apt-get -o Acquire::Retries=5 update \
+  && apt-get -o Acquire::Retries=5 install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
 
 # Copy built files
