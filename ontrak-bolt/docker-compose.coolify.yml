@@ -1,0 +1,76 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# OnTrak Bolt — the Coolify deployment (192.168.1.93).
+#
+#   Coolify → + New → Docker Compose → this repository
+#     Base Directory        /
+#     Docker Compose Location  /docker-compose.coolify.yml
+#
+# This file is **standalone on purpose**: `docker-compose.prod.yml` is an overlay
+# over the development file and needs both halves plus a `.env.production`, which is
+# the right shape for a host someone is sitting at and the wrong shape for a deploy
+# platform that checks out one commit and runs one file. Nothing here builds, either:
+# the image is published by `.gitea/workflows/publish.yml` to this estate's Gitea
+# registry, so a deployment is a pull of a tag that names a commit.
+#
+# ## Why no `ports:`
+#
+# Coolify's proxy reaches the container over the compose network; the domain is set
+# in the resource (Domains → Add domain → service `app`, internal port **5173**), not
+# here. Publishing `3500:5173` would also work, and would put a second door on a host
+# where only the proxy is supposed to have one — see README.md, *Before you expose it*.
+# The `expose` below is documentation of the port the proxy must be pointed at.
+#
+# ## The two values that are deployment facts, not defaults
+#
+#   PREVIEW_ALLOWED_HOSTS  `vite preview` answers 403 to a Host it was not told
+#                          about, so it must be the hostname Coolify serves. The
+#                          default is the family's name; a Bolt on any other name has
+#                          to say so, or the console loads and every request 403s.
+#   OPENAI_LIKE_API_KEY    empty is a valid state — the console then offers no
+#                          provider and says so — but it is not a useful one.
+#
+# Everything `${…}` below becomes an editable variable in the Coolify resource, so the
+# key is entered in the UI and never committed.
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  app:
+    # The deployment's tag: `main` follows the branch, `sha-<commit>` pins a build
+    # (README.md, *Rolling back*). Coolify keeps the value it has; the deploy webhook
+    # redeploys whatever this names.
+    image: ${ONTRAK_BOLT_IMAGE:-gitlab.innotel.us/innotelinc/ontrak-bolt:main}
+    pull_policy: always
+    restart: always
+    init: true
+    # A laptop `.env` is absent in a Coolify checkout — optional keeps that from being
+    # a start failure, and the `environment:` block below is what actually configures
+    # the container.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: "5173"
+      HOST: 0.0.0.0
+      NODE_ENV: production
+      RUNNING_IN_DOCKER: "true"
+      # The one model endpoint this deployment uses. The worker is rendered from these
+      # three at boot (`docker-entrypoint.sh`), because `vite preview` runs the app in
+      # an isolate that cannot read the container's environment.
+      OPENAI_LIKE_API_BASE_URL: ${OPENAI_LIKE_API_BASE_URL:-https://gateway.telno.services/v1}
+      OPENAI_LIKE_API_KEY: ${OPENAI_LIKE_API_KEY:-}
+      OPENAI_LIKE_API_MODELS: ${OPENAI_LIKE_API_MODELS:-auto/coding:200000;auto/best-coding:200000;auto/best-chat:200000;auto/cheap:200000;auto/thrifty:200000}
+      # The rate limiter needs to name a client; the image's preview server stamps
+      # this from the TCP peer, so the header cannot be forged by a browser.
+      BUG_REPORT_TRUSTED_IP_HEADER: x-real-ip
+      PREVIEW_ALLOWED_HOSTS: ${PREVIEW_ALLOWED_HOSTS:-bolt.ontrak.technology}
+      # Cerulean Vault, only when the key above is a `vault://` reference. With these
+      # empty the entrypoint skips resolution and a plain value passes through; with
+      # VAULT_ADDR set and no readable token the container refuses to start, which is
+      # the designed failure. Mount the token by uncommenting the volume below.
+      VAULT_ADDR: ${VAULT_ADDR:-}
+      VAULT_TOKEN_FILE: ${VAULT_TOKEN_FILE:-}
+      VAULT_PREFIX: ${VAULT_PREFIX:-cerulean}
+    expose:
+      - "5173"
+    # volumes:
+    #   - /etc/ontrak/bolt.token:/vault/token/bolt.token:ro

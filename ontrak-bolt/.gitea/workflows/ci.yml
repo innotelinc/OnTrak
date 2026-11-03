@@ -1,0 +1,67 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# ci.yml — the checks that must be green before an image is published.
+#
+# This is the Gitea twin of the `bolt` job in `../.github/workflows/ci.yml`, and it
+# exists because the two forges are not the same forge: GitHub stops seeing a push
+# the day this product is pushed to `gitlab.innotel.us`, and a pipeline that only
+# runs on the mirror is a pipeline that runs on a tree nobody deploys.
+#
+# The steps are deliberately the same four, in the same order, with the same
+# toolchain: Node 24, `corepack` + the lockfile, `typecheck`, `test`. That is what
+# makes a green run here mean what a green run there means — the image is built on
+# Node 24 from the same lockfile, so a suite that passes on another major or another
+# pnpm is a suite that never ran inside the container.
+#
+# There is no `build` step: the publish workflow builds the image, which compiles the
+# serving stage. What a unit suite adds over that is the rules a compiler cannot see,
+# and duplicating the build here would only make the queue longer.
+#
+# Requires a runner registered against this repository with the `ubuntu-latest`
+# label — see README.md, *Deploying from Gitea through Coolify*.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    # Bounded for the same reason as GitHub's copy: without a ceiling a hang holds
+    # the runner for the instance's default — minutes of work, hours of waiting.
+    # The slowest step here is the Vite test run at about three minutes.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # The major the image is built on (Dockerfile), not the one the runner
+          # happens to ship.
+          node-version: 24
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.9 --activate
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Tests
+        run: pnpm test

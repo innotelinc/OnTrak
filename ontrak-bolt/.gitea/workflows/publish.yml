@@ -1,0 +1,177 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# publish.yml — build the image, push it to this Gitea's own registry, and ask
+# Coolify (192.168.1.93) to deploy it.
+#
+# This is the estate's twin of `.github/workflows/publish.yml`: the same image, the
+# same serving stage (`bolt-ai-production`), and the same tag shape — different
+# registry, because the machine that deploys is on the LAN beside the forge rather
+# than beside GitHub. `gitlab.innotel.us/innotelinc/ontrak-bolt` is the name Coolify
+# pulls; GHCR remains for the GitHub mirror.
+#
+# ## Why the image is built here rather than on the deploy host
+#
+# Coolify *can* build this repository itself (README.md documents that path, and it
+# is the one to use when there is no runner), but a build on 192.168.1.93 is a build
+# whose inputs nobody keeps: the tag it produces is not the tag a rollback needs, and
+# two deploys of the same commit can differ. Publishing here gives every deployment
+# an immutable `sha-<commit>` tag, which is what "roll back to last Tuesday" needs.
+#
+# ## What a run needs
+#
+#   * A runner registered against this repository with the `ubuntu-latest` label and
+#     access to a Docker daemon. `act_runner` runs jobs in a container; the daemon is
+#     reached through the mounted socket or `DOCKER_HOST`. Without one, the job fails
+#     at the first `docker` command rather than pretending to publish.
+#   * `packages: write` on the job token — Gitea's `GITEA_TOKEN` carries the job's
+#     permission scopes, so no personal access token is required for the push. If the
+#     instance's package registry refuses the job token, set `REGISTRY_USERNAME` and
+#     `REGISTRY_TOKEN` (a user token with `write:package`) as repository secrets; they
+#     take precedence.
+#   * `COOLIFY_DEPLOY_WEBHOOK` and `COOLIFY_TOKEN` to trigger the deployment. Both are
+#     optional on purpose: a repository that has not decided where it deploys still
+#     publishes images, and says so in the log instead of failing the build.
+#
+# Tag shape matches the GitHub workflow so an image from either forge is the same
+# artifact: a release tag `v1.2.3` publishes `1.2.3`, `1.2`, `latest`; a push to
+# `main` publishes `main`; every run publishes `sha-<12>`.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: Publish image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # The job token is what signs in to the registry; see the header.
+  packages: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  # Never cancel mid-push: a half-uploaded tag is worse than a slow one.
+  cancel-in-progress: false
+
+env:
+  REGISTRY: gitlab.innotel.us
+  IMAGE: gitlab.innotel.us/innotelinc/ontrak-bolt
+  # The serving stage — the last stage of the Dockerfile, named rather than implied,
+  # so a stage added below it later cannot silently become the published image.
+  TARGET: bolt-ai-production
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    # Bounded: a cold build of this tree takes a few minutes; this ends a hang
+    # rather than timing a healthy run.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Sign in to the registry
+        env:
+          GITEA_JOB_TOKEN: ${{ secrets.GITEA_TOKEN }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          set -eu
+          user="${REGISTRY_USERNAME:-${{ github.actor }}}"
+          token="${REGISTRY_TOKEN:-$GITEA_JOB_TOKEN}"
+
+          if [ -z "$token" ]; then
+            echo "No registry credential: set REGISTRY_USERNAME/REGISTRY_TOKEN, or give the job token packages: write." >&2
+            exit 1
+          fi
+
+          printf '%s' "$token" | docker login "$REGISTRY" --username "$user" --password-stdin
+
+      - name: Work out the tags
+        id: tags
+        run: |
+          set -eu
+          ref_name="${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD)}"
+          sha="$(git rev-parse --short=12 HEAD)"
+          tags="$IMAGE:sha-$sha"
+          ref_tag=""
+
+          case "$ref_name" in
+            v[0-9]*.[0-9]*.[0-9]*)
+              version="${ref_name#v}"
+              ref_tag="$version"
+              tags="$tags $IMAGE:$version $IMAGE:${version%.*} $IMAGE:latest"
+              ;;
+            main|master)
+              ref_tag="$ref_name"
+              tags="$tags $IMAGE:$ref_name"
+              ;;
+          esac
+
+          {
+            echo "sha=$sha"
+            echo "ref_name=$ref_name"
+            echo "ref_tag=$ref_tag"
+            echo "tags=$tags"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Tags:"
+          printf '  %s\n' $tags
+
+      - name: Build
+        run: |
+          set -eu
+          sha='${{ steps.tags.outputs.sha }}'
+          docker build \
+            --target "$TARGET" \
+            --label org.opencontainers.image.revision="$sha" \
+            --label org.opencontainers.image.source="https://gitlab.innotel.us/innotelinc/ontrak-bolt" \
+            --label org.opencontainers.image.title="OnTrak Bolt" \
+            -t "$IMAGE:sha-$sha" \
+            .
+
+      - name: Tag and push
+        run: |
+          set -eu
+          sha='${{ steps.tags.outputs.sha }}'
+
+          # Every tag points at the image just built, so the release tags cannot
+          # drift from the commit tag they describe.
+          for tag in ${{ steps.tags.outputs.tags }}; do
+            if [ "$tag" != "$IMAGE:sha-$sha" ]; then
+              docker tag "$IMAGE:sha-$sha" "$tag"
+            fi
+          done
+
+          for tag in ${{ steps.tags.outputs.tags }}; do
+            docker push "$tag"
+          done
+
+      - name: Ask Coolify to deploy
+        env:
+          COOLIFY_DEPLOY_WEBHOOK: ${{ secrets.COOLIFY_DEPLOY_WEBHOOK }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          set -eu
+
+          if [ -z "${COOLIFY_DEPLOY_WEBHOOK:-}" ] || [ -z "${COOLIFY_TOKEN:-}" ]; then
+            echo "COOLIFY_DEPLOY_WEBHOOK / COOLIFY_TOKEN are not set on this repository."
+            echo "The image is published; the deployment was not triggered. See README.md,"
+            echo "*Deploying from Gitea through Coolify*, for the two secrets."
+            exit 0
+          fi
+
+          body="$(mktemp)"
+          code="$(curl -sS -m 60 -o "$body" -w '%{http_code}' -X GET \
+            "$COOLIFY_DEPLOY_WEBHOOK" -H "Authorization: Bearer $COOLIFY_TOKEN")"
+
+          cat "$body"
+
+          case "$code" in
+            200|201|202) echo "Coolify accepted the deployment ($code)." ;;
+            *)
+              echo "Coolify answered $code — the image is published but the deploy was not queued." >&2
+              exit 1
+              ;;
+          esac

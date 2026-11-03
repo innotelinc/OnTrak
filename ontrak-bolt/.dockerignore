@@ -1,6 +1,7 @@
-# Ignore Git and GitHub files
+# Ignore Git and forge files (a forge's workflow directory is not build input).
 .git
 .github/
+.gitea/
 
 # Ignore Husky configuration files
 .husky/

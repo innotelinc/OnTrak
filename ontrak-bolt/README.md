@@ -228,6 +228,111 @@ cp .env.production.example .env.production
 docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
+## Deploying from Gitea through Coolify
+
+This is how the estate deploys Bolt: from its own forge, not from GitHub. A push to
+`https://gitlab.innotel.us/innotelinc/ontrak-bolt` (the Gitea on `192.168.1.21`) runs
+the checks, builds the image, pushes it to that instance's registry, and asks
+**Coolify on `192.168.1.93`** to pull the new tag and restart the container. GitHub
+stays the upstream mirror and its workflow is unchanged; neither pipeline knows about
+the other.
+
+```
+push ─▶ Gitea .21 · innotelinc/ontrak-bolt          registry .21
+gitlab.innotel.us/innotelinc/ontrak-bolt:<tag>
+         │                                                  ▲
+         ├─ .gitea/workflows/ci.yml      typecheck, tests   │ image
+         └─ .gitea/workflows/publish.yml ───────────────────┘
+                     │
+                     └─ deploy webhook ─▶ Coolify .93 ──pull──▶ bolt :5173 ──▶ https://<domain>
+```
+
+### One-time setup
+
+1. **The repository.** Create `innotelinc/ontrak-bolt` on the Gitea instance (private,
+   no README). This checkout is the family monorepo, so the push is a subtree split:
+   `ontrak-bolt/` becomes the root of the Gitea repository and the other products never
+   appear in it — which is what puts `.gitea/workflows/` where a forge reads it.
+
+   ```bash
+   scripts/push-to-gitea.sh --dry-run   # split, show the root and the tip, push nothing
+   scripts/push-to-gitea.sh             # add the `gitea` remote and push
+   ```
+
+   It reads commits, not the working tree: commit first. `--force` is for a rewritten
+   history and nothing else.
+
+2. **A runner.** Gitea does not run jobs itself. Register an `act_runner` against the
+   repository or its owner with the `ubuntu-latest` label, and give it a Docker daemon
+   (the mounted `/var/run/docker.sock`, or `DOCKER_HOST` to a dind). A runner without
+   one gets as far as `docker build` and stops.
+
+3. **The deploy secrets**, in *repository → Settings → Actions → Secrets*:
+
+   | secret | where it comes from |
+   | --- | --- |
+   | `COOLIFY_DEPLOY_WEBHOOK` | Coolify → the application → **Webhooks** → *Deploy Webhook (auth required)* |
+   | `COOLIFY_TOKEN` | Coolify → **Keys & Tokens → API Tokens**, a deploy-only token |
+   | `REGISTRY_USERNAME`, `REGISTRY_TOKEN` | optional — a Gitea user token with `write:package`, only if the job token is refused by the registry |
+
+   Both Coolify secrets are optional: with neither set the workflow still publishes
+   the image and says in the log that it did not deploy.
+
+4. **A resource in Coolify.** Two shapes work, and they differ in where the image is
+   built:
+
+   * **Pull (recommended, and what the workflow above assumes).** + New → Docker
+     Compose → this repository, branch `main`. Base Directory `/`, Docker Compose
+     Location `/docker-compose.coolify.yml`. The image comes from
+     `gitlab.innotel.us/innotelinc/ontrak-bolt:main`, so Coolify needs the registry
+     credential from step 5. Every push to `main` asks for a redeploy, and the pull
+     policy is `always`, so the new tag is what actually runs.
+   * **Build.** + New → Application → this repository, Build Pack **Dockerfile**,
+     Base Directory `/`, Dockerfile `/Dockerfile`, exposed port `5173`. Coolify clones
+     and builds each deploy. It needs no registry credential, it is slower, and the
+     tag it builds belongs to nobody — which is why it is the fallback rather than the
+     default. Gitea's own webhook can drive it: Coolify's *Git* webhook URL, pasted into
+     the repository's Settings → Webhooks.
+
+5. **Registry credentials on .93** for the pull path: Coolify → **Private Registries**
+   → `gitlab.innotel.us`, username = the Gitea account that owns the token, password =
+   a Gitea token with `read:package`. Without it the deploy fails on `pull access
+   denied` — the failure is in the deployment log, not in this repository.
+
+6. **The domain**, in the resource: Domains → Add domain → service `app`, internal
+   port **5173**, then TLS. Set `PREVIEW_ALLOWED_HOSTS` to that hostname in the
+   resource's environment variables: `vite preview` answers 403 to any Host it was not
+   told about, and a domain that is not listed loads a blank console rather than an
+   error anyone can act on. `OPENAI_LIKE_API_KEY` is the other variable a useful
+   deployment needs (see `.env.example`).
+
+### Rolling back
+
+The publish workflow tags every build by commit (`sha-<12>`), and the release tags
+`<version>`, `<major>.<minor>` and `latest` when a `v*` tag is pushed. A rollback is a
+change of tag, not a rebuild:
+
+```bash
+COOLIFY_DEPLOY_WEBHOOK='…' COOLIFY_TOKEN='…' scripts/deploy-coolify.sh   # redeploy as-is
+```
+
+Set `ONTRAK_BOLT_IMAGE` in Coolify to `gitlab.innotel.us/innotelinc/ontrak-bolt:sha-<commit>`
+and run the command above. The Coolify deploy webhook cannot choose a tag — the
+resource's variable is the only thing that does — so pinning is deliberate.
+
+### Verifying a deployment
+
+```bash
+curl -fsS https://<domain>/api/health                     # the app answers at all
+curl -sS -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer <token>' \
+  "https://gitlab.innotel.us/v2/"                         # 401 = registry reachable, not authorised
+```
+
+In Gitea, the Actions run for the pushed commit should be green in both workflows; in
+Coolify, the deployment it queued should end `finished`, not merely be accepted. The
+image a container is running is `docker inspect --format '{{.Config.Image}}' <container>`
+on the .93 host — the same string `ONTRAK_BOLT_IMAGE` names.
+
 ## Before you expose it
 
 **It has to be served over HTTPS.** Bolt runs the app it builds in a WebContainer,
@@ -271,6 +376,7 @@ the console opened on a provider that could only answer
 | `app/theme/`, `app/components/ThemeToggle.tsx`, `app/components/header/Header.tsx`, `app/styles/unity-bridge.scss`, `app/types/theme.ts`, `app/routes/_index.tsx` | this fork (files 2 and 3 above) |
 | `public/unity-theme.js`, `public/ontrak-bolt-*.svg` | this fork |
 | `Dockerfile`, `docker-entrypoint.sh`, `scripts/render-worker-vars.mjs`, `scripts/vault-env.mjs`, `docker-compose*.yml`, `.env.example`, `.env.production.example`, `README.md` | this fork |
+| `.gitea/workflows/`, `scripts/push-to-gitea.sh`, `scripts/deploy-coolify.sh` | this fork — the Gitea → Coolify pipeline |
 
 Upstream's own notes are kept as they shipped: [`FAQ.md`](FAQ.md),
 [`CHANGES.md`](CHANGES.md), [`PROJECT.md`](PROJECT.md), and `docs/`.
