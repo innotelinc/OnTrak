@@ -1,3 +1,5 @@
+import { DEFAULT_GITEA_BASE_URL } from '~/lib/services/giteaApiService';
+import { giteaConnectionStore } from '~/lib/stores/giteaConnection';
 import { githubConnectionStore } from '~/lib/stores/githubConnection';
 import { gitlabConnection, gitlabConnectionStore } from '~/lib/stores/gitlabConnection';
 import { useMCPStore } from '~/lib/stores/mcp';
@@ -8,7 +10,8 @@ import type { NetlifyUser } from '~/types/netlify';
 import type { SupabaseStats, SupabaseUser } from '~/types/supabase';
 import type { VercelUser, VercelUserResponse } from '~/types/vercel';
 
-export type ConnectorActivationId = 'github' | 'gitlab' | 'vercel' | 'netlify' | 'supabase' | 'browserUseCloud';
+export type ConnectorActivationId =
+  'github' | 'gitlab' | 'gitea' | 'vercel' | 'netlify' | 'supabase' | 'browserUseCloud';
 
 // Browser Use Cloud MCP server configuration
 const BROWSER_USE_SERVER = 'browser-use-cloud';
@@ -59,6 +62,23 @@ export async function activateConnector(connector: ConnectorActivationId, entere
 
       if (!result.success) {
         throw new Error(result.error || 'GitLab rejected this token. Check it and try again.');
+      }
+
+      return;
+    }
+
+    case 'gitea': {
+      const connection = giteaConnectionStore.get();
+      const token = apiKey || connection.token;
+
+      if (!token) {
+        throw new Error('Enter a Gitea access token to enable this connector.');
+      }
+
+      const result = await giteaConnectionStore.connect(token, connection.baseUrl || DEFAULT_GITEA_BASE_URL);
+
+      if (!result.success) {
+        throw new Error(result.error || 'Gitea rejected this token. Check it and try again.');
       }
 
       return;

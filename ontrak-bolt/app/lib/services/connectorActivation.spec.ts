@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   githubConnect: vi.fn(),
   gitlabConnect: vi.fn(),
+  giteaConnect: vi.fn(),
   vercelUpdate: vi.fn(),
   netlifyUpdate: vi.fn(),
   supabaseUpdate: vi.fn(),
@@ -19,6 +20,12 @@ vi.mock('~/lib/stores/githubConnection', () => ({
 vi.mock('~/lib/stores/gitlabConnection', () => ({
   gitlabConnection: { get: () => ({ token: '', gitlabUrl: 'https://gitlab.com' }) },
   gitlabConnectionStore: { connect: mocks.gitlabConnect },
+}));
+vi.mock('~/lib/stores/giteaConnection', () => ({
+  giteaConnectionStore: {
+    get: () => ({ token: '', baseUrl: 'https://gitlab.innotel.us' }),
+    connect: mocks.giteaConnect,
+  },
 }));
 vi.mock('~/lib/stores/vercel', () => ({
   vercelConnection: { get: () => ({ token: '' }) },
@@ -48,7 +55,15 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('connector activation', () => {
   it('rejects missing credentials for every connector', async () => {
-    for (const connector of ['github', 'gitlab', 'vercel', 'netlify', 'supabase', 'browserUseCloud'] as const) {
+    for (const connector of [
+      'github',
+      'gitlab',
+      'gitea',
+      'vercel',
+      'netlify',
+      'supabase',
+      'browserUseCloud',
+    ] as const) {
       await expect(activateConnector(connector)).rejects.toThrow();
     }
   });
@@ -56,6 +71,11 @@ describe('connector activation', () => {
   it('rejects GitLab validation failures even when its store resolves instead of throwing', async () => {
     mocks.gitlabConnect.mockResolvedValueOnce({ success: false, error: 'Invalid GitLab token' });
     await expect(activateConnector('gitlab', 'invalid-test-token')).rejects.toThrow('Invalid GitLab token');
+  });
+
+  it('rejects Gitea validation failures even when its store resolves instead of throwing', async () => {
+    mocks.giteaConnect.mockResolvedValueOnce({ success: false, error: 'Gitea rejected this token.' });
+    await expect(activateConnector('gitea', 'invalid-test-token')).rejects.toThrow('Gitea rejected this token.');
   });
 
   it('rejects GitHub authentication failures', async () => {

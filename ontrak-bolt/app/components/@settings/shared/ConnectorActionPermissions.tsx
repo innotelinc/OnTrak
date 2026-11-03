@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { Switch } from '~/components/ui/Switch';
 import { useMCPStore } from '~/lib/stores/mcp';
 
-export type ConnectorPermissionId = 'github' | 'gitlab' | 'vercel' | 'netlify' | 'supabase';
+export type ConnectorPermissionId = 'github' | 'gitlab' | 'gitea' | 'vercel' | 'netlify' | 'supabase';
 
 export interface ConnectorPermissionAction {
   id: string;

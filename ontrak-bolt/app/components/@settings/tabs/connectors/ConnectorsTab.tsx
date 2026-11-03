@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import BrowserUseCloudTab from '~/components/@settings/tabs/connectors/BrowserUseCloudTab';
+import GiteaTab from '~/components/@settings/tabs/gitea/GiteaTab';
 import GitHubTab from '~/components/@settings/tabs/github/GitHubTab';
 import GitLabTab from '~/components/@settings/tabs/gitlab/GitLabTab';
 import NetlifyTab from '~/components/@settings/tabs/netlify/NetlifyTab';
@@ -13,7 +14,7 @@ import { activateConnector, type ConnectorActivationId } from '~/lib/services/co
 import { useMCPStore, type ConnectorId } from '~/lib/stores/mcp';
 import { classNames } from '~/utils/classNames';
 
-type ConnectorType = 'github' | 'gitlab' | 'vercel' | 'netlify' | 'supabase' | 'browser-use-cloud';
+type ConnectorType = 'github' | 'gitlab' | 'gitea' | 'vercel' | 'netlify' | 'supabase' | 'browser-use-cloud';
 
 interface Connector {
   id: ConnectorType;
@@ -92,6 +93,13 @@ const CONNECTORS: Connector[] = [
     name: 'GitLab',
     description: 'Integrate with GitLab for code hosting and CI/CD pipelines',
     icon: <GitLabIcon />,
+    category: 'source-control',
+  },
+  {
+    id: 'gitea',
+    name: 'Gitea',
+    description: 'Connect a self-hosted Gitea instance for repositories and account statistics',
+    icon: <div className="i-ph:git-branch w-5 h-5" />,
     category: 'source-control',
   },
   {
@@ -239,6 +247,8 @@ export default function ConnectorsTab() {
         return <GitHubTab />;
       case 'gitlab':
         return <GitLabTab />;
+      case 'gitea':
+        return <GiteaTab />;
       case 'vercel':
         return <VercelTab />;
       case 'netlify':

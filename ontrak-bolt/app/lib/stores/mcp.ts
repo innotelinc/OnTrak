@@ -4,7 +4,7 @@ import type { MCPConfig, MCPServerTools } from '~/lib/services/mcpService';
 const MCP_SETTINGS_KEY = 'mcp_settings';
 const isBrowser = typeof window !== 'undefined';
 
-export type ConnectorId = 'github' | 'gitlab' | 'vercel' | 'netlify' | 'supabase' | 'browserUseCloud';
+export type ConnectorId = 'github' | 'gitlab' | 'gitea' | 'vercel' | 'netlify' | 'supabase' | 'browserUseCloud';
 
 type MCPSettings = {
   mcpConfig: MCPConfig;
@@ -22,6 +22,7 @@ const defaultSettings = {
   connectorEnabled: {
     github: false,
     gitlab: false,
+    gitea: false,
     vercel: false,
     netlify: false,
     supabase: false,
