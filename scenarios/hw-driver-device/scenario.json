@@ -132,5 +132,21 @@
     "Right-click the adapter and choose Enable device — or use Get-PnpDevice followed by Enable-PnpDevice -InstanceId <id> -Confirm:$false.",
     "After enabling it, check Get-NetAdapter to confirm the link is actually up, not just present."
   ],
-  "reset_notes": "Reset re-clones the snapshot, so the adapter is disabled again. Scenarios that\nneed extra hardware declare it under instance_devices, which is applied when\nthe template is built.\n"
+  "reset_notes": "Reset re-clones the snapshot, so the adapter is disabled again. Scenarios that\nneed extra hardware declare it under instance_devices, which is applied when\nthe template is built.\n",
+  "i18n": {
+    "es": {
+      "title": "El Ethernet de la base muestra un triángulo de advertencia",
+      "briefing": "El puerto Ethernet de la base de acoplamiento dejó de funcionar tras una\nactualización de Windows. El puerto integrado funciona, así que el equipo está en\nlínea, pero la administración de dispositivos muestra un problema con el adaptador\nde la base y Windows no lo usa.\n\nEn el parque, los adaptadores presentes deben estar habilitados y reportar un estado\nsaludable: «deshabilitado para que deje de quejarse» no es una solución aceptada, y\ntampoco lo es dejarlo con un triángulo amarillo de advertencia.\n\nQueda un segundo punto: las notas del usuario. El trabajo de soporte solo termina\ncuando la siguiente persona puede leer lo que encontraste. Escribe tus notas en\nC:\\Users\\student\\Desktop\\ontrak-notes.txt con dos líneas etiquetadas:\n\n  Evidence: <lo que observaste, al menos una frase>\n  Action: <lo que cambiaste para arreglarlo, al menos una frase>",
+      "objectives": {
+        "nic-device-ok": "Todos los adaptadores de red están habilitados y reportan un estado de controlador saludable",
+        "nic-link-up": "Ambos adaptadores están activos y utilizables",
+        "cause-documented": "Notas escritas en el escritorio con una línea Evidence y una línea Action"
+      },
+      "hints": [
+        "Empieza por el Administrador de dispositivos (devmgmt.msc) y busca el triángulo amarillo en Adaptadores de red.",
+        "Haz clic derecho en el adaptador y elige Habilitar dispositivo, o usa Get-PnpDevice seguido de Enable-PnpDevice -InstanceId <id> -Confirm:$false.",
+        "Después de habilitarlo, comprueba con Get-NetAdapter que el enlace está realmente activo, no solo presente."
+      ]
+    }
+  }
 }

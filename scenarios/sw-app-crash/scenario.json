@@ -137,5 +137,22 @@
     "There are three independent faults: a syntax error in config.json, a wrong value in the registry override, and a leftover lock file.",
     "Fix the JSON syntax, set both server values to fileserver.ontrak.lab, delete crmapp.lock, then rerun the self-test."
   ],
-  "reset_notes": "Reset re-clones the snapshot, restoring the corrupted config, the wrong registry value and the lock file."
+  "reset_notes": "Reset re-clones the snapshot, restoring the corrupted config, the wrong registry value and the lock file.",
+  "i18n": {
+    "es": {
+      "title": "La aplicación de CRM se cierra al iniciarse",
+      "briefing": "El cliente de CRM en WORKSTATION-208 se niega a arrancar. Dana hace clic en el acceso\ndirecto del escritorio, aparece una consola un instante y se cierra, y no pasa nada más.\nFuncionaba antes de que el edificio perdiera la corriente el viernes.\n\nTres cosas sobre esta aplicación:\n\n* Su configuración de despliegue está en C:\\ProgramData\\OnTrak\\CrmApp\\config.json.\n* Hay una configuración por usuario en HKCU\\Software\\OnTrak\\CrmApp.\n* Se niega a arrancar mientras exista un archivo de bloqueo obsoleto. Los cierres\n  inesperados dejan uno, así que un fallo suele necesitar dos arreglos, no uno.\n\nEl backend aprobado es fileserver.ontrak.lab. Haz que la aplicación vuelva a arrancar\nlimpiamente. Puedes probarla desde el acceso directo o ejecutando\nC:\\Program Files\\OnTrak\\CrmApp\\CrmApp.ps1 -SelfTest y leyendo el registro en\nC:\\ProgramData\\OnTrak\\CrmApp\\selftest.log.",
+      "objectives": {
+        "config-valid": "config.json se analiza y apunta al backend aprobado",
+        "settings-correct": "La configuración por usuario en HKCU\\Software\\OnTrak\\CrmApp apunta al backend aprobado",
+        "lock-cleared": "El archivo de bloqueo obsoleto que impedía el inicio ha desaparecido",
+        "app-selftest": "La autoprueba de la aplicación pasa y escribe SELFTEST OK"
+      },
+      "hints": [
+        "Lee primero el registro: C:\\ProgramData\\OnTrak\\CrmApp\\selftest.log. Nombra la comprobación que falla.",
+        "Hay tres fallos independientes: un error de sintaxis en config.json, un valor incorrecto en la configuración del registro y un archivo de bloqueo olvidado.",
+        "Corrige la sintaxis del JSON, pon ambos valores de servidor en fileserver.ontrak.lab, borra crmapp.lock y vuelve a ejecutar la autoprueba."
+      ]
+    }
+  }
 }

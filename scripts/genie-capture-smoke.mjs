@@ -68,7 +68,9 @@ if (!response.ok || response.body === null) {
   const detail = await response.text().catch(() => "");
   fail(
     `Genie refused the turn (HTTP ${response.status})${detail === "" ? "" : `: ${detail.slice(0, 300)}`}` +
-      (response.status === 401 ? " — is TRUSTED_ACTOR_HEADER on for this deployment?" : ""),
+      (response.status === 401
+        ? ` — check TRUSTED_ACTOR_HEADER is on, and that ${actor} exists on this deployment's control plane`
+        : ""),
   );
 }
 

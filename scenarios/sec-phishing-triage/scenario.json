@@ -140,5 +140,23 @@
     "The user changed a file that maps names to addresses. Windows keeps it in a well-known place.",
     "A triage report needs the indicators, the evidence and the action taken — in that order."
   ],
-  "reset_notes": "Reset destroys the machine and clones a fresh copy, so the email and the hosts edit come back."
+  "reset_notes": "Reset destroys the machine and clones a fresh copy, so the email and the hosts edit come back.",
+  "i18n": {
+    "es": {
+      "title": "Correo de factura sospechoso: triaje antes de que se propague",
+      "briefing": "Un usuario reenvió un correo que dice ser una factura vencida. No ha abierto el adjunto,\npero antes había intentado «arreglar» una página de la intranet editando un archivo del\nsistema en esta máquina.\nHaz el triaje del correo y de la máquina: di cuáles son los indicadores, aísla todo lo que\npudiera ejecutarse y deja la configuración de la máquina como la encontraste. Escribe tus\nconclusiones donde el ticket las espera: un incidente que no se documenta no ocurrió.\nNada en esta máquina es malware real: el adjunto es un marcador de posición y la red está\naislada.",
+      "objectives": {
+        "phish-indicators": "Los indicadores están documentados (remitente suplantado, dominio parecido, adjunto)",
+        "attachment-isolated": "El adjunto descargado se ha aislado para que no pueda ejecutarse",
+        "hosts-restored": "El archivo hosts vuelve al valor predeterminado del fabricante",
+        "phish-reported": "El informe del incidente registra el remitente, la URL y la acción tomada"
+      },
+      "hints": [
+        "Lee las cabeceras del mensaje como lo haría un servidor de correo, no como lo haría un usuario.",
+        "Un adjunto que sigue en la carpeta Descargas de un usuario está a un doble clic de ejecutarse.",
+        "El usuario cambió un archivo que asocia nombres con direcciones. Windows lo guarda en un lugar conocido.",
+        "Un informe de triaje necesita los indicadores, la evidencia y la acción tomada, en ese orden."
+      ]
+    }
+  }
 }

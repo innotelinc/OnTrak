@@ -157,6 +157,14 @@ genie-down: ## Stop the agent console stack
 genie-logs: ## Tail the agent console's logs
 	cd $(GENIE_DIR) && docker compose logs -f
 
+# The browser console's twin for a terminal: the same `/api/chat` turn, streamed.
+# Installed as a command because that is what makes it usable away from this
+# checkout; the script itself is the source of truth.
+.PHONY: genie-cli
+genie-cli: ## Install the `genie` terminal CLI into /usr/local/bin
+	install -m 0755 scripts/genie.mjs /usr/local/bin/genie
+	@echo "genie: installed $(shell command -v genie || echo /usr/local/bin/genie) — run 'genie --help'"
+
 .PHONY: lan
 lan: ## Detect this host's LAN address and write the builder network into an env file
 	@scripts/lan-env.sh --file "$(LAN_ENV_FILE)"

@@ -138,5 +138,22 @@
     "Check all three persistence locations: the Run keys, Task Scheduler, and the Startup folder.",
     "The service was set to Disabled, not just stopped: `Set-Service -Name Spooler -StartupType Automatic` then `Start-Service Spooler`."
   ],
-  "reset_notes": "Reset re-clones the clean snapshot: the runaway process, both persistence\nentries and the disabled spooler all return.\n"
+  "reset_notes": "Reset re-clones the clean snapshot: the runaway process, both persistence\nentries and the disabled spooler all return.\n",
+  "i18n": {
+    "es": {
+      "title": "El equipo tarda diez minutos en arrancar y luego va lentísimo",
+      "briefing": "El equipo de Sam tarda unos diez minutos en quedar utilizable tras el arranque y,\nincluso entonces, los ventiladores no paran y todo va lento. Ella está convencida de\nque la máquina «se está muriendo», pero una revisión de hardware salió limpia.\n\nLa semana pasada instaló un «PC Speed Booster» gratuito de internet para ayudar.\nRecepción tampoco puede imprimir: la impresora aparece como no disponible.\n\nLo que sabes del parque:\n  * Los programas persistentes se listan en\n    HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run y en el Programador de tareas.\n  * Las herramientas de rendimiento del índice de búsqueda de Windows NO son software aprobado.\n  * La impresión en el parque pasa por el servicio Cola de impresión.\n\nDevuelve la máquina a un estado ágil y restaura la impresión. Eliminar el software no\ndeseado significa que el programa desaparezca, no solo que se detenga.",
+      "objectives": {
+        "cpu-normal": "El equipo ya no consume CPU sin control (ningún proceso desbocado, carga por debajo del 25 %)",
+        "persistence-removed": "Las dos entradas de persistencia han desaparecido: la clave Run y la tarea programada",
+        "software-removed": "El archivo del programa no deseado ya no está en el equipo",
+        "spooler-running": "El servicio Cola de impresión está en ejecución con un tipo de inicio normal"
+      },
+      "hints": [
+        "Empieza por el Administrador de tareas o `Get-OnTrakTopProcess`, y luego averigua *por qué* vuelve una y otra vez.",
+        "Revisa las tres ubicaciones de persistencia: las claves Run, el Programador de tareas y la carpeta Inicio.",
+        "El servicio estaba en Deshabilitado, no solo detenido: `Set-Service -Name Spooler -StartupType Automatic` y luego `Start-Service Spooler`."
+      ]
+    }
+  }
 }
