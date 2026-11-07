@@ -129,5 +129,22 @@
     "Create the group before adding the user to it, or useradd will refuse the membership.",
     "userdel without -r leaves the home directory behind — and the audit still finds it."
   ],
-  "reset_notes": "Reset re-clones the clean snapshot, so the joiner is missing, the leaver is back\nwith his home directory, and the orphan files return.\n"
+  "reset_notes": "Reset re-clones the clean snapshot, so the joiner is missing, the leaver is back\nwith his home directory, and the orphan files return.\n",
+  "i18n": {
+    "es": {
+      "title": "Un ingreso, un traslado y una baja en el mismo ticket",
+      "briefing": "La revisión mensual de accesos en sso-01 tiene tres puntos:\n\n  1. Aisha Khan se incorpora al servicio de ayuda el lunes. Necesita una cuenta local con\n     directorio personal y shell bash, y pertenecer al grupo support (créalo si no existe).\n  2. Tom Reeves, que se marchó a finales del mes pasado, todavía tiene cuenta. Elimínala\n     por completo, incluido su directorio personal.\n  3. La misma revisión señala que aún hay archivos del entorno propiedad del uid de Tom.\n     Demuestra que la máquina está limpia de ellos.\n\nEsto es una revisión de seguridad: «bloqueé la cuenta» no es una baja. Una cuenta\nbloqueada sigue siendo dueña de archivos y sigue apareciendo en una auditoría.",
+      "objectives": {
+        "joiner-created": "La cuenta del nuevo empleado existe, con directorio personal y shell de inicio de sesión",
+        "group-membership": "El nuevo empleado pertenece al grupo support",
+        "leaver-removed": "La cuenta del empleado que se marchó ya no existe",
+        "no-orphan-files": "Ningún archivo bajo /srv pertenece a una cuenta que ya no existe"
+      },
+      "hints": [
+        "`getent passwd`, `id`, `ls -l` y `find -nouser` son los cuatro comandos que responden a todo este ticket.",
+        "Crea el grupo antes de añadir el usuario, o useradd rechazará la pertenencia.",
+        "userdel sin -r deja el directorio personal atrás, y la auditoría todavía lo encuentra."
+      ]
+    }
+  }
 }

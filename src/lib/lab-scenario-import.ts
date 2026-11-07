@@ -42,7 +42,7 @@ import type { Difficulty } from "@prisma/client";
 
 import { LAB_SCENARIO_TAG } from "./lab-rules";
 import { DEFAULT_PASS_SCORE as FAMILY_DEFAULT_PASS_SCORE, MAX_TIME_LIMIT_SEC, MIN_TIME_LIMIT_SEC } from "./scenario-rules";
-import type { Platform, ScenarioDefinition, ScenarioHint } from "./sim/types";
+import type { Platform, ScenarioDefinition, ScenarioHint, ScenarioTextOverrides } from "./sim/types";
 import { expectedEngine } from "./validate";
 
 /* -------------------------------------------------------------------------- */
@@ -55,6 +55,18 @@ export interface LabObjective {
   weight?: number;
   critical?: boolean;
   hint?: string;
+}
+
+/** The lab's per-locale copy of the text a student reads, as authored (2.3). */
+export interface LabTextOverlay {
+  /** The catalogue title in this locale. */
+  title?: string;
+  /** The briefing in this locale. */
+  briefing?: string;
+  /** Objective id → its text in this locale. */
+  objectives?: Record<string, string>;
+  /** Hint texts, parallel to the authored `hints`. */
+  hints?: string[];
 }
 
 /** A parsed `scenario.yaml`. Everything optional except the two a scenario needs. */
@@ -78,6 +90,8 @@ export interface LabScenario {
   hints?: string[];
   reset_notes?: string;
   generated_from?: string[];
+  /** Per-locale copy the lab ships beside the authored text (2.3). */
+  i18n?: Record<string, LabTextOverlay>;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -105,6 +119,8 @@ export interface LabScenarioMeta {
   generatedFrom: string[];
   objectives: { id: string; text: string; weight: number; critical: boolean }[];
   resetNotes: string;
+  /** The lab's own `i18n` block, kept so a re-export rebuilds it exactly. */
+  translations: Record<string, LabTextOverlay>;
 }
 
 /** A family `Scenario` as this importer would write it (the row, not yet saved). */
@@ -113,6 +129,9 @@ export interface ImportedLabScenario {
   slug: string;
   title: string;
   summary: string;
+  /** The catalogue's Spanish copy (2.3); null when the lab has not translated it. */
+  titleEs: string | null;
+  summaryEs: string | null;
   description: string;
   platform: Platform;
   difficulty: Difficulty;
@@ -207,6 +226,60 @@ function machineFor(platform: Platform, workload: string): { machine: ScenarioDe
   return { machine: { hostname: "workstation", user: "student", os: "Ubuntu", version: "24.04" }, parsed: false };
 }
 
+/** The lab's `i18n` block, cleaned to the strings that actually say something. */
+function translationsOf(raw: unknown): Record<string, LabTextOverlay> {
+  if (!isRecord(raw)) return {};
+  const out: Record<string, LabTextOverlay> = {};
+  for (const [locale, value] of Object.entries(raw)) {
+    if (!isRecord(value)) continue;
+    const objectives: Record<string, string> = {};
+    if (isRecord(value.objectives)) {
+      for (const [id, translated] of Object.entries(value.objectives)) {
+        const copy = text(translated);
+        if (copy) objectives[id] = copy;
+      }
+    }
+    out[locale] = {
+      title: text(value.title) || undefined,
+      briefing: text(value.briefing) || undefined,
+      objectives: Object.keys(objectives).length > 0 ? objectives : undefined,
+      hints: stringList(value.hints),
+    };
+  }
+  return out;
+}
+
+/**
+ * The family's overlay, built from the lab's per-locale copy.
+ *
+ * The mapping is the reverse of the import: the lab names an objective by `id`, while the
+ * family's overlay addresses tasks by index (the objectives *are* the task list, in order)
+ * and hints by id (`lab-hint-<n>`, the ids this importer mints itself). Nothing structural
+ * crosses over — `checks` stays empty — so a translation still cannot be graded differently.
+ */
+function definitionI18n(
+  translations: Record<string, LabTextOverlay>,
+  objectives: LabScenarioMeta["objectives"],
+  hints: ScenarioHint[],
+): Record<string, ScenarioTextOverrides> | undefined {
+  const out: Record<string, ScenarioTextOverrides> = {};
+  for (const [locale, overlay] of Object.entries(translations)) {
+    const tasks = objectives.map((objective) => text(overlay.objectives?.[objective.id]));
+    const hintTexts = Object.fromEntries(
+      hints
+        .map((hint, index) => [hint.id, text(overlay.hints?.[index])] as const)
+        .filter(([, translated]) => translated !== ""),
+    );
+    const entry: ScenarioTextOverrides = {};
+    if (overlay.title) entry.objective = overlay.title;
+    if (overlay.briefing) entry.brief = overlay.briefing;
+    if (tasks.some((task) => task !== "")) entry.tasks = tasks;
+    if (Object.keys(hintTexts).length > 0) entry.hints = hintTexts;
+    if (Object.keys(entry).length > 0) out[locale] = entry;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 /** The first sentence of the briefing, for the catalog's one-line summary. */
 function summaryOf(title: string, briefing: string): string {
   const firstLine = briefing.split(/\n/, 1)[0]?.trim() ?? "";
@@ -276,6 +349,12 @@ export function importLabScenario(raw: unknown): LabScenarioImportResult {
   const { machine, parsed: machineParsed } = machineFor(platform, workload);
   const hints: ScenarioHint[] = stringList(raw.hints).map((hint, index) => ({ id: `lab-hint-${index + 1}`, text: hint }));
 
+  const translations = translationsOf(raw.i18n);
+  const i18n = definitionI18n(translations, parsedObjectives, hints);
+  const spanish = translations.es;
+  const titleEs = spanish?.title ?? null;
+  const summaryEs = spanish?.briefing ? summaryOf(spanish.title ?? title, spanish.briefing) : null;
+
   const definition: ScenarioDefinition = {
     version: 1,
     platform,
@@ -289,6 +368,7 @@ export function importLabScenario(raw: unknown): LabScenarioImportResult {
     // is what stops a lab scenario being published as if the simulator could grade it.
     checks: [],
     hints,
+    ...(i18n ? { i18n: i18n as ScenarioDefinition["i18n"] } : {}),
     authorNotes:
       `Imported from the lab scenario "${id}"` +
       `${text(raw.category) ? ` (category ${text(raw.category)})` : ""}` +
@@ -302,6 +382,8 @@ export function importLabScenario(raw: unknown): LabScenarioImportResult {
     slug: id,
     title,
     summary: summaryOf(title, briefing),
+    titleEs,
+    summaryEs,
     description: briefing,
     platform,
     difficulty,
@@ -320,6 +402,7 @@ export function importLabScenario(raw: unknown): LabScenarioImportResult {
       generatedFrom: stringList(raw.generated_from),
       objectives: parsedObjectives,
       resetNotes: text(raw.reset_notes),
+      translations,
     },
   };
 
@@ -375,6 +458,7 @@ export function exportLabScenario(scenario: ImportedLabScenario): LabScenario {
     hints: (scenario.definition.hints ?? []).map((hint) => hint.text),
     reset_notes: meta.resetNotes,
     generated_from: meta.generatedFrom.length > 0 ? meta.generatedFrom : undefined,
+    ...(Object.keys(meta.translations).length > 0 ? { i18n: meta.translations } : {}),
   };
 }
 

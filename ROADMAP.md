@@ -117,12 +117,23 @@ record ship here.
   retries, the read-back that refuses to trust a hand-edited total, and the
   validator's opt-in decision.
 
-### 2.3 — Content & locale completeness `[ ]`
+### 2.3 — Content & locale completeness `[x]`
 **Goal:** the localization mechanism gets content.
 
-- `[ ]` Spanish overlays for the ten bundled scenarios.
-- `[ ]` Per-locale catalog `title`/`summary` columns.
-- **Exit:** a cohort runs a bundled scenario end to end in Spanish.
+- `[x]` Spanish overlays for the ten bundled scenarios. Each `scenarios/<id>/scenario.json`
+  now carries an `i18n.es` block — title, briefing, objectives keyed by id and hints in
+  order — and `importLabScenario` maps it onto the definition's overlay (objective, brief,
+  tasks by index, hints by the ids the importer mints) and onto the catalogue columns. The
+  overlay type grew `brief` for this, since the briefing is the thing a student reads before
+  the timer starts. A translation still cannot add a task, a check or a hint.
+- `[x]` Per-locale catalog `title`/`summary` columns. `Scenario.titleEs` and
+  `Scenario.summaryEs` (migration `20261116000000_add_scenario_catalog_locale`), resolved by
+  `src/lib/catalog-i18n.ts` with per-field fallback, and read by the student catalogue and
+  the instructor's scenario list.
+- **Exit:** met. A cohort whose locale cookie is `es` reads the Spanish title, summary,
+  brief, tasks and hints for every translated bundled scenario; a string nobody translated
+  falls back to the authored one rather than a blank line
+  (`tests/lab-scenario-locale.test.ts`, `tests/catalog-i18n.test.ts`).
 
 ### 4.0 — The open credential network `[ ]`
 **Goal:** evidence that travels.

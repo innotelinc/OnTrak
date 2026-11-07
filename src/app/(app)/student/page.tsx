@@ -13,7 +13,8 @@ import { clearedPassMark, scorePercent } from "@/lib/score-rules";
 import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, Button, buttonClass, Card, EmptyState, ProgressBar } from "@/components/ui";
 import { formatDateTime, formatDuration, cn } from "@/lib/cn";
-import { getTranslator, type Translator } from "@/lib/i18n-server";
+import { currentLocale, getTranslator, type Translator } from "@/lib/i18n-server";
+import { catalogText } from "@/lib/catalog-i18n";
 
 export const metadata: Metadata = { title: "My scenarios" };
 
@@ -38,6 +39,7 @@ export default async function StudentHome({
   const { flash, error } = await searchParams;
   const user = await requireSession();
   const t = await getTranslator();
+  const locale = await currentLocale();
 
   // Where a student runs a lab-tagged scenario. One reader decides, and it answers three
   // ways: a link to a peer deployment (the old behaviour), this app's own `/lab` (the
@@ -301,6 +303,7 @@ export default async function StudentHome({
                 <li key={scenario.id}>
                   <ScenarioCard
                     scenario={scenario}
+                    locale={locale}
                     labUrl={isLabScenario(scenario.tags) ? labUrl : null}
                     badge={
                       assignment?.dueAt ? (
@@ -341,6 +344,7 @@ export default async function StudentHome({
               <li key={scenario.id}>
                 <ScenarioCard
                   scenario={scenario}
+                  locale={locale}
                   labUrl={isLabScenario(scenario.tags) ? labUrl : null}
                   t={t}
                 />
@@ -401,6 +405,9 @@ type ScenarioCardData = {
   id: string;
   title: string;
   summary: string;
+  /** The catalogue's Spanish copy (2.3); null when nobody has translated the row. */
+  titleEs?: string | null;
+  summaryEs?: string | null;
   objective?: string;
   platform: Platform;
   difficulty: string;
@@ -410,18 +417,22 @@ type ScenarioCardData = {
 
 function ScenarioCard({
   scenario,
+  locale,
   badge,
   note,
   labUrl,
   t,
 }: {
   scenario: ScenarioCardData;
+  /** The reader's locale; the card's copy falls back field by field to the authored row. */
+  locale: string;
   badge?: React.ReactNode;
   note?: string | null;
   /** Where to run this scenario on a real machine, when the lab offers one. */
   labUrl?: string | null;
   t: Translator;
 }) {
+  const copy = catalogText(scenario, locale);
   // The same rule `startAttempt` enforces server-side, asked here to decide which door
   // this card draws. Both ask it because a rule only one of them checks is a rule a POST
   // can walk past; the message itself is the refusal, so "is there one" is answer enough.
@@ -436,8 +447,8 @@ function ScenarioCard({
         {badge ? <span className="ml-auto">{badge}</span> : null}
       </div>
 
-      <h3 className="mt-3 font-display text-lg font-semibold text-ink">{scenario.title}</h3>
-      <p className="mt-1.5 line-clamp-3 text-sm text-ink-soft">{scenario.summary}</p>
+      <h3 className="mt-3 font-display text-lg font-semibold text-ink">{copy.title}</h3>
+      <p className="mt-1.5 line-clamp-3 text-sm text-ink-soft">{copy.summary}</p>
 
       {note ? (
         <p className="mt-3 rounded-xl2 border border-brand/20 bg-brand-soft/50 px-3 py-2 text-xs text-ink-soft">{note}</p>

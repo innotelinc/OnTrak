@@ -450,6 +450,8 @@ export type ScenarioTextLocale = string;
 export interface ScenarioTextOverrides {
   /** Replaces `objective`. */
   objective?: string;
+  /** Replaces `brief`, the long-form briefing a student reads before the timer starts (2.3). */
+  brief?: string;
   /** Parallel to `tasks`; an index with no entry keeps the authored task. */
   tasks?: string[];
   /** Check `id` → the label that check is read by. */

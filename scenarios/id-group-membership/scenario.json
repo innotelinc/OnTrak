@@ -148,5 +148,23 @@
     "The contractor's status should read disabled. `--reason` records why, which is what the review wants to see.",
     "`lib/idp.py audit` lists the changes with their reasons — read it before you call the ticket done."
   ],
-  "reset_notes": "Reset re-clones the clean snapshot: Marco is back in warehouse only, and the\ncontractor's account is active again.\n"
+  "reset_notes": "Reset re-clones the clean snapshot: Marco is back in warehouse only, and the\ncontractor's account is active again.\n",
+  "i18n": {
+    "es": {
+      "title": "Un traslado de equipo, una persona contratada que se marchó y un acceso que solo crece",
+      "briefing": "La revisión mensual de accesos en sso-01 tiene dos puntos y una pregunta evidente:\n\n  1. Marco Silva pasó del equipo de almacén a Finanzas. Necesita finance y debe conservar\n     finance-reporting, que también usa el equipo de sistemas financieros.\n\n  2. Chi Nguyen era una persona contratada cuyo acuerdo terminó el 2026-08-31. La cuenta\n     sigue activa y sigue en el grupo warehouse.\n\nEl servicio de directorio está en lib/idp.py con su estado en\n/var/lib/ontrak-idp/directory.json (HTTP en http://localhost:8081 si el servicio está en\nejecución).\n\nHaz los dos cambios, cada uno con un motivo registrado. La revisión la leerá alguien que\ncomprueba que el acceso no se limita a acumularse, así que diga lo que se retiró.",
+      "objectives": {
+        "added-to-new-group": "Marco Silva pertenece al grupo finance",
+        "removed-from-old-group": "Marco Silva ya no pertenece al grupo warehouse",
+        "kept-required-group": "Marco Silva sigue perteneciendo a finance-reporting",
+        "contractor-disabled": "La cuenta de la persona contratada está deshabilitada, no solo bloqueada"
+      },
+      "hints": [
+        "`lib/idp.py list-users` muestra el estado, los intentos fallidos y las pertenencias de un vistazo.",
+        "Añadir el grupo nuevo y quitar el antiguo son dos comandos; ninguno implica al otro.",
+        "El estado de la persona contratada debe leerse disabled. `--reason` registra el motivo, que es lo que la revisión quiere ver.",
+        "`lib/idp.py audit` lista los cambios con sus motivos: léelo antes de dar el ticket por terminado."
+      ]
+    }
+  }
 }

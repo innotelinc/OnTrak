@@ -129,5 +129,21 @@
     "The contractor left a static address and a gateway of 10.20.0.254. DHCP would supply 10.20.0.1.",
     "`Set-NetIPInterface -Dhcp Enabled` then `ipconfig /renew`, or set the adapter to 'Obtain an IP address automatically'."
   ],
-  "reset_notes": "Reset restores the static bogus address and gateway from the clean snapshot."
+  "reset_notes": "Reset restores the static bogus address and gateway from the clean snapshot.",
+  "i18n": {
+    "es": {
+      "title": "Un técnico externo «optimizó» la configuración de red",
+      "briefing": "WORKSTATION-117 volvió de una visita presencial con «direcciones fijas para más\nvelocidad». Ahora nada funciona: ni intranet, ni unidad compartida, ni navegación web.\nLa máquina responde a una sesión remota, que es como estás conectado a ella.\n\nEl estándar del sitio es simple: las estaciones toman su dirección por DHCP, en la red\n10.20.0.0/24, con puerta de enlace 10.20.0.1. Las máquinas de almacén nunca reciben\ndirecciones fijas porque se mueven entre escritorios.\n\nCorrige el direccionamiento de la máquina para que cumpla el estándar y demuestra que\ntienes conectividad después del cambio.",
+      "objectives": {
+        "dhcp-enabled": "El adaptador vuelve a tomar su dirección por DHCP",
+        "gateway-reachable": "La puerta de enlace predeterminada responde",
+        "reach-intranet": "El servidor de archivos es accesible por nombre y puerto"
+      },
+      "hints": [
+        "`ipconfig /all` y `Get-NetIPAddress` muestran la dirección; `Get-NetRoute` dice si existe una ruta predeterminada.",
+        "El técnico dejó una dirección estática y una puerta de enlace 10.20.0.254. DHCP entregaría 10.20.0.1.",
+        "`Set-NetIPInterface -Dhcp Enabled` y luego `ipconfig /renew`, o pon el adaptador en «Obtener una dirección IP automáticamente»."
+      ]
+    }
+  }
 }

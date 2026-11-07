@@ -9,7 +9,8 @@ import { totalPoints } from "@/lib/sim/grade";
 import { Flash, PageHeader } from "@/components/PageHeader";
 import { Badge, Button, ButtonLink, Card, EmptyState } from "@/components/ui";
 import { formatDuration, formatRelative } from "@/lib/cn";
-import { getTranslator } from "@/lib/i18n-server";
+import { currentLocale, getTranslator } from "@/lib/i18n-server";
+import { catalogText } from "@/lib/catalog-i18n";
 
 export const metadata: Metadata = { title: "Scenarios" };
 
@@ -21,6 +22,7 @@ export default async function ScenariosPage({
   const { flash, error } = await searchParams;
   const user = await requireSession();
   const t = await getTranslator();
+  const locale = await currentLocale();
 
   const [context, scenarios] = await Promise.all([
     loadAvailabilityContext(),
@@ -77,6 +79,7 @@ export default async function ScenariosPage({
             const availability = evaluateScenario(scenario, context);
             const definition = toDefinition(scenario);
             const points = totalPoints(definition);
+            const copy = catalogText(scenario, locale);
 
             return (
               <li key={scenario.id}>
@@ -110,9 +113,9 @@ export default async function ScenariosPage({
                         href={`/instructor/scenarios/${scenario.id}`}
                         className="mt-3 block font-display text-lg font-semibold text-ink hover:text-brand"
                       >
-                        {scenario.title}
+                        {copy.title}
                       </Link>
-                      <p className="mt-1 max-w-3xl text-sm text-ink-soft">{scenario.summary}</p>
+                      <p className="mt-1 max-w-3xl text-sm text-ink-soft">{copy.summary}</p>
 
                       <p className="mt-2 text-xs text-ink-faint">
                         {t("scenarios.meta", {

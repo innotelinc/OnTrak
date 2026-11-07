@@ -515,6 +515,10 @@ model Scenario {
   organizationId String?
   title          String
   summary        String
+  /// The catalogue's own copy in Spanish (2.3). Null is "not translated yet", which falls
+  /// back to the authored column field by field — see src/lib/catalog-i18n.ts.
+  titleEs        String?
+  summaryEs      String?
   /// Long-form markdown briefing shown before the timer starts.
   description    String
   platform       Platform

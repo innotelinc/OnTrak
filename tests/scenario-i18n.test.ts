@@ -186,7 +186,7 @@ test("i18n: coverage counts what is translated and names what is not", () => {
   assert.deepEqual(coverage.checks, { translated: 2, total: 3, unknown: [] });
   assert.deepEqual(coverage.hints, { translated: 1, total: 2, unknown: [] });
   assert.deepEqual(coverage.problems, []);
-  assert.match(coverageSummary([coverage]), /es: objective yes, tasks 4\/4, checks 2\/3, hints 1\/2/);
+  assert.match(coverageSummary([coverage]), /es: objective yes, brief no, tasks 4\/4, checks 2\/3, hints 1\/2/);
 });
 
 test("i18n: coverage reports a stale id, an unknown locale and an over-long task list", () => {

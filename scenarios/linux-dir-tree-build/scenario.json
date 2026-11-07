@@ -122,5 +122,22 @@
     "Docs mode is set after creation, with chmod 750.",
     "Read what is inside junk before removing it. If it were not junk, the ticket would be a different conversation."
   ],
-  "reset_notes": "Reset re-clones the clean snapshot, so the missing tree and the leftover junk\ndirectory come back.\n"
+  "reset_notes": "Reset re-clones the clean snapshot, so the missing tree and the leftover junk\ndirectory come back.\n",
+  "i18n": {
+    "es": {
+      "title": "Crea el espacio de trabajo que pidió el equipo",
+      "briefing": "El equipo de plataforma necesita un espacio de trabajo en build-02 para el proyecto\n«alpha». La petición es:\n\n  /srv/projects/alpha/            la raíz del proyecto\n  /srv/projects/alpha/src/        código fuente\n  /srv/projects/alpha/tests/      pruebas\n  /srv/projects/alpha/docs/       documentación — modo 750, contiene borradores que\n                                  no queremos legibles por todas las cuentas\n  /srv/projects/alpha/README.md   un README breve con el nombre del proyecto\n\nTambién queda un directorio /srv/projects/junk de una copia que alguien hizo el mes\npasado. Nadie lo reclama; guarda una copia obsoleta de los mismos archivos y debe\ndesaparecer.\n\nTrabaja desde la shell. No borres nada fuera de /srv/projects y deja el resto de /srv\nintacto.",
+      "objectives": {
+        "tree-created": "/srv/projects/alpha existe con los subdirectorios src, tests y docs",
+        "docs-restricted": "/srv/projects/alpha/docs tiene modo 750",
+        "readme-present": "README.md existe en la raíz del proyecto y describe el proyecto alpha",
+        "junk-removed": "El directorio obsoleto /srv/projects/junk ha desaparecido"
+      },
+      "hints": [
+        "Crea todo el árbol en un comando: la expansión de llaves repite el prefijo para cada nombre.",
+        "El modo de docs se pone después de crearlo, con chmod 750.",
+        "Lee qué hay dentro de junk antes de borrarlo. Si no fuera basura, el ticket sería otra conversación."
+      ]
+    }
+  }
 }

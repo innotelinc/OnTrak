@@ -144,5 +144,23 @@
     "The laptop session is a separate record from the account. Unlocking does not end it.",
     "`lib/idp.py audit` shows what your changes recorded — if it is not in there, it did not happen."
   ],
-  "reset_notes": "Reset re-clones the clean snapshot: the directory is seeded and the account is locked\nagain, with the stale laptop session back.\n"
+  "reset_notes": "Reset re-clones the clean snapshot: the directory is seeded and the account is locked\nagain, with the stale laptop session back.\n",
+  "i18n": {
+    "es": {
+      "title": "Una analista bloqueada durante el cierre de mes",
+      "briefing": "Aisha Khan, de Finanzas, no puede iniciar sesión esta mañana. El portal de usuario\ndice que su cuenta está bloqueada, y tiene fecha límite para el cierre de mes.\n\nTu servicio de ayuda tiene la máquina sso-01, que ejecuta el servicio de directorio del\nlaboratorio. Su CLI está en lib/idp.py y el estado del directorio en\n/var/lib/ontrak-idp/directory.json (el servicio también responde en\nhttp://localhost:8081 si está en ejecución).\n\nSe informan dos cosas:\n\n  1. Su cuenta está bloqueada y necesita iniciar sesión hoy.\n  2. Su portátil de trabajo anterior, que devolvió el mes pasado, todavía aparece con\n     sesión iniciada.\n\nDesbloquea la cuenta, termina la sesión obsoleta y deja un motivo en el cambio. No\ncambies sus pertenencias a grupos: sigue necesitando el acceso que tenía.",
+      "objectives": {
+        "account-unlocked": "La cuenta vuelve a estar activa, con su contador de inicios de sesión fallidos a cero",
+        "memberships-intact": "La cuenta sigue perteneciendo a finance y finance-reporting",
+        "stale-session-revoked": "No queda ninguna sesión activa para la cuenta",
+        "change-audited": "El desbloqueo está registrado en el registro de auditoría con un motivo"
+      },
+      "hints": [
+        "Lee antes de escribir: `lib/idp.py list-users`, `show-user aisha.khan`, `list-sessions`.",
+        "El desbloqueo también reinicia el contador de intentos fallidos, que es lo que evita que se vuelva a bloquear de inmediato.",
+        "La sesión del portátil es un registro distinto de la cuenta. Desbloquear no la termina.",
+        "`lib/idp.py audit` muestra lo que registraron tus cambios; si no está ahí, no ocurrió."
+      ]
+    }
+  }
 }

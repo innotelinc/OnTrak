@@ -140,5 +140,22 @@
     "The service account is www-data. The fix is to hand the tree to that account, not to open the tree to everyone.",
     "`chown -R --from=root www-data:www-data /srv/www/site` is repeatable and cannot touch files you already fixed."
   ],
-  "reset_notes": "Reset re-clones the clean snapshot: root ownership, the root-owned log and the\norphan archive all come back.\n"
+  "reset_notes": "Reset re-clones the clean snapshot: root ownership, the root-owned log and the\norphan archive all come back.\n",
+  "i18n": {
+    "es": {
+      "title": "La aplicación web funciona pero no puede escribir nada",
+      "briefing": "www-01 aloja el sitio de intranet en /srv/www/site. Desde que se reconstruyó la\nmáquina, la aplicación arranca y sirve páginas, pero las subidas fallan y el registro\nde la aplicación no muestra nada después del arranque.\n\nTodo el árbol del sitio pertenece a root. El servicio se ejecuta como www-data. El\narchivo de registro al que escribe la aplicación también lo creó el script de\nreconstrucción como root.\n\nUn archivo comprimido olvidado en el directorio de subidas pertenece a un uid que ya no\nexiste en esta máquina: un operador anterior que se marchó.\n\nDa al servicio el acceso que necesita. No relajes los permisos para lograrlo: el\ndirectorio debe seguir siendo accesible por todos (755) para que el proxy inverso sirva\narchivos estáticos, y ningún archivo del sitio puede quedar escribible por todos.",
+      "objectives": {
+        "site-owned-by-service": "/srv/www/site y todo su contenido pertenecen a www-data:www-data",
+        "log-owned-by-service": "El registro de la aplicación pertenece a www-data y no es escribible por todos",
+        "no-orphan-files": "Ningún archivo del árbol del sitio pertenece a un uid que ya no existe",
+        "permissions-intact": "El directorio del sitio sigue siendo accesible (755) y ningún archivo es escribible por todos"
+      },
+      "hints": [
+        "`ls -l /srv/www/site` y `ps -eo user,comm | grep nginx` te dicen quién es el dueño y quién lo necesita.",
+        "La cuenta del servicio es www-data. La corrección es entregar el árbol a esa cuenta, no abrirlo a todos.",
+        "`chown -R --from=root www-data:www-data /srv/www/site` es repetible y no toca archivos que ya corregiste."
+      ]
+    }
+  }
 }

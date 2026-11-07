@@ -140,5 +140,22 @@
     "Octal is three triples: owner, group, other — 7=rwx, 6=rw, 5=r-x, 4=r, 0=none.",
     "750 means the owner and the group can run it and nobody else can. 777 is not the answer to anything."
   ],
-  "reset_notes": "Reset re-clones the clean snapshot, so the 644 script, the world-readable export\nand the 777 cache all come back.\n"
+  "reset_notes": "Reset re-clones the clean snapshot, so the 644 script, the world-readable export\nand the 777 cache all come back.\n",
+  "i18n": {
+    "es": {
+      "title": "El despliegue nocturno dejó de ejecutarse",
+      "briefing": "app-01 ejecuta un despliegue nocturno desde /srv/app/deploy.sh. Anoche se detuvo,\ny el operador que estaba de turno dice que la tarea «simplemente no hizo nada»: ni\nerror en el correo del cron, ni salida alguna.\n\nMientras estás en la máquina, la revisión de seguridad marcó ese mismo directorio: una\nexportación de datos de nóminas está en /srv/app y, según quien revisa, «toda la oficina\npuede leerla». Un directorio de caché del mismo árbol lo creó un instalador y es\nescribible por todas las cuentas de la máquina.\n\nCorrige los tres problemas sin ampliar nada que ya esté correcto. /srv/app y todo lo\nque no fue marcado deben conservar los permisos que tienen ahora.",
+      "objectives": {
+        "deploy-executable": "/srv/app/deploy.sh es ejecutable por su propietario y su grupo, y por nadie más (750)",
+        "export-private": "La exportación de nóminas ya no es legible por el grupo ni por otros (600)",
+        "cache-not-world-writable": "/srv/app/cache ya no es escribible por todos y sigue siendo accesible (755)",
+        "deploy-runs": "Ejecutar /srv/app/deploy.sh ahora termina e informa éxito"
+      },
+      "hints": [
+        "Empieza con `ls -l /srv/app` y `stat -c '%a %n' /srv/app/*` para ver los tres problemas a la vez.",
+        "El octal son tres tríos: propietario, grupo y otros; 7=rwx, 6=rw, 5=r-x, 4=r, 0=nada.",
+        "750 significa que el propietario y el grupo pueden ejecutarlo y nadie más. 777 no es la respuesta a nada."
+      ]
+    }
+  }
 }

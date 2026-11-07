@@ -73,12 +73,21 @@ function normalizeOriginal(lab: LabScenario) {
     hints: (lab.hints ?? []).map((hint) => hint.trim()),
     reset_notes: (lab.reset_notes ?? "").trim(),
     generated_from: lab.generated_from ?? [],
+    // The lab's per-locale copy (2.3): the export rebuilds it from `labMeta.translations`.
+    i18n: lab.i18n ?? {},
   };
 }
 
 /** The same shape, from the exporter (whose empty lists are `undefined`). */
 function normalizeExported(lab: LabScenario) {
-  return { ...lab, workloads: lab.workloads ?? [], lessons: lab.lessons ?? [], generated_from: lab.generated_from ?? [] };
+  return {
+    ...lab,
+    workloads: lab.workloads ?? [],
+    lessons: lab.lessons ?? [],
+    generated_from: lab.generated_from ?? [],
+    // An untranslated scenario exports no `i18n` key; the original says `{}` (2.3).
+    i18n: lab.i18n ?? {},
+  };
 }
 
 function imported(lab: LabScenario): ImportedLabScenario {

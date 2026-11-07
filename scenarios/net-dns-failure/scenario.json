@@ -127,5 +127,21 @@
     "A wrong DNS server is set manually on the adapter. Setting the adapter back to DHCP is the least invasive fix.",
     "After changing DNS, clear the client cache with `Clear-DnsClientCache`, then retest."
   ],
-  "reset_notes": "Reset re-clones the clean snapshot, so the bogus DNS server returns. Every\nattempt starts from the same fault, which keeps scores comparable between\nstudents.\n"
+  "reset_notes": "Reset re-clones the clean snapshot, so the bogus DNS server returns. Every\nattempt starts from the same fault, which keeps scores comparable between\nstudents.\n",
+  "i18n": {
+    "es": {
+      "title": "No se resuelve nada en la intranet",
+      "briefing": "Priya está en WORKSTATION-042 y ya no puede abrir la unidad compartida ni el portal\ndel personal. Navegar por la web también falla con «servidor no encontrado». Dice que\nayer podía llegar a todo y que nadie más en Contabilidad tiene el problema, así que no\nes el servidor de archivos.\n\nTambién menciona que «el técnico de la empresa externa estuvo ayer por la tarde»\najustando la configuración de red.\n\nTu trabajo: que la máquina vuelva a resolver nombres en la intranet y dejar la conexión\nconfigurada como el resto del entorno (las direcciones vienen por DHCP, incluidos los\nservidores DNS).",
+      "objectives": {
+        "restore-resolver": "El adaptador vuelve a resolver mediante el servidor DNS del laboratorio (sin entradas DNS estáticas sobrantes)",
+        "resolve-intranet": "El nombre fileserver.ontrak.lab resuelve a una dirección",
+        "reach-service": "El servidor de archivos acepta conexiones en el puerto 80 por nombre"
+      },
+      "hints": [
+        "Empieza con `ipconfig /all`, `Get-DnsClientServerAddress` y `Resolve-DnsName fileserver.ontrak.lab`.",
+        "Hay un servidor DNS incorrecto puesto a mano en el adaptador. Devolver el adaptador a DHCP es la corrección menos invasiva.",
+        "Después de cambiar el DNS, vacía la caché del cliente con `Clear-DnsClientCache` y vuelve a probar."
+      ]
+    }
+  }
 }

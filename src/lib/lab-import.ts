@@ -111,6 +111,8 @@ export function labScenarioWrite(
     slug: scenario.slug,
     title: scenario.title,
     summary: scenario.summary,
+    titleEs: scenario.titleEs,
+    summaryEs: scenario.summaryEs,
     description: scenario.description,
     platform: scenario.platform,
     difficulty: scenario.difficulty,

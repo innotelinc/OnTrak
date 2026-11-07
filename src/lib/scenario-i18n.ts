@@ -81,12 +81,17 @@ export function localizeDefinition(
 
   const objective = text(overlay.objective) ?? definition.objective;
   const objectiveChanged = objective !== definition.objective;
+  const brief = text(overlay.brief) ?? definition.brief;
+  const briefChanged = brief !== definition.brief;
 
-  if (!tasksChanged && !checksChanged && !hintsChanged && !objectiveChanged) return definition;
+  if (!tasksChanged && !checksChanged && !hintsChanged && !objectiveChanged && !briefChanged) {
+    return definition;
+  }
 
   return {
     ...definition,
     objective,
+    brief,
     tasks,
     checks,
     ...(hints ? { hints } : {}),
@@ -142,6 +147,8 @@ export interface LocaleCoverage {
   /** Whether this deployment actually offers the locale. */
   supported: boolean;
   objective: boolean;
+  /** Whether the long-form briefing is translated (2.3). */
+  brief: boolean;
   tasks: { translated: number; total: number };
   checks: { translated: number; total: number; unknown: string[] };
   hints: { translated: number; total: number; unknown: string[] };
@@ -198,6 +205,7 @@ export function overlayCoverage(definition: ScenarioDefinition): LocaleCoverage[
       locale,
       supported,
       objective: text(overlay.objective) !== null,
+      brief: text(overlay.brief) !== null,
       tasks: {
         translated: Math.min(translatedTasks, definition.tasks.length),
         total: definition.tasks.length,
@@ -224,6 +232,7 @@ export function coverageSummary(coverage: LocaleCoverage[]): string {
     .map(
       (entry) =>
         `${entry.locale}: objective ${entry.objective ? "yes" : "no"}, ` +
+        `brief ${entry.brief ? "yes" : "no"}, ` +
         `tasks ${entry.tasks.translated}/${entry.tasks.total}, ` +
         `checks ${entry.checks.translated}/${entry.checks.total}, ` +
         `hints ${entry.hints.translated}/${entry.hints.total}`,

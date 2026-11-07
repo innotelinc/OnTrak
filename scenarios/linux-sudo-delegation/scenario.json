@@ -141,5 +141,23 @@
     "The narrow form is `%ops ALL=(root) NOPASSWD: /usr/bin/systemctl restart nginx` — one command, one group, no password.",
     "A group rule needs the % prefix. Without it, sudoers reads `ops` as a *user* named ops, which silently grants nobody anything."
   ],
-  "reset_notes": "Reset re-clones the clean snapshot, so the broken drop-in file returns and the ops\ndelegation is gone again.\n"
+  "reset_notes": "Reset re-clones the clean snapshot, so the broken drop-in file returns and the ops\ndelegation is gone again.\n",
+  "i18n": {
+    "es": {
+      "title": "sudo está roto en la máquina de operaciones y falta la delegación",
+      "briefing": "Ya nadie en ops-01 puede escalar privilegios: sudo termina con un error de\nsintaxis antes de leer el comando. Alguien editó a mano la política de sudo anoche y no\nla comprobó.\n\nCuando sudo vuelva a funcionar, el equipo de plataforma necesita recuperar su\ndelegación: los miembros del grupo ops deben poder reiniciar la unidad de nginx sin\ncontraseña, y no deben poder hacer nada más con ella.\n\nLa delegación va en /etc/sudoers.d, un archivo por cambio, con el modo que sudo exige.\nNo repartas una regla general para cerrar el ticket ni debilites nada de lo que ya está.",
+      "objectives": {
+        "sudoers-valid": "La política de sudo se analiza: visudo -c no informa errores",
+        "delegation-present": "El grupo ops puede ejecutar systemctl restart nginx como root sin contraseña",
+        "no-blanket-rule": "No se introdujo ninguna regla general ALL/NOPASSWD:ALL en la política de sudo",
+        "dropin-hygiene": "Todos los archivos de /etc/sudoers.d tienen modo 0440 y no contienen errores de sintaxis"
+      },
+      "hints": [
+        "Lee el archivo roto antes de borrar nada: `visudo -c` y `grep -rn '' /etc/sudoers.d/`.",
+        "sudo no aceptará un archivo escribible por el grupo o por todos, ni cuyo nombre contenga un punto.",
+        "La forma estrecha es `%ops ALL=(root) NOPASSWD: /usr/bin/systemctl restart nginx`: un comando, un grupo, sin contraseña.",
+        "Una regla de grupo necesita el prefijo %. Sin él, sudoers lee `ops` como un *usuario* llamado ops, que no concede nada a nadie."
+      ]
+    }
+  }
 }
