@@ -157,13 +157,14 @@ genie-down: ## Stop the agent console stack
 genie-logs: ## Tail the agent console's logs
 	cd $(GENIE_DIR) && docker compose logs -f
 
-# The browser console's twin for a terminal: the same `/api/chat` turn, streamed.
-# Installed as a command because that is what makes it usable away from this
-# checkout; the script itself is the source of truth.
+# The console in a terminal: the agent, its sessions, its approval gate and its
+# projects, driven through the same server API. Installed from the built package
+# rather than copied, because `dist/cli/main.js` imports the rest of `dist/`.
 .PHONY: genie-cli
-genie-cli: ## Install the `genie` terminal CLI into /usr/local/bin
-	install -m 0755 scripts/genie.mjs /usr/local/bin/genie
-	@echo "genie: installed $(shell command -v genie || echo /usr/local/bin/genie) — run 'genie --help'"
+genie-cli: ## Build and install the `genie` coding-agent CLI globally
+	cd $(GENIE_DIR) && npm run build
+	npm install -g --no-audit --no-fund --ignore-scripts ./$(GENIE_DIR)
+	@echo "genie: $(shell command -v genie) — run 'genie login', then 'genie'"
 
 .PHONY: lan
 lan: ## Detect this host's LAN address and write the builder network into an env file

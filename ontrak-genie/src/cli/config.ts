@@ -24,6 +24,13 @@ export interface CliConfig {
   token?: string;
   /** The signed-in session cookie value (`ontrak_genie_session`). */
   cookie?: string;
+  /**
+   * The account a shared bearer acts for. Only meaningful with `token`: a service
+   * or a script holds the deployment's bearer, and Genie attributes its turns to
+   * this address. A person signing in does not need it, because the session names
+   * its own account.
+   */
+  actor?: string;
   /** Model to ask for by default, when the plan allows a choice. */
   model?: string;
   /** Extra directory to load skills from, beside the built-in ones. */
@@ -34,6 +41,7 @@ export interface ResolvedTarget {
   base: string;
   token?: string;
   cookie?: string;
+  actor?: string;
   /** True when at least one credential was found, so the caller can prompt. */
   hasCredential: boolean;
 }
@@ -118,7 +126,8 @@ export function resolveTarget(flags: ResolveFlags = {}): ResolvedTarget {
     file.token,
   );
   const cookie = firstNonEmpty(process.env.ONTRAK_GENIE_COOKIE, file.cookie);
-  return { base, token, cookie, hasCredential: token !== undefined || cookie !== undefined };
+  const actor = firstNonEmpty(process.env.ONTRAK_GENIE_ACTOR, file.actor);
+  return { base, token, cookie, actor, hasCredential: token !== undefined || cookie !== undefined };
 }
 
 function firstNonEmpty(...values: (string | undefined)[]): string | undefined {

@@ -17,6 +17,19 @@ genie projects              # saved projects: list, save, open, export, import
 genie --help                # everything else
 ```
 
+## Install
+
+```bash
+make genie-cli     # from the repo root: builds ontrak-genie, installs `genie` globally
+# or, from ontrak-genie/:
+npm run build && npm install -g .
+```
+
+The command is installed from the built package, not copied as a single file:
+`dist/cli/main.js` imports the rest of `dist/`. A shared bearer deployment needs
+`ONTRAK_GENIE_ACTOR` (or `actor` in the config) so a turn can be attributed;
+`genie login` needs neither.
+
 ---
 
 ## 1. Why it exists, and what it is not

@@ -21,6 +21,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import { pathToFileURL } from "node:url";
 
 import { parseImages } from "../attachments.js";
 import {
@@ -301,7 +302,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 
   const target = resolveTarget({ url: args.url, token: args.token });
   if (args.cookie !== undefined) target.cookie = args.cookie;
-  const client = new GenieClient({ base: target.base, token: target.token, cookie: target.cookie });
+  const client = new GenieClient({
+    base: target.base,
+    token: target.token,
+    cookie: target.cookie,
+    actor: target.actor,
+  });
   const theme = new Theme(args.color && supportsColor(process.stdout));
 
   switch (args.command) {
@@ -1466,7 +1472,24 @@ function question(rl: readline.Interface, prompt: string): Promise<string> {
 }
 
 // Run when invoked as a program, not when imported by a test.
-if (process.argv[1] !== undefined && import.meta.url === `file://${path.resolve(process.argv[1])}`) {
+//
+// Compared through the real path: a package manager installs a bin as a symlink
+// (`/usr/local/bin/genie -> …/dist/cli/main.js`), `argv[1]` is the symlink, and
+// `import.meta.url` is always the resolved file — so the naive comparison made an
+// installed `genie` exit 0 without running a line.
+function invokedDirectly(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  let real = "";
+  try {
+    real = fs.realpathSync(entry);
+  } catch {
+    real = path.resolve(entry);
+  }
+  return import.meta.url === pathToFileURL(real).href;
+}
+
+if (invokedDirectly()) {
   main()
     .then((code) => {
       process.exitCode = code;

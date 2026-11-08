@@ -57,6 +57,12 @@ export interface GenieClientOptions {
   token?: string;
   /** The signed-in session, sent as the console's own cookie. */
   cookie?: string;
+  /**
+   * Who a shared bearer acts for (`x-genie-actor`). A session names its own
+   * account, so this is sent only beside a token — a deployment with
+   * `TRUSTED_ACTOR_HEADER` on resolves it to a real subject before the turn.
+   */
+  actor?: string;
   /** Per-request budget for the non-streaming calls. */
   timeoutMs?: number;
 }
@@ -324,6 +330,7 @@ export class GenieClient {
     this.base = options.base.replace(/\/+$/, "");
     this.headers = { "Content-Type": "application/json" };
     if (options.token) this.headers.Authorization = `Bearer ${options.token}`;
+    if (options.token && options.actor) this.headers["x-genie-actor"] = options.actor;
     if (options.cookie) this.headers.Cookie = `ontrak_genie_session=${encodeURIComponent(options.cookie)}`;
     this.timeoutMs = options.timeoutMs ?? 15_000;
   }
