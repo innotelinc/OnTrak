@@ -70,6 +70,11 @@ const NOT_IN_FAMILY_STACK = new Set([
   "engineer-portal-sso",
   "g0dm0d3-sso",
   "onyx-sso",
+  // The Bolt sign-in proxy: its published 3500 is the builder's front door, and it
+  // cannot come up on a runner without the vault-resolved OIDC values. The builder
+  // itself publishes no port, so the job asks it inside the network instead of
+  // waiting on a door that can never open.
+  "bolt-sso",
 ]);
 
 function read(file: string): string {

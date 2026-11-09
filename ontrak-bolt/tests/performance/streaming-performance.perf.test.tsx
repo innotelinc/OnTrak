@@ -194,7 +194,7 @@ describe('Streaming Performance - Long Messages', () => {
   it('handles very long messages efficiently', () => {
     const longMessage = 'A'.repeat(10000); // 10k characters
     const chunkSize = 100;
-    const chunks = [];
+    const chunks: string[] = [];
 
     for (let i = 0; i < longMessage.length; i += chunkSize) {
       chunks.push(longMessage.slice(0, i + chunkSize));
