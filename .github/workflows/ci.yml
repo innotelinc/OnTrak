@@ -864,7 +864,6 @@ jobs:
           sentinel http://127.0.0.1:8787/health
           portal http://127.0.0.1:3300/health
           genie http://127.0.0.1:3400/health
-          bolt http://127.0.0.1:3500/api/health
           sync-api http://127.0.0.1:8420/api/health
           sync-web http://127.0.0.1:8421/health
           guacamole http://127.0.0.1:8080/guacamole/"
@@ -914,11 +913,16 @@ jobs:
       - name: The code console answers
         run: curl -fsS http://127.0.0.1:3400/health | grep -q '"service":"ontrak-genie"'
 
-      # Through the sign-in proxy, on the port it publishes, at the one path it lets
-      # through without a session. Asking the app's own container instead would prove
-      # the builder started and say nothing about the door in front of it.
-      - name: The builder answers behind its sign-in
-        run: curl -fsS http://127.0.0.1:3500/api/health | grep -q '"status":"healthy"'
+      # The builder publishes no port: 3500 belongs to its sign-in proxy, and that
+      # proxy cannot start here — it is configured from vault:// references the
+      # deploy resolves, and a runner has none. So the app is asked inside the
+      # network, at the address the proxy reaches it on, and the proxy's wiring is
+      # held to that same upstream separately.
+      - name: The builder answers
+        run: docker compose -f docker-compose.all.yml exec -T bolt-app curl -fsS http://127.0.0.1:5173/api/health | grep -q '"status":"healthy"'
+
+      - name: The builder's sign-in points at the builder
+        run: docker compose -f docker-compose.all.yml config | grep -q 'http://bolt-app:5173'
 
       - name: The provider answers discovery
         run: curl -fsS http://127.0.0.1:8787/.well-known/openid-configuration | grep -q authorization_endpoint
