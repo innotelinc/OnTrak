@@ -169,6 +169,16 @@ services:
       # Its own address, for the SSO redirect URI. Defaults to the host port this
       # file publishes, which is right for a browser on this machine.
       ONTRAK_TRAINING_BASE_URL: ${ONTRAK_TRAINING_BASE_URL:-http://127.0.0.1:3000}
+      # The training app reads these one mapping per line. `.env` writes the same
+      # list comma-separated, as every other list there is written, and the shipped
+      # build folds that into a single mapping whose value matches no group — so
+      # every SSO sign-in fell through to the default role. Stated here as lines so
+      # a deployment picks the fix up without rebuilding the image.
+      ONTRAK_OIDC_ROLE_MAPPINGS: |
+        ontrak-admins=ADMIN
+        ontrak-instructors=INSTRUCTOR
+        range-instructors=INSTRUCTOR
+        ontrak-students=STUDENT
       # OnTrak Lab, served by this app (`/lab`). Passed through rather than
       # defaulted on: a deployment that has not asked for a lab gets exactly the
       # behaviour it had before the port. The lab's own settings
@@ -887,7 +897,7 @@ services:
       # the worker's `vars` — see `ontrak-bolt/docker-entrypoint.sh`. The app is a
       # Worker build served by workerd, which cannot see the container's environment;
       # a variable that is not rendered into `vars` is a variable the app cannot see.
-      OPENAI_LIKE_API_BASE_URL: ${OPENAI_LIKE_API_BASE_URL:-https://gateway.telno.services/v1}
+      OPENAI_LIKE_API_BASE_URL: ${OPENAI_LIKE_API_BASE_URL:-https://gateway.innotel.us/v1}
       # The deployment's own model list: the gateway answers /models with 1,249 ids,
       # which is a directory rather than a picker. Left unset, the app offers all of
       # them — and most of them answer 401, because a `~vendor/model` id needs that

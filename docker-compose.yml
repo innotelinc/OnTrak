@@ -100,6 +100,16 @@ services:
       DATABASE_URL: postgresql://ontrak:ontrak@db:5432/ontrak?schema=public
       STORAGE_DIR: ./storage/packages
       NODE_ENV: production
+      # The app reads these one per line (`parseRoleMappings` splits on newlines
+      # only), while `.env` carries the same list comma-separated like every other
+      # list there — which the app folds into one mapping whose value matches no
+      # group, so every SSO sign-in fell through to the default role. Stated here,
+      # in the file this deployment actually runs, so a recreate picks it up.
+      ONTRAK_OIDC_ROLE_MAPPINGS: |
+        ontrak-admins=ADMIN
+        ontrak-instructors=INSTRUCTOR
+        range-instructors=INSTRUCTOR
+        ontrak-students=STUDENT
     volumes:
       - ontrak-storage:/app/storage
 
