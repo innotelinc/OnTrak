@@ -70,7 +70,12 @@ services:
       migrate:
         condition: service_completed_successfully
     ports:
-      - "3000:3000"
+      # The host port is the deployment's choice, not the product's: the family
+      # stack already reserves :3000 for training, so a second door onto this same
+      # build takes a port of its own (this deployment publishes :3002 as
+      # app.ontrak.technology). Unset, it stays :3000 — what `docker compose up`
+      # on a laptop has always got.
+      - "${ONTRAK_APP_PORT:-3000}:3000"
     # "Healthy" here means the server is up and serving, not that the database is
     # reachable: a database blip should not mark a running app unhealthy and send
     # an operator after the wrong container. The sign-in page renders without
