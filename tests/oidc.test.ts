@@ -36,6 +36,7 @@ import {
   ssoConfigFromEnv,
   ssoConfigWarning,
   ssoRedirectUri,
+  ssoOrigin,
   stateExpired,
   validateDiscovery,
   type SsoAuthorization,
@@ -500,6 +501,18 @@ test("only a same-site path may survive as a destination", () => {
   assert.equal(safeRelativePath("/student"), "/student");
   assert.equal(safeRelativePath("//evil.test"), null);
   assert.equal(safeRelativePath("https://evil.test"), null);
+});
+
+test("a declared door names itself, and anything else falls back to the deployment", () => {
+  const doors = " https://app.training.test , https://its.training.test/ ";
+  assert.equal(ssoOrigin("https://its.training.test", doors, "https://app.training.test"), "https://app.training.test");
+  assert.equal(ssoOrigin("https://its.training.test", doors, "https://ITS.training.test"), "https://its.training.test");
+  assert.equal(ssoOrigin("https://its.training.test", doors, "http://app.training.test"), "https://app.training.test");
+  assert.equal(ssoOrigin("https://its.training.test", doors, "app.training.test"), "https://app.training.test");
+  assert.equal(ssoOrigin("https://its.training.test", doors, "192.168.1.21:3002"), "https://its.training.test");
+  assert.equal(ssoOrigin("https://its.training.test", doors, "http://0.0.0.0:3000"), "https://its.training.test");
+  assert.equal(ssoOrigin("https://its.training.test", undefined, "http://127.0.0.1:3000"), "https://its.training.test");
+  assert.equal(ssoOrigin(undefined, "", "http://0.0.0.0:3000/"), "http://0.0.0.0:3000");
 });
 
 test("the deployment states its own address, and falls back to the request's", () => {

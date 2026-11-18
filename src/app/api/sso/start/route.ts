@@ -18,9 +18,9 @@ import { HttpOidcClient, createPkcePair, randomUrlSafe } from "../../../../lib/o
 import {
   activeSsoConfig,
   buildAuthorizationUrl,
-  deploymentOrigin,
   ssoConfigIssues,
   ssoRedirectUri,
+  ssoOrigin,
 } from "../../../../lib/oidc-rules";
 import { safeRelativePath } from "../../../../lib/auth-rules";
 import { setSsoState } from "../../../../lib/sso-session";
@@ -29,7 +29,13 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 function originOf(request: NextRequest): string {
-  return deploymentOrigin(process.env.ONTRAK_TRAINING_BASE_URL, request.nextUrl.origin);
+  return ssoOrigin(
+    process.env.ONTRAK_TRAINING_BASE_URL,
+    process.env.ONTRAK_SSO_ORIGINS,
+    request.headers.get("x-forwarded-host") ??
+      request.headers.get("host") ??
+      request.nextUrl.origin,
+  );
 }
 
 function fail(request: NextRequest, message: string): NextResponse {

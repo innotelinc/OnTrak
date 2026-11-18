@@ -23,9 +23,9 @@ import { HttpOidcClient } from "../../../../lib/oidc-client";
 import {
   activeSsoConfig,
   authorizeSso,
-  deploymentOrigin,
   extractOidcClaims,
   ssoRedirectUri,
+  ssoOrigin,
 } from "../../../../lib/oidc-rules";
 import { resolveSsoSignIn, ssoDeniedAudit, ssoSignInAudit } from "../../../../lib/oidc-service";
 import { prismaSsoStore } from "../../../../lib/oidc-store-prisma";
@@ -35,7 +35,13 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 function originOf(request: NextRequest): string {
-  return deploymentOrigin(process.env.ONTRAK_TRAINING_BASE_URL, request.nextUrl.origin);
+  return ssoOrigin(
+    process.env.ONTRAK_TRAINING_BASE_URL,
+    process.env.ONTRAK_SSO_ORIGINS,
+    request.headers.get("x-forwarded-host") ??
+      request.headers.get("host") ??
+      request.nextUrl.origin,
+  );
 }
 
 /** Refuse, audit the refusal, and send the browser back to the sign-in page. */

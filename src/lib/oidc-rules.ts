@@ -560,6 +560,43 @@ export function deploymentOrigin(configured: string | null | undefined, requestO
   return trimmed || requestOrigin.replace(/\/+$/, "");
 }
 
+/**
+ * The origin an SSO handshake may name.
+ *
+ * The `state` cookie that guards the handshake is host-only — it carries no
+ * `Domain`, so it belongs to the exact name the browser was at when the flow
+ * started. A deployment that serves the same build on more than one name
+ * (`:3000` and `:3002` here) would otherwise start the flow on one door and
+ * return on another, find no state cookie there, and refuse the sign-in as
+ * unverifiable.
+ *
+ * So the doors are declared, not guessed: `ONTRAK_SSO_ORIGINS` lists them
+ * comma-separated, and the request's own origin is used only when it is one of
+ * them. Anything else — an internal socket address, a foreign `Host` — falls
+ * back to the address the deployment states for itself, which is the one the
+ * provider has registered.
+ */
+export function ssoOrigin(
+  configured: string | null | undefined,
+  allowed: string | null | undefined,
+  requestOrigin: string,
+): string {
+  const trim = (value: string) => value.trim().replace(/\/+$/, "");
+  const doors = (allowed ?? "")
+    .split(",")
+    .map(trim)
+    .filter(Boolean);
+  // Matched on the host, not the whole origin: behind a reverse proxy the app
+  // can believe the request arrived over http, and that difference is not a
+  // different door. The declared form is returned — it carries the scheme the
+  // provider has registered.
+  const host = (value: string) => value.trim().replace(/^[a-z]+:\/\//i, "").replace(/\/+$/, "").toLowerCase();
+  const match = doors.find((door) => host(door) === host(requestOrigin));
+  if (match) return match;
+  const request = trim(requestOrigin);
+  return deploymentOrigin(configured, /^[a-z]+:\/\//i.test(request) ? request : `https://${request}`);
+}
+
 /** The single redirect URI this deployment is registered under, given its origin. */
 export function ssoRedirectUri(origin: string): string {
   return `${origin.replace(/\/+$/, "")}${SSO_CALLBACK_PATH}`;
