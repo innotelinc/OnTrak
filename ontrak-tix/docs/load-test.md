@@ -162,17 +162,14 @@ read: inbox page      p95  464.8 ms   MISSED  (target 300 ms,     5 samples)
 **Read that last row as a smoke test, not a p95.** The inbox stage times five
 reads on purpose — at this size one page read is the expensive thing and the point
 is its latency — so its "p95" is its slowest of five: p50 219.8 ms, max 464.8 ms.
-The same two calls measured again on the same tenant with the writes finished gave
-p50 116 ms and p95 235 ms, and the page read alone p50 59 ms. So the target is
-**not settled** in either direction by that run, and this document does not claim
-it is met.
+It is not evidence about the 300 ms target in either direction, which is why the
+next step was more samples rather than a verdict (below).
 
 What the numbers do say is where the cost sits: the page itself is a bounded read,
 and the header counts (`groupBy` over the tenant, plus unassigned and urgent) are
 the larger half of the request — one index-only scan per count over a million
-rows. If the next run at 1M wants a verdict rather than an anecdote, it needs more
-than five inbox samples (`--inbox-reads 60`) and, if it still misses, a count that
-is maintained rather than counted.
+rows. If a run at 1M still misses, the answer is a count that is maintained rather
+than counted.
 
 The raw result is
 [load-test-2026-10-24-inbox.json](./load-test-2026-10-24-inbox.json).

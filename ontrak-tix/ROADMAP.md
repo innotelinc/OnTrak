@@ -197,13 +197,13 @@ controls, backup/DR, analytics and the opt-in assistant.
   partitions because it is not an enum order, with a status-partitioned merge so
   every read is served by `[tenantId, status, priority desc, updatedAt]` handing
   back a sorted prefix. The header's numbers are one `groupBy`. Recorded at the
-  target in [docs/load-test.md](docs/load-test.md): at 1,000,000 tickets the first
-  page plus the counts measured p50 219.8 ms / p95 464.8 ms over **five** reads —
-  a smoke test, not a p95 — and p50 116 ms / p95 235 ms when re-measured alone, so
-  the 300 ms verdict is **not settled**. The header counts (three scans of the
-  tenant per read) are the larger half of the cost; the remaining work is to
-  settle it with a run that takes enough samples, and to maintain those counts if
-  it still misses.
+  target in [docs/load-test.md](docs/load-test.md): the rehearsal's own inbox stage
+  measured p50 219.8 ms / p95 464.8 ms at 1,000,000 tickets, but over **five**
+  reads — a smoke test rather than a p95 — so the number was then taken properly:
+  60 sequential samples of the same two calls on the same tenant put the page +
+  counts at p95 **132.7 ms**, inside the 300 ms target, with the header counts
+  (three scans of the tenant per read) the larger half as predicted. What is not
+  yet done is reading that inside a rehearsal run rather than beside one.
 - `[x]` Hold the reference mark in a row instead of deriving it from every
   reference already issued (`TicketSequence`, bootstrapped once per process,
   incremented atomically). Measured: create p95 **408 ms** at 500 agents /
@@ -219,7 +219,9 @@ controls, backup/DR, analytics and the opt-in assistant.
   then taken without re-seeding — `scripts/measure-inbox.ts` times the same two
   shipped calls 60 times against the 1M tenant: page p95 **50.3 ms**, header counts
   p95 **79.5 ms**, both **p95 132.7 ms** — met against 300 ms, with the counts the
-  larger half as predicted.
+  larger half as predicted. What that does not yet have is the same reading inside
+  a rehearsal: the run's inbox stage takes five samples, and the sixty were taken
+  sequentially on an otherwise idle box.
 - **Exit:** the 10,000-staff / 1,000,000-ticket rehearsal meets the stated p95 for
   the worklist read and for create. Create is met (**357 ms**), and so is the
   worklist read (**132.7 ms** p95 over 60 samples); see
@@ -1459,8 +1461,9 @@ up to an adjuster or auditor.
     named: page (or filter) the worklist at the database, and hold the reference
     mark in a row rather than deriving it from a million refs. **Both have since
     landed** — see §2.1 — and the re-run at 1M has detail 28.2 ms, create 357 ms
-    and reply 204.8 ms met, with the paged inbox read measured but not yet
-    judged (five samples).
+    and reply 204.8 ms met, with the paged inbox read at p95 **132.7 ms** over 60
+    sequential samples on that tenant — inside 300 ms, but not yet read inside a
+    full rehearsal run.
   - `[x]` **Concurrent writes hold up** — the rehearsal's first round found that
     they did not: under eight concurrent writers the audit append lost
     `@@unique([tenantId, seq])` *after* its row was written, and the reference lost
