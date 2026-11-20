@@ -182,18 +182,25 @@ function truthy(value: string | undefined): boolean {
 }
 
 /**
- * Parse `group=ROLE` lines, one per line.
+ * Parse `group=ROLE` mappings, one per line or comma-separated.
  *
  * The `<claim>:` prefix is optional and defaults to `groups`, so an org chart
  * change (a new team, a renamed one) is configuration rather than a deploy.
  * Every problem is reported rather than dropped: a mapping that silently does
  * nothing is worse than one that refuses to be saved.
+ *
+ * Commas separate entries for the same reason `splitList` accepts them: every
+ * other list in the environment is written that way, so an operator who writes
+ * `a=ADMIN,b=INSTRUCTOR` means two mappings. Splitting only on newlines turned
+ * that line into one mapping whose value was the whole rest of the text, which
+ * matched no group at all — every sign-in fell through to the default role and
+ * nothing said so.
  */
 export function parseRoleMappings(text: string): { mappings: RoleMapping[]; errors: string[] } {
   const mappings: RoleMapping[] = [];
   const errors: string[] = [];
 
-  for (const raw of text.split("\n")) {
+  for (const raw of text.split(/[\n,]/)) {
     const line = raw.trim();
     if (line === "" || line.startsWith("#")) continue;
 

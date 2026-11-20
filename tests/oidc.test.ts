@@ -248,6 +248,14 @@ test("role mappings default to the groups claim and report every problem", () =>
     { claim: "roles", value: "it-ops", role: "ADMIN" },
   ]);
   assert.equal(parsed.errors.length, 2);
+
+  // The deployment writes this list comma-separated, like every other list in the
+  // environment. Reading it as one mapping is how an instructor signed in as a
+  // student for a month: the value became the whole tail of the line.
+  assert.deepEqual(parseRoleMappings("ontrak-admins=ADMIN,ontrak-instructors=INSTRUCTOR").mappings, [
+    { claim: "groups", value: "ontrak-admins", role: "ADMIN" },
+    { claim: "groups", value: "ontrak-instructors", role: "INSTRUCTOR" },
+  ]);
 });
 
 test("scopes and domains are read as lists, with or without the at-sign", () => {
