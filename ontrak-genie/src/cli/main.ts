@@ -1143,7 +1143,9 @@ async function turn(
     await client.patchSession(state.sessionId, { model: state.model }).catch(() => undefined);
   }
 
-  state.followups = suggestFollowups(outcome.summary);
+  // The request is passed too: a turn that did nothing and said nothing can only
+  // be followed up from what was asked for.
+  state.followups = suggestFollowups(outcome.summary, message);
   if (state.followups.length > 0) {
     process.stdout.write(`\n${theme.gray("next:")}\n`);
     state.followups.forEach((suggestion, index) => {

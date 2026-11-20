@@ -757,10 +757,81 @@ test("a clean change suggests review, tests and commit", () => {
   ]);
 });
 
-test("an untouched turn still offers something rather than an empty menu", () => {
-  const suggestions = suggestFollowups(summarizeEvents([{ type: "text", text: "Nothing to do." }]));
-  assert.ok(suggestions.length >= 1);
-  assert.match(suggestions[0] ?? "", /Explain the approach/);
+test("the question a turn ends on offers its own two answers, not a restatement", () => {
+  // The chips are what the person would type back, so an either/or question has to
+  // come back as its two choices — not as the question again, and not as "keep going".
+  const said =
+    "Two layouts would work here. Should “3D” mean a single 7×7 board shown in perspective, " +
+    "or stacked 7×7 boards where four cards can also connect across layers?";
+  const suggestions = suggestFollowups(summarizeEvents([{ type: "text", text: said }]));
+  assert.deepEqual(suggestions, [
+    "A single 7×7 board shown in perspective",
+    "Stacked 7×7 boards where four cards can also connect across layers",
+  ]);
+});
+
+test("the question outranks the review a change would otherwise suggest", () => {
+  const summary = summarizeEvents([
+    toolCall("edit_file", { path: "a.ts" }),
+    { type: "text", text: "Do you want the board to be 7×7 or 9×9?" },
+  ]);
+  const suggestions = suggestFollowups(summary);
+  assert.equal(suggestions[0], "7×7");
+  assert.equal(suggestions[1], "9×9");
+  assert.ok(suggestions.length <= 3);
+});
+
+test("a yes/no question is left for the person to answer", () => {
+  // Writing "Yes" on their behalf would be inventing a decision the turn never made.
+  const summary = summarizeEvents([{ type: "text", text: "Should I apply this to all three boards?" }]);
+  const suggestions = suggestFollowups(summary, "apply the layout to the boards");
+  assert.equal(suggestions.some((s) => /^(?:yes|no)\b/i.test(s)), false);
+});
+
+test("a turn that did nothing narrows the request instead of gesturing past it", () => {
+  const summary = summarizeEvents([{ type: "text", text: "Nothing to do." }]);
+  assert.deepEqual(suggestFollowups(summary), ["Point me at the file or folder to start from"]);
+  assert.equal(
+    suggestFollowups(summary, "fix the login redirect")[0],
+    "Make the first change that “fix the login redirect” needs",
+  );
+});
+
+test("a failure names work that exists, even when the tool's line names nothing", () => {
+  // "list_dir: ." is not a task; the command that ran is.
+  const summary = summarizeEvents([
+    toolCall("list_dir", { path: "." }),
+    { type: "tool_result", id: "c1", name: "list_dir", ok: false, content: ".\n" },
+    toolCall("run_command", { command: "npm run check" }),
+  ]);
+  const suggestions = suggestFollowups(summary);
+  assert.equal(suggestions[0], "Fix the failure: npm run check failed");
+  assert.equal(suggestions[1], "Re-run npm run check and show the full output");
+});
+
+test("a read-only turn offers to explain the file it read", () => {
+  const summary = summarizeEvents([
+    toolCall("read_file", { path: "src/a.ts" }),
+    { type: "tool_result", id: "c", name: "read_file", ok: true, content: "export {};" },
+  ]);
+  assert.equal(suggestFollowups(summary)[0], "Walk me through src/a.ts");
+});
+
+test("a listing of the workspace root is not a file to walk through", () => {
+  const summary = summarizeEvents([
+    toolCall("list_dir", { path: "." }),
+    { type: "tool_result", id: "c", name: "list_dir", ok: true, content: ". is empty" },
+  ]);
+  const text = suggestFollowups(summary, "what is in this repo").join("\n");
+  assert.doesNotMatch(text, /Walk me through \./);
+});
+
+test("no chip is a generic gesture", () => {
+  const text = suggestFollowups(
+    summarizeEvents([{ type: "text", text: "Done." }]),
+    "do the thing",
+  ).join("\n");
+  assert.doesNotMatch(text, /Explain the approach|next logical step/i);
 });
 
 test("a denied approval suggests an alternative rather than repeating it", () => {

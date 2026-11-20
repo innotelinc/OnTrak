@@ -128,9 +128,18 @@ unattended run says it means it.
 ### Follow-ups
 
 After a turn the CLI offers up to three next steps, derived from what the turn
-actually did — a failure outranks a review; a clean change suggests review, tests
-and commit. They come from the events, **not** from a second model call: a
-suggestion can never invent work the turn did not do, and it costs nothing.
+actually did. The order is the order the person's own next sentence would take: a
+failure the turn could not fix, then the **question the reply ended on**, then the
+work a change makes possible (review, tests, commit). They come from the events and
+the reply, **not** from a second model call: a suggestion can never invent work the
+turn did not do, and it costs nothing.
+
+An either/or question comes back as **its two answers**, because that is what the
+person is being asked for: *“Should the board be 7×7 or 9×9?”* offers `7×7` and
+`9×9`, not the question again and not `keep going`. A yes/no question is not
+answered on their behalf — the chip narrows the request instead. And no chip ever
+repeats a tool's raw output (`. is empty`) or a tool's name: when a failure's first
+line names nothing, the chip names the command or file it was about.
 
 ## 4. Projects
 

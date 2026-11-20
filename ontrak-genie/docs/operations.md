@@ -814,9 +814,11 @@ A single-page app with no build step (`public/`), served by the agent itself.
   `aria-activedescendant`, so the keyboard selection is announced. `Enter` sends
   only when the palette is closed.
 - **Follow-up chips.** After a turn the console offers up to three next steps as
-  chips, derived from the turn's own events (a failure outranks a review; a change
-  suggests review, tests, commit) and never from a second model call — so a chip
-  can only name work the turn actually did. A chip **fills the composer** rather
+  chips, derived from the turn's own events and its closing question (a failure
+  outranks a review; an either/or question offers its two answers; a change suggests
+  review, tests, commit) and never from a second model call — so a chip can only
+  name work the turn actually did or a choice it actually asked for. A chip
+  **fills the composer** rather
   than sending: a suggestion you can edit is a suggestion; one that fires on click
   is a command. The rule is the CLI's (`src/cli/followups.ts`), not a second copy:
   the server serves that compiled module at **`/followups.js`** and the page imports

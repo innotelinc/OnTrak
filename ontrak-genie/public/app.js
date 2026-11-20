@@ -2230,8 +2230,9 @@ async function sendMessage(text) {
     setStreaming(false);
     void loadSessions();
     // A failure included: "fix the failure" is the most useful chip there is,
-    // and it is first in `suggestFollowups` for exactly that reason.
-    if (turnNotes !== null) showFollowups(suggestFollowups(turnNotes));
+    // and it is first in `suggestFollowups` for exactly that reason. The request
+    // goes with the summary so a turn that did nothing can be narrowed from it.
+    if (turnNotes !== null) showFollowups(suggestFollowups(turnNotes, text));
     $("#input").focus();
   }
 }
@@ -5516,8 +5517,9 @@ async function openForgePullRequest() {
  *     suggestion, and one that fires on click is a command.
  *
  * The follow-ups are derived from the turn's own events — a failure outranks a
- * review; a change suggests review, tests, commit — and never from a second model
- * call, so a chip can only ever name work the turn actually did.
+ * review; a question that offers two choices suggests those two answers; a change
+ * suggests review, tests, commit — and never from a second model call, so a chip
+ * can only ever name work the turn actually did or a choice it actually asked for.
  */
 const PALETTE_ACTIONS = [
   { name: "help", desc: "what this console can do", run: () => addNotice(paletteHelp()) },
